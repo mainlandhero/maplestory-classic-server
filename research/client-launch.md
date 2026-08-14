@@ -47,22 +47,61 @@ So the client exits **before it ever initialises GameGuard**. Note this also mea
 Themida is *not* binding the static `grap64.dll!#9` import at load time the way the
 normal Windows loader would — consistent with its IAT being rebuilt at runtime.
 
+## BREAKTHROUGH: the client runs and connects to us
+
+```
+MapleStory.exe -NXLDEBUG 127.0.0.1 8484
+```
+
+**The client stays running and opens a TCP connection to `127.0.0.1:8484`.**
+
+Captured by `tools/listen.py`:
+
+```
+[8484] 01:56:14 *** CONNECTION from 127.0.0.1:65272 ***
+[8484] no further data (total 0 bytes); holding open
+```
+
+Three things follow from this.
+
+**1. `-NXLDEBUG <ip> <port>` is the way in.** It is the only mode that both survives and
+connects. Per `docs/launch-protocol.md` it writes token 1 to `cfg+0x18` (IP) and token 2
+to `cfg+0x20` (port) and sets mode **5** — the same address fields as `IPPORT`, but a
+path the client actually tolerates. `IPPORT` still crashes; `WEBSTART` still exits
+cleanly even with ten arguments supplied, so its six payload fields are checked for
+content we cannot yet fake.
+
+**2. The client sends nothing and waits — the server speaks first.** It connected and
+then sat there having sent **0 bytes**. That matches the classic MapleStory handshake,
+where the server opens with an unencrypted greeting carrying the version, the two IV
+seeds, and a locale byte, and only then does the client reply. So Stage 2 begins by
+*sending*, not by waiting to decode something.
+
+**3. GameGuard never initialises on this path.** `grap-stub.log` is empty across every
+run, and the client reaches the network regardless. The no-GameGuard route works: no
+service, no kernel driver, and nothing installed system-wide.
+
+Note the process cannot be killed with `Stop-Process` (access denied) — Themida's
+self-protection. Use `taskkill /F` or let it exit on its own.
+
 ## Interpretation
 
-The client is missing something the Nexon launcher normally supplies — most likely a
-session/auth handoff (Passport or Steam), since `WEBSTART` and `STEAMSTART` are exactly
-the launcher's entry modes and both exit cleanly rather than crashing.
+`WEBSTART` still exits cleanly even when given ten arguments, so its six payload fields
+(tokens 4-9) are validated for content, not merely presence. Those are the launcher's
+session identifiers, and faking them needs either the real format or a path that skips
+the check — which `-NXLDEBUG` appears to be.
 
-**GameGuard neutralisation remains unverified**, not failed: we have not yet reached the
-point in startup where it would run.
+**GameGuard neutralisation is effectively confirmed** for this path: the client reaches
+the network with the stub in place and the driver folder disabled.
 
 ## Next
 
-Find the early-exit path in Ghidra and see what it tests for:
+Stage 2, and the server has to talk first:
 
-- Locate the argument parser via the string constants (`WEBSTART`, `IPPORT`,
-  `GAMELAUNCHING`) and follow their cross-references.
-- Identify the check made immediately after argument parsing — registry key, named pipe,
-  environment variable, mutex, or file left by the launcher.
-- No client-side log or dump file is produced on exit, so the answer has to come from
-  static analysis or runtime observation (e.g. Process Monitor) rather than client logs.
+- Send a candidate handshake on connect (version 779, two 4-byte IV seeds, locale byte)
+  and watch whether the client replies or drops.
+- A reply means the framing is right and `crates/net`'s `MapleCipher` hypothesis can be
+  tested against real bytes; silence or a drop means the format differs and
+  `MapleSecurePC64` has to be reversed first.
+- Keep `WEBSTART` in view as the eventual production path, since that is what our
+  launcher will use once the six fields are understood.
