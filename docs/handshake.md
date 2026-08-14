@@ -1,8 +1,8 @@
 # Connection handshake
 
-Status: **layout recovered, not yet confirmed on the wire.** The classic format is ruled
-out, the protocol version is known, and the field readers and their order have been
-decoded from the client.
+Status: **framing confirmed, body accepted, rejection cause still unknown.** The client
+parses what we send; it then rejects it via an error-code path that is *not* the version
+comparison in `FUN_1415d10e0`.
 
 ## The client waits for us
 
@@ -178,7 +178,39 @@ where garbage produces nothing, which means:
 3. **`cfg+0x48 != 0` under `-NXLDEBUG`** — the gated blocks belong, since omitting them
    loses the dialog entirely.
 
-## Open: the version fields are misaligned
+## The dialog is NOT the version check (corrected)
+
+A single test settled this. Sending a body with **every `u32` slot set to 100** — so
+whichever slot the client reads as the version range must read 100 — still produced
+"The client is outdated".
+
+Under `FUN_1415d10e0` that is impossible: `low = 100, high = 100` satisfies
+`low < 101 && high > 99` on the second-connect path, and `high == 100` is the
+`Version OK` branch on the first-connect path. Neither can reach a patch/outdated
+verdict.
+
+**So the dialog does not come from the version check in `FUN_1415d10e0`.** Earlier
+revisions of this document attributed it there; that was wrong.
+
+Supporting evidence: the exact dialog text appears **nowhere as plaintext** in any
+client binary — not `MapleStory.exe`, not `String.wz`, not any DLL. A search across the
+whole install finds only unrelated matches in `NexonAnalytics64.dll` and CEF resources.
+The message is therefore assembled or looked up by **error code**, matching the pattern
+already seen in the launch parser:
+
+```c
+FUN_1429e4fa0("http://maplestory.nexon.net/micro-site/20701", 0, 0);
+FUN_141804870(&DAT_143271f04, 0x1a4, 0x22000009, ...);   // error code
+```
+
+Known codes in these paths: `0x195`, `0x1a4`, `0x23d`, `0x243`, `0x327`, `0x33b`,
+`0x3dc`, `0x3df`, `0x3e3`, `0x3e6`.
+
+What still holds: the framing is right and the client parses our body — a structured
+payload produces a specific error while garbage produces silence. What is wrong is the
+assumption about *which* check is failing.
+
+## Superseded: the version-field misalignment theory
 
 Every combination tried produces the same "outdated" dialog:
 
@@ -216,10 +248,10 @@ Exact bytes sent for `(1, 100, 0)`, for reference when re-deriving:
 
 ## Next
 
-1. **Find the misalignment.** Sweep the version triple's byte offset within the body
-   (shift it ±4, ±8 …) and watch for the dialog to change or disappear. One test per
-   launch, with the dialog as the oracle.
-2. Better: **enable the client's own log.** `FUN_14019cfe0` writes `MapleStory.LOG`
+1. **Map the error codes to messages.** Find what `FUN_1429e4fa0` and the
+   `FUN_141804870` / `FUN_1415e0*` family do with a code, and which code produces the
+   outdated text. That names the real failing check instead of guessing at it.
+2. **Enable the client's own log.** `FUN_14019cfe0` writes `MapleStory.LOG`
    (built from the exe path, suffix `LOG`, guarded by a `ZtlLog` mutex) and the version
    branches log their actual numbers — `"Launch Patcher : %d < %d -> Target : %d_%d"`
    would name the values directly. It is gated behind `FUN_140933f30`; finding what
