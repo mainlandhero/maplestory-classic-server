@@ -1,7 +1,8 @@
 # Connection handshake
 
-Status: **format not yet reproduced.** Two solid results so far — the classic format is
-ruled out, and the protocol version is known.
+Status: **layout recovered, not yet confirmed on the wire.** The classic format is ruled
+out, the protocol version is known, and the field readers and their order have been
+decoded from the client.
 
 ## The client waits for us
 
@@ -54,36 +55,73 @@ The function also distinguishes a **first connect** from a **second connect**
 (`local_res18[0]`, i.e. the third parameter), taking different validation paths. The
 login and channel connections are therefore not identical.
 
-## The handshake is a serialised structure, not a fixed layout
+## The field readers (decoded)
 
-The decode is field-by-field through two helpers:
+> **Correction.** An earlier revision of this document called the encoding
+> "variable-length / varint-style", reasoning that a fixed layout would not need each
+> reader to return a consumed length. That was wrong. Decompiling the readers shows the
+> returned length is simply the field's **constant** width; it exists so the caller can
+> advance a cursor uniformly, and so every read is bounds-checked. The layout is fixed.
 
-```c
-consumed = FUN_1406e8380(&dest_u32, cursor, remaining);  cursor += consumed;
-consumed = FUN_1406e82f0(&dest_u8,  cursor, remaining);  cursor += consumed;
+All four readers take `(dest, cursor, bytes_remaining)`, throw a C++ exception if the
+buffer is too short, and return the number of bytes consumed:
+
+| Function | Reads | Consumes |
+|---|---|---|
+| `FUN_1406e82f0` | `u8` | 1 |
+| `FUN_1406e8330` | `u16` | 2 |
+| `FUN_1406e8380` | `u32` | 4 |
+| `FUN_1406e84d0` | **string**: `u16` length, then that many bytes | `2 + len` |
+
+The string reader is the familiar MapleStory shape — a `u16` byte count followed by the
+bytes — which `crates/net`'s `PacketWriter::str` already produces.
+
+## Handshake layout
+
+Reconstructed from the read order in `FUN_1415d10e0`. Two blocks are gated on the same
+condition, `cfg+0x48 != 0`:
+
+```
+--- only when cfg+0x48 != 0 ---
+u16      A
+string   B          (post-processed into a u16)
+u32      C
+u32      D
+u8       E
+u8       F
+
+--- always ---
+u16      G          ** high bit 0x8000 is a flag, then masked to 0x7FFF **
+u32      H
+string   I          (post-processed into a u16)
+u32      J
+u32      K
+u8       L
+
+--- only when cfg+0x48 != 0 ---
+u32      server version range LOW    -> must be <= 100
+u32      server version range HIGH   -> must be >= 100
+u32      nClientVersion_Temp         -> 0 or 100 selects the check path
+u8       M
+u8       N
+u8       O
 ```
 
-Each returns **how many bytes it consumed**, and the cursor advances by that amount. A
-fixed-width layout would not need a returned length — this is variable-length encoding
-(varint-style), which is why a fixed classic greeting gets nowhere.
+Field `G` is notable: the top bit is pulled out as a boolean before the remaining 15 bits
+are used, so it is a packed flag plus value.
 
-Read in order at the version block:
-
-```
-u32-ish  server version range low     -> compared against 100
-u32-ish  server version range high    -> compared against 100
-u32-ish  nClientVersion_Temp
-u8-ish   (flag)
-```
-
-preceded by several more fields decoded the same way.
+`cfg+0x48` is a field of the same config struct the launch parser fills
+(`docs/launch-protocol.md`), so **the handshake shape depends on the launch mode** — more
+evidence that `-NXLDEBUG` (mode 5) and `WEBSTART` (mode 3) are not interchangeable.
 
 ## Next
 
-1. **Decompile `FUN_1406e8380` and `FUN_1406e82f0`** — they define the wire encoding.
-   Both are in unpacked `.text`, so this is tractable and is the direct path to a
-   greeting the client will accept.
-2. Rebuild the probe around that encoding, with version **100**.
-3. Only then revisit whether `MapleSecurePC64` also encrypts the stream; so far the
-   evidence points at plain-but-serialised rather than encrypted, since the client reads
-   and rejects rather than failing to decrypt.
+1. Build a greeting from the layout above with version **100**, and send it on connect.
+   Send both variants — with and without the `cfg+0x48` blocks — since we do not yet know
+   which side of that condition `-NXLDEBUG` puts us on.
+2. If the client replies, the framing is right and the login flow can start.
+3. Confirm whether an outer length/opcode header precedes this structure: the parser
+   works over a buffer bounded by `local_2278`, so something upstream already framed it.
+   That framing is the remaining unknown.
+4. `MapleSecurePC64` still looks less relevant than feared — the client reads plaintext
+   fields here rather than failing to decrypt.
