@@ -112,12 +112,44 @@ def classic(version: int, sub: bytes, recv_iv: bytes, send_iv: bytes, locale: in
     return len(body).to_bytes(2, "little") + body
 
 
+def all_u32_are(value: int) -> bytes:
+    """Every u32 slot set to the same value.
+
+    Sweeping the version triple's offset one step at a time costs one client launch per
+    step. Setting *every* u32 to 100 covers all candidate positions in a single test:
+    whichever slot the client actually reads as the version range will read 100, which
+    is the value that takes its "Version OK" branch. If the dialog still appears, the
+    version fields are not inside the structure we are sending at all - a much more
+    useful thing to learn than one more offset being wrong.
+    """
+    body = b""
+    body += u16(value)      # A
+    body += mstr(b"100")    # B  (string, parsed as a number by the client)
+    body += u32(value)      # C
+    body += u32(value)      # D
+    body += u8(0)           # E
+    body += u8(0)           # F
+    body += u16(value)      # G  (flag bit left clear)
+    body += u32(value)      # H
+    body += mstr(b"100")    # I
+    body += u32(value)      # J
+    body += u32(value)      # K
+    body += u8(0)           # L
+    body += u32(value)      # low
+    body += u32(value)      # high
+    body += u32(value)      # temp
+    body += u8(0) + u8(0) + u8(0)
+    return frame(body)
+
+
 def variants():
     """Candidate greetings, cheapest/most-likely first.
 
     Includes deliberate controls. If random bytes produce exactly the same client
     behaviour as a well-formed greeting, the client is not parsing our format at all
     and the version is not the variable to sweep."""
+    yield ("ALL u32 fields = 100", all_u32_are(100))
+
     # Gated blocks confirmed present: those variants reached the client's version
     # check and produced its "client is outdated" dialog, which is the Launch Patcher
     # branch (high > 100). Sweep toward high == 100, which is the "Version OK" branch.
