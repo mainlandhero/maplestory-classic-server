@@ -9,18 +9,21 @@ A local, testing-only server emulator for the MapleStory **`mscw`** client
 > `C:\Nexon\Library\maplestorycw` is treated as **read-only reference** — all client
 > patching happens on a separate copy.
 
-See [ROADMAP.md](ROADMAP.md) for the staged plan and current status.
+**Start here:** [STATUS.md](STATUS.md) — current state and next steps.
+[ROADMAP.md](ROADMAP.md) has the staged plan.
 
 ## Status
 
 | Stage | Goal | State |
 |---|---|---|
-| 0 | Foundation: recon, WZ parser | **WZ parser done** — 9,994/9,994 images parse |
-| 1 | Patched client that launches standalone and talks to localhost | not started |
-| 2 | Handshake + packet crypto | not started |
+| 0 | Foundation: recon, WZ parser, protection map | **done** — 9,994/9,994 images parse |
+| 1 | Patched client that launches and talks to localhost | **done** — `-NXLDEBUG 127.0.0.1 8484` connects, GameGuard never loads |
+| 2 | Handshake | **in progress** — framing confirmed, client parses our body, rejection cause open |
+| 2.5 | Auth server + our own launcher | auth server **done**; launcher blocked on the `WEBSTART` session fields |
 | 3 | Login server → character select | not started |
 | 4 | Channel server → walk a map | not started |
-| 5+ | Mobs, drops, skills, NPCs, inventory | not started |
+| 5 | Cash shop server | not started |
+| 6+ | Mobs, drops, skills, NPCs, inventory | not started |
 
 ## Layout
 
