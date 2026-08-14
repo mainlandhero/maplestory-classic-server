@@ -1,0 +1,18 @@
+; Export table mirroring the real grap64.dll exactly.
+;
+; MapleStory.exe statically imports ordinal #9, and Themida resolves further
+; entries at runtime, so every ordinal the original exports is provided here.
+; Ordinals must match the original numbering or the import will not bind.
+LIBRARY grap64
+EXPORTS
+    grap_ord_1     @1  NONAME
+    grap_ord_2     @2  NONAME
+    grap_ord_3     @3  NONAME
+    grap_ord_4     @4  NONAME
+    grap_ord_5     @5  NONAME
+    grap_ord_6     @6  NONAME
+    grap_ord_7     @7  NONAME
+    grap_ord_8     @8  NONAME
+    grap_ord_9     @9  NONAME
+    __syscall_Common_Param16 @10
+    __syscall_Common_Param8  @11

@@ -1,0 +1,12 @@
+[package]
+name = "grap-stub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "No-op replacement for grap64.dll (GameGuard NGS-X interface), so the client runs without loading the anti-cheat service or its kernel driver."
+
+[lib]
+name = "grap64"
+crate-type = ["cdylib"]
+
+[dependencies]

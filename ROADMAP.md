@@ -5,6 +5,14 @@ Goal: a **local, private, testing-only** server for the MapleStory "CW" client s
 world/channel → walk a map → mobs/drops/skills/NPCs/inventory), built in stages so each
 stage is usable on its own.
 
+The deliverable is **two halves**, both of which have to be built:
+
+1. **The server software** — login server, world/channel registry, game (channel) server,
+   and the cash shop server, plus the shared codec, game-data, and persistence layers.
+   See *Server architecture* below.
+2. **A patched local client** to talk to it, made from a separate copy so the original
+   install is never modified.
+
 Scope guardrails:
 - Everything stays on the local machine. This is reverse engineering our own client for
   interoperability/testing. It crosses Nexon's ToS, so it is never distributed or used online.
@@ -110,29 +118,86 @@ Ordered cheapest-first, per the revised strategy above.
 - [ ] Implement the framing + cipher in `crates/net`; round-trip a handshake with the client.
 
 ### Stage 3 — Login server
-- [ ] `crates/server` login binary: version check → (stub) auth → world list → channel select
-      → character list → migration to channel. Reach **character-select screen**.
+- [ ] `crates/login`: version check → (stub) auth → world list → channel select →
+      character list → **migration** hand-off to a channel. Reach **character-select**.
+- [ ] `crates/world`: world/channel registry the login server advertises, and the
+      migration token store both sides validate against.
+- [ ] `crates/data`: typed loaders over `crates/wz` (mobs, items, skills, maps, strings).
+- [ ] `crates/store`: persistence for accounts and characters (SQLite to start).
 
 ### Stage 4 — Channel server / enter world
-- [ ] Character spawn into a map; needs server-side Map WZ (portals, spawns, foothold).
+- [ ] `crates/channel`: accept a migrating client, spawn the character into a map.
+      Needs server-side Map WZ (portals, spawns, footholds).
 - [ ] Movement, chat. **Walk around a map.**
 
-### Stage 5+ — Gameplay
+### Stage 5 — Cash shop server
+The cash shop is a **separate server with its own connection**: the client disconnects
+from the channel, migrates to the cash shop, and migrates back on exit. It needs its own
+handler set, not a menu inside the channel server.
+- [ ] `crates/cashshop`: accept the migration, serve the shop UI's item catalogue from
+      `Item/Cash` + `String/Cash.img`, and migrate the client back to a channel.
+- [ ] Wallet (NX/maple points) in `crates/store`; purchase → cash inventory grant.
+- [ ] Cash inventory as a distinct storage area from the normal inventory.
+
+### Stage 6+ — Gameplay systems
 - [ ] Mob spawns/AI/damage, drops, loot, inventory, skills, NPCs/shops, quests, parties…
       Driven by extracted WZ data (Mob/Skill/Npc/Quest/Reactor/String).
 
 ---
 
+---
+
+## Server architecture
+
+MapleStory is **not** one server process. The client holds **one TCP connection at a
+time** and is handed between servers by *migration*: the current server sends the client
+an address plus a one-time token, the client disconnects, reconnects to the new address,
+and presents the token. Every stage below has to implement that hand-off correctly.
+
+```
+                    ┌────────────────┐
+   client ─────────▶│  Login  :8484  │  version check, auth, world/channel list,
+                    │                │  character list/create/delete
+                    └───────┬────────┘
+                            │ migrate (ip:port + token)
+                            ▼
+                    ┌────────────────┐
+                    │ Channel :5160+ │  the actual game world: maps, movement,
+                    │  (one per ch.) │  mobs, drops, skills, NPCs, parties
+                    └───┬────────┬───┘
+             migrate    │        │   migrate back
+                        ▼        ▲
+                    ┌────────────────┐
+                    │   Cash Shop    │  separate connection; NX wallet,
+                    │                │  catalogue, cash inventory
+                    └────────────────┘
+
+        ┌───────────────────────────────────────────────┐
+        │ World registry + migration tokens (shared)    │
+        │ Persistence: accounts, characters, inventory  │
+        │ Game data: loaded from WZ at startup          │
+        └───────────────────────────────────────────────┘
+```
+
+Cross-cutting pieces every server needs: the packet codec (`crates/net`), the WZ-backed
+game data (`crates/data`), and persistence (`crates/store`).
+
 ## Workspace layout
 ```
 MapleCW/
   crates/
-    wz/       WZ archive parser + extractor (offline foundation)
-    net/      packet framing + crypto (Stage 2)
-    server/   login/world/channel binaries (Stage 3+)
-  tools/      CLI utilities (wz dumping, packet capture analysis)
-  research/   RE notes, byte fixtures, protection analysis
-  docs/       protocol/opcode/data-format documentation as we learn it
+    wz/         WZ archive parser + extractor        [done]
+    grap-stub/  no-op grap64.dll, keeps GameGuard off [Stage 1]
+    net/        packet framing + crypto              [Stage 2]
+    data/       typed game data loaded from WZ       [Stage 3]
+    store/      accounts/characters persistence      [Stage 3]
+    world/      world+channel registry, migration    [Stage 3]
+    login/      login server binary                  [Stage 3]
+    channel/    channel/game server binary           [Stage 4]
+    cashshop/   cash shop server binary              [Stage 5]
+  tools/        CLI utilities (WZ dumping, PE analysis, client setup)
+  research/     RE notes, byte fixtures, protection analysis
+  docs/         protocol/opcode/data-format documentation as we learn it
 ```
 
 ## Open questions / decisions log
