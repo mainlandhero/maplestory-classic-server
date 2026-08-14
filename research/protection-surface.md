@@ -88,6 +88,30 @@ can redirect those IPs to `127.0.0.1` without modifying the client at all.
 - **`grap64.dll`** — 13 MB but only 2 exports, and unpacked. Best entry point for
   understanding how GameGuard is invoked.
 
+## grap64.dll internals (Ghidra, 2026-08-14)
+
+`grap64.dll` is **unpacked but control-flow obfuscated**. Decompiling its 11 exports
+(`research/grap64-exports.txt`, via `tools/ghidra_scripts/DumpExports.java`) shows:
+
+- **Opaque predicates** — arithmetic that always evaluates to a constant, e.g.
+  `((DAT_180c3c7d8 ^ 1) - 2) * DAT_180c3c7d8`, guarding branches that only ever go one way.
+- **Control-flow flattening** — every export ends in an indirect jump Ghidra reports as
+  `Could not recover jumptable ... Too many branches`.
+- Consequently Ghidra types every export as returning `void`: the real returns happen
+  inside jump-table targets it cannot follow.
+
+**Conclusion: do not try to derive the stub's return convention statically.** The cost is
+high and the answer uncertain. The stub logs each call instead, so launching the client
+tells us directly which ordinals are invoked, in what order, and where it gives up.
+
+Identity confirmed from strings: GameGuard **NGS-X**, build
+`D:\GST\NGS\grap-client-pc-release-1.5.0.0\_Build\grap-interface\x64\Output\Release\grap64.pdb`.
+The `grap-interface` path is the key point — this DLL is only the *interface*; the engine
+lives in the encrypted `grap-core64.aes` loaded by `NGService.exe`. Error strings
+(`Failed to launch NGService.exe`, `Service installation has failed…`) confirm that
+`grap64.dll` is what spawns the service that installs `BlackCat64.sys`. Stubbing it
+prevents the driver from ever loading.
+
 ## Consequences for the roadmap
 
 Stage 1 must be **re-planned around not modifying `MapleStory.exe`**:
