@@ -60,6 +60,9 @@ pub mod shanda {
         v.rotate_right(n % 8)
     }
 
+    // `j` is both the index and an operand in the arithmetic below, so indexing mirrors
+    // the reference algorithm; an iterator form would obscure it.
+    #[allow(clippy::needless_range_loop)]
     pub fn encrypt(data: &mut [u8]) {
         let len = data.len();
         for _ in 0..3 {
@@ -87,6 +90,7 @@ pub mod shanda {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     pub fn decrypt(data: &mut [u8]) {
         let len = data.len();
         for _ in 0..3 {
@@ -181,7 +185,7 @@ impl MapleCipher {
             let end = (pos + chunk).min(data.len());
             let mut block = iv16;
             for i in pos..end {
-                if (i - pos) % 16 == 0 {
+                if (i - pos).is_multiple_of(16) {
                     self.aes.encrypt_block(&mut block);
                 }
                 data[i] ^= block[(i - pos) % 16];
@@ -225,8 +229,7 @@ impl MapleCipher {
             out[2] ^= SHUFFLE[out[3] as usize].wrapping_add(b);
             out[3] = out[3].wrapping_sub(a.wrapping_sub(t));
 
-            let mut merged = u32::from_le_bytes(out);
-            merged = (merged >> 0x1D) | (merged << 0x03);
+            let merged = u32::from_le_bytes(out).rotate_left(3);
             out = merged.to_le_bytes();
         }
         self.iv = out;

@@ -1,0 +1,15 @@
+[package]
+name = "store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQLite persistence for MapleCW: accounts, password hashing, and session tokens."
+
+[dependencies]
+thiserror.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
+argon2 = "0.5"
+password-hash = { version = "0.5", features = ["std"] }
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"

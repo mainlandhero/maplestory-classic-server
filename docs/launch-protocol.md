@@ -86,10 +86,46 @@ So **`WEBSTART` expects roughly ten arguments**, of which six (indices 4–9) ar
 as the session payload. Identifying those six fields is the remaining work for
 `crates/launcher`.
 
+## Call chain
+
+Traced by cross-reference; each function has exactly one caller:
+
+```
+FUN_142c42f30   (main; owns the config as local_5c8)
+  └─ FUN_142c926e0   (startup, 9408 bytes)  — receives config as param_1
+       └─ FUN_142c94bd0  (the parser above)
+  └─ FUN_142e14bc0(config)     ─┐ consumers, called straight after parsing
+  └─ FUN_142c43db0(_, config)  ─┘
+```
+
+The config is a **stack local in main**, not a global, so Ghidra does not propagate a
+struct type into the consumers and their decompilation does not show `+0x90` / `+0x38`
+reads directly. Recovering the field *semantics* therefore needs the struct defined in
+Ghidra and re-propagated, or runtime observation.
+
+## Where the session actually goes
+
+The binary carries a **Nexon Client Manager** interface — function-pointer names such as:
+
+```
+CNMLoginNexonPassportFunc     CNMGetNexonPassportFunc     CNMLoginPassportFunc
+CNMGSGetSessionInfoFunc       CNMGSSessionCreatedEvent    CNMGSSessionEstablishedEvent
+```
+
+These belong to `nexon_api_x64.dll` / `nmcogame64.dll`, both of which are **unpacked and
+analysable** (see `research/protection-surface.md`). So the `WEBSTART` tokens are most
+likely identifiers handed to the Client Manager, which owns the actual session, rather
+than credentials the game validates itself.
+
+That makes `nmcogame64.dll` the place to look for the six fields' meaning — a smaller,
+unprotected target than the 76 MB Themida-wrapped exe.
+
 ## Next
 
-- Decompile the consumers of `+0x90` and `+0x38` to learn what the six `WEBSTART` fields
-  are (likely account id, session token, and related identifiers).
+- Define the config struct in Ghidra and re-run decompilation so the consumers show
+  named field accesses; or observe the values at runtime once the client starts.
+- Analyse `nmcogame64.dll` / `nexon_api_x64.dll` for the `CNM*` session interface, which
+  is where the `WEBSTART` identifiers are consumed.
 - Retry `IPPORT 127.0.0.1 8484` with a debugger or `+0x38`-aware tracing to find why it
   still crashed at `MapleStory.exe+0x20A520F` despite the arguments parsing correctly.
 - Try `-NXLDEBUG <ip> <port>`, which takes the same address/port pair but sets mode 5 and

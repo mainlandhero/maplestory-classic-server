@@ -1,0 +1,22 @@
+[package]
+name = "auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local authentication server and account administration CLI for MapleCW."
+
+[dependencies]
+store = { path = "../store" }
+thiserror.workspace = true
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rpassword = "7"
+
+[[bin]]
+name = "maplecw-auth"
+path = "src/bin/auth_server.rs"
+
+[[bin]]
+name = "maplecw-useradd"
+path = "src/bin/useradd.rs"
