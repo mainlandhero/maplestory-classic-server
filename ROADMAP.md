@@ -69,9 +69,8 @@ Each stage ends in something observable.
 - [x] Rust workspace + toolchain (rustc 1.97.1 msvc).
 - [ ] PE protection-surface map: imports/exports/TLS-callbacks of `MapleStory.exe`,
       `MapleSecurePC64.dll`, GameGuard modules → know exactly what loads what and when.
-- [ ] WZ parser (`crates/wz`): read header + directory tree + images from the split WZ,
-      determine the version hash and the string-decryption key for this client. Verify by
-      dumping `String.wz` to readable JSON.
+- [x] WZ parser (`crates/wz`): version **779** / hash `0x0000E73A` / **zero** string key.
+      Verified across the whole client: **9,994/9,994 images in 102 archives parse**.
 - [ ] Decide RE tooling (Ghidra — JDK present — vs IDA) and stand it up.
 
 ### Stage 1 — Client bring-up
