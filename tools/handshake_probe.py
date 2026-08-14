@@ -41,6 +41,65 @@ def hexdump(data: bytes, indent: str = "      ") -> str:
     return "\n".join(out)
 
 
+def frame(body: bytes) -> bytes:
+    """u16 little-endian body length, then the body.
+
+    The client reads exactly 2 bytes, takes them as the length, rewinds, and reads that
+    many bytes over them - so the length does not count itself and the body starts at
+    offset 0. See docs/handshake.md."""
+    return len(body).to_bytes(2, "little") + body
+
+
+def u8(v: int) -> bytes:
+    return bytes([v & 0xFF])
+
+
+def u16(v: int) -> bytes:
+    return (v & 0xFFFF).to_bytes(2, "little")
+
+
+def u32(v: int) -> bytes:
+    return (v & 0xFFFFFFFF).to_bytes(4, "little")
+
+
+def mstr(s: bytes) -> bytes:
+    """u16 byte count, then the bytes."""
+    return u16(len(s)) + s
+
+
+def greeting(with_gated: bool, low: int = 1, high: int = 200, temp: int = 100) -> bytes:
+    """Build a greeting from the layout recovered in docs/handshake.md.
+
+    Two of the three blocks are gated on cfg+0x48, and we do not yet know which side of
+    that condition -NXLDEBUG puts us on, so both shapes are tried.
+    """
+    body = b""
+    if with_gated:
+        body += u16(0)          # A
+        body += mstr(b"")       # B
+        body += u32(0)          # C
+        body += u32(0)          # D
+        body += u8(0)           # E
+        body += u8(0)           # F
+
+    # Always present. G packs a flag in bit 0x8000; send it clear.
+    body += u16(0)              # G
+    body += u32(0)              # H
+    body += mstr(b"")           # I
+    body += u32(0)              # J
+    body += u32(0)              # K
+    body += u8(0)               # L
+
+    if with_gated:
+        body += u32(low)        # version range low   (must be <= 100)
+        body += u32(high)       # version range high  (must be >= 100)
+        body += u32(temp)       # nClientVersion_Temp
+        body += u8(0)           # M
+        body += u8(0)           # N
+        body += u8(0)           # O
+    return frame(body)
+
+
 def classic(version: int, sub: bytes, recv_iv: bytes, send_iv: bytes, locale: int) -> bytes:
     body = (
         version.to_bytes(2, "little")
@@ -59,6 +118,21 @@ def variants():
     Includes deliberate controls. If random bytes produce exactly the same client
     behaviour as a well-formed greeting, the client is not parsing our format at all
     and the version is not the variable to sweep."""
+    # Gated blocks confirmed present: those variants reached the client's version
+    # check and produced its "client is outdated" dialog, which is the Launch Patcher
+    # branch (high > 100). Sweep toward high == 100, which is the "Version OK" branch.
+    for (low, high, temp) in (
+        (1, 100, 0),
+        (100, 100, 0),
+        (1, 100, 1),
+        (0, 100, 0),
+        (100, 100, 100),
+        (1, 100, 100),
+        (99, 101, 0),
+        (1, 200, 0),
+    ):
+        yield (f"low={low} high={high} temp={temp}", greeting(True, low=low, high=high, temp=temp))
+
     # CONTROL: not a valid greeting under any format.
     yield ("CONTROL random 16 bytes", bytes(range(0x40, 0x50)))
     # CONTROL: plausible length prefix, garbage payload.
