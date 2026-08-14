@@ -1,8 +1,8 @@
 # Connection handshake
 
-Status: **framing confirmed, body accepted, rejection cause still unknown.** The client
-parses what we send; it then rejects it via an error-code path that is *not* the version
-comparison in `FUN_1415d10e0`.
+Status: **framing confirmed; body parsed; field `L` gate found and passed; version
+comparison still not satisfied.** See `docs/client-messages.md` for how the client's
+dialogs are decoded back to error codes — that is what makes progress measurable here.
 
 ## The client waits for us
 
@@ -154,6 +154,19 @@ u8       O
 Field `G` is notable: the top bit is pulled out as a boolean before the remaining 15 bits
 are used, so it is a packed flag plus value.
 
+**Field `L` is a hard gate.** Immediately after the fields are read:
+
+```c
+if (L == 1) {
+    ... proceed ...
+} else {
+    FUN_140cc2350(..., 0x2df, 0x22000007);   // -> "The client is outdated"
+}
+```
+
+Sending `L = 0` produces the outdated dialog *before the version fields are examined at
+all*, which is why every version combination looked identical until this was found.
+
 `cfg+0x48` is a field of the same config struct the launch parser fills
 (`docs/launch-protocol.md`), so **the handshake shape depends on the launch mode** — more
 evidence that `-NXLDEBUG` (mode 5) and `WEBSTART` (mode 3) are not interchangeable.
@@ -245,6 +258,37 @@ Exact bytes sent for `(1, 100, 0)`, for reference when re-deriving:
 00 00 00 00                    temp = 0
 00 00 00                       M, N, O
 ```
+
+## Confirmed: `L = 1` is accepted
+
+Both the `L` gate and a version mismatch raise the **same** error code (`0x22000007`) and
+therefore the same dialog, so `L` could not be validated by the dialog alone. The
+discriminator was to send `L = 1` with the body **truncated immediately after `L`**:
+
+| Payload | Dialog | Meaning |
+|---|---|---|
+| `L=1`, full body | "The client is outdated" (`0x22000007`) | past the `L` gate, fails later |
+| `L=1`, truncated after `L` | "You cannot access the game…" (`0x22000001`) | past the `L` gate; the version read runs off the end and throws |
+| `L=0`, full body | "The client is outdated" | stopped at the `L` gate |
+
+The truncated case producing a *different* error is the proof: `L = 1` is accepted, and
+the failure has moved past it. The owner confirms `0x22000001` is the same dialog the real
+client shows when Nexon's servers are down — i.e. the generic connection/parse failure,
+exactly what a short read should look like.
+
+## Still open: the version comparison
+
+With `L = 1` and `low=1, high=100, temp=0`, the client still reports outdated. Per the
+decompiled logic **both** branches should pass:
+
+- second connect: `(low < 101) && (high > 99)` → `1 < 101 && 99 < 100` → OK
+- first connect: `temp != 100` → `v = high = 100` → `v == 100` → "Version OK"
+
+Since neither should fail, the three version `u32`s are still not landing where we place
+them. A payload with *every* field set to a passing value simultaneously (`u8 = 1`,
+`u32 = 100`, `u16 = 100`, strings `"100"`) changed the behaviour — the client exited
+cleanly instead of showing a dialog — which suggests the checks were satisfied and the
+failure moved on again.
 
 ## Next
 

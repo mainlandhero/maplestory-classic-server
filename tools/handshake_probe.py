@@ -67,11 +67,21 @@ def mstr(s: bytes) -> bytes:
     return u16(len(s)) + s
 
 
-def greeting(with_gated: bool, low: int = 1, high: int = 200, temp: int = 100) -> bytes:
+def greeting(
+    with_gated: bool,
+    low: int = 1,
+    high: int = 100,
+    temp: int = 0,
+    flag_l: int = 1,
+) -> bytes:
     """Build a greeting from the layout recovered in docs/handshake.md.
 
-    Two of the three blocks are gated on cfg+0x48, and we do not yet know which side of
-    that condition -NXLDEBUG puts us on, so both shapes are tried.
+    `flag_l` is field L, and it gates everything: the client does
+
+        if (L == 1) { ...proceed... } else { error 0x22000007 }   // "client is outdated"
+
+    so sending L = 0 produces that dialog no matter what the version fields say. That is
+    why every version combination looked identical until L was found.
     """
     body = b""
     if with_gated:
@@ -88,7 +98,7 @@ def greeting(with_gated: bool, low: int = 1, high: int = 200, temp: int = 100) -
     body += mstr(b"")           # I
     body += u32(0)              # J
     body += u32(0)              # K
-    body += u8(0)               # L
+    body += u8(flag_l)          # L  <- must be 1 or the client reports "outdated"
 
     if with_gated:
         body += u32(low)        # version range low   (must be <= 100)
@@ -134,11 +144,44 @@ def all_u32_are(value: int) -> bytes:
     body += mstr(b"100")    # I
     body += u32(value)      # J
     body += u32(value)      # K
-    body += u8(0)           # L
+    body += u8(1)           # L  (must be 1)
     body += u32(value)      # low
     body += u32(value)      # high
     body += u32(value)      # temp
     body += u8(0) + u8(0) + u8(0)
+    return frame(body)
+
+
+def truncated_after_l(flag_l: int) -> bytes:
+    """The gated + always blocks only, ending immediately after field L.
+
+    Deliberately too short for the version block that follows.
+    """
+    body = b""
+    body += u16(0) + mstr(b"") + u32(0) + u32(0) + u8(0) + u8(0)   # A B C D E F
+    body += u16(0) + u32(0) + mstr(b"") + u32(0) + u32(0)          # G H I J K
+    body += u8(flag_l)                                             # L
+    return frame(body)
+
+
+def all_fields_passing() -> bytes:
+    """Every field set to a value that should satisfy its check, simultaneously.
+
+    u8 fields -> 1   (field L must be 1; the others are flags)
+    u32 fields -> 100 (the version range brackets the client's version of 100)
+    u16 fields -> 100 (G's flag bit stays clear at this value)
+    strings   -> "100"
+
+    If this still fails, the field *types* or their order are wrong, not just one
+    value - which is a different and more useful conclusion than another near-miss.
+    """
+    body = b""
+    body += u16(100) + mstr(b"100") + u32(100) + u32(100) + u8(1) + u8(1)   # A B C D E F
+    body += u16(100) + u32(100) + mstr(b"100") + u32(100) + u32(100)        # G H I J K
+    body += u8(1)                                                          # L
+    body += u32(100) + u32(100) + u32(100)                                 # low high temp
+    body += u8(1) + u8(1)                                                  # M N (gated)
+    body += u8(1)                                                          # O (always)
     return frame(body)
 
 
@@ -148,7 +191,19 @@ def variants():
     Includes deliberate controls. If random bytes produce exactly the same client
     behaviour as a well-formed greeting, the client is not parsing our format at all
     and the version is not the variable to sweep."""
-    yield ("ALL u32 fields = 100", all_u32_are(100))
+    yield ("ALL fields passing (u8=1, u32=100)", all_fields_passing())
+
+    # Discriminator: both the L gate and the version mismatch raise error 0x22000007
+    # and so show the SAME "outdated" dialog. Truncating right after L separates them:
+    #   L accepted -> the version reads run off the end, the reader throws -> silent exit
+    #   L rejected -> the dialog appears as before
+    yield ("DISCRIMINATOR: L=1, body truncated after L", truncated_after_l(1))
+    yield ("DISCRIMINATOR: L=0, body truncated after L", truncated_after_l(0))
+
+    yield ("L=1, low=1 high=100 temp=0", greeting(True))
+    yield ("L=1, low=1 high=200 temp=100", greeting(True, low=1, high=200, temp=100))
+    yield ("L=1, low=100 high=100 temp=100", greeting(True, low=100, high=100, temp=100))
+    yield ("ALL u32 fields = 100 (L=1)", all_u32_are(100))
 
     # Gated blocks confirmed present: those variants reached the client's version
     # check and produced its "client is outdated" dialog, which is the Launch Patcher

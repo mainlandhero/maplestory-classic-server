@@ -1,0 +1,27 @@
+# calls to 1408a9e40 (FUN_1408a9e40) passing constant 106 (0x6a)
+
+HIT  call at 1426bf47e
+     in function FUN_1426bf2c0 @ 1426bf2c0
+     constant set by: 1426bf467  LEA RCX,[R15 + 0x6a]
+
+HIT  call at 1426bf684
+     in function FUN_1426bf2c0 @ 1426bf2c0
+     constant set by: 1426bf66d  LEA RCX,[R15 + 0x6a]
+
+HIT  call at 1426bfa34
+     in function FUN_1426bf2c0 @ 1426bf2c0
+     constant set by: 1426bfa1f  LEA RCX,[R15 + 0x6a]
+
+HIT  call at 1428dbae1
+     in function FUN_1428db920 @ 1428db920
+     constant set by: 1428dbab2  LEA EDX,[R9 + 0x6a]
+
+HIT  call at 141803e2c
+     in function FUN_141803cd0 @ 141803cd0
+     constant set by: 141803e24  MOV EDX,0x6a
+
+HIT  call at 141803e42
+     in function FUN_141803cd0 @ 141803cd0
+     constant set by: 141803e24  MOV EDX,0x6a
+
+# examined 6861 call sites, 6 matched
