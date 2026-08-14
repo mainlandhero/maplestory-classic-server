@@ -49,7 +49,7 @@ Source: static analysis of `MapleStory.exe` (76.7 MB) + patch manifest, 2026-08-
 
 ---
 
-## Strategy: the separate patched client
+## Strategy: the separate client copy
 
 We produce a *second copy* of the client (`client-patched/`) that:
 - launches standalone (no Nexon launcher / no Passport),
@@ -57,6 +57,25 @@ We produce a *second copy* of the client (`client-patched/`) that:
 - points its login socket at `127.0.0.1:8484`.
 
 Original `C:\Nexon\Library\maplestorycw\appdata` is read-only reference; never touched.
+
+> **Revised 2026-08-14 after PE analysis.** `MapleStory.exe` is **Themida-protected with
+> a rebuilt IAT**, so it checksums itself: *editing bytes in the exe should be assumed to
+> fail.* See `research/protection-surface.md`. The plan is therefore **configuration and
+> module substitution first, binary patching last**:
+>
+> 1. **`IPPORT` launch argument** — may redirect the client to `127.0.0.1` with no
+>    patching whatsoever. Cheapest test, biggest payoff. Try first.
+> 2. **Stub `grap64.dll`** — GameGuard's interface is only two exported functions
+>    (`__syscall_Common_Param8/16`). It is a static import so the file must exist, but a
+>    no-op replacement is small and well-defined.
+> 3. **Block/stub `MapleSecurePC64.dll`** — dynamically loaded, so easier to displace
+>    than GameGuard.
+> 4. **Network-layer redirect** (`netsh portproxy`) as a client-untouched fallback. Note
+>    the client targets hard-coded **IPs**, so a `hosts` file will not work.
+>
+> The good news: `.text` is 52.8 MB of ordinary unencrypted code, so Ghidra can read the
+> game logic. Because the IAT is obfuscated, find the socket code via **string xrefs**,
+> not import xrefs.
 
 ---
 
@@ -67,16 +86,24 @@ Each stage ends in something observable.
 ### Stage 0 — Foundation & analysis  ← current
 - [x] Reconnaissance of client (done; see above).
 - [x] Rust workspace + toolchain (rustc 1.97.1 msvc).
-- [ ] PE protection-surface map: imports/exports/TLS-callbacks of `MapleStory.exe`,
-      `MapleSecurePC64.dll`, GameGuard modules → know exactly what loads what and when.
+- [x] PE protection-surface map — all 42 binaries surveyed. `MapleStory.exe` and
+      `NGService.exe` are Themida-protected; `MapleSecurePC64.dll` and `BlackCat64.sys`
+      are packed; `grap64.dll`, `jypc.dll`, `ZLZ64.dll` are **clean and analysable**.
+      See `research/protection-surface.md`.
 - [x] WZ parser (`crates/wz`): version **779** / hash `0x0000E73A` / **zero** string key.
       Verified across the whole client: **9,994/9,994 images in 102 archives parse**.
-- [ ] Decide RE tooling (Ghidra — JDK present — vs IDA) and stand it up.
+- [x] RE tooling: **Ghidra 12.1.2** at `C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC`,
+      running headless on JDK 21. Projects in `research/ghidra/` (gitignored).
+      `MapleSecurePC64.dll` imported; `MapleStory.exe` analysis is long-running.
 
-### Stage 1 — Client bring-up
-- [ ] Make `client-patched/`: launch standalone, bypass GameGuard, bypass MapleSecurePC.
-- [ ] Redirect login endpoint to `127.0.0.1:8484` (host-table patch or launch args).
-- [ ] Stand up a bare TCP listener; capture the raw first bytes the client sends/expects.
+### Stage 1 — Client bring-up  ← next
+Ordered cheapest-first, per the revised strategy above.
+- [ ] Test the **`IPPORT`** launch argument on a copied client — can we set the server
+      endpoint without patching anything?
+- [ ] Determine whether the client will start with GameGuard absent/stubbed, and whether
+      Themida validates `grap64.dll`.
+- [ ] Make `client-patched/` accordingly (stub `grap64.dll`, block `MapleSecurePC64.dll`).
+- [ ] Stand up a bare TCP listener on 8484; capture the raw first bytes the client sends.
 
 ### Stage 2 — Crypto & handshake
 - [ ] Reverse the initial handshake: version, sub-version/locale, IV seeds, cipher.
