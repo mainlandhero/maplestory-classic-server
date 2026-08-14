@@ -5,13 +5,19 @@ Goal: a **local, private, testing-only** server for the MapleStory "CW" client s
 world/channel → walk a map → mobs/drops/skills/NPCs/inventory), built in stages so each
 stage is usable on its own.
 
-The deliverable is **two halves**, both of which have to be built:
+The deliverable is **three parts**, all of which have to be built:
 
-1. **The server software** — login server, world/channel registry, game (channel) server,
-   and the cash shop server, plus the shared codec, game-data, and persistence layers.
-   See *Server architecture* below.
-2. **A patched local client** to talk to it, made from a separate copy so the original
+1. **The server software** — auth server, login server, world/channel registry, game
+   (channel) server, and the cash shop server, plus the shared codec, game-data, and
+   persistence layers. See *Server architecture* below.
+2. **Our own launcher** — a small client that authenticates the user against our auth
+   server and then starts `MapleStory.exe` in `WEBSTART` mode with the resulting session.
+   Nexon's launcher normally does this; the game will not proceed without it.
+3. **A patched local client** to talk to it, made from a separate copy so the original
    install is never modified.
+
+**Persistence: SQLite throughout.** Everything is local and single-machine, so there is
+no reason for anything heavier.
 
 Scope guardrails:
 - Everything stays on the local machine. This is reverse engineering our own client for
@@ -117,6 +123,38 @@ Ordered cheapest-first, per the revised strategy above.
 - [ ] Reverse the initial handshake: version, sub-version/locale, IV seeds, cipher.
 - [ ] Implement the framing + cipher in `crates/net`; round-trip a handshake with the client.
 
+### Stage 2.5 — Auth server + our own launcher
+The client will not get past startup without the session handoff its launcher normally
+performs: bare `WEBSTART` exits cleanly rather than proceeding (`research/client-launch.md`).
+So we build that half ourselves rather than trying to patch the requirement away.
+
+- [ ] **Determine the handoff mechanism** — how the launcher passes the session to the
+      game: command line, registry, environment, named pipe, or a token file. This is the
+      open question; answer it from the `WEBSTART` string xrefs in Ghidra, or by watching
+      a launch with Process Monitor.
+- [ ] `crates/auth`: HTTP/JSON auth server, SQLite accounts, issues short-lived session
+      tokens. Stands in for Nexon Passport.
+- [ ] `crates/auth` **user-admin CLI** (`maplecw-useradd`): create/list/disable accounts
+      and reset passwords, run locally against the SQLite file. Reads the password from
+      a prompt or stdin — never from an argument, which would leak it into shell history
+      and the process list.
+
+**Credential handling rules (non-negotiable, even though this is local):**
+- Passwords are **never stored in plain text** and never stored reversibly.
+- Hash with **argon2id** — memory-hard, so it stays expensive to attack. Each password
+  gets a **unique random salt**, stored with the hash in PHC string format.
+- Verification is constant-time; a wrong username and a wrong password are
+  indistinguishable to the caller.
+- Passwords are never logged, never echoed to the terminal, and never placed in a
+  command-line argument.
+- Session tokens are random (from a CSPRNG), short-lived, and stored hashed, so a leaked
+  database does not hand over live sessions.
+- [ ] `crates/launcher`: authenticates against `crates/auth`, then starts
+      `MapleStory.exe` in `WEBSTART` mode carrying the session. CLI first; a small GUI
+      later if it is warranted.
+- [ ] The login server (Stage 3) validates the same session token, so the two agree on
+      who the player is.
+
 ### Stage 3 — Login server
 - [ ] `crates/login`: version check → (stub) auth → world list → channel select →
       character list → **migration** hand-off to a channel. Reach **character-select**.
@@ -155,6 +193,12 @@ an address plus a one-time token, the client disconnects, reconnects to the new 
 and presents the token. Every stage below has to implement that hand-off correctly.
 
 ```
+   ┌──────────────┐   HTTP    ┌────────────────┐
+   │ our launcher │──────────▶│  Auth  server  │  account login, issues a session
+   │  (we write)  │◀──────────│   (HTTP/JSON)  │  token; SQLite-backed
+   └──────┬───────┘  session  └────────────────┘
+          │ starts MapleStory.exe WEBSTART + session
+          ▼
                     ┌────────────────┐
    client ─────────▶│  Login  :8484  │  version check, auth, world/channel list,
                     │                │  character list/create/delete
@@ -188,9 +232,11 @@ MapleCW/
   crates/
     wz/         WZ archive parser + extractor        [done]
     grap-stub/  no-op grap64.dll, keeps GameGuard off [Stage 1]
-    net/        packet framing + crypto              [Stage 2]
+    net/        packet primitives, framing, ciphers  [done]
+    auth/       HTTP auth server, session tokens     [Stage 2.5]
+    launcher/   our launcher: auth -> WEBSTART       [Stage 2.5]
     data/       typed game data loaded from WZ       [Stage 3]
-    store/      accounts/characters persistence      [Stage 3]
+    store/      SQLite persistence (accounts, chars) [Stage 3]
     world/      world+channel registry, migration    [Stage 3]
     login/      login server binary                  [Stage 3]
     channel/    channel/game server binary           [Stage 4]
@@ -201,6 +247,27 @@ MapleCW/
 ```
 
 ## Open questions / decisions log
-- Server language: **Rust** (chosen). C++ was the alternative.
-- WZ string-decryption key: TBD (KMS/zero/custom) — determine empirically in Stage 0.
-- RE disassembler: TBD (Ghidra likely).
+
+Decided:
+- Server language: **Rust**. C++ was the alternative.
+- WZ parameters: **version 779**, hash `0x0000E73A`, **zero** string key. Settled
+  empirically; 9,994/9,994 images parse.
+- RE disassembler: **Ghidra 12.1.2**, headless on JDK 21.
+- Anti-cheat: **stub `grap64.dll`** so GameGuard never loads, rather than fighting the
+  kernel driver. Original install untouched; work happens on a copy.
+- Client patching: **avoid it.** Themida checksums the image, so prefer configuration
+  and module substitution.
+- **We write our own launcher and auth server** rather than trying to remove the
+  client's launcher-session requirement.
+- **Persistence: SQLite** everywhere, since this is local and single-machine.
+
+Open:
+- **How does the launcher hand the session to the game?** Command line, registry,
+  environment, named pipe, or token file. Blocks Stage 2.5; answer via Ghidra string
+  xrefs on `WEBSTART`, or Process Monitor on a live launch.
+- **What does the client speak on the wire?** `MapleSecurePC64.dll` wraps the socket
+  layer. `crates/net` keeps the cipher swappable; the classic AES+shanda scheme is the
+  first hypothesis to test.
+- Opcode table: entirely unknown for this build, and must be recovered empirically.
+- Whether Themida validates a substituted `grap64.dll` — untested, because startup fails
+  earlier for unrelated reasons.

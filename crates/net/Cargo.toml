@@ -1,0 +1,10 @@
+[package]
+name = "net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Packet primitives, framing, and pluggable ciphers for the MapleCW servers."
+
+[dependencies]
+thiserror.workspace = true
+aes = "0.8"
