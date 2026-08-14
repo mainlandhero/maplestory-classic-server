@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+
+# Never commit client binaries or extracted game assets.
+/client-patched/
+/research/fixtures/*.bin
+/research/fixtures/*.wz
+/out/
+*.pdb

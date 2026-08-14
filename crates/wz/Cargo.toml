@@ -1,0 +1,13 @@
+[package]
+name = "wz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parser for Wizet WZ archives as shipped with the mscw client."
+
+[dependencies]
+thiserror.workspace = true
+
+[[bin]]
+name = "wz-dump"
+path = "src/bin/wz_dump.rs"

@@ -1,0 +1,115 @@
+# MapleCW — Local Server Emulator
+
+Goal: a **local, private, testing-only** server for the MapleStory "CW" client shipped in
+`C:\Nexon\Library\maplestorycw\appdata`. Long-term target: **fuller gameplay** (login →
+world/channel → walk a map → mobs/drops/skills/NPCs/inventory), built in stages so each
+stage is usable on its own.
+
+Scope guardrails:
+- Everything stays on the local machine. This is reverse engineering our own client for
+  interoperability/testing. It crosses Nexon's ToS, so it is never distributed or used online.
+- The **original client install is never modified.** All patching happens on a *separate copy*.
+
+---
+
+## Client reconnaissance (established facts)
+
+Source: static analysis of `MapleStory.exe` (76.7 MB) + patch manifest, 2026-08-14.
+
+- **Codename `mscw`**, 64-bit. PDB path: `c:\build\src\mscw_game\Bin64\MapleStory.pdb`.
+- **Build ≈ Jan 2026** (`buildtime 1786489625`).
+- **Classic "Wvs" architecture, modernized.** Binary still contains canonical class names:
+  `COutPacket`, `CInPacket`, `CWvsContext`, `CLoginQueueDlg`. Server model is the traditional
+  MapleStory one: **Login (port 8484)**, **World**, **Channel (port 5160)**.
+- **Version-check handshake present**: strings `First Connect : nClientVersion_Temp : %d`,
+  `OK. Allowed Version. %d ( %d~%d )`, `Low Version. Launch Patch`, `High Version. Error.`
+- **Server address candidates found in binary** (leftover dev/live tables):
+  - Login: `10.9.2.131/132/133` port `8484`, tag `LIVE`; also `175.207.3.196/238/239` (KR).
+  - Channels: `192.168.128.75..84:5160` (internal pool); `54.180.211.235:24200`,
+    `43.200.157.16:24200` (AWS).
+- **Launch flags** (client is normally started by the Nexon launcher):
+  `GAMELAUNCHING`, `WEBSTART`, `STEAMSTART`, `IPPORT`, `autologin`, `skiplogo`, `-NXL`,
+  `-NXLDEBUG`, `-NXLPTS`, plus debug flags `noquest`, `debugwnd`, `showcode`, `fastskillui`…
+- **Login backends**: Nexon Passport (`CNMLoginNexonPassportFunc`) + Steam (`steam_api64.dll`).
+- **Data = standard WZ**, split layout: `X.ini` (`LastWzIndex|N`) + header `X.wz`
+  (`PKG1`, "Package file v1.0 Copyright 2002 Wizet, ZMS") + data blobs `X_000.wz`.
+  All 17 trees present: Base, Character, Effect, Etc, Item, Map, Mob, Morph, Npc, Quest,
+  Reactor, Skill, Sound, String, TamingMob, UI.
+
+### Protections (the real work is here, not the WZ data)
+
+1. **nProtect GameGuard** — `grap\BlackCat64.sys` (kernel driver), `grap\NGService.exe`,
+   encrypted `grap-core64.aes` / `grap-communicator64.aes` / `grap-updater.aes`. Kernel-level
+   anti-cheat; blocks debuggers & packet capture, may refuse to run outside Nexon's environment.
+2. **MapleSecurePC64.dll** + **jypc.dll** — Nexon packet encryption / anti-tamper. Client will
+   not speak plaintext classic-MapleStory crypto until this is understood or neutralized.
+3. **No public data for this build** — version number, opcode table, and crypto handshake
+   (AES variant / IV seeds) are all unknown for `mscw`. Existing emulators (HeavenMS/Cosmic/…)
+   target 2009-era v83 clients and **do not apply**.
+
+---
+
+## Strategy: the separate patched client
+
+We produce a *second copy* of the client (`client-patched/`) that:
+- launches standalone (no Nexon launcher / no Passport),
+- has GameGuard + MapleSecurePC neutralized,
+- points its login socket at `127.0.0.1:8484`.
+
+Original `C:\Nexon\Library\maplestorycw\appdata` is read-only reference; never touched.
+
+---
+
+## Staged plan
+
+Each stage ends in something observable.
+
+### Stage 0 — Foundation & analysis  ← current
+- [x] Reconnaissance of client (done; see above).
+- [x] Rust workspace + toolchain (rustc 1.97.1 msvc).
+- [ ] PE protection-surface map: imports/exports/TLS-callbacks of `MapleStory.exe`,
+      `MapleSecurePC64.dll`, GameGuard modules → know exactly what loads what and when.
+- [ ] WZ parser (`crates/wz`): read header + directory tree + images from the split WZ,
+      determine the version hash and the string-decryption key for this client. Verify by
+      dumping `String.wz` to readable JSON.
+- [ ] Decide RE tooling (Ghidra — JDK present — vs IDA) and stand it up.
+
+### Stage 1 — Client bring-up
+- [ ] Make `client-patched/`: launch standalone, bypass GameGuard, bypass MapleSecurePC.
+- [ ] Redirect login endpoint to `127.0.0.1:8484` (host-table patch or launch args).
+- [ ] Stand up a bare TCP listener; capture the raw first bytes the client sends/expects.
+
+### Stage 2 — Crypto & handshake
+- [ ] Reverse the initial handshake: version, sub-version/locale, IV seeds, cipher.
+- [ ] Implement the framing + cipher in `crates/net`; round-trip a handshake with the client.
+
+### Stage 3 — Login server
+- [ ] `crates/server` login binary: version check → (stub) auth → world list → channel select
+      → character list → migration to channel. Reach **character-select screen**.
+
+### Stage 4 — Channel server / enter world
+- [ ] Character spawn into a map; needs server-side Map WZ (portals, spawns, foothold).
+- [ ] Movement, chat. **Walk around a map.**
+
+### Stage 5+ — Gameplay
+- [ ] Mob spawns/AI/damage, drops, loot, inventory, skills, NPCs/shops, quests, parties…
+      Driven by extracted WZ data (Mob/Skill/Npc/Quest/Reactor/String).
+
+---
+
+## Workspace layout
+```
+MapleCW/
+  crates/
+    wz/       WZ archive parser + extractor (offline foundation)
+    net/      packet framing + crypto (Stage 2)
+    server/   login/world/channel binaries (Stage 3+)
+  tools/      CLI utilities (wz dumping, packet capture analysis)
+  research/   RE notes, byte fixtures, protection analysis
+  docs/       protocol/opcode/data-format documentation as we learn it
+```
+
+## Open questions / decisions log
+- Server language: **Rust** (chosen). C++ was the alternative.
+- WZ string-decryption key: TBD (KMS/zero/custom) — determine empirically in Stage 0.
+- RE disassembler: TBD (Ghidra likely).
