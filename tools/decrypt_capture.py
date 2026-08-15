@@ -7,10 +7,11 @@ The client uses the classic MapleStory transport, confirmed three ways:
   * block size   0x5B4, which also shows up as FUN_1406f1730(0x5b4, ...) in the
                  handshake handler
 
-The AES key is a *customised* variant of the stock one. The client stores it the classic
-way - 32 dwords, one key byte in each - at VA 0x143A86810, directly before the shuffle
-table. Every fourth byte matches the well-known MapleStory key (13 08 06 B4 1B 0F 33 52);
-the bytes that are zero in the stock key have been filled in with other values here.
+The AES key is the *stock* MapleStory one. FUN_140c76070 reads eight key words from VA
+0x143A86810 at a stride of four dwords, and dumping the table shows each of those holds
+only a low byte: 13 08 06 B4 1B 0F 33 52. The 24 dwords interleaved between them are
+decoys that are never read - folding them in was an earlier mistake here, and it silently
+invalidated every sweep run against this module. See docs/transport.md.
 
     python tools/decrypt_capture.py [--log probe.log] [--iv 52307801]
 """
@@ -35,8 +36,9 @@ def read_client_tables():
     def at(va, n):
         return data[pe.get_offset_from_rva(va - base) : pe.get_offset_from_rva(va - base) + n]
 
-    # 32 dwords, low byte of each is the key byte
-    key = bytes(struct.unpack_from("<32I", at(KEY_VA, 128))[i] & 0xFF for i in range(32))
+    # Eight key words at a stride of four dwords - what FUN_140c76070 actually reads.
+    words = struct.unpack_from("<32I", at(KEY_VA, 128))
+    key = b"".join(struct.pack("<I", words[i]) for i in range(0, 32, 4))
     return key, at(SHUFFLE_VA, 256)
 
 

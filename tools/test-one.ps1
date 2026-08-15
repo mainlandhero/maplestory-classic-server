@@ -23,6 +23,9 @@ param(
     [switch]$Stop,
     [switch]$List,
     [switch]$Normal,
+    [ValidateSet('header', 'ping')]
+    [string]$Reply,
+    [string]$Opcode = '0xFFFF',
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -74,8 +77,14 @@ Start-Sleep -Milliseconds 600
 $name = (& python $probe --list | Where-Object { $_ -match "^\s*$Variant\s" })
 Write-Host "variant $Variant :$name"
 
+$probeArgs = @('-u', $probe, '--port', "$Port", '--only', "$Variant")
+if ($Reply) {
+    $probeArgs += @('--reply', $Reply, '--opcode', $Opcode)
+    Write-Host "will answer the client with: $Reply"
+}
+
 Start-Process -FilePath 'python' `
-    -ArgumentList @('-u', $probe, '--port', "$Port", '--only', "$Variant") `
+    -ArgumentList $probeArgs `
     -WorkingDirectory $root `
     -RedirectStandardOutput $logFile `
     -RedirectStandardError (Join-Path $root 'probe.err') `

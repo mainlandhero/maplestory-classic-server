@@ -311,7 +311,28 @@ def variants():
     )
 
 
-def serve(port: int, only: int | None, hold: float) -> None:
+def build_reply(kind: str, opcode: int, client_recv_iv: int):
+    """A server->client frame, built with the rules read out of the client's recv path.
+
+    "header" is the sharpest transport test available: a valid header that declares a
+    payload we never send. If the header is good the client simply waits for the rest,
+    so nothing is dispatched and an unknown opcode cannot muddy the result; if the
+    header is bad it calls FUN_1415d33c0 and drops us straight away.
+    """
+    import transport
+
+    key, shuffle = transport.load_tables()
+    cipher = transport.ServerCipher(client_recv_iv, key, shuffle)
+    if kind == "header":
+        return cipher.peek_header(100), "valid 4-byte header declaring 100 bytes, body withheld"
+    if kind == "ping":
+        frame = cipher.encode(transport.packet(opcode))
+        return frame, f"complete encrypted packet, opcode 0x{opcode:04X}"
+    raise SystemExit(f"unknown reply kind: {kind}")
+
+
+def serve(port: int, only: int | None, hold: float, reply: str | None = None,
+          opcode: int = 0xFFFF, recv_iv: int = 0x52307802) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -345,8 +366,18 @@ def serve(port: int, only: int | None, hold: float) -> None:
         # exactly like a rejected handshake, so an idle timeout would poison the result.
         total = b""
         deadline = time.time() + hold
+        last_data = time.time()
+        replied = reply is None
         try:
             while time.time() < deadline:
+                # Let the client finish its opening burst, then answer into the quiet.
+                if not replied and total and time.time() - last_data > 2.0:
+                    frame, what = build_reply(reply, opcode, recv_iv)
+                    log(f"[{port}] >>> REPLY: {what}  ({len(frame)} bytes)")
+                    log(hexdump(frame))
+                    conn.sendall(frame)
+                    replied = True
+                    reply_at = time.time()
                 try:
                     data = conn.recv(4096)
                 except socket.timeout:
@@ -355,12 +386,17 @@ def serve(port: int, only: int | None, hold: float) -> None:
                     log(f"[{port}] client closed the connection")
                     break
                 total += data
+                last_data = time.time()
                 log(f"[{port}] *** CLIENT SENT {len(data)} bytes ***")
                 log(hexdump(data))
         except ConnectionResetError:
             log(f"[{port}] connection reset by client")
         finally:
             conn.close()
+
+        if reply is not None:
+            held = time.time() - locals().get("reply_at", time.time())
+            log(f"[{port}] connection lasted {held:.1f}s after the reply was sent")
 
         if total:
             log(f"[{port}] VERDICT: client answered {len(total)} bytes to [{name}]")
@@ -379,6 +415,19 @@ def main() -> None:
         help="seconds to keep each connection open (closing early looks like a rejection)",
     )
     ap.add_argument("--list", action="store_true", help="print the variants and exit")
+    ap.add_argument(
+        "--reply",
+        choices=("header", "ping"),
+        default=None,
+        help="answer the client once its opening burst goes quiet",
+    )
+    ap.add_argument("--opcode", type=lambda s: int(s, 0), default=0xFFFF)
+    ap.add_argument(
+        "--recv-iv",
+        type=lambda s: int(s, 16),
+        default=0x52307802,
+        help="the K field we sent; the client reads with this chain (conn+0xec)",
+    )
     args = ap.parse_args()
 
     if args.list:
@@ -386,7 +435,11 @@ def main() -> None:
             log(f"{i:3d}  {name}  ({len(payload)} bytes)")
         return
 
-    t = threading.Thread(target=serve, args=(args.port, args.only, args.hold), daemon=True)
+    t = threading.Thread(
+        target=serve,
+        args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv),
+        daemon=True,
+    )
     t.start()
     try:
         while True:
