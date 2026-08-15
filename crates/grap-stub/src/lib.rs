@@ -21,6 +21,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+pub mod hook;
+
 use std::ffi::c_void;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -90,6 +92,17 @@ pub unsafe extern "system" fn DllMain(
     const DLL_PROCESS_ATTACH: u32 = 1;
     if reason == DLL_PROCESS_ATTACH {
         log("DllMain: PROCESS_ATTACH (GameGuard stub loaded; no service, no driver)");
+
+        // Opt-in dispatcher hook. Installed from a spawned thread rather than inline:
+        // DllMain runs under the loader lock, and patching another module's code from
+        // there risks deadlock. The delay also lets the client finish unpacking .text
+        // before we touch it.
+        if std::env::var(hook::HOOK_ENV).is_ok() {
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                unsafe { hook::install() };
+            });
+        }
     }
     1
 }

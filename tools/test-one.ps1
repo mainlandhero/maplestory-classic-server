@@ -37,6 +37,7 @@ param(
     [string]$PingFirst = '',
     [double]$PingWait = 10,
     [double]$QuietBefore = 5,
+    [string]$HookLog = '',
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -128,6 +129,16 @@ if ((-not $probeAlive) -or ($errText -and $errText.Trim())) {
     if (Test-Path $logFile) { Get-Content $logFile | Select-Object -Last 5 }
     Stop-All
     return
+}
+
+# The dispatcher hook lives in our grap64.dll stub, which the client loads itself, so
+# enabling it is just an environment variable the child process inherits.
+if ($HookLog) {
+    if (Test-Path $HookLog) { Remove-Item $HookLog -Force }
+    $env:MAPLECW_HOOK_LOG = $HookLog
+    Write-Host "dispatcher hook enabled -> $HookLog"
+} else {
+    Remove-Item Env:\MAPLECW_HOOK_LOG -ErrorAction SilentlyContinue
 }
 
 $p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
