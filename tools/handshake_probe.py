@@ -386,6 +386,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
             log(f"[{port}] !!! holding the connection open; THIS RUN PROVES NOTHING")
             cipher, replied = None, True
         next_op = sweep_from
+        last_sent = None
         next_send = 0.0
         if reply == "sweep":
             conn.settimeout(0.05)  # keep the loop responsive between sweep sends
@@ -405,6 +406,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     # changes, the last line printed says exactly where it happened.
                     log(f"[{port}] {time.strftime('%H:%M:%S')} >>> {what}")
                     conn.sendall(frame)
+                    last_sent = next_op
                     next_op += 1
                     next_send = time.time() + sweep_delay
                 elif not replied and ready:
@@ -423,7 +425,11 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     break
                 total += data
                 last_data = time.time()
-                log(f"[{port}] *** CLIENT SENT {len(data)} bytes ***")
+                # Attribute the data to the opcode in flight. A reply to one of our
+                # packets is a far stronger signal than a UI change, and this is what
+                # makes the log say so without hand-correlating timestamps.
+                since = f" (after 0x{last_sent:04X})" if last_sent is not None else ""
+                log(f"[{port}] *** CLIENT SENT {len(data)} bytes{since} ***")
                 log(hexdump(data))
         except ConnectionResetError:
             log(f"[{port}] connection reset by client")
