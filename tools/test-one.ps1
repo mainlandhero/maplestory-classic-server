@@ -22,6 +22,7 @@ param(
     [int]$Variant = 0,
     [switch]$Stop,
     [switch]$List,
+    [switch]$Normal,
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -36,10 +37,23 @@ $logFile = Join-Path $root 'probe.log'
 
 function Stop-All {
     # The client ignores Stop-Process (Themida); taskkill is the one that works.
-    & taskkill /F /IM MapleStory.exe /T 2>&1 | Out-Null
-    Get-CimInstance Win32_Process -Filter "Name like '%python%'" |
-        Where-Object { $_.CommandLine -like '*handshake_probe*' } |
-        ForEach-Object { & taskkill /F /PID $_.ProcessId 2>&1 | Out-Null }
+    #
+    # Never pipe a native command's stderr here. Under PowerShell 5.1, `2>&1` on an exe
+    # wraps each stderr line in an ErrorRecord, which $ErrorActionPreference='Stop' then
+    # treats as fatal - so taskkill reporting "process not found" (the normal case on a
+    # clean start) would abort the script before it launched anything.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        if (Get-Process MapleStory -ErrorAction SilentlyContinue) {
+            taskkill /F /IM MapleStory.exe /T | Out-Null
+        }
+        Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -like '*handshake_probe*' } |
+            ForEach-Object { taskkill /F /PID $_.ProcessId | Out-Null }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 if ($List) { & python $probe --list; return }
@@ -71,16 +85,20 @@ Start-Sleep -Milliseconds 800
 $p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
     -ArgumentList @('-NXLDEBUG', '127.0.0.1', "$Port") -PassThru
 
-# Keep the host usable while the dialog is being read.
-try {
-    $p.PriorityClass = 'BelowNormal'
-    $cores = [Environment]::ProcessorCount
-    if ($cores -gt 2) {
-        # Leave core 0 free for everything else.
-        $p.ProcessorAffinity = [IntPtr](([long][Math]::Pow(2, $cores) - 1) -band -bnot 1)
+# Keep the host usable while the dialog is being read. -Normal skips this and runs the
+# client exactly as Windows would start it, in case the throttling ever looks like it is
+# affecting behaviour (timing-sensitive protection checks, for instance).
+if (-not $Normal) {
+    try {
+        $p.PriorityClass = 'BelowNormal'
+        $cores = [Environment]::ProcessorCount
+        if ($cores -gt 2) {
+            # Leave core 0 free for everything else.
+            $p.ProcessorAffinity = [IntPtr](([long][Math]::Pow(2, $cores) - 1) -band -bnot 1)
+        }
+    } catch {
+        Write-Host "could not lower client priority: $_"
     }
-} catch {
-    Write-Host "could not lower client priority: $_"
 }
 
 Write-Host "client pid $($p.Id) launched; read the dialog, then run: tools\test-one.ps1 -Stop"

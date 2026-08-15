@@ -10,3 +10,7 @@
 
 # Ghidra projects are large binaries/databases
 /research/ghidra/
+
+# probe run artifacts
+probe.log
+probe.err

@@ -1,9 +1,30 @@
 # Connection handshake
 
-Status: **framing confirmed; body parsed; all four gates located.** The last one found —
-`G == 1 && H == 1` — explains every failed test to date. See `docs/client-messages.md`
-for how the client's dialogs are decoded back to error codes; that is what makes progress
-measurable here.
+Status: **SOLVED.** The greeting below is accepted by the client — no error dialog, and it
+proceeds to send packets and wait for a login server. The gate that had hidden everything
+was `G == 1 && H == 1`. See `docs/client-messages.md` for how the client's dialogs are
+decoded back to error codes, and `docs/transport.md` for what happens next on the wire.
+
+Working greeting (48 bytes, `tools/handshake_probe.py` variant 0):
+
+```
+2E 00                          length = 46
+00 00                          A   u16
+00 00                          B   string, len 0
+00 00 00 00  00 00 00 00       C, D  u32
+00 00                          E, F  u8
+01 00                          G   u16   ** must be 1 **
+01 00 00 00                    H   u32   ** must be 1 **
+00 00                          I   string, len 0
+01 78 30 52                    J   u32   client send IV
+02 78 30 52                    K   u32   client recv IV
+01                             L   u8    ** must be 1 **
+01 00 00 00                    version low  = 1
+64 00 00 00                    version high = 100
+00 00 00 00                    temp = 0
+00 00                          M, N  u8
+00                             O   u8    locale
+```
 
 ## The gates, in one place
 
@@ -337,17 +358,22 @@ them. A payload with *every* field set to a passing value simultaneously (`u8 = 
 cleanly instead of showing a dialog — which suggests the checks were satisfied and the
 failure moved on again.
 
-## After the handshake: the client speaks first
+## After the handshake: the client speaks first — CONFIRMED
 
-Once the gates pass, `FUN_1415d10e0` runs its tail (lines 627-790) and the client starts
-talking without being prompted. In order:
+The greeting above was accepted by a real client: **no dialog**, and it immediately sent
+294 bytes in 16 packets before blocking on `recv`. See `docs/transport.md` for the wire
+format and `research/fixtures/capture-handshake-ok.log` for the capture.
 
-1. **16 raw bytes** — `FUN_1415e3de0(conn+0x20, conn+0x50, 0x10)` at line 631.
-   `FUN_1415e3de0` is a thin wrapper over `DAT_143262e50`, the IAT slot adjacent to the
-   `recv` used by the receive loop, i.e. `send`. These 16 bytes are **not** length-prefixed
-   and arrive before any packet, so a server-side parser has to consume them first.
+> **Correction.** An earlier revision claimed the client first sends **16 raw bytes** from
+> `conn+0x50`, reading `FUN_1415e3de0(conn+0x20, conn+0x50, 0x10)` at line 631 as a
+> `send`. The capture disproves it: the very first bytes on the wire are a valid 4-byte
+> packet header. `FUN_1415e3de0` installs those 16 bytes *into* the socket object — which
+> is exactly the size of the AES IV block (a 4-byte IV repeated 4×), so it is the cipher
+> being armed, not a transmission.
 
-2. **Packet `0x70`** — `FUN_1415d5b40` at line 640, sent unconditionally:
+What the client actually sends, per `FUN_1415d10e0`'s tail (lines 627-790):
+
+1. **Packet `0x70`** — `FUN_1415d5b40` at line 640, sent unconditionally:
 
    ```
    opcode 0x70

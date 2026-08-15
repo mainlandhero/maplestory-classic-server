@@ -47,25 +47,36 @@ It connects to `127.0.0.1:8484`, and GameGuard never loads.
 
 ## The open problem
 
-**Untested as of this note.** All four handshake gates have been located and a greeting
-that satisfies every one is built, but it has not been run against the client yet.
+**The handshake is solved.** The client accepts our greeting with no error dialog and
+proceeds to a white window, waiting for a login server that does not exist yet. It sent
+294 bytes in 16 packets — captured in `research/fixtures/capture-handshake-ok.log`.
 
 The gate that had been hiding: `FUN_1415d10e0` line 606 rejects the connection unless
 fields `G == 1` **and** `H == 1`, raising the *same* `0x22000007` "client is outdated"
 error as a version mismatch. It runs unconditionally, so it failed every probe we ever
 sent — the version sweep never got a chance to matter. Full table in `docs/handshake.md`.
 
+**Transport is decoded** (`docs/transport.md`): classic 4-byte header with
+`length = LOWORD ^ HIWORD`, `a = ((iv[3]<<8)|iv[2]) ^ 0x00DF`, and the stock IV shuffle.
+Seeding the chain with the `J` we sent predicts **16/16 observed headers exactly**.
+
+### The open problem
+
+**Payload decryption.** The cipher is stock in every part we can read — AES-256, OFB, the
+classic MapleStory key (`13 08 06 B4 1B 0F 33 52`, read from `0x143A86810` with a stride
+of 4 dwords; the interleaved bytes are decoys), stock S-box, IV repeated 4×, `0x5B0`/`0x5B4`
+chunking. Yet the captured payloads do not decrypt. Key, IV, endianness and Shanda
+variants have all been ruled out — see the list in `docs/transport.md`.
+
 ### Next steps, in order
 
-1. **Run the greeting** — `tools\test-one.ps1 -Variant 0`. Success looks like *no dialog*,
-   plus the probe logging 16 raw bytes then packet `0x70`. Any dialog means one more gate
-   remains; decode it via `docs/client-messages.md`.
-2. **Decode the client's own packets.** Once past the greeting the client talks first:
-   16 raw bytes from `conn+0x50`, then `0x70`, then `0x71` (login) or `0x7d` (game).
-   Packet layouts and the writer API are in `docs/handshake.md`.
-3. **Identify the 16 bytes at `conn+0x50`** — sent before any framed packet, so the server
-   must expect them. Plausibly the session key the WEBSTART fields carry, which would also
-   unblock the launcher.
+1. **Decompile `FUN_1415d9cd0`** (reached via `FUN_1415d5aa0`, which runs *before*
+   `FUN_1415d5b40`). If it sends a packet, then packet 1 is not opcode `0x70` and the
+   known-plaintext test that all the ruling-out relied on was invalid.
+2. **Decompile the send counterpart of `FUN_1415d36c0`** — the one reading `conn+0xe8` —
+   and read the header construction directly instead of inferring `0x00DF`.
+3. Then implement the login server. Note the **game/channel connection uses mode 2**, a
+   plain `byte - iv` subtract rather than AES, so it is far cheaper to talk to.
 
 ### Testing loop that works
 
