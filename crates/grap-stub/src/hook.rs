@@ -59,6 +59,7 @@ const DISPATCH_RVA: usize = 0x1415D60E0 - 0x140000000;
 const STOLEN: usize = 17;
 
 static INSTALLED: AtomicBool = AtomicBool::new(false);
+static TRIGGERED: AtomicBool = AtomicBool::new(false);
 static TRAMPOLINE: AtomicU64 = AtomicU64::new(0);
 static CALLS: AtomicU64 = AtomicU64::new(0);
 
@@ -115,6 +116,24 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     // elapsed time than one that falls straight through the dispatch.
     log(&format!("{n:5} opcode=0x{opcode:04X} elapsed_us={micros:.1} ret={ret}"));
     ret
+}
+
+/// Install once, from a background thread, on the first call from anywhere.
+///
+/// Called from every stubbed export as well as `DllMain`, because a Rust `cdylib`'s
+/// `DllMain` is not dependably invoked - the first attempt logged nothing at all even
+/// though the client loaded the DLL and ran normally. The exports are certain to run:
+/// ordinal #9 is statically imported by `MapleStory.exe`.
+pub fn install_once() {
+    if std::env::var(HOOK_ENV).is_err() || TRIGGERED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    log("install_once: triggered from a stub export");
+    std::thread::spawn(|| {
+        // Let the client finish unpacking .text before patching it.
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        unsafe { install() };
+    });
 }
 
 /// Install the hook. Safe to call twice; the second call is a no-op.

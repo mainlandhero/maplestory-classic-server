@@ -65,6 +65,11 @@ macro_rules! stub {
             _d: *mut c_void,
         ) -> i32 {
             log($label);
+            // Install the dispatcher hook from here as well as DllMain. A Rust cdylib's
+            // DllMain is not reliably invoked, and the first run produced no hook output
+            // at all despite the client loading the DLL and running normally - so the
+            // export the client statically imports is the dependable trigger.
+            hook::install_once();
             SUCCESS
         }
     };

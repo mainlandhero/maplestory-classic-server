@@ -136,7 +136,11 @@ if ((-not $probeAlive) -or ($errText -and $errText.Trim())) {
 if ($HookLog) {
     if (Test-Path $HookLog) { Remove-Item $HookLog -Force }
     $env:MAPLECW_HOOK_LOG = $HookLog
-    Write-Host "dispatcher hook enabled -> $HookLog"
+    # Also enable the stub's own call log, next to it. If neither file appears, the DLL
+    # is not running our code at all; if only this one does, the hook install is at fault.
+    $env:GRAP_STUB_LOG = "$HookLog.stub"
+    if (Test-Path $env:GRAP_STUB_LOG) { Remove-Item $env:GRAP_STUB_LOG -Force }
+    Write-Host "dispatcher hook enabled -> $HookLog (stub log -> $HookLog.stub)"
 } else {
     Remove-Item Env:\MAPLECW_HOOK_LOG -ErrorAction SilentlyContinue
 }
