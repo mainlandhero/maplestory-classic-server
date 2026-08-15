@@ -112,6 +112,25 @@ def static_bytes(va, n):
     return data[off : off + n] if off is not None else b""
 
 
+def dump_region(pid, va, size, out_path, slide=0):
+    """Dump live memory to a file.
+
+    The reason this exists: the packet dispatcher `FUN_1415d60e0` tail-jumps to
+    0x144ADD569, which lands in the `.themida` section - a section with **no file bytes**,
+    materialised only at runtime. It is the one thing that knows the inbound opcode table,
+    and static analysis cannot reach it. But it is plain code once the process is running,
+    so dumping it is the way in.
+    """
+    data = read(pid, va + slide, size)
+    with open(out_path, "wb") as fh:
+        fh.write(data)
+    nonzero = sum(1 for b in data if b)
+    print(f"dumped {len(data)} bytes from {va:#x} -> {out_path}")
+    print(f"  {nonzero} non-zero bytes ({100.0 * nonzero / max(len(data), 1):.1f}%)")
+    print(f"  first 32: {data[:32].hex(' ')}")
+    return data
+
+
 def main():
     pid, base = find_client()
     if pid is None:
@@ -158,22 +177,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
-def dump_region(pid, va, size, out_path, slide=0):
-    """Dump live memory to a file.
-
-    The reason this exists: the packet dispatcher `FUN_1415d60e0` tail-jumps to
-    0x144ADD569, which lands in the `.themida` section - a section with **no file bytes**,
-    materialised only at runtime. It is the one thing that knows the inbound opcode table,
-    and static analysis cannot reach it. But it is plain code once the process is running,
-    so dumping it is the way in.
-    """
-    data = read(pid, va + slide, size)
-    with open(out_path, "wb") as fh:
-        fh.write(data)
-    nonzero = sum(1 for b in data if b)
-    print(f"dumped {len(data)} bytes from {va:#x} -> {out_path}")
-    print(f"  {nonzero} non-zero bytes ({100.0 * nonzero / max(len(data), 1):.1f}%)")
-    print(f"  first 32: {data[:32].hex(' ')}")
-    return data
