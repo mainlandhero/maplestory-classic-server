@@ -36,6 +36,7 @@ param(
     [string]$Skip = '',
     [string]$PingFirst = '',
     [double]$PingWait = 10,
+    [double]$QuietBefore = 5,
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -89,7 +90,8 @@ Write-Host "variant $Variant :$name"
 
 $probeArgs = @('-u', $probe, '--port', "$Port", '--only', "$Variant")
 if ($Reply) {
-    $probeArgs += @('--reply', $Reply, '--opcode', $Opcode, '--pad', "$Pad")
+    $probeArgs += @('--reply', $Reply, '--opcode', $Opcode, '--pad', "$Pad",
+                    '--quiet-before', "$QuietBefore")
     if ($Reply -eq 'sweep') {
         $probeArgs += @('--sweep-from', $SweepFrom, '--sweep-to', $SweepTo,
                         '--sweep-delay', "$SweepDelay")

@@ -343,7 +343,8 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
           pad: int = 0, skip: frozenset = frozenset(),
-          ping_first: int | None = None, ping_wait: float = 10.0) -> None:
+          ping_first: int | None = None, ping_wait: float = 10.0,
+          quiet_before: float = 5.0) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -400,7 +401,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         try:
             while time.time() < deadline:
                 # Let the client finish its opening burst, then answer into the quiet.
-                ready = total and time.time() - last_data > 2.0
+                ready = total and time.time() - last_data > quiet_before
                 if reply == "sweep" and ready and time.time() >= next_send:
                     # Isolate one opcode before the sweep starts, so a reply to it can be
                     # timed against our packet rather than against the connection age.
@@ -456,7 +457,8 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                 else:
                     since = (f" (after 0x{last_sent:04X}, +{time.time() - sent_at:.2f}s"
                              f", {time.time() - opened_at:.1f}s into the connection)")
-                log(f"[{port}] *** CLIENT SENT {len(data)} bytes{since} ***")
+                log(f"[{port}] {time.strftime('%H:%M:%S')} *** CLIENT SENT "
+                    f"{len(data)} bytes{since} ***")
                 log(hexdump(data))
         except ConnectionResetError:
             log(f"[{port}] connection reset by client")
@@ -498,6 +500,11 @@ def main() -> None:
     ap.add_argument("--ping-first", type=lambda s: int(s, 0), default=None,
                     help="send this opcode alone before the sweep begins")
     ap.add_argument("--ping-wait", type=float, default=10.0)
+    ap.add_argument("--quiet-before", type=float, default=5.0,
+                    help="seconds of client silence to wait for before sending. The "
+                         "client's own startup burst varies hugely between runs "
+                         "(294 to 3393 bytes observed), and speaking too early makes "
+                         "its late chatter look like a reply")
     ap.add_argument("--skip", default="",
                     help="comma-separated opcodes to skip (e.g. 0x23), the growing "
                          "blacklist of ones that end the connection")
@@ -535,7 +542,7 @@ def main() -> None:
         args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv,
               args.sweep_from, args.sweep_to, args.sweep_delay, args.pad,
               frozenset(int(x, 0) for x in args.skip.split(',') if x.strip()),
-              args.ping_first, args.ping_wait),
+              args.ping_first, args.ping_wait, args.quiet_before),
         daemon=True,
     )
     t.start()
