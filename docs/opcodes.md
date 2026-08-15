@@ -108,3 +108,38 @@ login and world-select screens. `0x007C` (`confirmDeleteCharacterPermanently`) c
 
 Full per-call-site detail, including the unfiltered strings, is in
 `research/msexe-packet-fields.txt`.
+
+## The login connection's startup sequence
+
+Read from the tail of `FUN_1415d10e0` (the handshake handler), which is normal readable
+code. `conn+0x48` selects the path, and it is **non-zero for the login connection** — the
+same flag that selects AES over the byte-subtract cipher:
+
+```c
+FUN_1415d5b40(param_1);                 // 0x70   version report (u8 2, u32 100)
+if (*(int *)(param_1 + 0x48) == 0) {    // game/channel connection - NOT our path
+    ... builds 0x7D, then 0xB5 ...
+} else {                                // login connection - ours
+    FUN_1415d5c20(param_1);             // 0x71   environment report
+    FUN_1415dde80();                    // 0x8F   \
+    FUN_1415ddf60();                    // 0x90    > three integrity reports
+    FUN_1415de040();                    // 0x91   /
+    if (FUN_1415e2e70(param_1 + 0x150)) // conditional
+        ... builds 0xA1 ...
+}
+*(undefined1 *)(param_1 + 0x145) = 1;
+return local_21ac;                      // returns 1 - the handler does NOT block
+```
+
+So on our connection the client sends **`0x70`, `0x71`, `0x8F`, `0x90`, `0x91`** and
+optionally `0xA1`, then the handshake handler *returns*. The hang is therefore not inside
+the handshake at all — the client is back in its main loop waiting on the socket.
+
+`0x8F`, `0x90` and `0x91` have byte-identical builder signatures
+(`FUN_140a00790, u32, FUN_140a00790, FUN_1415e2f80, FUN_1406ede20`) — a u32 followed by a
+binary blob, three times over. That shape says client-integrity or file-hash reporting, and
+it is the most likely thing the server is expected to acknowledge before the client will
+proceed to the login screen.
+
+The `0x7D` path, which sends a 16-byte blob from `DAT_143262960`, is **game-connection
+only** and never runs for us. Worth knowing so it is not chased.

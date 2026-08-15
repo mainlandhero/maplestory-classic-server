@@ -1,0 +1,72 @@
+reply preflight OK (sweep)
+[8484] listening; will send a candidate handshake on each connection
+
+[8484] 00:52:24 connection from 127.0.0.1:55320
+[8484] sending: G=1 H=1 L=1, high=100 (all known gates satisfied)  (48 bytes)
+      0000  2E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+      0010  01 00 01 00 00 00 00 00 01 78 30 52 02 78 30 52  .........x0R.x0R
+      0020  01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00  .....d..........
+[8484] 00:52:25 *** CLIENT SENT 51 bytes ***
+      0000  EF 52 C0 52 87 BB 8B 51 E7 F2 E7 78 F9 49 E5 D5  .R.R...Q...x.I..
+      0010  EB 46 2B 60 00 58 0E E2 36 3D DD 1C 2F B8 37 83  .F+`.X..6=../.7.
+      0020  7A A0 F7 C3 41 7E C3 5D F7 E9 3C D9 1C DD 76 BD  z...A~.]..<...v.
+      0030  E5 67 19                                         .g.
+[8484] 00:52:25 *** CLIENT SENT 55 bytes ***
+      0000  6B FB 58 FB 27 8B 81 DB B4 6F 9D 78 53 58 19 29  k.X.'....o.xSX.)
+      0010  B7 41 60 AC BD 0C 39 C0 44 27 0A 5C 50 2E E1 6E  .A`...9.D'.\P..n
+      0020  61 A2 AF 73 E9 C9 2F 38 C5 C8 D8 B4 CE 43 87 57  a..s../8.....C.W
+      0030  F6 FB 47 E6 F1 51 63                             ..G..Qc
+[8484] 00:52:25 *** CLIENT SENT 12 bytes ***
+      0000  37 DD 3F DD 2A 1D F9 ED D5 3E 40 73              7.?.*....>@s
+[8484] 00:52:25 *** CLIENT SENT 24 bytes ***
+      0000  5B E3 51 E3 09 AF 4C 0E 39 75 44 19 21 19 9C 9A  [.Q...L.9uD.!...
+      0010  9A 9A D0 05 D5 A2 8D 40                          .......@
+[8484] 00:52:25 *** CLIENT SENT 30 bytes ***
+      0000  AA 99 AC 99 EE 2A AE 9E E0 87 18 3D 1E 3D A1 EB  .....*.....=.=..
+      0010  C3 78 74 5A 76 23 70 23 44 5E 28 31 10 AA        .xtZv#p#D^(1..
+[8484] 00:52:25 *** CLIENT SENT 10 bytes ***
+      0000  33 84 35 84 FF BC 07 B9 F4 35                    3.5......5
+[8484] 00:52:25 *** CLIENT SENT 10 bytes ***
+      0000  00 8D 06 8D 42 4D F1 DD FA A0                    ....BM....
+[8484] 00:52:25 *** CLIENT SENT 10 bytes ***
+      0000  14 4C 12 4C D7 F7 9D 1F B5 07                    .L.L......
+[8484] 00:52:25 *** CLIENT SENT 10 bytes ***
+      0000  9F C4 99 C4 40 2E F0 62 37 BB                    ....@..b7.
+[8484] 00:52:25 *** CLIENT SENT 10 bytes ***
+      0000  9C FA 9A FA B5 A0 2D 49 E0 52                    ......-I.R
+[8484] 00:52:26 *** CLIENT SENT 10 bytes ***
+      0000  27 71 21 71 9C F4 D7 F5 EC 99                    'q!q......
+[8484] 00:52:26 *** CLIENT SENT 62 bytes ***
+      0000  EE 23 E8 23 EF 6A CC 55 FE D2 76 E8 46 E8 34 34  .#.#.j.U..v.F.44
+      0010  12 FC 2D 6A F5 44 DB 8B D0 EE 80 23 60 CB C1 CF  ..-j.D.....#`...
+      0020  A8 23 B1 EE 1E A8 9A 0E 8A 2C 38 76 49 E4 60 42  .#.......,8vI.`B
+      0030  96 9B 8E CC 5D 19 81 76 49 B7 F0 0A 40 8B        ....]..vI...@.
+[8484] 00:52:31 >>> opcode 0x01DD +32B
+[8484] 00:52:31 >>> opcode 0x01DE +32B
+[8484] 00:52:31 >>> opcode 0x01DF +32B
+[8484] 00:52:32 >>> opcode 0x01E0 +32B
+[8484] 00:52:32 >>> opcode 0x01E1 +32B
+[8484] 00:52:32 >>> opcode 0x01E2 +32B
+[8484] 00:52:32 >>> opcode 0x01E3 +32B
+[8484] 00:52:32 >>> opcode 0x01E4 +32B
+[8484] 00:52:32 >>> opcode 0x01E5 +32B
+[8484] 00:52:33 >>> opcode 0x01E6 +32B
+[8484] 00:52:33 >>> opcode 0x01E7 +32B
+[8484] 00:52:33 >>> opcode 0x01E8 +32B
+[8484] 00:52:33 >>> opcode 0x01E9 +32B
+[8484] 00:52:33 >>> opcode 0x01EA +32B
+[8484] 00:52:34 >>> opcode 0x01EB +32B
+[8484] 00:52:34 >>> opcode 0x01EC +32B
+[8484] 00:52:34 >>> opcode 0x01ED +32B
+[8484] 00:52:34 >>> opcode 0x01EE +32B
+[8484] 00:52:34 >>> opcode 0x01EF +32B
+[8484] 00:52:35 >>> opcode 0x01F0 +32B
+[8484] 00:52:35 >>> opcode 0x01F1 +32B
+[8484] 00:52:35 *** CLIENT SENT 54 bytes (after 0x01F1, +0.00s, 10.3s into the connection) ***
+      0000  81 2F B3 2F AE F8 7C E7 86 7D AD ED 28 0E BE 56  ././..|..}..(..V
+      0010  B4 FA 46 79 F4 5C 9E 68 74 68 F4 42 51 47 A2 14  ..Fy.\.hth.BQG..
+      0020  E7 C8 6D FD D4 39 BC ED CD 8E 4B FB D4 2E 9A 29  ..m..9....K....)
+      0030  0B 10 B4 43 CD 3C                                ...C.<
+[8484] connection reset by client
+[8484] connection lasted 0.0s after the reply was sent
+[8484] VERDICT: client answered 348 bytes to [G=1 H=1 L=1, high=100 (all known gates satisfied)]
