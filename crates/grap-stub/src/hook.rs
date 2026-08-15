@@ -74,11 +74,18 @@ extern "system" {
     fn QueryPerformanceFrequency(v: *mut i64) -> i32;
 }
 
+/// Where to log. Falls back to a file beside the client rather than going silent.
+///
+/// Both `DllMain` and the export stubs previously logged only when `HOOK_ENV` was set,
+/// so a run that produced *no* files was ambiguous: it could mean our code never ran, or
+/// merely that the variable did not reach the client. Logging unconditionally removes
+/// that ambiguity. Installing the hook is still gated on the variable.
+fn log_path() -> String {
+    std::env::var(HOOK_ENV).unwrap_or_else(|_| "maplecw-hook.log".to_string())
+}
+
 fn log(msg: &str) {
-    let Ok(path) = std::env::var(HOOK_ENV) else {
-        return;
-    };
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
         let _ = writeln!(f, "{msg}");
     }
 }
@@ -125,10 +132,18 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
 /// though the client loaded the DLL and ran normally. The exports are certain to run:
 /// ordinal #9 is statically imported by `MapleStory.exe`.
 pub fn install_once() {
-    if std::env::var(HOOK_ENV).is_err() || TRIGGERED.swap(true, Ordering::SeqCst) {
+    if TRIGGERED.swap(true, Ordering::SeqCst) {
         return;
     }
-    log("install_once: triggered from a stub export");
+    let enabled = std::env::var(HOOK_ENV).is_ok();
+    log(&format!(
+        "install_once: our code IS running. {} = {}",
+        HOOK_ENV,
+        if enabled { "set, installing" } else { "NOT set, standing down" }
+    ));
+    if !enabled {
+        return;
+    }
     std::thread::spawn(|| {
         // Let the client finish unpacking .text before patching it.
         std::thread::sleep(std::time::Duration::from_secs(5));
