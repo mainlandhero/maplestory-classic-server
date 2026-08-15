@@ -246,32 +246,34 @@ transform theory was the wrong shape entirely: there is no extra transform, just
 keystream we cannot yet reproduce — most likely because the send side seeds its AES from
 something other than the header IV.
 
-## First client reply: opcode 0x0171 (candidate)
+## Client replies: 0x0171 ruled out, trigger is in 0x01C4-0x01CA
 
-The second sweep (`0x0024`-`0x01C3`, `--pad 32`, `probe.err` empty) drew the first reply
-the client has ever sent us:
+Two sweeps drew a reply out of the client. In both cases the reply is the client's
+**17th packet** — header `a=0x2F81`, which is send-chain position 16, right after its
+opening 16 — so its send IV stays in lockstep with our model throughout.
 
-```
-[8484] 00:23:21 >>> opcode 0x0171 +32B
-[8484] *** CLIENT SENT 10 bytes (after 0x0171) ***
-      0000  81 2F 87 2F 17 FC 7D E7 A0 7D
-```
+| Run | Sweep | Reply | Payload | When |
+|---|---|---|---|---|
+| 1 | `0x0024`-`0x01C3` | `81 2F 87 2F ...` | 6 bytes | right after `0x0171`, +64 s into the connection |
+| 2 | `0x0171` isolated, then `0x01C4`-`0x01DC` | `81 2F B3 2F ...` | **50 bytes** | during `0x01C4`-`0x01CA`, +19.7 s in |
 
-Header `a=0x2F81 b=0x2F87` -> length 6. Walking the client's send chain from `J` matches
-this header at **position 16** — exactly the next packet after its opening 16. So the
-client's send IV is still in lockstep with our model and this is a genuine 17th packet,
-not noise. Nothing in `0x0024`-`0x01C3` made the client exit; it went back to hanging.
+**`0x0171` is ruled out.** Run 2 sent it alone and watched for 15 s: no reply. The run-1
+attribution was coincidental, which is exactly why it was worth isolating rather than
+building on. The two replies are also different packets — 6 bytes versus 50 — so they were
+not the same event happening twice, and a fixed keepalive timer is ruled out too (+64 s
+versus +19.7 s).
 
-**This is a candidate, not a confirmed cause.** The packet arrived ~62 s into the
-connection, which is exactly where a 60-second keepalive would land. The first sweep only
-ran ~10 s, so it would not have seen such a timer.
+The real trigger is somewhere in **`0x01C4`-`0x01CA`**, which run 2 sent at ~150 ms
+spacing — too fast to attribute. Re-running that range slowly will name it.
 
-The discriminating test is a one-shot `--reply ping --opcode 0x0171`, which fires ~2 s
-after the client's opening burst goes quiet:
+**`0x01DC` ends the connection.** Run 2's client exited cleanly right after it, the same
+behaviour as `0x0023`. Known connection-enders: `0x0023`, `0x01DC`.
 
-- reply arrives ~2 s in, right after our packet -> **causal**, `0x0171` is a request the
-  client answers;
-- reply arrives ~60 s in regardless -> a keepalive timer, and `0x0171` means nothing.
+### A crib channel, for later
 
-Client data lines now carry both elapsed figures (`+1.47s` since our packet, `3.5s into
-the connection`) precisely so this cannot be misread.
+Both replies sit at the same chain position, so they share a keystream, and
+`ct1 ^ ct2 == pt1 ^ pt2` regardless of what that keystream is. For the first six bytes
+that is `b9 04 01 00 26 00`: bytes 3 and 5 are identical in both plaintexts, and the
+opcodes differ. Not enough to decrypt, but it is real plaintext information extracted
+without breaking the cipher, and it will constrain candidates if the outbound keystream is
+ever attacked.
