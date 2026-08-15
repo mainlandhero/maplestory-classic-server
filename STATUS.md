@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-14
+# Where things stand — 2026-08-15
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -6,7 +6,7 @@ specs.
 ## Working right now
 
 ```bash
-cargo test --release          # 47 tests, zero clippy warnings
+cargo test --release          # 49 tests green
 cargo build --release
 ```
 
@@ -26,11 +26,12 @@ It connects to `127.0.0.1:8484`, and GameGuard never loads.
 | | |
 |---|---|
 | `crates/wz` | WZ parser. **9,994/9,994 images** across 102 archives parse. `wz-dump` CLI. |
-| `crates/net` | Packet reader/writer + stream framer, pluggable cipher. 16 tests. |
+| `crates/net` | **The client's real wire cipher**, verified against captures. 19 tests. |
 | `crates/store` | SQLite accounts/sessions. argon2id, per-password salt, hashed single-use tokens. 21 tests. |
 | `crates/auth` | Local HTTP auth server (loopback only) + `maplecw-useradd`. Verified end to end. |
-| `crates/grap-stub` | No-op `grap64.dll`. GameGuard never starts; no service, no kernel driver. |
+| `crates/grap-stub` | No-op `grap64.dll`; GameGuard never starts. Plus a working **in-process dispatcher hook**. |
 | Client copy | `client-patched/` — original install untouched, firewalled outbound. |
+| Tooling | `handshake_probe.py` decodes the client's live stream; `dump_runtime.py` reads its memory. |
 
 ## Key facts (do not re-derive)
 
@@ -105,18 +106,58 @@ to a random opcode and is silently ignored, not rejected.
 
 ### Next steps
 
-1. Re-run a sweep now that the client can actually read our packets. The probe decrypts
-   and labels the client's stream live, so any response is legible:
+**Everything about the transport is finished.** The one thing missing is *which inbound
+opcode unblocks the login screen*, and the two techniques tried for it are both exhausted:
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal -Reply sweep -SweepFrom 0x0000 -SweepTo 0x0200 -Pad 32 -SweepDelay 0.2 -QuietBefore 5
-   ```
+* **Blind sweeping is retired.** The client accepts 26 packets per launch and no more, at
+  0.2 s and 3.0 s spacing alike, because unhandled packets leak a six-entry buffer pool.
+  ~150 launches would be needed to cover the opcode space. Pacing does not help.
+* **The dispatch table cannot be read.** `FUN_1415d60e0` tail-jumps into `.themida`, which
+  has no file bytes, and the code there is virtualised.
 
-2. Then implement the login server. The **game/channel connection uses mode 2**, a plain
-   `byte - iv` subtract rather than AES, so it is far cheaper to talk to.
+#### 1. Find the login-screen handler, then find its address in memory
 
-The **outbound** opcode map is recovered: 657 distinct opcodes in
-`research/msexe-send-opcodes.txt`, 59 labelled in `docs/opcodes.md`.
+This is the recommended line, and the hook proved the capability it needs: arbitrary code
+runs inside the client, and process memory reads work.
+
+Handler *functions* are ordinary code — only the dispatch is virtualised. So:
+
+1. Identify the function that drives the login-screen transition. Use string xrefs, the
+   technique that has worked repeatedly here (`docs/opcodes.md` explains the tooling).
+   `UI/Login.img` and the `GC:` state names are the obvious starting points; `0x0080` and
+   `0x00A0` already reference `GC:SelectWorld`, `accountno` and `nexonsn`.
+2. Scan the live process for that function's address with `tools/dump_runtime.py --dump`.
+   Its slot in the dispatch table gives the opcode by index — no guessing, no packet budget.
+
+#### 2. Cheaper thing to try first
+
+Now that the client's stream is fully readable, re-read what it actually sends with fresh
+eyes — `0x00A6` carries an incrementing id (1, 11, 2, 5, 3, 4, 12 …) eleven times, which
+looks like the client enumerating something and possibly waiting on each. Decoding
+`FUN_142c4adc0`/`FUN_142c4ef20` (`0x009E`, the periodic status packet) may also name what
+it is polling for.
+
+#### 3. Then the login server
+
+`crates/net` already implements the wire format with the real key. The **game/channel**
+connection uses cipher mode 2 — a plain `byte - iv` subtract, no AES — so it is much
+cheaper to talk to than the login connection.
+
+### Traps that cost time — do not re-learn these
+
+* The **on-disk AES key is a decoy**; read the real one from a running client. A regression
+  test guards against reverting it.
+* **Accepting a packet only proves the header.** A bad payload decrypts to a random opcode
+  and is silently ignored, not rejected — which is what made a broken cipher look fine for
+  six sweeps.
+* `tools/test-one.ps1` runs the **bare system Python** with no third-party packages; keep
+  the probe path stdlib-only, and check `probe.err` is empty before believing any negative.
+* The client needs **elevation**, so it must launch via ShellExecute, which does **not**
+  propagate `$env:` — hence the hook's marker file.
+* The client's opening burst varies **294 to 3393 bytes** because `0x8F`-`0x91` upload and
+  delete log files. Wait for silence (`-QuietBefore`) before attributing anything to a reply.
+* Scripts here are invoked as
+  `powershell -ExecutionPolicy Bypass -File "<abs path>"`; the bare path will not run.
 
 ### Testing loop that works
 

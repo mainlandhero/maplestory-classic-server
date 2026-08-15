@@ -13,25 +13,24 @@
 //! packet passes through. Hooking it costs nothing in analysis and answers the one
 //! question we cannot answer from outside: **was this opcode handled?**
 //!
-//! # How the answer falls out
+//! # What it established
 //!
-//! An unhandled opcode falls through the dispatch and returns almost immediately. A
-//! handled one runs a handler. Logging `opcode` and elapsed ticks per call therefore
-//! separates the two, and a single sweep produces the set of handled opcodes — which is
-//! exactly what six sweeps of guessing from outside failed to produce.
+//! * **Themida does not checksum this part of `.text`** — the inline patch survives and
+//!   the client runs on.
+//! * **Every opcode arrives as the one we sent**, which confirms framing, header rule, IV
+//!   chain and AES key from *inside* the client rather than by inference.
+//! * The timing idea did **not** pay off: across `0x0000`-`0x0019` the spread is
+//!   102-148 us, median 131, with nothing even twice the median. Either none of that range
+//!   has a handler, or ~130 us is fixed dispatcher overhead that swamps the difference.
+//! * The client accepts **26 packets and no more**, at 0.2 s and at 3.0 s spacing alike.
+//!   The dispatcher's return cycles through six addresses 56 bytes apart — a six-entry
+//!   buffer pool that unhandled packets never release. This is what retires sweeping.
 //!
 //! # Scope
 //!
-//! Opt-in via [`HOOK_ENV`]; unset means this module never touches anything. It is a
-//! debugging aid for `client-patched/`, which is firewalled outbound and GameGuard-stubbed,
-//! and it is useless anywhere else: it only reads, and only from a client we are pointing
-//! at our own loopback server.
-//!
-//! # Caveat
-//!
-//! Themida may verify `.text`. If it does, patching here will trip anti-tamper and the
-//! client will die on startup — which is itself a clear, quick result. The hook logs
-//! every step so a failure says where it happened.
+//! Opt-in: enabled only by the [`HOOK_MARKER`] file (or [`HOOK_ENV`]). A debugging aid for
+//! `client-patched/`, which is firewalled outbound and GameGuard-stubbed, pointed at our
+//! own loopback server.
 
 use std::ffi::c_void;
 use std::fs::OpenOptions;
@@ -86,12 +85,12 @@ extern "system" {
     fn QueryPerformanceFrequency(v: *mut i64) -> i32;
 }
 
-/// Where to log. Falls back to a file beside the client rather than going silent.
+/// Where to log. Falls back to `maplecw-hook.log` beside the client rather than going
+/// silent.
 ///
-/// Both `DllMain` and the export stubs previously logged only when `HOOK_ENV` was set,
-/// so a run that produced *no* files was ambiguous: it could mean our code never ran, or
-/// merely that the variable did not reach the client. Logging unconditionally removes
-/// that ambiguity. Installing the hook is still gated on the variable.
+/// Logging used to be gated on `HOOK_ENV` too, which made a run that produced *no* file
+/// ambiguous: our code never ran, or the variable never arrived? Logging unconditionally
+/// separates those. Installing is still gated.
 fn log_path() -> String {
     std::env::var(HOOK_ENV).unwrap_or_else(|_| "maplecw-hook.log".to_string())
 }
