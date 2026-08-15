@@ -14,8 +14,11 @@
     waiting for someone to read a dialog box.
 
 .EXAMPLE
-    tools\test-one.ps1 -Variant 0
-    tools\test-one.ps1 -Stop
+    Running scripts is disabled on this machine, so invoke it through -File with a
+    per-process bypass (this changes no machine setting):
+
+    powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal
+    powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Stop
 #>
 [CmdletBinding()]
 param(
@@ -136,4 +139,5 @@ if (-not $Normal) {
     }
 }
 
-Write-Host "client pid $($p.Id) launched; read the dialog, then run: tools\test-one.ps1 -Stop"
+Write-Host "client pid $($p.Id) launched. When done, read the screen, then run:"
+Write-Host "  powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Stop"

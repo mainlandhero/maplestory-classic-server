@@ -423,7 +423,9 @@ Read off `FUN_1415d5b40` / `FUN_1415d5c20`, which is how the packets above were 
 
 ## Next
 
-1. **Test the greeting with every gate satisfied** — `tools/test-one.ps1 -Variant 0`.
+1. **Test the greeting with every gate satisfied** — run `tools/test-one.ps1` via
+   `powershell -ExecutionPolicy Bypass -File ... -Variant 0` (scripts are disabled on
+   this machine, so the bare path will not run).
    Expected on success: no dialog, and the probe logs 16 raw bytes followed by packet
    `0x70`. Any dialog instead means another gate is still hiding; decode it via
    `docs/client-messages.md`.
