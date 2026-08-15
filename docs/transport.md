@@ -283,3 +283,31 @@ is only trustworthy when the client has gone quiet first and the reply lands pro
 Also worth keeping in mind: a null result may mean the **body** was wrong rather than the
 opcode. Everything so far has been sent with 32 zero bytes, so an opcode whose handler
 needs real content may well have run and done nothing visible.
+
+## Sweep coverage so far
+
+`0x0000`-`0x03C7` has been swept with a 32-byte zero body. No inbound opcode has produced
+a confirmed reply or any visible UI change. The only reproducible reactions are clean
+exits, at `0x0023`, somewhere in `0x01CB`-`0x01DC`, somewhere in `0x01DD`-`0x01F1`, and
+around `0x03C5`.
+
+Every apparent "reply" has turned out to be the client's own asynchronous traffic. The
+50-byte packet that keeps showing up is the next packet after the opening burst - chain
+position 16 in one run, 18 in another - arriving at +10.3 s, +19.7 s and +94.1 s in
+different runs. It is not a response to anything.
+
+**Blind sweeping is now poor value.** ~3000 opcodes remain, exits truncate each run, and a
+null result is ambiguous anyway because the body is always 32 zero bytes.
+
+### Untested hypothesis: the hang may not be our protocol at all
+
+The firewall rule `MapleCW - block patched client outbound` blocks the patched client from
+reaching **any** external host (`RemoteIP: Any, Protocol: Any`). Windows Firewall does not
+filter loopback, which is why our probe on `127.0.0.1:8484` works while everything outbound
+is silently dropped.
+
+If the client blocks on an external endpoint - auth, CDN, telemetry - it hangs at a white
+screen no matter what we send, and every null sweep result is explained without any opcode
+being wrong. `tools/client-sockets.ps1` settles it: run it while the client is hanging and
+look for a non-loopback socket. `SYN_SENT` to an external address means the firewall is
+dropping it; only-loopback means the hang really is our protocol.
