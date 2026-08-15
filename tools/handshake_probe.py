@@ -318,7 +318,7 @@ def make_cipher(client_recv_iv: int):
     return transport.ServerCipher(client_recv_iv, key, shuffle)
 
 
-def build_reply(kind: str, opcode: int, cipher):
+def build_reply(kind: str, opcode: int, cipher, pad: int = 0):
     """A server->client frame, built with the rules read out of the client's recv path.
 
     "header" is the sharpest transport test available: a valid header that declares a
@@ -331,14 +331,18 @@ def build_reply(kind: str, opcode: int, cipher):
     if kind == "header":
         return cipher.peek_header(100), "valid 4-byte header declaring 100 bytes, body withheld"
     if kind in ("ping", "sweep"):
-        frame = cipher.encode(transport.packet(opcode))
-        return frame, f"opcode 0x{opcode:04X}"
+        # A bare 2-byte packet makes any handler that reads a body underflow, which can
+        # end a sweep on its first *handled* opcode. Zero padding lets more handlers run
+        # to completion: fixed-width fields read 0, and length-prefixed strings read empty.
+        frame = cipher.encode(transport.packet(opcode, b"\x00" * pad))
+        return frame, f"opcode 0x{opcode:04X}" + (f" +{pad}B" if pad else "")
     raise SystemExit(f"unknown reply kind: {kind}")
 
 
 def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
-          sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15) -> None:
+          sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
+          pad: int = 0) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -393,7 +397,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     if next_op >= sweep_to:
                         log(f"[{port}] sweep finished at 0x{sweep_to:04X}")
                         break
-                    frame, what = build_reply(reply, next_op, cipher)
+                    frame, what = build_reply(reply, next_op, cipher, pad)
                     # One line per opcode, timestamped: if the client dies or the UI
                     # changes, the last line printed says exactly where it happened.
                     log(f"[{port}] {time.strftime('%H:%M:%S')} >>> {what}")
@@ -401,7 +405,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     next_op += 1
                     next_send = time.time() + sweep_delay
                 elif not replied and ready:
-                    frame, what = build_reply(reply, opcode, cipher)
+                    frame, what = build_reply(reply, opcode, cipher, pad)
                     log(f"[{port}] >>> REPLY: {what}  ({len(frame)} bytes)")
                     log(hexdump(frame))
                     conn.sendall(frame)
@@ -453,6 +457,8 @@ def main() -> None:
     ap.add_argument("--sweep-from", type=lambda s: int(s, 0), default=0)
     ap.add_argument("--sweep-to", type=lambda s: int(s, 0), default=0x1000)
     ap.add_argument("--sweep-delay", type=float, default=0.15)
+    ap.add_argument("--pad", type=int, default=0,
+                    help="zero bytes appended after the opcode")
     ap.add_argument("--opcode", type=lambda s: int(s, 0), default=0xFFFF)
     ap.add_argument(
         "--recv-iv",
@@ -475,7 +481,7 @@ def main() -> None:
         try:
             c = make_cipher(args.recv_iv)
             build_reply("header", args.opcode, c)
-            build_reply("ping", args.opcode, c)
+            build_reply("ping", args.opcode, c, args.pad)
         except Exception as e:  # noqa: BLE001
             log(f"PREFLIGHT FAILED: {e!r}")
             log("refusing to start - fix this before launching the client")
@@ -485,7 +491,7 @@ def main() -> None:
     t = threading.Thread(
         target=serve,
         args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv,
-              args.sweep_from, args.sweep_to, args.sweep_delay),
+              args.sweep_from, args.sweep_to, args.sweep_delay, args.pad),
         daemon=True,
     )
     t.start()

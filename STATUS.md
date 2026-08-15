@@ -60,7 +60,13 @@ sent — the version sweep never got a chance to matter. Full table in `docs/han
 `length = LOWORD ^ HIWORD`, `a = ((iv[3]<<8)|iv[2]) ^ 0x00DF`, and the stock IV shuffle.
 Seeding the chain with the `J` we sent predicts **16/16 observed headers exactly**.
 
-### Server → client is solved
+### Server → client is solved and CONFIRMED
+
+**2026-08-15: the client accepted a frame we built and stayed connected.** A
+`--reply header` run (valid header, body withheld, so nothing is dispatched) did not drop
+the connection. That validates the header rule, the `0xFFFE` constant, the `K` IV seed and
+the shuffle table in one shot. We can now talk to the client.
+
 
 `tools/transport.py` builds packets the client will accept, and reproduces **all 16
 captured client headers byte-exactly**:
@@ -97,17 +103,15 @@ client, so it should not hold up the login server.
 
 ### Next steps, in order
 
-1. **Validate the send direction against the client** — the client is the oracle:
+1. ~~Validate the send direction against the client.~~ **Done — confirmed 2026-08-15.**
+2. `-Reply sweep` to find the inbound opcode the client is waiting for. This also tests
+   the payload path for the first time, since a sweep sends complete encrypted packets:
+   if the very first one drops the connection, the AES/OFB side is wrong; surviving many
+   opcodes means it is right. Use `-Pad` to append zero bytes after the opcode — a bare
+   2-byte packet makes any handler that reads a body underflow, which can end the sweep
+   on its first *handled* opcode.
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal -Reply header
-   ```
-
-   This sends a valid header declaring 100 bytes and withholds the body, so nothing is
-   dispatched and an unknown opcode cannot muddy the result. Connection stays open ⇒ the
-   header rule and IV chain are right. Client drops immediately ⇒ they are not.
-2. Then `-Reply ping` to check a complete encrypted packet is accepted.
-3. Then `-Reply sweep` to find the inbound opcode the client is waiting for. The
+   The
    **inbound** opcode space is the one thing we cannot recover statically — the
    dispatcher lives in `.themida`, which has no file bytes — so it has to come from the
    client. The sweep logs one timestamped line per opcode, so the last line printed

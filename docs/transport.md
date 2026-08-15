@@ -4,9 +4,18 @@ What sits on the socket *after* the greeting in `docs/handshake.md` is accepted.
 from a real client run: `research/fixtures/capture-handshake-ok.log`, 294 bytes, 16
 packets.
 
-Status: **the server -> client direction is fully specified and reproduces the client's
-own headers byte-exactly. The client -> server payload cipher is still opaque, and we now
-know why: that code path is Themida-obfuscated.**
+Status: **the server -> client direction is solved and CONFIRMED against the real client** —
+it accepted a frame we built and stayed connected. The client -> server payload cipher is
+still opaque, and we now know why: that code path does not exist on disk.
+
+> **Confirmed 2026-08-15.** A `--reply header` run (valid header, body withheld) left the
+> client connected instead of dropping it. That is the first frame the client has ever
+> accepted from us, and it validates the header rule, the `0xFFFE` constant, the `K` IV
+> seed and the shuffle table together.
+>
+> Beware the failure mode that preceded it: an exception in the probe closed the socket,
+> and the client dropped because the *server* vanished — indistinguishable from a
+> rejection. Always check `probe.err` is empty before believing a negative result.
 
 ## Framing — read from `FUN_1406e9530`
 
