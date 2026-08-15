@@ -381,3 +381,41 @@ opcodes occasionally landing on a disconnect handler, which is why none reproduc
 why sending `0x0023` alone did nothing. The whole `0x0000`-`0x03C7` range is unexplored
 again, but that no longer matters much: with decryption working we can simply read what
 the client asks for instead of guessing.
+
+## The dispatcher is Themida-virtualised, not merely relocated
+
+Dumped live from `0x144ADD569` (32 KB, 83.5% non-zero, `research/themida-dispatch.bin`).
+It is not plain code:
+
+```
+9c              pushfq
+50              push rax
+48 89 c0        mov rax, rax          <- no-op filler
+48 83 ec 08     sub rsp, 8
+48 89 0c 24     mov [rsp], rcx
+48 b9 7f 01 ... mov rcx, 0x17F
+51              push rcx
+8f 44 24 08     pop qword [rsp+8]     <- value moved through the stack
+48 8b 0c 24     mov rcx, [rsp]
+```
+
+83 `pushfq` in 32 KB, constants laundered through push/pop, no-op filler: a Themida VM
+handler. Scanning the region for an opcode->handler table found 317 scattered image
+pointers but **no run of 4 or more consecutive ones**, so the table is not there in plain
+form either.
+
+Reversing a Themida VM is a project in itself, not a next step. The inbound opcode table
+should be considered unavailable by static *or* simple dynamic means.
+
+### What that leaves
+
+1. **Do not blind-sweep.** It was harmless when our packets were noise; now that they
+   decrypt, every opcode reaches a real handler with a 32-byte zero body, and the client
+   dies of malformed input at semi-random points (`0x001B` survived in isolation but the
+   run died later at `0x0030`).
+2. **Find a handler, then find its address in the table.** Handler *functions* are probably
+   normal code — only the dispatch is virtualised. If the function behind the login-screen
+   transition can be identified statically, searching process memory for its address would
+   locate its table slot, and the slot index gives the opcode.
+3. **Hook the client.** A DLL in the client's own process could log what the dispatcher
+   does, which sidesteps the VM entirely.
