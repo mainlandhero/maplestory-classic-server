@@ -311,3 +311,28 @@ screen no matter what we send, and every null sweep result is explained without 
 being wrong. `tools/client-sockets.ps1` settles it: run it while the client is hanging and
 look for a non-loopback socket. `SYN_SENT` to an external address means the firewall is
 dropping it; only-loopback means the hang really is our protocol.
+
+### Ruled out: the hang is not an external network wait
+
+`tools/client-sockets.ps1`, run against a hung client (pid 64140, `responding=False`,
+57 threads), across six samples:
+
+```
+      State Local           Remote         Loopback
+Established 127.0.0.1:53509 127.0.0.1:8484     True
+      Bound 0.0.0.0:53509   0.0.0.0:0          True
+```
+
+One socket, loopback, ours. The client never attempts an external connection, so the
+outbound firewall rule is not implicated and the hang really is our protocol. The sweep
+premise holds. `responding=False` also says the UI thread is blocked rather than spinning.
+
+### Ruled out: the outbound keystream is not the fixed default IV
+
+`FUN_140c75880` falls back to a fixed 16-byte IV at `0x143307778` when passed a NULL IV,
+which would make every packet share one keystream. The captures disprove it: the same
+50-byte client packet appears at chain position 16 in two runs (identical first 10 payload
+bytes) and at position 18 in another (`72 61 FB B9 ...` versus `AE F8 7C E7 ...`). A fixed
+keystream would give the same ciphertext prefix at any position. So the outbound keystream
+*does* vary with chain position — consistent with IV-based OFB, which is what makes its
+resistance to the stock key so odd.
