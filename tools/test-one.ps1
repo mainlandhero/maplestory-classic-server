@@ -135,6 +135,8 @@ if ((-not $probeAlive) -or ($errText -and $errText.Trim())) {
 # enabling it is just an environment variable the child process inherits.
 if ($HookLog) {
     if (Test-Path $HookLog) { Remove-Item $HookLog -Force }
+    # Marker file beside the client, read by the hook at startup.
+    New-Item -ItemType File -Path (Join-Path $ClientDir 'maplecw-hook.enable') -Force | Out-Null
     $env:MAPLECW_HOOK_LOG = $HookLog
     # Also enable the stub's own call log, next to it. If neither file appears, the DLL
     # is not running our code at all; if only this one does, the hook install is at fault.
@@ -143,22 +145,15 @@ if ($HookLog) {
     Write-Host "dispatcher hook enabled -> $HookLog (stub log -> $HookLog.stub)"
 } else {
     Remove-Item Env:\MAPLECW_HOOK_LOG -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.enable') -ErrorAction SilentlyContinue
 }
 
-# Launch via ProcessStartInfo rather than Start-Process. Start-Process defaults to
-# UseShellExecute = true, which does not reliably carry $env: changes into the child -
-# the hook DLL confirmed it was running but saw MAPLECW_HOOK_LOG unset. Setting
-# UseShellExecute = false makes EnvironmentVariables authoritative.
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $exe
-$psi.WorkingDirectory = $ClientDir
-$psi.Arguments = "-NXLDEBUG 127.0.0.1 $Port"
-$psi.UseShellExecute = $false
-if ($HookLog) {
-    $psi.EnvironmentVariables['MAPLECW_HOOK_LOG'] = $HookLog
-    $psi.EnvironmentVariables['GRAP_STUB_LOG'] = "$HookLog.stub"
-}
-$p = [System.Diagnostics.Process]::Start($psi)
+# Start-Process (ShellExecute) is required: the client has an elevation manifest, and
+# CreateProcess - which is what UseShellExecute = false uses - fails with "requires
+# elevation". ShellExecute in turn will not carry $env: into the child, which is why the
+# hook is switched on by a marker file instead.
+$p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
+    -ArgumentList @('-NXLDEBUG', '127.0.0.1', "$Port") -PassThru
 
 # Keep the host usable while the dialog is being read. -Normal skips this and runs the
 # client exactly as Windows would start it, in case the throttling ever looks like it is

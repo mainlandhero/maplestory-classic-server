@@ -39,7 +39,19 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Set to a writable path to install the dispatcher hook and log to that file.
+///
+/// Kept as an override, but the marker file below is the primary switch: the client
+/// requires elevation, so it must be launched via ShellExecute, and that does not
+/// reliably carry `$env:` changes into the child.
 pub const HOOK_ENV: &str = "MAPLECW_HOOK_LOG";
+
+/// Presence of this file, relative to the client's working directory, enables the hook.
+///
+/// A file rather than an environment variable because the client runs elevated: launching
+/// it needs ShellExecute, which does not propagate environment changes, and switching to
+/// CreateProcess to fix that fails outright with "requires elevation". A marker file is
+/// immune to both.
+pub const HOOK_MARKER: &str = "maplecw-hook.enable";
 
 /// `FUN_1415d60e0(conn, view)` — the dispatcher stub. The client has no ASLR slide
 /// (observed base `0x140000000`), but we resolve the module base anyway rather than
@@ -135,11 +147,12 @@ pub fn install_once() {
     if TRIGGERED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let enabled = std::env::var(HOOK_ENV).is_ok();
+    let by_env = std::env::var(HOOK_ENV).is_ok();
+    let by_marker = std::path::Path::new(HOOK_MARKER).exists();
+    let enabled = by_env || by_marker;
     log(&format!(
-        "install_once: our code IS running. {} = {}",
-        HOOK_ENV,
-        if enabled { "set, installing" } else { "NOT set, standing down" }
+        "install_once: our code IS running. env={by_env} marker={by_marker} -> {}",
+        if enabled { "installing" } else { "standing down" }
     ));
     if !enabled {
         return;
