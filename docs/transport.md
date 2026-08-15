@@ -419,3 +419,35 @@ should be considered unavailable by static *or* simple dynamic means.
    locate its table slot, and the slot index gives the opcode.
 3. **Hook the client.** A DLL in the client's own process could log what the dispatcher
    does, which sidesteps the VM entirely.
+
+## The dispatcher hook works
+
+`crates/grap-stub/src/hook.rs`, enabled by the marker file `maplecw-hook.enable`:
+
+```
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+    0 opcode=0x0000 elapsed_us=133.4 ret=109729296
+   25 opcode=0x0019 elapsed_us=133.3 ret=109729368
+```
+
+**Themida does not checksum this part of `.text`** — the inline patch survives and the
+client runs on. Three things follow:
+
+1. **The transport is confirmed from inside the client.** Every opcode we sent arrives at
+   the dispatcher as the opcode we intended, which independently validates framing, header
+   rule, IV chain and AES key at the far end rather than by inference.
+2. **No handler among `0x0000`-`0x0019`.** Elapsed time is flat at 119-159 us across all
+   26 packets, with no outlier. Either none of these has a handler, or ~130 us is fixed
+   dispatcher overhead and a real handler must be looked for as a much larger figure.
+3. **The client dies after ~25 packets, whatever they are.** Runs with the real key ended
+   at 28, 22 and now 26 packets, while an earlier run with *garbage* opcodes survived 470.
+   The `ret` value cycles through exactly **six** addresses 56 bytes apart — a six-entry
+   buffer pool. Unhandled packets plausibly fail to release their buffer, so the pool
+   exhausts after a couple of dozen and the client shuts down.
+
+That last point is the important one: **sweeping is self-limiting at ~25 opcodes per client
+run**, which is not a viable way to search a 4000-opcode space. Worth testing whether a
+much slower rate lets the pool recover — if it does the limit is rate, if not it is a leak
+and sweeping is finished as a technique.

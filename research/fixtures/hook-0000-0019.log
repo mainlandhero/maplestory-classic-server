@@ -1,0 +1,29 @@
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+    0 opcode=0x0000 elapsed_us=133.4 ret=109729296
+    1 opcode=0x0001 elapsed_us=143.1 ret=109729352
+    2 opcode=0x0002 elapsed_us=129.7 ret=109729408
+    3 opcode=0x0003 elapsed_us=138.1 ret=109729464
+    4 opcode=0x0004 elapsed_us=125.7 ret=109729520
+    5 opcode=0x0005 elapsed_us=137.9 ret=109729256
+    6 opcode=0x0006 elapsed_us=123.1 ret=109729312
+    7 opcode=0x0007 elapsed_us=119.7 ret=109729368
+    8 opcode=0x0008 elapsed_us=124.2 ret=109729424
+    9 opcode=0x0009 elapsed_us=123.4 ret=109729480
+   10 opcode=0x000A elapsed_us=125.8 ret=109729536
+   11 opcode=0x000B elapsed_us=122.6 ret=109729256
+   12 opcode=0x000C elapsed_us=159.1 ret=109729312
+   13 opcode=0x000D elapsed_us=133.8 ret=109729368
+   14 opcode=0x000E elapsed_us=130.4 ret=109729424
+   15 opcode=0x000F elapsed_us=132.8 ret=109729480
+   16 opcode=0x0010 elapsed_us=131.3 ret=109729536
+   17 opcode=0x0011 elapsed_us=126.3 ret=109729256
+   18 opcode=0x0012 elapsed_us=123.7 ret=109729312
+   19 opcode=0x0013 elapsed_us=122.3 ret=109729368
+   20 opcode=0x0014 elapsed_us=130.8 ret=109729424
+   21 opcode=0x0015 elapsed_us=124.1 ret=109729480
+   22 opcode=0x0016 elapsed_us=129.6 ret=109729536
+   23 opcode=0x0017 elapsed_us=123.2 ret=109729256
+   24 opcode=0x0018 elapsed_us=130.7 ret=109729312
+   25 opcode=0x0019 elapsed_us=133.3 ret=109729368
