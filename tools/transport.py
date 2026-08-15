@@ -14,8 +14,6 @@ across 16/16 captured packets) and *requires* 0xFFFE on what it receives.
 
 import struct
 
-from Crypto.Cipher import AES
-
 KEY_VA = 0x143A86810
 SHUFFLE_VA = 0x143A86890
 
@@ -52,6 +50,95 @@ def load_tables(exe=None):
     return key, at(SHUFFLE_VA, 256)
 
 
+# --------------------------------------------------------------------------------------
+# AES-256, in pure Python.
+#
+# Deliberately dependency-free: the probe is launched by test-one.ps1 through whichever
+# `python` is on PATH, and pycryptodome not being installed there once killed the serve
+# thread mid-test. The client then dropped the connection because the *server* had gone
+# away, which looked exactly like a rejected header. One block per packet, so speed is
+# irrelevant here.
+#
+# The S-box is generated the same way the client generates it (FUN_140c759a0): GF(2^8)
+# log/antilog with the 0x1b polynomial, then the affine transform with constant 0x63.
+# --------------------------------------------------------------------------------------
+
+
+def _build_sbox():
+    alog = [1] * 256
+    x = 1
+    for i in range(1, 256):
+        x = (x ^ ((x << 1) & 0xFF) ^ (0x1B if x & 0x80 else 0)) & 0xFF
+        alog[i] = x
+    log = [0] * 256
+    for i in range(255):
+        log[alog[i]] = i
+
+    sbox = [0] * 256
+    for i in range(256):
+        inv = 0 if i == 0 else alog[255 - log[i]]
+        acc, rot = inv, inv
+        for _ in range(4):
+            rot = ((rot << 1) | (rot >> 7)) & 0xFF
+            acc ^= rot
+        sbox[i] = acc ^ 0x63
+    return sbox
+
+
+SBOX = _build_sbox()
+
+
+def _xtime(a):
+    a <<= 1
+    return (a ^ 0x1B) & 0xFF if a & 0x100 else a
+
+
+def expand_key(key):
+    """AES-256 key schedule: Nk = 8, Nr = 14, 60 words."""
+    nk, nr = 8, 14
+    w = [list(key[4 * i : 4 * i + 4]) for i in range(nk)]
+    rcon = 1
+    for i in range(nk, 4 * (nr + 1)):
+        t = list(w[i - 1])
+        if i % nk == 0:
+            t = t[1:] + t[:1]
+            t = [SBOX[b] for b in t]
+            t[0] ^= rcon
+            rcon = _xtime(rcon)
+        elif i % nk == 4:
+            t = [SBOX[b] for b in t]
+        w.append([w[i - nk][j] ^ t[j] for j in range(4)])
+    return w
+
+
+def encrypt_block(block, w):
+    nr = 14
+    s = list(block)
+    for c in range(4):
+        for r in range(4):
+            s[4 * c + r] ^= w[c][r]
+
+    for rnd in range(1, nr + 1):
+        s = [SBOX[b] for b in s]
+        shifted = list(s)
+        for r in range(1, 4):
+            for c in range(4):
+                shifted[4 * c + r] = s[4 * ((c + r) % 4) + r]
+        s = shifted
+        if rnd != nr:
+            for c in range(4):
+                a = s[4 * c : 4 * c + 4]
+                t = a[0] ^ a[1] ^ a[2] ^ a[3]
+                s[4 * c + 0] = a[0] ^ t ^ _xtime(a[0] ^ a[1])
+                s[4 * c + 1] = a[1] ^ t ^ _xtime(a[1] ^ a[2])
+                s[4 * c + 2] = a[2] ^ t ^ _xtime(a[2] ^ a[3])
+                s[4 * c + 3] = a[3] ^ t ^ _xtime(a[3] ^ a[0])
+        for c in range(4):
+            for r in range(4):
+                s[4 * c + r] ^= w[4 * rnd + c][r]
+    return bytes(s)
+
+
 def next_iv(iv, shuffle):
     out = bytearray(b"\xf2\x53\x50\xc6")
     for i in range(4):
@@ -70,7 +157,7 @@ def next_iv(iv, shuffle):
 
 def ofb(data, iv, key):
     """AES-256-OFB, restarted at every chunk boundary (0x5B0 then 0x5B4)."""
-    aes = AES.new(key, AES.MODE_ECB)
+    w = expand_key(key)
     data = bytearray(data)
     pos, remaining, chunk = 0, len(data), 0x5B0
     while remaining > 0:
@@ -78,7 +165,7 @@ def ofb(data, iv, key):
         n = min(chunk, remaining)
         for x in range(n):
             if x % 16 == 0:
-                block = aes.encrypt(block)
+                block = encrypt_block(block, w)
             data[pos + x] ^= block[x % 16]
         pos += n
         remaining -= n

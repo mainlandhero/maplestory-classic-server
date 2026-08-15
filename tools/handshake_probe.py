@@ -375,7 +375,12 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         last_data = time.time()
         # "sweep" drives its own sends; the one-shot reply must not also fire.
         replied = reply is None or reply == "sweep"
-        cipher = None if reply is None else make_cipher(recv_iv)
+        try:
+            cipher = None if reply is None else make_cipher(recv_iv)
+        except Exception as e:  # noqa: BLE001 - must not look like a client rejection
+            log(f"[{port}] !!! PROBE ERROR building the cipher: {e!r}")
+            log(f"[{port}] !!! holding the connection open; THIS RUN PROVES NOTHING")
+            cipher, replied = None, True
         next_op = sweep_from
         next_send = 0.0
         if reply == "sweep":
@@ -461,6 +466,21 @@ def main() -> None:
         for i, (name, payload) in enumerate(variants()):
             log(f"{i:3d}  {name}  ({len(payload)} bytes)")
         return
+
+    # Preflight before anything launches the client. A tooling failure here used to kill
+    # the serve thread mid-test, closing the socket; the client then dropped because the
+    # server had vanished, which is indistinguishable from it rejecting our header. Fail
+    # loudly and early instead of burning a client run on a wrong answer.
+    if args.reply is not None:
+        try:
+            c = make_cipher(args.recv_iv)
+            build_reply("header", args.opcode, c)
+            build_reply("ping", args.opcode, c)
+        except Exception as e:  # noqa: BLE001
+            log(f"PREFLIGHT FAILED: {e!r}")
+            log("refusing to start - fix this before launching the client")
+            raise SystemExit(2)
+        log(f"reply preflight OK ({args.reply})")
 
     t = threading.Thread(
         target=serve,

@@ -98,7 +98,23 @@ Start-Process -FilePath 'python' `
     -RedirectStandardOutput $logFile `
     -RedirectStandardError (Join-Path $root 'probe.err') `
     -WindowStyle Hidden | Out-Null
-Start-Sleep -Milliseconds 800
+Start-Sleep -Milliseconds 1200
+
+# Never launch the client against a dead probe. A crashed serve thread closes the socket,
+# and the client then drops because the server vanished - which reads exactly like the
+# client rejecting our packet. That cost a full test cycle once; check instead.
+$errFile = Join-Path $root 'probe.err'
+$probeAlive = Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*handshake_probe*' }
+$errText = if (Test-Path $errFile) { (Get-Content $errFile -Raw) } else { '' }
+if ((-not $probeAlive) -or ($errText -and $errText.Trim())) {
+    Write-Host ''
+    Write-Host 'PROBE DID NOT START CLEANLY - not launching the client.' -ForegroundColor Red
+    if ($errText.Trim()) { Write-Host $errText.Trim() }
+    if (Test-Path $logFile) { Get-Content $logFile | Select-Object -Last 5 }
+    Stop-All
+    return
+}
 
 $p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
     -ArgumentList @('-NXLDEBUG', '127.0.0.1', "$Port") -PassThru
