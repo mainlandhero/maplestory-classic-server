@@ -145,8 +145,20 @@ if ($HookLog) {
     Remove-Item Env:\MAPLECW_HOOK_LOG -ErrorAction SilentlyContinue
 }
 
-$p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
-    -ArgumentList @('-NXLDEBUG', '127.0.0.1', "$Port") -PassThru
+# Launch via ProcessStartInfo rather than Start-Process. Start-Process defaults to
+# UseShellExecute = true, which does not reliably carry $env: changes into the child -
+# the hook DLL confirmed it was running but saw MAPLECW_HOOK_LOG unset. Setting
+# UseShellExecute = false makes EnvironmentVariables authoritative.
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $exe
+$psi.WorkingDirectory = $ClientDir
+$psi.Arguments = "-NXLDEBUG 127.0.0.1 $Port"
+$psi.UseShellExecute = $false
+if ($HookLog) {
+    $psi.EnvironmentVariables['MAPLECW_HOOK_LOG'] = $HookLog
+    $psi.EnvironmentVariables['GRAP_STUB_LOG'] = "$HookLog.stub"
+}
+$p = [System.Diagnostics.Process]::Start($psi)
 
 # Keep the host usable while the dialog is being read. -Normal skips this and runs the
 # client exactly as Windows would start it, in case the throttling ever looks like it is
