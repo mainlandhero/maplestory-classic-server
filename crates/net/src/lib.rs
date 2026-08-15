@@ -5,10 +5,9 @@
 //! * [`PacketWriter`] / [`PacketReader`] — packet *bodies*. These are well understood
 //!   (little-endian, `u16`-length-prefixed strings) and independent of any cipher, so
 //!   they can be built and tested now.
-//! * [`Cipher`] — the wire framing. This client's scheme is **not yet known**
-//!   (`MapleSecurePC64.dll` wraps the socket layer), so the concrete cipher is a
-//!   swappable choice. [`PlainCipher`] enables end-to-end development today;
-//!   [`MapleCipher`] is the classic scheme kept as the first hypothesis to test.
+//! * [`Cipher`] — the wire framing. [`MapleCipher`] implements this client's actual
+//!   scheme, read out of its receive path and checked against a real capture; see
+//!   `docs/transport.md`. [`PlainCipher`] stays available for tests.
 //!
 //! ```
 //! use net::{PacketWriter, PacketReader};
@@ -26,7 +25,7 @@ pub mod error;
 pub mod packet;
 pub mod session;
 
-pub use codec::{Cipher, MapleCipher, PlainCipher, HEADER_LEN, MAX_PACKET_LEN};
+pub use codec::{Cipher, Direction, MapleCipher, PlainCipher, HEADER_LEN, MAX_PACKET_LEN};
 pub use error::{NetError, Result};
 pub use packet::{PacketReader, PacketWriter};
 pub use session::{Framer, FramerState};

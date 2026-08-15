@@ -1,14 +1,16 @@
 //! Wire framing and pluggable ciphers.
 //!
-//! We do **not** yet know what `mscw` uses on the wire; `MapleSecurePC64.dll` wraps the
-//! socket layer and has not been reversed (see `research/protection-surface.md`). So the
-//! cipher sits behind [`Cipher`] and the concrete choice is a decision for later:
+//! The scheme is no longer a guess: it was read out of the client's own receive path and
+//! is documented in `docs/transport.md`. [`MapleCipher`] implements it, and
+//! `reproduces_the_captured_client_headers` checks it against a real capture.
 //!
-//! * [`PlainCipher`] — no encryption. Lets the servers, handlers, and tests be built and
-//!   exercised end-to-end against our own test client before the real scheme is known.
-//! * [`MapleCipher`] — the classic MapleStory scheme (AES in a 1460-byte OFB-like mode
-//!   plus the "shanda" byte shuffle). **A hypothesis, not a confirmed match** for this
-//!   client; it is the obvious first thing to test once we can capture real bytes.
+//! * [`MapleCipher`] — 4-byte header (`len = a ^ b`), then AES-256-OFB over the body with
+//!   the IV repeated 4x, chunked `0x5B0` then `0x5B4`, IV rolled once per packet. The
+//!   header constant differs per [`Direction`].
+//! * [`PlainCipher`] — no encryption, for tests where a cipher only obscures failures.
+//!
+//! There is **no shanda** in this client's packet path; see [`shanda`] for why the module
+//! is still here.
 
 use crate::error::{NetError, Result};
 
@@ -51,6 +53,12 @@ impl Cipher for PlainCipher {
 }
 
 /// The "shanda" byte shuffle that classic clients apply on top of AES.
+///
+/// **Not part of this client's packet path.** The receive path runs `FUN_1406e99e0`
+/// (AES only) and hands the buffer straight to the dispatcher, and applying shanda to
+/// the captured stream does not decode it either. Kept because the client -> server
+/// direction still has an unidentified transform (see `docs/transport.md`), and this is
+/// the first thing to re-test if that is ever attacked with a debugger.
 pub mod shanda {
     fn rol(v: u8, n: u32) -> u8 {
         v.rotate_left(n % 8)
@@ -120,16 +128,36 @@ pub mod shanda {
     }
 }
 
-/// Classic MapleStory cipher: AES over 1460-byte chunks, then shanda.
+/// This client's wire cipher: AES-256-OFB over the body, IV rolled once per packet.
 ///
-/// **Unverified for this client.** Kept behind [`Cipher`] so swapping it out costs
-/// nothing once `MapleSecurePC64` is understood.
+/// Verified against a real capture — see `reproduces_the_captured_client_headers`.
 pub struct MapleCipher {
     iv: [u8; 4],
-    version: u16,
-    /// Some regions negate the version in the header; kept configurable.
-    negate_version: bool,
+    /// XORed into the header's `a` field. The client uses a *different* value in each
+    /// direction, so this is set from [`Direction`] rather than from a version number.
+    header_const: u16,
     aes: Box<dyn AesEcb>,
+}
+
+/// Which way a stream flows. The client checks the two directions against different
+/// constants, so a cipher instance is only valid for one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// Packets we send. `FUN_1406e97e0` computes `(iv >> 16) ^ a` and both receive
+    /// loops drop the connection unless the result is `0xFFFE`.
+    ServerToClient,
+    /// Packets the client sends. Measured across all 16 headers of
+    /// `research/fixtures/capture-handshake-ok.log`.
+    ClientToServer,
+}
+
+impl Direction {
+    pub const fn header_const(self) -> u16 {
+        match self {
+            Direction::ServerToClient => 0xFFFE,
+            Direction::ClientToServer => 0x00DF,
+        }
+    }
 }
 
 /// Minimal AES-256 ECB block operation, so the cipher can be tested with a stub.
@@ -156,15 +184,27 @@ pub const CLASSIC_AES_KEY: [u8; 32] = [
 ];
 
 impl MapleCipher {
-    pub fn new(iv: [u8; 4], version: u16, negate_version: bool) -> Self {
+    pub fn new(iv: [u8; 4], dir: Direction) -> Self {
         use aes::cipher::KeyInit;
         let key = aes::Aes256::new_from_slice(&CLASSIC_AES_KEY).expect("32-byte key");
-        Self { iv, version, negate_version, aes: Box::new(RealAes { key }) }
+        Self { iv, header_const: dir.header_const(), aes: Box::new(RealAes { key }) }
     }
 
     /// Inject a different AES implementation (tests use a stub).
-    pub fn with_aes(iv: [u8; 4], version: u16, negate_version: bool, aes: Box<dyn AesEcb>) -> Self {
-        Self { iv, version, negate_version, aes }
+    pub fn with_aes(iv: [u8; 4], dir: Direction, aes: Box<dyn AesEcb>) -> Self {
+        Self { iv, header_const: dir.header_const(), aes }
+    }
+
+    /// The header the client will accept for a body of `len`, without rolling the IV.
+    ///
+    /// Used for framing-only probes, where a header is sent and the body withheld.
+    pub fn peek_header(&self, len: u16) -> [u8; HEADER_LEN] {
+        let a = u16::from_le_bytes([self.iv[2], self.iv[3]]) ^ self.header_const;
+        let b = a ^ len;
+        let mut header = [0u8; HEADER_LEN];
+        header[..2].copy_from_slice(&a.to_le_bytes());
+        header[2..].copy_from_slice(&b.to_le_bytes());
+        header
     }
 
     pub fn iv(&self) -> [u8; 4] {
@@ -199,65 +239,53 @@ impl MapleCipher {
     /// need separate cipher instances.
     fn next_iv(&mut self) {
         const SHUFFLE: [u8; 256] = [
-            0xEC, 0x3F, 0x77, 0xA4, 0x45, 0xD0, 0x71, 0xBF, 0xB7, 0x98, 0x20, 0xFC, 0x4B, 0xE9,
-            0xB3, 0xE1, 0x5C, 0x22, 0xF7, 0x0C, 0x44, 0x1B, 0x81, 0xBD, 0x63, 0x8D, 0xD4, 0xC3,
-            0xF2, 0x10, 0x19, 0xE0, 0xFB, 0xA1, 0x6E, 0x66, 0xEA, 0xAE, 0xD6, 0xCE, 0x06, 0x18,
-            0x4E, 0xEB, 0x78, 0x95, 0xDB, 0xBA, 0xB6, 0x42, 0x7A, 0x2A, 0x83, 0x0B, 0x54, 0x67,
-            0x6D, 0xE8, 0x65, 0xE7, 0x2F, 0x07, 0xF3, 0xAA, 0x27, 0x7B, 0x85, 0xB0, 0x26, 0xFD,
-            0x8B, 0xA9, 0xFA, 0xBE, 0xA8, 0xD7, 0xCB, 0xCC, 0x92, 0xDA, 0xF9, 0x93, 0x60, 0x2D,
-            0xDD, 0xD2, 0xA2, 0x9B, 0x39, 0x5F, 0x82, 0x21, 0x4C, 0x69, 0xF8, 0x31, 0x87, 0xEE,
-            0x8E, 0xAD, 0x8C, 0x6A, 0xBC, 0xB5, 0x6B, 0x59, 0x13, 0xF1, 0x04, 0x00, 0xF6, 0x5A,
-            0x35, 0x79, 0x48, 0x8F, 0x15, 0xCD, 0x97, 0x57, 0x12, 0x3E, 0x37, 0xFF, 0x9D, 0x4F,
-            0x51, 0xF5, 0xA3, 0x70, 0xBB, 0x14, 0x75, 0xC2, 0xB8, 0x72, 0xC0, 0xED, 0x5D, 0x64,
-            0x33, 0x46, 0x01, 0x5E, 0x09, 0x16, 0x0D, 0x3D, 0xE2, 0x28, 0x2C, 0x1E, 0x2B, 0x11,
-            0x53, 0x02, 0xD1, 0xE5, 0x38, 0x56, 0xF0, 0x89, 0xBA, 0x4D, 0xE4, 0xC1, 0x9F, 0x25,
-            0x0A, 0x36, 0x91, 0x0F, 0x0E, 0x03, 0xD5, 0x40, 0x9E, 0x88, 0x1D, 0xC7, 0xE6, 0x30,
-            0x9A, 0xAB, 0xD3, 0x62, 0xDC, 0x74, 0x1F, 0x24, 0x2E, 0x50, 0x76, 0xCF, 0x84, 0x3A,
-            0x86, 0x94, 0xEF, 0x17, 0xC4, 0x7C, 0x1C, 0xF4, 0x7D, 0x08, 0x6C, 0x73, 0x3C, 0xB2,
-            0x1A, 0x49, 0x99, 0xDE, 0x32, 0x9C, 0x43, 0x23, 0xB4, 0xA6, 0x58, 0x61, 0xCA, 0xC8,
-            0x52, 0xC5, 0xA7, 0xC9, 0x3B, 0x68, 0x5B, 0x47, 0xD8, 0x41, 0xA0, 0x34, 0x55, 0xAC,
-            0xB1, 0xD9, 0xB9, 0x29, 0xDF, 0x05, 0xC6, 0x4A, 0x8A, 0xA5, 0x7E, 0x96, 0x6F, 0x7F,
-            0xAF, 0x90, 0x80, 0x5B,
+        0xEC, 0x3F, 0x77, 0xA4, 0x45, 0xD0, 0x71, 0xBF, 0xB7, 0x98, 0x20, 0xFC,
+        0x4B, 0xE9, 0xB3, 0xE1, 0x5C, 0x22, 0xF7, 0x0C, 0x44, 0x1B, 0x81, 0xBD,
+        0x63, 0x8D, 0xD4, 0xC3, 0xF2, 0x10, 0x19, 0xE0, 0xFB, 0xA1, 0x6E, 0x66,
+        0xEA, 0xAE, 0xD6, 0xCE, 0x06, 0x18, 0x4E, 0xEB, 0x78, 0x95, 0xDB, 0xBA,
+        0xB6, 0x42, 0x7A, 0x2A, 0x83, 0x0B, 0x54, 0x67, 0x6D, 0xE8, 0x65, 0xE7,
+        0x2F, 0x07, 0xF3, 0xAA, 0x27, 0x7B, 0x85, 0xB0, 0x26, 0xFD, 0x8B, 0xA9,
+        0xFA, 0xBE, 0xA8, 0xD7, 0xCB, 0xCC, 0x92, 0xDA, 0xF9, 0x93, 0x60, 0x2D,
+        0xDD, 0xD2, 0xA2, 0x9B, 0x39, 0x5F, 0x82, 0x21, 0x4C, 0x69, 0xF8, 0x31,
+        0x87, 0xEE, 0x8E, 0xAD, 0x8C, 0x6A, 0xBC, 0xB5, 0x6B, 0x59, 0x13, 0xF1,
+        0x04, 0x00, 0xF6, 0x5A, 0x35, 0x79, 0x48, 0x8F, 0x15, 0xCD, 0x97, 0x57,
+        0x12, 0x3E, 0x37, 0xFF, 0x9D, 0x4F, 0x51, 0xF5, 0xA3, 0x70, 0xBB, 0x14,
+        0x75, 0xC2, 0xB8, 0x72, 0xC0, 0xED, 0x7D, 0x68, 0xC9, 0x2E, 0x0D, 0x62,
+        0x46, 0x17, 0x11, 0x4D, 0x6C, 0xC4, 0x7E, 0x53, 0xC1, 0x25, 0xC7, 0x9A,
+        0x1C, 0x88, 0x58, 0x2C, 0x89, 0xDC, 0x02, 0x64, 0x40, 0x01, 0x5D, 0x38,
+        0xA5, 0xE2, 0xAF, 0x55, 0xD5, 0xEF, 0x1A, 0x7C, 0xA7, 0x5B, 0xA6, 0x6F,
+        0x86, 0x9F, 0x73, 0xE6, 0x0A, 0xDE, 0x2B, 0x99, 0x4A, 0x47, 0x9C, 0xDF,
+        0x09, 0x76, 0x9E, 0x30, 0x0E, 0xE4, 0xB2, 0x94, 0xA0, 0x3B, 0x34, 0x1D,
+        0x28, 0x0F, 0x36, 0xE3, 0x23, 0xB4, 0x03, 0xD8, 0x90, 0xC8, 0x3C, 0xFE,
+        0x5E, 0x32, 0x24, 0x50, 0x1F, 0x3A, 0x43, 0x8A, 0x96, 0x41, 0x74, 0xAC,
+        0x52, 0x33, 0xF0, 0xD9, 0x29, 0x80, 0xB1, 0x16, 0xD3, 0xAB, 0x91, 0xB9,
+        0x84, 0x7F, 0x61, 0x1E, 0xCF, 0xC5, 0xD1, 0x56, 0x3D, 0xCA, 0xF4, 0x05,
+        0xC6, 0xE5, 0x08, 0x49,
         ];
 
         let mut out: [u8; 4] = [0xF2, 0x53, 0x50, 0xC6];
         for &b in self.iv.iter() {
-            let a = out[1];
             let t = SHUFFLE[b as usize];
             out[0] = out[0].wrapping_add(SHUFFLE[out[1] as usize].wrapping_sub(b));
             out[1] = out[1].wrapping_sub(out[2] ^ t);
             out[2] ^= SHUFFLE[out[3] as usize].wrapping_add(b);
-            out[3] = out[3].wrapping_sub(a.wrapping_sub(t));
+            // Note this consumes the *updated* out[0], not the value it had on entry.
+            out[3] = out[3].wrapping_sub(out[0].wrapping_sub(t));
 
             let merged = u32::from_le_bytes(out).rotate_left(3);
             out = merged.to_le_bytes();
         }
         self.iv = out;
     }
-
-    fn version_field(&self) -> u16 {
-        if self.negate_version {
-            !self.version
-        } else {
-            self.version
-        }
-    }
 }
 
 impl Cipher for MapleCipher {
     fn encrypt(&mut self, body: &mut [u8]) -> [u8; HEADER_LEN] {
-        let len = body.len() as u16;
-        let v = self.version_field();
-        let a = u16::from_le_bytes([self.iv[2], self.iv[3]]) ^ v;
-        let b = a ^ len;
-
-        shanda::encrypt(body);
+        // No shanda: the client's receive path runs FUN_1406e99e0 (AES only) and hands
+        // the buffer straight to the dispatcher. See docs/transport.md.
+        let header = self.peek_header(body.len() as u16);
         self.transform(body);
         self.next_iv();
-
-        let mut header = [0u8; HEADER_LEN];
-        header[..2].copy_from_slice(&a.to_le_bytes());
-        header[2..].copy_from_slice(&b.to_le_bytes());
         header
     }
 
@@ -274,7 +302,6 @@ impl Cipher for MapleCipher {
 
     fn decrypt(&mut self, body: &mut [u8]) -> Result<()> {
         self.transform(body);
-        shanda::decrypt(body);
         self.next_iv();
         Ok(())
     }
@@ -315,11 +342,65 @@ mod tests {
         fn encrypt_block(&self, _b: &mut [u8; 16]) {}
     }
 
+    /// The headers the real client actually put on the wire, from
+    /// `research/fixtures/capture-handshake-ok.log`, with the payload length of each.
+    ///
+    /// This is the load-bearing test for the whole transport: reproducing all sixteen
+    /// byte-exactly pins the header constant, the IV seed, and the shuffle table at once.
+    /// Any of the three being wrong breaks it, usually from the second packet on.
+    const CAPTURED: [([u8; 4], u16); 16] = [
+        ([0xEF, 0x52, 0xC0, 0x52], 47),
+        ([0x6B, 0xFB, 0x58, 0xFB], 51),
+        ([0x37, 0xDD, 0x3F, 0xDD], 8),
+        ([0x5B, 0xE3, 0x51, 0xE3], 10),
+        ([0x9C, 0x9A, 0x9A, 0x9A], 6),
+        ([0xAA, 0x99, 0xAC, 0x99], 6),
+        ([0x18, 0x3D, 0x1E, 0x3D], 6),
+        ([0x76, 0x23, 0x70, 0x23], 6),
+        ([0x33, 0x84, 0x35, 0x84], 6),
+        ([0x00, 0x8D, 0x06, 0x8D], 6),
+        ([0x14, 0x4C, 0x12, 0x4C], 6),
+        ([0x9F, 0xC4, 0x99, 0xC4], 6),
+        ([0x9C, 0xFA, 0x9A, 0xFA], 6),
+        ([0x27, 0x71, 0x21, 0x71], 6),
+        ([0xEE, 0x23, 0xE8, 0x23], 6),
+        ([0x76, 0xE8, 0x46, 0xE8], 48),
+    ];
+
+    #[test]
+    fn reproduces_the_captured_client_headers() {
+        // The J field we sent in the greeting; the client sends on this chain.
+        let mut c = MapleCipher::new(0x5230_7801u32.to_le_bytes(), Direction::ClientToServer);
+        for (n, (expected, len)) in CAPTURED.iter().enumerate() {
+            let got = c.peek_header(*len);
+            assert_eq!(
+                got, *expected,
+                "packet {n}: got {got:02X?}, client sent {expected:02X?}"
+            );
+            assert_eq!(c.decode_len(got).unwrap(), *len as usize);
+            c.next_iv();
+        }
+    }
+
+    #[test]
+    fn server_headers_satisfy_the_clients_check() {
+        // FUN_1406e97e0 returns (iv >> 16) ^ a and the caller requires 0xFFFE.
+        let mut c = MapleCipher::new(0x5230_7802u32.to_le_bytes(), Direction::ServerToClient);
+        for len in [2u16, 6, 47, 1000] {
+            let h = c.peek_header(len);
+            let a = u16::from_le_bytes([h[0], h[1]]);
+            let iv_hi = u16::from_le_bytes([c.iv()[2], c.iv()[3]]);
+            assert_eq!(iv_hi ^ a, 0xFFFE, "client would drop us at len {len}");
+            assert_eq!(c.decode_len(h).unwrap(), len as usize);
+            c.next_iv();
+        }
+    }
+
     #[test]
     fn maple_cipher_round_trips_across_packets() {
         let iv = [0x12, 0x34, 0x56, 0x78];
-        let mut send = MapleCipher::with_aes(iv, 779, false, Box::new(NoopAes));
-        let mut recv = MapleCipher::with_aes(iv, 779, false, Box::new(NoopAes));
+        let mut send = MapleCipher::with_aes(iv, Direction::ServerToClient, Box::new(NoopAes));
+        let mut recv = MapleCipher::with_aes(iv, Direction::ServerToClient, Box::new(NoopAes));
 
         // Several packets in a row: the IV rolls, so both sides must stay in step.
         for n in 1usize..6 {
@@ -346,7 +427,7 @@ mod tests {
 
     #[test]
     fn absurd_header_is_rejected() {
-        let c = MapleCipher::new([1, 2, 3, 4], 779, false);
+        let c = MapleCipher::new([1, 2, 3, 4], Direction::ServerToClient);
         // a ^ b decodes to 0, which is never a valid body length.
         assert!(c.decode_len([0xAA, 0xBB, 0xAA, 0xBB]).is_err());
     }
