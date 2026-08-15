@@ -111,17 +111,16 @@ client, so it should not hold up the login server.
    2-byte packet makes any handler that reads a body underflow, which can end the sweep
    on its first *handled* opcode.
 
-   The
-   **inbound** opcode space is the one thing we cannot recover statically — the
+   The **inbound** opcode space is the one thing we cannot recover statically — the
    dispatcher lives in `.themida`, which has no file bytes — so it has to come from the
    client. The sweep logs one timestamped line per opcode, so the last line printed
    before a disconnect or a UI change names the opcode responsible:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal -Reply sweep -SweepFrom 0x0000 -SweepTo 0x0200
+   powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal -Reply sweep -SweepFrom 0x0000 -SweepTo 0x0200 -Pad 32
    ```
 
-4. Then implement the login server. Note the **game/channel connection uses mode 2**, a
+3. Then implement the login server. Note the **game/channel connection uses mode 2**, a
    plain `byte - iv` subtract rather than AES, so it is far cheaper to talk to.
 
 The **outbound** opcode map is already recovered: 657 distinct opcodes in
