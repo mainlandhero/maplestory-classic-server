@@ -311,7 +311,14 @@ def variants():
     )
 
 
-def build_reply(kind: str, opcode: int, client_recv_iv: int):
+def make_cipher(client_recv_iv: int):
+    import transport
+
+    key, shuffle = transport.load_tables()
+    return transport.ServerCipher(client_recv_iv, key, shuffle)
+
+
+def build_reply(kind: str, opcode: int, cipher):
     """A server->client frame, built with the rules read out of the client's recv path.
 
     "header" is the sharpest transport test available: a valid header that declares a
@@ -321,18 +328,17 @@ def build_reply(kind: str, opcode: int, client_recv_iv: int):
     """
     import transport
 
-    key, shuffle = transport.load_tables()
-    cipher = transport.ServerCipher(client_recv_iv, key, shuffle)
     if kind == "header":
         return cipher.peek_header(100), "valid 4-byte header declaring 100 bytes, body withheld"
-    if kind == "ping":
+    if kind in ("ping", "sweep"):
         frame = cipher.encode(transport.packet(opcode))
-        return frame, f"complete encrypted packet, opcode 0x{opcode:04X}"
+        return frame, f"opcode 0x{opcode:04X}"
     raise SystemExit(f"unknown reply kind: {kind}")
 
 
 def serve(port: int, only: int | None, hold: float, reply: str | None = None,
-          opcode: int = 0xFFFF, recv_iv: int = 0x52307802) -> None:
+          opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
+          sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -367,12 +373,30 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         total = b""
         deadline = time.time() + hold
         last_data = time.time()
-        replied = reply is None
+        # "sweep" drives its own sends; the one-shot reply must not also fire.
+        replied = reply is None or reply == "sweep"
+        cipher = None if reply is None else make_cipher(recv_iv)
+        next_op = sweep_from
+        next_send = 0.0
+        if reply == "sweep":
+            conn.settimeout(0.05)  # keep the loop responsive between sweep sends
         try:
             while time.time() < deadline:
                 # Let the client finish its opening burst, then answer into the quiet.
-                if not replied and total and time.time() - last_data > 2.0:
-                    frame, what = build_reply(reply, opcode, recv_iv)
+                ready = total and time.time() - last_data > 2.0
+                if reply == "sweep" and ready and time.time() >= next_send:
+                    if next_op >= sweep_to:
+                        log(f"[{port}] sweep finished at 0x{sweep_to:04X}")
+                        break
+                    frame, what = build_reply(reply, next_op, cipher)
+                    # One line per opcode, timestamped: if the client dies or the UI
+                    # changes, the last line printed says exactly where it happened.
+                    log(f"[{port}] {time.strftime('%H:%M:%S')} >>> {what}")
+                    conn.sendall(frame)
+                    next_op += 1
+                    next_send = time.time() + sweep_delay
+                elif not replied and ready:
+                    frame, what = build_reply(reply, opcode, cipher)
                     log(f"[{port}] >>> REPLY: {what}  ({len(frame)} bytes)")
                     log(hexdump(frame))
                     conn.sendall(frame)
@@ -417,10 +441,13 @@ def main() -> None:
     ap.add_argument("--list", action="store_true", help="print the variants and exit")
     ap.add_argument(
         "--reply",
-        choices=("header", "ping"),
+        choices=("header", "ping", "sweep"),
         default=None,
         help="answer the client once its opening burst goes quiet",
     )
+    ap.add_argument("--sweep-from", type=lambda s: int(s, 0), default=0)
+    ap.add_argument("--sweep-to", type=lambda s: int(s, 0), default=0x1000)
+    ap.add_argument("--sweep-delay", type=float, default=0.15)
     ap.add_argument("--opcode", type=lambda s: int(s, 0), default=0xFFFF)
     ap.add_argument(
         "--recv-iv",
@@ -437,7 +464,8 @@ def main() -> None:
 
     t = threading.Thread(
         target=serve,
-        args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv),
+        args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv,
+              args.sweep_from, args.sweep_to, args.sweep_delay),
         daemon=True,
     )
     t.start()

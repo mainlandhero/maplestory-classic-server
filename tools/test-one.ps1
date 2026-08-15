@@ -23,9 +23,12 @@ param(
     [switch]$Stop,
     [switch]$List,
     [switch]$Normal,
-    [ValidateSet('header', 'ping')]
+    [ValidateSet('header', 'ping', 'sweep')]
     [string]$Reply,
     [string]$Opcode = '0xFFFF',
+    [string]$SweepFrom = '0x0000',
+    [string]$SweepTo = '0x1000',
+    [double]$SweepDelay = 0.15,
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -80,7 +83,13 @@ Write-Host "variant $Variant :$name"
 $probeArgs = @('-u', $probe, '--port', "$Port", '--only', "$Variant")
 if ($Reply) {
     $probeArgs += @('--reply', $Reply, '--opcode', $Opcode)
-    Write-Host "will answer the client with: $Reply"
+    if ($Reply -eq 'sweep') {
+        $probeArgs += @('--sweep-from', $SweepFrom, '--sweep-to', $SweepTo,
+                        '--sweep-delay', "$SweepDelay")
+        Write-Host "will sweep opcodes $SweepFrom..$SweepTo at ${SweepDelay}s each"
+    } else {
+        Write-Host "will answer the client with: $Reply"
+    }
 }
 
 Start-Process -FilePath 'python' `

@@ -127,14 +127,24 @@ Scored without assuming an opcode — real MapleStory plaintext is zero-rich, so
 packet should show several `00` bytes. Across 1296 trials the mean was 0.22 zeros and the
 best 2, i.e. indistinguishable from chance.
 
-**Why: the send path is obfuscated.** `FUN_1415d3990` is the send entry point (called by
-both `FUN_1415d5b40` for opcode `0x70` and `FUN_1415d5c20` for `0x71`), and Ghidra hits
-`halt_baddata()` partway through it. `FUN_1415d60e0`, the step that runs immediately after
-decryption in both receive loops, is a 22-byte stub that is *entirely* `halt_baddata()`.
-Themida has protected exactly the two functions that would show the extra transform.
+**Why: the code is not in the file.** `FUN_1415d60e0` — the step that runs immediately
+after decryption in both receive loops — is a 22-byte stub that tail-jumps out:
 
-So the paradox is resolved: every primitive we can read is stock, and the transform that
-makes the capture opaque lives in code that cannot be read statically.
+```
+48 89 54 24 10       mov  [rsp+0x10], rdx
+48 89 4c 24 08       mov  [rsp+0x08], rcx
+48 81 ec 88 00 00 00 sub  rsp, 0x88
+e9 73 74 50 03       jmp  +0x03507473        -> 0x144ADD569
+```
+
+and `0x144ADD569` lands in the **`.themida` section, which has no file bytes at all** — it
+is materialised only at runtime. `FUN_1415d3990`, the send entry point (called by both
+`FUN_1415d5b40` for `0x70` and `FUN_1415d5c20` for `0x71`), likewise hits `halt_baddata()`
+partway through.
+
+So the paradox is resolved, and definitively: every primitive we can read is stock, and
+the packet dispatcher plus the outbound transform simply do not exist on disk. No amount
+of further decompiling will recover them.
 
 ### Next
 
@@ -144,3 +154,39 @@ makes the capture opaque lives in code that cannot be read statically.
 2. If the client -> server direction is needed later, it will take dynamic analysis
    (breakpoint after `FUN_1406e99e0` and read the buffer) rather than more decompiling.
 3. Remember the **game/channel connection uses mode 2**, so none of this AES applies there.
+
+## The client's outbound opcode map
+
+`tools/ghidra_scripts/DumpOpcodes.java` enumerates every call to the packet writer
+`FUN_1406ed520(buf, opcode)`, which names one client -> server opcode per call site.
+**1881 of 1894 call sites resolved, giving 657 distinct opcodes** from `0x0000` to `0x0FA0`
+(`research/msexe-send-opcodes.txt`). This is the outbound half of the protocol, recovered
+without decrypting anything.
+
+The connection module (`FUN_1415d*`) sends `0x70`, `0x71`, `0x72`, `0x7D`, `0x8F`-`0x91`,
+`0x95`, `0x9B`-`0x9D`, `0xA1`, `0xA7`, `0xB5`, `0xB7`, `0xBE`, `0xBF`, `0xC3`, `0x427` and
+`0x42B`. Two things worth noting:
+
+- the handshake handler `FUN_1415d10e0` itself sends `0x7D`, `0xA1` and `0xB5` in its tail,
+  so some of the captured 16 packets come from the handshake, not from the `0x70`/`0x71`
+  senders;
+- `FUN_1415d9cd0` builds **no** packet — it raises event `0x3f0` via
+  `FUN_140319730(conn+0xf8, ..., 0x3f0)`. That closes the old question of whether it sends
+  something before `0x70`.
+
+The **inbound** opcode space is still unknown, because the dispatcher is the `.themida`
+function above. Hence the sweep below.
+
+## Testing against the client
+
+The client is the only oracle available, so `handshake_probe.py` can answer it:
+
+| `--reply` | What it sends | What it tells us |
+|---|---|---|
+| `header` | a valid header declaring 100 bytes, body withheld | framing and IV only — nothing is dispatched, so an unknown opcode cannot muddy the result |
+| `ping` | one complete encrypted packet | whether a full packet is accepted |
+| `sweep` | every opcode in a range, one per `--sweep-delay` | which inbound opcode the client reacts to |
+
+The sweep logs one timestamped line per opcode, so if the client disconnects or the UI
+changes, the last line printed says exactly where. Cipher state is carried across the
+whole sweep, so the IV stays in step with the client's.
