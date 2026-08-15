@@ -444,9 +444,34 @@ client runs on. Three things follow:
 3. The `ret` value cycles through exactly **six** addresses 56 bytes apart, which looks
    like a six-entry buffer pool.
 
-> **Correction.** A first reading of this log concluded the client dies after ~25 packets
-> and that sweeping was therefore capped. That was wrong: the log had been read while a
-> run was still in progress, and the hook DLL *appends across runs*, so two runs had
-> concatenated into what looked like one. `test-one.ps1` now clears
-> `client-patched/maplecw-hook.log` before each run. Treat any packet ceiling as unproven
-> until a run is confirmed finished.
+> **Correction, then confirmation.** A first reading concluded a ~25-packet ceiling from a
+> log that was still being written and had two runs concatenated (the DLL appends).
+> `test-one.ps1` now clears `client-patched/maplecw-hook.log` per run. A clean re-test then
+> established the ceiling properly.
+
+### The ceiling is real: 26 packets, and it is a leak not a rate limit
+
+| Run | Spacing | Packets accepted | Last opcode |
+|---|---|---|---|
+| fast | 0.2 s | **26** | `0x0019` |
+| slow | 3.0 s | **26** | `0x0019` |
+
+Fifteen times the spacing, identical count. So the client is not being overrun — something
+is consumed per packet and never returned. The dispatcher's return value cycling through
+six addresses 56 bytes apart says that something is a **six-entry buffer pool**; unhandled
+packets evidently never release their buffer.
+
+**This retires sweeping as a search technique.** At 26 opcodes per client launch, covering
+the ~4000-opcode space would take about 150 runs. No amount of pacing helps.
+
+Timing gives nothing either: across `0x0000`-`0x0019` the spread is 102-148 us, median 131,
+with no value even twice the median. Either none of that range has a handler, or ~130 us is
+fixed dispatcher overhead that swamps the difference.
+
+### Where to go instead
+
+The hook proves arbitrary code can run inside the client, and that is the lever. Rather
+than probing opcodes from outside, identify the function behind the login-screen
+transition — handler *functions* are ordinary code, only the dispatch is virtualised — then
+scan process memory for its address. Its slot in the dispatch table gives the opcode
+directly, with no guessing and no per-run packet budget.
