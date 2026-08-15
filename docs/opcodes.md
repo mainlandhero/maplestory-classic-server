@@ -143,3 +143,42 @@ proceed to the login screen.
 
 The `0x7D` path, which sends a 16-byte blob from `DAT_143262960`, is **game-connection
 only** and never runs for us. Worth knowing so it is not chased.
+
+## 0x8F / 0x90 / 0x91 are log uploads — and they explain the noisy captures
+
+All three builders are identical bar their source, and the source is a **file path**
+(`FUN_142e56b40`, `FUN_142e56bc0`, `FUN_142c4ad20` each return an MSVC `std::string`).
+`FUN_1415ddd10(buf, path, 0x2000)` then:
+
+```c
+thunk_FUN_1408e8c70(local_68, param_2, 3, 0x80, 1, 0x80000000, 0, 0);  // CreateFile,
+                                                                       // OPEN_EXISTING,
+                                                                       // GENERIC_READ
+uVar1 = FUN_1401bd210(local_68);                  // file size
+if ((uVar1 != 0) && (uVar1 < param_3)) { ... }    // read it, if under 0x2000
+local_a8 = (*DAT_143ad55c0)(param_2);             // delete the file
+```
+
+and the packet is `opcode + u32 length + that many bytes` (`FUN_140a00790` reads the length
+stored at `*p - 8`; `FUN_1415e2f80` returns the pointer). Each is skipped entirely unless
+`FUN_1415e3fd0` says the buffer is non-empty.
+
+So the client **reads up to 8 KB from three files, uploads them, and deletes them**. These
+are log uploads.
+
+Two consequences:
+
+1. **This is the confounder** that made two sweeps look like they had drawn replies. Log
+   size varies with whatever the previous session left behind — the client's 4th packet
+   (chain position 3, header `a=0xE35B` every run) was 10 bytes in one run and **2764** in
+   another, and the whole opening burst ranged 294 to 3393 bytes. Repeatedly killing the
+   client with `taskkill` is what grows them. It is self-limiting: the files are deleted
+   once uploaded, which is why the 3393-byte run was followed by a 294-byte one.
+2. **They need no acknowledgement.** An earlier hypothesis here — that `0x8F`-`0x91` were
+   integrity reports the server must ack before the login screen appears — is wrong. They
+   are fire-and-forget diagnostics.
+
+That leaves `0x70` (version) and `0x71` (environment) as what the client is plausibly
+waiting on a response to. The reply opcode cannot be recovered statically: the only
+readable callers of the handshake handler are its own disconnect path (`FUN_1415d33c0`) and
+an unanalysed site at `142c8d6cd`, and the dispatcher is in `.themida`.
