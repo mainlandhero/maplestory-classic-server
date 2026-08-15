@@ -45,104 +45,78 @@ It connects to `127.0.0.1:8484`, and GameGuard never loads.
   times now.
 - The client cannot be killed with `Stop-Process`; use `taskkill /F`.
 
-## The open problem
+## Transport: SOLVED IN BOTH DIRECTIONS
 
-**The handshake is solved.** The client accepts our greeting with no error dialog and
-proceeds to a white window, waiting for a login server that does not exist yet. It sent
-294 bytes in 16 packets — captured in `research/fixtures/capture-handshake-ok.log`.
+**The handshake is solved.** `FUN_1415d10e0` line 606 rejects the connection unless fields
+`G == 1` **and** `H == 1`, raising the *same* `0x22000007` "client is outdated" error as a
+version mismatch, unconditionally — which is why every early version sweep looked
+identical. Full table in `docs/handshake.md`.
 
-The gate that had been hiding: `FUN_1415d10e0` line 606 rejects the connection unless
-fields `G == 1` **and** `H == 1`, raising the *same* `0x22000007` "client is outdated"
-error as a version mismatch. It runs unconditionally, so it failed every probe we ever
-sent — the version sweep never got a chance to matter. Full table in `docs/handshake.md`.
+**The packet transport is solved**, and the client both accepts our frames and has its own
+stream fully decoded. See `docs/transport.md`.
 
-**Transport is decoded** (`docs/transport.md`): classic 4-byte header with
-`length = LOWORD ^ HIWORD`, `a = ((iv[3]<<8)|iv[2]) ^ 0x00DF`, and the stock IV shuffle.
-Seeding the chain with the `J` we sent predicts **16/16 observed headers exactly**.
+```
+len     = a ^ b                     # two u16 LE; no byte-swap, unlike classic MapleStory
+a       = ((iv >> 16) & 0xFFFF) ^ K # K = 0xFFFE for packets we send, 0x00DF for the client's
+payload = AES-256-OFB(key, iv repeated 4x)   # chunks 0x5B0 then 0x5B4
+iv       -> stock shuffle table at 0x143A86890, rolled once per packet
+```
 
-### Transport is SOLVED IN BOTH DIRECTIONS
+Our chain seeds from `K`, the **second** u32 of the greeting (`conn+0xec`); the client
+transmits on `J`, the first (`conn+0xe8`). Lengths `>= 0xFF00` use an 8-byte header.
 
-The last blocker was the AES key. The table at `0x143A86810` holds the stock MapleStory key
-**on disk and is a decoy** — the client overwrites the low byte of all 32 dwords at startup.
-Only that table; the IV shuffle table beside it is untouched, which is exactly why framing,
-the header constant and the IV chain were provably right while everything AES-shaped failed
-in *both* directions. Real key (`tools/dump_runtime.py`, stable across sessions):
+### The AES key is a decoy on disk — do not "fix" it
+
+The table at `0x143A86810` holds the **stock** MapleStory key in the file, and the client
+overwrites the low byte of all 32 dwords at startup. Only that table — the shuffle table
+beside it is untouched, which is exactly why framing, the header constant and the IV chain
+were provably correct while everything AES-shaped failed in *both* directions at once.
 
 ```
 0f 00 00 00  1b 00 00 00  c5 00 00 00  46 00 00 00
 f3 00 00 00  be 00 00 00  ff 00 00 00  75 00 00 00
 ```
 
-**Do not "correct" this back to the stock key** — a regression test guards it.
+Read with `tools/dump_runtime.py` (read-only, needs an elevated shell), stable across
+sessions, so it is a build constant. `the_disk_key_is_a_decoy_and_does_not_decrypt` guards
+against reverting it.
 
-The probe now decrypts the client's stream live and logs it as `opcode + fields`.
-All sweep results predate this and are void: the client never saw an opcode we intended.
+With it, every captured packet matches its decompiled builder field for field — packet 1 is
+`70 00 02 64 00 00 00`, exactly `FUN_1415d5b40`'s `u8 2, u32 100`.
 
-### Server → client (previously)
+### What the client sends, and what it waits for
 
-**2026-08-15: the client accepted a frame we built and stayed connected.** A
-`--reply header` run (valid header, body withheld, so nothing is dispatched) did not drop
-the connection. That validates the header rule, the `0xFFFE` constant, the `K` IV seed and
-the shuffle table in one shot. We can now talk to the client.
+Login connection startup, read from the handshake tail (`conn+0x48 != 0` selects it):
+**`0x70` version, `0x71` environment, `0x8F`/`0x90`/`0x91` log uploads, optional `0xA1`** —
+then the handler *returns*. The hang is in the main loop, waiting on the socket. The eleven
+6-byte packets are `0x00A6` carrying an incrementing id.
 
+`0x8F`-`0x91` read a file up to 8 KB, upload it and delete it; they need no reply, and they
+are why opening bursts varied 294 to 3393 bytes between runs.
 
-`tools/transport.py` builds packets the client will accept, and reproduces **all 16
-captured client headers byte-exactly**:
+### All earlier sweep results are void
 
-```
-a = ((iv >> 16) & 0xFFFF) ^ 0xFFFE      # 0xFFFE is hardcoded in the client
-b = a ^ length                          # no byte-swap, unlike classic MapleStory
-payload = AES-256-OFB(stock key, iv repeated 4x)
-```
+Every sweep predates the key fix, so the client never saw an opcode we intended, and the
+scattered exits at `0x0023`, `~0x01DC`, `~0x01F1`, `~0x03C5` were random garbage opcodes
+hitting a disconnect handler — none reproduced, and `0x0023` sent alone did nothing.
 
-on the `conn+0xec` chain (the **second** u32 of the greeting, `K`), evolving once per
-packet. Lengths `>= 0xFF00` use an 8-byte header with a 32-bit length.
+Note the trap that hid this: **acceptance only proves the header**. A bad payload decrypts
+to a random opcode and is silently ignored, not rejected.
 
-**The AES key is the stock one.** `13 00 00 00 08 00 00 00 06 00 00 00 B4 …` — eight key
-*words* at a stride of 4 dwords from `0x143A86810`; the 24 dwords interleaved between them
-are decoys. `decrypt_capture.py` used to fold the decoys in, which silently invalidated
-every sweep ever run against it. Don't reintroduce that.
+### Next steps
 
-### The open problem — and why it is not blocking
-
-**Client → server payloads still do not decrypt**, now with the correct key and after
-re-running every sweep (key forms, both IV chains × 24 positions, keystream alignment 0-8,
-Shanda, mode 2). Scored on zero-richness rather than a guessed opcode: mean 0.22 zeros
-over 1296 trials, best 2 — pure chance.
-
-The reason is now known. `FUN_1415d3990` (the send entry point, called by both `0x70` and
-`0x71` senders) hits `halt_baddata()` partway through, and `FUN_1415d60e0` — the step run
-immediately after decryption in both receive loops — is a 22-byte stub that is *entirely*
-`halt_baddata()`. **Themida has obfuscated exactly the two functions that would show the
-extra transform.** Every primitive we can read is stock; more decompiling will not help.
-
-Reading the client's traffic would take dynamic analysis. It is not needed to drive the
-client, so it should not hold up the login server.
-
-### Next steps, in order
-
-1. ~~Validate the send direction against the client.~~ **Done — confirmed 2026-08-15.**
-2. `-Reply sweep` to find the inbound opcode the client is waiting for. This also tests
-   the payload path for the first time, since a sweep sends complete encrypted packets:
-   if the very first one drops the connection, the AES/OFB side is wrong; surviving many
-   opcodes means it is right. Use `-Pad` to append zero bytes after the opcode — a bare
-   2-byte packet makes any handler that reads a body underflow, which can end the sweep
-   on its first *handled* opcode.
-
-   The **inbound** opcode space is the one thing we cannot recover statically — the
-   dispatcher lives in `.themida`, which has no file bytes — so it has to come from the
-   client. The sweep logs one timestamped line per opcode, so the last line printed
-   before a disconnect or a UI change names the opcode responsible:
+1. Re-run a sweep now that the client can actually read our packets. The probe decrypts
+   and labels the client's stream live, so any response is legible:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal -Reply sweep -SweepFrom 0x0000 -SweepTo 0x0200 -Pad 32
+   powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal -Reply sweep -SweepFrom 0x0000 -SweepTo 0x0200 -Pad 32 -SweepDelay 0.2 -QuietBefore 5
    ```
 
-3. Then implement the login server. Note the **game/channel connection uses mode 2**, a
-   plain `byte - iv` subtract rather than AES, so it is far cheaper to talk to.
+2. Then implement the login server. The **game/channel connection uses mode 2**, a plain
+   `byte - iv` subtract rather than AES, so it is far cheaper to talk to.
 
-The **outbound** opcode map is already recovered: 657 distinct opcodes in
-`research/msexe-send-opcodes.txt`, from `tools/ghidra_scripts/DumpOpcodes.java`.
+The **outbound** opcode map is recovered: 657 distinct opcodes in
+`research/msexe-send-opcodes.txt`, 59 labelled in `docs/opcodes.md`.
 
 ### Testing loop that works
 
