@@ -245,3 +245,33 @@ is now established from data rather than from failed sweeps, and it means the ex
 transform theory was the wrong shape entirely: there is no extra transform, just a
 keystream we cannot yet reproduce — most likely because the send side seeds its AES from
 something other than the header IV.
+
+## First client reply: opcode 0x0171 (candidate)
+
+The second sweep (`0x0024`-`0x01C3`, `--pad 32`, `probe.err` empty) drew the first reply
+the client has ever sent us:
+
+```
+[8484] 00:23:21 >>> opcode 0x0171 +32B
+[8484] *** CLIENT SENT 10 bytes (after 0x0171) ***
+      0000  81 2F 87 2F 17 FC 7D E7 A0 7D
+```
+
+Header `a=0x2F81 b=0x2F87` -> length 6. Walking the client's send chain from `J` matches
+this header at **position 16** — exactly the next packet after its opening 16. So the
+client's send IV is still in lockstep with our model and this is a genuine 17th packet,
+not noise. Nothing in `0x0024`-`0x01C3` made the client exit; it went back to hanging.
+
+**This is a candidate, not a confirmed cause.** The packet arrived ~62 s into the
+connection, which is exactly where a 60-second keepalive would land. The first sweep only
+ran ~10 s, so it would not have seen such a timer.
+
+The discriminating test is a one-shot `--reply ping --opcode 0x0171`, which fires ~2 s
+after the client's opening burst goes quiet:
+
+- reply arrives ~2 s in, right after our packet -> **causal**, `0x0171` is a request the
+  client answers;
+- reply arrives ~60 s in regardless -> a keepalive timer, and `0x0171` means nothing.
+
+Client data lines now carry both elapsed figures (`+1.47s` since our packet, `3.5s into
+the connection`) precisely so this cannot be misread.
