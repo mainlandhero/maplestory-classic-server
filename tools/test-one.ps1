@@ -34,6 +34,8 @@ param(
     [double]$SweepDelay = 0.15,
     [int]$Pad = 0,
     [string]$Skip = '',
+    [string]$PingFirst = '',
+    [double]$PingWait = 10,
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -92,6 +94,10 @@ if ($Reply) {
         $probeArgs += @('--sweep-from', $SweepFrom, '--sweep-to', $SweepTo,
                         '--sweep-delay', "$SweepDelay")
         if ($Skip) { $probeArgs += @('--skip', $Skip) }
+        if ($PingFirst) {
+            $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
+            Write-Host "will send $PingFirst alone first, then watch ${PingWait}s"
+        }
         Write-Host "will sweep opcodes $SweepFrom..$SweepTo at ${SweepDelay}s each (pad $Pad)"
     } else {
         Write-Host "will answer the client with: $Reply"

@@ -342,7 +342,8 @@ def build_reply(kind: str, opcode: int, cipher, pad: int = 0):
 def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
-          pad: int = 0, skip: frozenset = frozenset()) -> None:
+          pad: int = 0, skip: frozenset = frozenset(),
+          ping_first: int | None = None, ping_wait: float = 10.0) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -388,6 +389,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         next_op = sweep_from
         last_sent = None
         sent_at = None
+        pinged = ping_first is None
         opened_at = time.time()
         next_send = 0.0
         if reply is not None:
@@ -400,6 +402,18 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                 # Let the client finish its opening burst, then answer into the quiet.
                 ready = total and time.time() - last_data > 2.0
                 if reply == "sweep" and ready and time.time() >= next_send:
+                    # Isolate one opcode before the sweep starts, so a reply to it can be
+                    # timed against our packet rather than against the connection age.
+                    # Folds the causality test and the next sweep range into one run.
+                    if not pinged:
+                        frame, what = build_reply("ping", ping_first, cipher, pad)
+                        log(f"[{port}] {time.strftime('%H:%M:%S')} >>> ISOLATED {what}"
+                            f" - watching {ping_wait:.0f}s before the sweep starts")
+                        conn.sendall(frame)
+                        last_sent, sent_at = ping_first, time.time()
+                        pinged = True
+                        next_send = time.time() + ping_wait
+                        continue
                     while next_op in skip and next_op < sweep_to:
                         log(f"[{port}] skipping 0x{next_op:04X}")
                         next_op += 1
@@ -481,6 +495,9 @@ def main() -> None:
     ap.add_argument("--sweep-delay", type=float, default=0.15)
     ap.add_argument("--pad", type=int, default=0,
                     help="zero bytes appended after the opcode")
+    ap.add_argument("--ping-first", type=lambda s: int(s, 0), default=None,
+                    help="send this opcode alone before the sweep begins")
+    ap.add_argument("--ping-wait", type=float, default=10.0)
     ap.add_argument("--skip", default="",
                     help="comma-separated opcodes to skip (e.g. 0x23), the growing "
                          "blacklist of ones that end the connection")
@@ -517,7 +534,8 @@ def main() -> None:
         target=serve,
         args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv,
               args.sweep_from, args.sweep_to, args.sweep_delay, args.pad,
-              frozenset(int(x, 0) for x in args.skip.split(',') if x.strip())),
+              frozenset(int(x, 0) for x in args.skip.split(',') if x.strip()),
+              args.ping_first, args.ping_wait),
         daemon=True,
     )
     t.start()
