@@ -342,7 +342,7 @@ def build_reply(kind: str, opcode: int, cipher, pad: int = 0):
 def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
-          pad: int = 0) -> None:
+          pad: int = 0, skip: frozenset = frozenset()) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -394,6 +394,9 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                 # Let the client finish its opening burst, then answer into the quiet.
                 ready = total and time.time() - last_data > 2.0
                 if reply == "sweep" and ready and time.time() >= next_send:
+                    while next_op in skip and next_op < sweep_to:
+                        log(f"[{port}] skipping 0x{next_op:04X}")
+                        next_op += 1
                     if next_op >= sweep_to:
                         log(f"[{port}] sweep finished at 0x{sweep_to:04X}")
                         break
@@ -459,6 +462,9 @@ def main() -> None:
     ap.add_argument("--sweep-delay", type=float, default=0.15)
     ap.add_argument("--pad", type=int, default=0,
                     help="zero bytes appended after the opcode")
+    ap.add_argument("--skip", default="",
+                    help="comma-separated opcodes to skip (e.g. 0x23), the growing "
+                         "blacklist of ones that end the connection")
     ap.add_argument("--opcode", type=lambda s: int(s, 0), default=0xFFFF)
     ap.add_argument(
         "--recv-iv",
@@ -491,7 +497,8 @@ def main() -> None:
     t = threading.Thread(
         target=serve,
         args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv,
-              args.sweep_from, args.sweep_to, args.sweep_delay, args.pad),
+              args.sweep_from, args.sweep_to, args.sweep_delay, args.pad,
+              frozenset(int(x, 0) for x in args.skip.split(',') if x.strip())),
         daemon=True,
     )
     t.start()

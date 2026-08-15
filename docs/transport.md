@@ -199,3 +199,49 @@ The client is the only oracle available, so `handshake_probe.py` can answer it:
 The sweep logs one timestamped line per opcode, so if the client disconnects or the UI
 changes, the last line printed says exactly where. Cipher state is carried across the
 whole sweep, so the IV stays in step with the client's.
+
+## Confirmed inbound behaviour (2026-08-15)
+
+A `--reply sweep` run sent opcodes `0x0000`-`0x0023` as complete encrypted packets, each
+with `--pad 32`, one every ~150 ms. `probe.err` was empty, so the run is trustworthy.
+
+**The payload cipher is confirmed.** The client consumed **36 consecutive encrypted
+packets** without complaint, its receive IV staying in lockstep with ours the whole way.
+A wrong key, IV or mode would have failed on the first packet, not the thirty-seventh.
+AES-256-OFB with the stock key, IV repeated 4x, rolled once per packet, is correct for
+the direction we send.
+
+**Opcode `0x0023` makes the client exit.** After it was sent the client reset the
+connection and shut down *gracefully* — no crash, no dialog. That is the first inbound
+opcode identified, and it is clearly handled. Known reactive opcodes:
+
+| Opcode | Effect |
+|---|---|
+| `0x0000`-`0x0022` | consumed with no visible effect |
+| `0x0023` | client closes the connection and exits cleanly |
+
+Capture kept as `research/fixtures/sweep-0000-0023-exit.log`. `--skip` exists to carry a
+growing blacklist of connection-enders across later sweeps.
+
+## The outbound payload is a position-wise keystream — shanda is ruled out
+
+Two runs sent the same `J`, so the client's send keystream was identical in both. Packet 1
+came out as:
+
+```
+run A: 87 BB 8B 51 ... 00 58 0E  F8 02 B2 A5 06 1B 37 4F 99 4E 2F 8F D9 75 FB 8B 7B E3 54 74  D9 1C DD 76 BD E5 67 19
+run B: 87 BB 8B 51 ... 00 58 0E  F2 97 2C E3 0C 8E A9 09 93 DB B1 C9 D3 E2 6C C5 4D 56 FF 32  D9 1C DD 76 BD E5 67 19
+```
+
+Bytes 0-18 identical, **19-38 differ**, 39-46 identical again. Under a stream cipher
+identical ciphertext means identical plaintext, so the plaintext differs *only* in those
+20 bytes — a per-run session value of some kind.
+
+The important part is what that rules out. Shanda, and any byte-mixing transform, chains
+state across the packet: a change at byte 19 would propagate to every byte after it. It
+does not. So the client -> server payload is a **pure position-wise keystream**
+(`ct[i] = pt[i] (op) ks[i]`), and the only thing wrong is the keystream we compute. That
+is now established from data rather than from failed sweeps, and it means the extra
+transform theory was the wrong shape entirely: there is no extra transform, just a
+keystream we cannot yet reproduce — most likely because the send side seeds its AES from
+something other than the header IV.

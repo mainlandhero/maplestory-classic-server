@@ -1,0 +1,82 @@
+reply preflight OK (sweep)
+[8484] listening; will send a candidate handshake on each connection
+
+[8484] 00:16:50 connection from 127.0.0.1:50870
+[8484] sending: G=1 H=1 L=1, high=100 (all known gates satisfied)  (48 bytes)
+      0000  2E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+      0010  01 00 01 00 00 00 00 00 01 78 30 52 02 78 30 52  .........x0R.x0R
+      0020  01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00  .....d..........
+[8484] *** CLIENT SENT 51 bytes ***
+      0000  EF 52 C0 52 87 BB 8B 51 E7 F2 E7 78 F9 49 E5 D5  .R.R...Q...x.I..
+      0010  EB 46 2B 60 00 58 0E F2 97 2C E3 0C 8E A9 09 93  .F+`.X...,......
+      0020  DB B1 C9 D3 E2 6C C5 4D 56 FF 32 D9 1C DD 76 BD  .....l.MV.2...v.
+      0030  E5 67 19                                         .g.
+[8484] *** CLIENT SENT 55 bytes ***
+      0000  6B FB 58 FB 27 8B 81 DB B4 6F 9D 78 53 58 19 29  k.X.'....o.xSX.)
+      0010  B7 41 60 AC BD 0C 39 C0 44 27 0A 5C 50 2E E1 6E  .A`...9.D'.\P..n
+      0020  61 A2 AF 73 E9 C9 2F 38 C5 C8 D8 B4 CE 43 87 57  a..s../8.....C.W
+      0030  F6 FB 47 E6 F1 51 63                             ..G..Qc
+[8484] *** CLIENT SENT 12 bytes ***
+      0000  37 DD 3F DD 2A 1D F9 ED D5 3E 40 73              7.?.*....>@s
+[8484] *** CLIENT SENT 14 bytes ***
+      0000  5B E3 51 E3 09 AF 4C 0E 39 75 44 19 21 19        [.Q...L.9uD.!.
+[8484] *** CLIENT SENT 40 bytes ***
+      0000  9C 9A 9A 9A D0 05 D5 A2 8D 40 AA 99 AC 99 EE 2A  .........@.....*
+      0010  AE 9E E0 87 18 3D 1E 3D A1 EB C3 78 74 5A 76 23  .....=.=...xtZv#
+      0020  70 23 44 5E 28 31 10 AA                          p#D^(1..
+[8484] *** CLIENT SENT 10 bytes ***
+      0000  33 84 35 84 FF BC 07 B9 F4 35                    3.5......5
+[8484] *** CLIENT SENT 10 bytes ***
+      0000  00 8D 06 8D 42 4D F1 DD FA A0                    ....BM....
+[8484] *** CLIENT SENT 10 bytes ***
+      0000  14 4C 12 4C D7 F7 9D 1F B5 07                    .L.L......
+[8484] *** CLIENT SENT 10 bytes ***
+      0000  9F C4 99 C4 40 2E F0 62 37 BB                    ....@..b7.
+[8484] *** CLIENT SENT 10 bytes ***
+      0000  9C FA 9A FA B5 A0 2D 49 E0 52                    ......-I.R
+[8484] *** CLIENT SENT 10 bytes ***
+      0000  27 71 21 71 9C F4 D7 F5 EC 99                    'q!q......
+[8484] *** CLIENT SENT 62 bytes ***
+      0000  EE 23 E8 23 EF 6A CC 55 FE D2 76 E8 46 E8 34 34  .#.#.j.U..v.F.44
+      0010  12 FC 2D 6A F5 44 DB 8B D0 EE 80 23 60 CB C1 CF  ..-j.D.....#`...
+      0020  A8 23 BA 7B 25 C4 91 9B B1 40 33 E3 72 88 1B D5  .#.{%....@3.r...
+      0030  9C 3F B3 3B 53 45 81 76 49 B7 F0 0A 40 8B        .?.;SE.vI...@.
+[8484] 00:16:54 >>> opcode 0x0000 +32B
+[8484] 00:16:54 >>> opcode 0x0001 +32B
+[8484] 00:16:54 >>> opcode 0x0002 +32B
+[8484] 00:16:54 >>> opcode 0x0003 +32B
+[8484] 00:16:55 >>> opcode 0x0004 +32B
+[8484] 00:16:55 >>> opcode 0x0005 +32B
+[8484] 00:16:55 >>> opcode 0x0006 +32B
+[8484] 00:16:55 >>> opcode 0x0007 +32B
+[8484] 00:16:55 >>> opcode 0x0008 +32B
+[8484] 00:16:55 >>> opcode 0x0009 +32B
+[8484] 00:16:56 >>> opcode 0x000A +32B
+[8484] 00:16:56 >>> opcode 0x000B +32B
+[8484] 00:16:56 >>> opcode 0x000C +32B
+[8484] 00:16:56 >>> opcode 0x000D +32B
+[8484] 00:16:56 >>> opcode 0x000E +32B
+[8484] 00:16:57 >>> opcode 0x000F +32B
+[8484] 00:16:57 >>> opcode 0x0010 +32B
+[8484] 00:16:57 >>> opcode 0x0011 +32B
+[8484] 00:16:57 >>> opcode 0x0012 +32B
+[8484] 00:16:57 >>> opcode 0x0013 +32B
+[8484] 00:16:58 >>> opcode 0x0014 +32B
+[8484] 00:16:58 >>> opcode 0x0015 +32B
+[8484] 00:16:58 >>> opcode 0x0016 +32B
+[8484] 00:16:58 >>> opcode 0x0017 +32B
+[8484] 00:16:58 >>> opcode 0x0018 +32B
+[8484] 00:16:58 >>> opcode 0x0019 +32B
+[8484] 00:16:59 >>> opcode 0x001A +32B
+[8484] 00:16:59 >>> opcode 0x001B +32B
+[8484] 00:16:59 >>> opcode 0x001C +32B
+[8484] 00:16:59 >>> opcode 0x001D +32B
+[8484] 00:16:59 >>> opcode 0x001E +32B
+[8484] 00:17:00 >>> opcode 0x001F +32B
+[8484] 00:17:00 >>> opcode 0x0020 +32B
+[8484] 00:17:00 >>> opcode 0x0021 +32B
+[8484] 00:17:00 >>> opcode 0x0022 +32B
+[8484] 00:17:00 >>> opcode 0x0023 +32B
+[8484] connection reset by client
+[8484] connection lasted 0.0s after the reply was sent
+[8484] VERDICT: client answered 294 bytes to [G=1 H=1 L=1, high=100 (all known gates satisfied)]

@@ -33,6 +33,7 @@ param(
     [string]$SweepTo = '0x1000',
     [double]$SweepDelay = 0.15,
     [int]$Pad = 0,
+    [string]$Skip = '',
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -90,6 +91,7 @@ if ($Reply) {
     if ($Reply -eq 'sweep') {
         $probeArgs += @('--sweep-from', $SweepFrom, '--sweep-to', $SweepTo,
                         '--sweep-delay', "$SweepDelay")
+        if ($Skip) { $probeArgs += @('--skip', $Skip) }
         Write-Host "will sweep opcodes $SweepFrom..$SweepTo at ${SweepDelay}s each (pad $Pad)"
     } else {
         Write-Host "will answer the client with: $Reply"
