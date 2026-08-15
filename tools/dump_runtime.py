@@ -98,10 +98,16 @@ def read(pid, addr, size):
 
 
 def static_bytes(va, n):
-    sys.path.insert(0, "tools")
+    # Resolve relative to this file, not the cwd - this gets run from anywhere,
+    # including an elevated shell that starts in system32.
+    import os
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, here)
     from dump_va import load_sections, va_to_off
 
-    data, base, sections = load_sections("client-patched/MapleStory.exe")
+    exe = os.path.join(os.path.dirname(here), "client-patched", "MapleStory.exe")
+    data, base, sections = load_sections(exe)
     off, _ = va_to_off(va, base, sections)
     return data[off : off + n] if off is not None else b""
 

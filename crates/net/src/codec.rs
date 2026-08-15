@@ -9,8 +9,8 @@
 //!   header constant differs per [`Direction`].
 //! * [`PlainCipher`] — no encryption, for tests where a cipher only obscures failures.
 //!
-//! There is **no shanda** in this client's packet path; see [`shanda`] for why the module
-//! is still here.
+//! There is **no shanda** in this client's packet path. Note [`AES_KEY`]: the key in the
+//! binary is a decoy the client patches at startup, so it must not be "corrected" back.
 
 use crate::error::{NetError, Result};
 
@@ -54,11 +54,9 @@ impl Cipher for PlainCipher {
 
 /// The "shanda" byte shuffle that classic clients apply on top of AES.
 ///
-/// **Not part of this client's packet path.** The receive path runs `FUN_1406e99e0`
-/// (AES only) and hands the buffer straight to the dispatcher, and applying shanda to
-/// the captured stream does not decode it either. Kept because the client -> server
-/// direction still has an unidentified transform (see `docs/transport.md`), and this is
-/// the first thing to re-test if that is ever attacked with a debugger.
+/// **Not part of this client's packet path**, and now proven so: with the real AES key
+/// the captured stream decodes to clean packets with no shanda step anywhere. Kept only
+/// as reference for other MapleStory-derived clients.
 pub mod shanda {
     fn rol(v: u8, n: u32) -> u8 {
         v.rotate_left(n % 8)
@@ -177,8 +175,25 @@ impl AesEcb for RealAes {
     }
 }
 
-/// The AES-256 key shipped in classic clients (expanded from 4-byte groups).
-pub const CLASSIC_AES_KEY: [u8; 32] = [
+/// This client's real AES-256 key, read out of the **running** process.
+///
+/// The key table at `0x143A86810` on disk holds the stock MapleStory key
+/// (`13 08 06 B4 1B 0F 33 52`) and is a **decoy**: the client overwrites the low byte of
+/// all 32 dwords at startup. Only that table is patched — the IV shuffle table beside it
+/// is untouched, which is precisely why framing, the header constant and the IV chain all
+/// worked while everything AES-shaped failed in both directions.
+///
+/// Recovered with `tools/dump_runtime.py` and verified against eight captures from
+/// different sessions; see `reproduces_the_captured_client_headers` and
+/// `decrypts_the_captured_version_packet`.
+pub const AES_KEY: [u8; 32] = [
+    0x0F, 0x00, 0x00, 0x00, 0x1B, 0x00, 0x00, 0x00, 0xC5, 0x00, 0x00, 0x00, 0x46, 0x00, 0x00, 0x00,
+    0xF3, 0x00, 0x00, 0x00, 0xBE, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x75, 0x00, 0x00, 0x00,
+];
+
+/// The stock key the binary carries on disk. Kept only so the decoy is documented and
+/// nobody "fixes" [`AES_KEY`] back to it.
+pub const DECOY_AES_KEY: [u8; 32] = [
     0x13, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0xB4, 0x00, 0x00, 0x00,
     0x1B, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x33, 0x00, 0x00, 0x00, 0x52, 0x00, 0x00, 0x00,
 ];
@@ -186,7 +201,7 @@ pub const CLASSIC_AES_KEY: [u8; 32] = [
 impl MapleCipher {
     pub fn new(iv: [u8; 4], dir: Direction) -> Self {
         use aes::cipher::KeyInit;
-        let key = aes::Aes256::new_from_slice(&CLASSIC_AES_KEY).expect("32-byte key");
+        let key = aes::Aes256::new_from_slice(&AES_KEY).expect("32-byte key");
         Self { iv, header_const: dir.header_const(), aes: Box::new(RealAes { key }) }
     }
 
@@ -366,6 +381,47 @@ mod tests {
         ([0xEE, 0x23, 0xE8, 0x23], 6),
         ([0x76, 0xE8, 0x46, 0xE8], 48),
     ];
+
+    /// The client's first packet, captured verbatim off the wire, with the payload
+    /// still encrypted. Decrypting it must yield exactly what FUN_1415d5b40 builds:
+    /// opcode 0x70, then `u8 2`, then `u32 100`. This is what pins the AES key - the
+    /// on-disk key is a decoy and produces noise here.
+    const CAPTURED_PKT0: [u8; 47] = [
+        0x87, 0xBB, 0x8B, 0x51, 0xE7, 0xF2, 0xE7, 0x78, 0xF9, 0x49, 0xE5, 0xD5, 0xEB, 0x46, 0x2B,
+        0x60, 0x00, 0x58, 0x0E, 0xF8, 0x02, 0xB2, 0xA5, 0x06, 0x1B, 0x37, 0x4F, 0x99, 0x4E, 0x2F,
+        0x8F, 0xD9, 0x75, 0xFB, 0x8B, 0x7B, 0xE3, 0x54, 0x74, 0xD9, 0x1C, 0xDD, 0x76, 0xBD, 0xE5,
+        0x67, 0x19,
+    ];
+
+    #[test]
+    fn decrypts_the_captured_version_packet() {
+        let mut c = MapleCipher::new(0x5230_7801u32.to_le_bytes(), Direction::ClientToServer);
+        let mut body = CAPTURED_PKT0.to_vec();
+        c.decrypt(&mut body).unwrap();
+
+        assert_eq!(u16::from_le_bytes([body[0], body[1]]), 0x0070, "opcode");
+        assert_eq!(body[2], 2, "the u8 FUN_1415d5b40 writes");
+        assert_eq!(
+            u32::from_le_bytes([body[3], body[4], body[5], body[6]]),
+            100,
+            "the u32 FUN_1415d5b40 writes"
+        );
+    }
+
+    #[test]
+    fn the_disk_key_is_a_decoy_and_does_not_decrypt() {
+        assert_ne!(AES_KEY, DECOY_AES_KEY);
+        use aes::cipher::KeyInit;
+        let key = aes::Aes256::new_from_slice(&DECOY_AES_KEY).unwrap();
+        let mut c = MapleCipher::with_aes(
+            0x5230_7801u32.to_le_bytes(),
+            Direction::ClientToServer,
+            Box::new(RealAes { key }),
+        );
+        let mut body = CAPTURED_PKT0.to_vec();
+        c.decrypt(&mut body).unwrap();
+        assert_ne!(u16::from_le_bytes([body[0], body[1]]), 0x0070);
+    }
 
     #[test]
     fn reproduces_the_captured_client_headers() {

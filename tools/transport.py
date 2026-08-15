@@ -17,6 +17,24 @@ import struct
 KEY_VA = 0x143A86810
 SHUFFLE_VA = 0x143A86890
 
+# The real AES-256 key, read out of the *running* client with tools/dump_runtime.py.
+#
+# The bytes on disk at KEY_VA are the stock MapleStory key (13 08 06 B4 1B 0F 33 52) and
+# are a decoy: Themida overwrites the low byte of all 32 dwords at startup. Only the key
+# table is patched - the IV shuffle table beside it is untouched, which is exactly why
+# framing, the header constant and the IV chain all worked while everything AES failed in
+# both directions.
+#
+# Verified against eight captures from different sessions: packet 1 decrypts to
+# `70 00 02 64 00 00 00`, matching FUN_1415d5b40's `u8 2, u32 100` byte for byte. Stable
+# across sessions, so it is a build constant rather than a session secret.
+REAL_KEY = bytes.fromhex(
+    "0f000000" "1b000000" "c5000000" "46000000" "f3000000" "be000000" "ff000000" "75000000"
+)
+DECOY_KEY = bytes.fromhex(
+    "13000000" "08000000" "06000000" "b4000000" "1b000000" "0f000000" "33000000" "52000000"
+)
+
 # Hardcoded comparison in FUN_1415d36c0 / FUN_1415e7090 against FUN_1406e97e0's result.
 RECV_CONST = 0xFFFE
 # What the client uses on its own outbound packets; kept for decoding captures.
@@ -43,11 +61,9 @@ def load_tables(exe=None):
         off, _ = va_to_off(va, base, sections)
         return data[off : off + n]
 
-    # FUN_140c76070 reads 8 key words at a stride of 4 dwords; the 24 dwords in between
-    # are decoys that are never read.
-    words = struct.unpack("<32I", at(KEY_VA, 128))
-    key = b"".join(struct.pack("<I", words[i]) for i in range(0, 32, 4))
-    return key, at(SHUFFLE_VA, 256)
+    # The key must come from REAL_KEY, not from the image: the on-disk table is a decoy
+    # that the client patches at startup. The shuffle table *is* genuine on disk.
+    return REAL_KEY, at(SHUFFLE_VA, 256)
 
 
 # --------------------------------------------------------------------------------------

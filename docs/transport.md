@@ -4,9 +4,25 @@ What sits on the socket *after* the greeting in `docs/handshake.md` is accepted.
 from a real client run: `research/fixtures/capture-handshake-ok.log`, 294 bytes, 16
 packets.
 
-Status: **the server -> client direction is solved and CONFIRMED against the real client** —
-it accepted a frame we built and stayed connected. The client -> server payload cipher is
-still opaque, and we now know why: that code path does not exist on disk.
+Status: **SOLVED IN BOTH DIRECTIONS.** The captured client stream decrypts to clean
+packets, and the client accepts frames we build.
+
+The last blocker was the AES key. The key table at `0x143A86810` holds the stock
+MapleStory key **on disk and is a decoy** — the client overwrites the low byte of all 32
+dwords at startup. Only that table is patched; the IV shuffle table beside it is
+untouched, which is exactly why framing, the header constant and the IV chain were all
+provably right while everything AES-shaped failed in *both* directions.
+
+The real key, read out of the live process with `tools/dump_runtime.py`:
+
+```
+0f 00 00 00  1b 00 00 00  c5 00 00 00  46 00 00 00
+f3 00 00 00  be 00 00 00  ff 00 00 00  75 00 00 00
+```
+
+It is stable across sessions, so it is a build constant rather than a session secret.
+Packet 1 of the capture decrypts to `70 00 02 64 00 00 00` — opcode `0x70`, `u8 2`,
+`u32 100` — matching `FUN_1415d5b40` byte for byte.
 
 > **Confirmed 2026-08-15.** A `--reply header` run (valid header, body withheld) left the
 > client connected instead of dropping it. That is the first frame the client has ever
@@ -336,3 +352,32 @@ bytes) and at position 18 in another (`72 61 FB B9 ...` versus `AE F8 7C E7 ...`
 keystream would give the same ciphertext prefix at any position. So the outbound keystream
 *does* vary with chain position — consistent with IV-based OFB, which is what makes its
 resistance to the stock key so odd.
+
+
+## What the client actually sends (decrypted)
+
+`research/fixtures/capture-handshake-ok.log`, decrypted with the real key:
+
+| # | Opcode | Body | Source |
+|---|---|---|---|
+| 0 | `0x0070` | `02`, `u32 100` | `FUN_1415d5b40` — version report |
+| 1 | `0x0071` | `01`, `u32 1`, `u32 100`, `00`, ... | `FUN_1415d5c20` — environment report |
+| 2-13 | `0x00A6` | one `u32` id each: 1, 11, 2, 5, 3, 4, 12, 13, 14, 15, 17, 18 | an enumeration of some kind |
+| 14 | `0x00A1` | `u32 0` | the conditional `0xA1` in the handshake tail |
+| 15 | `0x0070` | `01`, `u32 100`, ... | second version packet |
+
+Runs whose opening burst was large show `0x008F` and `0x0090` in the same stream — the log
+uploads, exactly as predicted from `FUN_1415dde80`/`FUN_1415ddf60`.
+
+Every builder decoded here matches its decompiled source field for field, which is the
+strongest possible confirmation that the whole transport — framing, header rule, IV chain
+and cipher — is correct.
+
+## Everything the sweeps "found" is void
+
+All sweep results predate the key fix, so the client never once saw an opcode we intended.
+The scattered exits at `0x0023`, `~0x01DC`, `~0x01F1` and `~0x03C5` were random garbage
+opcodes occasionally landing on a disconnect handler, which is why none reproduced — and
+why sending `0x0023` alone did nothing. The whole `0x0000`-`0x03C7` range is unexplored
+again, but that no longer matters much: with decryption working we can simply read what
+the client asks for instead of guessing.
