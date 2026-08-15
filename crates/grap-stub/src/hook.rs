@@ -166,9 +166,8 @@ pub fn install_once() {
 
 /// Install the hook. Safe to call twice; the second call is a no-op.
 pub unsafe fn install() {
-    if std::env::var(HOOK_ENV).is_err() {
-        return;
-    }
+    // No env check here: install_once() already decided, via the env var *or* the marker
+    // file. Re-checking only the env var here is what silently swallowed the marker path.
     if INSTALLED.swap(true, Ordering::SeqCst) {
         return;
     }
