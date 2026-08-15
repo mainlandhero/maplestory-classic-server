@@ -60,21 +60,53 @@ sent — the version sweep never got a chance to matter. Full table in `docs/han
 `length = LOWORD ^ HIWORD`, `a = ((iv[3]<<8)|iv[2]) ^ 0x00DF`, and the stock IV shuffle.
 Seeding the chain with the `J` we sent predicts **16/16 observed headers exactly**.
 
-### The open problem
+### Server → client is solved
 
-**Payload decryption.** The cipher is stock in every part we can read — AES-256, OFB, the
-classic MapleStory key (`13 08 06 B4 1B 0F 33 52`, read from `0x143A86810` with a stride
-of 4 dwords; the interleaved bytes are decoys), stock S-box, IV repeated 4×, `0x5B0`/`0x5B4`
-chunking. Yet the captured payloads do not decrypt. Key, IV, endianness and Shanda
-variants have all been ruled out — see the list in `docs/transport.md`.
+`tools/transport.py` builds packets the client will accept, and reproduces **all 16
+captured client headers byte-exactly**:
+
+```
+a = ((iv >> 16) & 0xFFFF) ^ 0xFFFE      # 0xFFFE is hardcoded in the client
+b = a ^ length                          # no byte-swap, unlike classic MapleStory
+payload = AES-256-OFB(stock key, iv repeated 4x)
+```
+
+on the `conn+0xec` chain (the **second** u32 of the greeting, `K`), evolving once per
+packet. Lengths `>= 0xFF00` use an 8-byte header with a 32-bit length.
+
+**The AES key is the stock one.** `13 00 00 00 08 00 00 00 06 00 00 00 B4 …` — eight key
+*words* at a stride of 4 dwords from `0x143A86810`; the 24 dwords interleaved between them
+are decoys. `decrypt_capture.py` used to fold the decoys in, which silently invalidated
+every sweep ever run against it. Don't reintroduce that.
+
+### The open problem — and why it is not blocking
+
+**Client → server payloads still do not decrypt**, now with the correct key and after
+re-running every sweep (key forms, both IV chains × 24 positions, keystream alignment 0-8,
+Shanda, mode 2). Scored on zero-richness rather than a guessed opcode: mean 0.22 zeros
+over 1296 trials, best 2 — pure chance.
+
+The reason is now known. `FUN_1415d3990` (the send entry point, called by both `0x70` and
+`0x71` senders) hits `halt_baddata()` partway through, and `FUN_1415d60e0` — the step run
+immediately after decryption in both receive loops — is a 22-byte stub that is *entirely*
+`halt_baddata()`. **Themida has obfuscated exactly the two functions that would show the
+extra transform.** Every primitive we can read is stock; more decompiling will not help.
+
+Reading the client's traffic would take dynamic analysis. It is not needed to drive the
+client, so it should not hold up the login server.
 
 ### Next steps, in order
 
-1. **Decompile `FUN_1415d9cd0`** (reached via `FUN_1415d5aa0`, which runs *before*
-   `FUN_1415d5b40`). If it sends a packet, then packet 1 is not opcode `0x70` and the
-   known-plaintext test that all the ruling-out relied on was invalid.
-2. **Decompile the send counterpart of `FUN_1415d36c0`** — the one reading `conn+0xe8` —
-   and read the header construction directly instead of inferring `0x00DF`.
+1. **Validate the send direction against the client** — the client is the oracle:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Variant 0 -Normal -Reply header
+   ```
+
+   This sends a valid header declaring 100 bytes and withholds the body, so nothing is
+   dispatched and an unknown opcode cannot muddy the result. Connection stays open ⇒ the
+   header rule and IV chain are right. Client drops immediately ⇒ they are not.
+2. Then `-Reply ping` to check a complete encrypted packet is accepted.
 3. Then implement the login server. Note the **game/channel connection uses mode 2**, a
    plain `byte - iv` subtract rather than AES, so it is far cheaper to talk to.
 
