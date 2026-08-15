@@ -218,3 +218,86 @@ class ServerCipher:
 
 def packet(opcode, body=b""):
     return struct.pack("<H", opcode) + body
+
+
+# --------------------------------------------------------------------------------------
+# Live decoding of the client -> server stream.
+# --------------------------------------------------------------------------------------
+
+# Opcodes decoded from real captures and matched against their decompiled builders.
+CLIENT_OPCODES = {
+    0x0070: "version report (FUN_1415d5b40)",
+    0x0071: "environment report (FUN_1415d5c20)",
+    0x008F: "log upload A (FUN_1415dde80)",
+    0x0090: "log upload B (FUN_1415ddf60)",
+    0x0091: "log upload C (FUN_1415de040)",
+    0x00A1: "handshake-tail notify",
+    0x00A6: "enumeration entry",
+    0x00B5: "version mismatch report",
+    0x007D: "game-connection hello",
+}
+
+
+def describe(body):
+    """A short, honest rendering of a packet body: no invented field structure."""
+    if len(body) < 2:
+        return ""
+    rest = body[2:]
+    bits = []
+    if len(rest) == 4:
+        bits.append(f"u32={int.from_bytes(rest, 'little')}")
+    elif len(rest) == 1:
+        bits.append(f"u8={rest[0]}")
+    elif 0 < len(rest) <= 24:
+        bits.append("body=" + rest.hex(" "))
+    elif rest:
+        bits.append(f"body={len(rest)}B {rest[:16].hex(' ')}...")
+    return "  ".join(bits)
+
+
+class ClientDecoder:
+    """Reassembles and decrypts the client's stream, which is framed exactly like ours.
+
+    Handles TCP coalescing and splits: `feed` takes whatever `recv` returned and yields
+    only whole packets. The IV rolls once per packet, so a desync is unrecoverable — hence
+    `header_ok`, which reports whether the frame's `a` matched the IV we expected.
+    """
+
+    def __init__(self, iv, key, shuffle):
+        self.iv = struct.pack("<I", iv) if isinstance(iv, int) else bytes(iv)
+        self.key = key
+        self.shuffle = shuffle
+        self.buf = bytearray()
+        self.count = 0
+
+    def feed(self, data):
+        self.buf += data
+        out = []
+        while True:
+            if len(self.buf) < 4:
+                return out
+            a = int.from_bytes(self.buf[0:2], "little")
+            b = int.from_bytes(self.buf[2:4], "little")
+            length = a ^ b
+            head = 4
+            if length >= EXTENDED_LEN:
+                if len(self.buf) < 8:
+                    return out
+                length = int.from_bytes(self.buf[4:8], "little") ^ a
+                head = 8
+            if len(self.buf) < head + length:
+                return out
+
+            expected = (((int.from_bytes(self.iv, "little") >> 16) & 0xFFFF) ^ SEND_CONST) & 0xFFFF
+            payload = bytes(self.buf[head : head + length])
+            del self.buf[: head + length]
+
+            plain = ofb(payload, self.iv, self.key)
+            self.iv = next_iv(self.iv, self.shuffle)
+            self.count += 1
+            out.append({
+                "n": self.count - 1,
+                "opcode": int.from_bytes(plain[:2], "little") if len(plain) >= 2 else None,
+                "body": plain,
+                "header_ok": a == expected,
+            })

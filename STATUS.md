@@ -60,7 +60,25 @@ sent — the version sweep never got a chance to matter. Full table in `docs/han
 `length = LOWORD ^ HIWORD`, `a = ((iv[3]<<8)|iv[2]) ^ 0x00DF`, and the stock IV shuffle.
 Seeding the chain with the `J` we sent predicts **16/16 observed headers exactly**.
 
-### Server → client is solved and CONFIRMED
+### Transport is SOLVED IN BOTH DIRECTIONS
+
+The last blocker was the AES key. The table at `0x143A86810` holds the stock MapleStory key
+**on disk and is a decoy** — the client overwrites the low byte of all 32 dwords at startup.
+Only that table; the IV shuffle table beside it is untouched, which is exactly why framing,
+the header constant and the IV chain were provably right while everything AES-shaped failed
+in *both* directions. Real key (`tools/dump_runtime.py`, stable across sessions):
+
+```
+0f 00 00 00  1b 00 00 00  c5 00 00 00  46 00 00 00
+f3 00 00 00  be 00 00 00  ff 00 00 00  75 00 00 00
+```
+
+**Do not "correct" this back to the stock key** — a regression test guards it.
+
+The probe now decrypts the client's stream live and logs it as `opcode + fields`.
+All sweep results predate this and are void: the client never saw an opcode we intended.
+
+### Server → client (previously)
 
 **2026-08-15: the client accepted a frame we built and stayed connected.** A
 `--reply header` run (valid header, body withheld, so nothing is dispatched) did not drop

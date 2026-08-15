@@ -344,7 +344,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
           pad: int = 0, skip: frozenset = frozenset(),
           ping_first: int | None = None, ping_wait: float = 10.0,
-          quiet_before: float = 5.0) -> None:
+          quiet_before: float = 5.0, send_iv: int = 0x52307801) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -381,6 +381,14 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         last_data = time.time()
         # "sweep" drives its own sends; the one-shot reply must not also fire.
         replied = reply is None or reply == "sweep"
+        decoder = None
+        try:
+            import transport
+
+            key, shuffle = transport.load_tables()
+            decoder = transport.ClientDecoder(send_iv, key, shuffle)
+        except Exception as e:  # noqa: BLE001
+            log(f"[{port}] !!! could not build the inbound decoder: {e!r}")
         try:
             cipher = None if reply is None else make_cipher(recv_iv)
         except Exception as e:  # noqa: BLE001 - must not look like a client rejection
@@ -459,7 +467,19 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                              f", {time.time() - opened_at:.1f}s into the connection)")
                 log(f"[{port}] {time.strftime('%H:%M:%S')} *** CLIENT SENT "
                     f"{len(data)} bytes{since} ***")
-                log(hexdump(data))
+                if decoder is not None:
+                    import transport
+
+                    for pkt in decoder.feed(data):
+                        op = pkt["opcode"]
+                        name = transport.CLIENT_OPCODES.get(op, "")
+                        # A bad header means the IV chain desynced; every later packet is
+                        # then garbage, so say so loudly rather than printing nonsense.
+                        flag = "" if pkt["header_ok"] else "  <<< HEADER MISMATCH, IV DESYNC"
+                        log(f"[{port}]      <- #{pkt['n']:<3} 0x{op:04X} {name:34}"
+                            f" {transport.describe(pkt['body'])}{flag}")
+                else:
+                    log(hexdump(data))
         except ConnectionResetError:
             log(f"[{port}] connection reset by client")
         finally:
@@ -500,6 +520,8 @@ def main() -> None:
     ap.add_argument("--ping-first", type=lambda s: int(s, 0), default=None,
                     help="send this opcode alone before the sweep begins")
     ap.add_argument("--ping-wait", type=float, default=10.0)
+    ap.add_argument("--send-iv", type=lambda s: int(s, 16), default=0x52307801,
+                    help="the J field we sent; the client transmits on this chain")
     ap.add_argument("--quiet-before", type=float, default=5.0,
                     help="seconds of client silence to wait for before sending. The "
                          "client's own startup burst varies hugely between runs "
@@ -542,7 +564,7 @@ def main() -> None:
         args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv,
               args.sweep_from, args.sweep_to, args.sweep_delay, args.pad,
               frozenset(int(x, 0) for x in args.skip.split(',') if x.strip()),
-              args.ping_first, args.ping_wait, args.quiet_before),
+              args.ping_first, args.ping_wait, args.quiet_before, args.send_iv),
         daemon=True,
     )
     t.start()
