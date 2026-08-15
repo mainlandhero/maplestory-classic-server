@@ -140,6 +140,16 @@ def main():
             print(f"  {len(diff)} of {n} bytes differ, first at offset {diff[0]}")
         print()
 
+    # Optional: dump a live region, e.g. the .themida dispatcher.
+    #   python tools/dump_runtime.py --dump 0x144ADD569 0x8000 research/themida-dispatch.bin
+    if "--dump" in sys.argv:
+        i = sys.argv.index("--dump")
+        va = int(sys.argv[i + 1], 16)
+        size = int(sys.argv[i + 2], 0)
+        out = sys.argv[i + 3]
+        dump_region(pid, va, size, out, slide)
+        return 0
+
     flag = read(pid, TABLE_INIT_FLAG + slide, 1)
     built = "built" if flag and flag[0] != 0 else "NOT built"
     print(f"AES table-init flag @ {TABLE_INIT_FLAG:#x}: {flag.hex()} ({built})")
@@ -148,3 +158,22 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def dump_region(pid, va, size, out_path, slide=0):
+    """Dump live memory to a file.
+
+    The reason this exists: the packet dispatcher `FUN_1415d60e0` tail-jumps to
+    0x144ADD569, which lands in the `.themida` section - a section with **no file bytes**,
+    materialised only at runtime. It is the one thing that knows the inbound opcode table,
+    and static analysis cannot reach it. But it is plain code once the process is running,
+    so dumping it is the way in.
+    """
+    data = read(pid, va + slide, size)
+    with open(out_path, "wb") as fh:
+        fh.write(data)
+    nonzero = sum(1 for b in data if b)
+    print(f"dumped {len(data)} bytes from {va:#x} -> {out_path}")
+    print(f"  {nonzero} non-zero bytes ({100.0 * nonzero / max(len(data), 1):.1f}%)")
+    print(f"  first 32: {data[:32].hex(' ')}")
+    return data
