@@ -81,14 +81,20 @@ python tools/dump_stringids.py --all-locales
 
 ## Reading the two dialogs we have actually seen
 
-**"The client is outdated…"** = `0x22000007`. Raised from **three** places in the
+**"The client is outdated…"** = `0x22000007`. Raised from **four** places in the
 handshake handler `FUN_1415d10e0`, which is why it is ambiguous on its own:
 
 | Site | Condition |
 |---|---|
 | `FUN_140cc2350(…, 0x2df, 0x22000007)` | field **L != 1** — fires *before* the version fields are even read |
+| **`FUN_140cc2350(…, 0x348, 0x22000007)`** | **fields `G != 1` or `H != 1`** — runs unconditionally, *after* the version block, and rejected every probe we sent for weeks |
 | `FUN_1415e0fb0(…, 0x33b, 0x22000007, &low)` | second connect, "High Version. Error." |
 | `FUN_1415e0e30(…, 0x327, 0x22000007, &L)` | first connect, "Client Version is Higher" |
+
+Four sites behind one dialog is the trap this project kept falling into: a payload that
+fixes the version fields still shows the identical message if `G`/`H` are wrong. When a
+code has multiple sites, the only reliable move is to find an input that yields a
+*different* code, then reason from the pair.
 
 **"You cannot access the game…"** = `0x22000001`, from
 `FUN_1415e0eb0(…, 0x23d, 0x22000001, …)`. The owner confirms this is the same dialog the real

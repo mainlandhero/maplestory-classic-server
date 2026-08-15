@@ -110,6 +110,62 @@ def greeting(
     return frame(body)
 
 
+def handshake(
+    low: int = 1,
+    high: int = 100,
+    temp: int = 0,
+    g: int = 1,
+    h: int = 1,
+    sub: bytes = b"",
+    iv_recv: int = 0x52307801,
+    iv_send: int = 0x52307802,
+    locale: int = 0,
+) -> bytes:
+    """The greeting with every known gate satisfied.
+
+    Constraints, all read straight off `research/msexe-handshake.c`:
+
+      G == 1 and H == 1     line 606: `(H != 1) || (G != 1)` -> 0x22000007, the SAME
+                            "outdated" dialog as a version mismatch. This check sits
+                            *outside* the version block and runs unconditionally, so it
+                            fired on every earlier test and hid the version result.
+      G & 0x8000 clear      line 609: the flag bit raises 0x22000001.
+      atoi(I) == 0          line 438: with G == 1 a non-zero sub-version diverts into
+                            the patcher path, which throws.
+      L == 1                line 437: the gate found earlier.
+      high == 100           first connect (line 567) wants exactly 100; second connect
+      low  <= 100           (line 525) wants low < 101 && high > 99. high=100, low=1
+      temp == 0             satisfies both, and temp=0 selects the checked path.
+
+    J and K land in the connection object at +0xe8/+0xec and look like the send/recv
+    seeds, so they get plausible values rather than zero.
+    """
+    body = b""
+    # --- gated on cfg+0x48 != 0 (the login connection) ---
+    body += u16(0)              # A
+    body += mstr(b"")           # B   (overwritten by I below)
+    body += u32(0)              # C
+    body += u32(0)              # D
+    body += u8(0)               # E
+    body += u8(0)               # F
+    # --- always present ---
+    body += u16(g & 0x7FFF)     # G   must be 1, flag bit clear
+    body += u32(h)              # H   must be 1
+    body += mstr(sub)           # I   must parse to 0
+    body += u32(iv_recv)        # J   -> conn+0xe8
+    body += u32(iv_send)        # K   -> conn+0xec
+    body += u8(1)               # L   must be 1
+    # --- gated again ---
+    body += u32(low)            # version range low
+    body += u32(high)           # version range high
+    body += u32(temp)           # nClientVersion_Temp
+    body += u8(0)               # M
+    body += u8(0)               # N
+    # --- always present ---
+    body += u8(locale)          # O   -> conn+0x0c; 4 and 5 take special paths
+    return frame(body)
+
+
 def classic(version: int, sub: bytes, recv_iv: bytes, send_iv: bytes, locale: int) -> bytes:
     body = (
         version.to_bytes(2, "little")
@@ -191,6 +247,11 @@ def variants():
     Includes deliberate controls. If random bytes produce exactly the same client
     behaviour as a well-formed greeting, the client is not parsing our format at all
     and the version is not the variable to sweep."""
+    yield ("G=1 H=1 L=1, high=100 (all known gates satisfied)", handshake())
+    yield ("G=1 H=1, second-connect range low=1 high=200", handshake(low=1, high=200))
+    yield ("G=1 H=1, locale O=4", handshake(locale=4))
+    yield ("G=1 H=1, locale O=5", handshake(locale=5))
+
     yield ("ALL fields passing (u8=1, u32=100)", all_fields_passing())
 
     # Discriminator: both the L gate and the version mismatch raise error 0x22000007
@@ -250,7 +311,7 @@ def variants():
     )
 
 
-def serve(port: int, only: int | None) -> None:
+def serve(port: int, only: int | None, hold: float) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -270,7 +331,7 @@ def serve(port: int, only: int | None) -> None:
         log(f"[{port}] sending: {name}  ({len(payload)} bytes)")
         log(hexdump(payload))
 
-        conn.settimeout(8.0)
+        conn.settimeout(5.0)
         try:
             conn.sendall(payload)
         except OSError as e:
@@ -278,17 +339,24 @@ def serve(port: int, only: int | None) -> None:
             conn.close()
             continue
 
+        # Hold the connection open. Closing it early makes the client's recv return 0,
+        # which sends it down its own disconnect path (FUN_1415d10e0 recurses with
+        # param_2 = 0 and raises 0x22000001, "You cannot access the game"). That looks
+        # exactly like a rejected handshake, so an idle timeout would poison the result.
         total = b""
+        deadline = time.time() + hold
         try:
-            while True:
-                data = conn.recv(4096)
+            while time.time() < deadline:
+                try:
+                    data = conn.recv(4096)
+                except socket.timeout:
+                    continue
                 if not data:
+                    log(f"[{port}] client closed the connection")
                     break
                 total += data
-                log(f"[{port}] *** CLIENT REPLIED with {len(data)} bytes ***")
+                log(f"[{port}] *** CLIENT SENT {len(data)} bytes ***")
                 log(hexdump(data))
-        except socket.timeout:
-            pass
         except ConnectionResetError:
             log(f"[{port}] connection reset by client")
         finally:
@@ -304,9 +372,21 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8484)
     ap.add_argument("--only", type=int, default=None, help="send only variant N")
+    ap.add_argument(
+        "--hold",
+        type=float,
+        default=300.0,
+        help="seconds to keep each connection open (closing early looks like a rejection)",
+    )
+    ap.add_argument("--list", action="store_true", help="print the variants and exit")
     args = ap.parse_args()
 
-    t = threading.Thread(target=serve, args=(args.port, args.only), daemon=True)
+    if args.list:
+        for i, (name, payload) in enumerate(variants()):
+            log(f"{i:3d}  {name}  ({len(payload)} bytes)")
+        return
+
+    t = threading.Thread(target=serve, args=(args.port, args.only, args.hold), daemon=True)
     t.start()
     try:
         while True:

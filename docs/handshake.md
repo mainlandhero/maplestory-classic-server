@@ -1,8 +1,37 @@
 # Connection handshake
 
-Status: **framing confirmed; body parsed; field `L` gate found and passed; version
-comparison still not satisfied.** See `docs/client-messages.md` for how the client's
-dialogs are decoded back to error codes — that is what makes progress measurable here.
+Status: **framing confirmed; body parsed; all four gates located.** The last one found —
+`G == 1 && H == 1` — explains every failed test to date. See `docs/client-messages.md`
+for how the client's dialogs are decoded back to error codes; that is what makes progress
+measurable here.
+
+## The gates, in one place
+
+Everything the greeting must satisfy, with the line in `research/msexe-handshake.c`:
+
+| Requirement | Line | Failure |
+|---|---|---|
+| `L == 1` | 437 | `0x22000007` "outdated" |
+| **`G == 1` and `H == 1`** | **606** | **`0x22000007` "outdated"** |
+| `G & 0x8000` clear | 609 | `0x22000001` "cannot access" |
+| `atoi(I) == 0` when `G == 1` | 438 | diverts to the patcher path, which throws |
+| `high == 100` (first connect) | 567 | patcher / "version is higher" |
+| `low <= 100 <= high` (second connect) | 525 | `0x22000007` |
+| `temp == 0` | 562 | skips the check entirely ("Temp OK") |
+
+The `G`/`H` check is the one that mattered:
+
+```c
+if ((local_21d0[0] != 1) || (local_2298[0] != 1)) {     // H != 1 || G != 1
+    FUN_140cc2350(&DAT_143271f04,0x348,0x22000007);     // "The client is outdated"
+}
+```
+
+`local_2298` is `G`, `local_21d0` is `H`. This sits **outside** the version block and runs
+unconditionally, and it raises the *same* error code as a version mismatch. Every probe
+sent so far had `G = 0, H = 0` (or `100, 100`), so all of them failed here — before the
+version numbers were ever compared. That is the whole explanation for the sweep that
+never moved.
 
 ## The client waits for us
 
@@ -223,6 +252,24 @@ What still holds: the framing is right and the client parses our body — a stru
 payload produces a specific error while garbage produces silence. What is wrong is the
 assumption about *which* check is failing.
 
+## Corrected: there was no version-field misalignment
+
+The section below concluded that the three version `u32`s were landing at the wrong byte
+offsets, because values that should pass did not. **That was wrong.** The offsets were
+right the whole time; the `G`/`H` check at line 606 was rejecting every payload before the
+version comparison could matter, and it reports the identical error code, so the failure
+was indistinguishable from a version mismatch.
+
+Two lessons worth keeping:
+
+- A single error code raised from **four** different sites cannot identify a failure on its
+  own. The `L` gate was only confirmed by finding a payload that produced a *different*
+  code (truncating after `L`).
+- "The value that should pass does not" is at least as likely to mean *another check is
+  failing first* as it is to mean the field is misplaced.
+
+The original reasoning is kept below because the byte layout in it is still accurate.
+
 ## Superseded: the version-field misalignment theory
 
 Every combination tried produces the same "outdated" dialog:
@@ -290,15 +337,74 @@ them. A payload with *every* field set to a passing value simultaneously (`u8 = 
 cleanly instead of showing a dialog — which suggests the checks were satisfied and the
 failure moved on again.
 
+## After the handshake: the client speaks first
+
+Once the gates pass, `FUN_1415d10e0` runs its tail (lines 627-790) and the client starts
+talking without being prompted. In order:
+
+1. **16 raw bytes** — `FUN_1415e3de0(conn+0x20, conn+0x50, 0x10)` at line 631.
+   `FUN_1415e3de0` is a thin wrapper over `DAT_143262e50`, the IAT slot adjacent to the
+   `recv` used by the receive loop, i.e. `send`. These 16 bytes are **not** length-prefixed
+   and arrive before any packet, so a server-side parser has to consume them first.
+
+2. **Packet `0x70`** — `FUN_1415d5b40` at line 640, sent unconditionally:
+
+   ```
+   opcode 0x70
+   u8   2
+   u32  100        <- the client's version again
+   ```
+
+3. Then the connection type decides:
+
+   | `conn+0x48` | Meaning | Next packet |
+   |---|---|---|
+   | `!= 0` | **login** server — this is the one that version-checks | `0x71` via `FUN_1415d5c20` |
+   | `== 0` | **game/channel** server | `0x7d` via the block at line 649, carrying a machine GUID, a 16-byte MAC, and an obfuscated blob |
+
+   Packet `0x71` is:
+
+   ```
+   opcode 0x71
+   u8   1
+   u32  1
+   u32  100
+   u8   0
+   u8   FUN_142cb8610(cfg)
+   u8   cfg+0x2520
+   u8   cfg+0x2524
+   u8   cfg+0x2528
+   u8   FUN_1415dcc90()
+   ```
+
+   Note it echoes `1, 1, 100` — the same `G`, `H`, version triple the server sends.
+
+**So `cfg+0x48` is what separates a login connection from a game connection**, not a launch
+mode detail: the version negotiation and both gated blocks belong to the login connection
+only. A game-server connection sends a shorter greeting with no version fields at all.
+
+### Packet writer API
+
+Read off `FUN_1415d5b40` / `FUN_1415d5c20`, which is how the packets above were decoded:
+
+| Function | Writes |
+|---|---|
+| `FUN_1406ed520(buf, op)` | begin a packet with opcode `op` (kept in a field at `buf+0x434`, prepended at send) |
+| `FUN_1406ed840(buf, v)` | `u8` |
+| `FUN_1406ed9d0(buf, v)` | `u32` |
+| `FUN_1415dc6f0(buf)` | finalize (appends a trailer) |
+| `FUN_1415d3990(conn, buf)` | send |
+
 ## Next
 
-1. **Map the error codes to messages.** Find what `FUN_1429e4fa0` and the
-   `FUN_141804870` / `FUN_1415e0*` family do with a code, and which code produces the
-   outdated text. That names the real failing check instead of guessing at it.
-2. **Enable the client's own log.** `FUN_14019cfe0` writes `MapleStory.LOG`
-   (built from the exe path, suffix `LOG`, guarded by a `ZtlLog` mutex) and the version
-   branches log their actual numbers — `"Launch Patcher : %d < %d -> Target : %d_%d"`
-   would name the values directly. It is gated behind `FUN_140933f30`; finding what
-   enables it removes all the guesswork.
-3. `MapleSecurePC64` still looks less relevant than feared — the client is reading our
+1. **Test the greeting with every gate satisfied** — `tools/test-one.ps1 -Variant 0`.
+   Expected on success: no dialog, and the probe logs 16 raw bytes followed by packet
+   `0x70`. Any dialog instead means another gate is still hiding; decode it via
+   `docs/client-messages.md`.
+2. **Decode `0x70` / `0x71` off the wire** and confirm the trailer `FUN_1415dc6f0` adds,
+   which determines whether the stream is obfuscated after the greeting.
+3. **Identify the 16 bytes at `conn+0x50`.** They are sent before any packet, so the
+   server has to expect them. Likely a session/machine key — possibly the same material
+   the WEBSTART token fields carry, which would also unblock the launcher work.
+4. `MapleSecurePC64` still looks less relevant than feared — the client is reading our
    plaintext fields, not failing to decrypt.
