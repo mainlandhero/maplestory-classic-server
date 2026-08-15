@@ -137,6 +137,10 @@ if ($HookLog) {
     if (Test-Path $HookLog) { Remove-Item $HookLog -Force }
     # Marker file beside the client, read by the hook at startup.
     New-Item -ItemType File -Path (Join-Path $ClientDir 'maplecw-hook.enable') -Force | Out-Null
+    # The DLL appends, and it writes beside the client rather than to -HookLog when the
+    # env var does not propagate. Clear it, or two runs concatenate and the second looks
+    # like a continuation of the first - which already caused one wrong conclusion.
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.log') -ErrorAction SilentlyContinue
     $env:MAPLECW_HOOK_LOG = $HookLog
     # Also enable the stub's own call log, next to it. If neither file appears, the DLL
     # is not running our code at all; if only this one does, the hook install is at fault.

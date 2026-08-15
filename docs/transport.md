@@ -441,13 +441,12 @@ client runs on. Three things follow:
 2. **No handler among `0x0000`-`0x0019`.** Elapsed time is flat at 119-159 us across all
    26 packets, with no outlier. Either none of these has a handler, or ~130 us is fixed
    dispatcher overhead and a real handler must be looked for as a much larger figure.
-3. **The client dies after ~25 packets, whatever they are.** Runs with the real key ended
-   at 28, 22 and now 26 packets, while an earlier run with *garbage* opcodes survived 470.
-   The `ret` value cycles through exactly **six** addresses 56 bytes apart — a six-entry
-   buffer pool. Unhandled packets plausibly fail to release their buffer, so the pool
-   exhausts after a couple of dozen and the client shuts down.
+3. The `ret` value cycles through exactly **six** addresses 56 bytes apart, which looks
+   like a six-entry buffer pool.
 
-That last point is the important one: **sweeping is self-limiting at ~25 opcodes per client
-run**, which is not a viable way to search a 4000-opcode space. Worth testing whether a
-much slower rate lets the pool recover — if it does the limit is rate, if not it is a leak
-and sweeping is finished as a technique.
+> **Correction.** A first reading of this log concluded the client dies after ~25 packets
+> and that sweeping was therefore capped. That was wrong: the log had been read while a
+> run was still in progress, and the hook DLL *appends across runs*, so two runs had
+> concatenated into what looked like one. `test-one.ps1` now clears
+> `client-patched/maplecw-hook.log` before each run. Treat any packet ceiling as unproven
+> until a run is confirmed finished.
