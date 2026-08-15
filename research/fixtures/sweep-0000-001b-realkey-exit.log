@@ -1,0 +1,69 @@
+reply preflight OK (sweep)
+[8484] listening; will send a candidate handshake on each connection
+
+[8484] 01:30:10 connection from 127.0.0.1:56499
+[8484] sending: G=1 H=1 L=1, high=100 (all known gates satisfied)  (48 bytes)
+      0000  2E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+      0010  01 00 01 00 00 00 00 00 01 78 30 52 02 78 30 52  .........x0R.x0R
+      0020  01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00  .....d..........
+[8484] 01:30:11 *** CLIENT SENT 51 bytes ***
+[8484]      <- #0   0x0070 version report (FUN_1415d5b40)     body=45B 02 64 00 00 00 00 00 00 00 00 00 00 00 02 00 00...
+[8484] 01:30:11 *** CLIENT SENT 55 bytes ***
+[8484]      <- #1   0x0071 environment report (FUN_1415d5c20) body=49B 01 01 00 00 00 64 00 00 00 00 00 00 00 00 01 1e...
+[8484] 01:30:11 *** CLIENT SENT 12 bytes ***
+[8484]      <- #2   0x00A6 enumeration entry                  body=01 00 00 00 00 00
+[8484] 01:30:11 *** CLIENT SENT 34 bytes ***
+[8484]      <- #3   0x00A6 enumeration entry                  body=0b 00 00 00 00 00 00 00
+[8484]      <- #4   0x00A6 enumeration entry                  u32=2
+[8484]      <- #5   0x00A6 enumeration entry                  u32=5
+[8484] 01:30:11 *** CLIENT SENT 30 bytes ***
+[8484]      <- #6   0x00A6 enumeration entry                  u32=3
+[8484]      <- #7   0x00A6 enumeration entry                  u32=4
+[8484]      <- #8   0x00A6 enumeration entry                  u32=12
+[8484] 01:30:11 *** CLIENT SENT 10 bytes ***
+[8484]      <- #9   0x00A6 enumeration entry                  u32=13
+[8484] 01:30:11 *** CLIENT SENT 10 bytes ***
+[8484]      <- #10  0x00A6 enumeration entry                  u32=14
+[8484] 01:30:11 *** CLIENT SENT 10 bytes ***
+[8484]      <- #11  0x00A6 enumeration entry                  u32=15
+[8484] 01:30:11 *** CLIENT SENT 10 bytes ***
+[8484]      <- #12  0x00A6 enumeration entry                  u32=17
+[8484] 01:30:12 *** CLIENT SENT 10 bytes ***
+[8484]      <- #13  0x00A6 enumeration entry                  u32=18
+[8484] 01:30:12 *** CLIENT SENT 10 bytes ***
+[8484]      <- #14  0x00A1 handshake-tail notify              u32=0
+[8484] 01:30:12 *** CLIENT SENT 52 bytes ***
+[8484]      <- #15  0x0070 version report (FUN_1415d5b40)     body=46B 01 64 00 00 00 82 fd 8e e4 82 fd 8e e4 02 00 00...
+[8484] 01:30:17 >>> opcode 0x0000 +32B
+[8484] 01:30:17 >>> opcode 0x0001 +32B
+[8484] 01:30:18 >>> opcode 0x0002 +32B
+[8484] 01:30:18 >>> opcode 0x0003 +32B
+[8484] 01:30:18 >>> opcode 0x0004 +32B
+[8484] 01:30:18 >>> opcode 0x0005 +32B
+[8484] 01:30:19 >>> opcode 0x0006 +32B
+[8484] 01:30:19 >>> opcode 0x0007 +32B
+[8484] 01:30:19 >>> opcode 0x0008 +32B
+[8484] 01:30:19 >>> opcode 0x0009 +32B
+[8484] 01:30:20 >>> opcode 0x000A +32B
+[8484] 01:30:20 >>> opcode 0x000B +32B
+[8484] 01:30:20 >>> opcode 0x000C +32B
+[8484] 01:30:20 >>> opcode 0x000D +32B
+[8484] 01:30:21 >>> opcode 0x000E +32B
+[8484] 01:30:21 >>> opcode 0x000F +32B
+[8484] 01:30:21 >>> opcode 0x0010 +32B
+[8484] 01:30:21 >>> opcode 0x0011 +32B
+[8484] 01:30:22 >>> opcode 0x0012 +32B
+[8484] 01:30:22 >>> opcode 0x0013 +32B
+[8484] 01:30:22 >>> opcode 0x0014 +32B
+[8484] 01:30:22 >>> opcode 0x0015 +32B
+[8484] 01:30:23 >>> opcode 0x0016 +32B
+[8484] 01:30:23 >>> opcode 0x0017 +32B
+[8484] 01:30:23 >>> opcode 0x0018 +32B
+[8484] 01:30:23 >>> opcode 0x0019 +32B
+[8484] 01:30:24 >>> opcode 0x001A +32B
+[8484] 01:30:24 *** CLIENT SENT 54 bytes (after 0x001A, +0.00s, 13.1s into the connection) ***
+[8484]      <- #16  0x009E                                    body=48B 03 00 02 00 00 21 26 00 a5 fa 87 fa 18 00 00 00...
+[8484] 01:30:29 >>> opcode 0x001B +32B
+[8484] connection reset by client
+[8484] connection lasted 0.0s after the reply was sent
+[8484] VERDICT: client answered 348 bytes to []

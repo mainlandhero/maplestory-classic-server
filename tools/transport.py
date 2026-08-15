@@ -232,6 +232,7 @@ CLIENT_OPCODES = {
     0x0090: "log upload B (FUN_1415ddf60)",
     0x0091: "log upload C (FUN_1415de040)",
     0x00A1: "handshake-tail notify",
+    0x009E: "periodic status (FUN_142c4ef20) - client-initiated, not a reply",
     0x00A6: "enumeration entry",
     0x00B5: "version mismatch report",
     0x007D: "game-connection hello",
