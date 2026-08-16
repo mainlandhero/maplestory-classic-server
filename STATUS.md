@@ -104,44 +104,59 @@ hitting a disconnect handler — none reproduced, and `0x0023` sent alone did no
 Note the trap that hid this: **acceptance only proves the header**. A bad payload decrypts
 to a random opcode and is silently ignored, not rejected.
 
+### The startup gate is solved - the client reaches its login screen
+
+**Inbound opcode `0x0032`, body `0x00`.** Seven bytes on the wire, and the client goes
+from a blank non-responding window to the login screen.
+
+It was never a login handshake. On connect the client hashes `Data.wz` into `conn+0x14c`,
+sends `0x00A1` carrying that `u32`, and then blocks in `recv` **on its UI thread** inside
+`FUN_1415e7090`, looping recv -> decrypt -> dispatch until a handler sets the byte at
+`conn+0x150`. Only `FUN_1415e5c20` does that, and it is a `Data.wz` patch handler. The
+body is a zigzag varint length (`FUN_1406efcc0`):
+
+| length | client does |
+|---|---|
+| `0` | nothing to patch - sets the flag and carries on |
+| `> 0` | expects that many bytes in 64 KB chunks, then writes `Data.wz` |
+| `< 0` | deletes `Data.wz` and carries on |
+
+This client has no `Data.wz` at all - it ships a `Data/` directory - so it sends hash `0`
+and a varint `0` reply is the right answer. Verified with a single packet and no probe:
+`flag=0->1 state=0->2`, then the login screen. `crates/net/src/opcode.rs`.
+
+That also explains the "26 packet ceiling": every unhandled packet allocates a `0x5b4`
+buffer inside that loop and the loop never exits to free them. It was a leak, not a limit.
+
+### How inbound opcodes get found, because it is not by reading
+
+The dispatcher is virtualised and handler addresses appear nowhere as data - not in the
+image, not in a gigabyte of live memory. Sweeping over the wire costs about two opcodes
+per launch, because live handlers take the client down.
+
+So `crates/grap-stub/src/probe.rs` walks the space **inside** the client: it snapshots one
+captured packet, rewrites its opcode, and re-dispatches, watching `conn+0x150`. The whole
+enum in one launch. A vectored handler catches decoder throws and access violations and
+resumes the loop; `ExitProcess`/`TerminateProcess` are detoured so a handler cannot end
+the run. `-Probe <from>-<to>` on `test-one.ps1`.
+
+**Snapshot before the dispatch, never after.** The dispatcher consumes the opcode and
+moves the cursor 4 -> 6, so an after-snapshot replays with the cursor past the opcode and
+dispatches "opcode 0" every time - a silent no-op that reports as an empty range. The walk
+now reports how many calls advanced the cursor, and says outright when the answer is
+"broken", not "empty".
+
 ### Next steps
 
-**Everything about the transport is finished.** The one thing missing is *which inbound
-opcode unblocks the login screen*, and the two techniques tried for it are both exhausted:
+The client is at the login screen and still talking: after `0x0032` it sends `0x00BF`,
+`0x00C0` (`05 00 00 00 20 4e 00 00`) and another run of `0x00A6` with ids 19-28.
 
-* **Blind sweeping is retired.** The client accepts 26 packets per launch and no more, at
-  0.2 s and 3.0 s spacing alike, because unhandled packets leak a six-entry buffer pool.
-  ~150 launches would be needed to cover the opcode space. Pacing does not help.
-* **The dispatch table cannot be read.** `FUN_1415d60e0` tail-jumps into `.themida`, which
-  has no file bytes, and the code there is virtualised.
-
-#### 1. Find the login-screen handler, then find its address in memory
-
-This is the recommended line, and the hook proved the capability it needs: arbitrary code
-runs inside the client, and process memory reads work.
-
-Handler *functions* are ordinary code — only the dispatch is virtualised. So:
-
-1. Identify the function that drives the login-screen transition. Use string xrefs, the
-   technique that has worked repeatedly here (`docs/opcodes.md` explains the tooling).
-   `UI/Login.img` and the `GC:` state names are the obvious starting points; `0x0080` and
-   `0x00A0` already reference `GC:SelectWorld`, `accountno` and `nexonsn`.
-2. Scan the live process for that function's address with `tools/dump_runtime.py --dump`.
-   Its slot in the dispatch table gives the opcode by index — no guessing, no packet budget.
-
-#### 2. Cheaper thing to try first
-
-Now that the client's stream is fully readable, re-read what it actually sends with fresh
-eyes — `0x00A6` carries an incrementing id (1, 11, 2, 5, 3, 4, 12 …) eleven times, which
-looks like the client enumerating something and possibly waiting on each. Decoding
-`FUN_142c4adc0`/`FUN_142c4ef20` (`0x009E`, the periodic status packet) may also name what
-it is polling for.
-
-#### 3. Then the login server
-
-`crates/net` already implements the wire format with the real key. The **game/channel**
-connection uses cipher mode 2 — a plain `byte - iv` subtract, no AES — so it is much
-cheaper to talk to than the login connection.
+1. **Capture a login attempt.** Have the owner type credentials and press Login while the probe
+   holds the connection. Whatever opcode that produces is the next thing to answer, and it
+   is outbound - so `docs/opcodes.md` can name its fields.
+2. **Answer it** from `crates/store`, which already has argon2id accounts and single-use
+   session tokens, plus `maplecw-useradd`.
+3. **Find the reply opcode** the same way, with `-Probe` narrowed around a candidate band.
 
 ### Traps that cost time — do not re-learn these
 
