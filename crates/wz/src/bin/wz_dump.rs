@@ -19,6 +19,7 @@ fn main() -> ExitCode {
              wz-dump info <archive.wz>\n  \
              wz-dump tree <archive.wz> [depth]\n  \
              wz-dump cat  <archive.wz> <image/path>\n  \
+             wz-dump canvas <archive.wz> <image> <out dir> [node filter]\n  \
              wz-dump scan <Data dir>"
         );
         return ExitCode::FAILURE;
@@ -31,6 +32,12 @@ fn main() -> ExitCode {
             cmd_tree(Path::new(&args[1]), depth)
         }
         "cat" if args.len() >= 3 => cmd_cat(Path::new(&args[1]), &args[2]),
+        "canvas" if args.len() >= 4 => cmd_canvas(
+            Path::new(&args[1]),
+            &args[2],
+            Path::new(&args[3]),
+            args.get(4).map(|s| s.as_str()),
+        ),
         "scan" if args.len() >= 2 => cmd_scan(Path::new(&args[1])),
         "verify" if args.len() >= 2 => cmd_verify(Path::new(&args[1])),
         other => {
@@ -103,6 +110,103 @@ fn cmd_cat(path: &Path, img_path: &str) -> wz::Result<()> {
     let value = wz::parse_image(bytes)?;
     println!("{}", wz::to_json(&value, 0));
     Ok(())
+}
+
+/// Export every canvas payload in one image, plus a manifest describing them.
+///
+/// The payloads are written exactly as they sit in the archive - still compressed, not
+/// decoded. Inflating them needs a zlib implementation, and this crate has no
+/// dependencies; `tools/wz_png.py` takes it from here using Python's stdlib `zlib`.
+///
+/// A `--filter` substring keeps the output to the nodes actually being looked at: a single
+/// UI image can hold thousands of canvases and tens of megabytes.
+fn cmd_canvas(path: &Path, img_path: &str, out_dir: &Path, filter: Option<&str>) -> wz::Result<()> {
+    let ar = Archive::open(path)?;
+    let Some(node) = ar.root.get(img_path) else {
+        eprintln!("no such node: {img_path}");
+        std::process::exit(1);
+    };
+    let bytes = ar.image_bytes(node)?;
+    let value = wz::parse_image(bytes)?;
+
+    io(out_dir, std::fs::create_dir_all(out_dir))?;
+    let mut entries: Vec<String> = Vec::new();
+    let mut skipped = 0usize;
+    collect_canvases(&value, String::new(), &mut |node_path, w, h, fmt, off, len| {
+        if let Some(f) = filter {
+            if !node_path.contains(f) {
+                return Ok(());
+            }
+        }
+        // An offset past the end means the parse and the payload disagree; say so rather
+        // than writing a truncated file that looks like a decode failure later.
+        if off + len > bytes.len() {
+            eprintln!("warning: {node_path} payload runs past the image, skipping");
+            skipped += 1;
+            return Ok(());
+        }
+        let name = format!("{}.bin", node_path.trim_matches('/').replace('/', "."));
+        let dest = out_dir.join(&name);
+        io(&dest, std::fs::write(&dest, &bytes[off..off + len]))?;
+        entries.push(format!(
+            "  {{\"node\": {}, \"file\": {}, \"width\": {w}, \"height\": {h}, \
+             \"format\": {fmt}, \"bytes\": {len}}}",
+            json_str(node_path),
+            json_str(&name)
+        ));
+        Ok(())
+    })?;
+
+    let manifest = format!("[\n{}\n]\n", entries.join(",\n"));
+    let manifest_path = out_dir.join("manifest.json");
+    io(&manifest_path, std::fs::write(&manifest_path, manifest))?;
+    println!(
+        "wrote {} canvases to {}{}",
+        entries.len(),
+        out_dir.display(),
+        if skipped > 0 { format!(" ({skipped} skipped)") } else { String::new() }
+    );
+    Ok(())
+}
+
+/// Walk every `Canvas` in a parsed image, deepest-first path included.
+fn collect_canvases(
+    v: &wz::Value,
+    path: String,
+    f: &mut impl FnMut(&str, i32, i32, i32, usize, usize) -> wz::Result<()>,
+) -> wz::Result<()> {
+    if let wz::Value::Canvas { width, height, format, data_off, data_len, .. } = v {
+        if *data_len > 0 {
+            f(&path, *width, *height, *format, *data_off, *data_len)?;
+        }
+    }
+    if let Some(children) = v.children() {
+        for c in children {
+            collect_canvases(&c.value, format!("{path}/{}", c.name), f)?;
+        }
+    }
+    Ok(())
+}
+
+/// `WzError::Io` names the path it failed on, so io errors are attributed rather than
+/// converted blindly - "io error" with no filename is useless when writing thousands.
+fn io<T>(path: &Path, r: std::io::Result<T>) -> wz::Result<T> {
+    r.map_err(|source| wz::WzError::Io { path: path.to_path_buf(), source })
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Open every `<Tree>_000.wz` under a Data directory and report parse health.

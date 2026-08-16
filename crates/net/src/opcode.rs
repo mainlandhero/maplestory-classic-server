@@ -89,10 +89,17 @@ pub const LOGIN_OK: u8 = 0;
 ///
 /// # Why it is needed
 ///
-/// The login result makes the client look up its world in the list at `stage+0x100`
-/// (`FUN_141b2c7c0`). Only this packet appends to it - `FUN_141b44520(stage+0x100, -1)`.
-/// Answering the login request without it leaves the client at character select with no
-/// world, which it does not survive.
+/// Two reasons, and the second is the one that was missed for a long time.
+///
+/// 1. The login result makes the client look up its world in the list at `stage+0x100`
+///    (`FUN_141b2c7c0`). Only this packet appends to it - `FUN_141b44520(stage+0x100, -1)`.
+/// 2. **It enables the Login button.** The handler sets `stage+0x108` one line above the
+///    append, and the `ClassicIntro` tick `FUN_14112a720` enables the control named
+///    `"login"` only when that byte is non-zero. The screen builder creates the button
+///    disabled, so without this packet it never becomes clickable - which is exactly the
+///    "invalid session" state the owner describes.
+///
+/// Only a real world entry does either; the terminator returns before both.
 ///
 /// # Body
 ///

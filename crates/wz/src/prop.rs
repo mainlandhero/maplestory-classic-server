@@ -25,12 +25,19 @@ pub enum Value {
     Uol(String),
     /// A nested property list.
     Object(Vec<Property>),
-    /// `Canvas` — image data. Pixels are left unparsed; we keep the metadata that
-    /// the server actually needs and the raw (still compressed) payload length.
+    /// `Canvas` — image data. Pixels are left unparsed here: decoding them needs an
+    /// inflater, and this crate is deliberately dependency-free. What is kept is enough
+    /// for someone else to do it — the metadata plus **where the payload starts**, as an
+    /// offset into the image bytes that `Archive::image_bytes` returns.
+    ///
+    /// `wz-dump canvas` exports those slices; `tools/wz_png.py` turns them into PNGs.
+    /// Reading the client's baked UI text is what that is for: a lot of this client's
+    /// on-screen wording exists only as pixels, and is invisible to any string search.
     Canvas {
         width: i32,
         height: i32,
         format: i32,
+        data_off: usize,
         data_len: usize,
         children: Vec<Property>,
     },
@@ -174,8 +181,11 @@ fn read_extended(r: &mut WzReader, base: usize, end: usize) -> Result<Value> {
             let height = r.compressed_i32()?;
             let format = r.compressed_i32()? + r.u8()? as i32;
             r.u32()?; // unused
+            // The declared length counts a leading byte that is not part of the payload,
+            // so the pixels start one byte after this field and run `data_len` bytes.
             let data_len = r.i32()?.saturating_sub(1).max(0) as usize;
-            Value::Canvas { width, height, format, data_len, children }
+            let data_off = r.pos + 1;
+            Value::Canvas { width, height, format, data_off, data_len, children }
         }
         "Shape2D#Vector2D" => Value::Vector(r.compressed_i32()?, r.compressed_i32()?),
         "Shape2D#Convex2D" => {
@@ -235,7 +245,7 @@ pub fn to_json(v: &Value, indent: usize) -> String {
             let inner: Vec<String> = items.iter().map(|i| to_json(i, indent + 1)).collect();
             format!("[{}]", inner.join(", "))
         }
-        Value::Canvas { width, height, format, data_len, children } => {
+        Value::Canvas { width, height, format, data_len, children, data_off: _ } => {
             let mut parts = vec![
                 format!("{pad2}\"_canvas\": true"),
                 format!("{pad2}\"width\": {width}"),

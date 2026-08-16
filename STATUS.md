@@ -199,6 +199,29 @@ mode-5 branch is always the live one and the handler the switch names first is d
 for us. `0x000B`, the login flow, and the Login button all fork this way. Decoding the
 wrong side costs a full analysis pass. Table in `docs/opcodes.md`.
 
+### The Login button is enabled by one byte, and `0x000B` sets it
+
+The owner: the button starts **disabled** in an invalid session. `FUN_14112a720`, the
+`ClassicIntro` tick, enables the control named `"login"` only when
+`FUN_141b2a160(stage)` - that is, `*(u8 *)(stage + 0x108)` - is non-zero. The screen
+builder `FUN_141129930` creates it disabled.
+
+`stage+0x108` is written by the **world-list handler**, one line above the list append:
+
+```c
+*(undefined1 *)(param_1 + 0x108) = 1;
+piVar10 = (int *)FUN_141b44520(param_1 + 0x100, 0xffffffff);
+```
+
+So **inbound `0x000B` enables the button**, populates the list the login result searches,
+and is the one thing missing since the client first reached the login screen. Only a real
+world entry does it - the terminator branch returns before both writes.
+
+The account field is a different object: `FUN_142cb83a0` is `DAT_143aa84a0 + 0x22f8`,
+rendered into `textAccount` when non-empty. `DAT_143aa84a0` also holds world id `+0x2258`
+and channel id `+0x2260`; it is **not** the `DAT_143ac1898` that carries the `0x0073`
+identity.
+
 ### Next step - the world list
 
 The login result makes the client search for its world in the list at `stage+0x100`

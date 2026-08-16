@@ -31,6 +31,45 @@ Two consequences:
 - Because it appears at screen-construction time, whatever is wrong is already wrong when
   the client opens.
 
+## What actually enables the Login button
+
+**One byte: `stage + 0x108`.** The owner: the Login button starts *disabled* in an invalid
+session, and becomes clickable in a valid one.
+
+`FUN_14112a720`, the `ClassicIntro` tick, does exactly that:
+
+```c
+if (FUN_141b2a160(stage) != '\0') {          // FUN_141b2a160 = *(u8 *)(stage + 0x108)
+    FUN_142aa2010(this + 0x240, L"login", 1);  // enable the control named "login"
+    ...
+}
+```
+
+`FUN_142aa2010(container, name, value)` looks a control up by name and calls its vtable
+slot `+0x70`. The screen builder `FUN_141129930` calls it with **`0`** at construction, so
+the button is born disabled and this tick is the only thing that turns it on.
+
+**`stage + 0x108` is set by the world-list handler**, one line above the append:
+
+```c
+*(undefined1 *)(param_1 + 0x108) = 1;
+piVar10 = (int *)FUN_141b44520(param_1 + 0x100, 0xffffffff);
+```
+
+So the list (`+0x100`) and the flag (`+0x108`) are written together by inbound **`0x000B`**,
+which we have never sent. Only a real world entry does this - the terminator branch
+(`worldId < 0`) returns before either.
+
+That makes `0x000B` the single highest-value packet outstanding: it enables the button, it
+populates the list the login result searches, and it is the one thing the client has been
+missing since it first reached the login screen.
+
+**The account field is separate.** In the same tick, `FUN_142cb83a0(DAT_143aa84a0, &s)` -
+which is just `DAT_143aa84a0 + 0x22f8` - is rendered into the control at `+0x258`
+(`textAccount`) when non-empty. Note the object: `DAT_143aa84a0`, *not* the `DAT_143ac1898`
+that carries the `0x0073` identity. The same object also holds the world id (`+0x2258`) and
+channel id (`+0x2260`) the login result compares against.
+
 ## Two login screens, and we are probably on the wrong one
 
 `Login.img` contains two:
