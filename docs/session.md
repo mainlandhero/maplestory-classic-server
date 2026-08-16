@@ -70,6 +70,59 @@ which is just `DAT_143aa84a0 + 0x22f8` - is rendered into the control at `+0x258
 that carries the `0x0073` identity. The same object also holds the world id (`+0x2258`) and
 channel id (`+0x2260`) the login result compares against.
 
+## Stage ids
+
+Read out of `FUN_141127730`, which registers each stage id against a screen name - data,
+not inference:
+
+| Stage | Screen |
+|---|---|
+| 1 | Title |
+| 2 | WorldSelect |
+| 3 | **ClassicIntro** |
+| 4 | **CharSelect** |
+| 5 | NewChar |
+
+Two independent checks agree with the owner's description of the live client: the classic Login
+button does `FUN_141b3f050(stage, 4, 600)` - straight to CharSelect - and mode 5 sends us to
+stage 3, the legacy login screen.
+
+`FUN_141b21ea0` picks the stage on entry:
+
+```c
+if (FUN_1411284d0() == 2)                       -> stage 2, sends 0x0073 + 0x0080
+else if (session+0x68 == 5)                     -> stage 3, sends 0x0073 + 0x0080   <- us
+else                                            -> stage 1, sends nothing
+```
+
+**The login result does not advance the stage.** Both of its transitions are
+`FUN_141b3f050(stage, 3, 800)` - re-entering stage 3, the stage the client is already in
+when it sends `0x0080`. That is useful: answering `0x0010` keeps the connection alive
+without skipping past the login screen.
+
+### The Login button behaves differently in mode 5
+
+```c
+if (FUN_141b3fd10(stage))  FUN_141b3ff10(stage);          // mode == 5  <- us
+else                       FUN_141b3f050(stage, 4, 600);  // -> CharSelect
+```
+
+Only the second path is readable. `FUN_141b3ff10` calls `FUN_141b2ba60(stage, 0x50, 0, 0, 0)`
+and raises *"unable to log on to game server"* if it returns 0 - and **`FUN_141b2ba60` is
+virtualised**: 50 bytes of prologue then `jmp 0x144C74CD1`, inside `.themida`. It cannot be
+decompiled, only observed.
+
+So there are two ways to reach CharSelect by clicking Login:
+
+1. **Observe the mode-5 path.** Enable the button, click it, and read what goes out. One
+   run, and it costs nothing extra because the packets are already built.
+2. **Leave mode 5.** `session+0x68` is a `u32` at `[0x143ac1898] + 0x68`; with any other
+   value the button takes the readable `FUN_141b3f050(stage, 4, 600)` straight to
+   CharSelect. `crates/grap-stub` already patches memory in-process. Note this **sidesteps**
+   the question rather than answering it - it makes the client behave, it does not make the
+   session valid - and it also switches `0x000B` to the classic handler, so it should be
+   done *after* the world list lands.
+
 ## Two login screens, and we are probably on the wrong one
 
 `Login.img` contains two:
