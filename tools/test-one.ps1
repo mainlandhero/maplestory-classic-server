@@ -48,6 +48,8 @@ param(
     # (u8 result 0x65, then a u16-length empty string).
     [string]$Body = '',
     [string]$PingBody = '',
+    # Client opcode to answer the instant it arrives, e.g. 0x0080.
+    [string]$ReplyTo = '',
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -127,6 +129,7 @@ if ($Reply) {
         if ($Skip) { $probeArgs += @('--skip', $Skip) }
         if ($Body) { $probeArgs += @('--body', $Body) }
         if ($PingBody) { $probeArgs += @('--ping-body', $PingBody) }
+        if ($ReplyTo) { $probeArgs += @('--reply-to', $ReplyTo) }
         if ($PingFirst) {
             $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
             Write-Host "will send $PingFirst alone first, then watch ${PingWait}s"

@@ -351,6 +351,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
           pad: int = 0, skip: frozenset = frozenset(),
           body: bytes | None = None, ping_body: bytes | None = None,
+          reply_to: int | None = None,
           ping_first: int | None = None, ping_wait: float = 10.0,
           quiet_before: float = 5.0, send_iv: int = 0x52307801) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -406,6 +407,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         next_op = sweep_from
         last_sent = None
         sent_at = None
+        answered = False
         pinged = ping_first is None
         opened_at = time.time()
         next_send = 0.0
@@ -487,6 +489,22 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                         flag = "" if pkt["header_ok"] else "  <<< HEADER MISMATCH, IV DESYNC"
                         log(f"[{port}]      <- #{pkt['n']:<3} 0x{op:04X} {name:34}"
                             f" {transport.describe(pkt['body'])}{flag}")
+
+                        # Answer the moment the client asks, rather than on a timer.
+                        #
+                        # The window is genuinely tight and it moves: the client sent
+                        # 0x0080 at +4.4s in one run, +6.1s in another, +7.2s in a third,
+                        # and abandoned the connection within a second or two of that. A
+                        # fixed delay lost that race repeatedly, and `--quiet-before`
+                        # made it worse by additionally requiring a silence that never
+                        # came. Reacting to the packet removes the race entirely.
+                        if reply_to is not None and op == reply_to and not answered:
+                            frame, what = build_reply("ping", opcode, cipher, pad, body)
+                            log(f"[{port}] {time.strftime('%H:%M:%S')} >>> ANSWERING "
+                                f"0x{op:04X} with {what}")
+                            conn.sendall(frame)
+                            answered = True
+                            last_sent, sent_at = opcode, time.time()
                 else:
                     log(hexdump(data))
         except ConnectionResetError:
@@ -524,6 +542,9 @@ def main() -> None:
     ap.add_argument("--sweep-from", type=lambda s: int(s, 0), default=0)
     ap.add_argument("--sweep-to", type=lambda s: int(s, 0), default=0x1000)
     ap.add_argument("--sweep-delay", type=float, default=0.15)
+    ap.add_argument("--reply-to", type=lambda s: int(s, 0),
+                    help="client opcode to answer immediately, e.g. 0x0080 - removes the "
+                         "timing race a fixed delay creates")
     ap.add_argument("--body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
                     help="hex body for the replied/swept opcode, instead of zero padding")
     ap.add_argument("--ping-body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
@@ -582,7 +603,7 @@ def main() -> None:
             sweep_from=args.sweep_from, sweep_to=args.sweep_to,
             sweep_delay=args.sweep_delay, pad=args.pad,
             skip=frozenset(int(x, 0) for x in args.skip.split(',') if x.strip()),
-            body=args.body, ping_body=args.ping_body,
+            body=args.body, ping_body=args.ping_body, reply_to=args.reply_to,
             ping_first=args.ping_first, ping_wait=args.ping_wait,
             quiet_before=args.quiet_before, send_iv=args.send_iv,
         ),
