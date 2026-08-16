@@ -123,20 +123,23 @@ $probeArgs = @('-u', $probePy, '--port', "$Port", '--only', "$Variant")
 if ($Reply) {
     $probeArgs += @('--reply', $Reply, '--opcode', $Opcode, '--pad', "$Pad",
                     '--quiet-before', "$QuietBefore")
+    # These apply to every reply mode, not just sweep. Gating them on sweep meant a
+    # -ReplyTo run silently dropped its gate packet and its body.
+    if ($Body) { $probeArgs += @('--body', $Body) }
+    if ($PingBody) { $probeArgs += @('--ping-body', $PingBody) }
+    if ($ReplyTo) { $probeArgs += @('--reply-to', $ReplyTo) }
+    if ($PingFirst) {
+        $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
+    }
     if ($Reply -eq 'sweep') {
         $probeArgs += @('--sweep-from', $SweepFrom, '--sweep-to', $SweepTo,
                         '--sweep-delay', "$SweepDelay")
         if ($Skip) { $probeArgs += @('--skip', $Skip) }
-        if ($Body) { $probeArgs += @('--body', $Body) }
-        if ($PingBody) { $probeArgs += @('--ping-body', $PingBody) }
-        if ($ReplyTo) { $probeArgs += @('--reply-to', $ReplyTo) }
-        if ($PingFirst) {
-            $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
-            Write-Host "will send $PingFirst alone first, then watch ${PingWait}s"
-        }
         Write-Host "will sweep opcodes $SweepFrom..$SweepTo at ${SweepDelay}s each (pad $Pad)"
-    } else {
-        if ($Body) { $probeArgs += @('--body', $Body) }
+    }
+    if ($ReplyTo) {
+        Write-Host "will send $PingFirst as the gate, then answer $ReplyTo with $Opcode body=$Body"
+    } elseif ($Reply -ne 'sweep') {
         Write-Host "will answer the client with: $Reply"
     }
 }

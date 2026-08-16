@@ -420,7 +420,26 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
             while time.time() < deadline:
                 # Let the client finish its opening burst, then answer into the quiet.
                 ready = total and time.time() - last_data > quiet_before
-                if reply == "sweep" and ready and time.time() >= next_send:
+
+                # --reply-to mode: send only the gate packet on a timer, and leave the
+                # actual answer to the decode loop.
+                #
+                # Otherwise the timed path races the client and can fire *before* the
+                # request it is meant to answer - which is exactly what happened: 0x0010
+                # went out 0.12s before the client sent 0x0080, so the reply arrived
+                # first and the request went unanswered. Ordering, not timing.
+                if reply_to is not None:
+                    if ready and not pinged and ping_first is not None:
+                        frame, what = build_reply("ping", ping_first, cipher, pad, ping_body)
+                        log(f"[{port}] {time.strftime('%H:%M:%S')} >>> GATE {what}"
+                            f" - now waiting for the client to send 0x{reply_to:04X}")
+                        conn.sendall(frame)
+                        last_sent, sent_at = ping_first, time.time()
+                        pinged = True
+                    replied = True          # suppress the one-shot timer path entirely
+
+                if (reply == "sweep" and reply_to is None and ready
+                        and time.time() >= next_send):
                     # Isolate one opcode before the sweep starts, so a reply to it can be
                     # timed against our packet rather than against the connection age.
                     # Folds the causality test and the next sweep range into one run.
