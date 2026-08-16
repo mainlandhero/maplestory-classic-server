@@ -1,0 +1,5 @@
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+    0 opcode=0x0095 elapsed_us=137.3 ret=110664592 flag=0->0 state=0->0
+    1 opcode=0x0096 elapsed_us=127.7 ret=110664648 flag=0->0 state=0->0
