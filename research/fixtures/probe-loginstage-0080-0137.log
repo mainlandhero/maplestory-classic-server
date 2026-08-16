@@ -1,0 +1,25 @@
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+    0 opcode=0x0032 elapsed_us=89.4 ret=110301056 flag=0->1 state=0->2
+***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+probe: dispatch #1, waiting for #2 before walking
+    1 opcode=0x0000 elapsed_us=367.0 ret=1 flag=1->1 state=2->2
+probe: neutralised RtlExitUserProcess
+probe: neutralised NtTerminateProcess
+probe: armed int3 at 0x141b25f30 (was 0x48)
+probe: neutralised ExitProcess
+probe: neutralised TerminateProcess
+probe: walking 0x0080..0x1000, packet len=518 cursor before dispatch=4 after=85, oracle=int3 on target
+probe: at 0x0080 (faults so far 0)
+probe: at 0x0090 (faults so far 5)
+probe: at 0x00A0 (faults so far 7)
+probe: at 0x00B0 (faults so far 12)
+probe: at 0x00C0 (faults so far 14)
+probe: at 0x00D0 (faults so far 21)
+probe: at 0x00E0 (faults so far 24)
+probe: at 0x00F0 (faults so far 31)
+probe: at 0x0100 (faults so far 32)
+probe: at 0x0110 (faults so far 34)
+probe: at 0x0120 (faults so far 39)
+probe: at 0x0130 (faults so far 41)
