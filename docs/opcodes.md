@@ -214,3 +214,97 @@ branch that merely re-sends `0x0080`.
 
 The other cases in that switch are unlabelled but free to read the same way, and the same
 trick should work for every other stage.
+
+## The login stage has two variants, and we are in the second one
+
+**Read this before decoding any login-stage handler.** Several handlers open with
+
+```c
+if (FUN_142c4a810(DAT_143ac1898) == 5) { <other handler>(this, packet); return; }
+```
+
+`FUN_142c4a810(obj)` is just `*(u32 *)(obj + 0x68)`, and `DAT_143ac1898` is the session
+object. **That field is `5` in our client**, and it is not a guess: it is transmitted as the
+first `u32` of outbound `0x0073`, where we captured `05 00 00 00`.
+
+Mode 5 is what **`-NXLDEBUG`** selects — the launch mode this project uses for everything.
+So every mode-5 branch is the live one, and the classic branch beside it is dead code for
+us. Known forks so far:
+
+| Site | mode != 5 | mode == 5 |
+|---|---|---|
+| `0x000B` handler `FUN_141b2fac0` | classic world list | **`FUN_141b31ff0`** |
+| login flow `FUN_141b21ea0` | stage 2 | stage 3 |
+| Login button `FUN_14112a570` | fade to stage 4 | `FUN_141b3ff10` |
+
+The trap: decompile the *first* handler the switch names, decode it carefully, and you have
+decoded a function this client never calls. Check for the `== 5` fork first, every time.
+
+## 0x0010 — the login result. Confirmed accepted.
+
+Sent as the answer to outbound `0x0080`. Body:
+
+```
+u8   result        0 = success
+str  message       u16 length, then bytes
+// result == 0 continues:
+u8
+8B   server time       -> _DAT_143ac3120, paired with a local tick baseline
+u32  world id          -> compared against session+0x2258
+u32  channel id        -> compared against session+0x2260
+4B   world id          -> DAT_143ac2040
+4B   world TYPE        -> DAT_143ac2044; 1=normal 2=reboot 3=burning 4=challenge, 0 skips
+4B                     -> _DAT_143ac2160
+u32
+u8
+     then FUN_14108d290 and FUN_14108bdf0 read further sub-records
+u8, u8, u32, u8, u8, u8, u32
+// result == 0x83 instead reads: two more u32
+```
+
+**Verified working.** `body = 00 00 00` plus 256 zero bytes made the client run the success
+path to completion and advance its UI to character select. Compare `0x65`, which dropped the
+connection in 0.0 s with no follow-up. Fixtures:
+`research/fixtures/reply-0010-result0-advanced-to-charselect.log` (success) and
+`reply-0010-correct-order-no-effect.log` (the `0x65` run).
+
+Note the world/channel comparison: when the pair we send differs from `session+0x2258` /
+`+0x2260`, the client calls `FUN_141b2c7c0(stage, world, channel, 0)`, which **searches the
+world list at `stage+0x100`**. That list is populated only by `0x000B`. Send the login
+result without a world list and the client arrives at character select with no world.
+
+## 0x000B — the world list
+
+One packet per world; a final packet whose first byte has the high bit set closes the list.
+Read from `FUN_141b31ff0`, the **mode-5** handler (see the fork warning above).
+
+```
+u8    worldId
+      // if worldId < 0 (high bit set, e.g. 0xFF) this is the TERMINATOR:
+      //     u8  flag      -> stage+0x1a8
+      //     u8  hasNotice -> non-zero shows a message
+      //     ... and the entry fields below are NOT read
+str   worldName
+u8    flag
+str   eventDescription
+u8    flag
+u8    channelCount
+      repeat channelCount:
+          str  channelName
+          u32
+          u8
+          u8
+          u8
+          u8
+u16   balloonCount
+      repeat balloonCount:
+          u16  x
+          u16  y
+          str  message
+u32
+u8    hasExtra        // non-zero: FUN_1408e4210 reads a further sub-record
+```
+
+The entry is appended by `FUN_141b44520(stage + 0x100, -1)` — the same list
+`FUN_141b2c7c0` later searches by world id, which is what ties this packet to the login
+result.

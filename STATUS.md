@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-16
+# Where things stand — 2026-08-16 (evening: login result accepted)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -175,37 +175,65 @@ Corroborated independently: non-zero results are **error message IDs**, resolved
 `FUN_141803cd0` in `docs/client-messages.md`. `0x65` is 101, *"You have been disconnected
 from the login server"* - exactly the dialog that replying `0x65` produced.
 
-### Next step - set up, not yet tried
+### DONE - the login result is accepted, the client reaches character select
 
+`0x0010` with `body = 00 00 00` + 256 zero bytes ran the success path to completion and the
+client's UI **advanced to character select**. Compare `0x65`, which dropped the connection
+in 0.0 s with no follow-up. Fixture:
+`research/fixtures/reply-0010-result0-advanced-to-charselect.log`.
+
+Full field list in `docs/opcodes.md`. Two fields matter beyond filler: the `u32` world id
+and `u32` channel id, which the client looks up in a world list it does not yet have.
+
+### The whole login stage has two variants, and we are in mode 5
+
+**Check this before decoding any login-stage handler.** Several open with
+
+```c
+if (FUN_142c4a810(DAT_143ac1898) == 5) { <other handler>(...); return; }
 ```
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
-  -Opcode 0x0010 -Body 000000 -Pad 256 -PingFirst 0x0032 -PingBody 00
-  -ReplyTo 0x0080 -QuietBefore 4 -HookLog on
-```
 
-`0x0032` passes the data gate; the moment the client sends `0x0080` it gets `0x0010` with
-result `0`, an empty message, and 256 zero bytes to satisfy the success path's reads.
+`session+0x68` is **5** in our client - transmitted as the first `u32` of `0x0073`, captured
+as `05 00 00 00`. Mode 5 is what **`-NXLDEBUG`** sets, which is how we launch. So the
+mode-5 branch is always the live one and the handler the switch names first is dead code
+for us. `0x000B`, the login flow, and the Login button all fork this way. Decoding the
+wrong side costs a full analysis pass. Table in `docs/opcodes.md`.
 
-If the dialog persists, watch `FUN_141b267c0` (`-Probe watch@141b267c0`) to see whether it
-is returning zero, rather than guessing at the body again.
+### Next step - the world list
 
-### The session question, still open
+The login result makes the client search for its world in the list at `stage+0x100`
+(`FUN_141b2c7c0`). Only inbound **`0x000B`** appends to it, and we have never sent one, so
+the client arrives at character select with no world. That is the gap, not the empty
+character list - an account with no characters legitimately routes to "create a character"
+(the owner, who knows the live game).
 
-The owner, who knows the live game: the login form is vestigial, the client already holds a
-session when it connects, and **"Having trouble logging in?" means the session is
-invalid**. In the live client the Login ID field is pre-filled with a masked account email;
-in ours it is empty. The password field's "press the Login Button to proceed" is a
-placeholder and appears in the live client too - it is not a symptom.
+Format decoded from `FUN_141b31ff0` (the mode-5 handler) and built by
+`crates::net::opcode::{world_list_entry, world_list_end}`, with a test that re-reads the
+bytes the way the client does.
 
-Tried and inconclusive: six distinguishable tokens in config `+0x90` (the array
-`-NXLDEBUG` fills from token 3 onward, `WEBSTART` from tokens 4-9) produced a
-**byte-identical** client stream - same `0x0073` body, same empty `0x0080`. So either they
-are not the identity source or they never arrived; `test-one.ps1` now echoes the real
-command line so the next run can tell those apart.
+The run needs **three packets** in answer to `0x0080`: a world entry, the terminator, then
+the login result. `test-one.ps1 -ReplyTo` sends only one, so the probe needs a reply
+*sequence* first - worth building rather than spending three launches.
 
-Unexplained and worth decoding: the constant 20-byte tail of `0x0073`, and why `0x0080`
-carries no body. The `CNM*` session interface lives in `nexon_api_x64.dll` /
-`nmcogame64.dll`, both unpacked and far easier to read than the exe.
+### The session identity - see `docs/session.md`
+
+Short version, because two long-standing assumptions turned out to be wrong:
+
+- **"Having trouble logging in" is a baked bitmap**, not a string. It is absent from the
+  6165 encrypted messages, from `Login.img`'s 260 strings, from `StringTable.img`, and from
+  the whole install as ASCII or UTF-16. A canvas can be permanent furniture, so **stop
+  using it as the oracle** - use the wire.
+- **The empty identity did not block the login.** The client still sent `0x0073` and
+  `0x0080` and accepted a `result = 0` reply. It is a real gap but not the current blocker.
+
+The identity is one `char *` at **`DAT_143ac1898 + 0x1b8`**, read by `FUN_142c50400` and
+sent as the second field of `0x0073`, where we captured a **zero-length string**. Nothing
+computes it. The six `+0x90` launcher tokens are ruled out. Next: find its writer in
+`nexon_api_x64.dll` / `nmcogame64.dll` (both unpacked), or write the field directly from
+`grap-stub`, which is already in-process.
+
+The old "constant 20-byte tail of `0x0073`" question is closed: it is a 16-byte GUID plus a
+4-byte counter, not session data.
 
 ### The opcode walk, and how to aim it
 
@@ -235,6 +263,12 @@ screen exists cannot work no matter what address is used.
 * **Accepting a packet only proves the header.** A bad payload decrypts to a random opcode
   and is silently ignored, not rejected.
 * Login result **`0` is success**; `0x65`/`0x67` are a different branch entirely.
+* **Check the `session+0x68 == 5` fork before decoding any login-stage handler.** The
+  handler the switch names is often a shim that hands off to the mode-5 one, and we are
+  always mode 5.
+* **The on-screen dialog is a bitmap, not a state readout.** Two wire-level oracles are
+  strictly better: the identity string in `0x0073`, and how long the connection survives a
+  reply.
 * The client's opening burst varies **294 to 3393 bytes** because `0x8F`-`0x91` upload and
   delete log files.
 

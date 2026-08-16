@@ -78,6 +78,76 @@ pub const CLIENT_LOGIN_REQUEST: u16 = 0x0080;
 /// `result == 0`. The client treats every other value as an error message ID.
 pub const LOGIN_OK: u8 = 0;
 
+/// The world list. One packet per world, then one whose `worldId` closes the list.
+///
+/// # How it was established
+///
+/// Read from the login stage's switch (`case 0xb`), then from the handler itself. **Take
+/// the mode-5 fork**: `FUN_141b2fac0` opens with `if (session+0x68 == 5) { FUN_141b31ff0();
+/// return; }`, and our client is mode 5, so `FUN_141b31ff0` is the live handler. Decoding
+/// the outer function instead decodes something this client never runs.
+///
+/// # Why it is needed
+///
+/// The login result makes the client look up its world in the list at `stage+0x100`
+/// (`FUN_141b2c7c0`). Only this packet appends to it - `FUN_141b44520(stage+0x100, -1)`.
+/// Answering the login request without it leaves the client at character select with no
+/// world, which it does not survive.
+///
+/// # Body
+///
+/// ```text
+/// u8   worldId          high bit set => terminator: u8 flag, u8 hasNotice, [notice]
+/// str  worldName
+/// u8   flag
+/// str  eventDescription
+/// u8   flag
+/// u8   channelCount
+///      repeat: str channelName, u32, u8, u8, u8, u8
+/// u16  balloonCount
+///      repeat: u16 x, u16 y, str message
+/// u32
+/// u8   hasExtra         non-zero pulls in a further sub-record
+/// ```
+pub const WORLD_LIST: u16 = 0x000B;
+
+/// The `worldId` that ends a [`WORLD_LIST`] run. Any value with the high bit set works -
+/// the client's test is `(char) worldId < 0`.
+pub const WORLD_LIST_END: u8 = 0xFF;
+
+/// A MapleStory string: `u16` length, then the bytes. Mirrors `FUN_1406e9050`.
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    out.extend_from_slice(&(s.len() as u16).to_le_bytes());
+    out.extend_from_slice(s.as_bytes());
+}
+
+/// One [`WORLD_LIST`] entry: a world with `channels` unnamed channels and no notices.
+///
+/// Deliberately minimal - every optional count is zero - because the point is to give
+/// `FUN_141b2c7c0` a world to find, not to furnish a realistic server list.
+pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
+    let mut out = vec![world_id];
+    put_str(&mut out, name);
+    out.push(0);
+    put_str(&mut out, "");
+    out.push(0);
+    out.push(channels);
+    for i in 0..channels {
+        put_str(&mut out, &format!("{name}-{i}"));
+        out.extend_from_slice(&0u32.to_le_bytes()); // capacity
+        out.extend_from_slice(&[0, 0, 0, 0]);
+    }
+    out.extend_from_slice(&0u16.to_le_bytes()); // balloonCount
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0); // hasExtra
+    out
+}
+
+/// The packet that closes a [`WORLD_LIST`] run, with no notice.
+pub fn world_list_end() -> Vec<u8> {
+    vec![WORLD_LIST_END, 0, 0]
+}
+
 /// Encode a zigzag varint, the length format [`DATA_WZ_PATCH`] expects.
 ///
 /// Mirrors `FUN_1406efcc0` in the client: zigzag so the sign survives, then 7 bits per
@@ -133,6 +203,60 @@ mod tests {
     fn the_up_to_date_reply_is_a_single_zero_byte() {
         // The client reads one varint and stops, so this is the entire body.
         assert_eq!(data_wz_up_to_date(), vec![0x00]);
+    }
+
+    /// Walks the entry the way `FUN_141b31ff0` does and returns how many bytes it read.
+    /// If the builder and the client's read sequence ever disagree, this stops matching
+    /// the buffer length.
+    fn read_world_entry(b: &[u8]) -> usize {
+        let mut i = 0;
+        let take_str = |i: &mut usize| {
+            let n = u16::from_le_bytes([b[*i], b[*i + 1]]) as usize;
+            *i += 2 + n;
+        };
+        i += 1; // worldId
+        take_str(&mut i); // worldName
+        i += 1; // flag
+        take_str(&mut i); // eventDescription
+        i += 1; // flag
+        let channels = b[i];
+        i += 1;
+        for _ in 0..channels {
+            take_str(&mut i); // channelName
+            i += 4 + 4; // u32, then four u8
+        }
+        let balloons = u16::from_le_bytes([b[i], b[i + 1]]);
+        i += 2;
+        for _ in 0..balloons {
+            i += 4; // u16 x, u16 y
+            take_str(&mut i);
+        }
+        i += 4; // u32
+        i += 1; // hasExtra
+        i
+    }
+
+    #[test]
+    fn a_world_entry_is_read_back_exactly_as_it_was_built() {
+        // Zero channels and several channels exercise the loop boundary, which is where a
+        // field-order mistake would otherwise hide.
+        for channels in [0u8, 1, 3] {
+            let body = world_list_entry(0, "Scania", channels);
+            assert_eq!(
+                read_world_entry(&body),
+                body.len(),
+                "client's read sequence disagrees with the builder for {channels} channels"
+            );
+        }
+    }
+
+    #[test]
+    fn the_terminator_trips_the_clients_signed_test() {
+        // The client's check is `(char) worldId < 0`, not `== 0xFF`.
+        let end = world_list_end();
+        assert!((end[0] as i8) < 0, "terminator must have its high bit set");
+        // A real world id must not accidentally look like one.
+        assert!((world_list_entry(0, "Scania", 1)[0] as i8) >= 0);
     }
 
     #[test]
