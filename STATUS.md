@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-15
+# Where things stand — 2026-08-16
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -106,14 +106,15 @@ to a random opcode and is silently ignored, not rejected.
 
 ### The startup gate is solved - the client reaches its login screen
 
-**Inbound opcode `0x0032`, body `0x00`.** Seven bytes on the wire, and the client goes
-from a blank non-responding window to the login screen.
+**Inbound opcode `0x0032`, body `0x00`.** Seven bytes on the wire, and the client goes from
+a blank non-responding window to the login screen. Verified with a single packet and no
+probe: `flag=0->1 state=0->2`.
 
-It was never a login handshake. On connect the client hashes `Data.wz` into `conn+0x14c`,
-sends `0x00A1` carrying that `u32`, and then blocks in `recv` **on its UI thread** inside
+It was never a login handshake. The client hashes `Data.wz` into `conn+0x14c`, sends
+`0x00A1` carrying that `u32`, and blocks in `recv` **on its UI thread** inside
 `FUN_1415e7090`, looping recv -> decrypt -> dispatch until a handler sets the byte at
-`conn+0x150`. Only `FUN_1415e5c20` does that, and it is a `Data.wz` patch handler. The
-body is a zigzag varint length (`FUN_1406efcc0`):
+`conn+0x150`. Only `FUN_1415e5c20` does that, and it is a `Data.wz` patch handler whose
+first field is a **zigzag varint** length (`FUN_1406efcc0`):
 
 | length | client does |
 |---|---|
@@ -121,58 +122,144 @@ body is a zigzag varint length (`FUN_1406efcc0`):
 | `> 0` | expects that many bytes in 64 KB chunks, then writes `Data.wz` |
 | `< 0` | deletes `Data.wz` and carries on |
 
-This client has no `Data.wz` at all - it ships a `Data/` directory - so it sends hash `0`
-and a varint `0` reply is the right answer. Verified with a single packet and no probe:
-`flag=0->1 state=0->2`, then the login screen. `crates/net/src/opcode.rs`.
+This client ships no `Data.wz` at all (a `Data/` directory instead), so it sends hash `0`
+and a varint `0` is the right answer. See `crates/net/src/opcode.rs`.
 
-That also explains the "26 packet ceiling": every unhandled packet allocates a `0x5b4`
-buffer inside that loop and the loop never exits to free them. It was a leak, not a limit.
+That also explains the old "26 packet ceiling": every unhandled packet allocates a `0x5b4`
+buffer inside that loop and the loop never exits to free them. A leak, not a limit.
 
-### How inbound opcodes get found, because it is not by reading
+### The login exchange, and where it stands
 
-The dispatcher is virtualised and handler addresses appear nowhere as data - not in the
-image, not in a gigabyte of live memory. Sweeping over the wire costs about two opcodes
-per launch, because live handlers take the client down.
+The client **logs in by itself** - no button press. After the gate it sends:
 
-So `crates/grap-stub/src/probe.rs` walks the space **inside** the client: it snapshots one
-captured packet, rewrites its opcode, and re-dispatches, watching `conn+0x150`. The whole
-enum in one launch. A vectored handler catches decoder throws and access violations and
-resumes the loop; `ExitProcess`/`TerminateProcess` are detoured so a handler cannot end
-the run. `-Probe <from>-<to>` on `test-one.ps1`.
+```
+0x00C0  05 00 00 00 20 4e 00 00
+0x0073  26B  05 00 00 00 00 00 aa bb cc dd ee ff de ad be ef...   <- 20 bytes, constant
+0x0080  (empty body)                                              <- the login request
+0x007A  01 01 4x 00 00 00 ...
+```
 
-**Snapshot before the dispatch, never after.** The dispatcher consumes the opcode and
-moves the cursor 4 -> 6, so an after-snapshot replays with the cursor past the opcode and
-dispatches "opcode 0" every time - a silent no-op that reports as an empty range. The walk
-now reports how many calls advanced the cursor, and says outright when the answer is
-"broken", not "empty".
+then waits **4-7 seconds** and abandons the connection. `0x0073` and `0x0080` are both
+built by `FUN_141b21ea0`, the function that loads `UI/Login.img`.
 
-### Next steps
+**The reply is inbound `0x0010`**, and this is the structural find of the session: the
+login stage's `OnPacket` is `FUN_141b25f30`, and it is an **ordinary readable switch on the
+opcode**. The Themida-virtualised dispatcher hands a stage its opcode; the stage dispatches
+in plain code. So the whole login-stage opcode map is readable:
 
-The client is at the login screen and still talking: after `0x0032` it sends `0x00BF`,
-`0x00C0` (`05 00 00 00 20 4e 00 00`) and another run of `0x00A6` with ids 19-28.
+```
+0x00, 0x0b-0x18, 0x23, 0x25-0x27, 0x29, 0x2b, 0x34-0x39, 0x45-0x48, 0x4a, 0x50, 0x5f, 0x5f4
+case 0x10 -> FUN_141b307b0    the login result
+```
 
-1. **Capture a login attempt.** Have the owner type credentials and press Login while the probe
-   holds the connection. Whatever opcode that produces is the next thing to answer, and it
-   is outbound - so `docs/opcodes.md` can name its fields.
-2. **Answer it** from `crates/store`, which already has argon2id accounts and single-use
-   session tokens, plus `maplecw-useradd`.
-3. **Find the reply opcode** the same way, with `-Probe` narrowed around a candidate band.
+Watch mode confirmed at runtime that `FUN_141b307b0` **is entered while dispatching
+`0x0010`**, so the opcode and the stage are both right.
 
-### Traps that cost time — do not re-learn these
+Body of `0x0010`, from `FUN_141b307b0` and `FUN_1406e9050` (strings are `u16` length then
+bytes):
 
-* The **on-disk AES key is a decoy**; read the real one from a running client. A regression
-  test guards against reverting it.
+```
+u8  result
+str message
+if result == 0:    u8, 8 bytes, u32, u32, 4B, 4B, 4B, u32, u8,
+                   then FUN_14108d290 and FUN_14108bdf0 read further
+if result == 0x83: two more u32
+```
+
+**Result `0` is success.** `FUN_141b267c0(this, result, 0, ...)` raises the error dialog,
+and the proceed branch is `cVar6 != 0 && result == 0`. `0x65`/`0x67` are *not* success -
+they take a different branch that re-sends `0x0080`. Misreading them as success cost three
+runs of the same dialog.
+
+### Next step - set up, not yet tried
+
+```
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+  -Opcode 0x0010 -Body 000000 -Pad 256 -PingFirst 0x0032 -PingBody 00
+  -ReplyTo 0x0080 -QuietBefore 4 -HookLog on
+```
+
+`0x0032` passes the data gate; the moment the client sends `0x0080` it gets `0x0010` with
+result `0`, an empty message, and 256 zero bytes to satisfy the success path's reads.
+
+If the dialog persists, watch `FUN_141b267c0` (`-Probe watch@141b267c0`) to see whether it
+is returning zero, rather than guessing at the body again.
+
+### The session question, still open
+
+The owner, who knows the live game: the login form is vestigial, the client already holds a
+session when it connects, and **"Having trouble logging in?" means the session is
+invalid**. In the live client the Login ID field is pre-filled with a masked account email;
+in ours it is empty. The password field's "press the Login Button to proceed" is a
+placeholder and appears in the live client too - it is not a symptom.
+
+Tried and inconclusive: six distinguishable tokens in config `+0x90` (the array
+`-NXLDEBUG` fills from token 3 onward, `WEBSTART` from tokens 4-9) produced a
+**byte-identical** client stream - same `0x0073` body, same empty `0x0080`. So either they
+are not the identity source or they never arrived; `test-one.ps1` now echoes the real
+command line so the next run can tell those apart.
+
+Unexplained and worth decoding: the constant 20-byte tail of `0x0073`, and why `0x0080`
+carries no body. The `CNM*` session interface lives in `nexon_api_x64.dll` /
+`nmcogame64.dll`, both unpacked and far easier to read than the exe.
+
+### The opcode walk, and how to aim it
+
+`crates/grap-stub/src/probe.rs` walks the inbound opcode space **inside** the client:
+snapshot one captured packet, rewrite its opcode, re-dispatch, watch an oracle. The whole
+enum in one launch instead of ~2 opcodes per launch over the wire. Faults are caught by a
+vectored handler and the loop resumes; `ExitProcess`, `TerminateProcess`,
+`RtlExitUserProcess` and `NtTerminateProcess` are detoured so a handler cannot end the run;
+progress is appended to a resume file so a fatal opcode costs one launch, not the search.
+
+`-Probe <from>-<to>[@targetVA][#N]`, or `-Probe watch@<VA>` to observe whether a function
+runs at all.
+
+**Aim it with `tools/handler_root.py`, never by hand.** A walk target must be a dispatcher
+entry: no direct callers **and in no vtable**. `FUN_141b25f30` has no callers but *is* a
+vtable entry, and aiming at it burned a full 3968-opcode run that missed cleanly.
+
+**And time it.** `#N` starts the walk on the Nth dispatched packet. The walk runs inside
+whatever loop the client is in, so walking for a login-stage handler before the login
+screen exists cannot work no matter what address is used.
+
+### Traps that cost time - do not re-learn these
+
+**Protocol**
+
+* The **on-disk AES key is a decoy**; read the real one from a running client.
 * **Accepting a packet only proves the header.** A bad payload decrypts to a random opcode
-  and is silently ignored, not rejected — which is what made a broken cipher look fine for
-  six sweeps.
-* `tools/test-one.ps1` runs the **bare system Python** with no third-party packages; keep
-  the probe path stdlib-only, and check `probe.err` is empty before believing any negative.
-* The client needs **elevation**, so it must launch via ShellExecute, which does **not**
-  propagate `$env:` — hence the hook's marker file.
+  and is silently ignored, not rejected.
+* Login result **`0` is success**; `0x65`/`0x67` are a different branch entirely.
 * The client's opening burst varies **294 to 3393 bytes** because `0x8F`-`0x91` upload and
-  delete log files. Wait for silence (`-QuietBefore`) before attributing anything to a reply.
-* Scripts here are invoked as
-  `powershell -ExecutionPolicy Bypass -File "<abs path>"`; the bare path will not run.
+  delete log files.
+
+**The walk**
+
+* **Snapshot the packet before the dispatch, never after.** The dispatcher consumes the
+  opcode and moves the cursor 4 -> 6, so an after-snapshot replays "opcode 0" every time:
+  4096 dispatches, no faults, reported as an empty range.
+* **One oracle per walk.** With a target armed, `conn+0x150` is *expected* to be set
+  already, so consulting it as well reports a hit on the first opcode tested.
+* **Aim at dispatcher entries** - no callers *and* no vtable. Use `handler_root.py`.
+* **Time the walk** into the phase where the handler exists (`#N`).
+* **Append resume records.** `fs::write` truncates first, so dying mid-write leaves an
+  empty file and the next launch restarts from zero and dies in the same place.
+* The probe detours `ExitProcess`, so the client survives and, being elevated, **cannot be
+  killed from a normal shell** - use `taskkill /F /IM MapleStory.exe /T` from an elevated
+  one, or the leftover holds port 8484 and the DLL file.
+
+**The harness**
+
+* **Answer on packet arrival, not on a timer.** The client sends `0x0080` at +4.4s, +6.1s
+  or +7.2s and gives up seconds later; a fixed delay once fired 0.12s *before* the request
+  it was meant to answer. Use `-ReplyTo`.
+* `-QuietBefore` also gates timed replies, and the client is rarely quiet for that long.
+* PowerShell variable names are **case-insensitive**: a `$probe` local silently ate the
+  `-Probe` parameter.
+* A parameter that never arrives looks exactly like one that arrives and does nothing -
+  `test-one.ps1` echoes the real command line for that reason.
+* Scripts are invoked as `powershell -ExecutionPolicy Bypass -File "<abs path>"`.
 
 ### Testing loop that works
 
