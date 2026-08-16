@@ -165,6 +165,42 @@ unsafe fn arm_target(target: usize) -> bool {
     true
 }
 
+/// Where the walk records how far it got, so a fatal opcode costs one launch, not the search.
+pub const RESUME_FILE: &str = "maplecw-hook.resume";
+
+/// Tag identifying which walk a resume point belongs to.
+///
+/// Without this, a resume point left over from one range would silently skip the start of
+/// the next - the same class of bug as the marker fallback, where stale state makes a run
+/// look like it covered ground it never touched.
+fn resume_tag(from: u32, to: u32, target: usize) -> String {
+    format!("{from:04X}-{to:04X}@{target:X}")
+}
+
+/// Read the resume point, if it belongs to this exact walk.
+fn resume_from(from: u32, to: u32, target: usize) -> Option<u32> {
+    let text = std::fs::read_to_string(RESUME_FILE).ok()?;
+    let (tag, at) = text.trim().split_once(':')?;
+    if tag != resume_tag(from, to, target) {
+        log(&format!(
+            "probe: ignoring resume point {text:?} - it is from a different walk than \
+             {}",
+            resume_tag(from, to, target)
+        ));
+        return None;
+    }
+    let at = u32::from_str_radix(at.trim(), 16).ok()?;
+    (at > from && at < to).then_some(at)
+}
+
+fn record_resume(from: u32, to: u32, target: usize, at: u32) {
+    let _ = std::fs::write(RESUME_FILE, format!("{}:{at:04X}", resume_tag(from, to, target)));
+}
+
+fn clear_resume() {
+    let _ = std::fs::remove_file(RESUME_FILE);
+}
+
 /// Put the target's original byte back.
 ///
 /// Must happen before the walk returns. The vectored handler only services the trap while
@@ -324,6 +360,12 @@ pub unsafe fn run(
 
     RESTORE_CTX.store(restore as u64, Ordering::SeqCst);
     AddVectoredExceptionHandler(1, veh as *const c_void);
+    // Detouring kernel32 is not enough: the client exited anyway, so it left by one of
+    // the lower doors. RtlExitUserProcess is what ExitProcess actually calls, and
+    // NtTerminateProcess is the syscall underneath both. Thread exit goes through
+    // NtTerminateThread, which is deliberately left alone.
+    neutralise(c"ntdll.dll", c"RtlExitUserProcess");
+    neutralise(c"ntdll.dll", c"NtTerminateProcess");
     if target != 0 && !arm_target(target) {
         log("probe: target could not be armed - aborting rather than reporting a false miss");
         return;
@@ -349,7 +391,17 @@ pub unsafe fn run(
     ));
 
     RUNNING.store(true, Ordering::SeqCst);
-    CURRENT.store(from, Ordering::SeqCst);
+    let start = match resume_from(from, to, target) {
+        Some(at) => {
+            log(&format!(
+                "probe: resuming at 0x{at:04X} - 0x{:04X} was fatal last run, skipping it",
+                at - 1
+            ));
+            at
+        }
+        None => from,
+    };
+    CURRENT.store(start, Ordering::SeqCst);
 
     loop {
         let op = CURRENT.load(Ordering::SeqCst);
@@ -367,8 +419,10 @@ pub unsafe fn run(
         }
         *(data.add(OPCODE_AT).cast::<u16>()) = op as u16;
 
-        // Leave a breadcrumb before each call: if a handler kills the process outright
-        // despite the guards, the log still says exactly which opcode did it.
+        // Record the *next* opcode before running this one. If this call kills the
+        // process despite the guards, the next launch resumes past it automatically -
+        // which is the difference between one wasted run and restarting the search.
+        record_resume(from, to, target, op + 1);
         if op.is_multiple_of(0x40) {
             log(&format!("probe: at 0x{op:04X} (faults so far {})", FAULTS.load(Ordering::Relaxed)));
         }
@@ -403,6 +457,7 @@ pub unsafe fn run(
             ));
             RUNNING.store(false, Ordering::SeqCst);
             disarm_target();
+            clear_resume();
             return;
         }
         // Exactly one oracle is live per walk. When a target is armed, conn+0x150 is
@@ -416,12 +471,14 @@ pub unsafe fn run(
             ));
             RUNNING.store(false, Ordering::SeqCst);
             disarm_target();
+            clear_resume();
             return;
         }
     }
 
     RUNNING.store(false, Ordering::SeqCst);
     disarm_target();
+    clear_resume();
     let consumed = CONSUMED.load(Ordering::Relaxed);
     let total = to - from;
     log(&format!(
