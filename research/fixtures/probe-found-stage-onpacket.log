@@ -1,0 +1,16 @@
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+    0 opcode=0x0032 elapsed_us=95.9 ret=108444384 flag=0->1 state=0->2
+***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+probe: dispatch #1, waiting for #2 before walking
+    1 opcode=0x0000 elapsed_us=453.2 ret=1 flag=1->1 state=2->2
+probe: neutralised RtlExitUserProcess
+probe: neutralised NtTerminateProcess
+probe: armed int3 at 0x141b25f30 (was 0x48)
+probe: neutralised ExitProcess
+probe: neutralised TerminateProcess
+probe: walking 0x0001..0x0080, packet len=518 cursor before dispatch=4 after=85, oracle=int3 on target
+probe: resume file holds only points from a different walk - starting over
+***** FOUND IT: inbound opcode 0x0001 reaches 0x141b25f30 (faults along the way: 0) *****
+probe: disarmed int3 at 0x141b25f30

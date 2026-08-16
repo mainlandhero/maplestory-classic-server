@@ -318,7 +318,7 @@ def make_cipher(client_recv_iv: int):
     return transport.ServerCipher(client_recv_iv, key, shuffle)
 
 
-def build_reply(kind: str, opcode: int, cipher, pad: int = 0):
+def build_reply(kind: str, opcode: int, cipher, pad: int = 0, body: bytes | None = None):
     """A server->client frame, built with the rules read out of the client's recv path.
 
     "header" is the sharpest transport test available: a valid header that declares a
@@ -331,6 +331,13 @@ def build_reply(kind: str, opcode: int, cipher, pad: int = 0):
     if kind == "header":
         return cipher.peek_header(100), "valid 4-byte header declaring 100 bytes, body withheld"
     if kind in ("ping", "sweep"):
+        # An explicit body is for answering a handler whose format we have actually read,
+        # rather than probing one we have not. The login result (opcode 0x0010) is
+        # `u8 result, u16-length string` per FUN_141b307b0, and no amount of zero padding
+        # produces a *specific* result code.
+        if body is not None:
+            frame = cipher.encode(transport.packet(opcode, body))
+            return frame, f"opcode 0x{opcode:04X} body={body.hex(' ')}"
         # A bare 2-byte packet makes any handler that reads a body underflow, which can
         # end a sweep on its first *handled* opcode. Zero padding lets more handlers run
         # to completion: fixed-width fields read 0, and length-prefixed strings read empty.
@@ -343,6 +350,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
           pad: int = 0, skip: frozenset = frozenset(),
+          body: bytes | None = None, ping_body: bytes | None = None,
           ping_first: int | None = None, ping_wait: float = 10.0,
           quiet_before: float = 5.0, send_iv: int = 0x52307801) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -415,7 +423,8 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     # timed against our packet rather than against the connection age.
                     # Folds the causality test and the next sweep range into one run.
                     if not pinged:
-                        frame, what = build_reply("ping", ping_first, cipher, pad)
+                        frame, what = build_reply("ping", ping_first, cipher, pad,
+                                                  ping_body)
                         log(f"[{port}] {time.strftime('%H:%M:%S')} >>> ISOLATED {what}"
                             f" - watching {ping_wait:.0f}s before the sweep starts")
                         conn.sendall(frame)
@@ -429,7 +438,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     if next_op >= sweep_to:
                         log(f"[{port}] sweep finished at 0x{sweep_to:04X}")
                         break
-                    frame, what = build_reply(reply, next_op, cipher, pad)
+                    frame, what = build_reply(reply, next_op, cipher, pad, body)
                     # One line per opcode, timestamped: if the client dies or the UI
                     # changes, the last line printed says exactly where it happened.
                     log(f"[{port}] {time.strftime('%H:%M:%S')} >>> {what}")
@@ -438,7 +447,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     next_op += 1
                     next_send = time.time() + sweep_delay
                 elif not replied and ready:
-                    frame, what = build_reply(reply, opcode, cipher, pad)
+                    frame, what = build_reply(reply, opcode, cipher, pad, body)
                     log(f"[{port}] {time.strftime('%H:%M:%S')} >>> REPLY: {what}"
                         f"  ({len(frame)} bytes)")
                     log(hexdump(frame))
@@ -515,6 +524,10 @@ def main() -> None:
     ap.add_argument("--sweep-from", type=lambda s: int(s, 0), default=0)
     ap.add_argument("--sweep-to", type=lambda s: int(s, 0), default=0x1000)
     ap.add_argument("--sweep-delay", type=float, default=0.15)
+    ap.add_argument("--body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
+                    help="hex body for the replied/swept opcode, instead of zero padding")
+    ap.add_argument("--ping-body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
+                    help="hex body for the --ping-first packet")
     ap.add_argument("--pad", type=int, default=0,
                     help="zero bytes appended after the opcode")
     ap.add_argument("--ping-first", type=lambda s: int(s, 0), default=None,
@@ -561,10 +574,18 @@ def main() -> None:
 
     t = threading.Thread(
         target=serve,
-        args=(args.port, args.only, args.hold, args.reply, args.opcode, args.recv_iv,
-              args.sweep_from, args.sweep_to, args.sweep_delay, args.pad,
-              frozenset(int(x, 0) for x in args.skip.split(',') if x.strip()),
-              args.ping_first, args.ping_wait, args.quiet_before, args.send_iv),
+        # Keyword arguments, not positional: serve() has grown past a dozen parameters and
+        # inserting one in the middle silently shifts every argument after it.
+        kwargs=dict(
+            port=args.port, only=args.only, hold=args.hold, reply=args.reply,
+            opcode=args.opcode, recv_iv=args.recv_iv,
+            sweep_from=args.sweep_from, sweep_to=args.sweep_to,
+            sweep_delay=args.sweep_delay, pad=args.pad,
+            skip=frozenset(int(x, 0) for x in args.skip.split(',') if x.strip()),
+            body=args.body, ping_body=args.ping_body,
+            ping_first=args.ping_first, ping_wait=args.ping_wait,
+            quiet_before=args.quiet_before, send_iv=args.send_iv,
+        ),
         daemon=True,
     )
     t.start()

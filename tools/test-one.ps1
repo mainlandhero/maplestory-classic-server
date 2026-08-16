@@ -44,6 +44,10 @@ param(
     # Extra launch tokens after <ip> <port>. -NXLDEBUG routes tokens 3 onward into the
     # config's six-slot session array at +0x90, which is what the launcher normally fills.
     [string[]]$SessionTokens = @(),
+    # Hex body for the replied/swept opcode, e.g. '650000' for the login result
+    # (u8 result 0x65, then a u16-length empty string).
+    [string]$Body = '',
+    [string]$PingBody = '',
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -121,12 +125,15 @@ if ($Reply) {
         $probeArgs += @('--sweep-from', $SweepFrom, '--sweep-to', $SweepTo,
                         '--sweep-delay', "$SweepDelay")
         if ($Skip) { $probeArgs += @('--skip', $Skip) }
+        if ($Body) { $probeArgs += @('--body', $Body) }
+        if ($PingBody) { $probeArgs += @('--ping-body', $PingBody) }
         if ($PingFirst) {
             $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
             Write-Host "will send $PingFirst alone first, then watch ${PingWait}s"
         }
         Write-Host "will sweep opcodes $SweepFrom..$SweepTo at ${SweepDelay}s each (pad $Pad)"
     } else {
+        if ($Body) { $probeArgs += @('--body', $Body) }
         Write-Host "will answer the client with: $Reply"
     }
 }
