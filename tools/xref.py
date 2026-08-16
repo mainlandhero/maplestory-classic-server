@@ -105,6 +105,80 @@ def scan_refs(data, image_base, sections, targets):
     return found
 
 
+def scan_field_writes(data, image_base, sections, disp, size_filter=None,
+                      nonzero_only=False):
+    """Find `mov [reg+disp], imm8/reg8` - i.e. who sets a given struct field.
+
+    The client's blocking startup loop `FUN_1415e7090` exits only when the byte at
+    `conn + 0x150` becomes non-zero, and a dispatched packet handler is what sets it.
+    Which handler is not something the virtualised dispatcher will tell us - but the
+    store itself is a concrete instruction with a fixed 32-bit displacement, so it can
+    just be searched for.
+
+    Encodings matched, with an optional REX prefix so r8-r15 are covered:
+
+        C6 /0 id ib     mov byte [reg+disp32], imm8
+        88 /r  id       mov byte [reg+disp32], reg8
+        C7 /0 id id     mov dword [reg+disp32], imm32
+        89 /r  id       mov dword [reg+disp32], reg32
+
+    mod=10 (disp32) is required: 0x150 does not fit the disp8 form.
+    """
+    want = struct.pack("<i", disp)
+    hits = []
+    # A REX-prefixed match at i and a bare match at i+1 describe the same instruction.
+    # They share the position of the displacement, so dedupe on that.
+    seen_disp = set()
+    for s in sections:
+        if not (s["chars"] & IMAGE_SCN_MEM_EXECUTE) or not s["rsize"]:
+            continue
+        base_rva = s["vaddr"]
+        blob = data[s["raddr"]:s["raddr"] + s["rsize"]]
+        n = len(blob)
+        for i in range(n - 11):
+            j = i
+            rex = 0
+            if 0x40 <= blob[j] <= 0x4F:
+                rex = blob[j]
+                j += 1
+            op = blob[j]
+            if op not in (0xC6, 0x88, 0xC7, 0x89):
+                continue
+            modrm = blob[j + 1]
+            if (modrm & 0xC0) != 0x80:                   # need mod=10, disp32
+                continue
+            if op in (0xC6, 0xC7) and (modrm & 0x38) != 0:
+                continue                                  # /0 only
+            rm = modrm & 0x07
+            k = j + 2
+            if rm == 4:                                   # SIB byte
+                k += 1
+            if blob[k:k + 4] != want:
+                continue
+            if (base_rva + k) in seen_disp:
+                continue
+            size = "byte" if op in (0xC6, 0x88) else "dword"
+            if size_filter and size != size_filter:
+                continue
+            if op == 0xC6:
+                imm = blob[k + 4]
+                if nonzero_only and imm == 0:
+                    continue
+                val = f"{imm:#x}"
+            elif op == 0xC7:
+                imm = struct.unpack_from("<I", blob, k + 4)[0]
+                if nonzero_only and imm == 0:
+                    continue
+                val = f"{imm:#x}"
+            else:
+                if nonzero_only:
+                    continue          # a register source tells us nothing about the value
+                val = f"reg{(modrm >> 3) & 7}{'+8' if rex & 0x4 else ''}"
+            seen_disp.add(base_rva + k)
+            hits.append((base_rva + i, size, val))
+    return hits
+
+
 def find_string(data, sections, text, image_base):
     """RVAs of ascii and utf-16 copies of `text` that live in a real section."""
     out = []
@@ -145,12 +219,37 @@ def main():
     ap.add_argument("--exe", default="client-patched/MapleStory.exe")
     ap.add_argument("--string", help="string literal to find references to")
     ap.add_argument("--va", help="address to find references to")
+    ap.add_argument("--field", help="struct offset, e.g. 0x150: find code writing it")
+    ap.add_argument("--size", choices=["byte", "dword"], help="filter --field by width")
+    ap.add_argument("--nonzero", action="store_true",
+                    help="--field: only stores of a non-zero immediate")
     ap.add_argument("--callers", action="store_true",
                     help="also list functions calling each referencing function")
     args = ap.parse_args()
 
     data, image_base, sections = load_pe(args.exe)
     starts, ends = parse_pdata(data, sections)
+
+    if args.field:
+        disp = int(args.field, 16)
+        hits = scan_field_writes(data, image_base, sections, disp,
+                                 args.size, args.nonzero)
+        byfn = collections.defaultdict(list)
+        for site, size, val in hits:
+            byfn[owner(site, starts, ends)].append((site, size, val))
+        print(f"{len(hits)} writes to [reg+{disp:#x}] in {len(byfn)} functions\n")
+        callers = build_callers(data, image_base, sections, starts, ends) \
+            if args.callers else None
+        for fn in sorted(byfn, key=lambda x: (x is None, x)):
+            label = f"FUN_{image_base + fn:x}" if fn is not None else "(no function)"
+            print(f"  {label}  size {ends.get(fn, 0) - fn if fn is not None else 0}")
+            for site, size, val in byfn[fn]:
+                print(f"      {size:5} <- {val:<10} at {image_base + site:#x}")
+            if callers is not None and fn is not None:
+                up = sorted(callers.get(fn, ()))
+                print(f"      called by {len(up)}: " +
+                      ", ".join(f"FUN_{image_base + u:x}" for u in up[:10]))
+        return 0
 
     targets = []
     if args.string:

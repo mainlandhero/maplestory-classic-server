@@ -131,6 +131,104 @@ def dump_region(pid, va, size, out_path, slide=0):
     return data
 
 
+MEM_COMMIT = 0x1000
+PAGE_READABLE = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80   # R, RW, WC, XR, XRW, XWC
+PAGE_GUARD = 0x100
+
+
+class MEMORY_BASIC_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BaseAddress", ctypes.c_void_p), ("AllocationBase", ctypes.c_void_p),
+        ("AllocationProtect", w.DWORD), ("__alignment1", w.DWORD),
+        ("RegionSize", ctypes.c_size_t), ("State", w.DWORD),
+        ("Protect", w.DWORD), ("Type", w.DWORD), ("__alignment2", w.DWORD),
+    ]
+
+
+def regions(h):
+    """Every committed, readable region in the target."""
+    k32.VirtualQueryEx.argtypes = [w.HANDLE, ctypes.c_void_p, ctypes.c_void_p,
+                                   ctypes.c_size_t]
+    k32.VirtualQueryEx.restype = ctypes.c_size_t
+    out = []
+    addr = 0
+    mbi = MEMORY_BASIC_INFORMATION()
+    while addr < 0x7FFFFFFF0000:
+        if not k32.VirtualQueryEx(h, ctypes.c_void_p(addr), ctypes.byref(mbi),
+                                  ctypes.sizeof(mbi)):
+            break
+        base = mbi.BaseAddress or 0
+        size = mbi.RegionSize
+        if size == 0:
+            break
+        if (mbi.State == MEM_COMMIT and (mbi.Protect & PAGE_READABLE)
+                and not (mbi.Protect & PAGE_GUARD)):
+            out.append((base, size, mbi.Protect))
+        addr = base + size
+    return out
+
+
+def find_qwords(pid, values, context=12):
+    """Search the whole address space for 8-byte values, and show their neighbours.
+
+    Why: `FUN_1415e5c20` is the handler that unblocks the client's startup loop, and the
+    opcode that reaches it lives only in the virtualised dispatcher. But whatever form
+    the dispatch takes, it has to hold that address somewhere. Finding the address in
+    memory and printing what surrounds it says whether it sits in an array - and if it
+    does, its index *is* the opcode.
+    """
+    h = k32.OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, False, pid)
+    if not h:
+        raise OSError(f"OpenProcess failed: {ctypes.get_last_error()} "
+                      "(try running this from an elevated shell)")
+    k32.ReadProcessMemory.argtypes = [w.HANDLE, ctypes.c_void_p, ctypes.c_void_p,
+                                      ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+    needles = {struct.pack("<Q", v): v for v in values}
+    hits = []
+    scanned = 0
+    try:
+        for base, size, protect in regions(h):
+            step = 1 << 20
+            off = 0
+            while off < size:
+                n = min(step, size - off)
+                buf = (ctypes.c_char * n)()
+                got = ctypes.c_size_t(0)
+                if not k32.ReadProcessMemory(h, ctypes.c_void_p(base + off), buf, n,
+                                             ctypes.byref(got)) and got.value == 0:
+                    off += n
+                    continue
+                blob = bytes(buf[: got.value])
+                scanned += len(blob)
+                for needle, val in needles.items():
+                    start = 0
+                    while True:
+                        i = blob.find(needle, start)
+                        if i < 0:
+                            break
+                        start = i + 1
+                        if (base + off + i) % 8 == 0:
+                            hits.append((base + off + i, val, protect))
+                off += n
+        print(f"scanned {scanned / (1 << 20):.0f} MB of committed memory")
+        print(f"{len(hits)} aligned hits\n")
+        for addr, val, protect in hits:
+            print(f"=== {val:#x} found at {addr:#x}   protect {protect:#x}")
+            lo = addr - context * 8
+            blob = read(pid, lo, (context * 2 + 1) * 8)
+            for j in range(0, len(blob) - 7, 8):
+                q = struct.unpack_from("<Q", blob, j)[0]
+                a = lo + j
+                mark = "  <<<<" if a == addr else ""
+                kind = "code" if 0x140001000 <= q < 0x143261A00 else (
+                    "-" if q == 0 else "")
+                print(f"    [{(a - addr) // 8:+4}] {a:#x}  {q:#018x}  {kind}{mark}")
+            print()
+    finally:
+        k32.CloseHandle(h)
+    return hits
+
+
 def main():
     pid, base = find_client()
     if pid is None:
@@ -142,6 +240,18 @@ def main():
 
     slide = base - STATIC_BASE
     print(f"pid {pid}   module base {base:#x}   ASLR slide {slide:+#x}\n")
+
+    # Locate a known handler's address in memory, to recover the dispatch mapping.
+    #   python tools/dump_runtime.py --find 0x1415e5c20
+    if "--find" in sys.argv:
+        i = sys.argv.index("--find")
+        vals = []
+        for a in sys.argv[i + 1:]:
+            if a.startswith("-"):
+                break
+            vals.append(int(a, 16) + slide)
+        find_qwords(pid, vals)
+        return 0
 
     for name, va, n in (("AES key table", KEY_VA, 128), ("IV shuffle table", SHUFFLE_VA, 256)):
         live = read(pid, va + slide, n)
