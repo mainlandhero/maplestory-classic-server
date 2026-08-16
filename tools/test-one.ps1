@@ -41,6 +41,9 @@ param(
     # Hex range like '0000-1000'. Walks the inbound opcode space in-process rather than
     # sending packets, which is bounded by the client's tolerance for unknown opcodes.
     [string]$Probe = '',
+    # Extra launch tokens after <ip> <port>. -NXLDEBUG routes tokens 3 onward into the
+    # config's six-slot session array at +0x90, which is what the launcher normally fills.
+    [string[]]$SessionTokens = @(),
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -184,12 +187,23 @@ if ($Probe) {
     Remove-Item $probeMarker -ErrorAction SilentlyContinue
 }
 
+# -NXLDEBUG puts token 1 at the server IP, token 2 at the port, and **tokens 3 onward
+# into config +0x90** - the same six-slot session array WEBSTART fills from tokens 4-9
+# (docs/launch-protocol.md). We have always launched with none of them, so that array is
+# empty, and the live client's login screen shows a pre-filled account ID where ours shows
+# nothing. Passing six distinguishable tokens maps slot -> on-screen field in one launch.
+$launchArgs = @('-NXLDEBUG', '127.0.0.1', "$Port")
+if ($SessionTokens) {
+    $launchArgs += $SessionTokens
+    Write-Host ("session tokens (config +0x90): " + ($SessionTokens -join ' '))
+}
+
 # Start-Process (ShellExecute) is required: the client has an elevation manifest, and
 # CreateProcess - which is what UseShellExecute = false uses - fails with "requires
 # elevation". ShellExecute in turn will not carry $env: into the child, which is why the
 # hook is switched on by a marker file instead.
 $p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
-    -ArgumentList @('-NXLDEBUG', '127.0.0.1', "$Port") -PassThru
+    -ArgumentList $launchArgs -PassThru
 
 # Keep the host usable while the dialog is being read. -Normal skips this and runs the
 # client exactly as Windows would start it, in case the throttling ever looks like it is
