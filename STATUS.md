@@ -233,8 +233,11 @@ Short version, because two long-standing assumptions turned out to be wrong:
 
 - **"Having trouble logging in" is a baked bitmap**, not a string. It is absent from the
   6165 encrypted messages, from `Login.img`'s 260 strings, from `StringTable.img`, and from
-  the whole install as ASCII or UTF-16. A canvas can be permanent furniture, so **stop
-  using it as the oracle** - use the wire.
+  the whole install as ASCII or UTF-16. **It is still a real signal**: the live client never
+  shows it, ours shows it *immediately after the splash screen* - so it is decided when the
+  login screen is built, before any packet exchange, and no reply we send can clear it.
+  `Login.img` has **two** login screens (`Title_new` = the live one, `ClassicIntro` = ours,
+  the one carrying `find_id`/`find_pw`), and `FUN_141129930` builds `ClassicIntro`.
 - **The empty identity did not block the login.** The client still sent `0x0073` and
   `0x0080` and accepted a `result = 0` reply. It is a real gap but not the current blocker.
 
@@ -278,9 +281,10 @@ screen exists cannot work no matter what address is used.
 * **Check the `session+0x68 == 5` fork before decoding any login-stage handler.** The
   handler the switch names is often a shim that hands off to the mode-5 one, and we are
   always mode 5.
-* **The on-screen dialog is a bitmap, not a state readout.** Two wire-level oracles are
-  strictly better: the identity string in `0x0073`, and how long the connection survives a
-  reply.
+* **The "trouble logging in" prompt is a bitmap, but it *is* a state readout.** It appears
+  before any packet exchange, so no reply can clear it and it does not measure the wire.
+  For wire questions use the identity string in `0x0073` and how long the connection
+  survives a reply; for the prompt, look at which login screen was built.
 * The client's opening burst varies **294 to 3393 bytes** because `0x8F`-`0x91` upload and
   delete log files.
 
