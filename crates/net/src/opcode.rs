@@ -250,6 +250,19 @@ mod tests {
         }
     }
 
+    /// The probe is driven from the command line with hex bodies, so the bytes that go on
+    /// the wire are typed by hand. Pinning them here means a change to the builder breaks
+    /// this test rather than silently disagreeing with a command in `STATUS.md`.
+    #[test]
+    fn the_one_world_list_we_actually_send_has_these_exact_bytes() {
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        assert_eq!(
+            hex(&world_list_entry(0, "Scania", 1)),
+            "0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+        );
+        assert_eq!(hex(&world_list_end()), "ff0000");
+    }
+
     #[test]
     fn the_terminator_trips_the_clients_signed_test() {
         // The client's check is `(char) worldId < 0`, not `== 0xFF`.

@@ -50,6 +50,10 @@ param(
     [string]$PingBody = '',
     # Client opcode to answer the instant it arrives, e.g. 0x0080.
     [string]$ReplyTo = '',
+    # Several packets to send for -ReplyTo, in order: 'OPCODE:HEXBODY[/PAD],...'. Needed
+    # when handlers depend on each other - the login result is only useful after the world
+    # list that 0x000B builds, and both must land inside one client launch.
+    [string]$ReplySeq = '',
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -128,6 +132,7 @@ if ($Reply) {
     if ($Body) { $probeArgs += @('--body', $Body) }
     if ($PingBody) { $probeArgs += @('--ping-body', $PingBody) }
     if ($ReplyTo) { $probeArgs += @('--reply-to', $ReplyTo) }
+    if ($ReplySeq) { $probeArgs += @('--reply-seq', $ReplySeq) }
     if ($PingFirst) {
         $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
     }
@@ -137,7 +142,9 @@ if ($Reply) {
         if ($Skip) { $probeArgs += @('--skip', $Skip) }
         Write-Host "will sweep opcodes $SweepFrom..$SweepTo at ${SweepDelay}s each (pad $Pad)"
     }
-    if ($ReplyTo) {
+    if ($ReplyTo -and $ReplySeq) {
+        Write-Host "will send $PingFirst as the gate, then answer $ReplyTo with a sequence: $ReplySeq"
+    } elseif ($ReplyTo) {
         Write-Host "will send $PingFirst as the gate, then answer $ReplyTo with $Opcode body=$Body"
     } elseif ($Reply -ne 'sweep') {
         Write-Host "will answer the client with: $Reply"

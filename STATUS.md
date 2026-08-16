@@ -212,8 +212,20 @@ Format decoded from `FUN_141b31ff0` (the mode-5 handler) and built by
 bytes the way the client does.
 
 The run needs **three packets** in answer to `0x0080`: a world entry, the terminator, then
-the login result. `test-one.ps1 -ReplyTo` sends only one, so the probe needs a reply
-*sequence* first - worth building rather than spending three launches.
+the login result. `-ReplySeq` now does that (`OPCODE:HEXBODY[/PAD],...`), sent back to back
+on the same socket. The world-list bytes below are pinned by
+`the_one_world_list_we_actually_send_has_these_exact_bytes`, so the command cannot drift
+from the decoded format.
+
+```
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+  -Opcode 0x0010 -PingFirst 0x0032 -PingBody 00 -ReplyTo 0x0080 -QuietBefore 4 -HookLog on
+  -ReplySeq "000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000,000b:ff0000,0010:000000/256"
+```
+
+Read the result off the **wire**, not the screen: does the connection outlive the reply,
+and does the client send anything it has not sent before? The bitmap on the login screen is
+not evidence either way.
 
 ### The session identity - see `docs/session.md`
 

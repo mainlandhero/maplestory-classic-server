@@ -353,12 +353,43 @@ def build_reply(kind: str, opcode: int, cipher, pad: int = 0, body: bytes | None
     raise SystemExit(f"unknown reply kind: {kind}")
 
 
+def parse_reply_seq(spec: str):
+    """`--reply-seq 000b:0006..,000b:ff0000,0010:000000/256` -> [(opcode, body, pad)].
+
+    A single reply is not enough once handlers depend on each other. The login result
+    makes the client look up its world in a list only inbound 0x000B fills, so the answer
+    to one request is three packets, in order. Sending them across three client launches
+    would not even be equivalent - the list lives on the stage and the client does not
+    survive to be relaunched into the same state.
+
+    `/N` appends N zero bytes, the same filler rule as `--pad`.
+    """
+    out = []
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        head, _, pad_txt = item.partition("/")
+        op_txt, sep, body_txt = head.partition(":")
+        if not sep:
+            raise SystemExit(f"--reply-seq entry needs OPCODE:BODY, got {item!r}")
+        try:
+            out.append((int(op_txt, 16),
+                        bytes.fromhex(body_txt.replace(" ", "")),
+                        int(pad_txt or 0)))
+        except ValueError as exc:
+            raise SystemExit(f"--reply-seq entry {item!r}: {exc}") from exc
+    if not out:
+        raise SystemExit("--reply-seq was empty")
+    return out
+
+
 def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
           pad: int = 0, skip: frozenset = frozenset(),
           body: bytes | None = None, ping_body: bytes | None = None,
-          reply_to: int | None = None,
+          reply_to: int | None = None, reply_seq=None,
           ping_first: int | None = None, ping_wait: float = 10.0,
           quiet_before: float = 5.0, send_iv: int = 0x52307801) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -525,12 +556,20 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                         # made it worse by additionally requiring a silence that never
                         # came. Reacting to the packet removes the race entirely.
                         if reply_to is not None and op == reply_to and not answered:
-                            frame, what = build_reply("ping", opcode, cipher, pad, body)
-                            log(f"[{port}] {time.strftime('%H:%M:%S')} >>> ANSWERING "
-                                f"0x{op:04X} with {what}")
-                            conn.sendall(frame)
+                            # One packet or several. The sequence is sent back to back on
+                            # the same socket: the client dispatches from a single recv
+                            # loop, so ordering on the wire is the ordering it sees.
+                            steps = (reply_seq if reply_seq
+                                     else [(opcode, body, pad)])
+                            for n, (step_op, step_body, step_pad) in enumerate(steps, 1):
+                                frame, what = build_reply(
+                                    "ping", step_op, cipher, step_pad, step_body)
+                                tag = (f" [{n}/{len(steps)}]" if len(steps) > 1 else "")
+                                log(f"[{port}] {time.strftime('%H:%M:%S')} >>> ANSWERING"
+                                    f"{tag} 0x{op:04X} with {what}")
+                                conn.sendall(frame)
+                                last_sent, sent_at = step_op, time.time()
                             answered = True
-                            last_sent, sent_at = opcode, time.time()
                 else:
                     log(hexdump(data))
         except ConnectionResetError:
@@ -571,6 +610,9 @@ def main() -> None:
     ap.add_argument("--reply-to", type=lambda s: int(s, 0),
                     help="client opcode to answer immediately, e.g. 0x0080 - removes the "
                          "timing race a fixed delay creates")
+    ap.add_argument("--reply-seq", default=None,
+                    help="several packets to send for --reply-to, in order: "
+                         "OPCODE:HEXBODY[/PAD],... e.g. 000b:00..,000b:ff0000,0010:000000/256")
     ap.add_argument("--body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
                     help="hex body for the replied/swept opcode, instead of zero padding")
     ap.add_argument("--ping-body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
@@ -608,16 +650,25 @@ def main() -> None:
     # the serve thread mid-test, closing the socket; the client then dropped because the
     # server had vanished, which is indistinguishable from it rejecting our header. Fail
     # loudly and early instead of burning a client run on a wrong answer.
+    # Parsed here rather than at the call below so a malformed sequence is rejected before
+    # the preflight, not after it.
+    seq = parse_reply_seq(args.reply_seq) if args.reply_seq else None
+    if seq is not None and args.reply_to is None:
+        raise SystemExit("--reply-seq needs --reply-to: it is sent when that opcode arrives")
+
     if args.reply is not None:
         try:
             c = make_cipher(args.recv_iv)
             build_reply("header", args.opcode, c)
             build_reply("ping", args.opcode, c, args.pad)
+            for step_op, step_body, step_pad in seq or []:
+                build_reply("ping", step_op, c, step_pad, step_body)
         except Exception as e:  # noqa: BLE001
             log(f"PREFLIGHT FAILED: {e!r}")
             log("refusing to start - fix this before launching the client")
             raise SystemExit(2)
-        log(f"reply preflight OK ({args.reply})")
+        log(f"reply preflight OK ({args.reply})"
+            + (f", {len(seq)} packets in sequence" if seq else ""))
 
     t = threading.Thread(
         target=serve,
@@ -630,6 +681,7 @@ def main() -> None:
             sweep_delay=args.sweep_delay, pad=args.pad,
             skip=frozenset(int(x, 0) for x in args.skip.split(',') if x.strip()),
             body=args.body, ping_body=args.ping_body, reply_to=args.reply_to,
+            reply_seq=seq,
             ping_first=args.ping_first, ping_wait=args.ping_wait,
             quiet_before=args.quiet_before, send_iv=args.send_iv,
         ),
