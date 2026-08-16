@@ -56,6 +56,7 @@ const OPCODE_AT: usize = 4; // the opcode sits just past the header
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static DONE: AtomicBool = AtomicBool::new(false);
 static CAPTURED: AtomicBool = AtomicBool::new(false);
+static WATCH_ARMED: AtomicBool = AtomicBool::new(false);
 static IN_CALL: AtomicBool = AtomicBool::new(false);
 static FAULTED: AtomicBool = AtomicBool::new(false);
 static CURRENT: AtomicU32 = AtomicU32::new(0);
@@ -67,6 +68,9 @@ static LAST_RET: AtomicU64 = AtomicU64::new(0);
 static TARGET: AtomicU64 = AtomicU64::new(0);
 static TARGET_BYTE: AtomicU32 = AtomicU32::new(0);
 static HIT: AtomicBool = AtomicBool::new(false);
+static WATCH: AtomicU64 = AtomicU64::new(0);
+static WATCH_BYTE: AtomicU32 = AtomicU32::new(0);
+static CURRENT_OPCODE: AtomicU32 = AtomicU32::new(0);
 
 /// x64 `CONTEXT` is 1232 bytes and must be 16-byte aligned.
 #[repr(C, align(16))]
@@ -257,8 +261,51 @@ unsafe fn disarm_target() {
     log(&format!("probe: disarmed int3 at {target:#x}"));
 }
 
+/// Arm watch mode if the marker says `watch@<VA>`, and report the opcode being dispatched.
+///
+/// Separate from the walk: the walk asks "which opcode reaches X" by synthesising
+/// thousands of packets, while this asks "did X run just now" for a packet we sent for
+/// real. After several runs guessing at result codes, knowing whether the handler is
+/// entered at all is the cheaper question.
+pub unsafe fn note_opcode(opcode: u16) {
+    CURRENT_OPCODE.store(opcode as u32, Ordering::SeqCst);
+    let text = std::fs::read_to_string(PROBE_MARKER).unwrap_or_default();
+    let Some(rest) = text.trim().strip_prefix("watch@") else {
+        return;
+    };
+    if WATCH.load(Ordering::SeqCst) != 0 || WATCH_ARMED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Ok(va) = usize::from_str_radix(rest.trim().trim_start_matches("0x"), 16) else {
+        log(&format!("probe: watch marker {text:?} is not watch@<hex VA>"));
+        return;
+    };
+    AddVectoredExceptionHandler(1, veh as *const c_void);
+    let mut old = 0u32;
+    if VirtualProtect(va as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+        log(&format!("probe: could not arm watch at {va:#x}"));
+        return;
+    }
+    WATCH_BYTE.store(*(va as *mut u8) as u32, Ordering::SeqCst);
+    *(va as *mut u8) = 0xCC;
+    VirtualProtect(va as *mut c_void, 1, old, &mut old);
+    WATCH.store(va as u64, Ordering::SeqCst);
+    log(&format!("probe: watching {va:#x} - will report if it is entered"));
+}
+
 pub fn enabled() -> bool {
     std::path::Path::new(PROBE_MARKER).exists()
+}
+
+/// Watch mode observes; it must never fall through into a walk.
+///
+/// `range()` cannot parse `watch@<VA>` and defaults to 0x0000-0x1000, so without this the
+/// marker that means "just tell me if this function runs" would quietly start walking four
+/// thousand opcodes instead - the same silent-fallback trap as before.
+fn watching() -> bool {
+    std::fs::read_to_string(PROBE_MARKER)
+        .map(|t| t.trim().starts_with("watch@"))
+        .unwrap_or(false)
 }
 
 static mut VIEW_SNAP: Vec<u8> = Vec::new();
@@ -272,7 +319,7 @@ static mut BUF_SNAP: Vec<u8> = Vec::new();
 /// and read the zero padding instead. That produced a full clean pass over 4096 opcodes
 /// with no faults and no effect - a null result that looked like an answer.
 pub unsafe fn capture(view: *mut c_void, dispatch: u64) {
-    if dispatch < trigger() || view.is_null() || CAPTURED.swap(true, Ordering::SeqCst) {
+    if watching() || dispatch < trigger() || view.is_null() || CAPTURED.swap(true, Ordering::SeqCst) {
         return;
     }
     let data = *(view.cast::<u8>().add(VIEW_DATA).cast::<*mut u8>());
@@ -300,11 +347,39 @@ pub unsafe fn captured_cursor() -> i64 {
 
 /// Catch the fault and resume in the loop, rather than letting it unwind the client.
 unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
-    if !IN_CALL.load(Ordering::SeqCst) || info.is_null() {
+    if info.is_null() {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     let code = (*(*info).record).code;
     let at = (*(*info).record).address as usize;
+
+    // Watch mode: answer "was this function entered, and by which opcode" without
+    // walking anything. Deliberately outside the IN_CALL guard, because the whole point
+    // is to observe the client's own dispatch of a packet we sent for real.
+    //
+    // One-shot: restore the byte and resume *at* the target so the function runs
+    // normally. Stepping over and re-arming would need a trap flag dance, and one
+    // observation is all the question needs.
+    let watch = WATCH.load(Ordering::SeqCst) as usize;
+    if code == EXCEPTION_BREAKPOINT && watch != 0 && at == watch {
+        let op = CURRENT_OPCODE.load(Ordering::SeqCst);
+        log(&format!(
+            "***** WATCH: {watch:#x} WAS ENTERED while dispatching opcode 0x{op:04X} *****"
+        ));
+        let mut old = 0u32;
+        if VirtualProtect(watch as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) != 0 {
+            *(watch as *mut u8) = WATCH_BYTE.load(Ordering::SeqCst) as u8;
+            VirtualProtect(watch as *mut c_void, 1, old, &mut old);
+        }
+        WATCH.store(0, Ordering::SeqCst);
+        let ctx = (*info).context.cast::<u8>();
+        *(ctx.add(CTX_RIP).cast::<u64>()) = watch as u64;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    if !IN_CALL.load(Ordering::SeqCst) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
 
     // Our own breakpoint on the target function: record the hit and make the call return
     // straight away, so the handler never runs on a body it was not meant to see.
@@ -372,6 +447,9 @@ pub unsafe fn run(
     tramp: extern "system" fn(*mut c_void, *mut c_void) -> u64,
     dispatch: u64,
 ) {
+    if watching() {
+        return;
+    }
     let want = trigger();
     if dispatch < want {
         log(&format!(

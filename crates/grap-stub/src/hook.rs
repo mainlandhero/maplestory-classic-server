@@ -159,6 +159,7 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     // `CALLS` has not been incremented yet, so this packet is number CALLS + 1.
     let dispatch = CALLS.load(Ordering::Relaxed) + 1;
     if crate::probe::enabled() {
+        crate::probe::note_opcode(opcode);
         crate::probe::capture(view, dispatch);
     }
 
