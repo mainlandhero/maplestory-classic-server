@@ -38,6 +38,9 @@ param(
     [double]$PingWait = 10,
     [double]$QuietBefore = 5,
     [string]$HookLog = '',
+    # Hex range like '0000-1000'. Walks the inbound opcode space in-process rather than
+    # sending packets, which is bounded by the client's tolerance for unknown opcodes.
+    [string]$Probe = '',
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -75,6 +78,9 @@ if ($List) { & python $probe --list; return }
 
 if ($Stop) {
     Stop-All
+    # Clear the walk marker here too. It is a one-shot experiment, and leaving it behind
+    # would silently turn the next ordinary run into a probe.
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.probe') -ErrorAction SilentlyContinue
     Write-Host 'stopped client and probe'
     if (Test-Path $logFile) { Write-Host "--- $logFile ---"; Get-Content $logFile }
     return
@@ -150,6 +156,17 @@ if ($HookLog) {
 } else {
     Remove-Item Env:\MAPLECW_HOOK_LOG -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.enable') -ErrorAction SilentlyContinue
+}
+
+# -Probe walks the opcode space from inside the client instead of over the wire. The
+# marker holds the range; the hook reads it once, on the first packet it sees.
+$probeMarker = Join-Path $ClientDir 'maplecw-hook.probe'
+if ($Probe) {
+    if (-not $HookLog) { throw '-Probe needs -HookLog: the walk reports through the hook log.' }
+    Set-Content -Path $probeMarker -Value $Probe -Encoding ascii
+    Write-Host "in-process opcode walk enabled, range $Probe"
+} else {
+    Remove-Item $probeMarker -ErrorAction SilentlyContinue
 }
 
 # Start-Process (ShellExecute) is required: the client has an elevation manifest, and

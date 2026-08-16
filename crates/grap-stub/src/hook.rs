@@ -75,7 +75,7 @@ const STOLEN: usize = 17;
 /// on recv/decrypt/dispatch until *this byte* is non-zero. Nothing else ends the loop, so
 /// watching it across a dispatch says precisely whether the opcode we just sent was the
 /// one the client was waiting for. See `docs/transport.md`.
-const CONN_DONE_FLAG: usize = 0x150;
+pub(crate) const CONN_DONE_FLAG: usize = 0x150;
 
 /// `conn + 0x14c` — the `Data.wz` hash the client computed and sent.
 const CONN_DATAWZ_HASH: usize = 0x14C;
@@ -114,7 +114,7 @@ fn log_path() -> String {
     std::env::var(HOOK_ENV).unwrap_or_else(|_| "maplecw-hook.log".to_string())
 }
 
-fn log(msg: &str) {
+pub(crate) fn log(msg: &str) {
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
         let _ = writeln!(f, "{msg}");
     }
@@ -195,6 +195,13 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
              (state {state_before}->{state_after}) but did not set the flag - \
              right opcode, wrong body *****"
         ));
+    }
+
+    // With one real packet in hand we have everything the walk needs: a live connection,
+    // a well-formed view, and a buffer we own. Run it here rather than from a thread, so
+    // the dispatcher is re-entered on the thread that normally calls it.
+    if flag_after == 0 && crate::probe::enabled() {
+        crate::probe::run(conn, view, tramp);
     }
     ret
 }

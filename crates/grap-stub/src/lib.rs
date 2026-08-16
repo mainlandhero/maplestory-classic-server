@@ -22,6 +22,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod hook;
+pub mod probe;
 
 use std::ffi::c_void;
 use std::fs::OpenOptions;
