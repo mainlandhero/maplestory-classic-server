@@ -14,3 +14,7 @@
 # probe run artifacts
 probe.log
 probe.err
+
+# Python bytecode from tools/
+__pycache__/
+*.pyc

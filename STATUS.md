@@ -32,6 +32,7 @@ It connects to `127.0.0.1:8484`, and GameGuard never loads.
 | `crates/grap-stub` | No-op `grap64.dll`; GameGuard never starts. Plus a working **in-process dispatcher hook**. |
 | Client copy | `client-patched/` — original install untouched, firewalled outbound. |
 | Tooling | `handshake_probe.py` decodes the client's live stream; `dump_runtime.py` reads its memory. |
+| Canvas render | `wz-dump canvas` + `tools/wz_png.py` turn WZ canvases into PNGs. **This is how the client's baked UI text gets read** - much of its on-screen wording is pixels, invisible to any string search. Formats 1, 2 and 513. |
 
 ## Key facts (do not re-derive)
 
@@ -222,6 +223,34 @@ rendered into `textAccount` when non-empty. `DAT_143aa84a0` also holds world id 
 and channel id `+0x2260`; it is **not** the `DAT_143ac1898` that carries the `0x0073`
 identity.
 
+### Start here next session
+
+**One question, and it has a designed experiment:** what result code reaches
+`FUN_141b267c0`, and when? The dialog is raised for result -1, 6, 8 or 9, but the owner sees it
+*before* any login exchange, and `0x0032` (handled by `FUN_1415e5c20`) never touches that
+path. Two of its callers - `FUN_141b2b120`, a 31-byte wrapper that passes the code straight
+through, and `FUN_141b2ae80` - have no callers and are in no vtable, so they are reached
+only through the virtualised dispatcher and **cannot be traced statically**.
+
+So observe it: hook `FUN_141b267c0` and log `param_2` plus when it fires. Today's
+`-Probe watch@<VA>` only reports *whether* a function ran; it needs to capture the second
+argument (RDX on entry) too. That is a small change in `crates/grap-stub/src/probe.rs` and
+it turns a guess into a table lookup.
+
+**The auto-advance is not a bug.** In mode 5 the `ClassicIntro` tick calls
+`FUN_141b3ff10` - *the same function the Login button calls* - as soon as `0x000B` sets
+`stage+0x108`. `-NXLDEBUG` is a debug launch mode that logs in without the button, which is
+why the flow does not match a normal server.
+
+**To get the click-the-button flow**, write anything but `5` to `[0x143ac1898] + 0x68`
+(`session+0x68`) from `grap-stub` once the world list has landed. Then the tick's
+auto-login goes false, the button still enables (that happens as a side effect of the
+`+0x108` check, independent of mode), and clicking Login takes the readable
+`FUN_141b3f050(stage, 4, 600)` straight to CharSelect. Switching modes sends `0x000B` to the
+classic handler `FUN_141b2fac0` instead of `FUN_141b31ff0`, which is safe: their read
+sequences were compared field by field and are identical. **Be honest about what this is** -
+it makes the client follow the normal flow, it does not make the session valid.
+
 ### Next step - the world list
 
 The login result makes the client search for its world in the list at `stage+0x100`
@@ -254,13 +283,13 @@ not evidence either way.
 
 Short version, because two long-standing assumptions turned out to be wrong:
 
-- **"Having trouble logging in" is a baked bitmap**, not a string. It is absent from the
-  6165 encrypted messages, from `Login.img`'s 260 strings, from `StringTable.img`, and from
-  the whole install as ASCII or UTF-16. **It is still a real signal**: the live client never
-  shows it, ours shows it *immediately after the splash screen* - so it is decided when the
-  login screen is built, before any packet exchange, and no reply we send can clear it.
-  `Login.img` has **two** login screens (`Title_new` = the live one, `ClassicIntro` = ours,
-  the one carrying `find_id`/`find_pw`), and `FUN_141129930` builds `ClassicIntro`.
+- **"Having trouble logging in" is `/Notice/text/loginTroubleAskSupport`** - a baked bitmap
+  in `Login.img`, which is why no string search ever found it. **It is a login result
+  dialog.** `FUN_141b267c0` switches on `result + 1` and raises it for result codes
+  **-1, 6, 8, 9** (3 = `blockedID`, 4 = `incorrectPassword`, 5 = `notRegisteredID`,
+  7 = `loginAlready`). So the client thinks it received a failing login result.
+  `Login.img` also has **two** login screens (`Title_new`, and `ClassicIntro` = ours, the
+  one carrying `find_id`/`find_pw`); `FUN_141129930` builds `ClassicIntro`.
 - **The empty identity did not block the login.** The client still sent `0x0073` and
   `0x0080` and accepted a `result = 0` reply. It is a real gap but not the current blocker.
 

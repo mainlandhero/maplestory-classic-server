@@ -15,21 +15,64 @@ absent from all four places text can live:
 | `String.wz` `StringTable.img` | no match |
 | raw ASCII **and** UTF-16 across every file in `client-patched/` | only the `troubled` facial emote |
 
-So the text is a **baked bitmap**, drawn from a canvas rather than resolved from a string.
+So the text is a **baked bitmap**. It has since been found and rendered:
 
-**It is still a real signal.** The owner, who knows the live game: the live client **never** shows
-it, and ours shows it **immediately after the splash screen** — before any of the
-`0x0073` / `0x0080` / `0x0010` exchange. So it is conditional, and the condition is
-evaluated when the login screen is built, not by anything we send. An earlier note here
-guessed it might be permanent screen furniture; that is wrong and direct observation
-settles it.
+**`/Notice/text/loginTroubleAskSupport`** in `Login.img` (215x86, canvas format 1):
 
-Two consequences:
+> Having trouble logging in?
+> Try logging in at maplestory.nexon.net
+> or visit the Nexon homepage
+> to view support options.
 
-- Nothing in the login *packet* exchange can clear it. Chasing it through opcodes is
-  chasing the wrong half of the client.
-- Because it appears at screen-construction time, whatever is wrong is already wrong when
-  the client opens.
+Read it yourself with:
+
+```bash
+./target/release/wz-dump.exe canvas client-patched/Data/UI/_Canvas/_Canvas_000.wz \
+    Login.img <outdir> "Notice/text/login"
+python tools/wz_png.py <outdir>
+```
+
+`/Notice/text/` is the client's **entire baked message table** - ~170 canvases on the same
+parchment frame, named (`incorrectPassword`, `notRegisteredID`, `blockedID`,
+`accountSuspended`, `loginAlready`, `loginTimeout`, `unableLogOnToGameSvr`, ...) and
+numbered (`28` = "You have entered an invalid login ID", `32` = "The server is under
+maintenance", `38` = "GameGuard has been updated"). The numeric keys are **not** the login
+result codes - there is no `101`/`0x65` entry - so the login result resolves through the
+named keys.
+
+### Which result codes raise it
+
+`FUN_141b267c0(stage, result, ...)` is the map, and it switches on `result + 1`:
+
+| Result | Notice |
+|---|---|
+| **-1, 6, 8, 9** | **`loginTroubleAskSupport`** |
+| 3 | `blockedID` |
+| 4 | `incorrectPassword` |
+| 5 | `notRegisteredID` |
+| 7 | `loginAlready` |
+
+So the prompt is a **login result dialog**: the client believes it got a failing login
+result of -1, 6, 8 or 9. No caller passes -1 as an immediate (checked with
+`FindConstArgCalls`), so the value arrives in a variable.
+
+**Unresolved, and the top question for next session:** the owner sees this dialog *immediately
+after the splash screen*, before we have sent anything but the `0x0032` gate - and `0x0032`
+is handled by `FUN_1415e5c20`, which never touches this path. Something is reaching
+`FUN_141b267c0` with a failing code before any login exchange. Two of its callers,
+`FUN_141b2b120` (a 31-byte wrapper passing the code straight through) and `FUN_141b2ae80`,
+have **no callers and are in no vtable**, so they are reached only through the virtualised
+dispatcher and cannot be traced statically.
+
+The way to settle it is to **observe**: hook `FUN_141b267c0` and log `param_2` and when it
+fires. That names the code, and the table above names the failure. `crates/grap-stub`
+already does inline hooks; today's watch mode only reports *whether* a function ran, so it
+needs to also capture an argument.
+
+**It is a real signal, not decoration.** The owner, who knows the live game: the live client
+**never** shows it, and ours shows it **immediately after the splash screen**. An earlier
+note here guessed it might be permanent screen furniture; that is wrong, and the render
+above settles it - this is the failure dialog from the login result table.
 
 ## What actually enables the Login button
 
