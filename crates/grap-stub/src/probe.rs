@@ -290,6 +290,17 @@ pub unsafe fn run(
         log("probe: RtlRestoreContext not found - aborting");
         return;
     }
+    // Refuse a walk whose oracle is already tripped. With no target the oracle is
+    // conn+0x150, so if that byte is set before we start - which it is whenever we answer
+    // 0x0032 first - the very first opcode would "hit" and the walk would confidently
+    // name the wrong number. Aborting loudly beats answering wrongly.
+    if target == 0 && *(conn.cast::<u8>().add(CONN_DONE_FLAG)) != 0 {
+        log("probe: conn+0x150 is ALREADY set and no target was given, so every opcode \
+             would look like a hit. Give a target (<from>-<to>@<VA>) or do not pre-answer \
+             0x0032. Aborting.");
+        return;
+    }
+
     RESTORE_CTX.store(restore as u64, Ordering::SeqCst);
     AddVectoredExceptionHandler(1, veh as *const c_void);
     if target != 0 && !arm_target(target) {

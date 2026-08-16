@@ -205,7 +205,12 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     // With one real packet in hand we have everything the walk needs: a live connection,
     // a well-formed view, and a buffer we own. Run it here rather than from a thread, so
     // the dispatcher is re-entered on the thread that normally calls it.
-    if flag_after == 0 && crate::probe::enabled() {
+    //
+    // Deliberately not gated on the flag still being clear. The useful sequence is to
+    // answer 0x0032 first - which sets it - and *then* walk for some other handler, so
+    // gating here skipped the walk entirely. Whether a set flag invalidates the run
+    // depends on which oracle is in use, and only the probe knows that, so it decides.
+    if crate::probe::enabled() {
         crate::probe::run(conn, view, tramp);
     }
     ret
