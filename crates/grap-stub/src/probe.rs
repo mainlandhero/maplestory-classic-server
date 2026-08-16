@@ -63,6 +63,9 @@ static RESTORE_CTX: AtomicU64 = AtomicU64::new(0);
 static CONSUMED: AtomicU32 = AtomicU32::new(0);
 static RET_CHANGES: AtomicU32 = AtomicU32::new(0);
 static LAST_RET: AtomicU64 = AtomicU64::new(0);
+static TARGET: AtomicU64 = AtomicU64::new(0);
+static TARGET_BYTE: AtomicU32 = AtomicU32::new(0);
+static HIT: AtomicBool = AtomicBool::new(false);
 
 /// x64 `CONTEXT` is 1232 bytes and must be 16-byte aligned.
 #[repr(C, align(16))]
@@ -80,6 +83,11 @@ extern "system" {
 
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
+const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
+const EXCEPTION_BREAKPOINT: u32 = 0x8000_0003;
+/// Offsets into x64 CONTEXT.
+const CTX_RSP: usize = 0x98;
+const CTX_RIP: usize = 0xF8;
 
 #[repr(C)]
 struct ExceptionPointers {
@@ -95,30 +103,66 @@ struct ExceptionRecord {
     address: *mut c_void,
 }
 
-/// Read `from-to` out of the marker file, defaulting when it is empty.
+/// Read `from-to[@targetVA]` out of the marker file, defaulting when it is empty.
+///
+/// The optional target generalises the walk. Without it the oracle is `conn+0x150`, which
+/// only ever finds the one handler that releases the startup loop. With it, the oracle
+/// becomes "which opcode called *this function*" - and since inbound opcodes cannot be
+/// read out of the binary at all, that is how every remaining one gets found.
 ///
 /// Content that is present but unparseable is reported rather than quietly replaced by
 /// the default. A caller-side bug once wrote a file path in here and the silent fallback
 /// made the walk look like it had honoured the requested range.
-fn range() -> (u32, u32) {
+fn range() -> (u32, u32, usize) {
     let text = std::fs::read_to_string(PROBE_MARKER).unwrap_or_default();
-    let text = text.trim();
+    let text = text.trim().to_string();
     if text.is_empty() {
-        return (DEFAULT_FROM, DEFAULT_TO);
+        return (DEFAULT_FROM, DEFAULT_TO, 0);
     }
-    if let Some((a, b)) = text.split_once('-') {
+    let (span, target) = match text.split_once('@') {
+        Some((s, t)) => (
+            s,
+            usize::from_str_radix(t.trim().trim_start_matches("0x"), 16).unwrap_or(0),
+        ),
+        None => (text.as_str(), 0),
+    };
+    if let Some((a, b)) = span.split_once('-') {
         if let (Ok(a), Ok(b)) = (
             u32::from_str_radix(a.trim().trim_start_matches("0x"), 16),
             u32::from_str_radix(b.trim().trim_start_matches("0x"), 16),
         ) {
-            return (a, b);
+            return (a, b, target);
         }
     }
     log(&format!(
-        "probe: marker says {text:?}, which is not <from>-<to> in hex - \
+        "probe: marker says {text:?}, which is not <from>-<to>[@targetVA] in hex - \
          falling back to 0x{DEFAULT_FROM:04X}-0x{DEFAULT_TO:04X}"
     ));
-    (DEFAULT_FROM, DEFAULT_TO)
+    (DEFAULT_FROM, DEFAULT_TO, 0)
+}
+
+/// Plant an `int3` on `target` so a call to it traps into our vectored handler.
+///
+/// A breakpoint rather than an inline hook, for two reasons: it needs one byte, so no
+/// assumptions about the target's prologue being relocatable; and the handler can make
+/// the function return immediately instead of running, which matters when we are about to
+/// invoke it with a body it was never meant to see.
+unsafe fn arm_target(target: usize) -> bool {
+    let mut old = 0u32;
+    if VirtualProtect(target as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+        log(&format!("probe: could not make {target:#x} writable"));
+        return false;
+    }
+    let p = target as *mut u8;
+    TARGET_BYTE.store(*p as u32, Ordering::SeqCst);
+    *p = 0xCC;
+    VirtualProtect(target as *mut c_void, 1, old, &mut old);
+    TARGET.store(target as u64, Ordering::SeqCst);
+    log(&format!(
+        "probe: armed int3 at {target:#x} (was {:#04x})",
+        TARGET_BYTE.load(Ordering::SeqCst)
+    ));
+    true
 }
 
 pub fn enabled() -> bool {
@@ -168,8 +212,24 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     let code = (*(*info).record).code;
-    // Leave debugger traps alone; everything else is ours to swallow.
-    if code == 0x8000_0003 || code == 0x8000_0004 {
+    let at = (*(*info).record).address as usize;
+
+    // Our own breakpoint on the target function: record the hit and make the call return
+    // straight away, so the handler never runs on a body it was not meant to see.
+    let target = TARGET.load(Ordering::SeqCst) as usize;
+    if code == EXCEPTION_BREAKPOINT && target != 0 && at == target {
+        HIT.store(true, Ordering::SeqCst);
+        let ctx = (*info).context.cast::<u8>();
+        // Simulate `ret`: the return address is on top of the stack at function entry.
+        let rsp = *(ctx.add(CTX_RSP).cast::<u64>());
+        let ret_addr = *(rsp as *const u64);
+        *(ctx.add(CTX_RIP).cast::<u64>()) = ret_addr;
+        *(ctx.add(CTX_RSP).cast::<u64>()) = rsp + 8;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    // Leave other debugger traps alone; everything else is ours to swallow.
+    if code == EXCEPTION_BREAKPOINT || code == 0x8000_0004 {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     IN_CALL.store(false, Ordering::SeqCst);
@@ -222,7 +282,7 @@ pub unsafe fn run(
     if conn.is_null() || view.is_null() || DONE.swap(true, Ordering::SeqCst) {
         return;
     }
-    let (from, to) = range();
+    let (from, to, target) = range();
 
     let ntdll = GetModuleHandleA(c"ntdll.dll".as_ptr().cast());
     let restore = GetProcAddress(ntdll, c"RtlRestoreContext".as_ptr().cast());
@@ -232,6 +292,10 @@ pub unsafe fn run(
     }
     RESTORE_CTX.store(restore as u64, Ordering::SeqCst);
     AddVectoredExceptionHandler(1, veh as *const c_void);
+    if target != 0 && !arm_target(target) {
+        log("probe: target could not be armed - aborting rather than reporting a false miss");
+        return;
+    }
     neutralise(c"kernel32.dll", c"ExitProcess");
     neutralise(c"kernel32.dll", c"TerminateProcess");
 
@@ -247,8 +311,9 @@ pub unsafe fn run(
 
     log(&format!(
         "probe: walking 0x{from:04X}..0x{to:04X}, packet len={len} \
-         cursor before dispatch={} after={cursor_now}",
-        captured_cursor()
+         cursor before dispatch={} after={cursor_now}, oracle={}",
+        captured_cursor(),
+        if target != 0 { "int3 on target" } else { "conn+0x150" }
     ));
 
     RUNNING.store(true, Ordering::SeqCst);
@@ -297,9 +362,17 @@ pub unsafe fn run(
             }
         }
 
-        let flag = *(conn.cast::<u8>().add(CONN_DONE_FLAG));
-        if flag != 0 {
-            let op = CURRENT.load(Ordering::SeqCst) - 1;
+        let op = CURRENT.load(Ordering::SeqCst) - 1;
+        if HIT.load(Ordering::SeqCst) {
+            log(&format!(
+                "***** FOUND IT: inbound opcode 0x{op:04X} reaches {target:#x} \
+                 (faults along the way: {}) *****",
+                FAULTS.load(Ordering::Relaxed)
+            ));
+            RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
+        if *(conn.cast::<u8>().add(CONN_DONE_FLAG)) != 0 {
             log(&format!(
                 "***** FOUND IT: inbound opcode 0x{op:04X} sets conn+0x150 \
                  (faults along the way: {}) *****",
