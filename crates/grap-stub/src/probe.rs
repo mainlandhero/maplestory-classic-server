@@ -34,6 +34,7 @@
 //! copy pointed at our own loopback server.
 
 use std::ffi::{c_void, CStr};
+use std::fs::OpenOptions;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::hook::{log, CONN_DONE_FLAG};
@@ -177,24 +178,43 @@ fn resume_tag(from: u32, to: u32, target: usize) -> String {
     format!("{from:04X}-{to:04X}@{target:X}")
 }
 
-/// Read the resume point, if it belongs to this exact walk.
+/// Read the resume point: the furthest opcode recorded for *this* walk.
+///
+/// Records are appended, so the file is a history rather than a single value and the last
+/// matching line wins.
 fn resume_from(from: u32, to: u32, target: usize) -> Option<u32> {
     let text = std::fs::read_to_string(RESUME_FILE).ok()?;
-    let (tag, at) = text.trim().split_once(':')?;
-    if tag != resume_tag(from, to, target) {
-        log(&format!(
-            "probe: ignoring resume point {text:?} - it is from a different walk than \
-             {}",
-            resume_tag(from, to, target)
-        ));
-        return None;
+    let want = resume_tag(from, to, target);
+    let mut best = None;
+    let mut foreign = false;
+    for line in text.lines() {
+        match line.trim().split_once(':') {
+            Some((tag, at)) if tag == want => {
+                if let Ok(at) = u32::from_str_radix(at.trim(), 16) {
+                    best = Some(best.map_or(at, |b: u32| b.max(at)));
+                }
+            }
+            Some(_) => foreign = true,
+            None => {}
+        }
     }
-    let at = u32::from_str_radix(at.trim(), 16).ok()?;
-    (at > from && at < to).then_some(at)
+    if best.is_none() && foreign {
+        log("probe: resume file holds only points from a different walk - starting over");
+    }
+    best.filter(|at| *at > from && *at < to)
 }
 
+/// Append the next opcode to try.
+///
+/// Appending, not rewriting. `fs::write` truncates first, so a process that dies during
+/// the write leaves an empty file - which is exactly what happened, and the next launch
+/// restarted from zero and died in the same place. An append can lose the newest record
+/// but never the ones before it.
 fn record_resume(from: u32, to: u32, target: usize, at: u32) {
-    let _ = std::fs::write(RESUME_FILE, format!("{}:{at:04X}", resume_tag(from, to, target)));
+    use std::io::Write;
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(RESUME_FILE) {
+        let _ = writeln!(f, "{}:{at:04X}", resume_tag(from, to, target));
+    }
 }
 
 fn clear_resume() {
@@ -423,7 +443,7 @@ pub unsafe fn run(
         // process despite the guards, the next launch resumes past it automatically -
         // which is the difference between one wasted run and restarting the search.
         record_resume(from, to, target, op + 1);
-        if op.is_multiple_of(0x40) {
+        if op.is_multiple_of(0x10) {
             log(&format!("probe: at 0x{op:04X} (faults so far {})", FAULTS.load(Ordering::Relaxed)));
         }
 
