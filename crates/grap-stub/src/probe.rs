@@ -114,9 +114,24 @@ struct ExceptionRecord {
 /// Content that is present but unparseable is reported rather than quietly replaced by
 /// the default. A caller-side bug once wrote a file path in here and the silent fallback
 /// made the walk look like it had honoured the requested range.
-fn range() -> (u32, u32, usize) {
+fn trigger() -> u64 {
+    // `...#N` starts the walk on the Nth dispatched packet instead of the first.
+    //
+    // Timing turns out to matter as much as the address. The walk runs inside
+    // FUN_1415e7090's startup loop, which is *before* the client has a login screen - so
+    // a per-stage OnPacket handler does not exist yet and nothing can route to it. Waiting
+    // for a later packet lets the client get where it is going first.
     let text = std::fs::read_to_string(PROBE_MARKER).unwrap_or_default();
-    let text = text.trim().to_string();
+    text.trim()
+        .rsplit_once('#')
+        .and_then(|(_, n)| n.trim().parse::<u64>().ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
+fn range() -> (u32, u32, usize) {
+    let raw = std::fs::read_to_string(PROBE_MARKER).unwrap_or_default();
+    let text = raw.trim().split('#').next().unwrap_or("").trim().to_string();
     if text.is_empty() {
         return (DEFAULT_FROM, DEFAULT_TO, 0);
     }
@@ -256,8 +271,8 @@ static mut BUF_SNAP: Vec<u8> = Vec::new();
 /// the *consumed* state, so every replayed call found the cursor already past the opcode
 /// and read the zero padding instead. That produced a full clean pass over 4096 opcodes
 /// with no faults and no effect - a null result that looked like an answer.
-pub unsafe fn capture(view: *mut c_void) {
-    if view.is_null() || CAPTURED.swap(true, Ordering::SeqCst) {
+pub unsafe fn capture(view: *mut c_void, dispatch: u64) {
+    if dispatch < trigger() || view.is_null() || CAPTURED.swap(true, Ordering::SeqCst) {
         return;
     }
     let data = *(view.cast::<u8>().add(VIEW_DATA).cast::<*mut u8>());
@@ -355,7 +370,15 @@ pub unsafe fn run(
     conn: *mut c_void,
     view: *mut c_void,
     tramp: extern "system" fn(*mut c_void, *mut c_void) -> u64,
+    dispatch: u64,
 ) {
+    let want = trigger();
+    if dispatch < want {
+        log(&format!(
+            "probe: dispatch #{dispatch}, waiting for #{want} before walking"
+        ));
+        return;
+    }
     if conn.is_null() || view.is_null() || DONE.swap(true, Ordering::SeqCst) {
         return;
     }

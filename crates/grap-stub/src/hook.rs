@@ -156,8 +156,10 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     let state_before = read_state();
 
     // Snapshot before the dispatcher consumes the opcode and moves the read cursor.
+    // `CALLS` has not been incremented yet, so this packet is number CALLS + 1.
+    let dispatch = CALLS.load(Ordering::Relaxed) + 1;
     if crate::probe::enabled() {
-        crate::probe::capture(view);
+        crate::probe::capture(view, dispatch);
     }
 
     let mut start = 0i64;
@@ -211,7 +213,7 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     // gating here skipped the walk entirely. Whether a set flag invalidates the run
     // depends on which oracle is in use, and only the probe knows that, so it decides.
     if crate::probe::enabled() {
-        crate::probe::run(conn, view, tramp);
+        crate::probe::run(conn, view, tramp, dispatch);
     }
     ret
 }

@@ -24,6 +24,29 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from find_handler_table import build_callgraph, load_pe, parse_pdata  # noqa: E402
 
 
+def in_vtable(data, image_base, va):
+    """Does this address sit in a table of pointers, i.e. is it a virtual method?
+
+    "No direct callers" is not enough to call something a dispatcher entry. A virtual
+    method has no direct callers either - it is reached through a vtable - and aiming a
+    walk at one produces a confident, fully-instrumented miss. `FUN_141b25f30` cost a
+    complete 3968-opcode run that way, while the handler the walk really did find,
+    `FUN_1415e5c20`, appears in no table at all.
+    """
+    import struct
+    return [m for m in _find_all(data, struct.pack("<Q", va)) if m % 8 == 0]
+
+
+def _find_all(data, needle):
+    out, i = [], 0
+    while True:
+        i = data.find(needle, i)
+        if i < 0:
+            return out
+        out.append(i)
+        i += 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("address", help="function VA, e.g. 0x141b307b0")
@@ -49,9 +72,16 @@ def main():
             up = callers.get(f, set())
             size = ends.get(f, 0) - f
             if not up:
-                roots.append(f)
-                print(f"{'  ' * level}FUN_{base + f:x}  size {size:6}  "
-                      f"<-- DISPATCHER ENTRY (no direct callers)")
+                vt = in_vtable(data, base, base + f)
+                if vt:
+                    print(f"{'  ' * level}FUN_{base + f:x}  size {size:6}  "
+                          f"<-- VIRTUAL METHOD, in {len(vt)} table(s) - NOT a dispatcher "
+                          f"entry. Reached through a vtable, so no opcode calls it "
+                          f"directly and a walk aimed here will miss cleanly.")
+                else:
+                    roots.append(f)
+                    print(f"{'  ' * level}FUN_{base + f:x}  size {size:6}  "
+                          f"<-- DISPATCHER ENTRY (no callers, in no vtable)")
             else:
                 print(f"{'  ' * level}FUN_{base + f:x}  size {size:6}  "
                       f"called by {len(up)}")
