@@ -1,0 +1,9 @@
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+    0 opcode=0x0000 elapsed_us=128.6 ret=109029200 flag=0->0 state=0->0
+probe: neutralised ExitProcess
+probe: neutralised TerminateProcess
+probe: walking 0x0000..0x1000, packet len=518 cursor before dispatch=4 after=6
+probe: at 0x0000 (faults so far 0)
+***** FOUND IT: inbound opcode 0x0032 sets conn+0x150 (faults along the way: 2) *****
