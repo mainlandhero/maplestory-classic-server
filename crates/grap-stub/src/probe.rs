@@ -165,6 +165,27 @@ unsafe fn arm_target(target: usize) -> bool {
     true
 }
 
+/// Put the target's original byte back.
+///
+/// Must happen before the walk returns. The vectored handler only services the trap while
+/// `IN_CALL` is set, so an `int3` left behind would fire on the client's own next call to
+/// that function with nothing willing to handle it - turning a finished experiment into a
+/// crash that looks unrelated.
+unsafe fn disarm_target() {
+    let target = TARGET.swap(0, Ordering::SeqCst) as usize;
+    if target == 0 {
+        return;
+    }
+    let mut old = 0u32;
+    if VirtualProtect(target as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+        log(&format!("probe: could not restore {target:#x} - it still holds an int3"));
+        return;
+    }
+    *(target as *mut u8) = TARGET_BYTE.load(Ordering::SeqCst) as u8;
+    VirtualProtect(target as *mut c_void, 1, old, &mut old);
+    log(&format!("probe: disarmed int3 at {target:#x}"));
+}
+
 pub fn enabled() -> bool {
     std::path::Path::new(PROBE_MARKER).exists()
 }
@@ -381,20 +402,26 @@ pub unsafe fn run(
                 FAULTS.load(Ordering::Relaxed)
             ));
             RUNNING.store(false, Ordering::SeqCst);
+            disarm_target();
             return;
         }
-        if *(conn.cast::<u8>().add(CONN_DONE_FLAG)) != 0 {
+        // Exactly one oracle is live per walk. When a target is armed, conn+0x150 is
+        // *expected* to be set already - we answer 0x0032 to get past the gate before
+        // walking - so consulting it here reports a hit on the first opcode every time.
+        if target == 0 && *(conn.cast::<u8>().add(CONN_DONE_FLAG)) != 0 {
             log(&format!(
                 "***** FOUND IT: inbound opcode 0x{op:04X} sets conn+0x150 \
                  (faults along the way: {}) *****",
                 FAULTS.load(Ordering::Relaxed)
             ));
             RUNNING.store(false, Ordering::SeqCst);
+            disarm_target();
             return;
         }
     }
 
     RUNNING.store(false, Ordering::SeqCst);
+    disarm_target();
     let consumed = CONSUMED.load(Ordering::Relaxed);
     let total = to - from;
     log(&format!(
