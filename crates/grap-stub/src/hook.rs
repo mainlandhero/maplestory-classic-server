@@ -69,10 +69,29 @@ const DISPATCH_RVA: usize = 0x1415D60E0 - 0x140000000;
 /// trampoline re-enters at +17 and proceeds into the VM as normal.
 const STOLEN: usize = 17;
 
+/// `conn + 0x150` — the byte that releases the client from its startup loop.
+///
+/// `FUN_1415e7090` hashes `Data.wz`, sends opcode `0xA1` carrying that hash, then loops
+/// on recv/decrypt/dispatch until *this byte* is non-zero. Nothing else ends the loop, so
+/// watching it across a dispatch says precisely whether the opcode we just sent was the
+/// one the client was waiting for. See `docs/transport.md`.
+const CONN_DONE_FLAG: usize = 0x150;
+
+/// `conn + 0x14c` — the `Data.wz` hash the client computed and sent.
+const CONN_DATAWZ_HASH: usize = 0x14C;
+
+/// `DAT_143ace3c8` — the patch state machine: 0 = idle, 1 = mid-transfer, 2 = settled.
+///
+/// Worth logging separately from the flag: a reply that reaches `FUN_1415e5c20` but
+/// declares a non-zero length moves this to 1 *without* setting the flag, so state alone
+/// distinguishes "wrong opcode" from "right opcode, wrong body".
+const PATCH_STATE_RVA: usize = 0x143ACE3C8 - 0x140000000;
+
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 static TRIGGERED: AtomicBool = AtomicBool::new(false);
 static TRAMPOLINE: AtomicU64 = AtomicU64::new(0);
 static CALLS: AtomicU64 = AtomicU64::new(0);
+static BASE: AtomicU64 = AtomicU64::new(0);
 
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 const MEM_COMMIT_RESERVE: u32 = 0x1000 | 0x2000;
@@ -116,6 +135,26 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
         }
     };
 
+    // Sample the two things that say whether this opcode was the one the client wanted,
+    // before and after, so a change can be attributed to exactly this packet.
+    let read_flag = || -> u32 {
+        if conn.is_null() {
+            u32::MAX
+        } else {
+            *(conn.cast::<u8>().add(CONN_DONE_FLAG)) as u32
+        }
+    };
+    let read_state = || -> u32 {
+        let base = BASE.load(Ordering::SeqCst) as usize;
+        if base == 0 {
+            u32::MAX
+        } else {
+            *((base + PATCH_STATE_RVA) as *const u32)
+        }
+    };
+    let flag_before = read_flag();
+    let state_before = read_state();
+
     let mut start = 0i64;
     QueryPerformanceCounter(&mut start);
 
@@ -125,14 +164,38 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
 
     let mut end = 0i64;
     QueryPerformanceCounter(&mut end);
+
+    let flag_after = read_flag();
+    let state_after = read_state();
     let mut freq = 1i64;
     QueryPerformanceFrequency(&mut freq);
     let micros = (end - start) as f64 * 1_000_000.0 / freq as f64;
 
     let n = CALLS.fetch_add(1, Ordering::Relaxed);
-    // One line per packet: a handled opcode does real work and shows a visibly larger
-    // elapsed time than one that falls straight through the dispatch.
-    log(&format!("{n:5} opcode=0x{opcode:04X} elapsed_us={micros:.1} ret={ret}"));
+    log(&format!(
+        "{n:5} opcode=0x{opcode:04X} elapsed_us={micros:.1} ret={ret} \
+         flag={flag_before}->{flag_after} state={state_before}->{state_after}"
+    ));
+
+    // The whole point of the exercise, called out so it cannot be missed in a log of
+    // dozens of near-identical lines.
+    if flag_after != flag_before && flag_after != u32::MAX {
+        let hash = if conn.is_null() {
+            0
+        } else {
+            *(conn.cast::<u8>().add(CONN_DATAWZ_HASH).cast::<u32>())
+        };
+        log(&format!(
+            "***** OPCODE 0x{opcode:04X} RELEASED THE STARTUP LOOP \
+             (conn+0x150 {flag_before}->{flag_after}, Data.wz hash now 0x{hash:08X}) *****"
+        ));
+    } else if state_after != state_before && state_after != u32::MAX {
+        log(&format!(
+            "***** OPCODE 0x{opcode:04X} REACHED THE Data.wz HANDLER \
+             (state {state_before}->{state_after}) but did not set the flag - \
+             right opcode, wrong body *****"
+        ));
+    }
     ret
 }
 
@@ -176,6 +239,7 @@ pub unsafe fn install() {
         log("install: GetModuleHandleA failed");
         return;
     }
+    BASE.store(base as u64, Ordering::SeqCst);
     let target = base + DISPATCH_RVA;
     log(&format!("install: base={base:#x} target={target:#x}"));
 
