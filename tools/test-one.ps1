@@ -221,5 +221,12 @@ if (-not $Normal) {
     }
 }
 
+# Read the command line back off the running process rather than trusting what we meant
+# to pass. A run where the session tokens silently failed to arrive looks exactly like a
+# run where they arrived and did nothing, and those call for opposite next steps.
+$actual = (Get-CimInstance Win32_Process -Filter "ProcessId = $($p.Id)" -ErrorAction SilentlyContinue).CommandLine
+if ($actual) { Write-Host "launched: $actual" }
+else { Write-Host 'launched: (could not read the command line back)' }
+
 Write-Host "client pid $($p.Id) launched. When done, read the screen, then run:"
 Write-Host "  powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Stop"
