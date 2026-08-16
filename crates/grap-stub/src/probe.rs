@@ -54,11 +54,15 @@ const OPCODE_AT: usize = 4; // the opcode sits just past the header
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static DONE: AtomicBool = AtomicBool::new(false);
+static CAPTURED: AtomicBool = AtomicBool::new(false);
 static IN_CALL: AtomicBool = AtomicBool::new(false);
 static FAULTED: AtomicBool = AtomicBool::new(false);
 static CURRENT: AtomicU32 = AtomicU32::new(0);
 static FAULTS: AtomicU32 = AtomicU32::new(0);
 static RESTORE_CTX: AtomicU64 = AtomicU64::new(0);
+static CONSUMED: AtomicU32 = AtomicU32::new(0);
+static RET_CHANGES: AtomicU32 = AtomicU32::new(0);
+static LAST_RET: AtomicU64 = AtomicU64::new(0);
 
 /// x64 `CONTEXT` is 1232 bytes and must be 16-byte aligned.
 #[repr(C, align(16))]
@@ -91,10 +95,17 @@ struct ExceptionRecord {
     address: *mut c_void,
 }
 
-/// Read `from-to` out of the marker file, defaulting when it is empty or malformed.
+/// Read `from-to` out of the marker file, defaulting when it is empty.
+///
+/// Content that is present but unparseable is reported rather than quietly replaced by
+/// the default. A caller-side bug once wrote a file path in here and the silent fallback
+/// made the walk look like it had honoured the requested range.
 fn range() -> (u32, u32) {
     let text = std::fs::read_to_string(PROBE_MARKER).unwrap_or_default();
     let text = text.trim();
+    if text.is_empty() {
+        return (DEFAULT_FROM, DEFAULT_TO);
+    }
     if let Some((a, b)) = text.split_once('-') {
         if let (Ok(a), Ok(b)) = (
             u32::from_str_radix(a.trim().trim_start_matches("0x"), 16),
@@ -103,11 +114,52 @@ fn range() -> (u32, u32) {
             return (a, b);
         }
     }
+    log(&format!(
+        "probe: marker says {text:?}, which is not <from>-<to> in hex - \
+         falling back to 0x{DEFAULT_FROM:04X}-0x{DEFAULT_TO:04X}"
+    ));
     (DEFAULT_FROM, DEFAULT_TO)
 }
 
 pub fn enabled() -> bool {
     std::path::Path::new(PROBE_MARKER).exists()
+}
+
+static mut VIEW_SNAP: Vec<u8> = Vec::new();
+static mut BUF_SNAP: Vec<u8> = Vec::new();
+
+/// Snapshot the packet **before** the dispatcher touches it.
+///
+/// This has to happen first, not after. The dispatcher reads the opcode out of the view
+/// itself, which advances the read cursor from 4 to 6; snapshotting afterwards captured
+/// the *consumed* state, so every replayed call found the cursor already past the opcode
+/// and read the zero padding instead. That produced a full clean pass over 4096 opcodes
+/// with no faults and no effect - a null result that looked like an answer.
+pub unsafe fn capture(view: *mut c_void) {
+    if view.is_null() || CAPTURED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let data = *(view.cast::<u8>().add(VIEW_DATA).cast::<*mut u8>());
+    let len = *(view.cast::<u8>().add(VIEW_LEN).cast::<u32>()) as usize;
+    if data.is_null() || !(OPCODE_AT + 2..=0x10000).contains(&len) {
+        return;
+    }
+    VIEW_SNAP = (0..VIEW_STRUCT).map(|i| *view.cast::<u8>().add(i)).collect();
+    BUF_SNAP = (0..len).map(|i| *data.add(i)).collect();
+}
+
+/// The read cursor at the moment we snapshotted, for logging.
+pub unsafe fn captured_cursor() -> i64 {
+    let snap = &*std::ptr::addr_of!(VIEW_SNAP);
+    if snap.len() < VIEW_CURSOR + 4 {
+        return -1;
+    }
+    i64::from(u32::from_le_bytes([
+        snap[VIEW_CURSOR],
+        snap[VIEW_CURSOR + 1],
+        snap[VIEW_CURSOR + 2],
+        snap[VIEW_CURSOR + 3],
+    ]))
 }
 
 /// Catch the fault and resume in the loop, rather than letting it unwind the client.
@@ -183,21 +235,20 @@ pub unsafe fn run(
     neutralise(c"kernel32.dll", c"ExitProcess");
     neutralise(c"kernel32.dll", c"TerminateProcess");
 
-    // Snapshot the view and its buffer so every opcode starts from the same packet.
     let data = *(view.cast::<u8>().add(VIEW_DATA).cast::<*mut u8>());
-    let len = *(view.cast::<u8>().add(VIEW_LEN).cast::<u32>()) as usize;
-    if data.is_null() || !(OPCODE_AT + 2..=0x10000).contains(&len) {
-        log(&format!("probe: packet looks wrong (data={data:?} len={len}) - aborting"));
+    let view_snapshot = &*std::ptr::addr_of!(VIEW_SNAP);
+    let buf_snapshot = &*std::ptr::addr_of!(BUF_SNAP);
+    if data.is_null() || view_snapshot.len() < VIEW_STRUCT || buf_snapshot.len() < OPCODE_AT + 2 {
+        log("probe: no pre-dispatch snapshot - aborting");
         return;
     }
-    let view_snapshot: Vec<u8> = (0..VIEW_STRUCT)
-        .map(|i| *view.cast::<u8>().add(i))
-        .collect();
-    let buf_snapshot: Vec<u8> = (0..len).map(|i| *data.add(i)).collect();
-    let cursor = *(view.cast::<u8>().add(VIEW_CURSOR).cast::<u32>());
+    let len = buf_snapshot.len();
+    let cursor_now = *(view.cast::<u8>().add(VIEW_CURSOR).cast::<u32>());
 
     log(&format!(
-        "probe: walking 0x{from:04X}..0x{to:04X}, packet len={len} cursor={cursor}"
+        "probe: walking 0x{from:04X}..0x{to:04X}, packet len={len} \
+         cursor before dispatch={} after={cursor_now}",
+        captured_cursor()
     ));
 
     RUNNING.store(true, Ordering::SeqCst);
@@ -230,8 +281,20 @@ pub unsafe fn run(
         // Reached twice: once normally, and again if the VEH longjmps back here.
         if !FAULTED.load(Ordering::SeqCst) {
             IN_CALL.store(true, Ordering::SeqCst);
-            tramp(conn, view);
+            let ret = tramp(conn, view);
             IN_CALL.store(false, Ordering::SeqCst);
+            // Proof of work. If the dispatcher never really looks at the packet, the
+            // cursor never moves and every call returns the same thing - which is exactly
+            // what a silently-inert walk looks like, and is otherwise indistinguishable
+            // from "swept the whole range, found nothing".
+            let cursor_after = *(view.cast::<u8>().add(VIEW_CURSOR).cast::<u32>());
+            if cursor_after != OPCODE_AT as u32 {
+                CONSUMED.fetch_add(1, Ordering::Relaxed);
+            }
+            let last = LAST_RET.swap(ret, Ordering::Relaxed);
+            if last != ret {
+                RET_CHANGES.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         let flag = *(conn.cast::<u8>().add(CONN_DONE_FLAG));
@@ -248,8 +311,15 @@ pub unsafe fn run(
     }
 
     RUNNING.store(false, Ordering::SeqCst);
+    let consumed = CONSUMED.load(Ordering::Relaxed);
+    let total = to - from;
     log(&format!(
-        "probe: finished 0x{from:04X}..0x{to:04X} with no hit ({} faults)",
-        FAULTS.load(Ordering::Relaxed)
+        "probe: finished 0x{from:04X}..0x{to:04X} with no hit          ({} faults, {consumed}/{total} calls advanced the cursor, {} distinct returns)",
+        FAULTS.load(Ordering::Relaxed),
+        RET_CHANGES.load(Ordering::Relaxed)
     ));
+    if consumed == 0 {
+        log("probe: WARNING - the cursor never moved on any call, so the dispatcher was \
+             not reading our packet. A broken walk, not an empty range.");
+    }
 }

@@ -155,6 +155,11 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     let flag_before = read_flag();
     let state_before = read_state();
 
+    // Snapshot before the dispatcher consumes the opcode and moves the read cursor.
+    if crate::probe::enabled() {
+        crate::probe::capture(view);
+    }
+
     let mut start = 0i64;
     QueryPerformanceCounter(&mut start);
 

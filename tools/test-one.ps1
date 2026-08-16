@@ -50,7 +50,9 @@ $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvoca
 $root = Split-Path -Parent $here
 if (-not $ClientDir) { $ClientDir = Join-Path $root 'client-patched' }
 $exe = Join-Path $ClientDir 'MapleStory.exe'
-$probe = Join-Path $here 'handshake_probe.py'
+# NOT $probe: PowerShell variable names are case-insensitive, so that would
+# collide with the -Probe parameter and silently overwrite it.
+$probePy = Join-Path $here 'handshake_probe.py'
 $logFile = Join-Path $root 'probe.log'
 
 function Stop-All {
@@ -74,14 +76,27 @@ function Stop-All {
     }
 }
 
-if ($List) { & python $probe --list; return }
+if ($List) { & python $probePy --list; return }
 
 if ($Stop) {
     Stop-All
     # Clear the walk marker here too. It is a one-shot experiment, and leaving it behind
     # would silently turn the next ordinary run into a probe.
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.probe') -ErrorAction SilentlyContinue
-    Write-Host 'stopped client and probe'
+    # taskkill cannot touch the elevated client from a normal shell, and it says so on
+    # stderr where it is easy to miss. Check rather than claim success: with the probe's
+    # ExitProcess detour in place the client no longer dies on its own, so a survivor
+    # here will hold port 8484 and quietly break the next run.
+    Start-Sleep -Milliseconds 400
+    if (Get-Process MapleStory -ErrorAction SilentlyContinue) {
+        Write-Host ''
+        Write-Host 'CLIENT IS STILL RUNNING - taskkill was denied (it runs elevated).' -ForegroundColor Red
+        Write-Host 'Kill it from an elevated shell, or the next run will fight it for the port:'
+        Write-Host '    taskkill /F /IM MapleStory.exe /T'
+        Write-Host ''
+    } else {
+        Write-Host 'stopped client and probe'
+    }
     if (Test-Path $logFile) { Write-Host "--- $logFile ---"; Get-Content $logFile }
     return
 }
@@ -92,10 +107,10 @@ if (-not (Test-Path $exe)) { throw "not found: $exe" }
 Stop-All
 Start-Sleep -Milliseconds 600
 
-$name = (& python $probe --list | Where-Object { $_ -match "^\s*$Variant\s" })
+$name = (& python $probePy --list | Where-Object { $_ -match "^\s*$Variant\s" })
 Write-Host "variant $Variant :$name"
 
-$probeArgs = @('-u', $probe, '--port', "$Port", '--only', "$Variant")
+$probeArgs = @('-u', $probePy, '--port', "$Port", '--only', "$Variant")
 if ($Reply) {
     $probeArgs += @('--reply', $Reply, '--opcode', $Opcode, '--pad', "$Pad",
                     '--quiet-before', "$QuietBefore")
