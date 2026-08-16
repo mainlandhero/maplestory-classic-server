@@ -336,8 +336,15 @@ def build_reply(kind: str, opcode: int, cipher, pad: int = 0, body: bytes | None
         # `u8 result, u16-length string` per FUN_141b307b0, and no amount of zero padding
         # produces a *specific* result code.
         if body is not None:
-            frame = cipher.encode(transport.packet(opcode, body))
-            return frame, f"opcode 0x{opcode:04X} body={body.hex(' ')}"
+            # `--pad` after an explicit body appends zeros. The login success path reads a
+            # u8, 8 bytes, two u32s, three 4-byte fields, a u32, a u8 and then two further
+            # sub-readers - spelling all of that out as hex makes the command unreadable,
+            # and zeros are the right filler anyway: fixed-width fields read 0 and
+            # length-prefixed strings read empty.
+            full = body + b"\x00" * pad
+            frame = cipher.encode(transport.packet(opcode, full))
+            return (frame, f"opcode 0x{opcode:04X} body={body.hex(' ')}"
+                    + (f" +{pad} zero bytes" if pad else ""))
         # A bare 2-byte packet makes any handler that reads a body underflow, which can
         # end a sweep on its first *handled* opcode. Zero padding lets more handlers run
         # to completion: fixed-width fields read 0, and length-prefixed strings read empty.
