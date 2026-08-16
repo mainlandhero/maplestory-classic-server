@@ -116,7 +116,8 @@ def modules(pid):
         while True:
             out.append((me.szModule.decode(errors="replace"),
                         ctypes.cast(me.modBaseAddr, ctypes.c_void_p).value,
-                        me.modBaseSize))
+                        me.modBaseSize,
+                        me.szExePath.decode(errors="replace")))
             if not k32.Module32Next(snap, ctypes.byref(me)):
                 break
     k32.CloseHandle(snap)
@@ -179,6 +180,38 @@ def read(h, addr, size, why=""):
     return bytes(buf[: got.value])
 
 
+def thread_identity(tid):
+    """(created, cpu_seconds, win32_start_address).
+
+    Creation time is how the main thread gets identified - it is the oldest thread in
+    the process, and knowing which one it is decides whether a hang is "the UI thread is
+    stuck" or "a worker is idle, as workers are". CPU time separates threads that have
+    done work from threads that have been parked since birth.
+    """
+    h = k32.OpenThread(THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT, False, tid)
+    if not h:
+        return None, None, None
+    try:
+        created, exited, kern, user = (w.FILETIME() for _ in range(4))
+        cpu = None
+        crt = None
+        if k32.GetThreadTimes(h, ctypes.byref(created), ctypes.byref(exited),
+                              ctypes.byref(kern), ctypes.byref(user)):
+            def q(ft):
+                return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+            crt = q(created)
+            cpu = (q(kern) + q(user)) / 1e7
+        start = ctypes.c_ulonglong(0)
+        ntdll = ctypes.WinDLL("ntdll")
+        # ThreadQuerySetWin32StartAddress = 9
+        if ntdll.NtQueryInformationThread(h, 9, ctypes.byref(start),
+                                          ctypes.sizeof(start), None) != 0:
+            start.value = 0
+        return crt, cpu, start.value or None
+    finally:
+        k32.CloseHandle(h)
+
+
 def thread_context(tid):
     """(rip, rsp, rbp) or None. Suspends only for as long as the read takes."""
     k32.OpenThread.restype = w.HANDLE
@@ -208,6 +241,91 @@ def thread_context(tid):
         k32.CloseHandle(h)
 
 
+_EXPORTS = {}
+
+
+def module_exports(path):
+    """[(rva, name)] sorted, parsed from the module on disk.
+
+    Turns `ntdll.dll+0x9d694` into `ntdll.dll!NtWaitForSingleObject+0x4`, which is the
+    difference between a stack dump you can read and one you can only stare at. Cached,
+    and failures degrade to the raw offset rather than raising - some modules are not
+    readable and that must not take the whole dump down.
+    """
+    if path in _EXPORTS:
+        return _EXPORTS[path]
+    out = []
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[e_lfanew:e_lfanew + 4] != b"PE\0\0":
+            raise ValueError("not a PE")
+        coff = e_lfanew + 4
+        n_sec = struct.unpack_from("<H", data, coff + 2)[0]
+        size_opt = struct.unpack_from("<H", data, coff + 16)[0]
+        opt = coff + 20
+        magic = struct.unpack_from("<H", data, opt)[0]
+        dd = opt + (0x70 if magic == 0x20B else 0x60)
+        exp_rva, exp_size = struct.unpack_from("<II", data, dd)
+
+        secs = []
+        tbl = opt + size_opt
+        for i in range(n_sec):
+            o = tbl + i * 40
+            vsize, vaddr, rsize, raddr = struct.unpack_from("<IIII", data, o + 8)
+            secs.append((vaddr, max(vsize, rsize), raddr, rsize))
+
+        def to_off(rva):
+            for vaddr, vsize, raddr, rsize in secs:
+                if vaddr <= rva < vaddr + vsize:
+                    d = rva - vaddr
+                    return raddr + d if d < rsize else None
+            return None
+
+        if exp_rva:
+            eo = to_off(exp_rva)
+            if eo is not None:
+                n_names = struct.unpack_from("<I", data, eo + 24)[0]
+                a_funcs = struct.unpack_from("<I", data, eo + 28)[0]
+                a_names = struct.unpack_from("<I", data, eo + 32)[0]
+                a_ords = struct.unpack_from("<I", data, eo + 36)[0]
+                fo, no, oo = to_off(a_funcs), to_off(a_names), to_off(a_ords)
+                if None not in (fo, no, oo):
+                    for i in range(n_names):
+                        nm_rva = struct.unpack_from("<I", data, no + i * 4)[0]
+                        nm_off = to_off(nm_rva)
+                        if nm_off is None:
+                            continue
+                        end = data.find(b"\0", nm_off)
+                        name = data[nm_off:end].decode("ascii", "replace")
+                        ordi = struct.unpack_from("<H", data, oo + i * 2)[0]
+                        frva = struct.unpack_from("<I", data, fo + ordi * 4)[0]
+                        # forwarded exports point back into the export directory
+                        if exp_rva <= frva < exp_rva + exp_size:
+                            continue
+                        out.append((frva, name))
+        out.sort()
+    except Exception:
+        out = []
+    _EXPORTS[path] = out
+    return out
+
+
+def nearest_export(path, off):
+    exps = module_exports(path)
+    if not exps:
+        return None
+    j = bisect.bisect_right(exps, (off, "\xff")) - 1
+    if j < 0:
+        return None
+    rva, name = exps[j]
+    delta = off - rva
+    if delta > 0x40000:                       # too far to be meaningful
+        return None
+    return f"{name}+{delta:#x}" if delta else name
+
+
 def load_pdata(exe):
     here = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, here)
@@ -223,18 +341,24 @@ def load_pdata(exe):
     return sorted(ends), ends
 
 
-def describe(addr, mods, starts, ends, client_base):
-    for name, base, size in mods:
+def describe(addr, mods, starts, ends, client_base, image="maplestory.exe"):
+    for name, base, size, path in mods:
         if base <= addr < base + size:
             off = addr - base
-            if name.lower() == "maplestory.exe":
+            if name.lower() == image.lower() and starts:
                 rva = addr - client_base
                 j = bisect.bisect_right(starts, rva) - 1
                 if j >= 0 and rva < ends.get(starts[j], 0):
                     fn = STATIC_BASE + starts[j]
-                    return f"MapleStory.exe!FUN_{fn:x}+{rva - starts[j]:#x}"
-                return f"MapleStory.exe+{off:#x}"
-            return f"{name}+{off:#x}"
+                    return f"{name}!FUN_{fn:x}+{rva - starts[j]:#x}"
+                # .themida and .boot have no .pdata entries, and saying so is the point
+                for sect, lo, hi in ((".themida", 0x3D87000, 0x5173000),
+                                     (".boot", 0x5173000, 0x5DAA400)):
+                    if lo <= rva < hi:
+                        return f"{name}{sect}+{rva - lo:#x}"
+                return f"{name}+{off:#x}"
+            exp = nearest_export(path, off)
+            return f"{name}!{exp}" if exp else f"{name}+{off:#x}"
     return None
 
 
@@ -249,7 +373,19 @@ def main():
                          "(used to smoke-test the walker against any process)")
     ap.add_argument("--image", default="maplestory.exe",
                     help="main module name, for use with --pid")
+    ap.add_argument("--out", help="write the report here as UTF-8. Prefer this over a "
+                                  "shell redirect - PowerShell writes UTF-16 and every "
+                                  "reader downstream then has to know that")
     args = ap.parse_args()
+
+    if args.out:
+        sink = open(args.out, "w", encoding="utf-8")
+        real = print
+
+        def _print(*a, **k):
+            k["file"] = sink
+            real(*a, **k)
+        globals()["print"] = _print
 
     pid = args.pid if args.pid else find_pid()
     if pid is None:
@@ -272,15 +408,27 @@ def main():
 
     h = open_proc(pid)
     tids = threads(pid)
-    print(f"{len(tids)} threads\n")
-    for tid in tids:
+
+    # Order by creation time so the main thread comes first and is labelled as such.
+    ident = {t: thread_identity(t) for t in tids}
+    tids.sort(key=lambda t: (ident[t][0] is None, ident[t][0] or 0))
+    print(f"{len(tids)} threads, oldest first\n")
+
+    for n, tid in enumerate(tids):
         ctx = thread_context(tid)
         if ctx is None:
             print(f"thread {tid}: could not read context")
             continue
         rip, rsp, rbp = ctx
-        at = describe(rip, mods, starts, ends, client_base) or f"{rip:#x} (unmapped)"
-        print(f"thread {tid:6}  rip {rip:#018x}  {at}")
+        _, cpu, start = ident[tid]
+        at = describe(rip, mods, starts, ends, client_base, args.image) \
+            or f"{rip:#x} (unmapped)"
+        who = describe(start, mods, starts, ends, client_base, args.image) if start else None
+        label = "  <-- MAIN THREAD" if n == 0 else ""
+        print(f"thread {tid:6}  cpu {cpu if cpu is not None else -1:8.3f}s  "
+              f"rip {rip:#018x}  {at}{label}")
+        if who:
+            print(f"                 started at {who}")
 
         want = min(args.depth * 8, committed_bytes(h, rsp) or args.depth * 8)
         stack = read(h, rsp, want, why="reading the stack") if want else b""
@@ -288,7 +436,7 @@ def main():
         seen = set()
         for i in range(0, len(stack) - 7, 8):
             q = struct.unpack_from("<Q", stack, i)[0]
-            d = describe(q, mods, starts, ends, client_base)
+            d = describe(q, mods, starts, ends, client_base, args.image)
             if d is None or d in seen:
                 continue
             seen.add(d)
@@ -300,6 +448,11 @@ def main():
             print("                 (no resolvable frames on the stack)")
         print()
     k32.CloseHandle(h)
+    if args.out:
+        sink.close()
+        globals()["print"] = __builtins__["print"] if isinstance(__builtins__, dict) \
+            else __builtins__.print
+        print(f"wrote {args.out}")
     return 0
 
 
