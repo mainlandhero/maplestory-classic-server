@@ -22,11 +22,45 @@
 //!   back into the loop via `RtlCaptureContext`/`RtlRestoreContext`, so one bad opcode costs
 //!   one iteration rather than the run.
 //! * **Access violations**, same path.
-//! * **A handler tries to end the process.** `ExitProcess` and `TerminateProcess` are
-//!   detoured to return without doing anything while the probe is running.
+//! * **A handler tries to end the process.** `ExitProcess`, `TerminateProcess`,
+//!   `RtlExitUserProcess` and `NtTerminateProcess` are all detoured to return without
+//!   doing anything — detouring only the kernel32 pair was not enough, the client simply
+//!   left by a lower door. `NtTerminateThread` is deliberately left alone.
 //!
-//! A hit is self-announcing: setting `conn+0x150` is exactly what releases the client, so
-//! the run that finds the opcode is also the run where the login screen finally appears.
+//! # Three modes, and which oracle each uses
+//!
+//! * `<from>-<to>` — oracle is `conn+0x150`. Only ever finds the one handler that releases
+//!   the startup loop. A hit is self-announcing: the run that finds it is the run where the
+//!   login screen appears. This found `0x0032`.
+//! * `<from>-<to>@<VA>` — oracle is an `int3` on that function. Works for any handler.
+//! * `watch@<VA>` — no walking at all: report whether that function runs, and under which
+//!   opcode, for a packet we sent for real. Cheaper than guessing at bodies, and it is what
+//!   confirmed `FUN_141b307b0` is entered on `0x0010`.
+//!
+//! `#N` starts the walk on the Nth dispatched packet.
+//!
+//! # Four ways this lies, all of them silently
+//!
+//! Every one of these produced a fully instrumented, confident miss:
+//!
+//! * **Aimed at a callee, or at a virtual method.** A walk target must have no direct
+//!   callers *and* appear in no vtable. Check with `tools/handler_root.py`, never by eye.
+//! * **Run at the wrong moment.** The walk executes inside whatever loop the client is in,
+//!   so hunting a login-stage handler before the login screen exists cannot work at any
+//!   address. That is what `#N` is for.
+//! * **Snapshot taken after the dispatch.** It consumes the opcode and moves the cursor
+//!   4 -> 6, so replays start past the opcode and dispatch "opcode 0" every time.
+//! * **Two oracles live at once.** With a target armed, `conn+0x150` is *expected* to be
+//!   set already, so consulting it too reports a hit on the first opcode tested.
+//!
+//! Before believing a negative, read the walk's own counters: how many calls advanced the
+//! cursor, and how many distinct values the dispatcher returned.
+//!
+//! # Prefer reading the stage switch
+//!
+//! The virtualised dispatcher only *routes*. A stage's `OnPacket` is ordinary code —
+//! `FUN_141b25f30` is a plain `switch` naming every login-stage opcode at once. Walking is
+//! for when no readable switch covers the handler in question.
 //!
 //! # Scope
 //!
@@ -39,8 +73,13 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::hook::{log, CONN_DONE_FLAG};
 
-/// Presence of this file enables the walk. Its contents may be `from-to` in hex
-/// (e.g. `0000-0fff`); empty means the default range.
+/// Presence of this file enables the probe. Contents select the mode:
+///
+/// * `` (empty)              — walk the default range, oracle `conn+0x150`
+/// * `0000-1000`             — walk that range, same oracle
+/// * `0000-1000@141b25f30`   — walk, oracle is an `int3` on that function
+/// * `0000-1000@141b25f30#2` — as above, starting on the 2nd dispatched packet
+/// * `watch@141b307b0`       — do not walk; report whether that function runs
 pub const PROBE_MARKER: &str = "maplecw-hook.probe";
 
 const DEFAULT_FROM: u32 = 0x0000;
@@ -108,16 +147,7 @@ struct ExceptionRecord {
     address: *mut c_void,
 }
 
-/// Read `from-to[@targetVA]` out of the marker file, defaulting when it is empty.
-///
-/// The optional target generalises the walk. Without it the oracle is `conn+0x150`, which
-/// only ever finds the one handler that releases the startup loop. With it, the oracle
-/// becomes "which opcode called *this function*" - and since inbound opcodes cannot be
-/// read out of the binary at all, that is how every remaining one gets found.
-///
-/// Content that is present but unparseable is reported rather than quietly replaced by
-/// the default. A caller-side bug once wrote a file path in here and the silent fallback
-/// made the walk look like it had honoured the requested range.
+/// Which dispatched packet the walk should start on.
 fn trigger() -> u64 {
     // `...#N` starts the walk on the Nth dispatched packet instead of the first.
     //
@@ -133,6 +163,16 @@ fn trigger() -> u64 {
         .max(1)
 }
 
+/// Read `from-to[@targetVA]` out of the marker file, defaulting when it is empty.
+///
+/// The optional target generalises the walk. Without it the oracle is `conn+0x150`, which
+/// only ever finds the one handler that releases the startup loop. With it, the oracle
+/// becomes "which opcode called *this function*", which is how any other handler gets
+/// identified when no readable stage switch covers it.
+///
+/// Content that is present but unparseable is reported rather than quietly replaced by
+/// the default. A caller-side bug once wrote a file path in here and the silent fallback
+/// made the walk look like it had honoured the range it was given.
 fn range() -> (u32, u32, usize) {
     let raw = std::fs::read_to_string(PROBE_MARKER).unwrap_or_default();
     let text = raw.trim().split('#').next().unwrap_or("").trim().to_string();

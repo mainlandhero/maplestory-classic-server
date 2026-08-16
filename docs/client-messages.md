@@ -59,6 +59,12 @@ python tools/dump_stringids.py --all-locales
 
 `FUN_141803cd0` maps an internal error code to the message shown. Recovered table:
 
+> **These string IDs are also the login result codes.** The login result (inbound
+> `0x0010`) carries a `u8` that lands in this table: **101 is `0x65`**, "You have been
+> disconnected from the login server." — which is exactly the dialog produced by replying
+> with `0x65`. **Result `0` is success**; any non-zero code raises a dialog from here. See
+> `docs/opcodes.md`.
+
 | Error code | String ID | Message (abridged) |
 |---|---|---|
 | `0x21000001` | 97 | — |

@@ -120,13 +120,22 @@ than credentials the game validates itself.
 That makes `nmcogame64.dll` the place to look for the six fields' meaning — a smaller,
 unprotected target than the 76 MB Themida-wrapped exe.
 
+## Settled since
+
+- **`-NXLDEBUG <ip> <port>` is the launch mode we use.** It runs *and* connects, and every
+  session since has been driven through it. `IPPORT` still crashes and is not worth
+  revisiting while `-NXLDEBUG` works.
+- **The six `+0x90` session tokens have been passed and changed nothing observable.**
+  `-NXLDEBUG` takes them from token 3 onward (`tools/test-one.ps1 -SessionTokens`), and six
+  distinguishable values produced a byte-identical client stream — same `0x0073` body, same
+  body-less `0x0080`. So they are either not the account identity or they never arrived;
+  `test-one.ps1` now echoes the real command line so the next run can distinguish those.
+
 ## Next
 
-- Define the config struct in Ghidra and re-run decompilation so the consumers show
-  named field accesses; or observe the values at runtime once the client starts.
-- Analyse `nmcogame64.dll` / `nexon_api_x64.dll` for the `CNM*` session interface, which
-  is where the `WEBSTART` identifiers are consumed.
-- Retry `IPPORT 127.0.0.1 8484` with a debugger or `+0x38`-aware tracing to find why it
-  still crashed at `MapleStory.exe+0x20A520F` despite the arguments parsing correctly.
-- Try `-NXLDEBUG <ip> <port>`, which takes the same address/port pair but sets mode 5 and
-  may follow a more permissive path.
+- Analyse `nmcogame64.dll` / `nexon_api_x64.dll` for the `CNM*` session interface, which is
+  where the `WEBSTART` identifiers are consumed. Both are unpacked and far easier to read
+  than the Themida-wrapped exe. This is the live thread: the client's login ID field is
+  blank where the live client shows a masked account email.
+- Decode the constant 20-byte tail of outbound `0x0073`, which is the only session-shaped
+  payload the client sends.

@@ -57,9 +57,11 @@ Source: static analysis of `MapleStory.exe` (76.7 MB) + patch manifest, 2026-08-
    anti-cheat; blocks debuggers & packet capture, may refuse to run outside Nexon's environment.
 2. **MapleSecurePC64.dll** + **jypc.dll** — Nexon packet encryption / anti-tamper. Client will
    not speak plaintext classic-MapleStory crypto until this is understood or neutralized.
-3. **No public data for this build** — version number, opcode table, and crypto handshake
-   (AES variant / IV seeds) are all unknown for `mscw`. Existing emulators (HeavenMS/Cosmic/…)
-   target 2009-era v83 clients and **do not apply**.
+3. **No public data for this build** — existing emulators (HeavenMS/Cosmic/…) target
+   2009-era v83 clients and **do not apply**. Much of this is now recovered rather than
+   unknown: protocol version **100**, the full wire cipher (AES-256-OFB with a key that is
+   a decoy on disk), the greeting layout, and the login-stage inbound opcode map. See
+   `docs/transport.md`, `docs/handshake.md`, `docs/opcodes.md` and `STATUS.md`.
 
 ---
 

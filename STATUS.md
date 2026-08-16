@@ -171,6 +171,10 @@ and the proceed branch is `cVar6 != 0 && result == 0`. `0x65`/`0x67` are *not* s
 they take a different branch that re-sends `0x0080`. Misreading them as success cost three
 runs of the same dialog.
 
+Corroborated independently: non-zero results are **error message IDs**, resolved through
+`FUN_141803cd0` in `docs/client-messages.md`. `0x65` is 101, *"You have been disconnected
+from the login server"* - exactly the dialog that replying `0x65` produced.
+
 ### Next step - set up, not yet tried
 
 ```

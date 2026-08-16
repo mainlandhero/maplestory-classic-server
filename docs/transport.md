@@ -33,6 +33,27 @@ Packet 1 of the capture decrypts to `70 00 02 64 00 00 00` — opcode `0x70`, `u
 > and the client dropped because the *server* vanished — indistinguishable from a
 > rejection. Always check `probe.err` is empty before believing a negative result.
 
+## The inbound side is solved too (2026-08-16)
+
+Two inbound opcodes are established, and neither was found by sweeping:
+
+* **`0x0032`** — the `Data.wz` patch reply. Body is a **zigzag varint** length; `0` means
+  "nothing to patch". Seven bytes on the wire take the client from a blank, non-responding
+  window to its login screen. It blocks in `recv` **on its UI thread** in `FUN_1415e7090`
+  until a handler sets `conn+0x150`, and `FUN_1415e5c20` is the only thing that does.
+* **`0x0010`** — the login result, answering the client's body-less `0x0080`. Body is
+  `u8 result` then a `u16`-length string; **result `0` is success**.
+
+The structural point matters more than either number: **a stage's `OnPacket` is ordinary
+readable code.** The virtualised dispatcher only routes — it hands a stage its opcode, and
+`FUN_141b25f30` (login) dispatches with a plain `switch` that names every login-stage
+opcode at once. Read the switch before reaching for any runtime technique.
+`docs/opcodes.md` has the map; `STATUS.md` has the current state and the traps.
+
+**Everything below this line is kept as history.** Sections marked *superseded* describe
+what was believed at the time, including several conclusions that turned out to be wrong;
+they are retained because the reasoning is instructive, not because it is current.
+
 ## Framing — read from `FUN_1406e9530`
 
 ```
@@ -137,7 +158,11 @@ The channel server is far cheaper to talk to.
 > and every earlier negative result — the key sweeps, the IV-position sweeps, the Shanda
 > tests — was produced with that broken key and proves nothing.
 
-## Open: the client -> server payload still does not decrypt
+## Superseded: "the client -> server payload does not decrypt"
+
+> **Resolved.** The payloads are plain AES-256-OFB. They failed only because the on-disk
+> key is a decoy, which the section above explains. Nothing in the list below was the
+> cause; keep it as a record of what was eliminated, not as an open problem.
 
 Re-run with the correct key, the captured payloads still do not decrypt. Ruled out
 properly this time:
@@ -262,7 +287,11 @@ transform theory was the wrong shape entirely: there is no extra transform, just
 keystream we cannot yet reproduce — most likely because the send side seeds its AES from
 something other than the header IV.
 
-## No confirmed reply yet - the client's own startup chatter is the confounder
+## Superseded: no confirmed reply *at the time*
+
+> **Resolved.** `0x0032` and `0x0010` are both confirmed inbound opcodes now. The warning
+> about the client's own chatter still stands, and `-QuietBefore` / `-ReplyTo` exist
+> because of it.
 
 **Correction.** Two earlier runs looked like the client answering us. Neither did.
 
@@ -300,7 +329,11 @@ Also worth keeping in mind: a null result may mean the **body** was wrong rather
 opcode. Everything so far has been sent with 32 zero bytes, so an opcode whose handler
 needs real content may well have run and done nothing visible.
 
-## Sweep coverage so far
+## Superseded: sweep coverage
+
+> **Blind sweeping is retired.** It cost ~2 opcodes per client launch once live handlers
+> started taking the client down. Read the stage's `OnPacket` switch, or walk the space
+> in-process with `-Probe`. See `STATUS.md`.
 
 `0x0000`-`0x03C7` has been swept with a 32-byte zero body. No inbound opcode has produced
 a confirmed reply or any visible UI change. The only reproducible reactions are clean
@@ -315,9 +348,13 @@ different runs. It is not a response to anything.
 **Blind sweeping is now poor value.** ~3000 opcodes remain, exits truncate each run, and a
 null result is ambiguous anyway because the body is always 32 zero bytes.
 
-### Untested hypothesis: the hang may not be our protocol at all
+### Ruled out: the hang was not an external network wait
 
-The firewall rule `MapleCW - block patched client outbound` blocks the patched client from
+> Settled twice over: `tools/client-sockets.ps1` found loopback only, and then the stack
+> dump showed the main thread parked in `WS2_32!recv` on our own socket. The hang was our
+> protocol, and specifically the `Data.wz` exchange.
+
+The hypothesis was worth checking. The firewall rule `MapleCW - block patched client outbound` blocks the patched client from
 reaching **any** external host (`RemoteIP: Any, Protocol: Any`). Windows Firewall does not
 filter loopback, which is why our probe on `127.0.0.1:8484` works while everything outbound
 is silently dropped.
@@ -328,7 +365,7 @@ being wrong. `tools/client-sockets.ps1` settles it: run it while the client is h
 look for a non-loopback socket. `SYN_SENT` to an external address means the firewall is
 dropping it; only-loopback means the hang really is our protocol.
 
-### Ruled out: the hang is not an external network wait
+And the measurement:
 
 `tools/client-sockets.ps1`, run against a hung client (pid 64140, `responding=False`,
 57 threads), across six samples:
@@ -461,14 +498,28 @@ is consumed per packet and never returned. The dispatcher's return value cycling
 six addresses 56 bytes apart says that something is a **six-entry buffer pool**; unhandled
 packets evidently never release their buffer.
 
-**This retires sweeping as a search technique.** At 26 opcodes per client launch, covering
-the ~4000-opcode space would take about 150 runs. No amount of pacing helps.
+**Now fully explained.** The pool is consumed inside `FUN_1415e7090`'s startup loop, which
+allocates a `0x5b4` buffer per packet and only exits when `conn+0x150` is set — so
+unhandled packets accumulate buffers the loop never returns. Answer `0x0032` and the loop
+exits, and the ceiling goes with it.
 
-Timing gives nothing either: across `0x0000`-`0x0019` the spread is 102-148 us, median 131,
-with no value even twice the median. Either none of that range has a handler, or ~130 us is
-fixed dispatcher overhead that swamps the difference.
+**It retired sweeping either way.** At 26 opcodes per launch the ~4000-opcode space needs
+about 150 runs, and past the login screen live handlers cut it to roughly 2 per launch.
+The replacements are the stage `OnPacket` switch and the in-process walk.
 
-### Where to go instead
+Timing looked useless at first: across `0x0000`-`0x0019` the spread is 102-148 us, median
+131, with no value even twice the median. **That was the range, not the technique.** A
+handled opcode is obvious — `0x00A1` came back at 9122 us against the same ~130 us
+baseline, and `0x0010` at 355 us with its handler allowed to run. `0x0000`-`0x0019` simply
+has no handlers on this connection.
+
+### Superseded: "scan memory for the handler's address"
+
+> **That plan failed, and the record is worth keeping.** `FUN_1415e5c20` appears nowhere
+> as data — not as an aligned qword in 1004 MB of committed memory, and in the image only
+> as its own `.pdata` entry. There is no table of handler pointers; the mapping lives
+> inside the Themida VM. The answers came instead from an in-process opcode walk
+> (`0x0032`) and from a stage's readable `OnPacket` switch (`0x0010`).
 
 The hook proves arbitrary code can run inside the client, and that is the lever. Rather
 than probing opcodes from outside, identify the function behind the login-screen

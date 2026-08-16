@@ -19,12 +19,16 @@
 //!   the client runs on.
 //! * **Every opcode arrives as the one we sent**, which confirms framing, header rule, IV
 //!   chain and AES key from *inside* the client rather than by inference.
-//! * The timing idea did **not** pay off: across `0x0000`-`0x0019` the spread is
-//!   102-148 us, median 131, with nothing even twice the median. Either none of that range
-//!   has a handler, or ~130 us is fixed dispatcher overhead that swamps the difference.
-//! * The client accepts **26 packets and no more**, at 0.2 s and at 3.0 s spacing alike.
-//!   The dispatcher's return cycles through six addresses 56 bytes apart — a six-entry
-//!   buffer pool that unhandled packets never release. This is what retires sweeping.
+//! * **Elapsed time does discriminate**, once pointed at a range that has handlers. Across
+//!   `0x0000`-`0x0019` the spread is a flat 102-148 us — but `0x00A1` came back at 9122 us
+//!   and `0x0010` at 355 us against that same baseline. A flat range means no handlers,
+//!   not a blunt instrument.
+//! * The client accepted **26 packets and no more** at 0.2 s and 3.0 s spacing alike. That
+//!   was `FUN_1415e7090`'s startup loop leaking a `0x5b4` buffer per packet, and it ends
+//!   the moment `conn+0x150` is set — see [`CONN_DONE_FLAG`]. It was a leak, not a rate
+//!   limit, and answering `0x0032` disposes of it.
+//! * `conn+0x150` and the patch state are sampled either side of every dispatch, so the
+//!   log says which opcode moved them rather than leaving it to be inferred.
 //!
 //! # Scope
 //!

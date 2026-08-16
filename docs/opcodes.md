@@ -8,10 +8,21 @@ fields. `tools/ghidra_scripts/DumpPacketFields.java` walks all 1894 call sites a
 the opcode, the field sequence, and every string the builder references;
 `tools/label_opcodes.py` turns that into the table below.
 
-The client's **inbound** opcodes cannot be recovered this way at all. The dispatcher
+The client's **inbound** opcodes cannot be recovered the same way: the dispatcher
 `FUN_1415d60e0` tail-jumps into the `.themida` section, which has no file bytes — see
-`docs/transport.md`. Inbound opcodes have to come from the client at runtime, which is what
-`handshake_probe.py --reply sweep` is for.
+`docs/transport.md`. But they are not out of reach, and **blind sweeping is retired**.
+
+Two routes, cheapest first:
+
+1. **Read the stage's `OnPacket` switch.** The virtualised dispatcher only *routes*: it
+   hands a stage its opcode, and the stage dispatches in ordinary code. `FUN_141b25f30` is
+   the login stage's, and it is a plain `switch` naming every login-stage opcode at once
+   (see "The login stage" below). Always look for this first.
+2. **Walk the opcode space inside the client**, when no readable switch covers it —
+   `crates/grap-stub/src/probe.rs`, driven by `-Probe` on `tools/test-one.ps1`. It rewrites
+   the opcode of one captured packet and re-dispatches, covering the whole enum in a single
+   client launch. Aim it with `tools/handler_root.py`; the ways it can silently lie are
+   listed in `STATUS.md`.
 
 ## On published opcode lists
 
@@ -22,6 +33,10 @@ classic v62/v83 numbering puts the login packet at `0x01`. The numbers will not 
 What *does* transfer is structure: field layouts for a given operation are far more stable
 across versions than the opcode numbers. So published lists are worth consulting to
 sanity-check a layout we have already derived, not to guess what an opcode means.
+
+The inbound numbering is its own enum and does not track the outbound one: the reply to
+outbound `0x00A1` is inbound `0x0032`, and the reply to outbound `0x0080` is inbound
+`0x0010`.
 
 ## Method and its limits
 
@@ -178,7 +193,24 @@ Two consequences:
    integrity reports the server must ack before the login screen appears — is wrong. They
    are fire-and-forget diagnostics.
 
-That leaves `0x70` (version) and `0x71` (environment) as what the client is plausibly
-waiting on a response to. The reply opcode cannot be recovered statically: the only
-readable callers of the handshake handler are its own disconnect path (`FUN_1415d33c0`) and
-an unanalysed site at `142c8d6cd`, and the dispatcher is in `.themida`.
+**It waits on none of those.** The startup block ends with `0x00A1`, a `Data.wz` hash, and
+the client then blocks in `recv` **on its UI thread** until the server answers it — see
+`docs/transport.md`. An earlier version of this file guessed `0x70`/`0x71` were what it
+waited on; they are fire-and-forget like the log uploads.
+
+## The login stage, read from its OnPacket switch
+
+`FUN_141b25f30(this, opcode, packet)` is the login stage's `OnPacket`, and its `switch` is
+ordinary decompilable code. That is the inbound opcode map for this stage:
+
+```
+0x00, 0x0b-0x18, 0x23, 0x25-0x27, 0x29, 0x2b, 0x34-0x39, 0x45-0x48, 0x4a, 0x50, 0x5f, 0x5f4
+```
+
+with **`case 0x10` → `FUN_141b307b0`, the login result** — confirmed at runtime by watch
+mode, which saw that function entered while dispatching `0x0010`. Its body is `u8 result`
+then a `u16`-length string; **result `0` is success**, and `0x65`/`0x67` take a different
+branch that merely re-sends `0x0080`.
+
+The other cases in that switch are unlabelled but free to read the same way, and the same
+trick should work for every other stage.

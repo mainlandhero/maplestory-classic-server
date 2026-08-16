@@ -45,6 +45,39 @@ pub const DATA_WZ_PATCH: u16 = 0x0032;
 /// The client's request that [`DATA_WZ_PATCH`] answers - outbound, so statically readable.
 pub const CLIENT_DATA_WZ_REQUEST: u16 = 0x00A1;
 
+/// Reply to the client's body-less `0x0080` login request.
+///
+/// # How it was established
+///
+/// Unlike [`DATA_WZ_PATCH`] this one was *read*, not walked. The Themida-virtualised
+/// dispatcher only routes: it hands a stage its opcode, and the stage's `OnPacket` is
+/// ordinary code. `FUN_141b25f30` is the login stage's, a plain `switch` naming every
+/// login-stage opcode at once, and `case 0x10` calls `FUN_141b307b0`. Confirmed at runtime
+/// by an `int3` watch, which saw that function entered while dispatching `0x0010`.
+///
+/// # Body
+///
+/// ```text
+/// u8   result          0 = success; anything else raises a dialog
+/// str  message         u16 length, then bytes
+/// // when result == 0, the client goes on to read:
+/// u8, 8 bytes, u32, u32, 4B, 4B, 4B, u32, u8, then two further sub-readers
+/// // when result == 0x83: two more u32
+/// ```
+///
+/// **Non-zero result codes are error message IDs**, resolved by `FUN_141803cd0` - see
+/// `docs/client-messages.md`. `0x65` is 101, "You have been disconnected from the login
+/// server", which is precisely the dialog it produces. `0x65` and `0x67` are *not* success
+/// despite reaching a "proceed"-looking branch; that branch only re-sends `0x0080`.
+pub const LOGIN_RESULT: u16 = 0x0010;
+
+/// The client's login request that [`LOGIN_RESULT`] answers. Sent with an **empty body**,
+/// and without any button press - the login form is vestigial.
+pub const CLIENT_LOGIN_REQUEST: u16 = 0x0080;
+
+/// `result == 0`. The client treats every other value as an error message ID.
+pub const LOGIN_OK: u8 = 0;
+
 /// Encode a zigzag varint, the length format [`DATA_WZ_PATCH`] expects.
 ///
 /// Mirrors `FUN_1406efcc0` in the client: zigzag so the sign survives, then 7 bits per
