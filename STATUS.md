@@ -26,11 +26,11 @@ That means, end to end and against a real server-side implementation:
 | Connection stays up | **not a problem** - the "reset" was our own log format, see the retraction below |
 | Character record | **CONFIRMED ON THE WIRE** - the client decoded it and drew the character |
 | Character list | **CONFIRMED ON THE WIRE**, `login_result` |
-| "Create a character" button | **gate found** - three `0x0010` tail fields we sent as zero |
+| "Create a character" button | **still dead.** The `0x0010` slot gate is filled in and did not fix it; one unexamined gate remains, `FUN_140c9e3f0` |
 | Name check | **both halves decoded**, `check_name_result` built, never sent |
 | Create request | **found, and it is Themida-virtualised** - it must be measured |
 | Create result | **decoded**, `create_character_result` built, never sent |
-| Client exits after 15-20s at CharSelect | **unexplained**, and it caps every run |
+| Client exits ~25s after our last packet | looks like an **inbound idle timeout**; `--keepalive` added and verified, untested against the client |
 | Valid session | still faked by two client patches |
 
 ### Read these first
@@ -73,13 +73,16 @@ Three other things came out of it:
 
 ### The plan, in order
 
-1. **Re-run with the gate filled in** and see whether the button goes anywhere. The
-   `0x00A8` it should then send is the first packet of creation, not the last.
-2. **Explain the 15-20s exit.** It caps how much can be clicked in one run, and character
-   creation is several clicks. `crates/grap-stub` already detours `ExitProcess`,
-   `TerminateProcess`, `RtlExitUserProcess` and `NtTerminateProcess` in walk mode; logging
-   which one fires and from where would name the path. That is the cheapest remaining
-   instrument and it needs no new technique.
+1. **Test the keepalive.** If the client stops exiting, every later run gets unlimited time
+   at character select, which is worth more than any single finding - character creation is
+   several clicks and has never fitted in the window.
+2. **Find which gate stops the "new" button.** The slot gate is filled in and did not do it.
+   `-Probe watch@141b282d0` splits the two remaining explanations - handler never entered
+   (so `FUN_140c9e3f0` returned zero) versus entered and refused - in one run. **This needs
+   `-Probe` to accept more than one target**, because the slot is held by
+   `watch@141b2a280:rdx=0` and without that the login dialog blocks the Login button.
+   That is a contained change in `crates/grap-stub/src/probe.rs`; remember
+   `tools/setup-client.ps1` afterwards or the client silently keeps the old DLL.
 3. **Answer `0x00A8`**, reach the NewChar screen, then capture the create request - it is
    virtualised and can only be measured.
 4. **Answer `0x0081` with `0x0014`** (`check_name_result(name, NAME_AVAILABLE)`) and the

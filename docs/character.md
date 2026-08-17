@@ -241,10 +241,39 @@ if (stage+0x238 == 0) {                          // no transition running
 }
 ```
 
-All three inputs arrive in the `0x0010` tail, and all three were inside the zero padding on
-the run that otherwise reached character select correctly - which is why the button did
-nothing. Note the **clamp**: a slot count of `0` does not disable creation, it makes the
-client inspect *the first character*, which is occupied as soon as the list is non-empty.
+All three inputs arrive in the `0x0010` tail, and all three were inside the zero padding.
+Note the **clamp**: a slot count of `0` does not disable creation, it makes the client
+inspect *the first character*, which is occupied as soon as the list is non-empty.
+
+**Filling all three in did not make the button work** (measured 2026-08-19, second run:
+`probe.log` shows the reply going out and no packet at all on the click). So either the
+refusal branch is being taken for a reason not yet understood, or `FUN_141b282d0` is never
+reached. There is one unexamined gate in front of it:
+
+```c
+// FUN_141177a10, the character-select button dispatcher
+if (stage+0x248 != 0 && FUN_141b3faf0(stage) == 0) {     // a card is selected, no transition
+    "select" -> FUN_141179410
+    "new"    -> if (FUN_140c9e3f0() && stage+0x248) FUN_141b282d0()
+    "delete" -> FUN_141b28750
+}
+```
+
+`DAT_1433881d0` is the wide string **`"new"`**, so this is the right dispatcher and the
+right button - `"delete"` sits immediately after it in `.rdata`.
+
+**`FUN_140c9e3f0` is an obfuscated global getter** of the same family as the record's
+scrambled fields: a value byte plus a rolling checksum, verified on every read, logging
+through `FUN_140197dd0` when the check fails. It returns `*DAT_143ac8170`. Its writers are
+`FUN_140c9e230`, `FUN_140c9e8a0` and unnamed code at `0x14003fb8a`; none has been read yet,
+and nothing is known about what the flag means or where its value comes from. It is called
+from exactly two places: this button, and `FUN_141b24ba0`.
+
+**Do not guess which gate it is - measure it.** `-Probe watch@141b282d0` answers "is the
+handler entered at all" directly, which splits the two explanations in one run. The
+obstacle is that `-Probe` currently takes one target and the slot is held by
+`watch@141b2a280:rdx=0`, without which the login dialog blocks the Login button and the run
+never reaches character select at all.
 
 Classic World has **three** character slots (the owner), so `CHARACTER_SLOTS = 3`, and with one
 character the client checks slot 2 and finds it empty.
@@ -337,13 +366,23 @@ out bodies up to 256 bytes.
   Nothing is known about what it expects back, and until the button is seen to work at all
   the reading of `0x00A8` is itself static.
 * **The `0x0010` tail past `slotCount`.** Still padded with zeros.
-* **Why the client exits after 15-20 seconds at character select.** It has done this for
-  many sessions. `probe.log` from 2026-08-19 shows the connection `Established` and idle
-  for 26 seconds after the client's last packet, then a reset - so the client kills its own
-  process. Nothing is known beyond that, and it caps how much can be clicked through in one
-  run. The instrument for it exists but has not been pointed at this: `crates/grap-stub`
-  already detours `ExitProcess`/`TerminateProcess`/`RtlExitUserProcess`/`NtTerminateProcess`
-  in walk mode, so logging the caller of whichever one fires would name the path.
+* **Why the client exits after 15-20 seconds at character select** - but there is now a
+  measurement and a hypothesis with a test. Two runs ended **26.8s and 24.7s after the last
+  packet we sent**, not at a fixed point in the session, with the socket `Established` and
+  idle throughout; the client ends its own process. The owner's reading is that the client wants
+  a heartbeat. `handshake_probe.py --keepalive N` now sends a packet every `N` seconds once
+  the reply has gone out, and `tools/test-charselect.ps1` passes `-Keepalive 10`.
+
+  The keepalive opcode defaults to **`0x0023`**, which the login stage's switch handles as
+  a literal `case 0x23: break;` - dispatched, handled, reads no body, touches no state. An
+  unhandled opcode would leak a `0x5b4` buffer per packet inside the receive loop.
+
+  The mechanism was verified against a fake client before being pointed at the real one:
+  the probe logs its keepalive setting at startup whether or not it is on, so an absence of
+  `KEEPALIVE` lines distinguishes "the flag never arrived" from "it was on and never fired".
+  If the client still dies at ~25s with keepalives flowing, the idle-timeout reading is
+  wrong and the next instrument is the exit path -`crates/grap-stub` already detours
+  `ExitProcess`/`TerminateProcess`/`RtlExitUserProcess`/`NtTerminateProcess` in walk mode.
 
 **What *is* measured**, as of 2026-08-19: the whole of `0x0010` from the head through the
 character list, and the entire 327-byte character record including the avatar look. The

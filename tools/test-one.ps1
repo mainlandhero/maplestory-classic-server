@@ -58,6 +58,10 @@ param(
     # when handlers depend on each other - the login result is only useful after the world
     # list that 0x000B builds, and both must land inside one client launch.
     [string]$ReplySeq = '',
+    # Seconds between keepalive packets once the reply sequence has gone out; 0 disables.
+    # Two runs both ended ~25s after our last packet, socket Established and idle the whole
+    # time, which is what an inbound idle timeout looks like from the outside.
+    [double]$Keepalive = 0,
     # Record the client's sockets for its whole lifetime, to see whether it ever connects
     # to a second endpoint after login. Writes sockets.log beside probe.log.
     [switch]$Sockets,
@@ -163,6 +167,7 @@ if ($Reply) {
     if ($PingBody) { $probeArgs += @('--ping-body', $PingBody) }
     if ($ReplyTo) { $probeArgs += @('--reply-to', $ReplyTo) }
     if ($ReplySeq) { $probeArgs += @('--reply-seq', $ReplySeq) }
+    if ($Keepalive -gt 0) { $probeArgs += @('--keepalive', "$Keepalive") }
     if ($PingFirst) {
         $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
     }

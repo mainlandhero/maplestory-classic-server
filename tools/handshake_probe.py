@@ -403,7 +403,8 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           body: bytes | None = None, ping_body: bytes | None = None,
           reply_to: int | None = None, reply_seq=None,
           ping_first: int | None = None, ping_wait: float = 10.0,
-          quiet_before: float = 5.0, send_iv: int = 0x52307801) -> None:
+          quiet_before: float = 5.0, send_iv: int = 0x52307801,
+          keepalive: float = 0.0, keepalive_opcode: int = 0x0023) -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -461,6 +462,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         pinged = ping_first is None
         opened_at = time.time()
         next_send = 0.0
+        next_keepalive = None
         if reply is not None:
             # Keep the loop responsive. With the default 5s timeout the loop blocks in
             # recv and cannot notice the client has gone quiet, so a one-shot reply fires
@@ -487,6 +489,21 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                         last_sent, sent_at = ping_first, time.time()
                         pinged = True
                     replied = True          # suppress the one-shot timer path entirely
+
+                # Keep the inbound direction alive.
+                #
+                # Read this before reading anything into a longer-lived client: it proves
+                # nothing about whether the session is valid, only whether the client was
+                # waiting on us. Started only once the real answer has gone out, so it can
+                # never race the reply sequence or muddy the causality of an early close.
+                if keepalive and next_keepalive is not None and time.time() >= next_keepalive:
+                    frame, what = build_reply("ping", keepalive_opcode, cipher, 0, b"")
+                    quiet = time.time() - last_data if total else 0.0
+                    log(f"[{port}] >>> KEEPALIVE {what}"
+                        f"  ({quiet:.1f}s since the client last sent anything,"
+                        f" {time.time() - opened_at:.1f}s into the connection)")
+                    conn.sendall(frame)
+                    next_keepalive = time.time() + keepalive
 
                 if (reply == "sweep" and reply_to is None and ready
                         and time.time() >= next_send):
@@ -582,6 +599,8 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                                 conn.sendall(frame)
                                 last_sent, sent_at = step_op, time.time()
                             answered = True
+                            if keepalive:
+                                next_keepalive = time.time() + keepalive
                 else:
                     log(hexdump(data))
         except ConnectionResetError:
@@ -631,6 +650,16 @@ def main() -> None:
     ap.add_argument("--reply-seq", default=None,
                     help="several packets to send for --reply-to, in order: "
                          "OPCODE:HEXBODY[/PAD],... e.g. 000b:00..,000b:ff0000,0010:000000/256")
+    ap.add_argument("--keepalive", type=float, default=0.0,
+                    help="seconds between keepalive packets once the reply has been sent; "
+                         "0 disables. Two runs both ended ~25s after our last packet with "
+                         "the socket Established and idle, which is what an inbound idle "
+                         "timeout looks like. This tests that directly.")
+    ap.add_argument("--keepalive-opcode", type=lambda s: int(s, 0), default=0x0023,
+                    help="opcode for --keepalive. The default is a genuine no-op: the "
+                         "login stage's switch has `case 0x23: break;`, so it is dispatched "
+                         "and handled without reading a body or touching any state. An "
+                         "unhandled opcode would leak a 0x5b4 buffer per packet instead.")
     ap.add_argument("--body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
                     help="hex body for the replied/swept opcode, instead of zero padding")
     ap.add_argument("--ping-body", type=lambda h: bytes.fromhex(h.replace(" ", "")),
@@ -681,12 +710,23 @@ def main() -> None:
             build_reply("ping", args.opcode, c, args.pad)
             for step_op, step_body, step_pad in seq or []:
                 build_reply("ping", step_op, c, step_pad, step_body)
+            if args.keepalive:
+                build_reply("ping", args.keepalive_opcode, c, 0, b"")
         except Exception as e:  # noqa: BLE001
             log(f"PREFLIGHT FAILED: {e!r}")
             log("refusing to start - fix this before launching the client")
             raise SystemExit(2)
         log(f"reply preflight OK ({args.reply})"
             + (f", {len(seq)} packets in sequence" if seq else ""))
+
+    # State the keepalive setting whether or not it is on. An absence of KEEPALIVE lines
+    # then distinguishes "the flag never arrived" from "it was on and never fired", which
+    # is the difference between a broken command line and a real finding.
+    if args.keepalive:
+        log(f"keepalive: every {args.keepalive:g}s, opcode "
+            f"0x{args.keepalive_opcode:04X}, starting once the reply has been sent")
+    else:
+        log("keepalive: OFF")
 
     t = threading.Thread(
         target=serve,
@@ -702,6 +742,7 @@ def main() -> None:
             reply_seq=seq,
             ping_first=args.ping_first, ping_wait=args.ping_wait,
             quiet_before=args.quiet_before, send_iv=args.send_iv,
+            keepalive=args.keepalive, keepalive_opcode=args.keepalive_opcode,
         ),
         daemon=True,
     )

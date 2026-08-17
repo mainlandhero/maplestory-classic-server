@@ -36,6 +36,11 @@ param(
     # on the first character-list run.
     [string]$LoginName = 'maplecw',
     [string]$AccountName = 'wisp****@example.com',
+    # Seconds between keepalive packets. Both runs so far ended ~25 seconds after the last
+    # packet *we* sent, with the socket Established and idle - the owner's read is that the
+    # client wants a heartbeat, and 10s is well inside that window. Set 0 to reproduce the
+    # short session instead.
+    [double]$Keepalive = 10,
     [int]$Port = 8484
 )
 
@@ -80,13 +85,13 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
     -Reply ping -Opcode 0x0032 -Body 00 `
     -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
     -Session mode=2 -Probe watch@141b2a280:rdx=0 `
-    -ReplyTo 0x0080 -ReplySeq $replySeq -Port $Port
+    -ReplyTo 0x0080 -ReplySeq $replySeq -Keepalive $Keepalive -Port $Port
 
 Write-Host ''
 Write-Host 'On screen:'
 Write-Host '  1. is the account name back on the login screen?'
 Write-Host '  2. click Login - is there a character called "Maple"?'
-Write-Host '  3. click "Create a character" - does it go anywhere now?'
-Write-Host '  4. if it does: spend all 25 points, type a name, click OK'
+Write-Host "  3. does the client now stay up past ~25 seconds? (keepalive every ${Keepalive}s)"
+Write-Host '  4. click "Create a character" - does it go anywhere?'
 Write-Host ''
 Write-Host 'Then run this script with -Stop. probe.log is the record of what was sent.'
