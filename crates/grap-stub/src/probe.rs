@@ -144,6 +144,8 @@ static FORCE_RDX: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 static PEEK_OFF: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 /// Set once, however many slots are armed - the handler must not be registered twice.
 static VEH_REGISTERED: AtomicBool = AtomicBool::new(false);
+/// Faults reported to the log, capped so a repeating one cannot fill the disk.
+static FAULT_LOGS: AtomicU32 = AtomicU32::new(0);
 /// Set between restoring the original byte and re-planting it one instruction later.
 static WATCH_REARM: AtomicU64 = AtomicU64::new(0);
 static CURRENT_OPCODE: AtomicU32 = AtomicU32::new(0);
@@ -769,6 +771,32 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     }
 
     if !IN_CALL.load(Ordering::SeqCst) {
+        // Not our walk, so this exception belongs to the client - but say so before
+        // handing it back.
+        //
+        // A watch answers "did this function run". It cannot answer "the process died and
+        // called nothing", which is exactly what happened when `RtlExitUserProcess` stayed
+        // silent through a client exit with its int3 verified planted. A process that
+        // leaves without calling an exit function has usually been killed by an exception,
+        // and a vectored handler sees every one of those first.
+        //
+        // Only faults, and only a few: C++ throws (0xE06D7363) and the debugger traps
+        // above are routine here, and logging them would bury the one line that matters.
+        if matches!(
+            code,
+            0xC000_0005 | 0xC000_001D | 0xC000_0025 | 0xC000_008C | 0xC000_008E
+                | 0xC000_0094 | 0xC000_00FD | 0xC000_0096
+        ) {
+            let n = FAULT_LOGS.fetch_add(1, Ordering::SeqCst) + 1;
+            if n <= 8 {
+                log(&format!(
+                    "***** CLIENT FAULT #{n}: code={code:#010x} at {at:#x}{} - the client \
+                     raised this, we did not. An unhandled one ends the process without \
+                     any call to ExitProcess. *****",
+                    crate::netwatch::module_of(at)
+                ));
+            }
+        }
         return EXCEPTION_CONTINUE_SEARCH;
     }
 

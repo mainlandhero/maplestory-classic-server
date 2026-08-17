@@ -41,12 +41,24 @@ param(
     # client wants a heartbeat, and 10s is well inside that window. Set 0 to reproduce the
     # short session instead.
     [double]$Keepalive = 10,
-    # Watch targets, comma separated. The first one has to stay: without it the "trouble
+    # Watch targets, comma separated. The first has to stay: without it the "trouble
     # logging in" dialog blocks the tick that enables the Login button, and the run never
-    # reaches character select at all. The others are this run's actual questions -
-    # `ntdll!RtlExitUserProcess` names whoever ends the process, and 141b282d0 says whether
-    # the create handler is entered at all or refused before it.
-    [string]$Probe = 'watch@141b2a280:rdx=0,ntdll!RtlExitUserProcess,141b282d0',
+    # reaches character select at all.
+    #
+    # The other three are what the 2026-08-19 run left open. It established two clean
+    # negatives - FUN_141b282d0 is never entered, so the create handler does not refuse, it
+    # is not reached; and ntdll!RtlExitUserProcess is never entered either, with its int3
+    # verified, so the client does not leave by that door.
+    #
+    #   ntdll!NtTerminateProcess - the syscall under every exit path, including the one a
+    #                              *different* process would use to kill this one
+    #   140c9e3f0                - the obfuscated flag guarding the "new" button. Its only
+    #                              callers are that branch and FUN_141b24ba0, so an entry
+    #                              here while clicking proves the branch was reached and
+    #                              therefore that the flag returned zero
+    #   141177a10                - the character-select button dispatcher itself, in case
+    #                              the click never gets that far
+    [string]$Probe = 'watch@141b2a280:rdx=0,ntdll!NtTerminateProcess,140c9e3f0,141177a10',
     [int]$Port = 8484
 )
 
@@ -111,7 +123,8 @@ Write-Host '  1. is the account name back on the login screen?'
 Write-Host '  2. click Login - is there a character called "Maple"?'
 Write-Host '  3. click "Create a character" once, then let the client exit on its own'
 Write-Host ''
-Write-Host 'Then run this script with -Stop. The answers are in hook.log:'
-Write-Host '  - a WATCH line for RtlExitUserProcess names whoever ends the process'
-Write-Host '  - a WATCH line for 141b282d0 means the create handler ran and refused;'
-Write-Host '    no line means it was never reached, so FUN_140c9e3f0 is the gate'
+Write-Host 'Then run this script with -Stop. The answers are in'
+Write-Host '  client-patched\maplecw-hook.log   (not hook.log, and not the repo root)'
+Write-Host '  - WATCH on NtTerminateProcess, or a CLIENT FAULT line, for the exit'
+Write-Host '  - WATCH on 140c9e3f0 means the flag is what blocks the "new" button;'
+Write-Host '    WATCH on 141177a10 but not 140c9e3f0 means the click stops earlier'

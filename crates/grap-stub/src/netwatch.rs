@@ -193,7 +193,7 @@ unsafe fn write_byte(addr: usize, value: u8) -> bool {
 /// game an anti-cheat that cannot reach its server will kill the client, and that we have
 /// stubbed GameGuard but *not* everything else in the process. Naming the module turns that
 /// from a hypothesis into a fact one way or the other.
-unsafe fn module_of(addr: usize) -> String {
+pub(crate) unsafe fn module_of(addr: usize) -> String {
     const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: u32 = 4;
     const GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT: u32 = 2;
     extern "system" {
