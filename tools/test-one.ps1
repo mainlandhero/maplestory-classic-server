@@ -72,9 +72,14 @@ param(
     # Two runs both ended ~25s after our last packet, socket Established and idle the whole
     # time, which is what an inbound idle timeout looks like from the outside.
     [double]$Keepalive = 0,
-    # Standing answers, one or more 'IN=OPCODE:HEXBODY' pairs. Unlike -ReplySeq these fire
-    # every time the client sends that opcode, which is what anything clickable needs.
-    [string[]]$Answer = @(),
+    # Standing answers, semicolon separated: 'IN=OPCODE:HEXBODY;IN=OPCODE:HEXBODY'. Unlike
+    # -ReplySeq these fire every time the client sends that opcode, which is what anything
+    # clickable needs.
+    #
+    # One string rather than [string[]] on purpose. These scripts are invoked as
+    # `powershell -File`, which flattens an array into separate command-line words, so only
+    # the first bound to -Answer and the second landed on -Variant and killed the run.
+    [string]$Answer = '',
     # Record the client's sockets for its whole lifetime, to see whether it ever connects
     # to a second endpoint after login. Writes sockets.log beside probe.log.
     [switch]$Sockets,
@@ -181,7 +186,16 @@ if ($Reply) {
     if ($ReplyTo) { $probeArgs += @('--reply-to', $ReplyTo) }
     if ($ReplySeq) { $probeArgs += @('--reply-seq', $ReplySeq) }
     if ($Keepalive -gt 0) { $probeArgs += @('--keepalive', "$Keepalive") }
-    foreach ($a in $Answer) { if ($a) { $probeArgs += @('--answer', $a) } }
+    # Echoed, not just forwarded. An -Answer that fails to bind is the difference between
+    # a client that sits on "Connecting..." and one that proceeds, and the two look the
+    # same from here unless the count is stated.
+    $answerList = @($Answer -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($answerList.Count -gt 0) {
+        Write-Host "standing answers ($($answerList.Count)): $($answerList -join '  |  ')"
+    } else {
+        Write-Host 'standing answers: none'
+    }
+    foreach ($a in $answerList) { $probeArgs += @('--answer', $a) }
     if ($PingFirst) {
         $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
     }

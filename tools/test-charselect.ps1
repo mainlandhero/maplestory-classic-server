@@ -121,6 +121,10 @@ $replySeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
 #                      hence <req>, which splices the request's payload in; the trailing
 #                      00 is CharNameResult 0 = available.
 $enterCreation = Get-Packet @('enter-creation')
+# One semicolon-separated string, not an array: these scripts are invoked through
+# `powershell -File`, which flattens an array into separate command-line words, so the
+# second entry bound positionally to -Variant and killed the run at parameter binding.
+$answers = "00a8=$enterCreation;0081=0014:<req>00"
 Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
 Write-Host "reply sequence is $($replySeq.Length) characters"
@@ -129,8 +133,7 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
     -Reply ping -Opcode 0x0032 -Body 00 `
     -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
     -Session $Session -Probe $Probe `
-    -ReplyTo 0x0080 -ReplySeq $replySeq `
-    -Answer "00a8=$enterCreation", "0081=0014:<req>00" `
+    -ReplyTo 0x0080 -ReplySeq $replySeq -Answer $answers `
     -Keepalive $Keepalive -Port $Port
 
 Write-Host ''
