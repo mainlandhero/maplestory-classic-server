@@ -3,10 +3,69 @@
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
 
+## THE GOAL (set 2026-08-17, for next session)
+
+The owner's goal, in their words, three parts:
+
+1. **A valid session on the client** - not a client-side patch.
+2. **The masked email showing on the login screen.**
+3. **Successfully create a character** by going through the character creation flow.
+
+### Most likely approach
+
+**The account name is server-supplied, and that probably means the session is too.** This
+is the day's last and most useful finding, and it inverts an assumption held for weeks.
+
+`FUN_14112a720` renders `DAT_143aa84a0 + 0x22f8` into `textAccount` when it is non-empty.
+That field is written only by `FUN_142cb8370`, whose **only two callers are login-stage
+packet handlers**:
+
+| Inbound | Handler |
+|---|---|
+| **`0x0000`** | `FUN_141b2dd00`, 4475 bytes |
+| **`0x0012`** | `FUN_141b2ee90`, 1868 bytes |
+
+So the client waits to be *told* who it is. We have never sent either packet. That makes
+the plan:
+
+1. **Decode `0x0000`** (`FUN_141b2dd00`) and send it. It opens with a `u8` and a string and
+   branches hard on that `u8`. It is also one of the three functions that reference
+   `loginTroubleAskSupport`, so it plausibly carries the login state *and* the account name
+   - i.e. goals 1 and 2 in one packet. Read it the way `0x000B` was read.
+2. **Decode `0x0012`** if `0x0000` turns out to be something else.
+3. **Then the character list**, for goal 3. Start with `FUN_141b28570`, called from the
+   login result's success path just before its stage transition; then read the remaining
+   login-stage cases.
+4. **Fallback only:** the `CNM*` interface in `nexon_api_x64.dll` / `nmcogame64.dll`, both
+   unpacked. This was the standing assumption and is now demoted - chase it only if the
+   packets above do not produce a valid session.
+
+**Watch the mode fork.** Handlers branch on `session+0x68 == 5`. With `-Session mode=2` the
+client is mode **2** by the time these packets would arrive, so the **classic** branch is
+the live one - the opposite of `0x000B`, which we decode from the mode-5 side.
+
+**Aim to retire the two client-side patches.** `-Session mode=2` and
+`-Probe watch@141b2a280:rdx=0` make the normal flow reachable but are not a valid session.
+If `0x0000` does what it looks like, both should become unnecessary - and that, not the
+screen, is the test of whether goal 1 is actually met.
+
+### Where things stand against that goal
+
+| | |
+|---|---|
+| Login screen | reached, `0x0032` |
+| Login button lit and clickable | reached, `0x000B` world entry sets `stage+0x108` |
+| Animated transition to character select | reached, by clicking Login in mode 2 |
+| Create a character | **blocked** - client has no character list, and sends nothing |
+| Valid session | **not started** - the two patches fake it |
+| Masked email | **not started** - needs `0x0000` / `0x0012` |
+
+Full recipe for the current state is under "MILESTONE" below.
+
 ## Working right now
 
 ```bash
-cargo test --release          # 49 tests green
+cargo test --release          # 57 tests green
 cargo build --release
 ```
 
@@ -26,10 +85,10 @@ It connects to `127.0.0.1:8484`, and GameGuard never loads.
 | | |
 |---|---|
 | `crates/wz` | WZ parser. **9,994/9,994 images** across 102 archives parse. `wz-dump` CLI. |
-| `crates/net` | **The client's real wire cipher**, verified against captures. 19 tests. |
+| `crates/net` | **The client's real wire cipher**, verified against captures, plus the recovered inbound opcodes and their bodies. 25 tests. |
 | `crates/store` | SQLite accounts/sessions. argon2id, per-password salt, hashed single-use tokens. 21 tests. |
 | `crates/auth` | Local HTTP auth server (loopback only) + `maplecw-useradd`. Verified end to end. |
-| `crates/grap-stub` | No-op `grap64.dll`; GameGuard never starts. Plus a working **in-process dispatcher hook**. |
+| `crates/grap-stub` | No-op `grap64.dll`; GameGuard never starts. Plus the **in-process dispatcher hook**, the opcode walk / watch probe, a session monitor and patcher, and a `connect()` watch. |
 | Client copy | `client-patched/` — original install untouched, firewalled outbound. |
 | Tooling | `handshake_probe.py` decodes the client's live stream; `dump_runtime.py` reads its memory. |
 | Canvas render | `wz-dump canvas` + `tools/wz_png.py` turn WZ canvases into PNGs. **This is how the client's baked UI text gets read** - much of its on-screen wording is pixels, invisible to any string search. Formats 1, 2 and 513. |
@@ -129,9 +188,14 @@ and a varint `0` is the right answer. See `crates/net/src/opcode.rs`.
 That also explains the old "26 packet ceiling": every unhandled packet allocates a `0x5b4`
 buffer inside that loop and the loop never exits to free them. A leak, not a limit.
 
-### The login exchange, and where it stands
+### The login exchange
 
-The client **logs in by itself** - no button press. After the gate it sends:
+**Superseded in part:** "the client logs in by itself" is true only in **mode 5**
+(`-NXLDEBUG`), where a per-frame tick calls the same function the Login button calls. With
+`-Session mode=2` the client waits for the button, which is the real flow. See "THE GOAL"
+at the top.
+
+After the gate the client sends:
 
 ```
 0x00C0  05 00 00 00 20 4e 00 00
@@ -223,27 +287,6 @@ rendered into `textAccount` when non-empty. `DAT_143aa84a0` also holds world id 
 and channel id `+0x2260`; it is **not** the `DAT_143ac1898` that carries the `0x0073`
 identity.
 
-### Start here next session
-
-**The prompt is still unsolved, and two candidate paths are now ruled out by measurement.**
-
-| Ruled out | How |
-|---|---|
-| `FUN_141b267c0` (login result codes) | watch armed before the login screen, dialog appeared, **never entered** |
-| `FUN_1415d9210` (`+0x2270` / `+0x227c`) | `-Session watch` read `+0x2270 = 0x00` live across three heartbeats - **bit 2 clear**, so it returns before raising anything |
-| `FUN_141804140` (error code -> notice name) | watch: **never entered** |
-
-That is **all three** functions in the binary that reference the string
-`loginTroubleAskSupport`, and `FUN_141b2dd00` - the third - is a login-stage packet handler
-that cannot have run, because only `0x0032` was ever dispatched.
-
-So the notice is **not selected by that literal**. Either the name is built at runtime, or
-the node is chosen by numeric id (`/Notice/text/` has numbered nodes as well as named ones),
-or the dialog on screen is a *different* node with similar wording.
-
-Each of these was a plausible static chain - matching string, matching default case - and
-none survived a run. **Measure before building on a static chain.** Three times now.
-
 ### MILESTONE - login screen -> Login button -> character select
 
 **Reached 2026-08-17.** The owner clicked a lit Login button, the client played its animated
@@ -325,34 +368,6 @@ Where to look, cheapest first:
    branch is the live one after the patch.
 2. `FUN_141b28570(param_1, &local_5e8, 0)`, called from the login result's success path
    right before its stage transition, looks like it consumes a character list.
-
-### Superseded: does the client migrate, or just time out?
-
-The owner: the login server and channel server are normally different ports, so if the client is
-migrating it needs to be told where - and **we have never told it, and have no channel
-server**. The 256 zero bytes in the login result mean any address field in there reads
-`0.0.0.0:0`.
-
-Both explanations currently fit, and they are not distinguished yet:
-
-* **Migration.** The client finishes login, drops the login connection, and connects to a
-  channel server it cannot reach.
-* **Timeout.** The client has closed at ~8-12s in *every* run since the first, including
-  ones where nothing worked.
-
-Only one connection was ever made (`grep -c "connection from"` = 1), so it did not come
-back to 8484 - which does not distinguish the two, since a migration would go to a
-different port.
-
-**Cheapest way to tell:** run `tools/client-sockets.ps1` against the live client after
-login. A connect attempt to any other port means migration; no second socket means the
-close is just the timeout. That decides whether the next task is *decoding an address
-field* or *keeping a connection alive*.
-
-Not yet located: any field that carries a server address. The login result's two sub-readers
-were decoded - `FUN_14108d290` reads a `u32` count then `{u32 key, 8 bytes}` pairs into a
-map, `FUN_14108bdf0` a count then `{u32, u8}` - and neither looks like an address. Login
-stage `case 0x0c` is not a migrate either; it reads a `u32` and drives UI.
 
 ### After that: build the server side
 
@@ -538,14 +553,16 @@ not evidence either way.
 Short version, because two long-standing assumptions turned out to be wrong:
 
 - **"Having trouble logging in" is `/Notice/text/loginTroubleAskSupport`** - a baked bitmap
-  in `Login.img`, which is why no string search ever found it. **Still unsolved.** Two
-  candidate raisers have been ruled out *by measurement*, not by reading: `FUN_141b267c0`
-  (never entered while the dialog was on screen) and `FUN_1415d9210` (its gating flag
-  `DAT_143aa84a0 + 0x2270` bit 2 was read live and is clear). See "Start here next session".
+  in `Login.img`, which is why no string search ever found it. **Solved:** raised by
+  `FUN_141b2a280(stage, code, flag)` for codes -1, 6, 8, 9 and 12; measured live as **code
+  12**, a generic failure, from a **virtualised** caller. Three other candidates were ruled
+  out by measurement first. Full table and the tooling lesson in `docs/session.md`.
   `Login.img` also has **two** login screens (`Title_new`, and `ClassicIntro` = ours, the
   one carrying `find_id`/`find_pw`); `FUN_141129930` builds `ClassicIntro`.
 - **The empty identity did not block the login.** The client still sent `0x0073` and
   `0x0080` and accepted a `result = 0` reply. It is a real gap but not the current blocker.
+- **The account name is server-supplied** (`0x0000` / `0x0012`), so the session may be too.
+  That demotes the launcher-handoff theory this section was built around - see "THE GOAL".
 
 The identity is one `char *` at **`DAT_143ac1898 + 0x1b8`**, read by `FUN_142c50400` and
 sent as the second field of `0x0073`, where we captured a **zero-length string**. Nothing

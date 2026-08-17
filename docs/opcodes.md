@@ -273,6 +273,26 @@ Note the world/channel comparison: when the pair we send differs from `session+0
 world list at `stage+0x100`**. That list is populated only by `0x000B`. Send the login
 result without a world list and the client arrives at character select with no world.
 
+## 0x0000 and 0x0012 — the account name (the masked email)
+
+Both handlers call `FUN_142cb8370(obj, str)`, which writes `DAT_143aa84a0 + 0x22f8` and then
+calls `FUN_141128960(4)` to refresh the UI. `FUN_14112a720` renders that field into
+`textAccount` whenever it is non-empty. **So the masked email on the login screen is
+server-supplied**, not a launcher handoff — which is the opposite of what was assumed for
+weeks.
+
+| Inbound | Handler | Size |
+|---|---|---|
+| **`0x0000`** | `FUN_141b2dd00` | 4475 bytes — also one of the three functions referencing `loginTroubleAskSupport` |
+| **`0x0012`** | `FUN_141b2ee90` | 1868 bytes |
+
+Neither body is decoded yet. `0x0000` opens with a `u8` and a string and branches heavily on
+that `u8`; one branch reads `u8, 8 bytes, string`, and it keys off values like `0x15`-`0x3c`
+and `99`. It is the best candidate for carrying account identity *and* session state.
+
+Found by scanning `.text` for the disp32 `0x22f8` and filtering to the account-manager
+range. **Not** by `xref.py` — a struct-offset store is not a `lea`.
+
 ## 0x000B — the world list
 
 One packet per world; a final packet whose first byte has the high bit set closes the list.

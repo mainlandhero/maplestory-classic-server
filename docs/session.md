@@ -40,33 +40,6 @@ maintenance", `38` = "GameGuard has been updated"). The numeric keys are **not**
 result codes - there is no `101`/`0x65` entry - so the login result resolves through the
 named keys.
 
-### What actually raises it: two bytes on the session object
-
-**Settled by observation, 2026-08-16.** A watch on `FUN_141b267c0` armed before the login
-screen appeared and stayed armed for the whole session; the dialog appeared and **that
-function was never entered**. So the login-result path below is *not* the source, and the
-result-code table is a dead end for this symptom. Keep it for reading actual login results.
-
-The real raiser is `FUN_1415d9210`:
-
-```c
-obj = DAT_143aa84a0;                       // the account/session manager
-if ((*(u8 *)(obj + 0x2270) & 4) == 0) return;   // no flag, no dialog at all
-switch (*(u8 *)(obj + 0x227c)) {
-    case 0:    -> 0x2100000B  loginTroubleAskSupport
-    case 1:    -> 0x2100000D
-    case 2:    -> 0x21000009  incorrectFormOfID
-    case 0x11: -> 0x21000008  errorUnableToConnect
-    case 0x1B: -> 0x2100000A  temporaryBlockedIPAddr
-    case 0x1C: -> 0x2100000C
-    case 0xFF: -> 0x21000007  selectiveShutdownYouth
-    default:   -> 0x2100000B  loginTroubleAskSupport
-}
-```
-
-`FUN_141804140` turns those codes into notice names - it is the same error-code family as
-`docs/client-messages.md`, and `0x2100000B` is not in that table yet.
-
 ### SOLVED: `FUN_141b2a280` raises it
 
 Found by logging the return address at a watch on the notice display:
@@ -79,8 +52,8 @@ if ((code + 1U < 0xe) && ((0x2681U >> (code + 1U & 0x1f) & 1) != 0)) {
 ```
 
 `0x2681` has bits 0, 7, 9, 10 and 13 set and the index is `code + 1`, so **codes -1, 6, 8,
-9 and 12** all produce this dialog. `code == 0` returns 1 - success - and everything else
-maps to a specific notice:
+9 and 12** produce this dialog. `code == 0` returns 1 - success. Everything else maps to a
+specific notice:
 
 | code | notice |
 |---|---|
@@ -100,98 +73,36 @@ maps to a specific notice:
 | 0x88 | `invalidRegion` |
 | 0x8B | `outOfServiceRegion` |
 
-It is a near-duplicate of `FUN_141b267c0`: same mapping, different function. The static
-work had the right table and the wrong function.
+**Measured, live: the code is 12** - a generic failure with no specific notice - and
+`called-from` is `0x144c05eb2`, inside `.themida`. **The caller is virtualised**, and the VM
+runs on its own stack, so a 16-slot stack scan at the call found no `.text` frame. *Who*
+decides code 12 cannot be answered by reading or by walking back from the call.
 
-#### Why every scan missed it
+`FUN_141b2a280` is a near-duplicate of `FUN_141b267c0`: same mapping, different function.
+
+#### Why every scan missed it, and the lesson
 
 `FUN_141b2a280` never takes the string's *address*. It **copies the literal inline**, eight
-bytes at a time, with RIP-relative `mov` from `0x1433d5d98`:
+bytes at a time, with RIP-relative `mov` from `0x1433d5d98`. `tools/xref.py` matches `lea`,
+so it reported three references - all later proven never entered by watch - while the real
+raiser was invisible to every scan built on it.
 
-```c
-*(undefined8 *)local_res20      = u_loginTroubleAskSupport_1433d5d98._0_8_;
-*(undefined8 *)(piVar5 + 6)     = u_loginTroubleAskSupport_1433d5d98._8_8_;
-...
-```
+**A "0 references" result from `xref.py` means "nothing takes its address", not "nothing
+uses it".** That warning now leads the tool's own docstring.
 
-`tools/xref.py` finds `lea` references, so a function that *reads* a literal rather than
-taking its address does not appear - and the qword-pointer scan missed it for the same
-reason. **A "no references" result from `xref.py` means "no `lea`", not "no uses".**
+#### Two theories that were measured and disproved
 
-**Next:** watch `FUN_141b2a280` - `rdx` is the code, and `called-from` names who decided the
-login failed. That is the actual question now.
+Recorded because each looked convincing on paper, and because the pattern matters more than
+either result:
 
-### The earlier theory, measured and wrong
-
-**`FUN_1415d9210` is not the raiser.** A `-Session watch` run read the object live while the
-dialog was on screen:
-
-```
-***** SESSION obj=0x606b0c8 +0x2270=0x00 +0x227c=0x00 -> no dialog (flag bit 2 clear) *****
-```
-
-`+0x2270` bit 2 is **clear**, so `FUN_1415d9210` returns before raising anything. The theory
-above was a plausible chain built from a matching string and a matching default case, and
-it did not survive contact with the running client.
-
-One caveat on that measurement, and it is a flaw in the tool rather than the finding: the
-object pointer went unreadable shortly after, and the monitor only logged on *change*, so
-it cannot prove the bytes stayed at zero through the exact moment the dialog appeared. The
-monitor now logs a heartbeat every ~3s and every readable/unreadable transition, so silence
-means "not running" rather than "running but unchanged".
-
-`0x2100000B` still maps to `loginTroubleAskSupport` in `FUN_141804140`, and the two
-immediate references to that code are still the only ones in `.text` - both inside
-`FUN_1415d9210`. So either the code reaches `FUN_141804140` from a **non-immediate**
-source, or the notice is raised without going through the error-code map at all.
-
-**Next:** watch `FUN_141804140` itself. It is the one place the name is produced, so if the
-dialog appears it should run, and its first argument is a *pointer to* the code - which the
-probe now dereferences and logs.
-
-Nothing writes either byte with an immediate - `xref.py --field 0x227c/0x2270 --size byte`
-finds nothing, though that only catches `mov [reg+disp], imm8`, so it is not proof. Given
-the object and how deep the offsets sit, the `CNM*` session interface in
-`nexon_api_x64.dll` / `nmcogame64.dll` remains the likely writer.
-
-**Cheapest next step:** confirm the mechanism rather than assume it. From `grap-stub`, read
-`DAT_143aa84a0` and log `+0x2270` and `+0x227c`. If the flag bit is set and the status byte
-is `0`, the chain is proven end to end - and clearing bit 2 of `+0x2270` should then
-suppress the dialog outright, which is a one-line test of the whole theory.
-
-### Which result codes raise it (login results only - NOT this dialog)
-
-`FUN_141b267c0(stage, result, ...)` is the map, and it switches on `result + 1`:
-
-| Result | Notice |
+| Theory | Disproved by |
 |---|---|
-| **-1, 6, 8, 9** | **`loginTroubleAskSupport`** |
-| 3 | `blockedID` |
-| 4 | `incorrectPassword` |
-| 5 | `notRegisteredID` |
-| 7 | `loginAlready` |
+| `FUN_141b267c0` (login result codes) | watch armed before the login screen; dialog appeared; **never entered** |
+| `FUN_1415d9210` (`+0x2270` bit 2, `+0x227c`) | live read: `+0x2270 = 0x00`, bit clear, so it returns before raising anything |
+| `FUN_141804140` (error code -> notice name) | watch: **never entered** |
 
-So the prompt is a **login result dialog**: the client believes it got a failing login
-result of -1, 6, 8 or 9. No caller passes -1 as an immediate (checked with
-`FindConstArgCalls`), so the value arrives in a variable.
-
-**Unresolved, and the top question for next session:** the owner sees this dialog *immediately
-after the splash screen*, before we have sent anything but the `0x0032` gate - and `0x0032`
-is handled by `FUN_1415e5c20`, which never touches this path. Something is reaching
-`FUN_141b267c0` with a failing code before any login exchange. Two of its callers,
-`FUN_141b2b120` (a 31-byte wrapper passing the code straight through) and `FUN_141b2ae80`,
-have **no callers and are in no vtable**, so they are reached only through the virtualised
-dispatcher and cannot be traced statically.
-
-The way to settle it is to **observe**: hook `FUN_141b267c0` and log `param_2` and when it
-fires. That names the code, and the table above names the failure. `crates/grap-stub`
-already does inline hooks; today's watch mode only reports *whether* a function ran, so it
-needs to also capture an argument.
-
-**It is a real signal, not decoration.** The owner, who knows the live game: the live client
-**never** shows it, and ours shows it **immediately after the splash screen**. An earlier
-note here guessed it might be permanent screen furniture; that is wrong, and the render
-above settles it - this is the failure dialog from the login result table.
+Each was a plausible chain built from a matching string plus a matching default case.
+**Measure before building on a static chain.**
 
 ## What actually enables the Login button
 
@@ -367,37 +278,45 @@ produced a byte-identical client stream — same `0x0073` body, same empty ident
 `test-one.ps1` echoes the real command line, so this was not a case of the arguments
 failing to arrive.
 
-## Next
+## Next - the account name is server-supplied
 
-Ordered by what settles the most per unit of work, and none of it needs a client launch:
+**The masked email is a packet field, not a launcher handoff.** The login screen renders
+`DAT_143aa84a0 + 0x22f8` into `textAccount` when it is non-empty (`FUN_14112a720`), and that
+field is written by `FUN_142cb8370(obj, str)`, which then calls `FUN_141128960(4)` to
+refresh the UI. Its **only two callers are login-stage packet handlers**:
 
-1. **Read the pixels.** `crates/wz` parses every canvas node's metadata but deliberately
-   skips pixel data (`prop.rs`: "Pixels are left unparsed"). Decoding them - zlib plus a
-   handful of pixel formats - would let us *read the client's baked UI text*, which is the
-   exact capability gap that made this prompt unfindable in the first place. It would say
-   definitively which node carries "having trouble logging in", and therefore which screen
-   we are on. Useful far beyond this one question.
-2. **Find what populates `DAT_143aca3d8`**, the stage -> screen-index map. That yields the
-   full mapping in one read, including which stage shows `Title_new` rather than
-   `ClassicIntro`.
-3. **Find the writer of `DAT_143ac1898 + 0x1b8`.** It is a single field; whatever fills it
-   is the launcher handoff. The `CNM*` interface in `nexon_api_x64.dll` /
-   `nmcogame64.dll` is the likely home, and both are unpacked and far easier to read than
-   the Themida-wrapped exe.
-4. **Write that field directly** from `crates/grap-stub`, which already runs in-process
-   with inline-hook and memory-patch capability. Pointing `+0x1b8` at a string we own
-   settles whether the empty identity changes the screen choice, without solving the
-   handoff first.
+| Inbound | Handler |
+|---|---|
+| **`0x0000`** | `FUN_141b2dd00` (4475 bytes - also one of the three functions referencing `loginTroubleAskSupport`) |
+| **`0x0012`** | `FUN_141b2ee90` |
 
-## What the empty identity does *not* block
+So the client expects the server to tell it who it is. That reframes the whole session
+question: rather than faking a launcher handoff, send `0x0000`.
 
-Worth stating plainly, because it was assumed for a while: an empty identity **did not stop
-the client from logging in**. It still built and sent `0x0073` *and* `0x0080`, and it
-accepted a `result = 0` login reply and advanced its UI to character select. At this stage
-the client is blocked on what we send it, not on its own state.
+Found by scanning `.text` for the disp32 `0x22f8` and filtering to the account-manager
+range - **not** by `xref.py`, which finds only `lea` and would have missed a struct-offset
+store the same way it missed `FUN_141b2a280`.
 
-So the identity is a real gap, but it is not what stops the *packet* flow - the missing
-world list (`0x000B`) is that.
+Still open, in order:
 
-It remains the best candidate for the **screen** choice, though, and that is a separate
-question decided before any packet is sent.
+1. **Decode `0x0000`** (`FUN_141b2dd00`). Its first fields are a `u8` and a string, and it
+   branches heavily on that `u8` - one branch reads `u8, 8 bytes, string` and another keys
+   off values like `0x15`-`0x3c` and `99`. This is the packet most likely to carry both the
+   account name and the session state.
+2. **Decode `0x0012`** (`FUN_141b2ee90`, 1868 bytes) - the smaller of the two and probably
+   the simpler account-name update.
+3. **Find the character-list packet**, for the character-creation half of the goal. Read
+   the remaining login-stage cases the way `0x000B` was read, and start with
+   `FUN_141b28570`, called from the login result's success path.
+4. **Only if those fail:** the `CNM*` interface in `nexon_api_x64.dll` / `nmcogame64.dll`.
+   Both are unpacked. This was the standing assumption for weeks and is now the *fallback*,
+   because the account name turning out to be server-supplied suggests the session may be
+   too.
+
+Settled and no longer worth pursuing:
+
+* **The client never migrates.** A `connect` hook on `ws2_32!connect` / `WSAConnect` logged
+  nothing after login. No channel server, no address field - one connection is all there is,
+  and the close is an ~8s idle timeout.
+* `DAT_143ac1898 + 0x1b8` (the `0x0073` identity string) is still empty and still unwritten
+  by anything we can find, but it did not stop login and is no longer the lead.
