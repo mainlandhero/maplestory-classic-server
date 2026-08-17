@@ -282,7 +282,53 @@ server attached, and **sent nothing**. Those transitions are purely client-side.
 handled (`2 opcode=0x0010 ... ret=1`), and the client closed 0.42s later, exactly as it does
 without one. So the close is not a rejection of our reply.
 
-### The open question: does the client migrate, or just time out?
+### Partly settled: no connect *attempt*, but that is not the same as no migration
+
+`-Sockets` recorded the client's whole lifetime:
+
+```
+Bound        0.0.0.0:58998 -> 0.0.0.0:0
+Established  127.0.0.1:58998 -> 127.0.0.1:8484
+no TCP sockets owned by the client     <- 8s after the last packet
+client exited
+```
+
+**One socket, ours, and never a second one** - no connect to any other port or host, and
+the close comes about 8 seconds after the last packet.
+
+**What that does and does not prove.** It rules out *the client tried to reach a channel
+server and failed*. It does **not** rule out *the client wanted to migrate and had nothing
+to dial*: we send 256 zero bytes, so any address field in the login result reads
+`0.0.0.0:0`, and a client that sanity-checks the address would never open a socket at all.
+Those two are indistinguishable from a socket poll, and an earlier draft of this section
+wrongly called the question closed.
+
+**How to actually settle it:** hook `ws2_32!connect` / `WSAConnect` in `grap-stub` and log
+every call with its `sockaddr`. That catches an attempt to `0.0.0.0:0` - which a socket
+poll cannot see, because no socket is ever created - and equally proves the negative if
+`connect` is never called again. Until then, treat both explanations as live.
+
+### The real gap: the client has no character list
+
+Also from that run: **the Login click, the transition to character select, and every
+"Create a character" click sent nothing at all.** Not one packet, while the socket was still
+open. So those controls are not blocked by a dead connection - the client has nothing to
+send because it was never told what characters exist.
+
+That is the next thing to find: the character-list packet. The client reached character
+select without one, which is why the screen is inert.
+
+Where to look, cheapest first:
+
+1. The login stage switch (`FUN_141b25f30`) still has many undecoded cases - `0x11`-`0x18`,
+   `0x23`, `0x25`-`0x27`, `0x29`, `0x2b`, `0x34`-`0x39`, `0x45`-`0x48`, `0x4a`, `0x50`,
+   `0x5f`. Read them the way `0x000B` was read. **Check the `session+0x68 == 5` fork in
+   each** - and note the mode patch means the client is mode 2 by then, so the *classic*
+   branch is the live one after the patch.
+2. `FUN_141b28570(param_1, &local_5e8, 0)`, called from the login result's success path
+   right before its stage transition, looks like it consumes a character list.
+
+### Superseded: does the client migrate, or just time out?
 
 The owner: the login server and channel server are normally different ports, so if the client is
 migrating it needs to be told where - and **we have never told it, and have no channel

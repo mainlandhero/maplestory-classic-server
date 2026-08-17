@@ -1,0 +1,8 @@
+﻿
+[00:48:20.687] waiting for MapleStory.exe
+[00:48:23.101] client pid(s) 190564
+[00:48:23.887] sockets:
+[00:48:23.889]     Bound        0.0.0.0:58998 -> 0.0.0.0:0
+[00:48:23.890]     Established  127.0.0.1:58998 -> 127.0.0.1:8484
+[00:48:40.594] no TCP sockets owned by the client
+[00:48:46.915] client exited
