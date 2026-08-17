@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-18 (character transaction decoded)
+# Where things stand — 2026-08-19 (record built; the create request must be measured)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -24,40 +24,62 @@ That means, end to end and against a real server-side implementation:
 | Masked email on the login screen | **done**, `0x0000` - no client patch needed |
 | Transition to character select | done |
 | Connection stays up | **not a problem** - the "reset" was our own log format, see the retraction below |
-| Character list | **format decoded, never sent** |
-| Name check | **both halves decoded**, never sent |
-| Create request | **not found yet** - the one real gap |
-| Create result | **decoded**, never sent |
+| Character record | **fully decoded and built**, `character_record`, never sent |
+| Character list | **built**, `login_result`, never sent |
+| Name check | **both halves decoded**, `check_name_result` built, never sent |
+| Create request | **found, and it is Themida-virtualised** - it must be measured |
+| Create result | **decoded**, `create_character_result` built, never sent |
 | Valid session | still faked by two client patches |
 
 ### Read these first
 
-* **`docs/character.md`** - the whole character transaction: the list, the record layout,
-  the three inbound opcodes, the outbound side, and precisely what is *not* established.
+* **`docs/character.md`** - the whole character transaction: the list, the complete record
+  layout, the three inbound opcodes, the NewChar screen, why the create request cannot be
+  read statically, and precisely what is *not* established.
 * `docs/opcodes.md` - the opcode tables, now including the character set.
 * `docs/session.md` - the login exchange and the "trouble logging in" story.
-* `research/msexe-charrecord.c`, `msexe-charstats.c`, `msexe-char-requests.c` - the
-  decompilation this rests on.
+* `research/msexe-charstats.c`, `msexe-charrecord.c`, `msexe-avatarlook.c`,
+  `msexe-newchar-ui.c`, `msexe-char-create.c` - the decompilation this rests on.
+* `C:\Users\user\Desktop\ModernMapleSource` - a modern-version server source the owner supplied.
+  A naming and structure reference, **not** this protocol. See `docs/character.md`.
+
+### The one thing that cannot be read
+
+**The create request is virtualised.** `FUN_141122420` (the NewChar OK button) calls
+`FUN_141b3fb10`, which tail-jumps to `FUN_141b2cf30`, which sets up a packet frame and then
+`JMP`s into `.themida`. Each has exactly one caller, so that is the only path. Its opcode
+and body have to come off the wire - and they will, because **the OK button sends `0x0081`
+and the create request back to back in one click**, without waiting for a reply.
 
 ### The plan, in order
 
-1. **Finish the character record.** `FUN_140302e30` is solid to `+0x23` (id, two `u32`s, a
-   **13-byte fixed name**, two `u8`s, three `u32`s). Past that: several `u32` blocks, a
-   `u64`, a four-iteration loop, then `u8, u8, 8B, u32, u32`. All of it is needed - the
-   readers throw on underrun, and a misaligned record corrupts every later field silently.
-   Build it in `crates/net/src/opcode.rs` with a read-back test, the way `account_info` and
-   `world_list_entry` were done.
-2. **Send a one-character list** inside `0x0010` and confirm CharSelect shows it. That is
-   the first thing here that has ever been on the wire, and it validates the record layout
-   before anything is built on top of it.
-3. **Find the create request.** Ruled out already: `0x0074`, `0x0075`, `0x0082`, `0x008B`,
-   `0x008C`, `0x008D`, `0x00A8`, `0x00A9`, `0x00C0`. Look at the **NewChar screen (screen
-   5)** and what its Create button calls - the same route that found the Login button's
-   handler. It carries a full character spec, so it is a builder with many field writes.
-4. **Answer `0x0081` with `0x0014`**, then the create request with `0x0015`, and watch the
-   client return to CharSelect with the new character.
-5. **Then make it real**: persist characters in `crates/store` so the transaction survives a
+1. **Send the one-character list** and read the result off the wire. This is step 2 and step
+   3 at once: it validates the record layout *and* captures the create request. See the run
+   below.
+2. **Answer `0x0081` with `0x0014`** (`check_name_result(name, NAME_AVAILABLE)`), and the
+   create request - once its opcode is known - with `0x0015`
+   (`create_character_result`), then watch the client return to CharSelect with the new
+   character.
+3. **Then make it real**: persist characters in `crates/store` so the transaction survives a
    restart, which is what "the server processes it" means.
+
+### The next run
+
+Reaches character select with one character called `Maple`, then asks the owner to open character
+creation, set the four stats so they total 25, type a name and click OK. The body comes from
+`cargo run --release -q -p net --bin packet-hex -- login-result Maple`, so it cannot drift
+from the builder.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping `
+  -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
+  -Session mode=2 -Probe watch@141b2a280:rdx=0 -ReplyTo 0x0080 `
+  -ReplySeq "000b:<world entry>,000b:ff0000,0010:<login-result hex>"
+```
+
+**What to read, in `probe.log`:** whether a character appears on the screen at all, then the
+two outbound packets after the OK click. `0x0081` should carry the name; the packet after it
+is the create request, and its opcode is the answer.
 
 ### Standing warnings
 
@@ -67,7 +89,8 @@ That means, end to end and against a real server-side implementation:
   If the login dialog ever reappears, check `install: hook active` precedes the first
   dispatch before concluding anything about the client.
 * **Every character finding above is static and unmeasured.** Four static chains in this
-  project looked equally convincing and were wrong.
+  project looked equally convincing and were wrong. The record has one thing they did not -
+  an independent second decoder that agrees - but that is still not the wire.
 
 ## Working right now
 

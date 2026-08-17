@@ -269,6 +269,380 @@ pub fn data_wz_up_to_date() -> Vec<u8> {
     zigzag_varint(0)
 }
 
+/// The name-check result: whether the name the client asked about may be used.
+///
+/// Answers the client's [`CLIENT_CHECK_NAME_REQUEST`]. Handler `FUN_141b33f30`, whose whole
+/// body is a `switch` on the result byte - so the codes below are read off the client, not
+/// guessed. The handler opens by clearing `stage+0xd4`, the same flag the request builder
+/// sets, which is what ties the two opcodes together beyond mere adjacency.
+///
+/// # Body
+///
+/// ```text
+/// str  name        echoed back
+/// u8   result      0 = available; see the constants below
+/// ```
+pub const CHECK_NAME_RESULT: u16 = 0x0014;
+
+/// The client's name-check request, sent from the character creation screen.
+///
+/// Built by `FUN_141b28950`, which refuses to send unless the screen is `5` (NewChar), no
+/// request is already in flight, and the four ability points at `stage+0x220` sum to `25` -
+/// otherwise it raises `useAllAP` locally. It also validates the name itself and raises
+/// `cannotUseThisName` without sending, so a locally-invalid name never reaches us.
+pub const CLIENT_CHECK_NAME_REQUEST: u16 = 0x0081;
+
+/// [`CHECK_NAME_RESULT`] code `0`: the name is free. Raises the `availableName` confirm.
+pub const NAME_AVAILABLE: u8 = 0;
+
+/// [`CHECK_NAME_RESULT`] code `0x7A`: `alreadyUsedName`.
+pub const NAME_ALREADY_USED: u8 = 0x7A;
+
+/// [`CHECK_NAME_RESULT`] codes `0x79` and `0x7B`: `cannotUseThisName`.
+pub const NAME_NOT_ALLOWED: u8 = 0x79;
+
+/// The character creation result.
+///
+/// Handler `FUN_141b36a10`. On success it decodes a full character record with
+/// `FUN_1403094b0`, registers it, and calls `FUN_141b3f050(stage, 4, 0x14a)` - back to
+/// character select with the new character in the list. A non-zero result raises a notice
+/// through `FUN_141b4ac80` and stays on the creation screen, so that is how we refuse.
+///
+/// # Body
+///
+/// ```text
+/// u8   result      0 = success
+/// // when result == 0:
+/// u32  worldId
+/// ..   one character record
+/// u8   returnToCharacterSelect
+/// ```
+pub const CREATE_CHARACTER_RESULT: u16 = 0x0015;
+
+/// The delete result, `FUN_141b34970`. Body is a single `u32` character id.
+pub const DELETE_CHARACTER_RESULT: u16 = 0x0016;
+
+/// The client's name field is a **fixed 13-byte block**, not a length-prefixed string.
+/// `FUN_140302e30` reads it with `FUN_1406e9170(packet, record + 0xc, 0xd)`.
+pub const CHARACTER_NAME_LEN: usize = 13;
+
+/// One character, in the fields the client actually reads out of a record.
+///
+/// Everything the client stores but never shows on the character select screen is left out
+/// and sent as zero - see [`character_record`] for which fields those are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Character {
+    pub id: u32,
+    pub name: String,
+    pub gender: u8,
+    pub skin: u8,
+    pub face: u32,
+    pub hair: u32,
+    pub level: u32,
+    pub job: u16,
+    pub strength: u16,
+    pub dexterity: u16,
+    pub intelligence: u16,
+    pub luck: u16,
+    pub hp: u32,
+    pub max_hp: u32,
+    pub mp: u32,
+    pub max_mp: u32,
+    pub ap: u16,
+    pub map_id: u32,
+    /// `(slot, itemId)` pairs for the avatar's visible equipment.
+    pub equips: Vec<(u8, u32)>,
+}
+
+impl Default for Character {
+    /// A level 1 beginner with the classic starting roll.
+    ///
+    /// `job` is `0`, which matters: the stat block's SP field forks on the job, and `0`
+    /// takes the extended-SP branch. See [`uses_extended_sp`].
+    fn default() -> Self {
+        Character {
+            id: 1,
+            name: String::new(),
+            gender: 0,
+            skin: 0,
+            face: 20000,
+            hair: 30000,
+            level: 1,
+            job: 0,
+            strength: 12,
+            dexterity: 5,
+            intelligence: 4,
+            luck: 4,
+            hp: 50,
+            max_hp: 50,
+            mp: 5,
+            max_mp: 5,
+            ap: 0,
+            map_id: 0,
+            equips: Vec::new(),
+        }
+    }
+}
+
+/// Whether the stat block sends an extended SP table for this job rather than a single
+/// `u16`.
+///
+/// `FUN_140302e30` branches on the job it just read, and the branch is a bit test against
+/// three literal masks. Decoding them gives exactly the explorer job tree - 100/110/111/112
+/// /120/121/122/130/131/132 and the same shape at 200, 300, 400 and 500, plus 430-439 - and
+/// that is the strongest single check that `+0x33` really is the job and that every field
+/// before it is in the right place.
+///
+/// Job `0`, a beginner, also takes this branch.
+pub fn uses_extended_sp(job: u16) -> bool {
+    if job == 0 {
+        return true;
+    }
+    if (430..440).contains(&job) {
+        return true;
+    }
+    let branch = job % 100;
+    match job / 100 {
+        1 | 2 => matches!(branch, 0 | 10..=12 | 20..=22 | 30..=32),
+        3..=5 => matches!(branch, 0 | 10..=12 | 20..=22),
+        _ => false,
+    }
+}
+
+/// A fixed-width, NUL-padded field. Mirrors `FUN_1406e9170`, which reads a byte count.
+fn put_fixed(out: &mut Vec<u8>, s: &str, len: usize) {
+    let bytes = s.as_bytes();
+    let taken = bytes.len().min(len);
+    out.extend_from_slice(&bytes[..taken]);
+    out.extend(std::iter::repeat_n(0u8, len - taken));
+}
+
+/// One character record: the stat block, a short trailer, then the avatar look.
+///
+/// # How it was established
+///
+/// Read from `FUN_1403094b0`, which is `FUN_140302e30` (the stat block) followed by four
+/// fields and then `FUN_1402ee8d0` (the look). Independently cross-checked field for field
+/// against `CharacterStat.encode` in a modern MapleStory server source, which agrees on the
+/// whole head - id, two log ids, the 13-byte name, gender, skin, a zero, face, hair, level,
+/// job, the four stats, hp/maxHp/mp/maxMp, ap, then the SP fork. Two sources deriving the
+/// same order independently is why this is worth trusting further than the usual static
+/// read - but it has still never been on the wire.
+///
+/// # Body
+///
+/// ```text
+/// u32  characterId
+/// u32  characterIdForLog
+/// u32  worldIdForLog
+/// 13B  name                fixed width, NUL padded
+/// u8   gender
+/// u8   skin
+/// u32                      always zero in the reference encoder
+/// u32  face
+/// u32  hair
+/// u32  level
+/// u16  job
+/// u16  str, dex, int, luk
+/// u32  hp, maxHp, mp, maxMp
+/// u16  ap
+///      extended-SP jobs: u8 count, then count x (u8 jobLevel, u32 sp)
+///      everything else:  u16 sp
+/// u64  exp
+/// u32  fame
+/// u32
+/// u8   portal
+/// u16  subJob
+/// u8
+/// 8B   FILETIME
+/// u32, u32
+/// // trailer, FUN_1403094b0
+/// u32, u64, u32, u64
+/// // avatar look, FUN_1402ee8d0
+/// u8   gender
+/// u8   skin
+/// u32  face
+/// u32  hair
+/// u32
+/// u8                       read and discarded
+/// u32                      equip slot 0
+/// u8/u32 pairs             equipment, terminated by slot 0xFF
+/// u8/u32 pairs             a second map, terminated by slot 0xFF
+/// u32, u32, u32, u32
+/// u32                      taken modulo 360
+/// u8
+/// u32
+/// 4B, 128B, u32, 13B
+/// ```
+///
+/// **The client's readers throw on underrun**, so a record that is short by one byte is not
+/// a rendering glitch - it is an exception inside the packet handler.
+pub fn character_record(chr: &Character, world_id: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+
+    // --- the stat block, FUN_140302e30 with param_3 == 0
+    out.extend_from_slice(&chr.id.to_le_bytes());
+    out.extend_from_slice(&chr.id.to_le_bytes()); // characterIdForLog
+    out.extend_from_slice(&world_id.to_le_bytes()); // worldIdForLog
+    put_fixed(&mut out, &chr.name, CHARACTER_NAME_LEN);
+    out.push(chr.gender);
+    out.push(chr.skin);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&chr.face.to_le_bytes());
+    out.extend_from_slice(&chr.hair.to_le_bytes());
+    out.extend_from_slice(&chr.level.to_le_bytes());
+    out.extend_from_slice(&chr.job.to_le_bytes());
+    out.extend_from_slice(&chr.strength.to_le_bytes());
+    out.extend_from_slice(&chr.dexterity.to_le_bytes());
+    out.extend_from_slice(&chr.intelligence.to_le_bytes());
+    out.extend_from_slice(&chr.luck.to_le_bytes());
+    out.extend_from_slice(&chr.hp.to_le_bytes());
+    out.extend_from_slice(&chr.max_hp.to_le_bytes());
+    out.extend_from_slice(&chr.mp.to_le_bytes());
+    out.extend_from_slice(&chr.max_mp.to_le_bytes());
+    out.extend_from_slice(&chr.ap.to_le_bytes());
+    if uses_extended_sp(chr.job) {
+        out.push(0); // no SP pools
+    } else {
+        out.extend_from_slice(&0u16.to_le_bytes()); // sp
+    }
+    out.extend_from_slice(&0u64.to_le_bytes()); // exp
+    out.extend_from_slice(&0u32.to_le_bytes()); // fame
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0); // portal
+    out.extend_from_slice(&0u16.to_le_bytes()); // subJob
+    out.push(0);
+    out.extend_from_slice(&0u64.to_le_bytes()); // FILETIME
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    // --- the trailer, FUN_1403094b0
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u64.to_le_bytes());
+    out.extend_from_slice(&chr.map_id.to_le_bytes());
+    out.extend_from_slice(&0u64.to_le_bytes());
+
+    // --- the avatar look, FUN_1402ee8d0
+    out.push(chr.gender);
+    out.push(chr.skin);
+    out.extend_from_slice(&chr.face.to_le_bytes());
+    out.extend_from_slice(&chr.hair.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0); // read and discarded
+    out.extend_from_slice(&0u32.to_le_bytes()); // equip slot 0
+    for (slot, item) in &chr.equips {
+        out.push(*slot);
+        out.extend_from_slice(&item.to_le_bytes());
+    }
+    out.push(0xFF); // end of the equipment map
+    out.push(0xFF); // end of the second map
+    for _ in 0..4 {
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+    out.extend_from_slice(&0u32.to_le_bytes()); // taken modulo 360
+    out.push(0);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(&[0u8; 128]);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&[0u8; CHARACTER_NAME_LEN]);
+    out
+}
+
+/// How many zero bytes to append after the character list in a [`LOGIN_RESULT`].
+///
+/// The fields past the list are not decoded. What is established is that the reply which
+/// carried the client to character select was `00 00 00` plus 253 zero bytes and was
+/// accepted, so a generous zero tail is known to satisfy whatever the client reads there.
+/// Under-providing is not a cosmetic problem: the readers throw on underrun.
+const LOGIN_RESULT_TAIL_PAD: usize = 200;
+
+/// A successful [`LOGIN_RESULT`], carrying the character list.
+///
+/// # The list is inside this packet
+///
+/// This is the thing that was missing while the character select screen sat inert. There is
+/// no separate character-list opcode. `FUN_141b307b0` reads the head below, then calls two
+/// sub-readers: `FUN_14108d290` for the scheduled-deletion list and `FUN_14108bdf0` for the
+/// display order and the characters themselves. Our old reply was zero-padded, so the
+/// client read a count of `0` and drew an empty screen - which is exactly why every "Create
+/// a character" click sent nothing.
+///
+/// # Body
+///
+/// ```text
+/// u8   result          0 = success
+/// str  message
+/// u8
+/// 8B   FILETIME
+/// u32  worldId         looked up in the world list from WORLD_LIST
+/// u32  channelId
+/// 4B, 4B, 4B
+/// u32
+/// u8
+/// u32  deletionCount   then count x (u32 characterId, 8B FILETIME)
+/// u32  orderCount      then count x u32 characterId
+/// u8   characterCount  then count x character record
+/// ..   an undecoded tail
+/// ```
+///
+/// `worldId` and `channelId` are not filler: `FUN_141b2c7c0` looks the world up in the list
+/// built from [`WORLD_LIST`], so they have to name a world we actually sent.
+pub fn login_result(world_id: u32, channel_id: u32, characters: &[Character]) -> Vec<u8> {
+    let mut out = vec![LOGIN_OK];
+    put_str(&mut out, ""); // message
+    out.push(0);
+    out.extend_from_slice(&0u64.to_le_bytes()); // FILETIME
+    out.extend_from_slice(&world_id.to_le_bytes());
+    out.extend_from_slice(&channel_id.to_le_bytes());
+    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0);
+
+    out.extend_from_slice(&0u32.to_le_bytes()); // no scheduled deletions
+
+    out.extend_from_slice(&(characters.len() as u32).to_le_bytes());
+    for chr in characters {
+        out.extend_from_slice(&chr.id.to_le_bytes());
+    }
+
+    out.push(characters.len() as u8);
+    for chr in characters {
+        out.extend_from_slice(&character_record(chr, world_id));
+    }
+
+    out.extend(std::iter::repeat_n(0u8, LOGIN_RESULT_TAIL_PAD));
+    out
+}
+
+/// The reply to the client's [`CLIENT_CHECK_NAME_REQUEST`].
+///
+/// The client echoes nothing itself - it compares the name we send back, so it has to be
+/// the name that was asked about.
+pub fn check_name_result(name: &str, code: u8) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_str(&mut out, name);
+    out.push(code);
+    out
+}
+
+/// A successful [`CREATE_CHARACTER_RESULT`]: here is the character you just made.
+pub fn create_character_result(world_id: u32, chr: &Character) -> Vec<u8> {
+    let mut out = vec![LOGIN_OK];
+    out.extend_from_slice(&world_id.to_le_bytes());
+    out.extend_from_slice(&character_record(chr, world_id));
+    out.push(1); // return to character select
+    out
+}
+
+/// A refused [`CREATE_CHARACTER_RESULT`]. Any non-zero code raises a notice and leaves the
+/// client on the creation screen.
+pub fn create_character_failed(code: u8) -> Vec<u8> {
+    vec![code]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,5 +842,168 @@ mod tests {
         // Why the in-process walk worked with 512 bytes of padding: the first byte is a
         // complete varint, so one probe body satisfied the handler for every opcode.
         assert_eq!(decode(&[0u8; 512]), 0);
+    }
+
+    /// Walks a character record the way `FUN_1403094b0` does and returns how many bytes it
+    /// consumed. The stat block's SP field forks on the job it just read, so this walker
+    /// only stays in step if the job really is where the builder puts it.
+    fn read_character_record(b: &[u8]) -> usize {
+        let mut i = 0;
+        // FUN_140302e30, the stat block
+        i += 4 + 4 + 4; // id, characterIdForLog, worldIdForLog
+        i += CHARACTER_NAME_LEN;
+        i += 1 + 1; // gender, skin
+        i += 4 + 4 + 4 + 4; // zero, face, hair, level
+        let job = u16::from_le_bytes([b[i], b[i + 1]]);
+        i += 2;
+        i += 2 * 4; // str, dex, int, luk
+        i += 4 * 4; // hp, maxHp, mp, maxMp
+        i += 2; // ap
+        if uses_extended_sp(job) {
+            let pools = b[i];
+            i += 1;
+            i += pools as usize * (1 + 4);
+        } else {
+            i += 2; // sp
+        }
+        i += 8; // exp
+        i += 4 + 4; // fame, u32
+        i += 1; // portal
+        i += 2; // subJob
+        i += 1;
+        i += 8; // FILETIME
+        i += 4 + 4;
+        // FUN_1403094b0's own fields
+        i += 4 + 8 + 4 + 8;
+        // FUN_1402ee8d0, the avatar look
+        i += 1 + 1 + 4 + 4 + 4; // gender, skin, face, hair, u32
+        i += 1; // discarded
+        i += 4; // equip slot 0
+        for _ in 0..2 {
+            while b[i] != 0xFF {
+                i += 1 + 4; // slot, itemId
+            }
+            i += 1; // the 0xFF terminator
+        }
+        i += 4 * 4;
+        i += 4; // taken modulo 360
+        i += 1;
+        i += 4;
+        i += 4 + 128 + 4 + CHARACTER_NAME_LEN;
+        i
+    }
+
+    #[test]
+    fn a_character_record_is_read_back_exactly_as_it_was_built() {
+        // Equipment exercises the two 0xFF-terminated maps, and a non-explorer job takes
+        // the other side of the SP fork - the one place in the record where a wrong job
+        // offset would shift every later field without any other symptom.
+        for (job, equips) in [
+            (0u16, vec![]),
+            (110, vec![(5u8, 1040036u32), (6, 1060026), (7, 1072038)]),
+            (2000, vec![(11, 1302000)]),
+        ] {
+            let chr = Character {
+                name: "Testy".into(),
+                job,
+                equips,
+                ..Character::default()
+            };
+            let body = character_record(&chr, 0);
+            assert_eq!(
+                read_character_record(&body),
+                body.len(),
+                "client's read sequence disagrees with the builder for job {job}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_job_fork_matches_the_masks_decoded_from_the_client() {
+        // FUN_140302e30 bit-tests three literal masks. These are the jobs they select, and
+        // the fact that they spell out the explorer tree is the evidence that +0x33 is the
+        // job at all - so a change here is a change to that claim.
+        for job in [0, 100, 110, 111, 112, 120, 121, 122, 130, 131, 132] {
+            assert!(uses_extended_sp(job), "explorer job {job} should extend SP");
+        }
+        for job in [200, 232, 300, 322, 400, 422, 430, 434, 439, 500, 522] {
+            assert!(uses_extended_sp(job), "explorer job {job} should extend SP");
+        }
+        for job in [101, 113, 123, 133, 323, 429, 440, 523, 1000, 2000, 3000] {
+            assert!(!uses_extended_sp(job), "job {job} should send a plain u16 sp");
+        }
+    }
+
+    /// Walks a login result the way `FUN_141b307b0` and its two sub-readers do, stopping
+    /// where the decode stops - the tail past the character list is padding we do not claim
+    /// to understand.
+    fn read_login_result_through_the_list(b: &[u8]) -> usize {
+        let mut i = 0;
+        i += 1; // result
+        let msg = u16::from_le_bytes([b[i], b[i + 1]]) as usize;
+        i += 2 + msg;
+        i += 1;
+        i += 8; // FILETIME
+        i += 4 + 4; // worldId, channelId
+        i += 4 + 4 + 4;
+        i += 4;
+        i += 1;
+        // FUN_14108d290
+        let deletions = u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        i += 4;
+        i += deletions as usize * (4 + 8);
+        // FUN_14108bdf0
+        let order = u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        i += 4;
+        i += order as usize * 4;
+        let count = b[i];
+        i += 1;
+        for _ in 0..count {
+            i += read_character_record(&b[i..]);
+        }
+        i
+    }
+
+    #[test]
+    fn the_login_result_lands_the_client_exactly_at_the_padding() {
+        // The list is inside this packet, so an off-by-one anywhere above it desynchronises
+        // the record decode rather than producing a short read - the failure mode that
+        // would otherwise look like "the client just does not draw the characters".
+        for count in [0usize, 1, 3] {
+            let chars: Vec<Character> = (0..count)
+                .map(|i| Character {
+                    id: 100 + i as u32,
+                    name: format!("Hero{i}"),
+                    ..Character::default()
+                })
+                .collect();
+            let body = login_result(0, 0, &chars);
+            assert_eq!(
+                read_login_result_through_the_list(&body),
+                body.len() - LOGIN_RESULT_TAIL_PAD,
+                "read sequence disagrees with the builder for {count} characters"
+            );
+        }
+    }
+
+    #[test]
+    fn the_one_character_list_we_actually_send_has_these_exact_bytes() {
+        // Same reason as the world list: this body gets typed onto a command line, so it
+        // has to be pinned somewhere that fails loudly when the builder changes.
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let chr = Character {
+            id: 1,
+            name: "Maple".into(),
+            ..Character::default()
+        };
+        let body = login_result(0, 0, std::slice::from_ref(&chr));
+        // 50 bytes of head, one 327-byte record, then the undecoded tail.
+        assert_eq!(character_record(&chr, 0).len(), 327);
+        assert_eq!(body.len(), 50 + 327 + LOGIN_RESULT_TAIL_PAD);
+        // Everything up to the order count is zero; then one order id and one character.
+        let head = format!("{}{}{}{}", "0".repeat(82), "01000000", "01000000", "01");
+        assert_eq!(hex(&body)[..head.len()], head);
+        // The name sits 12 bytes into the record, which starts at byte 50.
+        assert_eq!(&body[50 + 12..50 + 17], b"Maple");
     }
 }

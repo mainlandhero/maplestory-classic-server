@@ -236,7 +236,25 @@ CLIENT_OPCODES = {
     0x00A6: "enumeration entry",
     0x00B5: "version mismatch report",
     0x007D: "game-connection hello",
+    0x0073: "session identity (FUN_141b21ea0)",
+    0x0080: "world info request (FUN_141b21ea0)",
+    0x0081: "check character name (FUN_141b28950)",
+    0x0082: "leave world (FUN_141b3bfd0)",
+    0x008B: "select character (FUN_141b28750)",
+    0x008C: "delete character (FUN_141b2d860)",
+    0x008D: "cancel scheduled delete (FUN_141b2da30)",
+    0x00C0: "login attempt report (FUN_141b2a660)",
 }
+
+# How much of a body to spell out in full.
+#
+# This used to be 24 bytes, with anything longer cut to its first 16 - which is smaller than
+# every packet worth reading. The character creation request in particular is around sixty
+# bytes and is the one thing a run is being spent to capture, so a truncating log would have
+# thrown it away and the run would have looked like a success. Log uploads (0x8F-0x91) are
+# the only genuinely large packets and they are capped below.
+FULL_BODY_LIMIT = 256
+TRUNCATED_PREFIX = 64
 
 
 def describe(body):
@@ -244,16 +262,15 @@ def describe(body):
     if len(body) < 2:
         return ""
     rest = body[2:]
-    bits = []
+    if not rest:
+        return ""
     if len(rest) == 4:
-        bits.append(f"u32={int.from_bytes(rest, 'little')}")
-    elif len(rest) == 1:
-        bits.append(f"u8={rest[0]}")
-    elif 0 < len(rest) <= 24:
-        bits.append("body=" + rest.hex(" "))
-    elif rest:
-        bits.append(f"body={len(rest)}B {rest[:16].hex(' ')}...")
-    return "  ".join(bits)
+        return f"u32={int.from_bytes(rest, 'little')}"
+    if len(rest) == 1:
+        return f"u8={rest[0]}"
+    if len(rest) <= FULL_BODY_LIMIT:
+        return f"body={len(rest)}B " + rest.hex(" ")
+    return f"body={len(rest)}B {rest[:TRUNCATED_PREFIX].hex(' ')}... (truncated)"
 
 
 class ClientDecoder:

@@ -9,7 +9,10 @@
 //! cargo run --release -p net --bin packet-hex -- account-info maplecw "wisp****@example.com"
 //! ```
 
-use net::opcode::{account_info, world_list_end, world_list_entry, ACCOUNT_INFO, WORLD_LIST};
+use net::opcode::{
+    account_info, login_result, world_list_end, world_list_entry, Character, ACCOUNT_INFO,
+    LOGIN_RESULT, WORLD_LIST,
+};
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -17,7 +20,8 @@ fn hex(bytes: &[u8]) -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let usage = "usage: packet-hex <account-info LOGIN ACCOUNT | world-entry [NAME] | world-end>";
+    let usage = "usage: packet-hex <account-info LOGIN ACCOUNT | world-entry [NAME] | world-end \
+                 | login-result [CHARACTER_NAME...]>";
 
     let (opcode, body) = match args.first().map(String::as_str) {
         Some("account-info") => {
@@ -30,6 +34,20 @@ fn main() {
             (WORLD_LIST, world_list_entry(0, name, 1))
         }
         Some("world-end") => (WORLD_LIST, world_list_end()),
+        // No names means the empty list the client has been getting all along, which is
+        // the control this run is measured against.
+        Some("login-result") => {
+            let chars: Vec<Character> = args[1..]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| Character {
+                    id: 100 + i as u32,
+                    name: name.clone(),
+                    ..Character::default()
+                })
+                .collect();
+            (LOGIN_RESULT, login_result(0, 0, &chars))
+        }
         _ => {
             eprintln!("{usage}");
             std::process::exit(2);
