@@ -463,6 +463,8 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         opened_at = time.time()
         next_send = 0.0
         next_keepalive = None
+        keepalives_sent = 0
+        last_keepalive_at = 0.0
         if reply is not None:
             # Keep the loop responsive. With the default 5s timeout the loop blocks in
             # recv and cannot notice the client has gone quiet, so a one-shot reply fires
@@ -503,7 +505,9 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                         f"  ({quiet:.1f}s since the client last sent anything,"
                         f" {time.time() - opened_at:.1f}s into the connection)")
                     conn.sendall(frame)
-                    next_keepalive = time.time() + keepalive
+                    keepalives_sent += 1
+                    last_keepalive_at = time.time()
+                    next_keepalive = last_keepalive_at + keepalive
 
                 if (reply == "sweep" and reply_to is None and ready
                         and time.time() >= next_send):
@@ -616,7 +620,21 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
             held = time.time() - reply_at
             log(f"[{port}] connection lasted {held:.1f}s after the reply was sent")
         elif sent_at:
-            log(f"[{port}] connection ended {time.time() - sent_at:.1f}s after our last packet")
+            # "our last packet" was accurate until keepalives existed; they do not touch
+            # `sent_at`, which tracks the reply for attribution. Say which one this is,
+            # because the difference between "25s after the reply" and "25s after anything
+            # we sent" is the whole idle-timeout question.
+            log(f"[{port}] connection ended {time.time() - sent_at:.1f}s"
+                f" after the last packet of the reply sequence")
+        if keepalive:
+            if keepalives_sent:
+                log(f"[{port}] {keepalives_sent} keepalive(s) went out; the last was"
+                    f" {time.time() - last_keepalive_at:.1f}s before the close."
+                    f" If that gap is well under the lifetime, an inbound idle timeout is"
+                    f" not what ended this connection")
+            else:
+                log(f"[{port}] keepalive was on but never fired - the reply sequence had"
+                    f" not gone out yet, so this run says nothing about it")
 
         if total:
             log(f"[{port}] VERDICT: client answered {len(total)} bytes to [{name}]")

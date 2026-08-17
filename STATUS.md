@@ -30,7 +30,7 @@ That means, end to end and against a real server-side implementation:
 | Name check | **both halves decoded**, `check_name_result` built, never sent |
 | Create request | **found, and it is Themida-virtualised** - it must be measured |
 | Create result | **decoded**, `create_character_result` built, never sent |
-| Client exits ~25s after our last packet | looks like an **inbound idle timeout**; `--keepalive` added and verified, untested against the client |
+| Client exits ~25s after reaching CharSelect | **not an inbound idle timeout** - keepalives flowed and it died anyway. Next: watch `ntdll!RtlExitUserProcess` |
 | Valid session | still faked by two client patches |
 
 ### Read these first
@@ -71,18 +71,29 @@ Three other things came out of it:
    the client ends its own process. This has happened for many sessions and is now the thing
    that limits every run.
 
+### The exit is not an idle timeout - that is measured
+
+Keepalives were sent at +10s and +20s and the client still exited at +27s, so an inbound
+idle timeout is ruled out. The timer also does not restart on our traffic. What the three
+runs agree on is the interval **from reaching character select** to the exit:
+
+| run | login result sent | client exits | interval |
+|---|---|---|---|
+| 1 | 15:52:36 | 15:53:03 | 27s |
+| 2 | 16:03:44 | 16:04:09 | 25s |
+| 3 (keepalives on) | 16:13:52 | 16:14:19 | 27s |
+
+So it is either a client-side watchdog, or it is waiting for a *specific* packet after
+`0x007A` that a no-op does not satisfy. **Do not pick one by reasoning** - `-Probe` now
+watches `ntdll!RtlExitUserProcess`, which names the caller directly.
+
 ### The plan, in order
 
-1. **Test the keepalive.** If the client stops exiting, every later run gets unlimited time
-   at character select, which is worth more than any single finding - character creation is
-   several clicks and has never fitted in the window.
-2. **Find which gate stops the "new" button.** The slot gate is filled in and did not do it.
-   `-Probe watch@141b282d0` splits the two remaining explanations - handler never entered
-   (so `FUN_140c9e3f0` returned zero) versus entered and refused - in one run. **This needs
-   `-Probe` to accept more than one target**, because the slot is held by
-   `watch@141b2a280:rdx=0` and without that the login dialog blocks the Login button.
-   That is a contained change in `crates/grap-stub/src/probe.rs`; remember
-   `tools/setup-client.ps1` afterwards or the client silently keeps the old DLL.
+1. **Run the three-target watch** (below). It answers the exit *and* the button in one
+   launch.
+2. **Follow whichever answer comes back.** If the exit caller is in `.themida`, the stack
+   walk is a dead end by the rule already recorded and the next move is the wire, not the
+   binary.
 3. **Answer `0x00A8`**, reach the NewChar screen, then capture the create request - it is
    virtualised and can only be measured.
 4. **Answer `0x0081` with `0x0014`** (`check_name_result(name, NAME_AVAILABLE)`) and the

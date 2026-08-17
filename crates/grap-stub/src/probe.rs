@@ -120,13 +120,30 @@ static LAST_RET: AtomicU64 = AtomicU64::new(0);
 static TARGET: AtomicU64 = AtomicU64::new(0);
 static TARGET_BYTE: AtomicU32 = AtomicU32::new(0);
 static HIT: AtomicBool = AtomicBool::new(false);
-static WATCH: AtomicU64 = AtomicU64::new(0);
-static WATCH_BYTE: AtomicU32 = AtomicU32::new(0);
-static WATCH_HITS: AtomicU32 = AtomicU32::new(0);
+/// How many functions may be watched at once.
+///
+/// One was not enough. Two questions needed answering in the same run and could not share
+/// the slot: `watch@141b2a280:rdx=0` has to stay armed for the whole session or the login
+/// dialog blocks the button that gets us to character select, and every *other* question
+/// happens after that point. Rather than choose, watch several.
+const WATCH_SLOTS: usize = 4;
+
+#[allow(clippy::declare_interior_mutable_const)]
+const WATCH_ZERO: AtomicU64 = AtomicU64::new(0);
+#[allow(clippy::declare_interior_mutable_const)]
+const WATCH_NONE: AtomicU64 = AtomicU64::new(u64::MAX);
+#[allow(clippy::declare_interior_mutable_const)]
+const WATCH_ZERO32: AtomicU32 = AtomicU32::new(0);
+
+static WATCH: [AtomicU64; WATCH_SLOTS] = [WATCH_ZERO; WATCH_SLOTS];
+static WATCH_BYTE: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
+static WATCH_HITS: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
 /// `u64::MAX` means "do not force"; anything else is written to RDX on every watch hit.
-static FORCE_RDX: AtomicU64 = AtomicU64::new(u64::MAX);
+static FORCE_RDX: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 /// `u64::MAX` means none; anything else is an offset to read from `rcx` and log.
-static PEEK_OFF: AtomicU64 = AtomicU64::new(u64::MAX);
+static PEEK_OFF: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
+/// Set once, however many slots are armed - the handler must not be registered twice.
+static VEH_REGISTERED: AtomicBool = AtomicBool::new(false);
 /// Set between restoring the original byte and re-planting it one instruction later.
 static WATCH_REARM: AtomicU64 = AtomicU64::new(0);
 static CURRENT_OPCODE: AtomicU32 = AtomicU32::new(0);
@@ -360,59 +377,106 @@ pub unsafe fn arm_watch() {
     let Some(rest) = text.trim().strip_prefix("watch@") else {
         return;
     };
-    if WATCH.load(Ordering::SeqCst) != 0 || WATCH_ARMED.swap(true, Ordering::SeqCst) {
+    if WATCH_ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
-    // `watch@<VA>` or `watch@<VA>:rdx=<hex>`. The second form rewrites the second integer
+    for (slot, spec) in rest.split(',').filter(|s| !s.trim().is_empty()).enumerate() {
+        if slot >= WATCH_SLOTS {
+            log(&format!(
+                "probe: {text:?} names more than {WATCH_SLOTS} targets - ignoring the rest"
+            ));
+            break;
+        }
+        arm_one(slot, spec.trim(), &text);
+    }
+}
+
+/// Resolve one watch target.
+///
+/// Either a hex VA in the client's own image, or `<module>!<export>`. The symbolic form is
+/// not a convenience: `ntdll` is relocated on every boot, so there is no VA to write down
+/// for `RtlExitUserProcess`, and that is exactly the function worth watching when the
+/// client ends its own process.
+unsafe fn resolve_target(target: &str) -> Option<usize> {
+    if let Some((module, export)) = target.split_once('!') {
+        let m = GetModuleHandleA(format!("{module}\0").as_ptr().cast());
+        if m.is_null() {
+            log(&format!("probe: module {module:?} is not loaded"));
+            return None;
+        }
+        let f = GetProcAddress(m, format!("{export}\0").as_ptr().cast());
+        if f.is_null() {
+            log(&format!("probe: {module}!{export} not found"));
+            return None;
+        }
+        log(&format!("probe: {module}!{export} resolves to {:#x}", f as usize));
+        return Some(f as usize);
+    }
+    usize::from_str_radix(target.trim_start_matches("0x"), 16).ok()
+}
+
+unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
+    // `<target>` or `<target>:rdx=<hex>`. The second form rewrites the second integer
     // argument on entry — for asking "what would the client do if this value were X",
     // which is the only question left when the *caller* is virtualised and unreadable.
     // `:peek=<hex off>` logs the byte and dword at `rcx + off` — for reading the field a
     // tiny accessor exists to return, which is usually the actual question.
-    let (rest, peek) = match rest.split_once(":peek=") {
+    let (rest, peek) = match spec.split_once(":peek=") {
         Some((v, p)) => (v, Some(p)),
-        None => (rest, None),
+        None => (spec, None),
     };
-    let (va_txt, force) = match rest.split_once(":rdx=") {
+    let (target_txt, force) = match rest.split_once(":rdx=") {
         Some((v, f)) => (v, Some(f)),
         None => (rest, None),
+    };
+    let Some(va) = resolve_target(target_txt.trim()) else {
+        log(&format!(
+            "probe: watch spec {spec:?} in {text:?} is not <hex VA> or <module>!<export>"
+        ));
+        return;
     };
     if let Some(p) = peek {
         match u64::from_str_radix(p.trim().trim_start_matches("0x"), 16) {
             Ok(v) => {
-                PEEK_OFF.store(v, Ordering::SeqCst);
-                log(&format!("probe: will log [rcx+{v:#x}] on every entry"));
+                PEEK_OFF[slot].store(v, Ordering::SeqCst);
+                log(&format!("probe: will log [rcx+{v:#x}] on every entry to {va:#x}"));
             }
             Err(_) => {
-                log(&format!("probe: {text:?} has an unparseable :peek= offset"));
+                log(&format!("probe: {spec:?} has an unparseable :peek= offset"));
                 return;
             }
         }
     }
-    let Ok(va) = usize::from_str_radix(va_txt.trim().trim_start_matches("0x"), 16) else {
-        log(&format!("probe: watch marker {text:?} is not watch@<hex VA>[:rdx=<hex>]"));
-        return;
-    };
     if let Some(f) = force {
         let Ok(v) = u64::from_str_radix(f.trim().trim_start_matches("0x"), 16) else {
-            log(&format!("probe: {text:?} has an unparseable :rdx= value"));
+            log(&format!("probe: {spec:?} has an unparseable :rdx= value"));
             return;
         };
-        FORCE_RDX.store(v, Ordering::SeqCst);
+        FORCE_RDX[slot].store(v, Ordering::SeqCst);
         log(&format!("probe: will FORCE rdx={v:#x} on every entry to {va:#x}"));
     }
-    AddVectoredExceptionHandler(1, veh as *const c_void);
+    if !VEH_REGISTERED.swap(true, Ordering::SeqCst) {
+        AddVectoredExceptionHandler(1, veh as *const c_void);
+    }
     let mut old = 0u32;
     if VirtualProtect(va as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
         log(&format!("probe: could not arm watch at {va:#x}"));
         return;
     }
-    WATCH_BYTE.store(*(va as *mut u8) as u32, Ordering::SeqCst);
+    WATCH_BYTE[slot].store(*(va as *mut u8) as u32, Ordering::SeqCst);
     *(va as *mut u8) = 0xCC;
     VirtualProtect(va as *mut c_void, 1, old, &mut old);
-    WATCH.store(va as u64, Ordering::SeqCst);
+    // Read the byte back. A planted int3 that did not take reports nothing and looks
+    // exactly like a function that never runs - the silent negative this repo keeps
+    // getting caught by.
+    if *(va as *mut u8) != 0xCC {
+        log(&format!("probe: int3 at {va:#x} DID NOT TAKE - this watch is worthless"));
+        return;
+    }
+    WATCH[slot].store(va as u64, Ordering::SeqCst);
     log(&format!(
-        "probe: watching {va:#x} - will report every entry with rcx/rdx/r8/r9 \
-         (first {WATCH_MAX_HITS})"
+        "probe: watching {va:#x} (slot {slot}), int3 verified - will report every entry \
+         with rcx/rdx/r8/r9 (first {WATCH_MAX_HITS})"
     ));
 }
 
@@ -600,10 +664,14 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     // Repeating, not one-shot. A one-shot disarms on the first call, and the first call is
     // not always the interesting one - FUN_141b267c0 is also called with result 0 on
     // success, which would consume the single observation and report nothing useful.
-    let watch = WATCH.load(Ordering::SeqCst) as usize;
-    if code == EXCEPTION_BREAKPOINT && watch != 0 && at == watch {
+    let hit_slot = (0..WATCH_SLOTS).find(|&i| {
+        let va = WATCH[i].load(Ordering::SeqCst) as usize;
+        va != 0 && va == at
+    });
+    if let (EXCEPTION_BREAKPOINT, Some(slot)) = (code, hit_slot) {
+        let watch = at;
         let ctx = (*info).context.cast::<u8>();
-        let n = WATCH_HITS.fetch_add(1, Ordering::SeqCst) + 1;
+        let n = WATCH_HITS[slot].fetch_add(1, Ordering::SeqCst) + 1;
         if n <= WATCH_MAX_HITS {
             let op = CURRENT_OPCODE.load(Ordering::SeqCst);
             let rcx = *(ctx.add(CTX_RCX).cast::<u64>());
@@ -620,7 +688,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             } else {
                 String::new()
             };
-            let peek = match PEEK_OFF.load(Ordering::SeqCst) {
+            let peek = match PEEK_OFF[slot].load(Ordering::SeqCst) {
                 u64::MAX => String::new(),
                 off if crate::session::can_read(rcx as usize + off as usize, 4) => {
                     let at = rcx as usize + off as usize;
@@ -650,7 +718,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
 
         // Rewrite the argument if asked, after logging so the log records what the client
         // actually computed, not what we substituted.
-        let force = FORCE_RDX.load(Ordering::SeqCst);
+        let force = FORCE_RDX[slot].load(Ordering::SeqCst);
         if force != u64::MAX {
             *(ctx.add(CTX_RDX).cast::<u64>()) = force;
             if n <= WATCH_MAX_HITS {
@@ -661,7 +729,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         // Restore the byte and resume *at* the target so the real first instruction runs.
         let mut old = 0u32;
         if VirtualProtect(watch as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) != 0 {
-            *(watch as *mut u8) = WATCH_BYTE.load(Ordering::SeqCst) as u8;
+            *(watch as *mut u8) = WATCH_BYTE[slot].load(Ordering::SeqCst) as u8;
             VirtualProtect(watch as *mut c_void, 1, old, &mut old);
         }
         *(ctx.add(CTX_RIP).cast::<u64>()) = watch as u64;
@@ -671,8 +739,8 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         // runs every frame - and an exception plus a single-step on each call would slow
         // the client to the point where the test itself is what breaks.
         if n >= WATCH_MAX_HITS {
-            WATCH.store(0, Ordering::SeqCst);
-            log("probe: watch disarmed after the hit limit");
+            WATCH[slot].store(0, Ordering::SeqCst);
+            log(&format!("probe: watch on {watch:#x} disarmed after the hit limit"));
             return EXCEPTION_CONTINUE_EXECUTION;
         }
 

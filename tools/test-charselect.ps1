@@ -41,6 +41,12 @@ param(
     # client wants a heartbeat, and 10s is well inside that window. Set 0 to reproduce the
     # short session instead.
     [double]$Keepalive = 10,
+    # Watch targets, comma separated. The first one has to stay: without it the "trouble
+    # logging in" dialog blocks the tick that enables the Login button, and the run never
+    # reaches character select at all. The others are this run's actual questions -
+    # `ntdll!RtlExitUserProcess` names whoever ends the process, and 141b282d0 says whether
+    # the create handler is entered at all or refused before it.
+    [string]$Probe = 'watch@141b2a280:rdx=0,ntdll!RtlExitUserProcess,141b282d0',
     [int]$Port = 8484
 )
 
@@ -69,6 +75,18 @@ function Get-Packet {
     return $line.Trim()
 }
 
+# Rebuilding grap-stub does not update the client: cargo writes target/release/grap64.dll
+# and the client loads client-patched/grap64.dll. Skipping this is the most expensive kind
+# of failure here, because the run looks normal and the new hook code simply is not there.
+Push-Location $root
+try {
+    & cargo build --release -p grap-stub
+    if ($LASTEXITCODE -ne 0) { throw 'grap-stub failed to build' }
+}
+finally { Pop-Location }
+& powershell -ExecutionPolicy Bypass -File (Join-Path $here 'setup-client.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'setup-client.ps1 failed - the client would run the old hook' }
+
 $accountInfo = Get-Packet @('account-info', $LoginName, $AccountName)
 $worldEntry = Get-Packet @('world-entry', 'Scania')
 $worldEnd = Get-Packet @('world-end')
@@ -84,14 +102,16 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
 & powershell -ExecutionPolicy Bypass -File $testOne `
     -Reply ping -Opcode 0x0032 -Body 00 `
     -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
-    -Session mode=2 -Probe watch@141b2a280:rdx=0 `
+    -Session mode=2 -Probe $Probe `
     -ReplyTo 0x0080 -ReplySeq $replySeq -Keepalive $Keepalive -Port $Port
 
 Write-Host ''
 Write-Host 'On screen:'
 Write-Host '  1. is the account name back on the login screen?'
 Write-Host '  2. click Login - is there a character called "Maple"?'
-Write-Host "  3. does the client now stay up past ~25 seconds? (keepalive every ${Keepalive}s)"
-Write-Host '  4. click "Create a character" - does it go anywhere?'
+Write-Host '  3. click "Create a character" once, then let the client exit on its own'
 Write-Host ''
-Write-Host 'Then run this script with -Stop. probe.log is the record of what was sent.'
+Write-Host 'Then run this script with -Stop. The answers are in hook.log:'
+Write-Host '  - a WATCH line for RtlExitUserProcess names whoever ends the process'
+Write-Host '  - a WATCH line for 141b282d0 means the create handler ran and refused;'
+Write-Host '    no line means it was never reached, so FUN_140c9e3f0 is the gate'
