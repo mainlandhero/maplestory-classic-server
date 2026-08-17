@@ -88,21 +88,83 @@ cargo run --release -p net --bin packet-hex -- account-info maplecw "wisp****@ex
 **No `0x0010` in that sequence, deliberately.** Its success path transitions the stage, and
 the client would leave the login screen before the account name could be looked at.
 
-### Next: why the client resets, with an instrument that has been checked
+### The socket closer is named, and the hook is now trustworthy
 
-Re-run the same command. It costs nothing extra and now answers a different question,
-because two things changed:
+**`netwatch: SELF-TEST ok`** - the hook caught its own `connect` and `closesocket`. So its
+silence now means something, and the migration question can be settled by a clean run.
 
-1. **Read `netwatch: SELF-TEST` first.** `ok` means a later absence of `CONNECT` lines is a
-   real negative and the migration question can finally be closed one way or the other.
-   `FAILED` means the hook is the problem and nothing it has ever reported counts.
-2. **The hook log is timestamped**, so line it up against `probe.log`. The question is
-   whether any `CLOSESOCKET`/`SHUTDOWN` lands at the reset (`10:48:00` in the last run) or
-   whether the socket really is torn down through neither export.
+**The closer, from the one teardown with a `.text` stack:**
 
-If the self-test passes and still nothing lands at the reset, the teardown is going through
-something else - `CloseHandle` on the socket handle, or a Winsock extension obtained by
-pointer. Widen the hook then, not before.
+```
+10:58:01.199 CLOSESOCKET socket=0x6b8 called-from=0x1415e3b78
+  stack: 0x1415e3b78<-TEXT 0x1415d3657<-TEXT 0x142c46c42<-TEXT ...(vm)... 0x142c44399<-TEXT ...(vm)... 0x142c433d8<-TEXT
+```
+
+Every *other* teardown in the log comes from `0x7ffe…`, a different module on a steady
+cadence - telemetry sockets, not ours. This one is ours, and the chain resolves:
+
+| Frame | Function |
+|---|---|
+| `0x142c433d8` | `FUN_142c42f30 +0x4a3` - the second of its two teardown call sites |
+| `0x142c44399` | `FUN_142c44350` - the **session object's destructor** |
+| `0x142c46c42` | `FUN_142c46b80` - the destructor's body, its *only* caller being the above |
+| `0x1415d3657` | `FUN_1415d35f0` - connection teardown: resets `+0xc`/`+0x10`, closes the socket |
+| `0x1415e3b78` | `FUN_1415e3b60` - the `closesocket` wrapper |
+
+**These are live frames, not stack litter.** Two independent checks: `FUN_142c46b80` has
+exactly one caller (`142c44394`, and the stack holds `142c44399` = its return address), and
+`FUN_142c42f30`'s two calls to the destructor are at `142c43195` and `142c433d3` - the
+stack holds `142c433d8`, the return address of the **second**.
+
+**So the socket close is a consequence, not a decision.** `local_4f8` is the session object
+(it is what `FUN_142c4a810`, the mode getter, is called on), and the second call site is the
+one *after* `FUN_142c45e50` - the main call - returns. Nothing here is reacting to our
+server; the client is tearing its session down and the socket goes with it.
+
+**Do not over-read this yet.** In *this* run the dialog was not suppressed (see the
+regression below), and the dialog path has always ended in the client closing - so this
+close may be the dialog's, not the one seen in the milestone run. The chain is solid; which
+close it explains is not. That needs a run where the dialog is suppressed again.
+
+### REGRESSION, mine: the self-test brought the dialog back
+
+The dialog reappeared because of the diagnostic, not the client. `netwatch::install()` ran
+the self-test **inline**, and its blocking `connect` sat in SYN retries for **two seconds**
+- this client's outbound traffic is firewalled - all before `hook::install()` armed the
+dispatcher:
+
+```
+10:57:48.729  netwatch: CONNECT -> 127.0.0.1:9        <- self-test starts
+10:57:50.757  netwatch: SELF-TEST ok
+10:57:50.757  install: hook active                    <- two seconds late
+```
+
+The client's `0x0032` was therefore dispatched **unhooked** - the first dispatch the hook
+saw was `0x0000` (`flag=1->1`, already set) - and since `watch` can only arm once the hook
+has seen a dispatch, the `FUN_141b2a280` watch armed at `10:57:59`, long after the client
+raised the dialog at startup.
+
+Fixed twice over: the socket is now **non-blocking** (so the call returns immediately and
+the breakpoint has still been hit, which is all the test needs), and the self-test runs on
+its **own thread** so it cannot delay arming whatever it costs. **A diagnostic that changes
+what it is diagnosing is worse than no diagnostic.**
+
+### Next: re-run, with the dialog suppressed again
+
+Re-run the same command unchanged. With the self-test off the critical path the dialog
+should be suppressed again, which makes this a like-for-like repeat of the run that reached
+character select - but now with a hook that has proved itself and a timestamped log.
+
+The questions it answers:
+
+1. **Is the close the same one?** If `CLOSESOCKET` with the `FUN_142c44350` stack lands at
+   the moment the connection drops *while the dialog is suppressed*, the destructor chain
+   explains the real close and not just the dialog's.
+2. **Does the client migrate?** `SELF-TEST ok` plus no `CONNECT` line is now a real
+   negative. That finally closes the question the retracted section got wrong.
+
+Check `install: hook active` arrives before the first `0x0032` dispatch. If it does not,
+the timing is still off and nothing else in the run is comparable.
 
 ### After that
 

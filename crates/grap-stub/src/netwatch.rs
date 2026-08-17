@@ -170,7 +170,12 @@ pub unsafe fn install() {
         log("netwatch: nothing armed");
         return;
     }
-    self_test();
+    // On a thread, and never inline. The first version ran the self-test here and cost
+    // **two seconds** before `hook::install()` got as far as arming the dispatcher - long
+    // enough that the client's gate packet was dispatched unhooked, which in turn meant the
+    // `watch` probe armed late and the suppressed dialog came back. A diagnostic that
+    // changes the thing it is diagnosing is worse than no diagnostic.
+    std::thread::spawn(|| unsafe { self_test() });
 }
 
 /// Prove the hook fires, by calling the thing it watches.
@@ -183,17 +188,24 @@ pub unsafe fn install() {
 /// anything, and the migration question it was used to close is still open.
 ///
 /// So make a call we control. A `connect` to a discard address on the loopback interface
-/// needs no server and no network: it either fails immediately or is refused, and either
-/// way the export was entered. If `SELF-TEST ok` appears in the log, later silence is a
-/// real negative; if it does not, the hook is broken and nothing it reports means anything.
+/// needs no server and no network: what matters is only that the export was *entered*. If
+/// `SELF-TEST ok` appears in the log, later silence is a real negative; if it does not, the
+/// hook is broken and nothing it reports means anything.
+///
+/// The socket is put in **non-blocking** mode first. Blocking cost two seconds here,
+/// because this client runs behind a firewall rule that drops its outbound traffic, so the
+/// connect sat in SYN retries. Non-blocking returns `WSAEWOULDBLOCK` immediately and the
+/// breakpoint has already been hit by then, which is the whole point.
 unsafe fn self_test() {
     const AF_INET: i32 = 2;
     const SOCK_STREAM: i32 = 1;
+    const FIONBIO: i32 = -0x7FFB_9982; // 0x8004667E
     const INVALID_SOCKET: usize = usize::MAX;
     extern "system" {
         fn socket(af: i32, ty: i32, proto: i32) -> usize;
         fn connect(s: usize, name: *const u8, namelen: i32) -> i32;
         fn closesocket(s: usize) -> i32;
+        fn ioctlsocket(s: usize, cmd: i32, argp: *mut u32) -> i32;
     }
 
     let before = HITS.load(Ordering::SeqCst);
@@ -202,6 +214,8 @@ unsafe fn self_test() {
         log("netwatch: SELF-TEST inconclusive - could not create a socket");
         return;
     }
+    let mut nonblocking = 1u32;
+    ioctlsocket(s, FIONBIO, &mut nonblocking);
     // sockaddr_in { family=AF_INET, port=9 (discard), addr=127.0.0.1 }, network order.
     let mut sa = [0u8; 16];
     sa[0..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
@@ -210,17 +224,19 @@ unsafe fn self_test() {
     connect(s, sa.as_ptr(), sa.len() as i32);
     closesocket(s);
 
+    // At least our own `connect` and `closesocket`. The client is running concurrently, so
+    // this can over-count - which only ever makes the check pass, and it is a sanity check
+    // on the instrument, not a measurement.
     let hits = HITS.load(Ordering::SeqCst) - before;
-    // One `connect` plus one `closesocket`; anything less means an export is not armed.
     if hits >= 2 {
         log(&format!(
-            "netwatch: SELF-TEST ok - {hits} of our own calls were caught, \
+            "netwatch: SELF-TEST ok - {hits} calls were caught while making 2 of our own, \
              so a later absence of lines is a real negative"
         ));
     } else {
         log(&format!(
-            "netwatch: SELF-TEST FAILED - only {hits} of our own calls were caught. \
-             DO NOT read anything into what this hook does or does not report."
+            "netwatch: SELF-TEST FAILED - only {hits} calls caught while making 2 of our \
+             own. DO NOT read anything into what this hook does or does not report."
         ));
     }
 }

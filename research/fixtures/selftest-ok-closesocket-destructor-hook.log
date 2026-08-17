@@ -1,0 +1,45 @@
+10:57:43.727 install_once: our code IS running. env=false marker=true -> installing
+10:57:48.728 install: base=0x140000000 target=0x1415d60e0
+10:57:48.728 netwatch: watching ws2_32!connect at 0x7fff127d1a50
+10:57:48.729 netwatch: watching ws2_32!WSAConnect at 0x7fff127f0130
+10:57:48.729 10:57:48.729session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2" 
+netwatch: watching ws2_32!closesocket at 0x7fff127c5000
+10:57:48.729 netwatch: watching ws2_32!shutdown at 0x7fff127d1cc0
+10:57:48.729 ***** CONNECT -> 127.0.0.1:9 #1 called-from=0x7ffefb05af49 *****
+10:57:48.920 ***** CLOSESOCKET socket=0x1ac4 #2 called-from=0x7fff127c4f8a *****
+10:57:48.921 ***** CLOSESOCKET socket=0x12c4 #3 called-from=0x7ffeceee5e61 *****
+10:57:48.921 ***** SHUTDOWN socket=0x12c4 how=2 (both) #4 called-from=0x7ffeceee5fb4 *****
+10:57:48.921 ***** CLOSESOCKET socket=0x12c4 #5 called-from=0x7ffeceee5e61 *****
+10:57:48.929 session: object at 0x600ff38 is now readable
+10:57:48.929 ***** SESSION obj=0x600ff38 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+10:57:48.967 ***** CLOSESOCKET socket=0x122c #6 called-from=0x7fff127c4f8a *****
+10:57:50.757 ***** CLOSESOCKET socket=0x13c8 #7 called-from=0x7ffefb05af51 *****
+          stack: 
+      stack: 0x1415d60e0<-TEXT
+10:57:50.757 netwatch: SELF-TEST ok - 7 of our own calls were caught, so a later absence of lines is a real negative
+10:57:50.757 install: hook active
+10:57:51.737 ***** SESSION obj=0x600ff38 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+10:57:52.324 ***** CLOSESOCKET socket=0x17c8 #8 called-from=0x7fff127c4f8a *****
+10:57:52.325 ***** CLOSESOCKET socket=0x1b88 #9 called-from=0x7ffeceee5e61 *****
+10:57:52.325 ***** SHUTDOWN socket=0x1b88 how=2 (both) #10 called-from=0x7ffeceee5fb4 *****
+10:57:52.325 ***** CLOSESOCKET socket=0x1b88 #11 called-from=0x7ffeceee5e61 *****
+10:57:54.751 ***** SESSION obj=0x600ff38 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+10:57:57.758 ***** SESSION obj=0x600ff38 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+10:57:59.125 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+10:57:59.125 probe: watching 0x141b2a280 - will report every entry with rcx/rdx/r8/r9 (first 32)
+10:57:59.126     0 opcode=0x0000 elapsed_us=400.7 ret=1 flag=1->1 state=2->2
+10:57:59.126 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+10:57:59.126     1 opcode=0x000B elapsed_us=212.2 ret=1 flag=1->1 state=2->2
+10:57:59.144 ***** CLOSESOCKET socket=0x1004 #12 called-from=0x7fff127c4f8a *****
+10:57:59.144 ***** CLOSESOCKET socket=0x1004 #13 called-from=0x7ffeceee5e61 *****
+10:57:59.145 ***** SHUTDOWN socket=0x1004 how=2 (both) #14 called-from=0x7ffeceee5fb4 *****
+10:57:59.145 ***** CLOSESOCKET socket=0x1004 #15 called-from=0x7ffeceee5e61 *****
+10:58:00.764 ***** SESSION obj=0x600ff38 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+10:58:01.199 ***** CLOSESOCKET socket=0x6b8 #16 called-from=0x1415e3b78 *****
+          stack: 
+      stack: 0x1415e3b78<-TEXT 0x1415d3657<-TEXT 0x142c46c42<-TEXT 0x143dea15c(vm) 0x143dea100(vm) 0x143dea15c(vm) 0x143d87000(vm) 0x142c44399<-TEXT 0x143dea15c(vm) 0x142c433d8<-TEXT 0x143dea15c(vm) 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) 0x14346d606(?)
+10:58:01.762 ***** CLOSESOCKET socket=0x1894 #17 called-from=0x7fff127c4f8a *****
+10:58:01.763 ***** CLOSESOCKET socket=0xfa8 #18 called-from=0x7ffeceee5e61 *****
+10:58:01.763 ***** SHUTDOWN socket=0xfa8 how=2 (both) #19 called-from=0x7ffeceee5fb4 *****
+10:58:01.763 ***** CLOSESOCKET socket=0xfa8 #20 called-from=0x7ffeceee5e61 *****
+10:58:01.766 session: object at 0x0 is now UNREADABLE - values below are stale
