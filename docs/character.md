@@ -417,13 +417,33 @@ from that table is evidence of virtualisation, not of non-existence.**
 have thrown away exactly this packet while the run still looked successful. It now spells
 out bodies up to 256 bytes.
 
+## The whole transaction, measured
+
+```text
+0x0080  world info request  ->  0x0000 account, 0x000B world, 0x000B end, 0x0010 login result
+0x00A8  open creation       ->  0x05F4  00 00
+0x0081  check name          ->  0x0014  <the same name> 00
+0x008A  create, 101 bytes   ->  0x0015  00 + u32 worldId + one record + 00
+```
+
+`0x00A8` and `0x0081` arrive on **every** click, so they need standing answers rather than
+one-shots - `handshake_probe.py --answer`. The `0x0014` body must quote the name back,
+which is what `<req>` is for.
+
 ## What is *not* established
 
-* **The create request.** Opcode and body, both. See above - it must come off the wire.
-* **The reply to `0x00A8`.** The client sends it to open character creation and waits.
-  Nothing is known about what it expects back, and until the button is seen to work at all
-  the reading of `0x00A8` is itself static.
+* **What the real service sends to enable character creation.** The flag `FUN_140c9e3f0`
+  reads is set to zero by the handshake and to one by `FUN_140c9e230`, which has no caller
+  in `.text` - so the enable comes from virtualised code driven by a packet we do not send.
+  We currently call the setter ourselves from `grap-stub` (`-Session create=on`), which is a
+  **client patch, not the protocol**.
 * **The `0x0010` tail past `slotCount`.** Still padded with zeros.
+* **Whether the Check button can give its own dialogue.** Probably not: `FUN_141122420`
+  calls `FUN_141b28950` with identical arguments from both the Check and OK branches, so the
+  two send byte-identical `0x0081` packets and the server cannot tell them apart.
+  `FUN_141b33f30` has one `case 0`, and it always raises the `availableName` yes/no modal.
+  Different wording needs a different result code, and there is no code for an OK-only
+  "available" box.
 * **Why the client exits after 15-20 seconds at character select** - but there is now a
   measurement and a hypothesis with a test. Two runs ended **26.8s and 24.7s after the last
   packet we sent**, not at a fixed point in the session, with the socket `Established` and

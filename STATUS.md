@@ -1,7 +1,106 @@
-# Where things stand — 2026-08-19 (record built; the create request must be measured)
+# Where things stand — 2026-08-19 (creation works end to end; the 25s exit is the blocker)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
+
+## START HERE
+
+Character creation **works on the wire, end to end**: the client creates a character and
+returns to character select with it. Every packet in the transaction has been identified
+and every one of them has been measured, not guessed.
+
+Two things remain, and **the owner set the priority on 2026-08-19: the exit comes first.**
+
+1. **The client exits ~25 seconds after reaching character select.** It caps every run to
+   about that long, which is barely enough for the click sequence creation needs, and it
+   will block everything after this. See "THE PRIORITY" below.
+2. **Character creation is not yet done by the server** - the harness answers with canned
+   bodies from `packet-hex`. Nothing persists, and the reply cannot read the name out of
+   the request. See "What is left of character creation".
+
+To get moving in one command:
+
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1"
+```
+
+That builds `grap-stub`, installs it into `client-patched/`, starts the probe with every
+answer wired up, and launches the client. Then, on screen: Login -> Create a character ->
+spend all 25 points -> name it `Hello` -> Check -> OK -> confirm. Stop with `-Stop`.
+
+Where the answers land:
+
+| file | what is in it |
+|---|---|
+| `probe.log` | every packet in both directions, with bodies |
+| `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults - **not** `hook.log`, and not the repo root |
+| `client-exit.log` | the client's process exit code, written by a watcher |
+
+## THE PRIORITY - why the client exits after 25 seconds
+
+Unsolved, and it is the blocker. What is **ruled out**, each by a verified instrument
+rather than by silence:
+
+| ruled out | how |
+|---|---|
+| An inbound idle timeout | keepalives at +10s and +20s; it still died at +27s |
+| `ntdll!RtlExitUserProcess` | `int3` planted and read back; never entered |
+| `ntdll!NtTerminateProcess` | same; never entered |
+| Any fault a vectored handler sees | the probe logs client faults; none |
+| A crash or `__fastfail` | the Windows Application log has no error for any of these exits, **and that log works** - it holds a real `MapleStory.exe` `0xc0000005` from 2026-08-14 |
+
+The interval is measured from **reaching character select**, not from connection start, and
+our traffic does not restart it:
+
+| run | login result sent | client exits | interval |
+|---|---|---|---|
+| 1 | 15:52:36 | 15:53:03 | 27s |
+| 2 | 16:03:44 | 16:04:09 | 25s |
+| 3 (keepalives on) | 16:13:52 | 16:14:19 | 27s |
+
+**Two explanations survive:**
+
+1. **Another process kills it.** Its `NtTerminateProcess` runs in *that* process, where our
+   hook is not, which is exactly why an in-process breakpoint sees nothing.
+2. **The last thread ends**, and the kernel reaps the process without any of the functions
+   above being called.
+
+**Next step, and it needs no new technique:** read `client-exit.log` after any run.
+`test-one.ps1` now starts a watcher that records the exit code. `0xC0000409` is
+`__fastfail`, `0xC0000005` a fault, `0` or `1` a deliberate stop, and a failure to read it
+at all is itself a signal. If it points at (2), watch `ntdll!NtTerminateThread` and
+`ntdll!RtlExitUserThread`. If it points outward, the question becomes *which* process -
+`NexonAnalytics64.dll` is loaded in-process and has a service side, and the owner's standing
+hypothesis is that an anticheat that cannot reach its server kills the client.
+
+**Do not** re-test the keepalive or re-watch `RtlExitUserProcess`. Both are settled.
+
+## What is left of character creation
+
+The protocol is finished. What is missing is the *server*.
+
+| | |
+|---|---|
+| Every opcode in the transaction | **measured** - see the table below |
+| The reply bodies | built in `crates/net/src/opcode.rs`, all tested |
+| Who sends them | `tools/handshake_probe.py`, from canned hex - **this is the gap** |
+| Persistence | none. `crates/store` has accounts and sessions; characters are not stored |
+| The name in the reply | fixed. The harness cannot read it out of the request |
+| The look in the reply | `CreateCharacterRequest::parse` reads it, but only `packet-hex create-result-from <hex>` uses it |
+
+**The next real step is a server binary**, not more harness features. Everything it needs
+exists: the cipher and framing in `crates/net` (`codec.rs`, `session.rs`), every reply
+builder in `opcode.rs`, `CreateCharacterRequest::parse` for the one request that carries
+data, and SQLite in `crates/store`. The Python probe should stay as the packet-level
+instrument; it is not where server logic belongs.
+
+Two client patches are still holding the flow open, and results must be reported as such:
+
+* `-Session mode=2` - leaves launch mode 5 so the Login button gets a turn;
+* `-Session create=on` - calls `FUN_140c9e230` to set the flag that gates "Create a
+  character". **The real service sets this from virtualised code**, driven by something we
+  do not send. Finding that packet is real remaining protocol work;
+* `-Probe watch@141b2a280:rdx=0` - suppresses the "trouble logging in" dialog.
 
 ## THE GOAL (set 2026-08-18)
 
@@ -24,113 +123,96 @@ That means, end to end and against a real server-side implementation:
 | Masked email on the login screen | **done**, `0x0000` - no client patch needed |
 | Transition to character select | done |
 | Connection stays up | **not a problem** - the "reset" was our own log format, see the retraction below |
-| Character record | **CONFIRMED ON THE WIRE** - the client decoded it and drew the character |
-| Character list | **CONFIRMED ON THE WIRE**, `login_result` |
-| "Create a character" button | **still dead.** The `0x0010` slot gate is filled in and did not fix it; one unexamined gate remains, `FUN_140c9e3f0` |
-| Name check | **both halves decoded**, `check_name_result` built, never sent |
-| Create request | **found, and it is Themida-virtualised** - it must be measured |
-| Create result | **decoded**, `create_character_result` built, never sent |
-| Client exits ~25s after reaching CharSelect | **not an inbound idle timeout** - keepalives flowed and it died anyway. Next: watch `ntdll!RtlExitUserProcess` |
-| Valid session | still faked by two client patches |
+| Character record, 327 bytes | **MEASURED** - drawn on screen with the exact stats sent |
+| Character list | **MEASURED**, `login_result` |
+| "Create a character" button | **works**, but only with the `create=on` client patch |
+| Name check `0x0081`/`0x0014` | **MEASURED** both ways |
+| Create request `0x008A` | **MEASURED** - virtualised builder, so a capture was the only way |
+| Create result `0x0015` | **MEASURED** - the client returns to CharSelect with the new character |
+| Client exits ~25s after reaching CharSelect | **THE BLOCKER** - see "THE PRIORITY" |
+| Server-side creation | not started - the harness answers with canned bodies |
+| Valid session | still faked by client patches |
+
+### The whole transaction, as measured
+
+| # | client sends | we answer | builder |
+|---|---|---|---|
+| 1 | `0x0080` world info request | `0x0000` account, `0x000B` world, `0x000B` end, `0x0010` login result | `account_info`, `world_list_entry`, `world_list_end`, `login_result` |
+| 2 | `0x00A8` open creation (placeholder PIC, `01 00 2e`) | `0x05F4` `00 00` | `enter_creation_permitted` |
+| 3 | `0x0081` check name | `0x0014` name + result | `check_name_result`, or `--answer 0081=0014:<req>00` |
+| 4 | `0x008A` create, 101 bytes | `0x0015` result + record | `create_character_result` |
+
+`0x00A8` and `0x0081` arrive on **every** click, so they need standing answers
+(`--answer`), not one-shots.
 
 ### Read these first
 
-* **`docs/character.md`** - the whole character transaction: the list, the complete record
-  layout, the three inbound opcodes, the NewChar screen, why the create request cannot be
-  read statically, and precisely what is *not* established.
-* `docs/opcodes.md` - the opcode tables, now including the character set.
-* `docs/session.md` - the login exchange and the "trouble logging in" story.
+* **`docs/character.md`** - the whole transaction, the complete record layout, the NewChar
+  screen, the create-request body, and what is still not established.
+* `docs/opcodes.md`, `docs/session.md`, `docs/handshake.md`, `docs/transport.md`.
+* `crates/net/src/opcode.rs` - every builder, every constant, each documented with how it
+  was established. The tests there are the specification.
 * `research/msexe-charstats.c`, `msexe-charrecord.c`, `msexe-avatarlook.c`,
-  `msexe-newchar-ui.c`, `msexe-char-create.c` - the decompilation this rests on.
-* `C:\Users\user\Desktop\ModernMapleSource` - a modern-version server source the owner supplied.
-  A naming and structure reference, **not** this protocol. See `docs/character.md`.
+  `msexe-newchar-ui.c`, `msexe-char-create.c`, `msexe-createflag.c`,
+  `msexe-createbutton-gates.c` - the decompilation this rests on.
+* `research/fixtures/` - the logs behind each claim, named for what they show.
 
-### The one thing that cannot be read
+### The tools, and what each is for
 
-**The create request is virtualised.** `FUN_141122420` (the NewChar OK button) calls
-`FUN_141b3fb10`, which tail-jumps to `FUN_141b2cf30`, which sets up a packet frame and then
-`JMP`s into `.themida`. Each has exactly one caller, so that is the only path. Its opcode
-and body have to come off the wire - and they will, because **the OK button sends `0x0081`
-and the create request back to back in one click**, without waiting for a reply.
+| tool | use |
+|---|---|
+| `tools/test-charselect.ps1` | the whole run in one command; builds, installs, answers, launches |
+| `tools/test-one.ps1` | the general harness underneath it |
+| `packet-hex` | prints a reply body from the Rust builders, so hex is never typed by hand |
+| `tools/handshake_probe.py` | the server side. `--reply-seq` one-shot, `--answer` standing, `<req>` splices the request's payload, `--keepalive` |
+| `tools/transport.py` | the cipher, the framing, and the client-stream decoder |
+| `-Probe watch@A,B,C` | up to four `int3` watches; `<module>!<export>` for relocated modules; `:rdx=` forces an argument, `:peek=` logs `[rcx+off]` |
+| `-Session mode=2,create=on` | the client patches, comma separated |
+| `tools/ghidra_scripts/DecompileFunc.java` | decompile by address, creating the function if Ghidra has none |
+| `tools/ghidra_scripts/Xrefs.java` | callers, and data references |
+| `tools/ghidra_scripts/DumpAsm.java` | raw listing for a VA range - **use when the decompiler says "bad instruction data"** |
+| `tools/ghidra_scripts/DumpData.java` | bytes as ASCII and UTF-16 - turns `&DAT_1433881d0` into `"new"` |
+| Windows Application event log | records real client crashes; verified working |
 
-### What the 2026-08-19 run settled
+### The Swordie comparison - how to use it
 
-The one-character `0x0010` was sent and **worked**: the client decoded a 327-byte record and
-character select drew "Maple". Everything from the head of `0x0010` through the end of the
-record is now measured rather than static.
+`C:\Users\user\Desktop\ModernMapleSource` holds a Swordie-family server (`v214 src`) for a
+modern MapleStory. This client is **MapleStory Classic World**: a modern engine running
+classic content, so the source matches its *structures* but not its *numbers*.
 
-Three other things came out of it:
+**What it earned:** `CharacterStat.encode` agreed with `FUN_140302e30` field for field
+across the record head, which turned offsets into named stats; `selectWorldResult`'s
+three-list shape matched `FUN_14108d290` + `FUN_14108bdf0`; `checkDuplicatedIDResult` and
+`createNewCharacterResult` matched `0x0014` and `0x0015` body for body; and
+`src/main/resources/ins.txt` names the inbound opcodes, ours being its names shifted by ten
+in the character range.
 
-1. **The account name went blank** - `test-charselect.ps1` did not send `0x0000`. The client
-   cannot compute that field; leaving the packet out is enough to clear it. Fixed.
-2. **"Create a character" still did nothing**, and the cause is now known. `FUN_141b282d0`
-   gates it on three `0x0010` tail fields that were inside the zero padding - see
-   `docs/character.md`. Fixed: `stage+0xdc = 1`, `stage+0xe0 = 1`, `slotCount = 3`.
-3. **The client exits 15-20 seconds after reaching character select.** `probe.log` shows the
-   connection Established and idle for 26s after the client's last packet, then a reset - so
-   the client ends its own process. This has happened for many sessions and is now the thing
-   that limits every run.
-
-### The exit is not an idle timeout - that is measured
-
-Keepalives were sent at +10s and +20s and the client still exited at +27s, so an inbound
-idle timeout is ruled out. The timer also does not restart on our traffic. What the three
-runs agree on is the interval **from reaching character select** to the exit:
-
-| run | login result sent | client exits | interval |
-|---|---|---|---|
-| 1 | 15:52:36 | 15:53:03 | 27s |
-| 2 | 16:03:44 | 16:04:09 | 25s |
-| 3 (keepalives on) | 16:13:52 | 16:14:19 | 27s |
-
-So it is either a client-side watchdog, or it is waiting for a *specific* packet after
-`0x007A` that a no-op does not satisfy. **Do not pick one by reasoning** - `-Probe` now
-watches `ntdll!RtlExitUserProcess`, which names the caller directly.
-
-### The plan, in order
-
-1. **Run the three-target watch** (below). It answers the exit *and* the button in one
-   launch.
-2. **Follow whichever answer comes back.** If the exit caller is in `.themida`, the stack
-   walk is a dead end by the rule already recorded and the next move is the wire, not the
-   binary.
-3. **Answer `0x00A8`**, reach the NewChar screen, then capture the create request - it is
-   virtualised and can only be measured.
-4. **Answer `0x0081` with `0x0014`** (`check_name_result(name, NAME_AVAILABLE)`) and the
-   create request with `0x0015` (`create_character_result`), then watch the client return to
-   CharSelect with the new character.
-5. **Then make it real**: persist characters in `crates/store` so the transaction survives a
-   restart, which is what "the server processes it" means.
-
-### The next run
-
-```bash
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1"
-```
-
-Sends the account record, a world, the terminator, and a login result carrying one character
-and the create gate. All four bodies come from `packet-hex`, so none of them can drift from
-the builders.
-
-**What to read:** the account name on the login screen, the character at character select,
-and then whether "Create a character" moves. `probe.log` will show `0x00A8` if the gate
-opened. Expect roughly 20 seconds at character select before the client exits.
+**How to use its numbers - this is the nuance, and it cost a pass in both directions.**
+The offset is *not* constant across the whole range, so a number cannot be trusted. But
+`0x008A` for the create request was predicted exactly by its `CREATE_NEW_CHARACTER(141)` at
+an offset of -3, and that prediction was **discarded** because the opcode was absent from
+`research/msexe-send-opcodes.txt` - a scan of `FUN_1406ed520` call sites, and therefore
+blind to a builder inside the VM. So: treat its numbers as **hypotheses worth testing**,
+never as facts, and remember that **absence from the send-opcode table is evidence of
+virtualisation, not of non-existence**.
 
 ### Standing warnings
 
-* **`-Session mode=2` and `-Probe watch@141b2a280:rdx=0` are client patches.** They make the
-  normal flow reachable; they do not make the session valid. Say so when reporting.
-* **Watch mode now arms from `install()`**, so it no longer races the harness's gate packet.
-  If the login dialog ever reappears, check `install: hook active` precedes the first
-  dispatch before concluding anything about the client.
-* **Every character finding above is static and unmeasured.** Four static chains in this
-  project looked equally convincing and were wrong. The record has one thing they did not -
-  an independent second decoder that agrees - but that is still not the wire.
+* **`-Session mode=2,create=on` and `-Probe watch@141b2a280:rdx=0` are client patches.**
+  They make the normal flow reachable; they do not make the session valid. Say so when
+  reporting.
+* **Rebuilding `grap-stub` does not update the client** unless `setup-client.ps1` runs.
+  `test-charselect.ps1` does this itself; anything else must.
+* **`powershell -File` flattens array arguments** into separate words, so a `[string[]]`
+  parameter silently takes only its first element and the rest bind positionally. Pass
+  delimited strings.
+* **Check the console line `standing answers (N)`** before reading anything into a run. A
+  missing answer leaves the client on "Connecting..." and looks like a client problem.
 
 ## Working right now
 
 ```bash
-cargo test --release          # 60 tests green
+cargo test --release          # 68 tests green
 cargo build --release
 ```
 
@@ -425,26 +507,17 @@ endpoint was ever observed. That is weak evidence for one connection, not proof.
   inferred from timing alone and the timing has a second explanation - see "CORRECTION"
   above. What is settled is only that no reconnect follows it.
 
-### The real gap: the client has no character list
+### CLOSED - "the client has no character list"
 
-Also from that run: **the Login click, the transition to character select, and every
-"Create a character" click sent nothing at all.** Not one packet, while the socket was still
-open. So those controls are not blocked by a dead connection - the client has nothing to
-send because it was never told what characters exist.
+This section used to say the missing character-list packet was the next thing to find. It
+was found and it is done. The list is inside `0x0010` (`FUN_14108d290` then
+`FUN_14108bdf0`), it has been sent, and the client draws it. `FUN_141b28570`, nominated
+here on the strength of where it is called from and never actually read, turned out to be a
+290-byte state check with nothing to do with character lists.
 
-That is the next thing to find: the character-list packet. The client reached character
-select without one, which is why the screen is inert.
-
-**Both of those are now answered - see `docs/character.md`.** The list is inside `0x0010`
-(`FUN_14108bdf0`: `u8 count`, then records), and `FUN_141b28570` turned out **not** to
-consume a character list at all; it is a 290-byte state check that was nominated here on
-the strength of where it is called from, and never read.
-
-### After that: build the server side
-
-Client-side patching has taken this as far as it goes - the flow is reachable and the
-blocker is now that **nothing is answering**. Character select and character creation need
-real handlers, which is the `login server to character select` milestone in `ROADMAP.md`.
+The inert screen had a second cause that outlived the list: `FUN_141b282d0` gates the
+"Create a character" button on three `0x0010` tail fields **and** on an obfuscated flag the
+handshake sets to zero. See `docs/character.md`.
 
 ### SOLVED - `FUN_141b2a280` raises the prompt
 
@@ -591,33 +664,23 @@ classic handler `FUN_141b2fac0` instead of `FUN_141b31ff0`, which is safe: their
 sequences were compared field by field and are identical. **Be honest about what this is** -
 it makes the client follow the normal flow, it does not make the session valid.
 
-### Next step - the world list
+### DONE - the world list
 
 The login result makes the client search for its world in the list at `stage+0x100`
-(`FUN_141b2c7c0`). Only inbound **`0x000B`** appends to it, and we have never sent one, so
-the client arrives at character select with no world. That is the gap, not the empty
-character list - an account with no characters legitimately routes to "create a character"
-(the owner, who knows the live game).
-
-Format decoded from `FUN_141b31ff0` (the mode-5 handler) and built by
+(`FUN_141b2c7c0`), and only inbound **`0x000B`** appends to it. Format decoded from
+`FUN_141b31ff0` (the mode-5 handler) and built by
 `crates::net::opcode::{world_list_entry, world_list_end}`, with a test that re-reads the
 bytes the way the client does.
 
-The run needs **three packets** in answer to `0x0080`: a world entry, the terminator, then
-the login result. `-ReplySeq` now does that (`OPCODE:HEXBODY[/PAD],...`), sent back to back
-on the same socket. The world-list bytes below are pinned by
-`the_one_world_list_we_actually_send_has_these_exact_bytes`, so the command cannot drift
-from the decoded format.
+Sent on every run since, and it works. **Use `tools/test-charselect.ps1`** rather than the
+hand-written `-ReplySeq` that used to be here: it generates every body from `packet-hex`,
+so the command cannot drift from the builders. That drift is not hypothetical - the
+world-list hex on a command line was once two characters too long, and the only reason it
+was caught is that a test happened to compare against the builder.
 
-```
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
-  -Opcode 0x0010 -PingFirst 0x0032 -PingBody 00 -ReplyTo 0x0080 -QuietBefore 4 -HookLog on
-  -ReplySeq "000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000,000b:ff0000,0010:000000/256"
-```
-
-Read the result off the **wire**, not the screen: does the connection outlive the reply,
-and does the client send anything it has not sent before? The bitmap on the login screen is
-not evidence either way.
+**Send the world entry only, never the terminator plus the mode patch.** With the mode
+patched, a second `0x000B` reaches the classic `FUN_141b2fac0`, whose terminator branch
+transitions to WorldSelect - a screen this service does not use. That cost a run.
 
 ### The session identity - see `docs/session.md`
 
