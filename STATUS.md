@@ -338,7 +338,64 @@ dead.** A FIN reached us that the client's own code did not send. That is now es
 on instruments that have each been verified: the ws2_32 watch self-tests, the code watch
 has a canary, and the int3s are read back after planting.
 
-### Two hypotheses from the owner, and the run that tests both
+### The recurring caller is NexonAnalytics64.dll - and it is not the culprit
+
+Named at last, after four runs of being written off as "telemetry":
+
+```
+CLOSESOCKET socket=0x10e8  called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll
+SHUTDOWN    socket=0x10e8  called-from=0x7ffecdcd5fb4 in NexonAnalytics64.dll
+```
+
+It creates and tears down **its own** sockets every few seconds - failing to reach its
+server, because the firewall rule denies it - and it never touches the game socket. So the
+churn is explained and it is a red herring. `grap64.dll` in the log is our own stub making
+its self-test call.
+
+### Every user-mode way to end a connection has now been ruled out
+
+Run 10 armed seven ws2_32 exports, all verified, none hitting their cap:
+
+| Watched | On the game socket |
+|---|---|
+| `closesocket` | only at exit, ~11 s late |
+| `shutdown` | never |
+| `WSASendDisconnect` | **never fired at all** |
+| `WSACleanup` | never fired at all |
+| `setsockopt` | never fired at all |
+| `connect` / `WSAConnect` | only our own self-test |
+
+Plus: the handle polled **VALID** throughout, and the client's teardown functions ran only
+at exit. Our end still got a **reset** at the same point as always, ~0.3 s after `0x007A`.
+
+**And our own side is innocent too**, checked in code rather than assumed: the probe's loop
+exits only on an empty `recv` or a genuine `ConnectionResetError`, and `--hold` defaults to
+**300 s** - `test-one.ps1` never overrides it. Nothing on our end closes at ~9 s.
+
+So a TCP reset arrives that **neither endpoint's application code produced**, while both
+endpoints still hold open, valid sockets. That is a network-layer event, and it cannot be
+chased any further with user-mode API hooks - which is where this line of instrumentation
+stops.
+
+**Note against the firewall hypothesis:** Windows Firewall does not filter loopback, which
+is why this connection works at all. The rule is therefore an unlikely cause, though not
+impossible if a WFP callout driver (AV, or a Nexon component) is involved.
+
+### Next: this needs a decision, not another hook
+
+Three options, and they are the owner's to pick because two touch their machine's configuration:
+
+1. **Packet-level capture** (`pktmon`, built into Windows, needs elevation). Observes the
+   reset at the network layer and can attribute drops to a component. No change to the
+   client, no change to security posture. **Recommended.**
+2. **One run with the firewall rule off.** Cheap and decisive about the rule, but it lets
+   the patched client reach the real Nexon servers, which is the exact thing the rule was
+   added to prevent. The owner's call.
+3. **Serve on a real interface instead of loopback.** Puts the traffic on a NIC where it can
+   be captured conventionally *and* where the firewall rule genuinely applies - so it tests
+   both at once - but it is a bigger change to the harness.
+
+### Superseded: two hypotheses from the owner
 
 Both are about components we did *not* neutralise, and both fit the evidence better than
 anything the client's own login code could do.

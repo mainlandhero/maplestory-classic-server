@@ -1,0 +1,60 @@
+12:03:09.002 install_once: our code IS running. env=false marker=true -> installing
+12:03:14.003 install: base=0x140000000 target=0x1415d60e0
+12:03:14.004 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+12:03:14.004 probe: watching 0x141b2a280 - will report every entry with rcx/rdx/r8/r9 (first 32)
+12:03:14.00412:03:14.004  netwatch: watching ws2_32!connect at 0x7fff127d1a50session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="watch"
+
+12:03:14.004 netwatch: watching ws2_32!WSAConnect at 0x7fff127f0130
+12:03:14.004 netwatch: watching ws2_32!closesocket at 0x7fff127c5000
+12:03:14.005 netwatch: watching ws2_32!shutdown at 0x7fff127d1cc0
+12:03:14.005 netwatch: watching ws2_32!WSASendDisconnect at 0x7fff127ee6d0
+12:03:14.005 netwatch: watching ws2_32!WSACleanup at 0x7fff127d0410
+12:03:14.005 netwatch: watching ws2_32!setsockopt at 0x7fff127d10a0
+12:03:14.005 netwatch: watching FUN_1415d35f0 (connection teardown) at 0x1415d35f0 (orig 0x48, int3 verified)
+12:03:14.005 netwatch: watching FUN_142c44350 (session destructor) at 0x142c44350 (orig 0x48, int3 verified)
+12:03:14.006 netwatch: watching FUN_142cb8370 (account name - CANARY) at 0x142cb8370 (orig 0x48, int3 verified)
+12:03:14.006 install: hook active
+12:03:14.006 ***** CONNECT -> 127.0.0.1:9 #1 called-from=0x7ffef6b39de0 in grap64.dll *****
+12:03:14.006 ***** CLOSESOCKET socket=0x12ec #2 called-from=0x7ffef6b39de8 in grap64.dll *****
+12:03:14.006 netwatch: SELF-TEST ok - 2 calls were caught while making 2 of our own, so a later absence of lines is a real negative
+12:03:14.043     0 opcode=0x0032 elapsed_us=88.2 ret=111432032 flag=0->1 state=0->2
+12:03:14.043 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+12:03:14.205 ***** SOCKET conn=0x5930438 +0x20=0x6ac - the client holds a socket *****
+12:03:14.205 session: object at 0x61e0f48 is now readable
+12:03:14.205 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:14.264 ***** CLOSESOCKET socket=0x10e8 #3 called-from=0x7fff127c4f8a in WS2_32.dll *****
+12:03:14.264 ***** CLOSESOCKET socket=0x10e8 #4 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
+12:03:14.265 ***** SHUTDOWN socket=0x10e8 how=2 (both) #5 called-from=0x7ffecdcd5fb4 in NexonAnalytics64.dll *****
+12:03:14.265 ***** CLOSESOCKET socket=0x10e8 #6 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
+12:03:14.293 ***** CLOSESOCKET socket=0x170c #7 called-from=0x7fff127c4f8a in WS2_32.dll *****
+12:03:14.293 ***** CLOSESOCKET socket=0x1074 #8 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
+12:03:14.294 ***** SHUTDOWN socket=0x1074 how=2 (both) #9 called-from=0x7ffecdcd5fb4 in NexonAnalytics64.dll *****
+12:03:14.294 ***** CLOSESOCKET socket=0x1074 #10 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
+12:03:14.306 ***** CLOSESOCKET socket=0x18c8 #11 called-from=0x7fff127c4f8a in WS2_32.dll *****
+12:03:15.008 ***** SOCKET 0x6ac is now VALID (client still holds it) *****
+12:03:17.014 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:18.782 ***** WATCH #1: 0x141b2a280 ENTERED while dispatching opcode 0x0032 rcx=0x2ffc91d8 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+12:03:18.782       forced rdx -> 0x0
+12:03:18.813 ***** FUN_142cb8370 (account name - CANARY) obj=0x61e0f48 #12 called-from=0x141b2ed24 in MapleStory.exe *****
+          stack: 
+      stack: 0x141b2ed24<-TEXT 0x143ac1240(?)
+12:03:18.814     1 opcode=0x0000 elapsed_us=618.3 ret=1 flag=1->1 state=2->2
+12:03:18.814     2 opcode=0x000B elapsed_us=93.8 ret=1 flag=1->1 state=2->2
+12:03:20.018 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:23.021 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:26.027 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:27.600 ***** CLOSESOCKET socket=0x1514 #13 called-from=0x7fff127c4f8a in WS2_32.dll *****
+12:03:27.601 ***** CLOSESOCKET socket=0x1514 #14 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
+12:03:27.601 ***** SHUTDOWN socket=0x1514 how=2 (both) #15 called-from=0x7ffecdcd5fb4 in NexonAnalytics64.dll *****
+12:03:27.601 ***** CLOSESOCKET socket=0x1514 #16 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
+12:03:29.030 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:32.036 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:35.042 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:38.045 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:41.053 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:44.056 ***** SESSION obj=0x61e0f48 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:03:44.370 ***** CLOSESOCKET socket=0xf5c #17 called-from=0x7fff127c4f8a in WS2_32.dll *****
+12:03:44.370 ***** CLOSESOCKET socket=0xf5c #18 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
+12:03:44.370 ***** SHUTDOWN socket=0xf5c how=2 (both) #19 called-from=0x7ffecdcd5fb4 in NexonAnalytics64.dll *****
+12:03:44.371 ***** CLOSESOCKET socket=0xf5c #20 called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll *****
