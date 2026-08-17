@@ -269,6 +269,45 @@ pub fn data_wz_up_to_date() -> Vec<u8> {
     zigzag_varint(0)
 }
 
+/// The client's request to *enter* character creation - the second-password check.
+///
+/// Sent by `FUN_141b282d0` when "Create a character" is clicked and its gate opens. The
+/// body is a single one-character string holding `DAT_143275e10`, which is `.` - a
+/// placeholder, because MapleStory Classic World never used a second password (the owner).
+///
+/// Measured on the wire 2026-08-19: `01 00 2e`, five times for five clicks.
+pub const CLIENT_ENTER_CREATION_REQUEST: u16 = 0x00A8;
+
+/// The reply to [`CLIENT_ENTER_CREATION_REQUEST`]: may the client open character creation?
+///
+/// Handler `FUN_141b39490`, a `switch` on the first byte. `0` reads one more byte and calls
+/// `FUN_141b3f050(stage, 5, 0x14a)` - the transition to the NewChar screen. Every other
+/// named case is a second-password failure, which is what identifies this exchange:
+///
+/// | code | notice |
+/// |---|---|
+/// | `0x00` | none - **proceed to character creation** |
+/// | `0x14` | `incorrectPIC` |
+/// | `0x39` | `incorrectPICWarningOverCount` |
+/// | `0x3A` | `incorrectPICCloseByOverCount`, and back to the previous screen |
+/// | `0x45` | the antimacro (captcha) flow |
+///
+/// # Body
+///
+/// ```text
+/// u8   result      0 = proceed
+/// u8               read and discarded on the success path
+/// ```
+pub const ENTER_CREATION_RESULT: u16 = 0x05F4;
+
+/// A "yes, open character creation" body.
+///
+/// Two bytes, because the success path reads a second one before transitioning and the
+/// readers throw on underrun.
+pub fn enter_creation_permitted() -> Vec<u8> {
+    vec![0, 0]
+}
+
 /// The name-check result: whether the name the client asked about may be used.
 ///
 /// Answers the client's [`CLIENT_CHECK_NAME_REQUEST`]. Handler `FUN_141b33f30`, whose whole

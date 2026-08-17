@@ -284,9 +284,37 @@ handlers (`identifyVerficationFailed`, `goToNexonAuthPageToVerify`), so `1` asse
 "verified". Setting it does not itself raise a prompt: those notices are raised by inbound
 `0x26`/`0x27`, which we do not send.
 
-**`0x00A8` is therefore the first packet of character creation**, not the last. It carries a
-single one-character string - almost certainly the slot index - and the client waits for a
-reply before opening the NewChar screen. That reply has not been identified.
+### Measured: the gate, and the exchange behind it
+
+On 2026-08-19 the flag was patched on from `grap-stub` and the button worked. Five clicks
+produced five `WATCH` hits on `FUN_141b282d0` and five packets on the wire:
+
+```text
+<- 0x00A8   body=3B 01 00 2e
+```
+
+That is a length-prefixed string of one character, `0x2e` = `.`. It comes from
+`DAT_143275e10` and it is a **placeholder second password** - Classic World never used one
+(the owner), so the client sends a dummy and expects the server to wave it through.
+
+**The reply is inbound `0x05F4`**, handled by `FUN_141b39490`, a `switch` on the first byte:
+
+| code | what the client does |
+|---|---|
+| `0x00` | reads one more byte, then `FUN_141b3f050(stage, 5, 0x14a)` - **opens NewChar** |
+| `0x14` | `incorrectPIC` |
+| `0x39` | `incorrectPICWarningOverCount` |
+| `0x3A` | `incorrectPICCloseByOverCount`, and back a screen |
+| `0x45` | the antimacro (captcha) flow |
+
+Those notices are what identify the exchange: `0x00A8` is the PIC check, and `0x05F4` is its
+result. `crates::net::opcode::enter_creation_permitted` is the two-byte "yes".
+
+**So creation is three exchanges, not two:** `0x00A8`/`0x05F4` to open the screen, then
+`0x0081`/`0x0014` for the name, then the virtualised create request and `0x0015`.
+
+`0x00A8` arrives on **every** click, so it needs a standing answer rather than a one-shot -
+`handshake_probe.py --answer 00a8=05f4:0000`, verified against a fake client.
 
 ### The NewChar screen
 

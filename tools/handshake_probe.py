@@ -404,7 +404,9 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           reply_to: int | None = None, reply_seq=None,
           ping_first: int | None = None, ping_wait: float = 10.0,
           quiet_before: float = 5.0, send_iv: int = 0x52307801,
-          keepalive: float = 0.0, keepalive_opcode: int = 0x0023) -> None:
+          keepalive: float = 0.0, keepalive_opcode: int = 0x0023,
+          answers: dict | None = None) -> None:
+    answers = answers or {}
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -605,6 +607,19 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                             answered = True
                             if keepalive:
                                 next_keepalive = time.time() + keepalive
+
+                        # Standing answers, applied every time rather than once.
+                        #
+                        # --reply-to fires a single sequence at one moment, which is right
+                        # for the login handshake and wrong for anything the user can do
+                        # repeatedly. The client sends 0x00A8 on every click of "Create a
+                        # character", so an answer that fires once would look like the
+                        # button working the first time and breaking afterwards.
+                        for step_op, step_body, step_pad in answers.get(op, []):
+                            frame, what = build_reply(
+                                "ping", step_op, cipher, step_pad, step_body)
+                            log(f"[{port}] >>> ANSWERING 0x{op:04X} with {what}")
+                            conn.sendall(frame)
                 else:
                     log(hexdump(data))
         except ConnectionResetError:
@@ -668,6 +683,11 @@ def main() -> None:
     ap.add_argument("--reply-seq", default=None,
                     help="several packets to send for --reply-to, in order: "
                          "OPCODE:HEXBODY[/PAD],... e.g. 000b:00..,000b:ff0000,0010:000000/256")
+    ap.add_argument("--answer", action="append", default=[],
+                    help="a standing answer, repeatable: IN=OPCODE:HEXBODY[/PAD],... "
+                         "e.g. 00a8=05f4:0000. Unlike --reply-to this fires every time the "
+                         "client sends that opcode, which is what anything the user can "
+                         "click more than once needs.")
     ap.add_argument("--keepalive", type=float, default=0.0,
                     help="seconds between keepalive packets once the reply has been sent; "
                          "0 disables. Two runs both ended ~25s after our last packet with "
@@ -721,6 +741,21 @@ def main() -> None:
     if seq is not None and args.reply_to is None:
         raise SystemExit("--reply-seq needs --reply-to: it is sent when that opcode arrives")
 
+    answers = {}
+    for spec in args.answer:
+        incoming, _, outgoing = spec.partition('=')
+        if not outgoing:
+            raise SystemExit(f"--answer {spec!r} is not IN=OPCODE:HEXBODY")
+        try:
+            key = int(incoming, 16)
+        except ValueError as exc:
+            raise SystemExit(f"--answer {spec!r}: {incoming!r} is not hex") from exc
+        answers[key] = parse_reply_seq(outgoing)
+        log(f"standing answer: 0x{key:04X} -> "
+            + ", ".join(f"0x{o:04X}" for o, _, _ in answers[key]))
+    if not args.answer:
+        log("standing answers: none")
+
     if args.reply is not None:
         try:
             c = make_cipher(args.recv_iv)
@@ -728,6 +763,9 @@ def main() -> None:
             build_reply("ping", args.opcode, c, args.pad)
             for step_op, step_body, step_pad in seq or []:
                 build_reply("ping", step_op, c, step_pad, step_body)
+            for steps in answers.values():
+                for step_op, step_body, step_pad in steps:
+                    build_reply("ping", step_op, c, step_pad, step_body)
             if args.keepalive:
                 build_reply("ping", args.keepalive_opcode, c, 0, b"")
         except Exception as e:  # noqa: BLE001
@@ -761,6 +799,7 @@ def main() -> None:
             ping_first=args.ping_first, ping_wait=args.ping_wait,
             quiet_before=args.quiet_before, send_iv=args.send_iv,
             keepalive=args.keepalive, keepalive_opcode=args.keepalive_opcode,
+            answers=answers,
         ),
         daemon=True,
     )

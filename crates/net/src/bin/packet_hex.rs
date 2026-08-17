@@ -10,8 +10,8 @@
 //! ```
 
 use net::opcode::{
-    account_info, login_result, world_list_end, world_list_entry, Character, ACCOUNT_INFO,
-    LOGIN_RESULT, WORLD_LIST,
+    account_info, enter_creation_permitted, login_result, world_list_end, world_list_entry,
+    Character, ACCOUNT_INFO, ENTER_CREATION_RESULT, LOGIN_RESULT, WORLD_LIST,
 };
 
 fn hex(bytes: &[u8]) -> String {
@@ -21,7 +21,7 @@ fn hex(bytes: &[u8]) -> String {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let usage = "usage: packet-hex <account-info LOGIN ACCOUNT | world-entry [NAME] | world-end \
-                 | login-result [CHARACTER_NAME...]>";
+                 | login-result [CHARACTER_NAME...] | enter-creation>";
 
     let (opcode, body) = match args.first().map(String::as_str) {
         Some("account-info") => {
@@ -34,6 +34,7 @@ fn main() {
             (WORLD_LIST, world_list_entry(0, name, 1))
         }
         Some("world-end") => (WORLD_LIST, world_list_end()),
+        Some("enter-creation") => (ENTER_CREATION_RESULT, enter_creation_permitted()),
         // No names means the empty list the client has been getting all along, which is
         // the control this run is measured against.
         Some("login-result") => {

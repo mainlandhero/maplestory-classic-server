@@ -72,6 +72,9 @@ param(
     # Two runs both ended ~25s after our last packet, socket Established and idle the whole
     # time, which is what an inbound idle timeout looks like from the outside.
     [double]$Keepalive = 0,
+    # Standing answers, one or more 'IN=OPCODE:HEXBODY' pairs. Unlike -ReplySeq these fire
+    # every time the client sends that opcode, which is what anything clickable needs.
+    [string[]]$Answer = @(),
     # Record the client's sockets for its whole lifetime, to see whether it ever connects
     # to a second endpoint after login. Writes sockets.log beside probe.log.
     [switch]$Sockets,
@@ -178,6 +181,7 @@ if ($Reply) {
     if ($ReplyTo) { $probeArgs += @('--reply-to', $ReplyTo) }
     if ($ReplySeq) { $probeArgs += @('--reply-seq', $ReplySeq) }
     if ($Keepalive -gt 0) { $probeArgs += @('--keepalive', "$Keepalive") }
+    foreach ($a in $Answer) { if ($a) { $probeArgs += @('--answer', $a) } }
     if ($PingFirst) {
         $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
     }

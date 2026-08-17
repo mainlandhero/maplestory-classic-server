@@ -113,6 +113,8 @@ $loginResult = Get-Packet (@('login-result') + $Characters)
 # Account first: the name it carries is drawn on the login screen, which the client is
 # still showing when this sequence lands.
 $replySeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
+# Standing answer: every click of "Create a character" sends 0x00A8 and waits.
+$enterCreation = Get-Packet @('enter-creation')
 Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
 Write-Host "reply sequence is $($replySeq.Length) characters"
@@ -121,7 +123,8 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
     -Reply ping -Opcode 0x0032 -Body 00 `
     -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
     -Session $Session -Probe $Probe `
-    -ReplyTo 0x0080 -ReplySeq $replySeq -Keepalive $Keepalive -Port $Port
+    -ReplyTo 0x0080 -ReplySeq $replySeq -Answer "00a8=$enterCreation" `
+    -Keepalive $Keepalive -Port $Port
 
 Write-Host ''
 Write-Host 'On screen:'
