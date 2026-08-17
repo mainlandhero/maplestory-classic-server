@@ -67,7 +67,61 @@ switch (*(u8 *)(obj + 0x227c)) {
 `FUN_141804140` turns those codes into notice names - it is the same error-code family as
 `docs/client-messages.md`, and `0x2100000B` is not in that table yet.
 
-### ...except this was measured and is wrong
+### SOLVED: `FUN_141b2a280` raises it
+
+Found by logging the return address at a watch on the notice display:
+`called-from=0x141b2a61e`, inside `FUN_141b2a280(stage, code, flag)`.
+
+```c
+if ((code + 1U < 0xe) && ((0x2681U >> (code + 1U & 0x1f) & 1) != 0)) {
+    ... show loginTroubleAskSupport ...
+}
+```
+
+`0x2681` has bits 0, 7, 9, 10 and 13 set and the index is `code + 1`, so **codes -1, 6, 8,
+9 and 12** all produce this dialog. `code == 0` returns 1 - success - and everything else
+maps to a specific notice:
+
+| code | notice |
+|---|---|
+| **-1, 6, 8, 9, 12** | **`loginTroubleAskSupport`** |
+| 2, 3 | `blockedID` |
+| 4 | `incorrectPassword` |
+| 5 | `notRegisteredID` |
+| 7 | `loginAlready` |
+| 0x0A | `loginTimeout` |
+| 0x0B | `notAdult` |
+| 0x0D | `blockedIPAddr` |
+| 0x0E | `invalidRegion` |
+| 0x0F | `notRegisteredAccount` |
+| 0x11, 0x87 | `accountNotVerified` |
+| 0x44 | `cannotProcessRequest` |
+| 0x52 | `notVerifiedEmail` |
+| 0x88 | `invalidRegion` |
+| 0x8B | `outOfServiceRegion` |
+
+It is a near-duplicate of `FUN_141b267c0`: same mapping, different function. The static
+work had the right table and the wrong function.
+
+#### Why every scan missed it
+
+`FUN_141b2a280` never takes the string's *address*. It **copies the literal inline**, eight
+bytes at a time, with RIP-relative `mov` from `0x1433d5d98`:
+
+```c
+*(undefined8 *)local_res20      = u_loginTroubleAskSupport_1433d5d98._0_8_;
+*(undefined8 *)(piVar5 + 6)     = u_loginTroubleAskSupport_1433d5d98._8_8_;
+...
+```
+
+`tools/xref.py` finds `lea` references, so a function that *reads* a literal rather than
+taking its address does not appear - and the qword-pointer scan missed it for the same
+reason. **A "no references" result from `xref.py` means "no `lea`", not "no uses".**
+
+**Next:** watch `FUN_141b2a280` - `rdx` is the code, and `called-from` names who decided the
+login failed. That is the actual question now.
+
+### The earlier theory, measured and wrong
 
 **`FUN_1415d9210` is not the raiser.** A `-Session watch` run read the object live while the
 dialog was on screen:

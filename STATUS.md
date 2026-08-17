@@ -244,7 +244,34 @@ or the dialog on screen is a *different* node with similar wording.
 Each of these was a plausible static chain - matching string, matching default case - and
 none survived a run. **Measure before building on a static chain.** Three times now.
 
-### Caught in the act, and the caller is the last unknown
+### SOLVED - `FUN_141b2a280` raises the prompt
+
+`called-from=0x141b2a61e` at a watch on the notice display named it.
+`FUN_141b2a280(stage, code, flag)` shows `loginTroubleAskSupport` for **codes -1, 6, 8, 9
+and 12** (`0x2681` bit-tested at `code + 1`); `code == 0` is success. Full code -> notice
+table in `docs/session.md`, and the whole baked dialog table in `docs/client-notices.md`.
+
+It is a near-duplicate of `FUN_141b267c0` - same mapping, different function.
+
+**Why it hid for three sessions, and the lesson:** it never takes the string's address. It
+**copies the literal inline** with RIP-relative `mov`. `tools/xref.py` matches `lea`, so it
+reported three references, all of which were then proven never entered - and the real raiser
+was invisible to every scan built on it. A "0 references" result means *nothing takes its
+address*, not *nothing uses it*. That warning is now at the top of `xref.py`.
+
+Independently corroborated: an exhaustive render of all 170 `/Notice/` canvases found no
+duplicate node and no numeric twin, so the dialog on screen is definitely this one.
+
+**Next: who calls it, and with which code.** Watch `FUN_141b2a280` - `rdx` is the code and
+`called-from` names the decision point.
+
+```
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+  -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4
+  -HookLog on -Probe watch@141b2a280 -Session watch
+```
+
+### How it was found
 
 A watch on the notice display `FUN_141b4ac80(name, ...)` caught it:
 

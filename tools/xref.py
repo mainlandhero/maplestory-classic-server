@@ -14,6 +14,19 @@ x64 code reaches data two ways, and both are matched here:
 `.pdata` (RUNTIME_FUNCTION[]) maps a hit back to its containing function, so results come
 out as function addresses rather than raw offsets.
 
+**A "0 references" result means "nothing takes its address", not "nothing uses it".**
+This cost several sessions. `FUN_141b2a280` raises the "Having trouble logging in?" dialog
+and never appeared here, because it does not `lea` the string - it *copies the literal
+inline*, eight bytes at a time:
+
+    mov  rax, [rip+disp32]     48 8B /r         a data READ, not an address
+
+Every scan built on this tool inherited the blind spot: three functions were "the only
+references", all were proven never entered, and the real raiser was invisible the whole
+time. When a search comes back empty and the behaviour says otherwise, believe the
+behaviour - and reach for a runtime watch (`crates/grap-stub`, `-Probe watch@<VA>`), which
+logs arguments and the return address and does not care how the operand was encoded.
+
     python tools/xref.py --string "UI/Login.img"       # ascii and utf-16
     python tools/xref.py --va 0x143a86810              # who touches the key table
     python tools/xref.py --string Login.img --callers  # and who calls those functions
