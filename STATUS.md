@@ -278,20 +278,36 @@ WATCH #1: 0x141b2a280 ENTERED  rdx=0xc (as i32 12)  r8=0x1  called-from=0x144c05
 No packet carried this. Only `0x0032` was ever dispatched, so the client generated code 12
 on its own.
 
-**Next: look further up the stack.** The VM frame was itself entered from somewhere, and
-that address is usually still on the stack. Watch mode now prints a `stack:` line - up to 8
-qwords from `[rsp .. rsp+0x200]` that fall inside the image, each tagged `(themida)` when
-virtualised. The first **non**-themida address above the call is the real originator.
+**The stack walk is a dead end, and that is settled.** A 0x400-byte, 16-slot scan of the
+stack at the call found exactly one image address: the VM return address itself.
+
+```
+stack: 0x144c05eb2(vm)
+```
+
+No `.text` frames at all. Themida runs the VM on **its own stack**, so the caller chain is
+not there to find and widening the scan only reads more VM stack. **Who decided code 12
+cannot be answered by walking back from the call.**
+
+Two ways forward, and they answer different questions.
+
+**1. What does the client do if it believes login succeeded?** `FUN_141b2a280` returns
+success for code `0`, so rewriting the code at its entry answers that in one run.
 
 ```
 powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
   -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4
-  -HookLog on -Probe watch@141b2a280 -Session watch
+  -HookLog on -Probe watch@141b2a280:rdx=0 -Session watch
 ```
 
-If every candidate is `(themida)`, the whole decision lives in the VM and the approach has
-to change again - to watching what the *client asks* before deciding, rather than who
-decided.
+This is a **client-side patch** - it makes the client stop concluding it failed; it does not
+make the session valid. Say so when reporting results. What it buys is the rest of the
+flow: whether the login screen becomes usable, and where the client gets stuck next.
+
+**2. Why the client concludes failure.** The decision is virtualised, but what it *consults*
+need not be. The `CNM*` session interface lives in `nexon_api_x64.dll` / `nmcogame64.dll`,
+both **unpacked** - readable statically and hookable at their exports. That is the honest
+route to a genuinely valid session, and it needs no client runs to start.
 
 ### How it was found
 

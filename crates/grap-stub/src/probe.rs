@@ -42,6 +42,12 @@
 //!
 //!   Note it can only arm once the hook sees a dispatch, so a call that happens before the
 //!   first inbound packet is dispatched will not be seen.
+//! * `watch@<VA>:rdx=<hex>` — watch, and **rewrite** the second integer argument on entry.
+//!   For when the caller is virtualised and therefore unreadable: "who decided this" has no
+//!   answer, but "what would the client do if this value were X" still does. The log
+//!   records the original value first, so the run says what the client actually computed
+//!   as well as what we substituted. This patches the client — describe results
+//!   accordingly.
 //!
 //! `#N` starts the walk on the Nth dispatched packet.
 //!
@@ -85,7 +91,8 @@ use crate::hook::{log, CONN_DONE_FLAG};
 /// * `0000-1000`             — walk that range, same oracle
 /// * `0000-1000@141b25f30`   — walk, oracle is an `int3` on that function
 /// * `0000-1000@141b25f30#2` — as above, starting on the 2nd dispatched packet
-/// * `watch@141b307b0`       — do not walk; report whether that function runs
+/// * `watch@141b307b0`       — do not walk; report every entry with its arguments
+/// * `watch@141b2a280:rdx=0` — as above, and rewrite RDX on entry
 pub const PROBE_MARKER: &str = "maplecw-hook.probe";
 
 const DEFAULT_FROM: u32 = 0x0000;
@@ -116,6 +123,8 @@ static HIT: AtomicBool = AtomicBool::new(false);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 static WATCH_BYTE: AtomicU32 = AtomicU32::new(0);
 static WATCH_HITS: AtomicU32 = AtomicU32::new(0);
+/// `u64::MAX` means "do not force"; anything else is written to RDX on every watch hit.
+static FORCE_RDX: AtomicU64 = AtomicU64::new(u64::MAX);
 /// Set between restoring the original byte and re-planting it one instruction later.
 static WATCH_REARM: AtomicU64 = AtomicU64::new(0);
 static CURRENT_OPCODE: AtomicU32 = AtomicU32::new(0);
@@ -336,10 +345,25 @@ pub unsafe fn note_opcode(opcode: u16) {
     if WATCH.load(Ordering::SeqCst) != 0 || WATCH_ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let Ok(va) = usize::from_str_radix(rest.trim().trim_start_matches("0x"), 16) else {
-        log(&format!("probe: watch marker {text:?} is not watch@<hex VA>"));
+    // `watch@<VA>` or `watch@<VA>:rdx=<hex>`. The second form rewrites the second integer
+    // argument on entry — for asking "what would the client do if this value were X",
+    // which is the only question left when the *caller* is virtualised and unreadable.
+    let (va_txt, force) = match rest.split_once(":rdx=") {
+        Some((v, f)) => (v, Some(f)),
+        None => (rest, None),
+    };
+    let Ok(va) = usize::from_str_radix(va_txt.trim().trim_start_matches("0x"), 16) else {
+        log(&format!("probe: watch marker {text:?} is not watch@<hex VA>[:rdx=<hex>]"));
         return;
     };
+    if let Some(f) = force {
+        let Ok(v) = u64::from_str_radix(f.trim().trim_start_matches("0x"), 16) else {
+            log(&format!("probe: {text:?} has an unparseable :rdx= value"));
+            return;
+        };
+        FORCE_RDX.store(v, Ordering::SeqCst);
+        log(&format!("probe: will FORCE rdx={v:#x} on every entry to {va:#x}"));
+    }
     AddVectoredExceptionHandler(1, veh as *const c_void);
     let mut old = 0u32;
     if VirtualProtect(va as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
@@ -572,6 +596,16 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             ));
             if n == WATCH_MAX_HITS {
                 log("probe: watch hit limit reached, further calls will not be logged");
+            }
+        }
+
+        // Rewrite the argument if asked, after logging so the log records what the client
+        // actually computed, not what we substituted.
+        let force = FORCE_RDX.load(Ordering::SeqCst);
+        if force != u64::MAX {
+            *(ctx.add(CTX_RDX).cast::<u64>()) = force;
+            if n <= WATCH_MAX_HITS {
+                log(&format!("      forced rdx -> {force:#x}"));
             }
         }
 
