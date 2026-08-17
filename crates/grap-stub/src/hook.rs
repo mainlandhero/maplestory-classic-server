@@ -267,6 +267,13 @@ pub unsafe fn install() {
     let target = base + DISPATCH_RVA;
     log(&format!("install: base={base:#x} target={target:#x}"));
 
+    // Started here because this is the first point with a verified module base. It polls
+    // rather than piggy-backing on dispatches: a gate-only run dispatches one packet, and
+    // one sample taken before the login screen would say nothing about the prompt.
+    if crate::session::enabled() {
+        std::thread::spawn(move || unsafe { crate::session::monitor(base) });
+    }
+
     // Trampoline: the stolen prologue, then an absolute jump back to target+STOLEN.
     let tramp = VirtualAlloc(
         std::ptr::null_mut(),

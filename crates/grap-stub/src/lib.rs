@@ -23,6 +23,7 @@
 
 pub mod hook;
 pub mod probe;
+pub mod session;
 
 use std::ffi::c_void;
 use std::fs::OpenOptions;

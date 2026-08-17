@@ -41,6 +41,10 @@ param(
     # Hex range like '0000-1000'. Walks the inbound opcode space in-process rather than
     # sending packets, which is bounded by the client's tolerance for unknown opcodes.
     [string]$Probe = '',
+    # Watch/patch the session bytes behind the login prompt: 'watch', 'suppress', or
+    # 'status=<hex>'. See crates/grap-stub/src/session.rs.
+    [ValidateScript({ $_ -eq '' -or $_ -eq 'watch' -or $_ -eq 'suppress' -or $_ -match '^status=[0-9a-fA-F]{1,2}$' })]
+    [string]$Session = '',
     # Extra launch tokens after <ip> <port>. -NXLDEBUG routes tokens 3 onward into the
     # config's six-slot session array at +0x90, which is what the launcher normally fills.
     [string[]]$SessionTokens = @(),
@@ -96,6 +100,9 @@ if ($Stop) {
     # Clear the walk marker here too. It is a one-shot experiment, and leaving it behind
     # would silently turn the next ordinary run into a probe.
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.probe') -ErrorAction SilentlyContinue
+    # Same for the session marker, and more so for its patching modes: a leftover
+    # 'suppress' would quietly hide the very prompt a later run is trying to observe.
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.session') -ErrorAction SilentlyContinue
     # taskkill cannot touch the elevated client from a normal shell, and it says so on
     # stderr where it is easy to miss. Check rather than claim success: with the probe's
     # ExitProcess detour in place the client no longer dies on its own, so a survivor
@@ -205,6 +212,20 @@ if ($Probe) {
     Write-Host "in-process opcode walk enabled, range $Probe"
 } else {
     Remove-Item $probeMarker -ErrorAction SilentlyContinue
+}
+
+# -Session watches the two bytes on DAT_143aa84a0 that decide the "Having trouble logging
+# in?" prompt: +0x2270 bit 2 gates it, +0x227c selects which dialog. 'watch' only reports;
+# 'suppress' clears the flag bit; 'status=<hex>' writes the status byte. The patching modes
+# are client-side hacks - they stop the client REPORTING an invalid session, they do not
+# make one valid.
+$sessionMarker = Join-Path $ClientDir 'maplecw-hook.session'
+if ($Session) {
+    if (-not $HookLog) { throw '-Session needs -HookLog: it reports through the hook log.' }
+    Set-Content -Path $sessionMarker -Value $Session -Encoding ascii
+    Write-Host "session monitor enabled, mode $Session"
+} else {
+    Remove-Item $sessionMarker -ErrorAction SilentlyContinue
 }
 
 # -NXLDEBUG puts token 1 at the server IP, token 2 at the port, and **tokens 3 onward
