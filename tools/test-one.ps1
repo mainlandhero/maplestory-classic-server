@@ -61,6 +61,9 @@ param(
     # Record the client's sockets for its whole lifetime, to see whether it ever connects
     # to a second endpoint after login. Writes sockets.log beside probe.log.
     [switch]$Sockets,
+    # Log every connect() the client attempts, with the address. Sees an attempt to
+    # 0.0.0.0:0 that never becomes a socket, which -Sockets cannot.
+    [switch]$NetWatch,
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -111,6 +114,7 @@ if ($Stop) {
     # Same for the session marker, and more so for its patching modes: a leftover
     # 'suppress' would quietly hide the very prompt a later run is trying to observe.
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.session') -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.netwatch') -ErrorAction SilentlyContinue
     # taskkill cannot touch the elevated client from a normal shell, and it says so on
     # stderr where it is easy to miss. Check rather than claim success: with the probe's
     # ExitProcess detour in place the client no longer dies on its own, so a survivor
@@ -238,6 +242,15 @@ if ($Probe) {
 # 'suppress' clears the flag bit; 'status=<hex>' writes the status byte. The patching modes
 # are client-side hacks - they stop the client REPORTING an invalid session, they do not
 # make one valid.
+$netwatchMarker = Join-Path $ClientDir 'maplecw-hook.netwatch'
+if ($NetWatch) {
+    if (-not $HookLog) { throw '-NetWatch needs -HookLog: it reports through the hook log.' }
+    New-Item -ItemType File -Path $netwatchMarker -Force | Out-Null
+    Write-Host 'connect() watch enabled'
+} else {
+    Remove-Item $netwatchMarker -ErrorAction SilentlyContinue
+}
+
 $sessionMarker = Join-Path $ClientDir 'maplecw-hook.session'
 if ($Session) {
     if (-not $HookLog) { throw '-Session needs -HookLog: it reports through the hook log.' }

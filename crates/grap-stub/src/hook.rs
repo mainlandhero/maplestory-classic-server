@@ -289,6 +289,10 @@ pub unsafe fn install() {
     if crate::session::enabled() {
         std::thread::spawn(move || unsafe { crate::session::monitor(base) });
     }
+    // Same moment, same reason: ws2_32 is loaded long before this and the client has
+    // already made its first connection, so anything seen from here is a *later* one -
+    // which is the only kind that matters.
+    crate::netwatch::install();
 
     // Trampoline: the stolen prologue, then an absolute jump back to target+STOLEN.
     let tramp = VirtualAlloc(
