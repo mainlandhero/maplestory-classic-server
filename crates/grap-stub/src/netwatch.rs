@@ -76,11 +76,18 @@ const EXPORTS: [(&[u8], Kind); 4] = [
 /// comparable to the one being explained.
 ///
 /// Both were named by the stack of the one teardown that *did* have a `.text` caller.
-const EXTRA: [(&str, usize); 2] = [
+const EXTRA: [(&str, usize); 3] = [
     // FUN_1415d35f0 - connection teardown: resets +0xc/+0x10, then closes the socket.
     ("FUN_1415d35f0 (connection teardown)", 0x015d_35f0),
     // FUN_142c44350 - the session object's destructor, which reaches the above.
     ("FUN_142c44350 (session destructor)", 0x02c4_4350),
+    // FUN_142cb8370 - the account-name setter. **A canary, not a question.** It is called
+    // once per inbound 0x0000 and its effect is visible on screen, so it is the one client
+    // function we can be certain runs. If it reports and the two above do not, their
+    // silence is a real negative; if none of the three report, the code watch is broken and
+    // says nothing - which is precisely the trap the ws2_32 self-test was added to close,
+    // and it would have been repeated here without a canary.
+    ("FUN_142cb8370 (account name - CANARY)", 0x02cb_8370),
 ];
 
 const MAX_TARGETS: usize = EXPORTS.len() + EXTRA.len();
@@ -204,7 +211,22 @@ pub unsafe fn install() {
         TARGETS[slot].store(addr as u64, Ordering::SeqCst);
         ORIG[slot].store(orig as u64, Ordering::SeqCst);
         armed += 1;
-        log(&format!("netwatch: watching {label} at {addr:#x}"));
+        // Read the byte back. Patching another module's `.text` can silently not take -
+        // the page may be re-protected, or the address may be wrong for this build - and a
+        // breakpoint that was never planted looks exactly like a function that never runs.
+        let planted = *(addr as *const u8);
+        if planted == 0xCC {
+            log(&format!(
+                "netwatch: watching {label} at {addr:#x} (orig {orig:#04x}, int3 verified)"
+            ));
+        } else {
+            log(&format!(
+                "netwatch: {label} at {addr:#x} DID NOT TAKE - reads {planted:#04x}, not 0xcc. \
+                 Its silence means nothing."
+            ));
+            TARGETS[slot].store(0, Ordering::SeqCst);
+            armed -= 1;
+        }
     }
     if armed == 0 {
         log("netwatch: nothing armed");

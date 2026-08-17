@@ -175,6 +175,30 @@ proved it can see its own calls:
   at ~`11:03:36` predates arming at `11:03:42`, so the hook cannot be checked against it -
   but any *later* connect would have been caught, and there was none.
 
+### Run 4: both teardown watches silent - and that is not yet a finding
+
+Both armed (`netwatch: watching FUN_1415d35f0 ... at 0x1415d35f0`), the self-test passed,
+and **neither ever fired** - not at the reset, not at the client's exit. The reset itself
+reproduced identically for the third time.
+
+**This is deliberately not being written up as "the client never tears down".** Neither
+watch reported *once*, which is equally consistent with the watch not working - and that is
+the exact shape of the mistake that had to be retracted two runs ago. A negative from an
+instrument that has never been seen to fire is not evidence.
+
+Also note run 4 had **no `.text` closesocket at all**, unlike run 2 - so the exit took a
+different path, and the two runs' endings are not comparable.
+
+Two guards added, both cheap:
+
+* **The int3 is read back after planting.** Patching another module's `.text` can silently
+  not take. `int3 verified` in the log means the byte is really `0xcc`; `DID NOT TAKE`
+  disarms the slot and says so.
+* **A canary: `FUN_142cb8370`**, the account-name setter. It runs once per inbound `0x0000`
+  and its effect is on screen, so it is the one client function certain to be called. If
+  the canary reports and the teardown watches do not, their silence is real. If none of the
+  three report, the code watch is broken and the run says nothing.
+
 ### Next: does the client's teardown run at all?
 
 Two possibilities remain and one breakpoint separates them: the socket is destroyed through
