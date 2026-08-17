@@ -402,7 +402,7 @@ u32   skin              2
 u32   hair              30001
 u32   itemCount         6, then that many (u32 slot, u32 itemId) pairs:
                           1 face 20001,  2 hair 30000,   3 top 1040002,
-                          4 bottom 1060002, 5 shoes 1072002, 6 weapon 1301488
+                          4 bottom 1060002, 5 shoes 1072002, 6 weapon 1302000
 ```
 
 Two things worth keeping from how it was found. It arrives **after** the name check is

@@ -11,8 +11,8 @@
 
 use net::opcode::{
     account_info, create_character_result, enter_creation_permitted, login_result, world_list_end,
-    world_list_entry, Character, ACCOUNT_INFO, CREATE_CHARACTER_RESULT, ENTER_CREATION_RESULT,
-    LOGIN_RESULT, WORLD_LIST,
+    world_list_entry, Character, CreateCharacterRequest, ACCOUNT_INFO, CREATE_CHARACTER_RESULT,
+    ENTER_CREATION_RESULT, LOGIN_RESULT, WORLD_LIST,
 };
 
 fn hex(bytes: &[u8]) -> String {
@@ -41,6 +41,31 @@ fn main() {
         // whatever is named here. Give the client the name that will be typed and the
         // screen stays coherent; give it another and the transaction still completes, it
         // just visibly comes from us.
+        // Build the reply from a captured 0x008A body, so the new character wears what was
+        // actually picked. The first version sent a default character and it came back
+        // naked on screen - every choice on the creation screen is in that request.
+        Some("create-result-from") => {
+            let hex = args.get(1).map(String::as_str).unwrap_or_default();
+            let body: Vec<u8> = (0..hex.len() / 2)
+                .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap_or(0))
+                .collect();
+            let Some(req) = CreateCharacterRequest::parse(&body) else {
+                eprintln!("that is not a create request body ({} bytes)", body.len());
+                std::process::exit(2);
+            };
+            eprintln!(
+                "creating {:?}: face {} hair {} skin {} + {} equips",
+                req.name,
+                req.character(0).face,
+                req.character(0).hair,
+                req.skin,
+                req.character(0).equips.len()
+            );
+            (
+                CREATE_CHARACTER_RESULT,
+                create_character_result(0, &req.character(200)),
+            )
+        }
         Some("create-result") => {
             let name = args.get(1).map(String::as_str).unwrap_or("Hello");
             let chr = Character {

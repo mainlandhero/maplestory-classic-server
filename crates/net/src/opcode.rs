@@ -361,12 +361,162 @@ pub const NAME_NOT_ALLOWED: u8 = 0x79;
 /// u32   hair              30001
 /// u32   itemCount         6, then that many (u32 slot, u32 itemId) pairs:
 ///                           1 face 20001, 2 hair 30000, 3 top 1040002,
-///                           4 bottom 1060002, 5 shoes 1072002, 6 weapon 1301488
+///                           4 bottom 1060002, 5 shoes 1072002, 6 weapon 1302000
 /// ```
 ///
 /// The four stats are the same four the client keeps at `stage+0x220` and refuses to send
 /// unless they sum to 25, which is what ties the roll on screen to these bytes.
 pub const CLIENT_CREATE_CHARACTER_REQUEST: u16 = 0x008A;
+
+/// What the client asked for in a [`CLIENT_CREATE_CHARACTER_REQUEST`].
+///
+/// Parsed rather than assumed: the first version of this reply sent a default character and
+/// the new character came back **naked**, because every choice on the creation screen lives
+/// in this packet and nothing was reading it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateCharacterRequest {
+    pub name: String,
+    pub race: u32,
+    pub sub_job: u16,
+    pub strength: u16,
+    pub dexterity: u16,
+    pub intelligence: u16,
+    pub luck: u16,
+    pub gender: u8,
+    pub skin: u8,
+    pub hair: u32,
+    /// `(categorySlot, itemId)` exactly as sent - 1 face, 2 hair, 3 top, 4 bottom,
+    /// 5 shoes, 6 weapon.
+    pub items: Vec<(u32, u32)>,
+}
+
+/// The creation screen's category numbers. These are **not** avatar equipment slots; see
+/// [`CreateCharacterRequest::character`].
+const ITEM_FACE: u32 = 1;
+const ITEM_HAIR: u32 = 2;
+const ITEM_TOP: u32 = 3;
+const ITEM_BOTTOM: u32 = 4;
+const ITEM_SHOES: u32 = 5;
+const ITEM_WEAPON: u32 = 6;
+
+/// Reading side of a packet body, mirroring the client's readers closely enough that a
+/// short body is an error rather than a panic.
+struct Reader<'a> {
+    body: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    // No u8 reader: every scalar in a create request is a u32 or u16, including the ones
+    // that hold a byte's worth of meaning like gender and skin.
+    fn u16(&mut self) -> Option<u16> {
+        let b = self.body.get(self.at..self.at + 2)?;
+        self.at += 2;
+        Some(u16::from_le_bytes([b[0], b[1]]))
+    }
+    fn u32(&mut self) -> Option<u32> {
+        let b = self.body.get(self.at..self.at + 4)?;
+        self.at += 4;
+        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+    fn str(&mut self) -> Option<String> {
+        let n = self.u16()? as usize;
+        let b = self.body.get(self.at..self.at + n)?;
+        self.at += n;
+        Some(String::from_utf8_lossy(b).into_owned())
+    }
+}
+
+impl CreateCharacterRequest {
+    /// Decode a `0x008A` body. Returns `None` on anything short or malformed.
+    ///
+    /// The layout is in [`CLIENT_CREATE_CHARACTER_REQUEST`]. It was measured, not read -
+    /// the builder is inside the Themida VM - so this parser is written against one real
+    /// capture and pinned to it by test.
+    pub fn parse(body: &[u8]) -> Option<Self> {
+        let mut r = Reader { body, at: 0 };
+        let name = r.str()?;
+        let _ = r.u32()?;
+        let _ = r.u32()?;
+        let race = r.u32()?;
+        let sub_job = r.u16()?;
+        let strength = r.u32()? as u16;
+        let dexterity = r.u32()? as u16;
+        let intelligence = r.u32()? as u16;
+        let luck = r.u32()? as u16;
+        let gender = r.u32()? as u8;
+        let skin = r.u32()? as u8;
+        let hair = r.u32()?;
+        let count = r.u32()?;
+        let mut items = Vec::new();
+        for _ in 0..count {
+            items.push((r.u32()?, r.u32()?));
+        }
+        Some(CreateCharacterRequest {
+            name,
+            race,
+            sub_job,
+            strength,
+            dexterity,
+            intelligence,
+            luck,
+            gender,
+            skin,
+            hair,
+            items,
+        })
+    }
+
+    fn item(&self, category: u32) -> Option<u32> {
+        self.items.iter().find(|(c, _)| *c == category).map(|(_, id)| *id)
+    }
+
+    /// Turn the request into the character to send back.
+    ///
+    /// # The two slot numberings are different
+    ///
+    /// The request numbers its items by *creation category* - 3 is "top" because top is the
+    /// third picker on the screen. The avatar look numbers them by **equipment slot**, and
+    /// those are the classic MapleStory ones: 5 top, 6 bottom, 7 shoes, 11 weapon. Copying
+    /// the request's numbers straight across would dress the character in the wrong slots,
+    /// which renders as nothing at all.
+    ///
+    /// Face and hair are not equipment: they are fields of the stat block and of the look.
+    pub fn character(&self, id: u32) -> Character {
+        let mut equips = Vec::new();
+        for (category, slot) in [
+            (ITEM_TOP, 5u8),
+            (ITEM_BOTTOM, 6),
+            (ITEM_SHOES, 7),
+            (ITEM_WEAPON, 11),
+        ] {
+            if let Some(item) = self.item(category) {
+                equips.push((slot, item));
+            }
+        }
+        Character {
+            id,
+            name: self.name.clone(),
+            gender: self.gender,
+            skin: self.skin,
+            face: self.item(ITEM_FACE).unwrap_or(20000),
+            // The request sends the hair twice: a bare `hair` field carrying the colour
+            // variant, and category 2 carrying the base style. The variant is the one the
+            // player picked, so it is the one that goes back.
+            hair: if self.hair != 0 {
+                self.hair
+            } else {
+                self.item(ITEM_HAIR).unwrap_or(30000)
+            },
+            strength: self.strength,
+            dexterity: self.dexterity,
+            intelligence: self.intelligence,
+            luck: self.luck,
+            equips,
+            ..Character::default()
+        }
+    }
+}
 
 /// The character creation result.
 ///
@@ -1132,6 +1282,89 @@ mod tests {
             !client_will_offer_creation(slots, 3),
             "a full account must not be offered creation"
         );
+    }
+
+    /// The exact 101 bytes the client sent on 2026-08-19, creating "Hello" with a
+    /// 7/5/7/6 roll... no: 10/4/5/6. Kept verbatim because the builder is virtualised and
+    /// this capture is the only specification that exists.
+    const CAPTURED_CREATE_REQUEST: &str = "\
+0500 48656c6c6f 00000000 ffffffff 00000000 0000 \
+0a000000 04000000 05000000 06000000 \
+00000000 02000000 31750000 \
+06000000 \
+01000000 214e0000 02000000 30750000 03000000 82de0f00 \
+04000000 a22c1000 05000000 825b1000 06000000 f0dd1300";
+
+    fn captured() -> Vec<u8> {
+        let hex: String = CAPTURED_CREATE_REQUEST.chars().filter(|c| !c.is_whitespace()).collect();
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_captured_create_request_parses_field_for_field() {
+        let body = captured();
+        assert_eq!(body.len(), 101, "the capture is 101 bytes");
+        let req = CreateCharacterRequest::parse(&body).expect("should parse");
+        assert_eq!(req.name, "Hello");
+        assert_eq!(req.race, 0);
+        assert_eq!(req.sub_job, 0);
+        // The four the client refuses to send unless they total 25.
+        assert_eq!(
+            (req.strength, req.dexterity, req.intelligence, req.luck),
+            (10, 4, 5, 6)
+        );
+        assert_eq!(
+            req.strength + req.dexterity + req.intelligence + req.luck,
+            25
+        );
+        assert_eq!(req.gender, 0);
+        assert_eq!(req.skin, 2);
+        assert_eq!(req.hair, 30001);
+        assert_eq!(
+            req.items,
+            vec![
+                (1, 20001),
+                (2, 30000),
+                (3, 1040002),
+                (4, 1060002),
+                (5, 1072002),
+                (6, 1302000),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_created_character_wears_what_was_asked_for() {
+        // The bug this exists to prevent: the first reply sent a default character and the
+        // new character came back naked on screen.
+        let chr = CreateCharacterRequest::parse(&captured()).unwrap().character(200);
+        assert_eq!(chr.name, "Hello");
+        assert_eq!(chr.face, 20001);
+        assert_eq!(chr.hair, 30001, "the colour variant, not the base style");
+        assert_eq!(chr.skin, 2);
+        // Creation categories 3/4/5/6 become equipment slots 5/6/7/11 - copying the
+        // request's own numbering across would put the clothes in slots that render as
+        // nothing.
+        assert_eq!(
+            chr.equips,
+            vec![(5, 1040002), (6, 1060002), (7, 1072002), (11, 1302000)]
+        );
+        // And it must still survive the client's own read sequence.
+        let record = character_record(&chr, 0);
+        assert_eq!(read_character_record(&record), record.len());
+    }
+
+    #[test]
+    fn a_truncated_create_request_is_rejected_rather_than_guessed() {
+        let body = captured();
+        for cut in [0, 1, 6, 20, 50, 100] {
+            assert!(
+                CreateCharacterRequest::parse(&body[..cut]).is_none(),
+                "a {cut}-byte body must not parse"
+            );
+        }
     }
 
     #[test]

@@ -311,6 +311,40 @@ if ($SessionTokens) {
 $p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
     -ArgumentList $launchArgs -PassThru
 
+# Record how the client dies.
+#
+# Three exit paths have been ruled out from inside the process with verified breakpoints -
+# RtlExitUserProcess, NtTerminateProcess, and any fault a vectored handler can see - and
+# the Windows Application log holds no error for these exits either, though it does hold a
+# real MapleStory crash from 2026-08-14, so that log is working. What is left is a kill
+# from another process or the last thread simply ending, and the exit code tells those
+# apart: 0xC0000409 is __fastfail, 0xC0000005 a fault, 1 or 0 a deliberate stop.
+#
+# A separate shell, because this one returns so the screen can be used.
+$exitLog = Join-Path $root 'client-exit.log'
+Remove-Item $exitLog -ErrorAction SilentlyContinue
+$watcher = @"
+`$ErrorActionPreference = 'SilentlyContinue'
+`$stamp = { (Get-Date).ToString('HH:mm:ss.fff') }
+try {
+    `$c = Get-Process -Id $($p.Id)
+    if (-not `$c) { "`$(&`$stamp) client $($p.Id) was gone before the watcher opened it" | Add-Content '$exitLog'; exit }
+    `$c.WaitForExit()
+    try {
+        `$code = `$c.ExitCode
+        "`$(&`$stamp) client $($p.Id) exited, code 0x{0:X8} ({0})" -f `$code | Add-Content '$exitLog'
+    } catch {
+        "`$(&`$stamp) client $($p.Id) exited, but the code could not be read: `$_" | Add-Content '$exitLog'
+    }
+} catch {
+    "`$(&`$stamp) exit watcher could not attach to $($p.Id): `$_" | Add-Content '$exitLog'
+}
+"@
+Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
+    '-ExecutionPolicy', 'Bypass', '-Command', $watcher
+) | Out-Null
+Write-Host "exit watcher started -> $exitLog"
+
 # Keep the host usable while the dialog is being read. -Normal skips this and runs the
 # client exactly as Windows would start it, in case the throttling ever looks like it is
 # affecting behaviour (timing-sensitive protection checks, for instance).
