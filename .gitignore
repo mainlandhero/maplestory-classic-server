@@ -18,3 +18,6 @@ probe.err
 # Python bytecode from tools/
 __pycache__/
 *.pyc
+
+# Socket capture from -Sockets runs
+sockets.log

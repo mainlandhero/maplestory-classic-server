@@ -58,6 +58,9 @@ param(
     # when handlers depend on each other - the login result is only useful after the world
     # list that 0x000B builds, and both must land inside one client launch.
     [string]$ReplySeq = '',
+    # Record the client's sockets for its whole lifetime, to see whether it ever connects
+    # to a second endpoint after login. Writes sockets.log beside probe.log.
+    [switch]$Sockets,
     [string]$ClientDir,
     [int]$Port = 8484
 )
@@ -87,6 +90,11 @@ function Stop-All {
         }
         Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
             Where-Object { $_.CommandLine -like '*handshake_probe*' } |
+            ForEach-Object { taskkill /F /PID $_.ProcessId | Out-Null }
+        # The socket watcher polls until the client exits, but kill it explicitly too - it
+        # would otherwise outlive a run that ended by killing the client from elsewhere.
+        Get-CimInstance Win32_Process -Filter "Name like '%powershell%'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -like '*watch-sockets*' } |
             ForEach-Object { taskkill /F /PID $_.ProcessId | Out-Null }
     } finally {
         $ErrorActionPreference = $prev
@@ -129,6 +137,17 @@ Start-Sleep -Milliseconds 600
 
 $name = (& python $probePy --list | Where-Object { $_ -match "^\s*$Variant\s" })
 Write-Host "variant $Variant :$name"
+
+# Started before the client so the very first socket is captured. It waits for the process
+# itself, which is why this does not need a second shell or any timing by hand.
+$socketLog = Join-Path $root 'sockets.log'
+if ($Sockets) {
+    Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @(
+        '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $here 'watch-sockets.ps1'),
+        '-Out', $socketLog
+    ) | Out-Null
+    Write-Host "socket watcher started -> $socketLog"
+}
 
 $probeArgs = @('-u', $probePy, '--port', "$Port", '--only', "$Variant")
 if ($Reply) {
