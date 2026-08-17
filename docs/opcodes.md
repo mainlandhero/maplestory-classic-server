@@ -341,6 +341,22 @@ no `verifyState` byte or locked-account sub-record. Its middle differs field for
 it ends the same way, with the account name. Kept as the fallback if `0x0000` turns out to
 be the wrong one of the two.
 
+## Characters — see `docs/character.md`
+
+Decoded 2026-08-18, statically. Summary:
+
+| Direction | Opcode | Meaning |
+|---|---|---|
+| in | `0x0010` | the login result **carries the character list**, via `FUN_14108bdf0`: `u8 count`, then `count` records |
+| out | `0x0081` | name check request — one string |
+| in | `0x0014` | name check result — `str name`, `u8 result` |
+| in | `0x0015` | create result — `u8 result`; on `0`, `u32` + one character record + `u8` |
+| in | `0x0016` | delete result — `u32 characterId` |
+| out | ? | **the create request, still unfound** |
+
+The record itself is `FUN_1403094b0` -> `FUN_140302e30`. **CharSelect is a sub-screen of the
+login stage**, not a stage of its own, so all of this arrives through `FUN_141b25f30`.
+
 ## 0x000B — the world list
 
 One packet per world; a final packet whose first byte has the high bit set closes the list.

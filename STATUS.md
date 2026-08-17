@@ -1,737 +1,73 @@
-# Where things stand — 2026-08-18 (`0x0000` decoded, ready to send)
+# Where things stand — 2026-08-18 (character transaction decoded)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
 
-## THE GOAL (set 2026-08-17, extended 2026-08-18)
+## THE GOAL (set 2026-08-18)
 
-The owner's goal, in their words, now four parts:
+**The server processes an entire character creation transaction.** The owner set this after the
+masked email landed and the "connection dies" problem turned out not to exist.
 
-1. **A valid session on the client** - not a client-side patch.
-2. **The masked email showing on the login screen.**
-3. **Successfully create a character** by going through the character creation flow.
-4. **The server keeps the connection alive** once the session is valid, so the client does
-   not give up and disconnect.
+That means, end to end and against a real server-side implementation:
 
-### Where things stand against that goal
+1. the client reaches CharSelect with a **character list we sent**;
+2. it asks the server to **check a name**, and the server answers;
+3. it sends the **create request**, and the server creates the character and answers;
+4. the client returns to CharSelect **with the new character in the list**.
+
+### Where things stand
 
 | | |
 |---|---|
-| Login screen | reached, `0x0032` |
-| Login button lit and clickable | reached, `0x000B` world entry sets `stage+0x108` |
-| Animated transition to character select | reached, by clicking Login in mode 2 |
-| Masked email | **DONE** - `0x0000` puts `wisp****@example.com` on the login screen |
-| Valid session | **not started** - the two client patches fake it |
-| Connection stays up | **probably never broken** - the "reset" was a log-format artefact; both endpoints stay `Established` until the client exits |
-| Create a character | **blocked** - client has no character list, and sends nothing |
-
-Full recipe for the current state is under "MILESTONE" below.
-
-### `0x0000` is decoded, and it is a second login result
-
-**The account name is server-supplied, and so, it now looks, is the login state.**
-`FUN_14112a720` renders `DAT_143aa84a0 + 0x22f8` into `textAccount` when it is non-empty;
-that field is written only by `FUN_142cb8370`, whose only two callers are the handlers for
-inbound `0x0000` (`FUN_141b2dd00`) and `0x0012` (`FUN_141b2ee90`).
-
-Reading `FUN_141b2dd00` settled what it is: `u8 result`, `str message`, then a gate on the
-result, then ~20 fields ending in the account name. **The gate is `FUN_141b267c0` — the same
-function `0x0010` uses**, so the two packets share an error vocabulary, and result `0` (or
-`12`) proceeds. Full field list in `docs/opcodes.md`; builder and read-back test in
-`crates/net/src/opcode.rs`.
-
-**No mode fork here.** `FUN_141b2dd00` does not branch on `session+0x68 == 5`, so it is live
-in mode 2 and mode 5 alike — unlike `0x000B`, where picking the wrong side costs a pass.
-
-### DONE - the masked email is on the login screen
-
-**Reached 2026-08-18.** Sending `0x0000` ahead of `0x000B` put `wisp****@example.com` in the
-account field, Login still worked, and the client reached character creation. Fixture:
-`research/fixtures/account-info-masked-email-on-screen.log`. Goal 2 is met, and it needed
-no new client-side patch - the packet alone did it.
-
-The handler ran clean: `1 opcode=0x0000 elapsed_us=413.0 ret=1`.
-
-**The connection still dies**, in the same place and the same way:
-
-```
-10:47:59  #29 0x0080                        8.5s into the connection
-10:47:59  >>> 0x0000  >>> 0x000B
-10:48:00  #30 0x007A   (loading complete)   8.8s
-          connection reset by client
-```
-
-Note **reset**, not a graceful close - and note that the teardown chain reached from the
-boot loop right after `0x007A` (`FUN_1415f1c50`, `FUN_1413f4690`, `FUN_141b0eb80`) turns
-out to be a config write and two flag stores. Nothing there closes a socket. The socket
-watch logged four teardown groups, all on unrelated handles at a steady cadence, none of
-them at the moment of the reset.
-
-So the close is still unexplained, and there is now a reason to distrust the instrument -
-see "RETRACTED" below. Two things were added for the next run, both zero-cost: the hook log
-is **timestamped** so it can be lined up against `probe.log` (the reason the four teardown
-groups could not be attributed), and `netwatch` **self-tests** at install.
-
-### The previous run's command, for reference
-
-```bash
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session mode=2 -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
-```
-
-**Do not retype that `0x0000` body** - regenerate it, which is what `packet-hex` is for. The
-world-list pin was once two characters too long and only a test caught it:
-
-```bash
-cargo run --release -p net --bin packet-hex -- account-info maplecw "wisp****@example.com"
-```
-
-**No `0x0010` in that sequence, deliberately.** Its success path transitions the stage, and
-the client would leave the login screen before the account name could be looked at.
-
-### The socket closer is named, and the hook is now trustworthy
-
-**`netwatch: SELF-TEST ok`** - the hook caught its own `connect` and `closesocket`. So its
-silence now means something, and the migration question can be settled by a clean run.
-
-**The closer, from the one teardown with a `.text` stack:**
-
-```
-10:58:01.199 CLOSESOCKET socket=0x6b8 called-from=0x1415e3b78
-  stack: 0x1415e3b78<-TEXT 0x1415d3657<-TEXT 0x142c46c42<-TEXT ...(vm)... 0x142c44399<-TEXT ...(vm)... 0x142c433d8<-TEXT
-```
-
-Every *other* teardown in the log comes from `0x7ffe…`, a different module on a steady
-cadence - telemetry sockets, not ours. This one is ours, and the chain resolves:
-
-| Frame | Function |
-|---|---|
-| `0x142c433d8` | `FUN_142c42f30 +0x4a3` - the second of its two teardown call sites |
-| `0x142c44399` | `FUN_142c44350` - the **session object's destructor** |
-| `0x142c46c42` | `FUN_142c46b80` - the destructor's body, its *only* caller being the above |
-| `0x1415d3657` | `FUN_1415d35f0` - connection teardown: resets `+0xc`/`+0x10`, closes the socket |
-| `0x1415e3b78` | `FUN_1415e3b60` - the `closesocket` wrapper |
-
-**These are live frames, not stack litter.** Two independent checks: `FUN_142c46b80` has
-exactly one caller (`142c44394`, and the stack holds `142c44399` = its return address), and
-`FUN_142c42f30`'s two calls to the destructor are at `142c43195` and `142c433d3` - the
-stack holds `142c433d8`, the return address of the **second**.
-
-**So the socket close is a consequence, not a decision.** `local_4f8` is the session object
-(it is what `FUN_142c4a810`, the mode getter, is called on), and the second call site is the
-one *after* `FUN_142c45e50` - the main call - returns. Nothing here is reacting to our
-server; the client is tearing its session down and the socket goes with it.
-
-**Do not over-read this yet.** In *this* run the dialog was not suppressed (see the
-regression below), and the dialog path has always ended in the client closing - so this
-close may be the dialog's, not the one seen in the milestone run. The chain is solid; which
-close it explains is not. That needs a run where the dialog is suppressed again.
-
-### REGRESSION, mine: the self-test brought the dialog back
-
-The dialog reappeared because of the diagnostic, not the client. `netwatch::install()` ran
-the self-test **inline**, and its blocking `connect` sat in SYN retries for **two seconds**
-- this client's outbound traffic is firewalled - all before `hook::install()` armed the
-dispatcher:
-
-```
-10:57:48.729  netwatch: CONNECT -> 127.0.0.1:9        <- self-test starts
-10:57:50.757  netwatch: SELF-TEST ok
-10:57:50.757  install: hook active                    <- two seconds late
-```
-
-The client's `0x0032` was therefore dispatched **unhooked** - the first dispatch the hook
-saw was `0x0000` (`flag=1->1`, already set) - and since `watch` can only arm once the hook
-has seen a dispatch, the `FUN_141b2a280` watch armed at `10:57:59`, long after the client
-raised the dialog at startup.
-
-Fixed twice over: the socket is now **non-blocking** (so the call returns immediately and
-the breakpoint has still been hit, which is all the test needs), and the self-test runs on
-its **own thread** so it cannot delay arming whatever it costs. **A diagnostic that changes
-what it is diagnosing is worse than no diagnostic.**
-
-### The connection dies with no `closesocket` and no `shutdown`
-
-**Run 3, dialog suppressed, hook self-tested `ok`, timings clean** (`install: hook active`
-at `11:03:42.144`, first dispatch `0x0032` at `.196`). Fixtures:
-`research/fixtures/no-closesocket-at-the-reset*.log`.
-
-```
-11:03:44  0x0080 -> we answer 0x0000 + 0x000B      (both dispatched, ret=1)
-11:03:45  client sends 0x007A                       8.6s into the connection
-11:03:45  connection reset by client
-11:03:45 .. 11:04:10   NO CLOSESOCKET. NO SHUTDOWN. NO CONNECT.
-11:04:10  four teardowns, all telemetry sockets, all from 0x7ffece145e61
-```
-
-The client then lived on for **at least 27 more seconds**. So, with an instrument that has
-proved it can see its own calls:
-
-* **The socket is not torn down through `closesocket` or `shutdown`.** Something else
-  destroys it - `CloseHandle`/`NtClose` on the handle would fit, and would also explain the
-  **reset** rather than a graceful close.
-* **The connection dying and the client exiting are separate events**, ~30 s apart. The
-  run-2 teardown (`FUN_142c44350`, the session destructor) was the *exit*, not this.
-* **No migration after the hook armed.** Bounded, honestly: the client's original connect
-  at ~`11:03:36` predates arming at `11:03:42`, so the hook cannot be checked against it -
-  but any *later* connect would have been caught, and there was none.
-
-### Run 4: both teardown watches silent - and that is not yet a finding
-
-Both armed (`netwatch: watching FUN_1415d35f0 ... at 0x1415d35f0`), the self-test passed,
-and **neither ever fired** - not at the reset, not at the client's exit. The reset itself
-reproduced identically for the third time.
-
-**This is deliberately not being written up as "the client never tears down".** Neither
-watch reported *once*, which is equally consistent with the watch not working - and that is
-the exact shape of the mistake that had to be retracted two runs ago. A negative from an
-instrument that has never been seen to fire is not evidence.
-
-Also note run 4 had **no `.text` closesocket at all**, unlike run 2 - so the exit took a
-different path, and the two runs' endings are not comparable.
-
-Two guards added, both cheap:
-
-* **The int3 is read back after planting.** Patching another module's `.text` can silently
-  not take. `int3 verified` in the log means the byte is really `0xcc`; `DID NOT TAKE`
-  disarms the slot and says so.
-* **A canary: `FUN_142cb8370`**, the account-name setter. It runs once per inbound `0x0000`
-  and its effect is on screen, so it is the one client function certain to be called. If
-  the canary reports and the teardown watches do not, their silence is real. If none of the
-  three report, the code watch is broken and the run says nothing.
-
-### SETTLED: the client never tears the connection down - something else resets it
-
-**Run 5, with the instrument verified.** All three int3s reported `int3 verified`, the
-ws2_32 self-test passed, and the **canary fired**:
-
-```
-FUN_142cb8370 (account name - CANARY) obj=0x6057a38 called-from=0x141b2ed24
-```
-
-`0x141b2ed24` is exactly the call site inside `FUN_141b2dd00`, the `0x0000` handler - so the
-code watch works, and it is reporting from the function the decompilation predicted.
-
-Against that, **`FUN_1415d35f0` and `FUN_142c44350` never fired at all.** Combined with run
-3's equally-verified negative on `closesocket`/`shutdown`, the client:
-
-* never runs its connection teardown;
-* never runs its session destructor;
-* never calls `closesocket` or `shutdown`;
-* and **keeps running** for tens of seconds after the connection is gone.
-
-Yet the connection is reset, reproducibly, ~0.3-0.45 s after the client's `0x007A`.
-
-**So the close is not the client's decision at all** - which also means "the client gives up
-on an invalid session" is not what is happening, and no amount of answering it will keep the
-socket alive on its own.
-
-### FAILED EXPERIMENT: do not int3 a hot function
-
-Watching `CloseHandle`/`NtClose` **killed the client**, ~2 s after arming, before its window
-even appeared. Fixture: `research/fixtures/closehandle-hook-killed-the-client.log`.
-
-```
-11:40:32.569 netwatch: watching CloseHandle at 0x7fff11e74c20 for handle 0x6c0 only
-11:40:32.569 netwatch: watching NtClose  at 0x7fff12ded7e0 for handle 0x6c0 only
-11:40:34.975 (last line)
-```
-
-The cause is structural, not tuning. Every trap does restore-byte / single-step / re-plant,
-and `write_byte` calls **`VirtualProtect` twice per trap**. `NtClose` runs on essentially
-every handle operation in the process, including inside loader and I/O paths, and
-`VirtualProtect` takes process-wide locks of its own. A trap budget does not help: the
-damage is done long before any budget is reached.
-
-**Rule, now recorded in the module: this int3 technique is only for functions called
-rarely.** Anything hot needs an inline trampoline or IAT patching, and neither is worth
-building - the handle-validity poll answers the same question with no hooks at all.
-
-The run was not a total loss. Before it died, two of the three oracles worked:
-
-```
-***** SOCKET conn=0x5911658 +0x20=0x6c0 - the client holds a socket *****
-***** SOCKET 0x6c0 is now VALID (client still holds it) *****
-```
-
-So the socket poll and the OS handle check are both live and reporting. Those are the two
-that were going to answer the question anyway; the hooks were the greedy addition.
-
-### The reset only happens when we patch the client - and that changes the question
-
-**Run 7 showed the client tearing the connection down perfectly.** The dialog was back (see
-the race below), and with it:
-
-```
-11:44:12.520 FUN_142c44350 (session destructor)  obj=0x14f9f0    called-from=0x142c433d8
-11:44:12.520 FUN_1415d35f0 (connection teardown) obj=0x5941538   called-from=0x142c46c42
-11:44:12.520 CLOSESOCKET socket=0x6c0                            called-from=0x1415e3b78
-11:44:12.690 SOCKET conn=0x5941538 +0x20=0xffffffffffffffff - closed and cleared by the client
-```
-
-The probe logged **"client closed the connection"** - a graceful close, not the `reset` seen
-every other time. So the full teardown chain works, runs in order, and our watches see all
-of it.
-
-**Which means the earlier negative was conditional, and I stated it too broadly.** "The
-client never tears the connection down" holds only in the configuration where
-`-Probe watch@141b2a280:rdx=0` is active. Compare:
-
-| Run | dialog suppressed? | how the connection ends |
-|---|---|---|
-| 2, 7 | no | **graceful close**, full teardown chain, client exiting |
-| 3, 5 | yes | **reset**, no teardown of any kind, client alive for ~30 s more |
-
-**So the abnormal reset may be an artefact of our own patch rather than client behaviour** -
-and the whole of goal 4 may be chasing damage we are doing ourselves. That is now the
-first thing to test, and it is a single-variable test.
-
-### RESULT: the mode patch is innocent, and one invariant survives every run
-
-**Run 8, `-Session mode=2` dropped.** The connection died anyway, in the same place:
-
-```
-11:52:29  #29 0x0080  ->  we answer 0x0000 + 0x000B      8.9s into the connection
-11:52:29  #30 0x007A  (loading complete)                 9.3s
-          client closed the connection
-11:52:49  the client's teardown chain finally runs       20 s later, at exit
-```
-
-So the mode patch is not what kills it. And across all eight runs, with and without either
-client patch, one thing has never varied:
-
-> **The connection dies immediately after the client sends `0x007A`** - its loading-complete
-> report - between +0.27 s and +0.45 s, every single time.
-
-What *does* vary is only whether the probe calls it `reset` or `closed`, and how much later
-the client exits. The teardown chain, when it runs at all, runs at **exit** and is a
-separate event.
-
-**The owner's "Cannot connect to game server" is a consequence, not a new symptom.** That is the
-mode-5 login path: `FUN_141b3ff10` calls `FUN_141b2ba60(stage, 0x50, ...)` and raises
-`unableLogOnToGameSvr` when it returns 0. Without the mode patch the client is in mode 5, so
-clicking Login takes that path - and by then the connection has been gone for seconds. It
-confirms the connection was already dead; it is not a new failure.
-
-**A test-design slip worth recording:** `-Session` gates the session *monitor*, not just the
-mode patch. Dropping `-Session mode=2` also switched off the socket-handle poll and the
-`GetHandleInformation` check - two of the three oracles - so this run could not say whether
-the handle was still valid. Use `-Session watch` to keep the monitor without the patch.
-
-### SETTLED: the client does not end the connection. Something else sends the FIN.
-
-**Run 9, oracles finally all live.** The game socket is `0x6b4`:
-
-```
-11:55:58.202  SOCKET conn=0x5fe1f98 +0x20=0x6b4 - the client holds a socket
-11:55:58.402  SOCKET 0x6b4 is now VALID (client still holds it)
-11:55:58.5    probe: client closed the connection          <- our end sees a FIN
-   ... 11.5 seconds, no INVALID transition, no socket call on 0x6b4 at all ...
-11:56:09.982  CLOSESOCKET socket=0x6b4  called-from=0x1415e3b78   <- at exit
-```
-
-The **only** `closesocket(0x6b4)` in the whole run is at exit, eleven and a half seconds
-after our end saw the connection end, and there is no `shutdown` on it ever. The handle
-polled **VALID** throughout.
-
-**So the client's socket was open, valid and untouched while the connection was already
-dead.** A FIN reached us that the client's own code did not send. That is now established
-on instruments that have each been verified: the ws2_32 watch self-tests, the code watch
-has a canary, and the int3s are read back after planting.
-
-### The recurring caller is NexonAnalytics64.dll - and it is not the culprit
-
-Named at last, after four runs of being written off as "telemetry":
-
-```
-CLOSESOCKET socket=0x10e8  called-from=0x7ffecdcd5e61 in NexonAnalytics64.dll
-SHUTDOWN    socket=0x10e8  called-from=0x7ffecdcd5fb4 in NexonAnalytics64.dll
-```
-
-It creates and tears down **its own** sockets every few seconds - failing to reach its
-server, because the firewall rule denies it - and it never touches the game socket. So the
-churn is explained and it is a red herring. `grap64.dll` in the log is our own stub making
-its self-test call.
-
-### Every user-mode way to end a connection has now been ruled out
-
-Run 10 armed seven ws2_32 exports, all verified, none hitting their cap:
-
-| Watched | On the game socket |
-|---|---|
-| `closesocket` | only at exit, ~11 s late |
-| `shutdown` | never |
-| `WSASendDisconnect` | **never fired at all** |
-| `WSACleanup` | never fired at all |
-| `setsockopt` | never fired at all |
-| `connect` / `WSAConnect` | only our own self-test |
-
-Plus: the handle polled **VALID** throughout, and the client's teardown functions ran only
-at exit. Our end still got a **reset** at the same point as always, ~0.3 s after `0x007A`.
-
-**And our own side is innocent too**, checked in code rather than assumed: the probe's loop
-exits only on an empty `recv` or a genuine `ConnectionResetError`, and `--hold` defaults to
-**300 s** - `test-one.ps1` never overrides it. Nothing on our end closes at ~9 s.
-
-So a TCP reset arrives that **neither endpoint's application code produced**, while both
-endpoints still hold open, valid sockets. That is a network-layer event, and it cannot be
-chased any further with user-mode API hooks - which is where this line of instrumentation
-stops.
-
-**Note against the firewall hypothesis:** Windows Firewall does not filter loopback, which
-is why this connection works at all. The rule is therefore an unlikely cause, though not
-impossible if a WFP callout driver (AV, or a Nexon component) is involved.
-
-### pktmon cannot see loopback - the capture was empty
-
-**The recommendation was wrong and the run produced nothing.** `pktmon` hooks NDIS/WFP
-components, and loopback traffic never reaches them: against `127.0.0.1` it captures **zero
-packets** whatever `--comp` is set to. The 907-line log was component enumeration and
-per-component counters, all reading zero.
-
-Worse, the summary *said* "135 drops", which were all `Drop Counters` **metadata** lines
-that exist whether or not anything is captured. A tool that reports a number when it has
-measured nothing is the same failure as the connect hook, one layer up. `pktmon.ps1` now
-reads the UTF-16 output properly, counts only real drops, and **refuses to print a summary
-at all when no packets were captured**, saying so instead. It is kept for the day the
-harness serves on a real interface.
-
-### RETRACTED: "the connection dies right after 0x007A" was a log-format artefact
-
-**This is the big one, and it invalidates the premise of the last eight runs.**
-
-The TCP-state poll and the probe flatly contradicted each other:
-
-```
-sockets.log  12:46:21  probe  Established 127.0.0.1:8484  -> 127.0.0.1:64712
-             12:46:21  client Established 127.0.0.1:64712 -> 127.0.0.1:8484
-             ... no state change at all ...
-             12:46:57  client exited
-probe.log    12:46:34  <- #31 0x007A          <- last *timestamped* line
-             (no time) connection reset by client
-             (no time) connection lasted 0.0s after the reply was sent
-```
-
-**Both endpoints stayed `Established` for the full 36 seconds, until the client exited.**
-There was no reset at 9 seconds, and there never had been.
-
-Two defects in the probe's own logging produced the illusion, and both are now fixed:
-
-1. **`log()` did not timestamp.** Only a handful of call sites added a time of their own,
-   and `connection reset by client` was not one of them. Sitting directly under the last
-   timestamped line, it read as happening at that moment - when in fact it fires when the
-   loop exits, which is when the *client exits*, half a minute later. Every line is
-   timestamped now.
-2. **`connection lasted 0.0s after the reply was sent` measured nothing.** `reply_at` is
-   only set by the timed-reply path; in `--reply-to` mode it does not exist, so the code
-   fell back to `time.time()` and subtracted it from itself. It printed `0.0s` on every run
-   ever done, and it looked like the client giving up instantly.
-
-**What this means for goal 4:** the connection is *not* being killed. It stays up until the
-client exits for its own reasons. Everything built to explain the "reset" - the socket
-watch, the handle poll, `WSASendDisconnect`, the pktmon attempt - was chasing a number that
-came out of our own log formatting. The instruments were all working; they kept reporting
-"nothing closed this connection" because **nothing closed it**.
-
-The lesson is the one already recorded for hooks, applied one level up: an unverified
-*instrument* invalidates a negative, and a log format is an instrument.
-
-### Superseded: the free instrument that answers the same question
-
-`tools/watch-sockets.ps1` already polls `Get-NetTCPConnection` every 250 ms and logs only
-changes. It was written to spot migration; the **TCP state of each half is what says who
-closed first**, which is exactly the open question:
-
-| State seen | Means |
-|---|---|
-| client in `CloseWait` | **our end** sent FIN first |
-| client in `FinWait1`/`FinWait2` | **the client** sent FIN first |
-| the pair vanishes with no intermediate state | a **reset** |
-
-It now watches **both endpoints** - anything owned by the client *or* on the probe port -
-and labels each line `client` or `probe`. No driver, no elevation, and `-Sockets` already
-wires it into `test-one.ps1`.
-
-Add `-Sockets` to the standard run; everything else is unchanged. `sockets.log` lands
-beside `probe.log`.
-
-### Superseded: packet capture
-
-`tools/pktmon.ps1` wraps Windows' built-in `pktmon`. It changes nothing about the client
-and nothing about the machine's security posture, and the filter is **TCP on port 8484
-only** - so it records this experiment and nothing else.
-
-Two things it gives that no API hook can:
-
-* **the TCP flags on the wire**, so "reset" stops being an inference from a Python
-  exception and becomes an observed RST with a direction;
-* **DROP events with a reason and the component that dropped them**, which is how a filter
-  driver - antivirus, or something Nexon ships - would show up.
-
-`--comp all`, because loopback traffic never traverses a NIC. `--pkt-size 0`, so the TCP
-header is actually present in the log rather than truncated away.
-
-```powershell
-# 1. elevated shell
-powershell -ExecutionPolicy Bypass -File tools\pktmon.ps1 -Start
-# 2. normal shell: the usual run
-powershell -ExecutionPolicy Bypass -File tools	est-one.ps1 ...
-# 3. elevated shell again, once the client has closed
-powershell -ExecutionPolicy Bypass -File tools\pktmon.ps1 -Stop
-```
-
-`-Stop` converts to text and prints a summary of every RST and every drop, so the
-interesting lines do not have to be found by eye.
-
-| What the capture shows | Conclusion |
-|---|---|
-| RST from the **client's** port | the client's stack sent it, with no user-mode call - kernel-side, e.g. a filter driver |
-| RST from **our** port | our probe's socket is being reset, and the fault is on the server side after all |
-| a **Drop** with a component id | that component is the culprit; `pktmon list` names it |
-| neither | the connection is not being reset at the network layer, and "reset by client" needs re-examining |
-
-### Superseded: this needs a decision, not another hook
-
-Three options, and they are the owner's to pick because two touch their machine's configuration:
-
-1. **Packet-level capture** (`pktmon`, built into Windows, needs elevation). Observes the
-   reset at the network layer and can attribute drops to a component. No change to the
-   client, no change to security posture. **Recommended.**
-2. **One run with the firewall rule off.** Cheap and decisive about the rule, but it lets
-   the patched client reach the real Nexon servers, which is the exact thing the rule was
-   added to prevent. The owner's call.
-3. **Serve on a real interface instead of loopback.** Puts the traffic on a NIC where it can
-   be captured conventionally *and* where the firewall rule genuinely applies - so it tests
-   both at once - but it is a bigger change to the harness.
-
-### Superseded: two hypotheses from the owner
-
-Both are about components we did *not* neutralise, and both fit the evidence better than
-anything the client's own login code could do.
-
-1. **An anti-cheat that cannot reach its server kills the session.** GameGuard is stubbed,
-   which removes one killer - but `MapleSecurePC64.dll` and `NexonAnalytics64.dll` are still
-   in the process, and the firewall rule denies them their servers.
-2. **Such a component may not respect the `-NXLDEBUG` address at all**, dialling its own
-   hardcoded endpoint, failing, and reacting.
-
-There is a standing clue nobody has chased: **almost every socket teardown in these logs
-comes from `0x7ffe…`, outside the client image, on a steady few-second cadence.** It has
-been written off as "telemetry" for four runs without ever being identified.
-
-Three additions, all cheap and all safe to `int3` because they are rarely called:
-
-* **`called-from` now names the module** (`GetModuleHandleExA` + `GetModuleFileNameA`), so
-  the recurring `0x7ffe…` caller finally gets a name.
-* **`WSASendDisconnect`** - sends a FIN and leaves the socket open, which is exactly the
-  observed signature and the leading candidate.
-* **`WSACleanup`** and **`setsockopt`** - the former tears down every socket at once, the
-  latter is watched for `SO_LINGER {1,0}`, which turns a later close into a reset.
-
-```bash
-powershell -ExecutionPolicy Bypass -File "<repo>	ools	est-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session watch -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
-```
-
-If the module turns out to be an anti-cheat or telemetry component, the next question is
-whether it can be stubbed the way GameGuard was - which is the same technique already
-proven on `grap64.dll`, and squarely within what the owner asked for when they said the new client
-should bypass GameGuard, MapleSecurePC and any other protection.
-
-### Superseded: the socket oracles, with the mode patch still off
-
-```bash
-powershell -ExecutionPolicy Bypass -File "<repo>	ools	est-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session watch -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
-```
-
-`-Session watch` monitors without patching the mode. The question is unchanged and now
-uncontaminated by the mode patch: at the moment the connection dies, is the client's socket
-handle still **VALID**?
-
-* **VALID** - nothing closed it; the connection died under a live socket, which puts the
-  cause outside the client's own logic. The firewall rule scoped to this executable is then
-  the first thing to rule out, and that is the owner's call.
-* **INVALID** - something closed the handle without `closesocket`, and the search narrows to
-  how.
-
-### Superseded: is it the mode patch, or the dialog patch?
-
-Two client-side patches are active in every "reset" run. Drop one at a time.
-
-**Run A - keep the dialog suppression, drop `-Session mode=2`.** The client stays in mode 5
-and auto-logs-in, which is not the flow we want long-term but is fine for this question:
-does the connection still die at ~8.5 s?
-
-```bash
-powershell -ExecutionPolicy Bypass -File "<repo>	ools	est-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
-```
-
-If the connection survives, **the mode patch is what kills it** and goal 4 is largely a
-self-inflicted problem. If it still resets, the mode patch is innocent and the dialog patch
-is next.
-
-### FIXED: the dialog race, permanently
-
-The dialog came back twice, and both times it was timing, not the client. Watch mode armed
-on the **first dispatched packet**, so every run was a race between the DLL's five-second
-install delay and the harness's gate packet:
-
-```
-11:44:02.468  install: hook active
-11:44:10.992  probe: watching 0x141b2a280      <- eight seconds late
-11:44:10.993  0 opcode=0x0000  flag=1->1       <- 0x0032 was dispatched unhooked
-```
-
-**Watch now arms from `install()`.** That removes the race, and with it a documented
-limitation: a call made before the first inbound packet used to be invisible to watch mode
-by construction - which is unfortunate, given the thing being watched is a decision the
-client makes at startup.
-
-### Superseded: the two oracles that work, on their own
-
-Loaded so a single launch resolves the question whichever way it goes, because the
-instrument is finally trustworthy and the budget is not.
-
-**Three independent oracles, none of which interfere:**
-
-1. **`conn + 0x20`, the client's own socket handle.** `FUN_1415d35f0` hands it to
-   `FUN_1415e3b60`, which closes the socket and stores `-1`, so this field is what the
-   client believes it owns. Polled; every change logged.
-2. **`GetHandleInformation` on that handle**, once a second. Asks the OS whether the handle
-   is still open, independently of what the client thinks.
-**Removed:** a third oracle hooking `CloseHandle`/`NtClose`. See the failed experiment
-above - it killed the client and the technique cannot be used on hot functions.
-
-**How to read it:**
-
-| Observation | Conclusion |
-|---|---|
-| handle goes `INVALID` | something closed it behind the client's back |
-| `+0x20` goes to `-1` | `FUN_1415e3b60` ran after all, and the earlier negative needs revisiting |
-| handle stays **VALID** across the reset | nothing closed it: the socket object is alive and the *connection* is what died, which points outside the client entirely - the firewall rule, a filter driver, or our own probe |
-
-That last row is worth taking seriously rather than treating as the leftover. The reset is
-reproducible to within half a second of the same event every time, and none of the client's
-own teardown machinery is involved.
-
-
-### Superseded: is the socket destroyed, or abandoned?
-
-Two possibilities remain, and the connection object's own socket handle separates them.
-`FUN_1415d35f0` hands `conn + 0x20` to `FUN_1415e3b60`, which closes the socket and stores
-`-1`, so that field is the client's own view of whether it still owns a socket.
-
-The session monitor now polls it - no new API hooks - and logs every change:
-
-| Log line | Meaning |
-|---|---|
-| `SOCKET conn=... +0x20=0xffffffffffffffff` | something *did* tear it down, by a path that avoids both watched functions - chase `CloseHandle`/`NtClose` next |
-| `+0x20` unchanged and valid across the reset | the client still believes it owns a live socket, so the reset came from outside its own logic entirely |
-
-The connection object comes from the dispatcher's first argument, which is the only place
-we are handed it.
-
-### Superseded: does the client's teardown run at all?
-
-Two possibilities remain and one breakpoint separates them: the socket is destroyed through
-another API, or the client's teardown path never runs and something else resets the
-connection.
-
-`netwatch` now also watches **`FUN_1415d35f0`** (connection teardown) and **`FUN_142c44350`**
-(session destructor), by RVA. They went here rather than into `-Probe` because `-Probe`
-holds only one target and that slot is needed for the dialog suppression - without which the
-run is not comparable to the one being explained.
-
-Re-run the same command unchanged and read:
-
-| Log line | Meaning |
-|---|---|
-| `FUN_1415d35f0 (connection teardown)` at the reset | the client *is* tearing down; the close goes through an API we are not watching |
-| neither line at the reset | the client never tears down - the reset comes from elsewhere, and the socket is being destroyed under it |
-| `FUN_142c44350 (session destructor)` only later | confirms the exit is a separate event, as run 3 suggests |
-
-### Superseded plan - re-run with the dialog suppressed
-
-Re-run the same command unchanged. With the self-test off the critical path the dialog
-should be suppressed again, which makes this a like-for-like repeat of the run that reached
-character select - but now with a hook that has proved itself and a timestamped log.
-
-The questions it answers:
-
-1. **Is the close the same one?** If `CLOSESOCKET` with the `FUN_142c44350` stack lands at
-   the moment the connection drops *while the dialog is suppressed*, the destructor chain
-   explains the real close and not just the dialog's.
-2. **Does the client migrate?** `SELF-TEST ok` plus no `CONNECT` line is now a real
-   negative. That finally closes the question the retracted section got wrong.
-
-Check `install: hook active` arrives before the first `0x0032` dispatch. If it does not,
-the timing is still off and nothing else in the run is comparable.
-
-### GOAL 3 - the character list: structure mapped, packet not yet found
-
-Progress is real but the packet is still open. What is now settled:
-
-**CharSelect is not a separate packet stage.** `FUN_141b3f050(this, screenId, delay)` just
-writes `this + 0x238`, and screens **3 (ClassicIntro), 4 (CharSelect) and 5 (NewChar) are
-sub-screens of one login-stage object**. So the character list must arrive through
-`FUN_141b25f30`, the login-stage switch - there is no second `OnPacket` to find.
-
-**The nine sibling stages are mapped**, by scanning `.rdata` for the base-class run that
-every stage vtable shares (`FUN_141d5f590`), then reading the `OnPacket` slot of each:
-
-| OnPacket | Opcode range | What it is |
-|---|---|---|
-| `FUN_141b25f30` | the login set | **the login stage** |
-| `FUN_141b82b00` | `0x51`-`0x6f` | buddy / messenger |
-| `FUN_141072ec0` | `0x5ac`-`0x5bf` | - |
-| `FUN_141df5940` | `0x1001`-`0x1007` | - |
-| `FUN_142097ee0` | (×4) | a shared no-op base |
-
-**Corrections to earlier guesses in this file:**
-
-* **`FUN_141b28570` does not consume a character list.** It was nominated here on the
-  strength of where it is called from; reading it shows a 290-byte state check that calls
-  `FUN_140199470`. Another static chain that looked convincing and was not measured.
-* **`0x0010` does not carry the list either.** Its success path has a count and two bounded
-  loops, which is the right *shape* - but the loops are a nibble swap and a bit rotate over
-  a string buffer, i.e. the client obfuscating a token it will send back, not decoding
-  records.
-* **`0x11` is a notice handler** and **`0x46` is an announcement list** (two counted loops of
-  `str, str, str, 8B, u32`). Both were the densest readers in the switch, and neither is it.
-
-**Where to look next**, cheapest first: the login-stage cases still unread - `0x13`, `0x14`,
-`0x15`, `0x16`, `0x17`, `0x18`, `0x25`, `0x27`, `0x35`, `0x37`, `0x38`, `0x0f` - and then the
-cases that read *nothing* directly and delegate (`0x45`, `0x47`, `0x48`, `0x4a`, `0x50`,
-`0x5f`), since a per-character decode function would look exactly like that. All of this is
-static and costs no launches.
-
-### After that
-
-1. **Decode `0x0012`** if `0x0000` turns out to be the wrong one of the two.
-2. **The character list**, for goal 3. Start with `FUN_141b28570`, called from the login
-   result's success path just before its stage transition; then read the remaining
-   login-stage cases.
-3. **Fallback only:** the `CNM*` interface in `nexon_api_x64.dll` / `nmcogame64.dll`, both
-   unpacked. This was the standing assumption and is now demoted - chase it only if the
-   packets above do not produce a valid session.
-
-**Aim to retire the two client-side patches.** `-Session mode=2` and
-`-Probe watch@141b2a280:rdx=0` make the normal flow reachable but are not a valid session.
-If `0x0000` does what it looks like, both should become unnecessary - and that, not the
-screen, is the test of whether goal 1 is actually met.
-
-### CORRECTION: the close is not an idle timeout
-
-The client's last packet before dropping the connection is `0x007A`, and it is a
-**loading-complete report**, not a goodbye. `FUN_142c4f490` builds it; its only caller is
-`FUN_141b0ef00`, the boot task loop, which emits it once all four of its load phases have
-finished, carrying their durations (`67, 11, 10, 34, 122` ms in the milestone capture).
-
-So the close coincides with *loading finishing*, not with a quiet socket. Those two have
-been indistinguishable in every run so far, and "~8s idle timeout" was written down on the
-timing alone. Treat it as unproven; the `closesocket` hook is what will settle it.
-
-`FUN_141b0ef00` had no Ghidra function at all - reached only from virtualised code, so
-auto-analysis never made one. `DecompileFunc.java` now creates one when it is missing.
-**For this binary, "no function there" is the normal state for the interesting handlers.**
+| Login screen | done, `0x0032` |
+| Login button lit and clickable | done, `0x000B` world entry sets `stage+0x108` |
+| Masked email on the login screen | **done**, `0x0000` - no client patch needed |
+| Transition to character select | done |
+| Connection stays up | **not a problem** - the "reset" was our own log format, see the retraction below |
+| Character list | **format decoded, never sent** |
+| Name check | **both halves decoded**, never sent |
+| Create request | **not found yet** - the one real gap |
+| Create result | **decoded**, never sent |
+| Valid session | still faked by two client patches |
+
+### Read these first
+
+* **`docs/character.md`** - the whole character transaction: the list, the record layout,
+  the three inbound opcodes, the outbound side, and precisely what is *not* established.
+* `docs/opcodes.md` - the opcode tables, now including the character set.
+* `docs/session.md` - the login exchange and the "trouble logging in" story.
+* `research/msexe-charrecord.c`, `msexe-charstats.c`, `msexe-char-requests.c` - the
+  decompilation this rests on.
+
+### The plan, in order
+
+1. **Finish the character record.** `FUN_140302e30` is solid to `+0x23` (id, two `u32`s, a
+   **13-byte fixed name**, two `u8`s, three `u32`s). Past that: several `u32` blocks, a
+   `u64`, a four-iteration loop, then `u8, u8, 8B, u32, u32`. All of it is needed - the
+   readers throw on underrun, and a misaligned record corrupts every later field silently.
+   Build it in `crates/net/src/opcode.rs` with a read-back test, the way `account_info` and
+   `world_list_entry` were done.
+2. **Send a one-character list** inside `0x0010` and confirm CharSelect shows it. That is
+   the first thing here that has ever been on the wire, and it validates the record layout
+   before anything is built on top of it.
+3. **Find the create request.** Ruled out already: `0x0074`, `0x0075`, `0x0082`, `0x008B`,
+   `0x008C`, `0x008D`, `0x00A8`, `0x00A9`, `0x00C0`. Look at the **NewChar screen (screen
+   5)** and what its Create button calls - the same route that found the Login button's
+   handler. It carries a full character spec, so it is a builder with many field writes.
+4. **Answer `0x0081` with `0x0014`**, then the create request with `0x0015`, and watch the
+   client return to CharSelect with the new character.
+5. **Then make it real**: persist characters in `crates/store` so the transaction survives a
+   restart, which is what "the server processes it" means.
+
+### Standing warnings
+
+* **`-Session mode=2` and `-Probe watch@141b2a280:rdx=0` are client patches.** They make the
+  normal flow reachable; they do not make the session valid. Say so when reporting.
+* **Watch mode now arms from `install()`**, so it no longer races the harness's gate packet.
+  If the login dialog ever reappears, check `install: hook active` precedes the first
+  dispatch before concluding anything about the client.
+* **Every character finding above is static and unmeasured.** Four static chains in this
+  project looked equally convincing and were wrong.
 
 ## Working right now
 
@@ -1041,15 +377,10 @@ send because it was never told what characters exist.
 That is the next thing to find: the character-list packet. The client reached character
 select without one, which is why the screen is inert.
 
-Where to look, cheapest first:
-
-1. The login stage switch (`FUN_141b25f30`) still has many undecoded cases - `0x11`-`0x18`,
-   `0x23`, `0x25`-`0x27`, `0x29`, `0x2b`, `0x34`-`0x39`, `0x45`-`0x48`, `0x4a`, `0x50`,
-   `0x5f`. Read them the way `0x000B` was read. **Check the `session+0x68 == 5` fork in
-   each** - and note the mode patch means the client is mode 2 by then, so the *classic*
-   branch is the live one after the patch.
-2. `FUN_141b28570(param_1, &local_5e8, 0)`, called from the login result's success path
-   right before its stage transition, looks like it consumes a character list.
+**Both of those are now answered - see `docs/character.md`.** The list is inside `0x0010`
+(`FUN_14108bdf0`: `u8 count`, then records), and `FUN_141b28570` turned out **not** to
+consume a character list at all; it is a 290-byte state check that was nominated here on
+the strength of where it is called from, and never read.
 
 ### After that: build the server side
 

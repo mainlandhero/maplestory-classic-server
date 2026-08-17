@@ -307,9 +307,10 @@ Still open, in order:
    but has never been on the wire.
 2. **Decode `0x0012`** (`FUN_141b2ee90`, 1868 bytes) - the fallback if `0x0000` turns out to
    be the wrong one of the two. Same opening, same gate, different middle.
-3. **Find the character-list packet**, for the character-creation half of the goal. Read
-   the remaining login-stage cases the way `0x000B` was read, and start with
-   `FUN_141b28570`, called from the login result's success path.
+3. ~~Find the character-list packet.~~ **Done** - it is inside `0x0010`, decoded by
+   `FUN_14108bdf0`. The whole character transaction is in **`docs/character.md`**.
+   (`FUN_141b28570` was nominated for this and is *not* it - a static guess that was never
+   read before being written down.)
 4. **Only if those fail:** the `CNM*` interface in `nexon_api_x64.dll` / `nmcogame64.dll`.
    Both are unpacked. This was the standing assumption for weeks and is now the *fallback*,
    because the account name turning out to be server-supplied suggests the session may be
@@ -326,7 +327,21 @@ Settled and no longer worth pursuing:
 * `DAT_143ac1898 + 0x1b8` (the `0x0073` identity string) is still empty and still unwritten
   by anything we can find, but it did not stop login and is no longer the lead.
 
-## The close is not an idle timeout - correcting an earlier reading
+## RETRACTED: the connection was never dying
+
+**There was no close to explain.** A `Get-NetTCPConnection` poll showed *both* endpoints
+`Established` from before the supposed death right through to the client exiting half a
+minute later. The whole thing came from two defects in `handshake_probe.py`'s own logging:
+`log()` did not timestamp, so the untimestamped `connection reset by client` line - which
+fires when the receive loop exits, i.e. when the **client** exits - sat under the last
+timestamped line and read as happening there; and `connection lasted 0.0s after the reply
+was sent` subtracted `time.time()` from itself in `--reply-to` mode, printing `0.0s` on
+every run ever done. Both are fixed.
+
+Everything below was written while chasing that phantom. It is kept because the findings
+about `0x007A` are correct and useful, but the framing - "the close" - is not.
+
+### `0x007A` is a loading-complete report
 
 **`0x007A` is a loading-complete report, and the close follows it.** The client's last
 packet before dropping the connection is `0x007A`, body

@@ -99,7 +99,7 @@ Original `C:\Nexon\Library\maplestorycw\appdata` is read-only reference; never t
 
 Each stage ends in something observable.
 
-### Stage 0 — Foundation & analysis  ← current
+### Stage 0 — Foundation & analysis  ✅ done
 - [x] Reconnaissance of client (done; see above).
 - [x] Rust workspace + toolchain (rustc 1.97.1 msvc).
 - [x] PE protection-surface map — all 42 binaries surveyed. `MapleStory.exe` and
@@ -112,18 +112,18 @@ Each stage ends in something observable.
       running headless on JDK 21. Projects in `research/ghidra/` (gitignored).
       `MapleSecurePC64.dll` imported; `MapleStory.exe` analysis is long-running.
 
-### Stage 1 — Client bring-up  ← next
-Ordered cheapest-first, per the revised strategy above.
-- [ ] Test the **`IPPORT`** launch argument on a copied client — can we set the server
-      endpoint without patching anything?
-- [ ] Determine whether the client will start with GameGuard absent/stubbed, and whether
-      Themida validates `grap64.dll`.
-- [ ] Make `client-patched/` accordingly (stub `grap64.dll`, block `MapleSecurePC64.dll`).
-- [ ] Stand up a bare TCP listener on 8484; capture the raw first bytes the client sends.
+### Stage 1 — Client bring-up  ✅ done
+- [x] Launch mode: **`IPPORT` crashes**; `-NXLDEBUG <ip> <port>` is the only mode that runs
+      *and* connects. `WEBSTART` needs session fields we cannot fake.
+- [x] `client-patched/` with a stub `grap64.dll`. **GameGuard never loads**, and Themida
+      does not validate it.
+- [x] Listener on 8484 capturing the client's first bytes.
 
-### Stage 2 — Crypto & handshake
-- [ ] Reverse the initial handshake: version, sub-version/locale, IV seeds, cipher.
-- [ ] Implement the framing + cipher in `crates/net`; round-trip a handshake with the client.
+### Stage 2 — Crypto & handshake  ✅ done
+- [x] Handshake reversed — the gate was fields `G == 1` **and** `H == 1`, not the version.
+      See `docs/handshake.md`.
+- [x] Framing and cipher in `crates/net`, **verified in both directions**. The on-disk AES
+      key is a decoy; the real one is read from the running client. See `docs/transport.md`.
 
 ### Stage 2.5 — Auth server + our own launcher
 The client will not get past startup without the session handoff its launcher normally
@@ -157,9 +157,17 @@ So we build that half ourselves rather than trying to patch the requirement away
 - [ ] The login server (Stage 3) validates the same session token, so the two agree on
       who the player is.
 
-### Stage 3 — Login server
-- [ ] `crates/login`: version check → (stub) auth → world list → channel select →
-      character list → **migration** hand-off to a channel. Reach **character-select**.
+### Stage 3 — Login server  ← **current**
+- [x] Reach the login screen (inbound `0x0032`), the **world list** (`0x000B`, which is also
+      what enables the Login button), and **character select**.
+- [x] The **account name / masked email** (`0x0000`) — server-supplied, on screen.
+- [ ] **The character creation transaction** — the current goal. Character list inside
+      `0x0010`, name check `0x0081`/`0x0014`, create request (unfound) → `0x0015`.
+      Everything decoded so far is in **`docs/character.md`**.
+- [ ] `crates/login` proper: today the "server" is `tools/handshake_probe.py` replaying
+      hand-built bodies. The transaction above is what justifies a real crate.
+- [ ] **Migration is an open question again** — the evidence for "the client never
+      migrates" was retracted; see `STATUS.md`.
 - [ ] `crates/world`: world/channel registry the login server advertises, and the
       migration token store both sides validate against.
 - [ ] `crates/data`: typed loaders over `crates/wz` (mobs, items, skills, maps, strings).
