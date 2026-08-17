@@ -1,0 +1,64 @@
+11:55:50.392 install_once: our code IS running. env=false marker=true -> installing
+11:55:55.393 install: base=0x140000000 target=0x1415d60e0
+11:55:55.393 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+11:55:55.394 11:55:55.394probe: watching 0x141b2a280 - will report every entry with rcx/rdx/r8/r9 (first 32) 
+session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="watch"
+11:55:55.394 netwatch: watching ws2_32!connect at 0x7fff127d1a50
+11:55:55.394 netwatch: watching ws2_32!WSAConnect at 0x7fff127f0130
+11:55:55.394 netwatch: watching ws2_32!closesocket at 0x7fff127c5000
+11:55:55.394 netwatch: watching ws2_32!shutdown at 0x7fff127d1cc0
+11:55:55.394 netwatch: watching FUN_1415d35f0 (connection teardown) at 0x1415d35f0 (orig 0x48, int3 verified)
+11:55:55.394 netwatch: watching FUN_142c44350 (session destructor) at 0x142c44350 (orig 0x48, int3 verified)
+11:55:55.395 netwatch: watching FUN_142cb8370 (account name - CANARY) at 0x142cb8370 (orig 0x48, int3 verified)
+11:55:55.395 install: hook active
+11:55:55.395 ***** CONNECT -> 127.0.0.1:9 #1 called-from=0x7ffefb20de20 *****
+11:55:55.395 ***** CLOSESOCKET socket=0xfc0 #2 called-from=0x7ffefb20de28 *****
+11:55:55.395 netwatch: SELF-TEST ok - 2 calls were caught while making 2 of our own, so a later absence of lines is a real negative
+11:55:55.588 ***** CLOSESOCKET socket=0x1948 #3 called-from=0x7fff127c4f8a *****
+11:55:55.589 ***** CLOSESOCKET socket=0x194c #4 called-from=0x7ffecdcd5e61 *****
+11:55:55.589 ***** SHUTDOWN socket=0x194c how=2 (both) #5 called-from=0x7ffecdcd5fb4 *****
+11:55:55.589 ***** CLOSESOCKET socket=0x194c #6 called-from=0x7ffecdcd5e61 *****
+11:55:55.595 session: object at 0x60c0518 is now readable
+11:55:55.595 ***** SESSION obj=0x60c0518 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:55:55.642 ***** CLOSESOCKET socket=0x1a64 #7 called-from=0x7fff127c4f8a *****
+11:55:56.452 ***** CLOSESOCKET socket=0x1b34 #8 called-from=0x7fff127c4f8a *****
+11:55:56.453 ***** CLOSESOCKET socket=0x1b2c #9 called-from=0x7ffecdcd5e61 *****
+11:55:56.453 ***** SHUTDOWN socket=0x1b2c how=2 (both) #10 called-from=0x7ffecdcd5fb4 *****
+11:55:56.453 ***** CLOSESOCKET socket=0x1b2c #11 called-from=0x7ffecdcd5e61 *****
+11:55:58.159 ***** WATCH #1: 0x141b2a280 ENTERED while dispatching opcode 0x0000 rcx=0x2f86f558 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+11:55:58.159       forced rdx -> 0x0
+11:55:58.196 ***** FUN_142cb8370 (account name - CANARY) obj=0x60c0518 #12 called-from=0x141b2ed24 *****
+          stack: 
+      stack: 0x141b2ed24<-TEXT 0x143ac1240(?)
+11:55:58.196     0 opcode=0x0000 elapsed_us=570.8 ret=1 flag=1->1 state=2->2
+11:55:58.197     1 opcode=0x000B elapsed_us=78.4 ret=1 flag=1->1 state=2->2
+11:55:58.202 ***** SOCKET conn=0x5fe1f98 +0x20=0x6b4 - the client holds a socket *****
+11:55:58.402 ***** SOCKET 0x6b4 is now VALID (client still holds it) *****
+11:55:58.402 ***** SESSION obj=0x60c0518 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:56:01.408 ***** SESSION obj=0x60c0518 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:56:04.413 ***** SESSION obj=0x60c0518 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:56:07.421 ***** SESSION obj=0x60c0518 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:56:07.852 ***** CLOSESOCKET socket=0x1bb4 #13 called-from=0x7fff127c4f8a *****
+11:56:07.853 ***** CLOSESOCKET socket=0x1bc0 #14 called-from=0x7ffecdcd5e61 *****
+11:56:07.853 ***** SHUTDOWN socket=0x1bc0 how=2 (both) #15 called-from=0x7ffecdcd5fb4 *****
+11:56:07.853 ***** CLOSESOCKET socket=0x1bc0 #16 called-from=0x7ffecdcd5e61 *****
+11:56:09.982 ***** FUN_142c44350 (session destructor) obj=0x14f9f0 #17 called-from=0x142c433d8 *****
+          stack: 
+      stack: 0x142c433d8<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) 0x14346d606(?) 0x142f06b07<-TEXT 0x142f0f036<-TEXT 0x142f0c1c3<-TEXT 0x142f096ee<-TEXT 0x1434a3c90(?) 0x142f0a126<-TEXT 0x143295a4b(?) 0x142f0f753<-TEXT 0x142f06b07<-TEXT 0x142f0f036<-TEXT
+11:56:09.982 ***** FUN_1415d35f0 (connection teardown) obj=0x5fe1f98 #18 called-from=0x142c46c42 *****
+          stack: 
+      stack: 0x142c46c42<-TEXT 0x143dea15c(vm) 0x143dea100(vm) 0x143dea15c(vm) 0x143d87000(vm) 0x142c44399<-TEXT 0x143dea15c(vm) 0x142c433d8<-TEXT 0x143dea15c(vm) 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) 0x14346d606(?) 0x142f06b07<-TEXT 0x142f0f036<-TEXT
+11:56:09.982 ***** CLOSESOCKET socket=0x6b4 #19 called-from=0x1415e3b78 *****
+          stack: 
+      stack: 0x1415e3b78<-TEXT 0x1415d3657<-TEXT 0x142c46c42<-TEXT 0x143dea15c(vm) 0x143dea100(vm) 0x143dea15c(vm) 0x143d87000(vm) 0x142c44399<-TEXT 0x143dea15c(vm) 0x142c433d8<-TEXT 0x143dea15c(vm) 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) 0x14346d606(?)
+11:56:09.983 ***** FUN_1415d35f0 (connection teardown) obj=0x5fe1f98 #20 called-from=0x1415d04e7 *****
+          stack: 
+      stack: 0x1415d04e7<-TEXT 0x1415e33b7<-TEXT 0x142c46c58<-TEXT 0x143dea15c(vm) 0x143dea100(vm) 0x143dea15c(vm) 0x143d87000(vm) 0x142c44399<-TEXT 0x143dea15c(vm) 0x142c433d8<-TEXT 0x143dea15c(vm) 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) 0x14346d606(?)
+11:56:10.027 ***** SOCKET conn=0x5fe1f98 +0x20=0xffffffffffffffff - closed and cleared by the client (FUN_1415e3b60 ran) *****
+11:56:10.428 ***** SESSION obj=0x60c0518 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:56:10.628 session: object at 0x0 is now UNREADABLE - values below are stale
+11:56:10.667 ***** CLOSESOCKET socket=0x142c #21 called-from=0x7fff127c4f8a *****
+11:56:10.667 ***** CLOSESOCKET socket=0x8b0 #22 called-from=0x7ffecdcd5e61 *****
+11:56:10.667 ***** SHUTDOWN socket=0x8b0 how=2 (both) #23 called-from=0x7ffecdcd5fb4 *****
+11:56:10.667 ***** CLOSESOCKET socket=0x8b0 #24 called-from=0x7ffecdcd5e61 *****

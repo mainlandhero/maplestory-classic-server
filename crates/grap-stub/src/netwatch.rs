@@ -71,11 +71,26 @@ enum Kind {
 // building here: the socket-handle validity poll in `session` answers the same question
 // with no hooks at all.
 
-const EXPORTS: [(&[u8], Kind); 4] = [
+const EXPORTS: [(&[u8], Kind); 7] = [
     (b"connect\0", Kind::Connect),
     (b"WSAConnect\0", Kind::Connect),
     (b"closesocket\0", Kind::Close),
     (b"shutdown\0", Kind::Close),
+    // The three below were added once it was established that the client's socket stays
+    // **open and valid** for eleven seconds after our end sees a FIN. A FIN with no
+    // `shutdown` and no `closesocket` has to come from somewhere, and these are the rare,
+    // safe-to-int3 ways to produce one:
+    //
+    // * `WSASendDisconnect` sends a FIN and leaves the socket open - which is precisely the
+    //   observed signature, and the leading candidate.
+    // * `WSACleanup` tears down the whole Winsock context under every socket at once.
+    // * `setsockopt` is here for `SO_LINGER {1, 0}`, which turns a later close into an
+    //   abortive reset - the other thing seen on this connection.
+    //
+    // All three are called rarely; that is a hard requirement here. See the note above.
+    (b"WSASendDisconnect\0", Kind::Close),
+    (b"WSACleanup\0", Kind::Close),
+    (b"setsockopt\0", Kind::Close),
 ];
 
 /// The client's own teardown path, as RVAs from the image base.
@@ -130,6 +145,7 @@ const EXCEPTION_SINGLE_STEP: u32 = 0x8000_0004;
 const CTX_EFLAGS: usize = 0x44;
 const CTX_RCX: usize = 0x80;
 const CTX_RDX: usize = 0x88;
+const CTX_R8: usize = 0xB8;
 const CTX_RSP: usize = 0x98;
 const CTX_RIP: usize = 0xF8;
 const TRAP_FLAG: u32 = 0x100;
@@ -167,6 +183,43 @@ unsafe fn write_byte(addr: usize, value: u8) -> bool {
     *(addr as *mut u8) = value;
     VirtualProtect(addr as *mut c_void, 1, old, &mut old);
     true
+}
+
+/// Name the module an address belongs to, e.g. `MapleSecurePC64.dll`.
+///
+/// **Why this matters.** Nearly every socket teardown in these logs comes from
+/// `0x7ffe…` - outside the client image - on a steady few-second cadence, and has been
+/// dismissed as "telemetry" without ever being identified. The owner's point is that in the live
+/// game an anti-cheat that cannot reach its server will kill the client, and that we have
+/// stubbed GameGuard but *not* everything else in the process. Naming the module turns that
+/// from a hypothesis into a fact one way or the other.
+unsafe fn module_of(addr: usize) -> String {
+    const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: u32 = 4;
+    const GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT: u32 = 2;
+    extern "system" {
+        fn GetModuleHandleExA(flags: u32, addr: *const u8, module: *mut *mut c_void) -> i32;
+        fn GetModuleFileNameA(module: *mut c_void, buf: *mut u8, size: u32) -> u32;
+    }
+    let mut module = std::ptr::null_mut();
+    if GetModuleHandleExA(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        addr as *const u8,
+        &mut module,
+    ) == 0
+    {
+        return String::new();
+    }
+    let mut buf = [0u8; 260];
+    let n = GetModuleFileNameA(module, buf.as_mut_ptr(), buf.len() as u32) as usize;
+    if n == 0 {
+        return String::new();
+    }
+    let path = String::from_utf8_lossy(&buf[..n]).to_string();
+    // Just the file name; the full path is noise once it repeats every few seconds.
+    match path.rsplit(['\\', '/']).next() {
+        Some(name) if !name.is_empty() => format!(" in {name}"),
+        _ => String::new(),
+    }
 }
 
 /// Decode a `sockaddr` for logging. Only AF_INET is spelled out; anything else is reported
@@ -367,7 +420,8 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             // The breakpoint is on the export's first byte, so the call has just pushed
             // its return address and `[rsp]` is the immediate caller.
             let from = if crate::session::can_read(rsp, 8) {
-                format!(" called-from={:#x}", *(rsp as *const u64))
+                let ret = *(rsp as *const u64) as usize;
+                format!(" called-from={ret:#x}{}", module_of(ret))
             } else {
                 String::new()
             };
@@ -378,18 +432,35 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
                 }
                 Kind::Close => {
                     let socket = *(ctx.add(CTX_RCX).cast::<u64>());
-                    let how = *(ctx.add(CTX_RDX).cast::<u64>()) as u32;
-                    if label == "shutdown" {
-                        // SD_RECEIVE / SD_SEND / SD_BOTH.
-                        let dir = match how {
-                            0 => "recv",
-                            1 => "send",
-                            2 => "both",
-                            _ => "?",
-                        };
-                        format!("SHUTDOWN socket={socket:#x} how={how} ({dir})")
-                    } else {
-                        format!("CLOSESOCKET socket={socket:#x}")
+                    let rdx = *(ctx.add(CTX_RDX).cast::<u64>()) as u32;
+                    match label {
+                        "shutdown" => {
+                            // SD_RECEIVE / SD_SEND / SD_BOTH.
+                            let dir = match rdx {
+                                0 => "recv",
+                                1 => "send",
+                                2 => "both",
+                                _ => "?",
+                            };
+                            format!("SHUTDOWN socket={socket:#x} how={rdx} ({dir})")
+                        }
+                        "WSASendDisconnect" => {
+                            format!("WSASENDDISCONNECT socket={socket:#x}  <- sends a FIN and leaves the socket open")
+                        }
+                        "WSACleanup" => "WSACLEANUP  <- tears down every socket at once".to_string(),
+                        "setsockopt" => {
+                            // setsockopt(s, level, optname, ...): r8 is optname.
+                            let optname = *(ctx.add(CTX_R8).cast::<u64>()) as u32;
+                            let note = if rdx == 0xFFFF && optname == 0x0080 {
+                                "  <- SO_LINGER, which can turn a close into a reset"
+                            } else {
+                                ""
+                            };
+                            format!(
+                                "SETSOCKOPT socket={socket:#x} level={rdx:#x} opt={optname:#x}{note}"
+                            )
+                        }
+                        _ => format!("CLOSESOCKET socket={socket:#x}"),
                     }
                 }
                 Kind::Code => {

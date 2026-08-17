@@ -317,7 +317,61 @@ mode patch. Dropping `-Session mode=2` also switched off the socket-handle poll 
 `GetHandleInformation` check - two of the three oracles - so this run could not say whether
 the handle was still valid. Use `-Session watch` to keep the monitor without the patch.
 
-### Next: the socket oracles, with the mode patch still off
+### SETTLED: the client does not end the connection. Something else sends the FIN.
+
+**Run 9, oracles finally all live.** The game socket is `0x6b4`:
+
+```
+11:55:58.202  SOCKET conn=0x5fe1f98 +0x20=0x6b4 - the client holds a socket
+11:55:58.402  SOCKET 0x6b4 is now VALID (client still holds it)
+11:55:58.5    probe: client closed the connection          <- our end sees a FIN
+   ... 11.5 seconds, no INVALID transition, no socket call on 0x6b4 at all ...
+11:56:09.982  CLOSESOCKET socket=0x6b4  called-from=0x1415e3b78   <- at exit
+```
+
+The **only** `closesocket(0x6b4)` in the whole run is at exit, eleven and a half seconds
+after our end saw the connection end, and there is no `shutdown` on it ever. The handle
+polled **VALID** throughout.
+
+**So the client's socket was open, valid and untouched while the connection was already
+dead.** A FIN reached us that the client's own code did not send. That is now established
+on instruments that have each been verified: the ws2_32 watch self-tests, the code watch
+has a canary, and the int3s are read back after planting.
+
+### Two hypotheses from the owner, and the run that tests both
+
+Both are about components we did *not* neutralise, and both fit the evidence better than
+anything the client's own login code could do.
+
+1. **An anti-cheat that cannot reach its server kills the session.** GameGuard is stubbed,
+   which removes one killer - but `MapleSecurePC64.dll` and `NexonAnalytics64.dll` are still
+   in the process, and the firewall rule denies them their servers.
+2. **Such a component may not respect the `-NXLDEBUG` address at all**, dialling its own
+   hardcoded endpoint, failing, and reacting.
+
+There is a standing clue nobody has chased: **almost every socket teardown in these logs
+comes from `0x7ffe…`, outside the client image, on a steady few-second cadence.** It has
+been written off as "telemetry" for four runs without ever being identified.
+
+Three additions, all cheap and all safe to `int3` because they are rarely called:
+
+* **`called-from` now names the module** (`GetModuleHandleExA` + `GetModuleFileNameA`), so
+  the recurring `0x7ffe…` caller finally gets a name.
+* **`WSASendDisconnect`** - sends a FIN and leaves the socket open, which is exactly the
+  observed signature and the leading candidate.
+* **`WSACleanup`** and **`setsockopt`** - the former tears down every socket at once, the
+  latter is watched for `SO_LINGER {1,0}`, which turns a later close into a reset.
+
+```bash
+powershell -ExecutionPolicy Bypass -File "<repo>	ools	est-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session watch -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+```
+
+If the module turns out to be an anti-cheat or telemetry component, the next question is
+whether it can be stubbed the way GameGuard was - which is the same technique already
+proven on `grap64.dll`, and squarely within what the owner asked for when they said the new client
+should bypass GameGuard, MapleSecurePC and any other protection.
+
+### Superseded: the socket oracles, with the mode patch still off
 
 ```bash
 powershell -ExecutionPolicy Bypass -File "<repo>	ools	est-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session watch -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
