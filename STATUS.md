@@ -225,6 +225,22 @@ identity.
 
 ### Start here next session
 
+**The prompt is solved; confirm it, then find the writer.** `FUN_1415d9210` raises it from
+`DAT_143aa84a0 + 0x2270` (flag, bit 2) and `+0x227c` (status byte, 0 = this dialog). Full
+table in `docs/session.md`. Two moves, neither needing a guess:
+
+1. **Confirm at runtime.** From `grap-stub`, read `DAT_143aa84a0` and log `+0x2270` and
+   `+0x227c`. Flag set and status 0 proves the chain end to end.
+2. **Then clear bit 2 of `+0x2270`** - `FUN_1415d9210` returns immediately and the dialog
+   should not appear at all. A one-line test of the whole theory, and if it works it is
+   also the first time we have made the client *stop* reporting an invalid session.
+
+Nothing writes either byte with an immediate (`xref.py --field ... --size byte` finds
+nothing, but that only catches `imm8` stores). The `CNM*` interface in `nexon_api_x64.dll` /
+`nmcogame64.dll` is still the likely writer, and both are unpacked.
+
+#### Older note, now superseded
+
 **One question, and it has a designed experiment:** what result code reaches
 `FUN_141b267c0`, and when? The dialog is raised for result -1, 6, 8 or 9, but the owner sees it
 *before* any login exchange, and `0x0032` (handled by `FUN_1415e5c20`) never touches that
@@ -298,10 +314,12 @@ not evidence either way.
 Short version, because two long-standing assumptions turned out to be wrong:
 
 - **"Having trouble logging in" is `/Notice/text/loginTroubleAskSupport`** - a baked bitmap
-  in `Login.img`, which is why no string search ever found it. **It is a login result
-  dialog.** `FUN_141b267c0` switches on `result + 1` and raises it for result codes
-  **-1, 6, 8, 9** (3 = `blockedID`, 4 = `incorrectPassword`, 5 = `notRegisteredID`,
-  7 = `loginAlready`). So the client thinks it received a failing login result.
+  in `Login.img`, which is why no string search ever found it. **Solved: it is two bytes on
+  the session object.** `FUN_1415d9210` returns unless `DAT_143aa84a0 + 0x2270 & 4`, then
+  switches on `DAT_143aa84a0 + 0x227c`, where **0 (and any unmapped value) means this
+  dialog**. Same object as `textAccount` `+0x22f8` and world/channel `+0x2258`/`+0x2260`.
+  A watch proved the login-result path is *not* involved - `FUN_141b267c0` was never
+  entered while the dialog was on screen.
   `Login.img` also has **two** login screens (`Title_new`, and `ClassicIntro` = ours, the
   one carrying `find_id`/`find_pw`); `FUN_141129930` builds `ClassicIntro`.
 - **The empty identity did not block the login.** The client still sent `0x0073` and

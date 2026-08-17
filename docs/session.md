@@ -40,7 +40,50 @@ maintenance", `38` = "GameGuard has been updated"). The numeric keys are **not**
 result codes - there is no `101`/`0x65` entry - so the login result resolves through the
 named keys.
 
-### Which result codes raise it
+### What actually raises it: two bytes on the session object
+
+**Settled by observation, 2026-08-16.** A watch on `FUN_141b267c0` armed before the login
+screen appeared and stayed armed for the whole session; the dialog appeared and **that
+function was never entered**. So the login-result path below is *not* the source, and the
+result-code table is a dead end for this symptom. Keep it for reading actual login results.
+
+The real raiser is `FUN_1415d9210`:
+
+```c
+obj = DAT_143aa84a0;                       // the account/session manager
+if ((*(u8 *)(obj + 0x2270) & 4) == 0) return;   // no flag, no dialog at all
+switch (*(u8 *)(obj + 0x227c)) {
+    case 0:    -> 0x2100000B  loginTroubleAskSupport
+    case 1:    -> 0x2100000D
+    case 2:    -> 0x21000009  incorrectFormOfID
+    case 0x11: -> 0x21000008  errorUnableToConnect
+    case 0x1B: -> 0x2100000A  temporaryBlockedIPAddr
+    case 0x1C: -> 0x2100000C
+    case 0xFF: -> 0x21000007  selectiveShutdownYouth
+    default:   -> 0x2100000B  loginTroubleAskSupport
+}
+```
+
+`FUN_141804140` turns those codes into notice names - it is the same error-code family as
+`docs/client-messages.md`, and `0x2100000B` is not in that table yet.
+
+So **"Having trouble logging in?" is the zero/default case** of a status byte, gated by a
+flag bit, on the same object that holds `textAccount` (`+0x22f8`), the world id (`+0x2258`)
+and the channel id (`+0x2260`). That is exactly what an unpopulated session looks like, and
+it explains every observation: it appears immediately, it owes nothing to the wire, and no
+reply can clear it.
+
+Nothing writes either byte with an immediate - `xref.py --field 0x227c/0x2270 --size byte`
+finds nothing, though that only catches `mov [reg+disp], imm8`, so it is not proof. Given
+the object and how deep the offsets sit, the `CNM*` session interface in
+`nexon_api_x64.dll` / `nmcogame64.dll` remains the likely writer.
+
+**Cheapest next step:** confirm the mechanism rather than assume it. From `grap-stub`, read
+`DAT_143aa84a0` and log `+0x2270` and `+0x227c`. If the flag bit is set and the status byte
+is `0`, the chain is proven end to end - and clearing bit 2 of `+0x2270` should then
+suppress the dialog outright, which is a one-line test of the whole theory.
+
+### Which result codes raise it (login results only - NOT this dialog)
 
 `FUN_141b267c0(stage, result, ...)` is the map, and it switches on `result + 1`:
 
