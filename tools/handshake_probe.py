@@ -396,6 +396,48 @@ def parse_reply_seq(spec: str):
     return out
 
 
+REQUEST_TOKEN = "<req>"
+
+
+def parse_answer_seq(spec: str):
+    """Like `parse_reply_seq`, but a body may contain `<req>`.
+
+    Some replies have to quote the request back. The name check is the clear case: the
+    client sends `0x0081 { str name }` and waits for `0x0014 { str name, u8 result }`, and
+    the name in the answer is the name it asked about - a fixed body would answer about
+    some other name. `<req>` stands for the request's payload, opcode excluded, so the
+    whole answer is `<req>00`.
+
+    Returns [(opcode, [literal, ...] split on the token, pad)].
+    """
+    out = []
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        head, _, pad_txt = item.partition("/")
+        op_txt, sep, body_txt = head.partition(":")
+        if not sep:
+            raise SystemExit(f"--answer entry needs OPCODE:BODY, got {item!r}")
+        try:
+            parts = [bytes.fromhex(p.replace(" ", ""))
+                     for p in body_txt.lower().split(REQUEST_TOKEN)]
+            out.append((int(op_txt, 16), parts, int(pad_txt or 0)))
+        except ValueError as exc:
+            raise SystemExit(f"--answer entry {item!r}: {exc}") from exc
+    if not out:
+        raise SystemExit("--answer body was empty")
+    return out
+
+
+def build_answer_body(parts, request_body: bytes) -> bytes:
+    """Join the literal pieces, splicing the request's payload at each `<req>`."""
+    body = parts[0]
+    for piece in parts[1:]:
+        body += request_body + piece
+    return body
+
+
 def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           opcode: int = 0xFFFF, recv_iv: int = 0x52307802,
           sweep_from: int = 0, sweep_to: int = 0x1000, sweep_delay: float = 0.15,
@@ -615,7 +657,9 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                         # repeatedly. The client sends 0x00A8 on every click of "Create a
                         # character", so an answer that fires once would look like the
                         # button working the first time and breaking afterwards.
-                        for step_op, step_body, step_pad in answers.get(op, []):
+                        for step_op, parts, step_pad in answers.get(op, []):
+                            # pkt["body"] carries the opcode; the payload starts at 2.
+                            step_body = build_answer_body(parts, pkt["body"][2:])
                             frame, what = build_reply(
                                 "ping", step_op, cipher, step_pad, step_body)
                             log(f"[{port}] >>> ANSWERING 0x{op:04X} with {what}")
@@ -687,7 +731,9 @@ def main() -> None:
                     help="a standing answer, repeatable: IN=OPCODE:HEXBODY[/PAD],... "
                          "e.g. 00a8=05f4:0000. Unlike --reply-to this fires every time the "
                          "client sends that opcode, which is what anything the user can "
-                         "click more than once needs.")
+                         "click more than once needs. A body may contain <req>, which "
+                         "stands for the request's payload - '0081=0014:<req>00' answers "
+                         "the name check about the name that was actually asked.")
     ap.add_argument("--keepalive", type=float, default=0.0,
                     help="seconds between keepalive packets once the reply has been sent; "
                          "0 disables. Two runs both ended ~25s after our last packet with "
@@ -750,9 +796,11 @@ def main() -> None:
             key = int(incoming, 16)
         except ValueError as exc:
             raise SystemExit(f"--answer {spec!r}: {incoming!r} is not hex") from exc
-        answers[key] = parse_reply_seq(outgoing)
+        answers[key] = parse_answer_seq(outgoing)
         log(f"standing answer: 0x{key:04X} -> "
-            + ", ".join(f"0x{o:04X}" for o, _, _ in answers[key]))
+            + ", ".join(
+                f"0x{o:04X}" + ("  (echoes the request)" if len(p) > 1 else "")
+                for o, p, _ in answers[key]))
     if not args.answer:
         log("standing answers: none")
 
@@ -764,8 +812,11 @@ def main() -> None:
             for step_op, step_body, step_pad in seq or []:
                 build_reply("ping", step_op, c, step_pad, step_body)
             for steps in answers.values():
-                for step_op, step_body, step_pad in steps:
-                    build_reply("ping", step_op, c, step_pad, step_body)
+                for step_op, parts, step_pad in steps:
+                    # A plausible request payload, so a `<req>` answer is preflighted at
+                    # roughly the size it will really be rather than as an empty body.
+                    build_reply("ping", step_op, c, step_pad,
+                                build_answer_body(parts, b"\x04\x00Test"))
             if args.keepalive:
                 build_reply("ping", args.keepalive_opcode, c, 0, b"")
         except Exception as e:  # noqa: BLE001

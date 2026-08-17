@@ -344,6 +344,16 @@ to 4..12 and refuses any increment that would take the total over 25.
 | `0x008C` | `FUN_141b2d860` | `u32 characterId` - delete, after `confirmDeleteCharacterPermanently` | `0x0016` |
 | `0x008D` | `FUN_141b2da30` | `u32 characterId` - cancel a scheduled delete | - |
 
+**The name check blocks the screen until it is answered.** `FUN_141b28950` calls
+`FUN_141b3fd40(stage, 1)`, which builds a modal at `stage+0x270`; `FUN_141b33f30` dismisses
+it through that object's vtable slot `0x138`. Measured 2026-08-19: clicking "Check" left the
+client on "Connecting..." with the dialog blocking every other control, including OK. So
+`0x0014` is not optional for reaching the create request - it is in front of it.
+
+**The reply must quote the name back.** `0x0014` is `str name, u8 result` and the name is
+the one that was asked about, so a fixed body answers about the wrong name.
+`handshake_probe.py --answer 0081=0014:<req>00` splices the request's payload in.
+
 **`0x0081` ↔ `0x0014` is confirmed by more than adjacency.** `FUN_141b28950` sets
 `stage+0xd4 = 1` after sending, and `FUN_141b33f30` opens by writing `stage+0xd4 = 0`. Same
 flag, set by the request and cleared by the response. `FUN_141b28950` also refuses to send

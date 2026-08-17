@@ -113,7 +113,13 @@ $loginResult = Get-Packet (@('login-result') + $Characters)
 # Account first: the name it carries is drawn on the login screen, which the client is
 # still showing when this sequence lands.
 $replySeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
-# Standing answer: every click of "Create a character" sends 0x00A8 and waits.
+# Standing answers - both fire every time, because both are things the user can click
+# repeatedly and a one-shot would look like the button breaking after the first use.
+#
+#   0x00A8 -> 0x05F4   "Create a character": the placeholder-PIC check. 0 opens NewChar.
+#   0x0081 -> 0x0014   the name check. The reply must quote the name that was asked about,
+#                      hence <req>, which splices the request's payload in; the trailing
+#                      00 is CharNameResult 0 = available.
 $enterCreation = Get-Packet @('enter-creation')
 Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
@@ -123,7 +129,8 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
     -Reply ping -Opcode 0x0032 -Body 00 `
     -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
     -Session $Session -Probe $Probe `
-    -ReplyTo 0x0080 -ReplySeq $replySeq -Answer "00a8=$enterCreation" `
+    -ReplyTo 0x0080 -ReplySeq $replySeq `
+    -Answer "00a8=$enterCreation", "0081=0014:<req>00" `
     -Keepalive $Keepalive -Port $Port
 
 Write-Host ''
