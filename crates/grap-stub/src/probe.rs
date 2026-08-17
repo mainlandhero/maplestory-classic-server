@@ -494,9 +494,19 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             let rdx = *(ctx.add(CTX_RDX).cast::<u64>());
             let r8 = *(ctx.add(CTX_R8).cast::<u64>());
             let r9 = *(ctx.add(CTX_R9).cast::<u64>());
+            // The breakpoint sits on the function's first byte, so the `call` that got
+            // here has just pushed the return address and RSP points straight at it. That
+            // names the *caller*, which is the whole question once a watch confirms the
+            // callee runs - and it costs one read.
+            let rsp = *(ctx.add(CTX_RSP).cast::<u64>()) as usize;
+            let ret = if crate::session::can_read(rsp, 8) {
+                format!(" called-from={:#x}", *(rsp as *const u64))
+            } else {
+                String::new()
+            };
             log(&format!(
                 "***** WATCH #{n}: {watch:#x} ENTERED while dispatching opcode 0x{op:04X} \
-                 rcx={rcx:#x}{}{} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x} *****",
+                 rcx={rcx:#x}{}{} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x}{ret} *****",
                 deref(rcx),
                 deref_wstr(rcx),
                 rdx as u32 as i32,

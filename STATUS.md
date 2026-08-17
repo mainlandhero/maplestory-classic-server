@@ -244,10 +244,34 @@ or the dialog on screen is a *different* node with similar wording.
 Each of these was a plausible static chain - matching string, matching default case - and
 none survived a run. **Measure before building on a static chain.** Three times now.
 
-**Next: stop chasing the name, watch the display.** `FUN_141b4ac80(name, arg, flags)` is the
-central notice display - **26 callers**, including both known raisers. `rcx` points at a
-string object whose first field is the `wchar_t *`, and watch mode now dereferences that
-and logs the name, so this identifies the notice *however the caller chose it*.
+### Caught in the act, and the caller is the last unknown
+
+A watch on the notice display `FUN_141b4ac80(name, ...)` caught it:
+
+```
+WATCH #1: 0x141b4ac80 ENTERED  rcx=0x14d148 [0x057f5ed8] "loginTroubleAskSupport"
+          rdx=0x14d100  r8=0x0  r9=0xe
+```
+
+Settled by that line: the dialog **is** `loginTroubleAskSupport` (not some similar node),
+it is raised through `FUN_141b4ac80`, and the name arrives **intact** - so it is not built
+at runtime.
+
+Which leaves a genuine puzzle. Something loaded that name, but:
+
+* the `.rdata` literal at `0x1433d5d98` has exactly **three** code references, and all three
+  are proven never entered;
+* there is **no pointer-table reference** either - a scan for the qword `0x1433d5d98`
+  anywhere in the file finds nothing;
+* `rcx` pointed at a **heap** copy (`0x057f5ed8`), not the literal.
+
+The leading explanation is that the caller is **virtualised**: a `lea` inside Themida VM
+bytecode is invisible to every static scan we have. If so, static analysis is finished here
+and everything further must be measured.
+
+**Next:** watch mode now logs `called-from`, read from `[rsp]` at the breakpoint - the
+breakpoint sits on the function's first byte, so the `call` has just pushed the return
+address. Re-run the same command; the caller names itself.
 
 ```
 powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
@@ -255,7 +279,8 @@ powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
   -HookLog on -Probe watch@141b4ac80 -Session watch
 ```
 
-Look for `***** WATCH #n: ... rcx=... "someName"` - that name is the dialog on screen.
+A `called-from` inside `.themida` (roughly `0x144C0000`+) confirms the virtualised-caller
+theory. Anything in `.text` names a real function to decompile.
 
 #### Older note, now superseded
 

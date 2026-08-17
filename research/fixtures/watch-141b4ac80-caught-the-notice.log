@@ -1,0 +1,13 @@
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="watch"
+probe: watching 0x141b4ac80 - will report every entry with rcx/rdx/r8/r9 (first 32)
+    0 opcode=0x0032 elapsed_us=92.7 ret=111208288 flag=0->1 state=0->2
+***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+session: object at 0x6196508 is now readable
+***** SESSION obj=0x6196508 +0x2270=0x00 +0x227c=0x00 -> no dialog (flag bit 2 clear) *****
+***** SESSION obj=0x6196508 +0x2270=0x00 +0x227c=0x00 -> no dialog (flag bit 2 clear) *****
+***** WATCH #1: 0x141b4ac80 ENTERED while dispatching opcode 0x0032 rcx=0x14d148 [0x057f5ed8] "loginTroubleAskSupport" rdx=0x14d100 (as i32 1364224) [0x00000000] r8=0x0 r9=0xe *****
+***** SESSION obj=0x6196508 +0x2270=0x00 +0x227c=0x00 -> no dialog (flag bit 2 clear) *****
+session: object at 0x0 is now UNREADABLE - values below are stale
