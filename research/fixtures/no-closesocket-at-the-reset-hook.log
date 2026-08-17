@@ -1,0 +1,50 @@
+11:03:37.142 install_once: our code IS running. env=false marker=true -> installing
+11:03:42.143 install: base=0x140000000 target=0x1415d60e0
+11:03:42.143 netwatch: watching ws2_32!connect at 0x7fff127d1a50
+11:03:42.143 netwatch: watching ws2_32!WSAConnect at 0x7fff127f0130
+11:03:42.144 11:03:42.144session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2" 
+netwatch: watching ws2_32!closesocket at 0x7fff127c5000
+11:03:42.144 netwatch: watching ws2_32!shutdown at 0x7fff127d1cc0
+11:03:42.144 install: hook active
+11:03:42.144 ***** CONNECT -> 127.0.0.1:9 #1 called-from=0x7ffefb1ed150 *****
+11:03:42.145 ***** CLOSESOCKET socket=0x18f8 #2 called-from=0x7ffefb1ed158 *****
+11:03:42.145 netwatch: SELF-TEST ok - 2 calls were caught while making 2 of our own, so a later absence of lines is a real negative
+11:03:42.196 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+11:03:42.196 probe: watching 0x141b2a280 - will report every entry with rcx/rdx/r8/r9 (first 32)
+11:03:42.196     0 opcode=0x0032 elapsed_us=101.4 ret=110260256 flag=0->1 state=0->2
+11:03:42.196 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+11:03:42.344 session: object at 0x60e69e8 is now readable
+11:03:42.344 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:03:42.394 ***** CLOSESOCKET socket=0x1384 #3 called-from=0x7fff127c4f8a *****
+11:03:42.395 ***** CLOSESOCKET socket=0x1714 #4 called-from=0x7ffece145e61 *****
+11:03:42.395 ***** SHUTDOWN socket=0x1714 how=2 (both) #5 called-from=0x7ffece145fb4 *****
+11:03:42.395 ***** CLOSESOCKET socket=0x1714 #6 called-from=0x7ffece145e61 *****
+11:03:42.439 ***** CLOSESOCKET socket=0x1320 #7 called-from=0x7fff127c4f8a *****
+11:03:42.439 ***** CLOSESOCKET socket=0x1340 #8 called-from=0x7ffece145e61 *****
+11:03:42.440 ***** SHUTDOWN socket=0x1340 how=2 (both) #9 called-from=0x7ffece145fb4 *****
+11:03:42.440 ***** CLOSESOCKET socket=0x1340 #10 called-from=0x7ffece145e61 *****
+11:03:42.449 ***** CLOSESOCKET socket=0x1008 #11 called-from=0x7fff127c4f8a *****
+11:03:44.773 ***** WATCH #1: 0x141b2a280 ENTERED while dispatching opcode 0x0032 rcx=0x2fada8d8 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+11:03:44.773       forced rdx -> 0x0
+11:03:44.810     1 opcode=0x0000 elapsed_us=362.4 ret=1 flag=1->1 state=2->2
+11:03:44.811 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+11:03:44.811     2 opcode=0x000B elapsed_us=180.3 ret=1 flag=1->1 state=2->2
+11:03:45.149 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:03:48.155 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:03:51.161 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:03:54.165 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:03:57.171 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:04:00.178 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:04:03.186 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:04:06.192 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:04:09.200 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:04:10.341 ***** CLOSESOCKET socket=0x12d0 #12 called-from=0x7fff127c4f8a *****
+11:04:10.341 ***** CLOSESOCKET socket=0x1260 #13 called-from=0x7ffece145e61 *****
+11:04:10.341 ***** SHUTDOWN socket=0x1260 how=2 (both) #14 called-from=0x7ffece145fb4 *****
+11:04:10.341 ***** CLOSESOCKET socket=0x1260 #15 called-from=0x7ffece145e61 *****
+11:04:12.208 ***** SESSION obj=0x60e69e8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:04:12.673 ***** CLOSESOCKET socket=0x1a9c #16 called-from=0x7fff127c4f8a *****
+11:04:12.673 ***** CLOSESOCKET socket=0x12b8 #17 called-from=0x7ffece145e61 *****
+11:04:12.674 ***** SHUTDOWN socket=0x12b8 how=2 (both) #18 called-from=0x7ffece145fb4 *****
+11:04:12.674 ***** CLOSESOCKET socket=0x12b8 #19 called-from=0x7ffece145e61 *****

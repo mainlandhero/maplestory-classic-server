@@ -44,7 +44,7 @@ use crate::hook::log;
 /// Presence of this file enables the socket watch.
 pub const NETWATCH_MARKER: &str = "maplecw-hook.netwatch";
 
-/// What a watched export tells us, which decides how its arguments are read.
+/// What a watched address tells us, which decides how its arguments are read.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     /// `connect(SOCKET, const sockaddr *, int)`, `WSAConnect(SOCKET, const sockaddr *, ...)`
@@ -53,6 +53,9 @@ enum Kind {
     /// `closesocket(SOCKET)`, `shutdown(SOCKET, int how)` - `rcx` is the socket, and for
     /// `shutdown` `rdx` says which directions are being torn down.
     Close,
+    /// A function inside the client, watched because it is on the teardown path. `rcx` is
+    /// the object it acts on.
+    Code,
 }
 
 const EXPORTS: [(&[u8], Kind); 4] = [
@@ -62,7 +65,25 @@ const EXPORTS: [(&[u8], Kind); 4] = [
     (b"shutdown\0", Kind::Close),
 ];
 
-const MAX_TARGETS: usize = EXPORTS.len();
+/// The client's own teardown path, as RVAs from the image base.
+///
+/// **Why these are here rather than in `probe`:** a run showed the connection dying with
+/// *no* `closesocket` and *no* `shutdown`, on a hook that had just self-tested `ok`. That
+/// leaves two possibilities - the socket is destroyed through some other API, or the
+/// client's teardown never runs at all and something else resets the connection - and
+/// these two breakpoints separate them. `probe` can hold only one watch target, and that
+/// slot is needed for suppressing the login dialog, without which the run is not
+/// comparable to the one being explained.
+///
+/// Both were named by the stack of the one teardown that *did* have a `.text` caller.
+const EXTRA: [(&str, usize); 2] = [
+    // FUN_1415d35f0 - connection teardown: resets +0xc/+0x10, then closes the socket.
+    ("FUN_1415d35f0 (connection teardown)", 0x015d_35f0),
+    // FUN_142c44350 - the session object's destructor, which reaches the above.
+    ("FUN_142c44350 (session destructor)", 0x02c4_4350),
+];
+
+const MAX_TARGETS: usize = EXPORTS.len() + EXTRA.len();
 #[allow(clippy::declare_interior_mutable_const)]
 const ZERO: AtomicU64 = AtomicU64::new(0);
 static TARGETS: [AtomicU64; MAX_TARGETS] = [ZERO; MAX_TARGETS];
@@ -165,6 +186,25 @@ pub unsafe fn install() {
         armed += 1;
         let label = std::str::from_utf8(&name[..name.len() - 1]).unwrap_or("?");
         log(&format!("netwatch: watching ws2_32!{label} at {addr:#x}"));
+    }
+
+    let base = crate::hook::base();
+    for (i, (label, rva)) in EXTRA.iter().enumerate() {
+        if base == 0 {
+            log("netwatch: image base unknown - client teardown not watched");
+            break;
+        }
+        let addr = base + rva;
+        let orig = *(addr as *const u8);
+        if !write_byte(addr, 0xCC) {
+            log(&format!("netwatch: could not arm {label} at {addr:#x}"));
+            continue;
+        }
+        let slot = EXPORTS.len() + i;
+        TARGETS[slot].store(addr as u64, Ordering::SeqCst);
+        ORIG[slot].store(orig as u64, Ordering::SeqCst);
+        armed += 1;
+        log(&format!("netwatch: watching {label} at {addr:#x}"));
     }
     if armed == 0 {
         log("netwatch: nothing armed");
@@ -272,8 +312,15 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         }
         let n = HITS.fetch_add(1, Ordering::SeqCst) + 1;
         if n <= MAX_HITS {
-            let (name, kind) = EXPORTS[i];
-            let label = std::str::from_utf8(&name[..name.len() - 1]).unwrap_or("?");
+            let (label, kind) = if i < EXPORTS.len() {
+                let (name, kind) = EXPORTS[i];
+                (
+                    std::str::from_utf8(&name[..name.len() - 1]).unwrap_or("?"),
+                    kind,
+                )
+            } else {
+                (EXTRA[i - EXPORTS.len()].0, Kind::Code)
+            };
             let rsp = *(ctx.add(CTX_RSP).cast::<u64>()) as usize;
             // The breakpoint is on the export's first byte, so the call has just pushed
             // its return address and `[rsp]` is the immediate caller.
@@ -303,10 +350,14 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
                         format!("CLOSESOCKET socket={socket:#x}")
                     }
                 }
+                Kind::Code => {
+                    let rcx = *(ctx.add(CTX_RCX).cast::<u64>());
+                    format!("{label} obj={rcx:#x}")
+                }
             };
-            // A close is the thing we are trying to attribute, so spend the stack scan on
-            // it; a connect is already answered by the address alone.
-            let stack = if kind == Kind::Close {
+            // A teardown is the thing we are trying to attribute, so spend the stack scan
+            // on it; a connect is already answered by the address alone.
+            let stack = if kind != Kind::Connect {
                 let t = crate::probe::stack_trace(rsp);
                 if t.is_empty() {
                     String::new()

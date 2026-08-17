@@ -149,7 +149,52 @@ the breakpoint has still been hit, which is all the test needs), and the self-te
 its **own thread** so it cannot delay arming whatever it costs. **A diagnostic that changes
 what it is diagnosing is worse than no diagnostic.**
 
-### Next: re-run, with the dialog suppressed again
+### The connection dies with no `closesocket` and no `shutdown`
+
+**Run 3, dialog suppressed, hook self-tested `ok`, timings clean** (`install: hook active`
+at `11:03:42.144`, first dispatch `0x0032` at `.196`). Fixtures:
+`research/fixtures/no-closesocket-at-the-reset*.log`.
+
+```
+11:03:44  0x0080 -> we answer 0x0000 + 0x000B      (both dispatched, ret=1)
+11:03:45  client sends 0x007A                       8.6s into the connection
+11:03:45  connection reset by client
+11:03:45 .. 11:04:10   NO CLOSESOCKET. NO SHUTDOWN. NO CONNECT.
+11:04:10  four teardowns, all telemetry sockets, all from 0x7ffece145e61
+```
+
+The client then lived on for **at least 27 more seconds**. So, with an instrument that has
+proved it can see its own calls:
+
+* **The socket is not torn down through `closesocket` or `shutdown`.** Something else
+  destroys it - `CloseHandle`/`NtClose` on the handle would fit, and would also explain the
+  **reset** rather than a graceful close.
+* **The connection dying and the client exiting are separate events**, ~30 s apart. The
+  run-2 teardown (`FUN_142c44350`, the session destructor) was the *exit*, not this.
+* **No migration after the hook armed.** Bounded, honestly: the client's original connect
+  at ~`11:03:36` predates arming at `11:03:42`, so the hook cannot be checked against it -
+  but any *later* connect would have been caught, and there was none.
+
+### Next: does the client's teardown run at all?
+
+Two possibilities remain and one breakpoint separates them: the socket is destroyed through
+another API, or the client's teardown path never runs and something else resets the
+connection.
+
+`netwatch` now also watches **`FUN_1415d35f0`** (connection teardown) and **`FUN_142c44350`**
+(session destructor), by RVA. They went here rather than into `-Probe` because `-Probe`
+holds only one target and that slot is needed for the dialog suppression - without which the
+run is not comparable to the one being explained.
+
+Re-run the same command unchanged and read:
+
+| Log line | Meaning |
+|---|---|
+| `FUN_1415d35f0 (connection teardown)` at the reset | the client *is* tearing down; the close goes through an API we are not watching |
+| neither line at the reset | the client never tears down - the reset comes from elsewhere, and the socket is being destroyed under it |
+| `FUN_142c44350 (session destructor)` only later | confirms the exit is a separate event, as run 3 suggests |
+
+### Superseded plan - re-run with the dialog suppressed
 
 Re-run the same command unchanged. With the self-test off the critical path the dialog
 should be suppressed again, which makes this a like-for-like repeat of the run that reached
