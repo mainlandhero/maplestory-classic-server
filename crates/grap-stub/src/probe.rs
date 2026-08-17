@@ -40,8 +40,8 @@
 //!   with", e.g. which result code reaches `FUN_141b267c0`, where a readable switch turns
 //!   that number into the dialog on screen.
 //!
-//!   Note it can only arm once the hook sees a dispatch, so a call that happens before the
-//!   first inbound packet is dispatched will not be seen.
+//!   Armed from `install()`, so it catches calls made before any packet is dispatched -
+//!   including the client's own startup decisions.
 //! * `watch@<VA>:rdx=<hex>` — watch, and **rewrite** the second integer argument on entry.
 //!   For when the caller is virtualised and therefore unreadable: "who decided this" has no
 //!   answer, but "what would the client do if this value were X" still does. The log
@@ -340,6 +340,22 @@ unsafe fn disarm_target() {
 /// entered at all is the cheaper question.
 pub unsafe fn note_opcode(opcode: u16) {
     CURRENT_OPCODE.store(opcode as u32, Ordering::SeqCst);
+    arm_watch();
+}
+
+/// Arm the watch, if the marker asks for one. Idempotent.
+///
+/// **Called from `install()`, not from the first dispatch.** It used to arm only when the
+/// hook saw a packet, which made every run a race against the harness: if the gate packet
+/// reached the client before the DLL's five-second install delay elapsed, the watch armed
+/// seconds late and whatever it was meant to catch had already happened. That is exactly how
+/// the login dialog came back twice - the suppression was arming after the client had
+/// already decided to show it - and both times it looked like a change in the client rather
+/// than a change in timing.
+///
+/// It also removes a real limitation: a call made *before* the first inbound packet used to
+/// be invisible to watch mode by construction.
+pub unsafe fn arm_watch() {
     let text = std::fs::read_to_string(PROBE_MARKER).unwrap_or_default();
     let Some(rest) = text.trim().strip_prefix("watch@") else {
         return;

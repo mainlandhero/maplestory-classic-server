@@ -350,6 +350,10 @@ pub unsafe fn install() {
     if crate::session::enabled() {
         std::thread::spawn(move || unsafe { crate::session::monitor(base) });
     }
+    // Arm watch mode here rather than on the first dispatched packet. Waiting for a packet
+    // made every run a race against the harness's gate, and losing that race silently armed
+    // the watch seconds too late — which is how the login dialog came back twice.
+    crate::probe::arm_watch();
     // Same moment, same reason: ws2_32 is loaded long before this and the client has
     // already made its first connection, so anything seen from here is a *later* one -
     // which is the only kind that matters.

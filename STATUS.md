@@ -256,7 +256,69 @@ The run was not a total loss. Before it died, two of the three oracles worked:
 So the socket poll and the OS handle check are both live and reporting. Those are the two
 that were going to answer the question anyway; the hooks were the greedy addition.
 
-### Next: the two oracles that work, on their own
+### The reset only happens when we patch the client - and that changes the question
+
+**Run 7 showed the client tearing the connection down perfectly.** The dialog was back (see
+the race below), and with it:
+
+```
+11:44:12.520 FUN_142c44350 (session destructor)  obj=0x14f9f0    called-from=0x142c433d8
+11:44:12.520 FUN_1415d35f0 (connection teardown) obj=0x5941538   called-from=0x142c46c42
+11:44:12.520 CLOSESOCKET socket=0x6c0                            called-from=0x1415e3b78
+11:44:12.690 SOCKET conn=0x5941538 +0x20=0xffffffffffffffff - closed and cleared by the client
+```
+
+The probe logged **"client closed the connection"** - a graceful close, not the `reset` seen
+every other time. So the full teardown chain works, runs in order, and our watches see all
+of it.
+
+**Which means the earlier negative was conditional, and I stated it too broadly.** "The
+client never tears the connection down" holds only in the configuration where
+`-Probe watch@141b2a280:rdx=0` is active. Compare:
+
+| Run | dialog suppressed? | how the connection ends |
+|---|---|---|
+| 2, 7 | no | **graceful close**, full teardown chain, client exiting |
+| 3, 5 | yes | **reset**, no teardown of any kind, client alive for ~30 s more |
+
+**So the abnormal reset may be an artefact of our own patch rather than client behaviour** -
+and the whole of goal 4 may be chasing damage we are doing ourselves. That is now the
+first thing to test, and it is a single-variable test.
+
+### Next: is it the mode patch, or the dialog patch?
+
+Two client-side patches are active in every "reset" run. Drop one at a time.
+
+**Run A - keep the dialog suppression, drop `-Session mode=2`.** The client stays in mode 5
+and auto-logs-in, which is not the flow we want long-term but is fine for this question:
+does the connection still die at ~8.5 s?
+
+```bash
+powershell -ExecutionPolicy Bypass -File "<repo>	ools	est-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+```
+
+If the connection survives, **the mode patch is what kills it** and goal 4 is largely a
+self-inflicted problem. If it still resets, the mode patch is innocent and the dialog patch
+is next.
+
+### FIXED: the dialog race, permanently
+
+The dialog came back twice, and both times it was timing, not the client. Watch mode armed
+on the **first dispatched packet**, so every run was a race between the DLL's five-second
+install delay and the harness's gate packet:
+
+```
+11:44:02.468  install: hook active
+11:44:10.992  probe: watching 0x141b2a280      <- eight seconds late
+11:44:10.993  0 opcode=0x0000  flag=1->1       <- 0x0032 was dispatched unhooked
+```
+
+**Watch now arms from `install()`.** That removes the race, and with it a documented
+limitation: a call made before the first inbound packet used to be invisible to watch mode
+by construction - which is unfortunate, given the thing being watched is a decision the
+client makes at startup.
+
+### Superseded: the two oracles that work, on their own
 
 Loaded so a single launch resolves the question whichever way it goes, because the
 instrument is finally trustworthy and the budget is not.
@@ -817,9 +879,9 @@ Send only the gate, so nothing we send can be the cause: if the dialog still app
 failing code came from the client itself. Read `rdx as i32` out of the `***** WATCH #n`
 lines in the hook log.
 
-Two known limits, both recorded rather than discovered the hard way again: watch can only
-arm once the hook has seen a dispatch, so a call before the first inbound packet is
-invisible; and it stops logging after 32 hits so a per-frame caller cannot fill the disk.
+One known limit: it stops logging after 32 hits so a per-frame caller cannot fill the disk.
+(The old "can only arm once the hook has seen a dispatch" limit is **gone** - watch now
+arms from `install()`, which also removes the race that twice brought the dialog back.)
 
 **The auto-advance is not a bug.** In mode 5 the `ClassicIntro` tick calls
 `FUN_141b3ff10` - *the same function the Login button calls* - as soon as `0x000B` sets
