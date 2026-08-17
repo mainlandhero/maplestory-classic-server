@@ -28,7 +28,19 @@ VERSION = 779  # confirmed from the WZ archives
 
 
 def log(msg: str = "") -> None:
-    print(msg, flush=True)
+    """Print one line, always timestamped.
+
+    It used to print the message bare, and only a handful of call sites added a time of
+    their own. That is how "connection reset by client" - one of the *untimestamped* lines -
+    got read as happening immediately after the last timestamped line above it, which is
+    where "the connection dies right after 0x007A" came from. It was an artefact of the log
+    format: a `Get-NetTCPConnection` poll showed both endpoints Established from well before
+    that moment until the client exited half a minute later.
+
+    Every line carries a time now, so no line's position in the file can be mistaken for
+    its position in time.
+    """
+    print(f"{time.strftime('%H:%M:%S')} {msg}" if msg else "", flush=True)
 
 
 def hexdump(data: bytes, indent: str = "      ") -> str:
@@ -469,7 +481,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                 if reply_to is not None:
                     if ready and not pinged and ping_first is not None:
                         frame, what = build_reply("ping", ping_first, cipher, pad, ping_body)
-                        log(f"[{port}] {time.strftime('%H:%M:%S')} >>> GATE {what}"
+                        log(f"[{port}] >>> GATE {what}"
                             f" - now waiting for the client to send 0x{reply_to:04X}")
                         conn.sendall(frame)
                         last_sent, sent_at = ping_first, time.time()
@@ -484,7 +496,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     if not pinged:
                         frame, what = build_reply("ping", ping_first, cipher, pad,
                                                   ping_body)
-                        log(f"[{port}] {time.strftime('%H:%M:%S')} >>> ISOLATED {what}"
+                        log(f"[{port}] >>> ISOLATED {what}"
                             f" - watching {ping_wait:.0f}s before the sweep starts")
                         conn.sendall(frame)
                         last_sent, sent_at = ping_first, time.time()
@@ -500,14 +512,14 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                     frame, what = build_reply(reply, next_op, cipher, pad, body)
                     # One line per opcode, timestamped: if the client dies or the UI
                     # changes, the last line printed says exactly where it happened.
-                    log(f"[{port}] {time.strftime('%H:%M:%S')} >>> {what}")
+                    log(f"[{port}] >>> {what}")
                     conn.sendall(frame)
                     last_sent, sent_at = next_op, time.time()
                     next_op += 1
                     next_send = time.time() + sweep_delay
                 elif not replied and ready:
                     frame, what = build_reply(reply, opcode, cipher, pad, body)
-                    log(f"[{port}] {time.strftime('%H:%M:%S')} >>> REPLY: {what}"
+                    log(f"[{port}] >>> REPLY: {what}"
                         f"  ({len(frame)} bytes)")
                     log(hexdump(frame))
                     conn.sendall(frame)
@@ -533,7 +545,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                 else:
                     since = (f" (after 0x{last_sent:04X}, +{time.time() - sent_at:.2f}s"
                              f", {time.time() - opened_at:.1f}s into the connection)")
-                log(f"[{port}] {time.strftime('%H:%M:%S')} *** CLIENT SENT "
+                log(f"[{port}] *** CLIENT SENT "
                     f"{len(data)} bytes{since} ***")
                 if decoder is not None:
                     import transport
@@ -565,7 +577,7 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                                 frame, what = build_reply(
                                     "ping", step_op, cipher, step_pad, step_body)
                                 tag = (f" [{n}/{len(steps)}]" if len(steps) > 1 else "")
-                                log(f"[{port}] {time.strftime('%H:%M:%S')} >>> ANSWERING"
+                                log(f"[{port}] >>> ANSWERING"
                                     f"{tag} 0x{op:04X} with {what}")
                                 conn.sendall(frame)
                                 last_sent, sent_at = step_op, time.time()
@@ -577,9 +589,15 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
         finally:
             conn.close()
 
-        if reply is not None:
-            held = time.time() - locals().get("reply_at", time.time())
+        # `reply_at` is only ever set by the *timed* reply path. In `--reply-to` mode it
+        # does not exist, so this fell back to `time.time()` and printed "connection lasted
+        # 0.0s" on every single run - a number that looked like a measurement of the client
+        # giving up instantly and was in fact measuring nothing at all.
+        if reply is not None and "reply_at" in locals():
+            held = time.time() - reply_at
             log(f"[{port}] connection lasted {held:.1f}s after the reply was sent")
+        elif sent_at:
+            log(f"[{port}] connection ended {time.time() - sent_at:.1f}s after our last packet")
 
         if total:
             log(f"[{port}] VERDICT: client answered {len(total)} bytes to [{name}]")

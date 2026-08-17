@@ -22,7 +22,7 @@ The owner's goal, in their words, now four parts:
 | Animated transition to character select | reached, by clicking Login in mode 2 |
 | Masked email | **DONE** - `0x0000` puts `wisp****@example.com` on the login screen |
 | Valid session | **not started** - the two client patches fake it |
-| Connection stays up | **not started** - the client still resets, and both earlier readings of why were wrong |
+| Connection stays up | **probably never broken** - the "reset" was a log-format artefact; both endpoints stay `Established` until the client exits |
 | Create a character | **blocked** - client has no character list, and sends nothing |
 
 Full recipe for the current state is under "MILESTONE" below.
@@ -395,7 +395,47 @@ reads the UTF-16 output properly, counts only real drops, and **refuses to print
 at all when no packets were captured**, saying so instead. It is kept for the day the
 harness serves on a real interface.
 
-### The free instrument that answers the same question
+### RETRACTED: "the connection dies right after 0x007A" was a log-format artefact
+
+**This is the big one, and it invalidates the premise of the last eight runs.**
+
+The TCP-state poll and the probe flatly contradicted each other:
+
+```
+sockets.log  12:46:21  probe  Established 127.0.0.1:8484  -> 127.0.0.1:64712
+             12:46:21  client Established 127.0.0.1:64712 -> 127.0.0.1:8484
+             ... no state change at all ...
+             12:46:57  client exited
+probe.log    12:46:34  <- #31 0x007A          <- last *timestamped* line
+             (no time) connection reset by client
+             (no time) connection lasted 0.0s after the reply was sent
+```
+
+**Both endpoints stayed `Established` for the full 36 seconds, until the client exited.**
+There was no reset at 9 seconds, and there never had been.
+
+Two defects in the probe's own logging produced the illusion, and both are now fixed:
+
+1. **`log()` did not timestamp.** Only a handful of call sites added a time of their own,
+   and `connection reset by client` was not one of them. Sitting directly under the last
+   timestamped line, it read as happening at that moment - when in fact it fires when the
+   loop exits, which is when the *client exits*, half a minute later. Every line is
+   timestamped now.
+2. **`connection lasted 0.0s after the reply was sent` measured nothing.** `reply_at` is
+   only set by the timed-reply path; in `--reply-to` mode it does not exist, so the code
+   fell back to `time.time()` and subtracted it from itself. It printed `0.0s` on every run
+   ever done, and it looked like the client giving up instantly.
+
+**What this means for goal 4:** the connection is *not* being killed. It stays up until the
+client exits for its own reasons. Everything built to explain the "reset" - the socket
+watch, the handle poll, `WSASendDisconnect`, the pktmon attempt - was chasing a number that
+came out of our own log formatting. The instruments were all working; they kept reporting
+"nothing closed this connection" because **nothing closed it**.
+
+The lesson is the one already recorded for hooks, applied one level up: an unverified
+*instrument* invalidates a negative, and a log format is an instrument.
+
+### Superseded: the free instrument that answers the same question
 
 `tools/watch-sockets.ps1` already polls `Get-NetTCPConnection` every 250 ms and logs only
 changes. It was written to spot migration; the **TCP state of each half is what says who
