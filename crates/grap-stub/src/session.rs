@@ -168,6 +168,18 @@ fn mode() -> Option<String> {
         .map(|t| t.trim().to_ascii_lowercase())
 }
 
+/// One comma-separated option out of the marker, e.g. `mode=2,create=on`.
+///
+/// The marker used to hold exactly one setting. It now carries more than one, and splitting
+/// on commas rather than matching the whole string means an option that is not understood
+/// is ignored instead of silently disabling the one beside it.
+fn marker_token(prefix: &str) -> Option<String> {
+    mode()?
+        .split(',')
+        .map(str::trim)
+        .find_map(|t| t.strip_prefix(prefix).map(str::to_string))
+}
+
 pub fn enabled() -> bool {
     std::path::Path::new(SESSION_MARKER).exists()
 }
@@ -224,12 +236,11 @@ pub unsafe fn patch_mode_after_dispatch(opcode: u16) {
     if opcode != WORLD_LIST_OPCODE || MODE_PATCHED.load(Ordering::SeqCst) {
         return;
     }
-    let Some(mode) = mode() else { return };
-    let Some(hex) = mode.strip_prefix("mode=") else {
+    let Some(hex) = marker_token("mode=") else {
         return;
     };
     let Ok(want) = u32::from_str_radix(hex.trim().trim_start_matches("0x"), 16) else {
-        log(&format!("session: {mode:?} is not mode=<hex>"));
+        log(&format!("session: mode={hex:?} is not mode=<hex>"));
         MODE_PATCHED.store(true, Ordering::SeqCst);
         return;
     };
@@ -249,6 +260,58 @@ pub unsafe fn patch_mode_after_dispatch(opcode: u16) {
     log(&format!(
         "***** SESSION mode patched at {obj:#x}+0x68: {was} -> {want} - the tick should no \
          longer auto-login, and Login should transition to CharSelect *****"
+    ));
+}
+
+/// `FUN_140c9e230`, the setter that stores plaintext `1` into the protected flag guarding
+/// the "Create a character" button.
+const CREATE_FLAG_ENABLE_RVA: usize = 0x140C9E230 - 0x140000000;
+/// The login result. The handshake has certainly finished by the time one is dispatched.
+const LOGIN_RESULT_OPCODE: u16 = 0x0010;
+
+static CREATE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Turn the "Create a character" button back on.
+///
+/// # What this is
+///
+/// `FUN_141177a10` only calls the create handler when `FUN_140c9e3f0()` is non-zero, and a
+/// watch measured that call returning zero on every click - the handler `FUN_141b282d0` was
+/// never entered. The flag behind it is a protected byte (value plus rolling checksum) with
+/// exactly two setters, identical but for one instruction:
+///
+/// * `FUN_140c9e8a0` stores plaintext `0`, and the **handshake calls it on success**;
+/// * `FUN_140c9e230` stores plaintext `1`, and has no caller in `.text` and no vtable
+///   entry, so it is reached only from the Themida VM.
+///
+/// So the real service enables this from virtualised code we cannot read, driven by
+/// something we do not yet send. Calling the enable setter directly says whether that flag
+/// is the *only* thing in the way - and if it is, the whole creation flow becomes
+/// measurable, including the create request, which is virtualised and can only be measured.
+///
+/// **This patches the client.** It does not make the session valid, and it is not how a
+/// real server would do it. Say so when reporting any result that depends on it.
+///
+/// # Why after the login result
+///
+/// The handshake sets the flag to zero, so anything earlier is overwritten. `0x0010` is the
+/// first dispatch that is certainly after it, and it is also the packet that builds the
+/// screen the button lives on.
+pub unsafe fn enable_character_creation_after_dispatch(opcode: u16) {
+    if opcode != LOGIN_RESULT_OPCODE
+        || CREATE_ENABLED.load(Ordering::SeqCst)
+        || marker_token("create=").as_deref() != Some("on")
+    {
+        return;
+    }
+    CREATE_ENABLED.store(true, Ordering::SeqCst);
+    let at = crate::hook::base() + CREATE_FLAG_ENABLE_RVA;
+    let enable: extern "system" fn() = std::mem::transmute(at);
+    enable();
+    log(&format!(
+        "***** SESSION called FUN_140c9e230 at {at:#x} - the create-character flag should \
+         now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised \
+         code, so this proves the button's gate, not the protocol *****"
     ));
 }
 

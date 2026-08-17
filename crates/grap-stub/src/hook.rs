@@ -250,6 +250,7 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
     // `stage+0x108` but before control returns to the frame loop, is the one window where
     // both are true.
     crate::session::patch_mode_after_dispatch(opcode);
+    crate::session::enable_character_creation_after_dispatch(opcode);
 
     let mut end = 0i64;
     QueryPerformanceCounter(&mut end);

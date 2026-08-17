@@ -43,7 +43,17 @@ param(
     [string]$Probe = '',
     # Watch/patch the session bytes behind the login prompt: 'watch', 'suppress', or
     # 'status=<hex>'. See crates/grap-stub/src/session.rs.
-    [ValidateScript({ $_ -eq '' -or $_ -eq 'watch' -or $_ -eq 'suppress' -or $_ -match '^status=[0-9a-fA-F]{1,2}$' -or $_ -match '^mode=[0-9a-fA-F]{1,8}$' })]
+    # Comma-separated, e.g. 'mode=2,create=on'. A value this does not recognise is rejected
+    # here rather than written to the marker and silently ignored in-process, which is the
+    # difference between a failed run and a run that looks fine and measures nothing.
+    [ValidateScript({
+        $_ -eq '' -or ($_ -split ',' | ForEach-Object { $_.Trim() } | Where-Object {
+            $_ -notin @('watch', 'suppress') -and
+            $_ -notmatch '^status=[0-9a-fA-F]{1,2}$' -and
+            $_ -notmatch '^mode=[0-9a-fA-F]{1,8}$' -and
+            $_ -notmatch '^create=(on|off)$'
+        }).Count -eq 0
+    })]
     [string]$Session = '',
     # Extra launch tokens after <ip> <port>. -NXLDEBUG routes tokens 3 onward into the
     # config's six-slot session array at +0x90, which is what the launcher normally fills.

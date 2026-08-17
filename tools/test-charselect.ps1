@@ -58,7 +58,13 @@ param(
     #                              therefore that the flag returned zero
     #   141177a10                - the character-select button dispatcher itself, in case
     #                              the click never gets that far
-    [string]$Probe = 'watch@141b2a280:rdx=0,ntdll!NtTerminateProcess,140c9e3f0,141177a10',
+    [string]$Probe = 'watch@141b2a280:rdx=0,141b282d0',
+    # 'mode=2,create=on' calls FUN_140c9e230 after the login result, which sets the
+    # protected flag that gates the "Create a character" button. A watch measured
+    # FUN_140c9e3f0 returning zero on every click, and the only setter that writes 1 has no
+    # caller in .text - the real service enables this from virtualised code. THIS IS A
+    # CLIENT PATCH. Use 'mode=2' alone to reproduce the dead button.
+    [string]$Session = 'mode=2,create=on',
     [int]$Port = 8484
 )
 
@@ -114,7 +120,7 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
 & powershell -ExecutionPolicy Bypass -File $testOne `
     -Reply ping -Opcode 0x0032 -Body 00 `
     -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
-    -Session mode=2 -Probe $Probe `
+    -Session $Session -Probe $Probe `
     -ReplyTo 0x0080 -ReplySeq $replySeq -Keepalive $Keepalive -Port $Port
 
 Write-Host ''
@@ -125,6 +131,6 @@ Write-Host '  3. click "Create a character" once, then let the client exit on it
 Write-Host ''
 Write-Host 'Then run this script with -Stop. The answers are in'
 Write-Host '  client-patched\maplecw-hook.log   (not hook.log, and not the repo root)'
-Write-Host '  - WATCH on NtTerminateProcess, or a CLIENT FAULT line, for the exit'
-Write-Host '  - WATCH on 140c9e3f0 means the flag is what blocks the "new" button;'
-Write-Host '    WATCH on 141177a10 but not 140c9e3f0 means the click stops earlier'
+Write-Host '  - "SESSION called FUN_140c9e230" confirms the create flag was patched on'
+Write-Host '  - a WATCH on 141b282d0 means the create handler finally ran'
+Write-Host '  and probe.log shows whether 0x00A8 went out.'
