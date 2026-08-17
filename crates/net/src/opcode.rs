@@ -549,13 +549,22 @@ pub fn character_record(chr: &Character, world_id: u32) -> Vec<u8> {
     out
 }
 
-/// How many zero bytes to append after the character list in a [`LOGIN_RESULT`].
+/// How many zero bytes to append after the decoded part of a [`LOGIN_RESULT`].
 ///
-/// The fields past the list are not decoded. What is established is that the reply which
-/// carried the client to character select was `00 00 00` plus 253 zero bytes and was
-/// accepted, so a generous zero tail is known to satisfy whatever the client reads there.
+/// The fields past `slotCount` are still not decoded. What is established is that the reply
+/// which carried the client to character select was `00 00 00` plus 253 zero bytes and was
+/// accepted, so a generous zero tail satisfies whatever the client reads there.
 /// Under-providing is not a cosmetic problem: the readers throw on underrun.
 const LOGIN_RESULT_TAIL_PAD: usize = 200;
+
+/// How many characters the account may have. `3` in MapleStory Classic World (the owner).
+///
+/// This is not decoration. `FUN_141b282d0`, the only reader, is the create-a-character
+/// gate: it takes `slotCount - stage+0xe4 - 1`, clamps it at zero, and looks up the
+/// character in that slot. If the slot is occupied it raises a "no more characters" notice
+/// and sends nothing. Sending `0` clamped the index to `0`, which is the *first* character -
+/// so with one character in the list the button could never do anything.
+pub const CHARACTER_SLOTS: u32 = 3;
 
 /// A successful [`LOGIN_RESULT`], carrying the character list.
 ///
@@ -583,11 +592,19 @@ const LOGIN_RESULT_TAIL_PAD: usize = 200;
 /// u32  deletionCount   then count x (u32 characterId, 8B FILETIME)
 /// u32  orderCount      then count x u32 characterId
 /// u8   characterCount  then count x character record
+/// u8                   -> stage+0xdc, and it must be 1
+/// u8                   -> stage+0xe0, and it must be non-zero
+/// u32  slotCount       -> the character manager's slot count
 /// ..   an undecoded tail
 /// ```
 ///
 /// `worldId` and `channelId` are not filler: `FUN_141b2c7c0` looks the world up in the list
 /// built from [`WORLD_LIST`], so they have to name a world we actually sent.
+///
+/// **The three fields after the list are the create-a-character gate.** `FUN_141b282d0`
+/// refuses unless `stage+0xdc == 1` *and* `stage+0xe0 != 0` *and* the slot computed from
+/// `slotCount` is free. All three were inside the zero padding, which is why the button did
+/// nothing on the run that otherwise reached character select correctly.
 pub fn login_result(world_id: u32, channel_id: u32, characters: &[Character]) -> Vec<u8> {
     let mut out = vec![LOGIN_OK];
     put_str(&mut out, ""); // message
@@ -612,6 +629,11 @@ pub fn login_result(world_id: u32, channel_id: u32, characters: &[Character]) ->
     for chr in characters {
         out.extend_from_slice(&character_record(chr, world_id));
     }
+
+    // The create-a-character gate. Both bytes are tested, not stored - see the doc above.
+    out.push(1); // -> stage+0xdc, tested for exactly 1
+    out.push(1); // -> stage+0xe0, tested for non-zero
+    out.extend_from_slice(&CHARACTER_SLOTS.to_le_bytes());
 
     out.extend(std::iter::repeat_n(0u8, LOGIN_RESULT_TAIL_PAD));
     out
@@ -935,9 +957,9 @@ mod tests {
     }
 
     /// Walks a login result the way `FUN_141b307b0` and its two sub-readers do, stopping
-    /// where the decode stops - the tail past the character list is padding we do not claim
-    /// to understand.
-    fn read_login_result_through_the_list(b: &[u8]) -> usize {
+    /// where the decode stops - the tail past the slot count is padding we do not claim to
+    /// understand.
+    fn read_login_result_through_the_gate(b: &[u8]) -> usize {
         let mut i = 0;
         i += 1; // result
         let msg = u16::from_le_bytes([b[i], b[i + 1]]) as usize;
@@ -961,6 +983,12 @@ mod tests {
         for _ in 0..count {
             i += read_character_record(&b[i..]);
         }
+        // The create-a-character gate.
+        assert_eq!(b[i], 1, "stage+0xdc is tested for exactly 1");
+        i += 1;
+        assert_ne!(b[i], 0, "stage+0xe0 is tested for non-zero");
+        i += 1;
+        i += 4; // slotCount
         i
     }
 
@@ -979,11 +1007,38 @@ mod tests {
                 .collect();
             let body = login_result(0, 0, &chars);
             assert_eq!(
-                read_login_result_through_the_list(&body),
+                read_login_result_through_the_gate(&body),
                 body.len() - LOGIN_RESULT_TAIL_PAD,
                 "read sequence disagrees with the builder for {count} characters"
             );
         }
+    }
+
+    /// `FUN_141b282d0`'s own arithmetic: the slot it checks is `slotCount - stage+0xe4 - 1`
+    /// clamped at zero, and creation is allowed only when no character occupies it. Written
+    /// as the client writes it - signed, then clamped - because the clamp is the whole
+    /// story: it is what turned a slot count of `0` into "look at the first character".
+    fn client_will_offer_creation(slot_count: i32, characters: i32) -> bool {
+        let purchased = 0; // stage+0xe4, which this reply never sets
+        let slot = (slot_count - purchased - 1).max(0);
+        slot >= characters
+    }
+
+    #[test]
+    fn the_slot_count_leaves_a_free_slot_the_client_will_accept() {
+        // Why the button did nothing on the run that otherwise worked.
+        assert!(
+            !client_will_offer_creation(0, 1),
+            "a zero slot count clamps to the first character, which is occupied"
+        );
+        let slots = CHARACTER_SLOTS as i32;
+        assert!(client_will_offer_creation(slots, 0), "empty account");
+        assert!(client_will_offer_creation(slots, 1), "one of three");
+        assert!(client_will_offer_creation(slots, 2), "two of three");
+        assert!(
+            !client_will_offer_creation(slots, 3),
+            "a full account must not be offered creation"
+        );
     }
 
     #[test]
@@ -997,9 +1052,9 @@ mod tests {
             ..Character::default()
         };
         let body = login_result(0, 0, std::slice::from_ref(&chr));
-        // 50 bytes of head, one 327-byte record, then the undecoded tail.
+        // 50 bytes of head, one 327-byte record, the 6-byte gate, then the undecoded tail.
         assert_eq!(character_record(&chr, 0).len(), 327);
-        assert_eq!(body.len(), 50 + 327 + LOGIN_RESULT_TAIL_PAD);
+        assert_eq!(body.len(), 50 + 327 + 6 + LOGIN_RESULT_TAIL_PAD);
         // Everything up to the order count is zero; then one order id and one character.
         let head = format!("{}{}{}{}", "0".repeat(82), "01000000", "01000000", "01");
         assert_eq!(hex(&body)[..head.len()], head);

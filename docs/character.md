@@ -1,7 +1,12 @@
 # Characters: the list, the record, and the creation transaction
 
-Read statically on 2026-08-18 and 2026-08-19. **None of it has been on the wire yet** - say
-so when reporting, and see "what is not established" at the end.
+Read statically on 2026-08-18 and 2026-08-19.
+
+**The record and the list are measured.** On 2026-08-19 a `0x0010` carrying one character
+was sent, the client decoded it without throwing, and character select drew the character.
+That is the first time any of this has been on the wire, and it retires the standing warning
+for everything from the head of `0x0010` through the end of the character record. What is
+still only static is marked as such, and listed again at the end.
 
 ## What this client is
 
@@ -99,7 +104,11 @@ u32  deletionCount     then count x (u32 characterId, 8B FILETIME)
 --- FUN_14108bdf0
 u32  orderCount        then count x u32 characterId
 u8   characterCount    then count x character record
---- an undecoded tail: u8, u8, u32, u8, u8, u8, u32, ...
+--- the create-a-character gate, below
+u8                     -> stage+0xdc, tested for exactly 1
+u8                     -> stage+0xe0, tested for non-zero
+u32  slotCount         -> FUN_14108db90, the character manager's slot count
+--- an undecoded tail: u8, u8, u8, u32, ...
 ```
 
 **That is why "Create a character" sent nothing.** The client reached CharSelect with an
@@ -214,6 +223,42 @@ is how the server refuses.
 Two neighbours in the same family, not yet needed: `0x0017` (`FUN_141b359e0`) and `0x0018`
 (`FUN_141b365f0`), both `u32 characterId` plus a per-character call.
 
+### "Create a character" is gated by three fields we were sending as zero
+
+`FUN_141b282d0` is the only reader of the slot count, and it is the create-a-character
+handler:
+
+```c
+if (stage+0x238 == 0) {                          // no transition running
+    free = FUN_14108db80() - stage+0xe4 - 1;     // slotCount, from 0x0010
+    if (free < 0) free = 0;
+    if (character_at(free) == NULL) {
+        if (stage+0xe0 != 0 && stage+0xdc == 1)
+            send 0x00A8 { one one-character string }
+    } else {
+        raise a notice - no room for another character
+    }
+}
+```
+
+All three inputs arrive in the `0x0010` tail, and all three were inside the zero padding on
+the run that otherwise reached character select correctly - which is why the button did
+nothing. Note the **clamp**: a slot count of `0` does not disable creation, it makes the
+client inspect *the first character*, which is occupied as soon as the list is non-empty.
+
+Classic World has **three** character slots (the owner), so `CHARACTER_SLOTS = 3`, and with one
+character the client checks slot 2 and finds it empty.
+
+`stage+0xdc == 1` is **not** a second password - Classic World never used one. The same
+value feeds `FUN_142cb83e0`, an account flag also set from the identity-verification result
+handlers (`identifyVerficationFailed`, `goToNexonAuthPageToVerify`), so `1` asserts
+"verified". Setting it does not itself raise a prompt: those notices are raised by inbound
+`0x26`/`0x27`, which we do not send.
+
+**`0x00A8` is therefore the first packet of character creation**, not the last. It carries a
+single one-character string - almost certainly the slot index - and the client waits for a
+reply before opening the NewChar screen. That reply has not been identified.
+
 ### The NewChar screen
 
 `FUN_141122420` is its button dispatcher, and it names every control:
@@ -235,6 +280,7 @@ to 4..12 and refuses any increment that would take the total over 25.
 
 | Outbound | Builder | Body | Pairs with |
 |---|---|---|---|
+| **`0x00A8`** | `FUN_141b282d0` | one one-character string - **open character creation** | unknown |
 | **`0x0081`** | `FUN_141b28950` | one string: the name | **`0x0014`** |
 | `0x0082` | `FUN_141b3bfd0` | empty - leave world; clears the world list | - |
 | `0x008B` | `FUN_141b28750`, `FUN_141b2cb70` | `u32 characterId` - select | - |
@@ -287,7 +333,18 @@ out bodies up to 256 bytes.
 ## What is *not* established
 
 * **The create request.** Opcode and body, both. See above - it must come off the wire.
-* **The tail of `0x0010` past the character list.** We pad it with zeros, which is what the
-  accepted reply did. `LOGIN_RESULT_TAIL_PAD` is that padding.
-* **Everything above is unmeasured.** Four static chains in this project looked this
-  convincing and were wrong. Send it before believing it.
+* **The reply to `0x00A8`.** The client sends it to open character creation and waits.
+  Nothing is known about what it expects back, and until the button is seen to work at all
+  the reading of `0x00A8` is itself static.
+* **The `0x0010` tail past `slotCount`.** Still padded with zeros.
+* **Why the client exits after 15-20 seconds at character select.** It has done this for
+  many sessions. `probe.log` from 2026-08-19 shows the connection `Established` and idle
+  for 26 seconds after the client's last packet, then a reset - so the client kills its own
+  process. Nothing is known beyond that, and it caps how much can be clicked through in one
+  run. The instrument for it exists but has not been pointed at this: `crates/grap-stub`
+  already detours `ExitProcess`/`TerminateProcess`/`RtlExitUserProcess`/`NtTerminateProcess`
+  in walk mode, so logging the caller of whichever one fires would name the path.
+
+**What *is* measured**, as of 2026-08-19: the whole of `0x0010` from the head through the
+character list, and the entire 327-byte character record including the avatar look. The
+client decoded it and drew the character.

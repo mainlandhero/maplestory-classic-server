@@ -24,11 +24,13 @@ That means, end to end and against a real server-side implementation:
 | Masked email on the login screen | **done**, `0x0000` - no client patch needed |
 | Transition to character select | done |
 | Connection stays up | **not a problem** - the "reset" was our own log format, see the retraction below |
-| Character record | **fully decoded and built**, `character_record`, never sent |
-| Character list | **built**, `login_result`, never sent |
+| Character record | **CONFIRMED ON THE WIRE** - the client decoded it and drew the character |
+| Character list | **CONFIRMED ON THE WIRE**, `login_result` |
+| "Create a character" button | **gate found** - three `0x0010` tail fields we sent as zero |
 | Name check | **both halves decoded**, `check_name_result` built, never sent |
 | Create request | **found, and it is Themida-virtualised** - it must be measured |
 | Create result | **decoded**, `create_character_result` built, never sent |
+| Client exits after 15-20s at CharSelect | **unexplained**, and it caps every run |
 | Valid session | still faked by two client patches |
 
 ### Read these first
@@ -51,35 +53,54 @@ That means, end to end and against a real server-side implementation:
 and body have to come off the wire - and they will, because **the OK button sends `0x0081`
 and the create request back to back in one click**, without waiting for a reply.
 
+### What the 2026-08-19 run settled
+
+The one-character `0x0010` was sent and **worked**: the client decoded a 327-byte record and
+character select drew "Maple". Everything from the head of `0x0010` through the end of the
+record is now measured rather than static.
+
+Three other things came out of it:
+
+1. **The account name went blank** - `test-charselect.ps1` did not send `0x0000`. The client
+   cannot compute that field; leaving the packet out is enough to clear it. Fixed.
+2. **"Create a character" still did nothing**, and the cause is now known. `FUN_141b282d0`
+   gates it on three `0x0010` tail fields that were inside the zero padding - see
+   `docs/character.md`. Fixed: `stage+0xdc = 1`, `stage+0xe0 = 1`, `slotCount = 3`.
+3. **The client exits 15-20 seconds after reaching character select.** `probe.log` shows the
+   connection Established and idle for 26s after the client's last packet, then a reset - so
+   the client ends its own process. This has happened for many sessions and is now the thing
+   that limits every run.
+
 ### The plan, in order
 
-1. **Send the one-character list** and read the result off the wire. This is step 2 and step
-   3 at once: it validates the record layout *and* captures the create request. See the run
-   below.
-2. **Answer `0x0081` with `0x0014`** (`check_name_result(name, NAME_AVAILABLE)`), and the
-   create request - once its opcode is known - with `0x0015`
-   (`create_character_result`), then watch the client return to CharSelect with the new
-   character.
-3. **Then make it real**: persist characters in `crates/store` so the transaction survives a
+1. **Re-run with the gate filled in** and see whether the button goes anywhere. The
+   `0x00A8` it should then send is the first packet of creation, not the last.
+2. **Explain the 15-20s exit.** It caps how much can be clicked in one run, and character
+   creation is several clicks. `crates/grap-stub` already detours `ExitProcess`,
+   `TerminateProcess`, `RtlExitUserProcess` and `NtTerminateProcess` in walk mode; logging
+   which one fires and from where would name the path. That is the cheapest remaining
+   instrument and it needs no new technique.
+3. **Answer `0x00A8`**, reach the NewChar screen, then capture the create request - it is
+   virtualised and can only be measured.
+4. **Answer `0x0081` with `0x0014`** (`check_name_result(name, NAME_AVAILABLE)`) and the
+   create request with `0x0015` (`create_character_result`), then watch the client return to
+   CharSelect with the new character.
+5. **Then make it real**: persist characters in `crates/store` so the transaction survives a
    restart, which is what "the server processes it" means.
 
 ### The next run
 
-Reaches character select with one character called `Maple`, then asks the owner to open character
-creation, set the four stats so they total 25, type a name and click OK. The body comes from
-`cargo run --release -q -p net --bin packet-hex -- login-result Maple`, so it cannot drift
-from the builder.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping `
-  -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
-  -Session mode=2 -Probe watch@141b2a280:rdx=0 -ReplyTo 0x0080 `
-  -ReplySeq "000b:<world entry>,000b:ff0000,0010:<login-result hex>"
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1"
 ```
 
-**What to read, in `probe.log`:** whether a character appears on the screen at all, then the
-two outbound packets after the OK click. `0x0081` should carry the name; the packet after it
-is the create request, and its opcode is the answer.
+Sends the account record, a world, the terminator, and a login result carrying one character
+and the create gate. All four bodies come from `packet-hex`, so none of them can drift from
+the builders.
+
+**What to read:** the account name on the login screen, the character at character select,
+and then whether "Create a character" moves. `probe.log` will show `0x00A8` if the gate
+opened. Expect roughly 20 seconds at character select before the client exits.
 
 ### Standing warnings
 

@@ -31,6 +31,11 @@ param(
     # Names to put in the character list. No names sends an empty list, which is the
     # control: it is what every previous run has effectively been doing.
     [string[]]$Characters = @('Maple'),
+    # Shown on the login screen. Server-supplied - the client cannot compute it, so leaving
+    # 0x0000 out of the sequence makes the field go blank, which is exactly what happened
+    # on the first character-list run.
+    [string]$LoginName = 'maplecw',
+    [string]$AccountName = 'wisp****@example.com',
     [int]$Port = 8484
 )
 
@@ -59,11 +64,15 @@ function Get-Packet {
     return $line.Trim()
 }
 
+$accountInfo = Get-Packet @('account-info', $LoginName, $AccountName)
 $worldEntry = Get-Packet @('world-entry', 'Scania')
 $worldEnd = Get-Packet @('world-end')
 $loginResult = Get-Packet (@('login-result') + $Characters)
 
-$replySeq = "$worldEntry,$worldEnd,$loginResult"
+# Account first: the name it carries is drawn on the login screen, which the client is
+# still showing when this sequence lands.
+$replySeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
+Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
 Write-Host "reply sequence is $($replySeq.Length) characters"
 
@@ -74,8 +83,10 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
     -ReplyTo 0x0080 -ReplySeq $replySeq -Port $Port
 
 Write-Host ''
-Write-Host 'On screen: click Login, then look at character select.'
-Write-Host '  - is there a character called "Maple"?'
-Write-Host '  - open character creation, spend all 25 points, type a name, click OK'
+Write-Host 'On screen:'
+Write-Host '  1. is the account name back on the login screen?'
+Write-Host '  2. click Login - is there a character called "Maple"?'
+Write-Host '  3. click "Create a character" - does it go anywhere now?'
+Write-Host '  4. if it does: spend all 25 points, type a name, click OK'
 Write-Host ''
-Write-Host 'Then run this script with -Stop, and read probe.log for the packets after 0x0081.'
+Write-Host 'Then run this script with -Stop. probe.log is the record of what was sent.'
