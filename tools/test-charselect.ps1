@@ -63,7 +63,11 @@ param(
     #                              therefore that the flag returned zero
     #   141177a10                - the character-select button dispatcher itself, in case
     #                              the click never gets that far
-    [string]$Probe = 'watch@141b2a280:rdx=0,141b282d0',
+    # 141b36a10 is the create-result handler, and :peek=1c0 logs [stage+0x1c0] on entry -
+    # the world id it compares ours against. A mismatch makes it return having done
+    # nothing, which looks exactly like the reply never arriving, so measure the value
+    # rather than guess it.
+    [string]$Probe = 'watch@141b2a280:rdx=0,141b36a10:peek=1c0',
     # 'mode=2,create=on' calls FUN_140c9e230 after the login result, which sets the
     # protected flag that gates the "Create a character" button. A watch measured
     # FUN_140c9e3f0 returning zero on every click, and the only setter that writes 1 has no

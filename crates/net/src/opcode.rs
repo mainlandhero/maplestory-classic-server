@@ -372,18 +372,44 @@ pub const CLIENT_CREATE_CHARACTER_REQUEST: u16 = 0x008A;
 ///
 /// Handler `FUN_141b36a10`. On success it decodes a full character record with
 /// `FUN_1403094b0`, registers it, and calls `FUN_141b3f050(stage, 4, 0x14a)` - back to
-/// character select with the new character in the list. A non-zero result raises a notice
-/// through `FUN_141b4ac80` and stays on the creation screen, so that is how we refuse.
+/// character select with the new character in the list.
 ///
 /// # Body
 ///
 /// ```text
 /// u8   result      0 = success
 /// // when result == 0:
-/// u32  worldId
+/// u32  worldId     must equal stage+0x1c0 or the handler returns having done nothing
 /// ..   one character record
-/// u8   returnToCharacterSelect
+/// u8               read and discarded
 /// ```
+///
+/// **Two corrections to what a reference encoder suggests.** The trailing byte is *not* a
+/// "return to character select" switch in this client - `FUN_1406e8ae0(param_2)` reads it
+/// and throws the value away, and the transition to screen 4 is unconditional. And the
+/// `worldId` is a **gate**: if it does not match `stage+0x1c0` the handler returns
+/// immediately, having registered nothing and shown nothing, which is indistinguishable
+/// from the packet never arriving.
+///
+/// # Result codes, read from the handler's switch
+///
+/// | code | notice |
+/// |---|---|
+/// | `0x00` | success |
+/// | `0x09` | `insufficientCharacterSlot` |
+/// | `0x0A` | `loginTimeOut` |
+/// | `0x63` | `unavailableClass` |
+/// | `0x69` | `characterCreationRestrictedWorld`, and back to character select |
+/// | other | `cannotProcessRequest` |
+///
+/// # This client does not enter the game world here
+///
+/// The owner recalls the live service dropping a new character straight into the starter map.
+/// Whatever does that, it is not this handler: the success path ends at screen 4
+/// unconditionally. So it has to be a *further* packet the server sends afterwards. The
+/// candidate is inbound `0x0011` (`FUN_141b36f60`), which the opcode-name mapping in
+/// `docs/character.md` calls `SelectCharacterResult` - the packet that would carry a
+/// channel server address. Not investigated; noted so it is not rediscovered from scratch.
 pub const CREATE_CHARACTER_RESULT: u16 = 0x0015;
 
 /// The delete result, `FUN_141b34970`. Body is a single `u32` character id.
