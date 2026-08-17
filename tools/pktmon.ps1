@@ -18,7 +18,14 @@
       * DROP events with a reason and the component that dropped them, which is how a
         filter driver - antivirus, or something Nexon ships - would show up.
 
-    Loopback traffic does not traverse a NIC, so the capture uses `--comp all`.
+    KNOWN LIMITATION, established the hard way: pktmon hooks NDIS/WFP components, and
+    loopback traffic never reaches them. Against 127.0.0.1 this captures ZERO packets no
+    matter what --comp is set to, and -Stop now says so loudly instead of printing a
+    summary of metadata. It is kept for the day the harness serves on a real interface.
+
+    For the loopback case use `test-one.ps1 -Sockets`, which polls Get-NetTCPConnection on
+    both endpoints: the TCP state of each half says who closed first, which is the same
+    question and needs no driver.
 
 .EXAMPLE
     # 1. In an ELEVATED shell:
@@ -92,15 +99,32 @@ if (Test-Path $txt) { Remove-Item $txt -Force }
 & pktmon etl2txt $etl --out $txt --verbose 5 | Out-Null
 Write-Host "wrote $txt"
 
-# A summary, so the interesting lines do not have to be found by eye in a large file.
-# Resets and drops are the whole question; everything else is the connection working.
-$lines = Get-Content $txt
+# etl2txt writes UTF-16; reading it as anything else silently matches nothing.
+$lines = Get-Content $txt -Encoding Unicode
+
+# A real packet line carries a length; "Drop Counters" lines are per-component metadata
+# that exist whether or not anything was captured, and counting those as drops is how the
+# first run of this reported "135 drops" when it had captured nothing at all.
+$packets = $lines | Select-String -Pattern 'PktGroupId|Packet:' -SimpleMatch
 $resets = $lines | Select-String -Pattern 'RST' -SimpleMatch
-$drops = $lines | Select-String -Pattern 'Drop' -SimpleMatch
+$drops = $lines | Select-String -Pattern 'Drop ' -SimpleMatch |
+    Where-Object { $_.Line -notmatch 'Drop Counters' }
+
 Write-Host ""
-Write-Host ("packets logged : {0}" -f $lines.Count)
+Write-Host ("lines in log   : {0}" -f $lines.Count)
+Write-Host ("packets logged : {0}" -f $packets.Count)
 Write-Host ("lines with RST : {0}" -f $resets.Count)
-Write-Host ("lines with Drop: {0}" -f $drops.Count)
+Write-Host ("real drops     : {0}" -f $drops.Count)
+
+if ($packets.Count -eq 0) {
+    Write-Host ""
+    Write-Host "*** NO PACKETS WERE CAPTURED - this run says nothing. ***"
+    Write-Host "pktmon hooks NDIS/WFP components, and loopback traffic never reaches them,"
+    Write-Host "so 127.0.0.1 is invisible to it no matter what --comp is set to. Use"
+    Write-Host "test-one.ps1 -Sockets instead: polling Get-NetTCPConnection shows each end's"
+    Write-Host "TCP state, which is what says who closed first."
+    exit 1
+}
 if ($resets.Count) {
     Write-Host ""
     Write-Host "--- resets ---"

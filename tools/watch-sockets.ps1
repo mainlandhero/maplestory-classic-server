@@ -27,7 +27,8 @@ param(
     [string]$Out = 'sockets.log',
     # How long to wait for the client to appear before giving up.
     [int]$WaitSeconds = 60,
-    [int]$IntervalMs = 250
+    [int]$IntervalMs = 250,
+    [int]$ProbePort = 8484
 )
 
 # maplecw-sockets  <- marker so test-one.ps1 can find and stop this process by command line
@@ -60,8 +61,20 @@ while ($true) {
         break
     }
 
+    # Both endpoints, not just the client's. The TCP *state* of each half is what says who
+    # closed first, and that is now the open question:
+    #
+    #   client in CloseWait      -> our end sent FIN first
+    #   client in FinWait1/2     -> the client sent FIN first
+    #   the pair vanishes with no intermediate state -> a reset
+    #
+    # pktmon cannot answer this because it never sees loopback traffic at all, so this poll
+    # is the only view of the connection's TCP state we have.
     $conns = Get-NetTCPConnection -ErrorAction SilentlyContinue |
-        Where-Object { $ids -contains $_.OwningProcess } |
+        Where-Object {
+            $ids -contains $_.OwningProcess -or
+            $_.LocalPort -eq $ProbePort -or $_.RemotePort -eq $ProbePort
+        } |
         Sort-Object LocalPort, RemotePort
 
     $now = ($conns | ForEach-Object {
@@ -77,13 +90,15 @@ while ($true) {
             foreach ($c in $conns) {
                 $remote = "$($c.RemoteAddress):$($c.RemotePort)"
                 $tag = ''
-                # 8484 is our probe. Anything else is the interesting case - that is the
-                # migration this whole script exists to detect.
-                if ($c.RemotePort -ne 0 -and $c.RemotePort -ne 8484) {
+                # Anything off the probe port is the migration this script was written to
+                # detect. The states are the newer question - see the comment above.
+                if ($c.RemotePort -ne 0 -and $c.RemotePort -ne $ProbePort -and
+                    $c.LocalPort -ne $ProbePort) {
                     $tag = '   <<< NOT our probe port'
                 }
-                Note ("    {0,-12} {1}:{2} -> {3}{4}" -f `
-                    $c.State, $c.LocalAddress, $c.LocalPort, $remote, $tag)
+                $who = if ($ids -contains $c.OwningProcess) { 'client' } else { 'probe ' }
+                Note ("    {0} {1,-12} {2}:{3} -> {4}{5}" -f `
+                    $who, $c.State, $c.LocalAddress, $c.LocalPort, $remote, $tag)
             }
         }
         $last = $now

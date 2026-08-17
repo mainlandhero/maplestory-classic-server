@@ -381,7 +381,40 @@ stops.
 is why this connection works at all. The rule is therefore an unlikely cause, though not
 impossible if a WFP callout driver (AV, or a Nexon component) is involved.
 
-### Next: packet capture (the owner chose this)
+### pktmon cannot see loopback - the capture was empty
+
+**The recommendation was wrong and the run produced nothing.** `pktmon` hooks NDIS/WFP
+components, and loopback traffic never reaches them: against `127.0.0.1` it captures **zero
+packets** whatever `--comp` is set to. The 907-line log was component enumeration and
+per-component counters, all reading zero.
+
+Worse, the summary *said* "135 drops", which were all `Drop Counters` **metadata** lines
+that exist whether or not anything is captured. A tool that reports a number when it has
+measured nothing is the same failure as the connect hook, one layer up. `pktmon.ps1` now
+reads the UTF-16 output properly, counts only real drops, and **refuses to print a summary
+at all when no packets were captured**, saying so instead. It is kept for the day the
+harness serves on a real interface.
+
+### The free instrument that answers the same question
+
+`tools/watch-sockets.ps1` already polls `Get-NetTCPConnection` every 250 ms and logs only
+changes. It was written to spot migration; the **TCP state of each half is what says who
+closed first**, which is exactly the open question:
+
+| State seen | Means |
+|---|---|
+| client in `CloseWait` | **our end** sent FIN first |
+| client in `FinWait1`/`FinWait2` | **the client** sent FIN first |
+| the pair vanishes with no intermediate state | a **reset** |
+
+It now watches **both endpoints** - anything owned by the client *or* on the probe port -
+and labels each line `client` or `probe`. No driver, no elevation, and `-Sockets` already
+wires it into `test-one.ps1`.
+
+Add `-Sockets` to the standard run; everything else is unchanged. `sockets.log` lands
+beside `probe.log`.
+
+### Superseded: packet capture
 
 `tools/pktmon.ps1` wraps Windows' built-in `pktmon`. It changes nothing about the client
 and nothing about the machine's security posture, and the filter is **TCP on port 8484
