@@ -665,6 +665,44 @@ The questions it answers:
 Check `install: hook active` arrives before the first `0x0032` dispatch. If it does not,
 the timing is still off and nothing else in the run is comparable.
 
+### GOAL 3 - the character list: structure mapped, packet not yet found
+
+Progress is real but the packet is still open. What is now settled:
+
+**CharSelect is not a separate packet stage.** `FUN_141b3f050(this, screenId, delay)` just
+writes `this + 0x238`, and screens **3 (ClassicIntro), 4 (CharSelect) and 5 (NewChar) are
+sub-screens of one login-stage object**. So the character list must arrive through
+`FUN_141b25f30`, the login-stage switch - there is no second `OnPacket` to find.
+
+**The nine sibling stages are mapped**, by scanning `.rdata` for the base-class run that
+every stage vtable shares (`FUN_141d5f590`), then reading the `OnPacket` slot of each:
+
+| OnPacket | Opcode range | What it is |
+|---|---|---|
+| `FUN_141b25f30` | the login set | **the login stage** |
+| `FUN_141b82b00` | `0x51`-`0x6f` | buddy / messenger |
+| `FUN_141072ec0` | `0x5ac`-`0x5bf` | - |
+| `FUN_141df5940` | `0x1001`-`0x1007` | - |
+| `FUN_142097ee0` | (×4) | a shared no-op base |
+
+**Corrections to earlier guesses in this file:**
+
+* **`FUN_141b28570` does not consume a character list.** It was nominated here on the
+  strength of where it is called from; reading it shows a 290-byte state check that calls
+  `FUN_140199470`. Another static chain that looked convincing and was not measured.
+* **`0x0010` does not carry the list either.** Its success path has a count and two bounded
+  loops, which is the right *shape* - but the loops are a nibble swap and a bit rotate over
+  a string buffer, i.e. the client obfuscating a token it will send back, not decoding
+  records.
+* **`0x11` is a notice handler** and **`0x46` is an announcement list** (two counted loops of
+  `str, str, str, 8B, u32`). Both were the densest readers in the switch, and neither is it.
+
+**Where to look next**, cheapest first: the login-stage cases still unread - `0x13`, `0x14`,
+`0x15`, `0x16`, `0x17`, `0x18`, `0x25`, `0x27`, `0x35`, `0x37`, `0x38`, `0x0f` - and then the
+cases that read *nothing* directly and delegate (`0x45`, `0x47`, `0x48`, `0x4a`, `0x50`,
+`0x5f`), since a per-character decode function would look exactly like that. All of this is
+static and costs no launches.
+
 ### After that
 
 1. **Decode `0x0012`** if `0x0000` turns out to be the wrong one of the two.
