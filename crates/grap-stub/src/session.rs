@@ -166,6 +166,17 @@ static MODE_PATCHED: AtomicBool = AtomicBool::new(false);
 /// Also: `0x000B` is handled by the mode-5 `FUN_141b31ff0` on the way in, which is the
 /// variant whose field order we decoded. Patching on the way *out* keeps that true.
 ///
+/// # Do not send a world-list terminator with this
+///
+/// This fires after the **first** `0x000B`, so any later one is handled by the *classic*
+/// `FUN_141b2fac0` — and its terminator branch calls `FUN_141b3f050(stage, 2, 400)`,
+/// transitioning to **WorldSelect**. The mode-5 terminator has no transition, so the
+/// difference only appears once the mode is patched. It cost a run: the client jumped to a
+/// world-select screen that this service does not even use.
+///
+/// Send the world *entry* only. `stage+0x108` is set by the entry; the terminator merely
+/// closes the list, and nothing here needs it closed.
+///
 /// **This patches the client.** It makes the client follow the normal flow; it does not
 /// make the session valid.
 pub unsafe fn patch_mode_after_dispatch(opcode: u16) {
