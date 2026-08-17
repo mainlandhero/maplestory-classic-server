@@ -232,10 +232,24 @@ path. Two of its callers - `FUN_141b2b120`, a 31-byte wrapper that passes the co
 through, and `FUN_141b2ae80` - have no callers and are in no vtable, so they are reached
 only through the virtualised dispatcher and **cannot be traced statically**.
 
-So observe it: hook `FUN_141b267c0` and log `param_2` plus when it fires. Today's
-`-Probe watch@<VA>` only reports *whether* a function ran; it needs to capture the second
-argument (RDX on entry) too. That is a small change in `crates/grap-stub/src/probe.rs` and
-it turns a guess into a table lookup.
+So observe it. **`-Probe watch@<VA>` now does this**: it reports *every* entry with the
+dispatching opcode and the first four integer arguments (`rcx`, `rdx`, `r8`, `r9`), rather
+than announcing one hit and disarming. `rdx` is the result code, and the switch above turns
+that number into the dialog on screen.
+
+```
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+  -Opcode 0x0010 -PingFirst 0x0032 -PingBody 00 -ReplyTo 0x0080 -QuietBefore 4
+  -HookLog on -Probe watch@141b267c0
+```
+
+Send only the gate, so nothing we send can be the cause: if the dialog still appears, the
+failing code came from the client itself. Read `rdx as i32` out of the `***** WATCH #n`
+lines in the hook log.
+
+Two known limits, both recorded rather than discovered the hard way again: watch can only
+arm once the hook has seen a dispatch, so a call before the first inbound packet is
+invisible; and it stops logging after 32 hits so a per-frame caller cannot fill the disk.
 
 **The auto-advance is not a bug.** In mode 5 the `ClassicIntro` tick calls
 `FUN_141b3ff10` - *the same function the Login button calls* - as soon as `0x000B` sets
@@ -366,6 +380,11 @@ screen exists cannot work no matter what address is used.
 * A parameter that never arrives looks exactly like one that arrives and does nothing -
   `test-one.ps1` echoes the real command line for that reason.
 * Scripts are invoked as `powershell -ExecutionPolicy Bypass -File "<abs path>"`.
+* **Rebuilding `grap-stub` does not update the client.** `cargo build` writes
+  `target/release/grap64.dll`, but the client loads `client-patched/grap64.dll`, and only
+  `tools/setup-client.ps1` copies one to the other. Skip it and the run silently uses the
+  old hook - the most expensive kind of failure here, because it looks like the new code
+  did nothing. Compare hashes if in doubt.
 
 ### Testing loop that works
 

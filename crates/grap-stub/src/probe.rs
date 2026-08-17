@@ -33,9 +33,15 @@
 //!   the startup loop. A hit is self-announcing: the run that finds it is the run where the
 //!   login screen appears. This found `0x0032`.
 //! * `<from>-<to>@<VA>` — oracle is an `int3` on that function. Works for any handler.
-//! * `watch@<VA>` — no walking at all: report whether that function runs, and under which
-//!   opcode, for a packet we sent for real. Cheaper than guessing at bodies, and it is what
-//!   confirmed `FUN_141b307b0` is entered on `0x0010`.
+//! * `watch@<VA>` — no walking at all: report **every** time that function runs, with the
+//!   dispatching opcode and its first four integer arguments (`rcx`, `rdx`, `r8`, `r9`).
+//!   Cheaper than guessing at bodies; it confirmed `FUN_141b307b0` is entered on `0x0010`,
+//!   and the arguments answer the questions after that — "which *value* was it called
+//!   with", e.g. which result code reaches `FUN_141b267c0`, where a readable switch turns
+//!   that number into the dialog on screen.
+//!
+//!   Note it can only arm once the hook sees a dispatch, so a call that happens before the
+//!   first inbound packet is dispatched will not be seen.
 //!
 //! `#N` starts the walk on the Nth dispatched packet.
 //!
@@ -109,6 +115,9 @@ static TARGET_BYTE: AtomicU32 = AtomicU32::new(0);
 static HIT: AtomicBool = AtomicBool::new(false);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 static WATCH_BYTE: AtomicU32 = AtomicU32::new(0);
+static WATCH_HITS: AtomicU32 = AtomicU32::new(0);
+/// Set between restoring the original byte and re-planting it one instruction later.
+static WATCH_REARM: AtomicU64 = AtomicU64::new(0);
 static CURRENT_OPCODE: AtomicU32 = AtomicU32::new(0);
 
 /// x64 `CONTEXT` is 1232 bytes and must be 16-byte aligned.
@@ -129,9 +138,20 @@ const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
 const EXCEPTION_BREAKPOINT: u32 = 0x8000_0003;
+const EXCEPTION_SINGLE_STEP: u32 = 0x8000_0004;
 /// Offsets into x64 CONTEXT.
+const CTX_EFLAGS: usize = 0x44;
+const CTX_RCX: usize = 0x80;
+const CTX_RDX: usize = 0x88;
 const CTX_RSP: usize = 0x98;
+const CTX_R8: usize = 0xB8;
+const CTX_R9: usize = 0xC0;
 const CTX_RIP: usize = 0xF8;
+/// EFLAGS.TF - single-step after the next instruction.
+const TRAP_FLAG: u32 = 0x100;
+/// Stop logging after this many hits, so a function on a per-frame path cannot fill the
+/// disk while someone reads a dialog.
+const WATCH_MAX_HITS: u32 = 32;
 
 #[repr(C)]
 struct ExceptionPointers {
@@ -330,7 +350,10 @@ pub unsafe fn note_opcode(opcode: u16) {
     *(va as *mut u8) = 0xCC;
     VirtualProtect(va as *mut c_void, 1, old, &mut old);
     WATCH.store(va as u64, Ordering::SeqCst);
-    log(&format!("probe: watching {va:#x} - will report if it is entered"));
+    log(&format!(
+        "probe: watching {va:#x} - will report every entry with rcx/rdx/r8/r9 \
+         (first {WATCH_MAX_HITS})"
+    ));
 }
 
 pub fn enabled() -> bool {
@@ -393,28 +416,68 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     let code = (*(*info).record).code;
     let at = (*(*info).record).address as usize;
 
-    // Watch mode: answer "was this function entered, and by which opcode" without
-    // walking anything. Deliberately outside the IN_CALL guard, because the whole point
-    // is to observe the client's own dispatch of a packet we sent for real.
+    // Watch mode: answer "was this function entered, by which opcode, and with what
+    // arguments". Deliberately outside the IN_CALL guard, because the whole point is to
+    // observe the client's own dispatch of a packet we sent for real.
     //
-    // One-shot: restore the byte and resume *at* the target so the function runs
-    // normally. Stepping over and re-arming would need a trap flag dance, and one
-    // observation is all the question needs.
+    // The arguments are the useful half. "Did it run" was enough to confirm an opcode
+    // reaches a handler, but the questions that follow are of the form "which *value* was
+    // it called with" - e.g. which result code reaches FUN_141b267c0, where the code names
+    // the dialog via a switch we can already read. RCX/RDX/R8/R9 are the first four
+    // integer arguments under the Win64 ABI, read at entry before the prologue moves them.
+    //
+    // Repeating, not one-shot. A one-shot disarms on the first call, and the first call is
+    // not always the interesting one - FUN_141b267c0 is also called with result 0 on
+    // success, which would consume the single observation and report nothing useful.
     let watch = WATCH.load(Ordering::SeqCst) as usize;
     if code == EXCEPTION_BREAKPOINT && watch != 0 && at == watch {
-        let op = CURRENT_OPCODE.load(Ordering::SeqCst);
-        log(&format!(
-            "***** WATCH: {watch:#x} WAS ENTERED while dispatching opcode 0x{op:04X} *****"
-        ));
+        let ctx = (*info).context.cast::<u8>();
+        let n = WATCH_HITS.fetch_add(1, Ordering::SeqCst) + 1;
+        if n <= WATCH_MAX_HITS {
+            let op = CURRENT_OPCODE.load(Ordering::SeqCst);
+            let rcx = *(ctx.add(CTX_RCX).cast::<u64>());
+            let rdx = *(ctx.add(CTX_RDX).cast::<u64>());
+            let r8 = *(ctx.add(CTX_R8).cast::<u64>());
+            let r9 = *(ctx.add(CTX_R9).cast::<u64>());
+            log(&format!(
+                "***** WATCH #{n}: {watch:#x} ENTERED while dispatching opcode 0x{op:04X} \
+                 rcx={rcx:#x} rdx={rdx:#x} (rdx as i32 = {}) r8={r8:#x} r9={r9:#x} *****",
+                rdx as u32 as i32
+            ));
+            if n == WATCH_MAX_HITS {
+                log("probe: watch hit limit reached, further calls will not be logged");
+            }
+        }
+
+        // Restore the byte, resume *at* the target so the real first instruction runs,
+        // and set the trap flag so we get a single-step exception immediately after it -
+        // that is where the int3 goes back in. Without the re-arm this observes once.
         let mut old = 0u32;
         if VirtualProtect(watch as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) != 0 {
             *(watch as *mut u8) = WATCH_BYTE.load(Ordering::SeqCst) as u8;
             VirtualProtect(watch as *mut c_void, 1, old, &mut old);
         }
-        WATCH.store(0, Ordering::SeqCst);
-        let ctx = (*info).context.cast::<u8>();
         *(ctx.add(CTX_RIP).cast::<u64>()) = watch as u64;
+        *(ctx.add(CTX_EFLAGS).cast::<u32>()) |= TRAP_FLAG;
+        WATCH_REARM.store(watch as u64, Ordering::SeqCst);
         return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    // The step that follows a watch hit: put the breakpoint back.
+    if code == EXCEPTION_SINGLE_STEP {
+        let rearm = WATCH_REARM.swap(0, Ordering::SeqCst) as usize;
+        if rearm != 0 {
+            let mut old = 0u32;
+            if VirtualProtect(rearm as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) != 0 {
+                *(rearm as *mut u8) = 0xCC;
+                VirtualProtect(rearm as *mut c_void, 1, old, &mut old);
+            }
+            // TF clears itself on delivery, but clear it explicitly: leaving it set would
+            // single-step the client through the rest of the function.
+            let ctx = (*info).context.cast::<u8>();
+            *(ctx.add(CTX_EFLAGS).cast::<u32>()) &= !TRAP_FLAG;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
     }
 
     if !IN_CALL.load(Ordering::SeqCst) {
