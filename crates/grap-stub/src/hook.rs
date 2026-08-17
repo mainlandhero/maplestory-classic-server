@@ -123,9 +123,64 @@ fn log_path() -> String {
     std::env::var(HOOK_ENV).unwrap_or_else(|_| "maplecw-hook.log".to_string())
 }
 
+/// Wall-clock `HH:MM:SS.mmm`, to match the timestamps `handshake_probe.py` writes.
+///
+/// Without this the two logs cannot be lined up, and that is not a cosmetic problem: the
+/// client resets the connection at a moment when the hook log also shows socket teardowns,
+/// and there was no way to tell whether those were the same event or unrelated telemetry
+/// sockets closing on their own schedule. Computed from `SystemTime` rather than pulled
+/// from a formatting crate, because this runs inside another process's address space and
+/// the dependency list here is deliberately empty.
+fn stamp() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    // Local time, via the same offset the OS reports, so the two logs agree.
+    let secs = now.as_secs() as i64 - i64::from(utc_offset_secs());
+    let s = secs.rem_euclid(86_400);
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        s / 3600,
+        (s % 3600) / 60,
+        s % 60,
+        now.subsec_millis()
+    )
+}
+
+/// `GetTimeZoneInformation`'s `Bias`, in seconds. UTC = local + bias, so subtracting it
+/// turns a UTC timestamp into a local one.
+fn utc_offset_secs() -> i32 {
+    #[repr(C)]
+    struct TimeZoneInformation {
+        bias: i32,
+        rest: [u8; 168],
+    }
+    extern "system" {
+        fn GetTimeZoneInformation(info: *mut TimeZoneInformation) -> u32;
+    }
+    const TIME_ZONE_ID_INVALID: u32 = u32::MAX;
+    const TIME_ZONE_ID_DAYLIGHT: u32 = 2;
+    let mut tz = TimeZoneInformation {
+        bias: 0,
+        rest: [0; 168],
+    };
+    // SAFETY: the struct is the documented size and is fully initialised above.
+    let id = unsafe { GetTimeZoneInformation(&mut tz) };
+    if id == TIME_ZONE_ID_INVALID {
+        return 0;
+    }
+    // DaylightBias is the last i32 of the trailing block; add it when DST is in effect.
+    let daylight_bias = if id == TIME_ZONE_ID_DAYLIGHT {
+        i32::from_le_bytes([tz.rest[164], tz.rest[165], tz.rest[166], tz.rest[167]])
+    } else {
+        0
+    };
+    (tz.bias + daylight_bias) * 60
+}
+
 pub(crate) fn log(msg: &str) {
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
-        let _ = writeln!(f, "{msg}");
+        let _ = writeln!(f, "{} {msg}", stamp());
     }
 }
 

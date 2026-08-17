@@ -20,9 +20,9 @@ The owner's goal, in their words, now four parts:
 | Login screen | reached, `0x0032` |
 | Login button lit and clickable | reached, `0x000B` world entry sets `stage+0x108` |
 | Animated transition to character select | reached, by clicking Login in mode 2 |
-| Masked email | **built, never sent** - `0x0000` is decoded and `net::opcode::account_info` builds it |
+| Masked email | **DONE** - `0x0000` puts `wisp****@example.com` on the login screen |
 | Valid session | **not started** - the two client patches fake it |
-| Connection stays up | **not started** - and the "idle timeout" reading was wrong, see below |
+| Connection stays up | **not started** - the client still resets, and both earlier readings of why were wrong |
 | Create a character | **blocked** - client has no character list, and sends nothing |
 
 Full recipe for the current state is under "MILESTONE" below.
@@ -43,9 +43,36 @@ function `0x0010` uses**, so the two packets share an error vocabulary, and resu
 **No mode fork here.** `FUN_141b2dd00` does not branch on `session+0x68 == 5`, so it is live
 in mode 2 and mode 5 alike — unlike `0x000B`, where picking the wrong side costs a pass.
 
-### The next run, and what it decides
+### DONE - the masked email is on the login screen
 
-Two new things at once, because they are independent and each is its own oracle:
+**Reached 2026-08-18.** Sending `0x0000` ahead of `0x000B` put `wisp****@example.com` in the
+account field, Login still worked, and the client reached character creation. Fixture:
+`research/fixtures/account-info-masked-email-on-screen.log`. Goal 2 is met, and it needed
+no new client-side patch - the packet alone did it.
+
+The handler ran clean: `1 opcode=0x0000 elapsed_us=413.0 ret=1`.
+
+**The connection still dies**, in the same place and the same way:
+
+```
+10:47:59  #29 0x0080                        8.5s into the connection
+10:47:59  >>> 0x0000  >>> 0x000B
+10:48:00  #30 0x007A   (loading complete)   8.8s
+          connection reset by client
+```
+
+Note **reset**, not a graceful close - and note that the teardown chain reached from the
+boot loop right after `0x007A` (`FUN_1415f1c50`, `FUN_1413f4690`, `FUN_141b0eb80`) turns
+out to be a config write and two flag stores. Nothing there closes a socket. The socket
+watch logged four teardown groups, all on unrelated handles at a steady cadence, none of
+them at the moment of the reset.
+
+So the close is still unexplained, and there is now a reason to distrust the instrument -
+see "RETRACTED" below. Two things were added for the next run, both zero-cost: the hook log
+is **timestamped** so it can be lined up against `probe.log` (the reason the four teardown
+groups could not be attributed), and `netwatch` **self-tests** at install.
+
+### The previous run's command, for reference
 
 ```bash
 powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session mode=2 -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
@@ -58,14 +85,24 @@ world-list pin was once two characters too long and only a test caught it:
 cargo run --release -p net --bin packet-hex -- account-info maplecw "wisp****@example.com"
 ```
 
-| Oracle | Question |
-|---|---|
-| The login screen | does the masked email appear where the account name goes? (goal 2) |
-| `netwatch` `CLOSESOCKET`/`SHUTDOWN` lines | who tears the connection down, and from where? (goal 4) |
-| The wire | does the connection outlive the point where it has always died? |
-
 **No `0x0010` in that sequence, deliberately.** Its success path transitions the stage, and
 the client would leave the login screen before the account name could be looked at.
+
+### Next: why the client resets, with an instrument that has been checked
+
+Re-run the same command. It costs nothing extra and now answers a different question,
+because two things changed:
+
+1. **Read `netwatch: SELF-TEST` first.** `ok` means a later absence of `CONNECT` lines is a
+   real negative and the migration question can finally be closed one way or the other.
+   `FAILED` means the hook is the problem and nothing it has ever reported counts.
+2. **The hook log is timestamped**, so line it up against `probe.log`. The question is
+   whether any `CLOSESOCKET`/`SHUTDOWN` lands at the reset (`10:48:00` in the last run) or
+   whether the socket really is torn down through neither export.
+
+If the self-test passes and still nothing lands at the reset, the teardown is going through
+something else - `CloseHandle` on the socket handle, or a Winsock extension obtained by
+pointer. Widen the hook then, not before.
 
 ### After that
 
@@ -360,27 +397,37 @@ and **sent nothing**. Those transitions are purely client-side.
 handled (`2 opcode=0x0010 ... ret=1`), and the client closed 0.42s later, exactly as it does
 without one. So the close is not a rejection of our reply.
 
-### SETTLED: the client does not migrate - one connection is all there is
+### RETRACTED: "the client does not migrate" was never established
 
-A `connect` hook on `ws2_32!connect` and `WSAConnect`, armed long before the connection
-closed, logged **nothing**:
+This section used to read "SETTLED: the client does not migrate", on the strength of a
+`connect` hook that logged **nothing**. That was the same silent-negative mistake the repo
+warns about everywhere else, and it took two runs to notice.
+
+**The hook has never logged a `CONNECT` line at all — including for the connection to
+`127.0.0.1:8484`, which certainly happened.** So "no connect was logged" says nothing
+about the client's behaviour until the hook is shown to work. It may be that the client
+reaches its socket through a path `ws2_32!connect`/`WSAConnect` do not cover; it may be
+that the hook is simply broken. Either way the migration question is **open**, and so is
+everything that was inferred from it.
+
+`netwatch` now runs a **self-test** at install: it makes its own loopback `connect` and
+`closesocket` and reports whether its handler caught them.
 
 ```
-netwatch: watching ws2_32!connect at 0x7fffb6d71a50
-netwatch: watching ws2_32!WSAConnect at 0x7fffb6d90130
-(no CONNECT lines)
+netwatch: SELF-TEST ok - 2 of our own calls were caught, so a later absence of lines is a
+real negative
 ```
 
-That is the decisive form of the test. A hook at the API sees an attempt to `0.0.0.0:0`
-that never becomes a socket - the case a socket poll is blind to, and the reason the
-earlier "no second socket" reading was not proof. There was no attempt of any kind.
+Read that line before reading anything else from this hook. `SELF-TEST FAILED` means every
+negative it reports is worthless.
 
-**Consequences:**
+**What is still true:** `tools/watch-sockets.ps1` saw only one socket, and no second
+endpoint was ever observed. That is weak evidence for one connection, not proof.
 
-* **No channel server is needed** for character select or character creation. Everything
-  happens on the one connection we already have.
-* **No address field to find.** The unread fields in the login result are not a server
-  address, and looking for one would have been wasted work.
+**What was inferred from the retracted claim, and is now unsupported:**
+
+* that no channel server is needed;
+* that the unread fields in the login result cannot be a server address.
 * **The close is *not* explained.** It was recorded here as an ~8s idle timeout; that was
   inferred from timing alone and the timing has a second explanation - see "CORRECTION"
   above. What is settled is only that no reconnect follows it.

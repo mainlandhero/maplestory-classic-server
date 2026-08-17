@@ -168,6 +168,60 @@ pub unsafe fn install() {
     }
     if armed == 0 {
         log("netwatch: nothing armed");
+        return;
+    }
+    self_test();
+}
+
+/// Prove the hook fires, by calling the thing it watches.
+///
+/// **This exists because a negative from this hook was once written down as settled.** The
+/// `connect` watch has never logged a single `CONNECT` line - including for the connection
+/// to our own server, which certainly happened. Two explanations fit: the client reaches
+/// the socket through some path these exports do not cover, or the hook simply does not
+/// work. Until one is ruled out, "the client never called `connect`" is not evidence of
+/// anything, and the migration question it was used to close is still open.
+///
+/// So make a call we control. A `connect` to a discard address on the loopback interface
+/// needs no server and no network: it either fails immediately or is refused, and either
+/// way the export was entered. If `SELF-TEST ok` appears in the log, later silence is a
+/// real negative; if it does not, the hook is broken and nothing it reports means anything.
+unsafe fn self_test() {
+    const AF_INET: i32 = 2;
+    const SOCK_STREAM: i32 = 1;
+    const INVALID_SOCKET: usize = usize::MAX;
+    extern "system" {
+        fn socket(af: i32, ty: i32, proto: i32) -> usize;
+        fn connect(s: usize, name: *const u8, namelen: i32) -> i32;
+        fn closesocket(s: usize) -> i32;
+    }
+
+    let before = HITS.load(Ordering::SeqCst);
+    let s = socket(AF_INET, SOCK_STREAM, 0);
+    if s == INVALID_SOCKET {
+        log("netwatch: SELF-TEST inconclusive - could not create a socket");
+        return;
+    }
+    // sockaddr_in { family=AF_INET, port=9 (discard), addr=127.0.0.1 }, network order.
+    let mut sa = [0u8; 16];
+    sa[0..2].copy_from_slice(&(AF_INET as u16).to_le_bytes());
+    sa[2..4].copy_from_slice(&9u16.to_be_bytes());
+    sa[4..8].copy_from_slice(&[127, 0, 0, 1]);
+    connect(s, sa.as_ptr(), sa.len() as i32);
+    closesocket(s);
+
+    let hits = HITS.load(Ordering::SeqCst) - before;
+    // One `connect` plus one `closesocket`; anything less means an export is not armed.
+    if hits >= 2 {
+        log(&format!(
+            "netwatch: SELF-TEST ok - {hits} of our own calls were caught, \
+             so a later absence of lines is a real negative"
+        ));
+    } else {
+        log(&format!(
+            "netwatch: SELF-TEST FAILED - only {hits} of our own calls were caught. \
+             DO NOT read anything into what this hook does or does not report."
+        ));
     }
 }
 

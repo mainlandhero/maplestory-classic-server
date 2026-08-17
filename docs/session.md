@@ -317,8 +317,12 @@ Still open, in order:
 
 Settled and no longer worth pursuing:
 
-* **The client never migrates.** A `connect` hook on `ws2_32!connect` / `WSAConnect` logged
-  nothing after login. No channel server, no address field - one connection is all there is.
+* ~~**The client never migrates.**~~ **Retracted 2026-08-18.** That rested on a `connect`
+  hook logging nothing - but the hook has never logged a `CONNECT` line at all, including
+  for the connection to our own server, which certainly happened. Until the hook is shown
+  to work, its silence is not evidence. `netwatch` now self-tests at install; read that
+  line before reading its output. The migration question is open again, and so is whether
+  a channel server or an address field is needed.
 * `DAT_143ac1898 + 0x1b8` (the `0x0073` identity string) is still empty and still unwritten
   by anything we can find, but it did not stop login and is no longer the lead.
 
