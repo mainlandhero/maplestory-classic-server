@@ -278,18 +278,43 @@ reachable; they do **not** make the session valid. Describe results accordingly.
 Login click, the transition and the "Create a character" clicks all happened with no
 server attached, and **sent nothing**. Those transitions are purely client-side.
 
-**Next:** keep the connection alive so the clicks have somewhere to go. Add the login
-result back:
+**Adding the login result back did not keep the connection alive.** It *was* dispatched and
+handled (`2 opcode=0x0010 ... ret=1`), and the client closed 0.42s later, exactly as it does
+without one. So the close is not a rejection of our reply.
 
-```
--ReplySeq "000b:<entry>,0010:000000/256"
-```
+### The open question: does the client migrate, or just time out?
 
-Safe now in a way it was not before: the auto-advance came from the mode-5 tick, which the
-mode patch disables, and `0x0010`'s own world-select call only fires when the world/channel
-it carries differ from the session's - measured as `world=0 channel=0`, which zeros match.
-Then click through to character creation and read what the client sends; that is the first
-unmapped outbound packet of the next phase.
+The owner: the login server and channel server are normally different ports, so if the client is
+migrating it needs to be told where - and **we have never told it, and have no channel
+server**. The 256 zero bytes in the login result mean any address field in there reads
+`0.0.0.0:0`.
+
+Both explanations currently fit, and they are not distinguished yet:
+
+* **Migration.** The client finishes login, drops the login connection, and connects to a
+  channel server it cannot reach.
+* **Timeout.** The client has closed at ~8-12s in *every* run since the first, including
+  ones where nothing worked.
+
+Only one connection was ever made (`grep -c "connection from"` = 1), so it did not come
+back to 8484 - which does not distinguish the two, since a migration would go to a
+different port.
+
+**Cheapest way to tell:** run `tools/client-sockets.ps1` against the live client after
+login. A connect attempt to any other port means migration; no second socket means the
+close is just the timeout. That decides whether the next task is *decoding an address
+field* or *keeping a connection alive*.
+
+Not yet located: any field that carries a server address. The login result's two sub-readers
+were decoded - `FUN_14108d290` reads a `u32` count then `{u32 key, 8 bytes}` pairs into a
+map, `FUN_14108bdf0` a count then `{u32, u8}` - and neither looks like an address. Login
+stage `case 0x0c` is not a migrate either; it reads a `u32` and drives UI.
+
+### After that: build the server side
+
+Client-side patching has taken this as far as it goes - the flow is reachable and the
+blocker is now that **nothing is answering**. Character select and character creation need
+real handlers, which is the `login server to character select` milestone in `ROADMAP.md`.
 
 ### SOLVED - `FUN_141b2a280` raises the prompt
 

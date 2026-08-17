@@ -1,0 +1,70 @@
+reply preflight OK (ping), 2 packets in sequence
+[8484] listening; will send a candidate handshake on each connection
+
+[8484] 00:41:18 connection from 127.0.0.1:57909
+[8484] sending: G=1 H=1 L=1, high=100 (all known gates satisfied)  (48 bytes)
+      0000  2E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+      0010  01 00 01 00 00 00 00 00 01 78 30 52 02 78 30 52  .........x0R.x0R
+      0020  01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00  .....d..........
+[8484] 00:41:19 *** CLIENT SENT 51 bytes ***
+[8484]      <- #0   0x0070 version report (FUN_1415d5b40)     body=45B 02 64 00 00 00 00 00 00 00 00 00 00 00 02 00 00...
+[8484] 00:41:19 *** CLIENT SENT 55 bytes ***
+[8484]      <- #1   0x0071 environment report (FUN_1415d5c20) body=49B 01 01 00 00 00 64 00 00 00 00 00 00 00 00 01 1e...
+[8484] 00:41:19 *** CLIENT SENT 26 bytes ***
+[8484]      <- #2   0x00A6 enumeration entry                  body=01 00 00 00 00 00
+[8484]      <- #3   0x00A6 enumeration entry                  body=0b 00 00 00 00 00 00 00
+[8484] 00:41:19 *** CLIENT SENT 50 bytes ***
+[8484]      <- #4   0x00A6 enumeration entry                  u32=2
+[8484]      <- #5   0x00A6 enumeration entry                  u32=5
+[8484]      <- #6   0x00A6 enumeration entry                  u32=3
+[8484]      <- #7   0x00A6 enumeration entry                  u32=4
+[8484]      <- #8   0x00A6 enumeration entry                  u32=12
+[8484] 00:41:19 *** CLIENT SENT 10 bytes ***
+[8484]      <- #9   0x00A6 enumeration entry                  u32=13
+[8484] 00:41:19 *** CLIENT SENT 10 bytes ***
+[8484]      <- #10  0x00A6 enumeration entry                  u32=14
+[8484] 00:41:19 *** CLIENT SENT 10 bytes ***
+[8484]      <- #11  0x00A6 enumeration entry                  u32=15
+[8484] 00:41:19 *** CLIENT SENT 10 bytes ***
+[8484]      <- #12  0x00A6 enumeration entry                  u32=17
+[8484] 00:41:20 *** CLIENT SENT 10 bytes ***
+[8484]      <- #13  0x00A6 enumeration entry                  u32=18
+[8484] 00:41:20 *** CLIENT SENT 62 bytes ***
+[8484]      <- #14  0x00A1 handshake-tail notify              u32=0
+[8484]      <- #15  0x0070 version report (FUN_1415d5b40)     body=46B 01 64 00 00 00 82 fd 8e e4 82 fd 8e e4 02 00 00...
+[8484] 00:41:24 >>> GATE opcode 0x0032 body=00 - now waiting for the client to send 0x0080
+[8484] 00:41:24 *** CLIENT SENT 6 bytes (after 0x0032, +0.00s, 5.6s into the connection) ***
+[8484]      <- #16  0x00BF                                    
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.10s, 5.7s into the connection) ***
+[8484]      <- #17  0x00A6 enumeration entry                  u32=19
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.10s, 5.7s into the connection) ***
+[8484]      <- #18  0x00A6 enumeration entry                  u32=27
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.16s, 5.8s into the connection) ***
+[8484]      <- #19  0x00A6 enumeration entry                  u32=22
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.17s, 5.8s into the connection) ***
+[8484]      <- #20  0x00A6 enumeration entry                  u32=20
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.17s, 5.8s into the connection) ***
+[8484]      <- #21  0x00A6 enumeration entry                  u32=21
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.17s, 5.8s into the connection) ***
+[8484]      <- #22  0x00A6 enumeration entry                  u32=23
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.19s, 5.8s into the connection) ***
+[8484]      <- #23  0x00A6 enumeration entry                  u32=24
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.19s, 5.8s into the connection) ***
+[8484]      <- #24  0x00A6 enumeration entry                  u32=25
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.19s, 5.8s into the connection) ***
+[8484]      <- #25  0x00A6 enumeration entry                  u32=26
+[8484] 00:41:24 *** CLIENT SENT 10 bytes (after 0x0032, +0.24s, 5.9s into the connection) ***
+[8484]      <- #26  0x00A6 enumeration entry                  u32=28
+[8484] 00:41:26 *** CLIENT SENT 14 bytes (after 0x0032, +2.75s, 8.4s into the connection) ***
+[8484]      <- #27  0x00C0                                    body=05 00 00 00 20 4e 00 00
+[8484] 00:41:26 *** CLIENT SENT 32 bytes (after 0x0032, +2.80s, 8.4s into the connection) ***
+[8484]      <- #28  0x0073                                    body=26B 05 00 00 00 00 00 aa bb cc dd ee ff de ad be ef...
+[8484] 00:41:26 *** CLIENT SENT 6 bytes (after 0x0032, +2.80s, 8.4s into the connection) ***
+[8484]      <- #29  0x0080                                    
+[8484] 00:41:26 >>> ANSWERING [1/2] 0x0080 with opcode 0x000B body=00 06 00 53 63 61 6e 69 61 00 00 00 00 01 08 00 53 63 61 6e 69 61 2d 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+[8484] 00:41:26 >>> ANSWERING [2/2] 0x0080 with opcode 0x0010 body=00 00 00 +256 zero bytes
+[8484] 00:41:27 *** CLIENT SENT 28 bytes (after 0x0010, +0.42s, 8.8s into the connection) ***
+[8484]      <- #30  0x007A                                    body=01 01 46 00 00 00 0c 00 00 00 0b 00 00 00 23 00 00 00 80 00 00 00
+[8484] client closed the connection
+[8484] connection lasted 0.0s after the reply was sent
+[8484] VERDICT: client answered 480 bytes to []
