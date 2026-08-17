@@ -97,6 +97,11 @@ static TRAMPOLINE: AtomicU64 = AtomicU64::new(0);
 static CALLS: AtomicU64 = AtomicU64::new(0);
 static BASE: AtomicU64 = AtomicU64::new(0);
 
+/// Module base, once `install()` has resolved it. Zero before that.
+pub(crate) fn base() -> usize {
+    BASE.load(Ordering::SeqCst) as usize
+}
+
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 const MEM_COMMIT_RESERVE: u32 = 0x1000 | 0x2000;
 

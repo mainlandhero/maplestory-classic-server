@@ -423,6 +423,51 @@ unsafe fn deref(reg: u64) -> String {
     format!(" [{:#010x}]", *(addr as *const u32))
 }
 
+/// The image is about 60 MB; anything inside it is plausibly a code address.
+const IMAGE_SPAN: usize = 0x0400_0000;
+/// `.themida` starts here (`0x144C0000` at the observed base). Addresses at or above it are
+/// virtualised code, which cannot be decompiled — so they are labelled rather than chased.
+const THEMIDA_RVA: usize = 0x044C_0000;
+
+/// A poor man's backtrace: stack slots that look like return addresses into this module.
+///
+/// Needed because the immediate caller can be virtualised. `FUN_141b2a280` is invoked from
+/// `.themida`, which is a dead end on its own — but the VM frame was itself entered from
+/// somewhere, and that address is usually still sitting on the stack. Scanning a couple of
+/// hundred bytes up finds it without needing to understand the VM's frame layout.
+///
+/// Every slot is checked with `VirtualQuery` first, and non-code values are skipped rather
+/// than reported, so a stack full of data does not produce noise.
+unsafe fn stack_trace(rsp: usize) -> String {
+    let base = crate::hook::base();
+    if base == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut found = 0;
+    let mut off = 0;
+    while off < 0x200 && found < 8 {
+        let at = rsp + off;
+        off += 8;
+        if !crate::session::can_read(at, 8) {
+            continue;
+        }
+        let v = *(at as *const u64) as usize;
+        if v <= base || v >= base + IMAGE_SPAN {
+            continue;
+        }
+        let rva = v - base;
+        let tag = if rva >= THEMIDA_RVA { " (themida)" } else { "" };
+        out.push_str(&format!(" {v:#x}{tag}"));
+        found += 1;
+    }
+    if out.is_empty() {
+        out
+    } else {
+        format!("\n      stack:{out}")
+    }
+}
+
 /// Render `*(wchar_t **)reg` as text when it looks like one, else nothing.
 ///
 /// The notice display `FUN_141b4ac80(name, ...)` is handed a pointer to a string object
@@ -506,12 +551,13 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             };
             log(&format!(
                 "***** WATCH #{n}: {watch:#x} ENTERED while dispatching opcode 0x{op:04X} \
-                 rcx={rcx:#x}{}{} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x}{ret} *****",
+                 rcx={rcx:#x}{}{} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x}{ret}{} *****",
                 deref(rcx),
                 deref_wstr(rcx),
                 rdx as u32 as i32,
                 deref(rdx),
                 deref_wstr(rdx),
+                stack_trace(rsp),
             ));
             if n == WATCH_MAX_HITS {
                 log("probe: watch hit limit reached, further calls will not be logged");

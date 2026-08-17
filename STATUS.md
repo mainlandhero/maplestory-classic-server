@@ -262,14 +262,36 @@ address*, not *nothing uses it*. That warning is now at the top of `xref.py`.
 Independently corroborated: an exhaustive render of all 170 `/Notice/` canvases found no
 duplicate node and no numeric twin, so the dialog on screen is definitely this one.
 
-**Next: who calls it, and with which code.** Watch `FUN_141b2a280` - `rdx` is the code and
-`called-from` names the decision point.
+### The code is 12, and the caller is virtualised
+
+```
+WATCH #1: 0x141b2a280 ENTERED  rdx=0xc (as i32 12)  r8=0x1  called-from=0x144c05eb2
+```
+
+* **`code = 12`** - in the trouble set, and a *generic* failure: no specific notice maps to
+  it, unlike 4 (`incorrectPassword`) or 5 (`notRegisteredID`). The client is not reporting a
+  named reason, it is reporting "login did not succeed".
+* **`r8 = 1`** - the flag argument, which sets `stage+0xf0 = 1`.
+* **`called-from = 0x144c05eb2` is inside `.themida`.** The immediate caller is virtualised
+  and cannot be decompiled.
+
+No packet carried this. Only `0x0032` was ever dispatched, so the client generated code 12
+on its own.
+
+**Next: look further up the stack.** The VM frame was itself entered from somewhere, and
+that address is usually still on the stack. Watch mode now prints a `stack:` line - up to 8
+qwords from `[rsp .. rsp+0x200]` that fall inside the image, each tagged `(themida)` when
+virtualised. The first **non**-themida address above the call is the real originator.
 
 ```
 powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
   -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4
   -HookLog on -Probe watch@141b2a280 -Session watch
 ```
+
+If every candidate is `(themida)`, the whole decision lives in the VM and the approach has
+to change again - to watching what the *client asks* before deciding, rather than who
+decided.
 
 ### How it was found
 
