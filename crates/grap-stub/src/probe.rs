@@ -423,6 +423,46 @@ unsafe fn deref(reg: u64) -> String {
     format!(" [{:#010x}]", *(addr as *const u32))
 }
 
+/// Render `*(wchar_t **)reg` as text when it looks like one, else nothing.
+///
+/// The notice display `FUN_141b4ac80(name, ...)` is handed a pointer to a string object
+/// whose first field is the `wchar_t *` — so the *name of the dialog on screen* is two
+/// dereferences from `rcx`. That is worth reading directly: it identifies the notice
+/// regardless of how the caller chose it, which matters here because the name is evidently
+/// not always a literal in the binary.
+///
+/// Conservative on purpose. Anything that is not a readable pointer to a run of printable
+/// ASCII-range UTF-16 ending in NUL is reported as nothing rather than as garbage.
+unsafe fn deref_wstr(reg: u64) -> String {
+    if !crate::session::can_read(reg as usize, 8) {
+        return String::new();
+    }
+    let p = *(reg as usize as *const usize);
+    if !crate::session::can_read(p, 2) {
+        return String::new();
+    }
+    let mut s = String::new();
+    for i in 0..64 {
+        let at = p + i * 2;
+        if !crate::session::can_read(at, 2) {
+            return String::new();
+        }
+        let c = *(at as *const u16);
+        if c == 0 {
+            break;
+        }
+        if !(0x20..0x7F).contains(&c) {
+            return String::new(); // not the kind of string we are looking for
+        }
+        s.push(c as u8 as char);
+    }
+    if s.is_empty() {
+        String::new()
+    } else {
+        format!(" \"{s}\"")
+    }
+}
+
 /// Catch the fault and resume in the loop, rather than letting it unwind the client.
 unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     if info.is_null() {
@@ -456,10 +496,12 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             let r9 = *(ctx.add(CTX_R9).cast::<u64>());
             log(&format!(
                 "***** WATCH #{n}: {watch:#x} ENTERED while dispatching opcode 0x{op:04X} \
-                 rcx={rcx:#x}{} rdx={rdx:#x} (as i32 {}){} r8={r8:#x} r9={r9:#x} *****",
+                 rcx={rcx:#x}{}{} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x} *****",
                 deref(rcx),
+                deref_wstr(rcx),
                 rdx as u32 as i32,
                 deref(rdx),
+                deref_wstr(rdx),
             ));
             if n == WATCH_MAX_HITS {
                 log("probe: watch hit limit reached, further calls will not be logged");

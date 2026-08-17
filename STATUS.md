@@ -230,23 +230,32 @@ identity.
 | Ruled out | How |
 |---|---|
 | `FUN_141b267c0` (login result codes) | watch armed before the login screen, dialog appeared, **never entered** |
-| `FUN_1415d9210` (`+0x2270` / `+0x227c`) | `-Session watch` read `+0x2270 = 0x00` live - **bit 2 clear**, so it returns before raising anything |
+| `FUN_1415d9210` (`+0x2270` / `+0x227c`) | `-Session watch` read `+0x2270 = 0x00` live across three heartbeats - **bit 2 clear**, so it returns before raising anything |
+| `FUN_141804140` (error code -> notice name) | watch: **never entered** |
 
-Both were plausible chains built from a matching string plus a matching default case.
-Neither survived a run. **Measure before building on a static chain** - that is now twice.
+That is **all three** functions in the binary that reference the string
+`loginTroubleAskSupport`, and `FUN_141b2dd00` - the third - is a login-stage packet handler
+that cannot have run, because only `0x0032` was ever dispatched.
 
-**Next:** watch **`FUN_141804140`**, the one place the name `loginTroubleAskSupport` is
-produced. If the dialog appears, it should run. Its first argument is a *pointer to* the
-error code, and watch mode now dereferences pointer arguments and logs `[rcx]`/`[rdx]`.
+So the notice is **not selected by that literal**. Either the name is built at runtime, or
+the node is chosen by numeric id (`/Notice/text/` has numbered nodes as well as named ones),
+or the dialog on screen is a *different* node with similar wording.
+
+Each of these was a plausible static chain - matching string, matching default case - and
+none survived a run. **Measure before building on a static chain.** Three times now.
+
+**Next: stop chasing the name, watch the display.** `FUN_141b4ac80(name, arg, flags)` is the
+central notice display - **26 callers**, including both known raisers. `rcx` points at a
+string object whose first field is the `wchar_t *`, and watch mode now dereferences that
+and logs the name, so this identifies the notice *however the caller chose it*.
 
 ```
 powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
   -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4
-  -HookLog on -Probe watch@141804140 -Session watch
+  -HookLog on -Probe watch@141b4ac80 -Session watch
 ```
 
-If it is **not** entered either, the notice is raised without going through the error-code
-map, and the next place to look is whatever draws `/Notice/text/` nodes by name.
+Look for `***** WATCH #n: ... rcx=... "someName"` - that name is the dialog on screen.
 
 #### Older note, now superseded
 
