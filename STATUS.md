@@ -199,7 +199,49 @@ Two guards added, both cheap:
   the canary reports and the teardown watches do not, their silence is real. If none of the
   three report, the code watch is broken and the run says nothing.
 
-### Next: does the client's teardown run at all?
+### SETTLED: the client never tears the connection down - something else resets it
+
+**Run 5, with the instrument verified.** All three int3s reported `int3 verified`, the
+ws2_32 self-test passed, and the **canary fired**:
+
+```
+FUN_142cb8370 (account name - CANARY) obj=0x6057a38 called-from=0x141b2ed24
+```
+
+`0x141b2ed24` is exactly the call site inside `FUN_141b2dd00`, the `0x0000` handler - so the
+code watch works, and it is reporting from the function the decompilation predicted.
+
+Against that, **`FUN_1415d35f0` and `FUN_142c44350` never fired at all.** Combined with run
+3's equally-verified negative on `closesocket`/`shutdown`, the client:
+
+* never runs its connection teardown;
+* never runs its session destructor;
+* never calls `closesocket` or `shutdown`;
+* and **keeps running** for tens of seconds after the connection is gone.
+
+Yet the connection is reset, reproducibly, ~0.3-0.45 s after the client's `0x007A`.
+
+**So the close is not the client's decision at all** - which also means "the client gives up
+on an invalid session" is not what is happening, and no amount of answering it will keep the
+socket alive on its own.
+
+### Next: is the socket destroyed, or abandoned?
+
+Two possibilities remain, and the connection object's own socket handle separates them.
+`FUN_1415d35f0` hands `conn + 0x20` to `FUN_1415e3b60`, which closes the socket and stores
+`-1`, so that field is the client's own view of whether it still owns a socket.
+
+The session monitor now polls it - no new API hooks - and logs every change:
+
+| Log line | Meaning |
+|---|---|
+| `SOCKET conn=... +0x20=0xffffffffffffffff` | something *did* tear it down, by a path that avoids both watched functions - chase `CloseHandle`/`NtClose` next |
+| `+0x20` unchanged and valid across the reset | the client still believes it owns a live socket, so the reset came from outside its own logic entirely |
+
+The connection object comes from the dispatcher's first argument, which is the only place
+we are handed it.
+
+### Superseded: does the client's teardown run at all?
 
 Two possibilities remain and one breakpoint separates them: the socket is destroyed through
 another API, or the client's teardown path never runs and something else resets the

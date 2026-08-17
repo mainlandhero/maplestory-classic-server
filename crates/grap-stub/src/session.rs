@@ -45,7 +45,7 @@
 //! using them as "the session works".
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::hook::log;
 
@@ -76,6 +76,25 @@ const READABLE: u32 = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80;
 const PAGE_GUARD: u32 = 0x100;
 
 static PATCHED: AtomicBool = AtomicBool::new(false);
+
+/// The connection object, captured from the dispatcher's first argument.
+///
+/// Recorded so the socket handle inside it can be watched - see [`CONN_SOCKET_OFF`].
+pub(crate) static CONN: AtomicUsize = AtomicUsize::new(0);
+
+/// `conn + 0x20` - the `SOCKET`, read from `FUN_1415d35f0`, which hands `conn + 0x20` to
+/// `FUN_1415e3b60`, and that is the function that calls `closesocket` and then stores `-1`.
+///
+/// **Why this is worth polling.** With the code watch verified by a canary, the client's
+/// connection teardown and session destructor are both known *not* to run, and neither
+/// `closesocket` nor `shutdown` is called - yet the connection is reset while the client
+/// carries on. Two possibilities remain, and this field separates them:
+///
+/// * the handle goes to `-1` -> something *did* tear the socket down, through a path that
+///   does not go via the two watched functions;
+/// * the handle stays a live-looking value -> the client still believes it owns a socket
+///   that is already dead, so the reset came from outside the client's own logic.
+const CONN_SOCKET_OFF: usize = 0x20;
 
 #[repr(C)]
 #[derive(Default)]
@@ -222,10 +241,30 @@ pub unsafe fn monitor(base: usize) {
 
     let mut last: Option<(u8, u8)> = None;
     let mut was_readable: Option<bool> = None;
+    let mut last_socket: Option<u64> = None;
     let mut ticks: u32 = 0;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
         ticks += 1;
+
+        // Report every change to the connection's socket handle, including the first sight
+        // of it. `-1` is what `FUN_1415e3b60` writes after closing; anything else means the
+        // client still thinks it holds a socket.
+        let conn = CONN.load(Ordering::SeqCst);
+        if conn != 0 && readable(conn + CONN_SOCKET_OFF, 8) {
+            let socket = *((conn + CONN_SOCKET_OFF) as *const u64);
+            if last_socket != Some(socket) {
+                let what = if socket == u64::MAX {
+                    "  <- closed and cleared by the client"
+                } else {
+                    "  <- the client still holds a socket"
+                };
+                log(&format!(
+                    "***** SOCKET conn={conn:#x} +0x20={socket:#x}{what} *****"
+                ));
+                last_socket = Some(socket);
+            }
+        }
 
         let obj = if readable(ptr_at, 8) { *(ptr_at as *const usize) } else { 0 };
         let ok = obj != 0 && readable(obj + STATUS_OFF, 1);

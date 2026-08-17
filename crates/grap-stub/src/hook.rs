@@ -186,6 +186,12 @@ pub(crate) fn log(msg: &str) {
 
 /// The replacement dispatcher. Times the original and records the opcode.
 unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) -> u64 {
+    // Hand the connection object to the session monitor, which polls the socket handle
+    // inside it. This is the only place we are given that pointer.
+    if !conn.is_null() {
+        crate::session::CONN.store(conn as usize, std::sync::atomic::Ordering::SeqCst);
+    }
+
     // The view's data pointer sits at +0x10 and covers header *and* payload, so the
     // decrypted body — and therefore the opcode — starts 4 bytes in. See FUN_1406e88d0.
     let opcode = if view.is_null() {
