@@ -1,0 +1,8 @@
+install_once: our code IS running. env=false marker=true -> installing
+install: base=0x140000000 target=0x1415d60e0
+install: hook active
+session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="watch"
+    0 opcode=0x0032 elapsed_us=85.5 ret=110278832 flag=0->1 state=0->2
+***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+***** SESSION obj=0x606b0c8 +0x2270=0x00 +0x227c=0x00 -> no dialog (flag bit 2 clear) *****
+session: object not ready yet (null or unreadable), still polling

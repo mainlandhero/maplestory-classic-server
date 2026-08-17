@@ -123,6 +123,12 @@ pub fn enabled() -> bool {
     std::path::Path::new(SESSION_MARKER).exists()
 }
 
+/// Guarded read for other modules — notably the probe, which dereferences argument
+/// registers inside a vectored handler where a fault would be fatal.
+pub(crate) unsafe fn can_read(addr: usize, len: usize) -> bool {
+    readable(addr, len)
+}
+
 /// Poll the session object and report the two bytes that decide the prompt.
 pub unsafe fn monitor(base: usize) {
     let Some(mode) = mode() else { return };
@@ -133,25 +139,36 @@ pub unsafe fn monitor(base: usize) {
     ));
 
     let mut last: Option<(u8, u8)> = None;
-    let mut announced_null = false;
+    let mut was_readable: Option<bool> = None;
+    let mut ticks: u32 = 0;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
+        ticks += 1;
 
-        if !readable(ptr_at, 8) {
-            continue;
+        let obj = if readable(ptr_at, 8) { *(ptr_at as *const usize) } else { 0 };
+        let ok = obj != 0 && readable(obj + STATUS_OFF, 1);
+
+        // Log every readable<->unreadable transition, not just the first. Logging "not
+        // ready" once and then falling silent left it ambiguous whether the fields stayed
+        // put or whether the object simply vanished before the interesting moment - which
+        // is exactly what happened on the first run of this.
+        if was_readable != Some(ok) {
+            log(&format!(
+                "session: object at {obj:#x} is now {}",
+                if ok { "readable" } else { "UNREADABLE - values below are stale" }
+            ));
+            was_readable = Some(ok);
+            last = None; // force a fresh reading when it comes back
         }
-        let obj = *(ptr_at as *const usize);
-        if !readable(obj + STATUS_OFF, 1) {
-            if !announced_null {
-                log("session: object not ready yet (null or unreadable), still polling");
-                announced_null = true;
-            }
+        if !ok {
             continue;
         }
 
         let flags = *((obj + FLAGS_OFF) as *const u8);
         let status = *((obj + STATUS_OFF) as *const u8);
-        if last != Some((flags, status)) {
+        // Heartbeat every ~3s even when nothing changes, so silence in the log always
+        // means "not running" and never "running but unchanged".
+        if last != Some((flags, status)) || ticks.is_multiple_of(15) {
             let verdict = if flags & DIALOG_FLAG == 0 {
                 "no dialog (flag bit 2 clear)"
             } else {

@@ -225,19 +225,28 @@ identity.
 
 ### Start here next session
 
-**The prompt is solved; confirm it, then find the writer.** `FUN_1415d9210` raises it from
-`DAT_143aa84a0 + 0x2270` (flag, bit 2) and `+0x227c` (status byte, 0 = this dialog). Full
-table in `docs/session.md`. Two moves, neither needing a guess:
+**The prompt is still unsolved, and two candidate paths are now ruled out by measurement.**
 
-1. **Confirm at runtime.** From `grap-stub`, read `DAT_143aa84a0` and log `+0x2270` and
-   `+0x227c`. Flag set and status 0 proves the chain end to end.
-2. **Then clear bit 2 of `+0x2270`** - `FUN_1415d9210` returns immediately and the dialog
-   should not appear at all. A one-line test of the whole theory, and if it works it is
-   also the first time we have made the client *stop* reporting an invalid session.
+| Ruled out | How |
+|---|---|
+| `FUN_141b267c0` (login result codes) | watch armed before the login screen, dialog appeared, **never entered** |
+| `FUN_1415d9210` (`+0x2270` / `+0x227c`) | `-Session watch` read `+0x2270 = 0x00` live - **bit 2 clear**, so it returns before raising anything |
 
-Nothing writes either byte with an immediate (`xref.py --field ... --size byte` finds
-nothing, but that only catches `imm8` stores). The `CNM*` interface in `nexon_api_x64.dll` /
-`nmcogame64.dll` is still the likely writer, and both are unpacked.
+Both were plausible chains built from a matching string plus a matching default case.
+Neither survived a run. **Measure before building on a static chain** - that is now twice.
+
+**Next:** watch **`FUN_141804140`**, the one place the name `loginTroubleAskSupport` is
+produced. If the dialog appears, it should run. Its first argument is a *pointer to* the
+error code, and watch mode now dereferences pointer arguments and logs `[rcx]`/`[rdx]`.
+
+```
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+  -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4
+  -HookLog on -Probe watch@141804140 -Session watch
+```
+
+If it is **not** entered either, the notice is raised without going through the error-code
+map, and the next place to look is whatever draws `/Notice/text/` nodes by name.
 
 #### Older note, now superseded
 
@@ -314,12 +323,10 @@ not evidence either way.
 Short version, because two long-standing assumptions turned out to be wrong:
 
 - **"Having trouble logging in" is `/Notice/text/loginTroubleAskSupport`** - a baked bitmap
-  in `Login.img`, which is why no string search ever found it. **Solved: it is two bytes on
-  the session object.** `FUN_1415d9210` returns unless `DAT_143aa84a0 + 0x2270 & 4`, then
-  switches on `DAT_143aa84a0 + 0x227c`, where **0 (and any unmapped value) means this
-  dialog**. Same object as `textAccount` `+0x22f8` and world/channel `+0x2258`/`+0x2260`.
-  A watch proved the login-result path is *not* involved - `FUN_141b267c0` was never
-  entered while the dialog was on screen.
+  in `Login.img`, which is why no string search ever found it. **Still unsolved.** Two
+  candidate raisers have been ruled out *by measurement*, not by reading: `FUN_141b267c0`
+  (never entered while the dialog was on screen) and `FUN_1415d9210` (its gating flag
+  `DAT_143aa84a0 + 0x2270` bit 2 was read live and is clear). See "Start here next session".
   `Login.img` also has **two** login screens (`Title_new`, and `ClassicIntro` = ours, the
   one carrying `find_id`/`find_pw`); `FUN_141129930` builds `ClassicIntro`.
 - **The empty identity did not block the login.** The client still sent `0x0073` and

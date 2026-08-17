@@ -408,6 +408,21 @@ pub unsafe fn captured_cursor() -> i64 {
     ]))
 }
 
+/// Render `[reg]` as a `u32` when the register is a readable pointer, else nothing.
+///
+/// Half these functions take a pointer to the interesting value rather than the value:
+/// `FUN_141804140(u32 *code, ...)` switches on `*code`, so the raw register is an address
+/// and the number that names the dialog is one dereference away. Guarded, because this
+/// runs inside a vectored handler where a faulting read would be fatal - and a register
+/// holding a small integer rather than a pointer is the normal case, not an error.
+unsafe fn deref(reg: u64) -> String {
+    let addr = reg as usize;
+    if !crate::session::can_read(addr, 4) {
+        return String::new();
+    }
+    format!(" [{:#010x}]", *(addr as *const u32))
+}
+
 /// Catch the fault and resume in the loop, rather than letting it unwind the client.
 unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     if info.is_null() {
@@ -441,8 +456,10 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             let r9 = *(ctx.add(CTX_R9).cast::<u64>());
             log(&format!(
                 "***** WATCH #{n}: {watch:#x} ENTERED while dispatching opcode 0x{op:04X} \
-                 rcx={rcx:#x} rdx={rdx:#x} (rdx as i32 = {}) r8={r8:#x} r9={r9:#x} *****",
-                rdx as u32 as i32
+                 rcx={rcx:#x}{} rdx={rdx:#x} (as i32 {}){} r8={r8:#x} r9={r9:#x} *****",
+                deref(rcx),
+                rdx as u32 as i32,
+                deref(rdx),
             ));
             if n == WATCH_MAX_HITS {
                 log("probe: watch hit limit reached, further calls will not be logged");

@@ -67,11 +67,33 @@ switch (*(u8 *)(obj + 0x227c)) {
 `FUN_141804140` turns those codes into notice names - it is the same error-code family as
 `docs/client-messages.md`, and `0x2100000B` is not in that table yet.
 
-So **"Having trouble logging in?" is the zero/default case** of a status byte, gated by a
-flag bit, on the same object that holds `textAccount` (`+0x22f8`), the world id (`+0x2258`)
-and the channel id (`+0x2260`). That is exactly what an unpopulated session looks like, and
-it explains every observation: it appears immediately, it owes nothing to the wire, and no
-reply can clear it.
+### ...except this was measured and is wrong
+
+**`FUN_1415d9210` is not the raiser.** A `-Session watch` run read the object live while the
+dialog was on screen:
+
+```
+***** SESSION obj=0x606b0c8 +0x2270=0x00 +0x227c=0x00 -> no dialog (flag bit 2 clear) *****
+```
+
+`+0x2270` bit 2 is **clear**, so `FUN_1415d9210` returns before raising anything. The theory
+above was a plausible chain built from a matching string and a matching default case, and
+it did not survive contact with the running client.
+
+One caveat on that measurement, and it is a flaw in the tool rather than the finding: the
+object pointer went unreadable shortly after, and the monitor only logged on *change*, so
+it cannot prove the bytes stayed at zero through the exact moment the dialog appeared. The
+monitor now logs a heartbeat every ~3s and every readable/unreadable transition, so silence
+means "not running" rather than "running but unchanged".
+
+`0x2100000B` still maps to `loginTroubleAskSupport` in `FUN_141804140`, and the two
+immediate references to that code are still the only ones in `.text` - both inside
+`FUN_1415d9210`. So either the code reaches `FUN_141804140` from a **non-immediate**
+source, or the notice is raised without going through the error-code map at all.
+
+**Next:** watch `FUN_141804140` itself. It is the one place the name is produced, so if the
+dialog appears it should run, and its first argument is a *pointer to* the code - which the
+probe now dereferences and logs.
 
 Nothing writes either byte with an immediate - `xref.py --field 0x227c/0x2270 --size byte`
 finds nothing, though that only catches `mov [reg+disp], imm8`, so it is not proof. Given
