@@ -36,6 +36,11 @@ param(
     # on the first character-list run.
     [string]$LoginName = 'maplecw',
     [string]$AccountName = 'wisp****@example.com',
+    # The name of the character the create reply hands back. The harness cannot read the
+    # name out of the request, so type this one in the client and the screen stays
+    # coherent - type another and the transaction still completes, it just visibly
+    # comes from the server rather than from what was asked for.
+    [string]$NewCharacterName = 'Hello',
     # Seconds between keepalive packets. Both runs so far ended ~25 seconds after the last
     # packet *we* sent, with the socket Established and idle - the owner's read is that the
     # client wants a heartbeat, and 10s is well inside that window. Set 0 to reproduce the
@@ -121,10 +126,14 @@ $replySeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
 #                      hence <req>, which splices the request's payload in; the trailing
 #                      00 is CharNameResult 0 = available.
 $enterCreation = Get-Packet @('enter-creation')
+$createResult = Get-Packet @('create-result', $NewCharacterName)
 # One semicolon-separated string, not an array: these scripts are invoked through
 # `powershell -File`, which flattens an array into separate command-line words, so the
 # second entry bound positionally to -Variant and killed the run at parameter binding.
-$answers = "00a8=$enterCreation;0081=0014:<req>00"
+#
+#   0x008A -> 0x0015   the create request, measured off the wire. Its builder is
+#                      virtualised, so the opcode could only ever have come from a capture.
+$answers = "00a8=$enterCreation;0081=0014:<req>00;008a=0015:$($createResult -replace '^0015:','')"
 Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
 Write-Host "reply sequence is $($replySeq.Length) characters"
@@ -140,7 +149,9 @@ Write-Host ''
 Write-Host 'On screen:'
 Write-Host '  1. is the account name back on the login screen?'
 Write-Host '  2. click Login - is there a character called "Maple"?'
-Write-Host '  3. click "Create a character" once, then let the client exit on its own'
+Write-Host "  3. Create a character -> spend all 25 points, name it '$NewCharacterName',"
+Write-Host '     Check, then OK, then confirm. It should land back on character select'
+Write-Host '     with a second character in the list.'
 Write-Host ''
 Write-Host 'Then run this script with -Stop. The answers are in'
 Write-Host '  client-patched\maplecw-hook.log   (not hook.log, and not the repo root)'

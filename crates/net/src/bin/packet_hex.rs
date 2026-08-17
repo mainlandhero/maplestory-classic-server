@@ -10,8 +10,9 @@
 //! ```
 
 use net::opcode::{
-    account_info, enter_creation_permitted, login_result, world_list_end, world_list_entry,
-    Character, ACCOUNT_INFO, ENTER_CREATION_RESULT, LOGIN_RESULT, WORLD_LIST,
+    account_info, create_character_result, enter_creation_permitted, login_result, world_list_end,
+    world_list_entry, Character, ACCOUNT_INFO, CREATE_CHARACTER_RESULT, ENTER_CREATION_RESULT,
+    LOGIN_RESULT, WORLD_LIST,
 };
 
 fn hex(bytes: &[u8]) -> String {
@@ -21,7 +22,8 @@ fn hex(bytes: &[u8]) -> String {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let usage = "usage: packet-hex <account-info LOGIN ACCOUNT | world-entry [NAME] | world-end \
-                 | login-result [CHARACTER_NAME...] | enter-creation>";
+                 | login-result [CHARACTER_NAME...] | enter-creation \
+                 | create-result [NAME]>";
 
     let (opcode, body) = match args.first().map(String::as_str) {
         Some("account-info") => {
@@ -35,6 +37,19 @@ fn main() {
         }
         Some("world-end") => (WORLD_LIST, world_list_end()),
         Some("enter-creation") => (ENTER_CREATION_RESULT, enter_creation_permitted()),
+        // The harness cannot read the name out of the request, so the created character is
+        // whatever is named here. Give the client the name that will be typed and the
+        // screen stays coherent; give it another and the transaction still completes, it
+        // just visibly comes from us.
+        Some("create-result") => {
+            let name = args.get(1).map(String::as_str).unwrap_or("Hello");
+            let chr = Character {
+                id: 200,
+                name: name.to_string(),
+                ..Character::default()
+            };
+            (CREATE_CHARACTER_RESULT, create_character_result(0, &chr))
+        }
         // No names means the empty list the client has been getting all along, which is
         // the control this run is measured against.
         Some("login-result") => {

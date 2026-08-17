@@ -387,11 +387,31 @@ past the `JMP` is garbage decoded from data.
 * Ruled out by reading them, and still ruled out: `0x0074`, `0x0075`, `0x0082`, `0x008B`,
   `0x008C`, `0x008D`, `0x00A8`, `0x00A9`, `0x00C0`, plus every other login-range builder.
 
-**How to measure it.** The OK button sends `0x0081` **and** the create request back to back
-in one click, without waiting for a reply - the two calls are consecutive statements in the
-same `if`. So a single client run with the probe attached captures the create request in
-full: reach CharSelect, open character creation, fill it in, click OK, and read the second
-outbound packet out of `probe.log`.
+**It was measured, on 2026-08-19: the create request is `0x008A`, 101 bytes.**
+
+```text
+str   name              "Hello"
+u32                     0
+u32                     0xFFFFFFFF
+u32   race              0
+u16   subJob            0
+u32   str, dex, int, luk    10, 4, 5, 6 - the roll, and the client refuses to send unless
+                            these total 25, which is what ties them to the screen
+u32   gender            0
+u32   skin              2
+u32   hair              30001
+u32   itemCount         6, then that many (u32 slot, u32 itemId) pairs:
+                          1 face 20001,  2 hair 30000,   3 top 1040002,
+                          4 bottom 1060002, 5 shoes 1072002, 6 weapon 1301488
+```
+
+Two things worth keeping from how it was found. It arrives **after** the name check is
+answered, not alongside it - the `availableName` confirm has to be accepted first, so the
+`0x0081`/`0x0014` exchange is genuinely in front of it. And `0x008A` is exactly what the
+reference source's opcode numbering predicted at an offset of -3; that prediction was
+discarded earlier for being absent from `research/msexe-send-opcodes.txt`, which is a scan
+of `FUN_1406ed520` call sites and therefore blind to a builder inside the VM. **Absence
+from that table is evidence of virtualisation, not of non-existence.**
 
 `tools/transport.py` used to truncate any body over 24 bytes to its first 16, which would
 have thrown away exactly this packet while the run still looked successful. It now spells

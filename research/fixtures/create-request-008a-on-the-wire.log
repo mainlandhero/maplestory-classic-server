@@ -1,0 +1,91 @@
+16:54:11 standing answer: 0x00A8 -> 0x05F4
+16:54:11 standing answer: 0x0081 -> 0x0014  (echoes the request)
+16:54:11 reply preflight OK (ping), 4 packets in sequence
+16:54:11 keepalive: every 10s, opcode 0x0023, starting once the reply has been sent
+16:54:11 [8484] listening; will send a candidate handshake on each connection
+16:54:14 
+[8484] 16:54:14 connection from 127.0.0.1:51725
+16:54:14 [8484] sending: G=1 H=1 L=1, high=100 (all known gates satisfied)  (48 bytes)
+16:54:14       0000  2E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+      0010  01 00 01 00 00 00 00 00 01 78 30 52 02 78 30 52  .........x0R.x0R
+      0020  01 01 00 00 00 64 00 00 00 00 00 00 00 00 00 00  .....d..........
+16:54:15 [8484] *** CLIENT SENT 51 bytes ***
+16:54:15 [8484]      <- #0   0x0070 version report (FUN_1415d5b40)     body=45B 02 64 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 42 a6 ed 59 09 16 4c e6 e1 fb 31 24 77 3f b3 2b da 26 d1 56 00 00 00 00 00 00 00 00
+16:54:15 [8484] *** CLIENT SENT 55 bytes ***
+16:54:15 [8484]      <- #1   0x0071 environment report (FUN_1415d5c20) body=49B 01 01 00 00 00 64 00 00 00 00 00 00 00 00 01 1e 00 00 00 28 94 7d 75 40 2c 35 28 40 46 2c 2c 32 52 28 99 b5 85 7d 64 70 49 54 52 47 57 54 4a 54 70
+16:54:15 [8484] *** CLIENT SENT 270 bytes ***
+16:54:15 [8484]      <- #2   0x008F log upload A (FUN_1415dde80)       body=264B 04 01 00 00 45 4c 6f 67 7c 36 7c 56 45 52 53 49 4f 4e 7c 31 30 30 7c 44 41 54 45 54 49 4d 45 7c 31 36 30 31 2f 30 31 2f 30 31 20 30 30 3a 30 30 3a 32 32 7c 46 49 44 7c 39 39 39 39 39 39 39 39... (truncated)
+16:54:15 [8484] *** CLIENT SENT 76 bytes ***
+16:54:15 [8484]      <- #3   0x00A6 enumeration entry                  body=6B 01 00 00 00 00 00
+16:54:15 [8484]      <- #4   0x00A6 enumeration entry                  body=8B 0b 00 00 00 00 00 00 00
+16:54:15 [8484]      <- #5   0x00A6 enumeration entry                  u32=2
+16:54:15 [8484]      <- #6   0x00A6 enumeration entry                  u32=5
+16:54:15 [8484]      <- #7   0x00A6 enumeration entry                  u32=3
+16:54:15 [8484]      <- #8   0x00A6 enumeration entry                  u32=4
+16:54:15 [8484]      <- #9   0x00A6 enumeration entry                  u32=12
+16:54:15 [8484] *** CLIENT SENT 10 bytes ***
+16:54:15 [8484]      <- #10  0x00A6 enumeration entry                  u32=13
+16:54:15 [8484] *** CLIENT SENT 10 bytes ***
+16:54:15 [8484]      <- #11  0x00A6 enumeration entry                  u32=14
+16:54:15 [8484] *** CLIENT SENT 10 bytes ***
+16:54:15 [8484]      <- #12  0x00A6 enumeration entry                  u32=15
+16:54:15 [8484] *** CLIENT SENT 10 bytes ***
+16:54:15 [8484]      <- #13  0x00A6 enumeration entry                  u32=17
+16:54:16 [8484] *** CLIENT SENT 10 bytes ***
+16:54:16 [8484]      <- #14  0x00A6 enumeration entry                  u32=18
+16:54:16 [8484] *** CLIENT SENT 52 bytes ***
+16:54:16 [8484]      <- #15  0x0070 version report (FUN_1415d5b40)     body=46B 01 64 00 00 00 82 fd 8e e4 82 fd 8e e4 02 00 00 00 00 e8 02 7c 72 a3 b2 dd cd 4b 5f a0 0f 1d 9c 21 02 80 83 3f 2d 00 00 00 00 00 00 00 00
+16:54:16 [8484] *** CLIENT SENT 10 bytes ***
+16:54:16 [8484]      <- #16  0x00A1 handshake-tail notify              u32=0
+16:54:20 [8484] >>> GATE opcode 0x0032 body=00 - now waiting for the client to send 0x0080
+16:54:20 [8484] *** CLIENT SENT 6 bytes (after 0x0032, +0.00s, 5.6s into the connection) ***
+16:54:20 [8484]      <- #17  0x00BF                                    
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.10s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #18  0x00A6 enumeration entry                  u32=19
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.10s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #19  0x00A6 enumeration entry                  u32=27
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.16s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #20  0x00A6 enumeration entry                  u32=22
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.17s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #21  0x00A6 enumeration entry                  u32=20
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.17s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #22  0x00A6 enumeration entry                  u32=21
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.17s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #23  0x00A6 enumeration entry                  u32=23
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.19s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #24  0x00A6 enumeration entry                  u32=24
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.19s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #25  0x00A6 enumeration entry                  u32=25
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.19s, 5.7s into the connection) ***
+16:54:20 [8484]      <- #26  0x00A6 enumeration entry                  u32=26
+16:54:20 [8484] *** CLIENT SENT 10 bytes (after 0x0032, +0.24s, 5.8s into the connection) ***
+16:54:20 [8484]      <- #27  0x00A6 enumeration entry                  u32=28
+16:54:26 [8484] *** CLIENT SENT 14 bytes (after 0x0032, +6.73s, 12.3s into the connection) ***
+16:54:26 [8484]      <- #28  0x00C0 login attempt report (FUN_141b2a660) body=8B 05 00 00 00 20 4e 00 00
+16:54:27 [8484] *** CLIENT SENT 32 bytes (after 0x0032, +6.77s, 12.3s into the connection) ***
+16:54:27 [8484]      <- #29  0x0073 session identity (FUN_141b21ea0)   body=26B 05 00 00 00 00 00 aa bb cc dd ee ff de ad be ef 00 00 00 00 76 4d 00 00 00 00
+16:54:27 [8484] *** CLIENT SENT 6 bytes (after 0x0032, +6.77s, 12.3s into the connection) ***
+16:54:27 [8484]      <- #30  0x0080 world info request (FUN_141b21ea0) 
+16:54:27 [8484] >>> ANSWERING [1/4] 0x0080 with opcode 0x0000 body=00 00 00 00 00 00 00 00 07 00 6d 61 70 6c 65 63 77 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 12 00 77 69 73 70 2a 2a 2a 2a 40 67 6d 61 69 6c 2e 63 6f 6d
+16:54:27 [8484] >>> ANSWERING [2/4] 0x0080 with opcode 0x000B body=00 06 00 53 63 61 6e 69 61 00 00 00 00 01 08 00 53 63 61 6e 69 61 2d 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+16:54:27 [8484] >>> ANSWERING [3/4] 0x0080 with opcode 0x000B body=ff 00 00
+16:54:27 [8484] >>> ANSWERING [4/4] 0x0080 with opcode 0x0010 body=00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 64 00 00 00 01 64 00 00 00 64 00 00 00 00 00 00 00 4d 61 70 6c 65 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 4e 00 00 30 75 00 00 01 00 00 00 00 00 0c 00 05 00 04 00 04 00 32 00 00 00 32 00 00 00 05 00 00 00 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 20 4e 00 00 30 75 00 00 00 00 00 00 00 00 00 00 00 ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 01 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+16:54:27 [8484] *** CLIENT SENT 28 bytes (after 0x0010, +0.45s, 12.8s into the connection) ***
+16:54:27 [8484]      <- #31  0x007A                                    body=22B 01 01 44 00 00 00 0b 00 00 00 0a 00 00 00 20 00 00 00 79 00 00 00
+16:54:32 [8484] *** CLIENT SENT 9 bytes (after 0x0010, +5.32s, 17.7s into the connection) ***
+16:54:32 [8484]      <- #32  0x00A8                                    body=3B 01 00 2e
+16:54:32 [8484] >>> ANSWERING 0x00A8 with opcode 0x05F4 body=00 00
+16:54:37 [8484] >>> KEEPALIVE opcode 0x0023 body=  (4.7s since the client last sent anything, 22.4s into the connection)
+16:54:43 [8484] *** CLIENT SENT 13 bytes (after 0x0010, +16.09s, 28.4s into the connection) ***
+16:54:43 [8484]      <- #33  0x0081 check character name (FUN_141b28950) body=7B 05 00 48 65 6c 6c 6f
+16:54:43 [8484] >>> ANSWERING 0x0081 with opcode 0x0014 body=05 00 48 65 6c 6c 6f 00
+16:54:45 [8484] *** CLIENT SENT 13 bytes (after 0x0010, +18.27s, 30.6s into the connection) ***
+16:54:45 [8484]      <- #34  0x0081 check character name (FUN_141b28950) body=7B 05 00 48 65 6c 6c 6f
+16:54:45 [8484] >>> ANSWERING 0x0081 with opcode 0x0014 body=05 00 48 65 6c 6c 6f 00
+16:54:46 [8484] *** CLIENT SENT 107 bytes (after 0x0010, +19.72s, 32.0s into the connection) ***
+16:54:46 [8484]      <- #35  0x008A                                    body=101B 05 00 48 65 6c 6c 6f 00 00 00 00 ff ff ff ff 00 00 00 00 00 00 0a 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00 00 00 00 00 02 00 00 00 31 75 00 00 06 00 00 00 01 00 00 00 21 4e 00 00 02 00 00 00 30 75 00 00 03 00 00 00 82 de 0f 00 04 00 00 00 a2 2c 10 00 05 00 00 00 82 5b 10 00 06 00 00 00 f0 dd 13 00
+16:54:47 [8484] >>> KEEPALIVE opcode 0x0023 body=  (0.4s since the client last sent anything, 32.4s into the connection)
+16:54:50 [8484] connection reset by client
+16:54:50 [8484] connection ended 23.8s after the last packet of the reply sequence
+16:54:50 [8484] 2 keepalive(s) went out; the last was 3.7s before the close. If that gap is well under the lifetime, an inbound idle timeout is not what ended this connection
+16:54:50 [8484] VERDICT: client answered 892 bytes to []

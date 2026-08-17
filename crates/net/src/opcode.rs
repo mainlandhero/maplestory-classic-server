@@ -340,6 +340,34 @@ pub const NAME_ALREADY_USED: u8 = 0x7A;
 /// [`CHECK_NAME_RESULT`] codes `0x79` and `0x7B`: `cannotUseThisName`.
 pub const NAME_NOT_ALLOWED: u8 = 0x79;
 
+/// The client's create-character request. **Measured, not read.**
+///
+/// Its builder is Themida-virtualised - `FUN_141122420`'s OK button calls `FUN_141b3fb10`,
+/// which tail-jumps to `FUN_141b2cf30`, which `JMP`s into `.themida` - so this opcode
+/// appears in neither half of `research/msexe-send-opcodes.txt` and no static scan can
+/// find it. It came off the wire on 2026-08-19, 101 bytes.
+///
+/// # Body, from a real capture
+///
+/// ```text
+/// str   name              "Hello"
+/// u32                     0
+/// u32                     0xFFFFFFFF
+/// u32   race              0
+/// u16   subJob            0
+/// u32   str, dex, int, luk    10, 4, 5, 6 - the roll, and it must total 25
+/// u32   gender            0
+/// u32   skin              2
+/// u32   hair              30001
+/// u32   itemCount         6, then that many (u32 slot, u32 itemId) pairs:
+///                           1 face 20001, 2 hair 30000, 3 top 1040002,
+///                           4 bottom 1060002, 5 shoes 1072002, 6 weapon 1301488
+/// ```
+///
+/// The four stats are the same four the client keeps at `stage+0x220` and refuses to send
+/// unless they sum to 25, which is what ties the roll on screen to these bytes.
+pub const CLIENT_CREATE_CHARACTER_REQUEST: u16 = 0x008A;
+
 /// The character creation result.
 ///
 /// Handler `FUN_141b36a10`. On success it decodes a full character record with
