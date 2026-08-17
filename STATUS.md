@@ -285,7 +285,55 @@ client never tears the connection down" holds only in the configuration where
 and the whole of goal 4 may be chasing damage we are doing ourselves. That is now the
 first thing to test, and it is a single-variable test.
 
-### Next: is it the mode patch, or the dialog patch?
+### RESULT: the mode patch is innocent, and one invariant survives every run
+
+**Run 8, `-Session mode=2` dropped.** The connection died anyway, in the same place:
+
+```
+11:52:29  #29 0x0080  ->  we answer 0x0000 + 0x000B      8.9s into the connection
+11:52:29  #30 0x007A  (loading complete)                 9.3s
+          client closed the connection
+11:52:49  the client's teardown chain finally runs       20 s later, at exit
+```
+
+So the mode patch is not what kills it. And across all eight runs, with and without either
+client patch, one thing has never varied:
+
+> **The connection dies immediately after the client sends `0x007A`** - its loading-complete
+> report - between +0.27 s and +0.45 s, every single time.
+
+What *does* vary is only whether the probe calls it `reset` or `closed`, and how much later
+the client exits. The teardown chain, when it runs at all, runs at **exit** and is a
+separate event.
+
+**The owner's "Cannot connect to game server" is a consequence, not a new symptom.** That is the
+mode-5 login path: `FUN_141b3ff10` calls `FUN_141b2ba60(stage, 0x50, ...)` and raises
+`unableLogOnToGameSvr` when it returns 0. Without the mode patch the client is in mode 5, so
+clicking Login takes that path - and by then the connection has been gone for seconds. It
+confirms the connection was already dead; it is not a new failure.
+
+**A test-design slip worth recording:** `-Session` gates the session *monitor*, not just the
+mode patch. Dropping `-Session mode=2` also switched off the socket-handle poll and the
+`GetHandleInformation` check - two of the three oracles - so this run could not say whether
+the handle was still valid. Use `-Session watch` to keep the monitor without the patch.
+
+### Next: the socket oracles, with the mode patch still off
+
+```bash
+powershell -ExecutionPolicy Bypass -File "<repo>	ools	est-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session watch -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+```
+
+`-Session watch` monitors without patching the mode. The question is unchanged and now
+uncontaminated by the mode patch: at the moment the connection dies, is the client's socket
+handle still **VALID**?
+
+* **VALID** - nothing closed it; the connection died under a live socket, which puts the
+  cause outside the client's own logic. The firewall rule scoped to this executable is then
+  the first thing to rule out, and that is the owner's call.
+* **INVALID** - something closed the handle without `closesocket`, and the search narrows to
+  how.
+
+### Superseded: is it the mode patch, or the dialog patch?
 
 Two client-side patches are active in every "reset" run. Drop one at a time.
 
