@@ -423,11 +423,16 @@ unsafe fn deref(reg: u64) -> String {
     format!(" [{:#010x}]", *(addr as *const u32))
 }
 
-/// The image is about 60 MB; anything inside it is plausibly a code address.
-const IMAGE_SPAN: usize = 0x0400_0000;
-/// `.themida` starts here (`0x144C0000` at the observed base). Addresses at or above it are
-/// virtualised code, which cannot be decompiled — so they are labelled rather than chased.
-const THEMIDA_RVA: usize = 0x044C_0000;
+// Section bounds, read from the PE headers rather than estimated. The first version of
+// this guessed a 64 MB image and silently filtered out *every* candidate, because the
+// virtualised caller sits at RVA 0x4C05EB2 — about 80 MB in. An estimate that is too small
+// does not report "nothing plausible"; it reports nothing at all.
+/// `SizeOfImage`.
+const IMAGE_SPAN: usize = 0x05DA_B000;
+/// `.text`: real, decompilable code.
+const TEXT: std::ops::Range<usize> = 0x0000_1000..0x0326_194A;
+/// `.themida`: virtualised code, which cannot be decompiled — labelled, not chased.
+const THEMIDA: std::ops::Range<usize> = 0x03D8_7000..0x0517_3000;
 
 /// A poor man's backtrace: stack slots that look like return addresses into this module.
 ///
@@ -446,7 +451,7 @@ unsafe fn stack_trace(rsp: usize) -> String {
     let mut out = String::new();
     let mut found = 0;
     let mut off = 0;
-    while off < 0x200 && found < 8 {
+    while off < 0x400 && found < 16 {
         let at = rsp + off;
         off += 8;
         if !crate::session::can_read(at, 8) {
@@ -457,7 +462,13 @@ unsafe fn stack_trace(rsp: usize) -> String {
             continue;
         }
         let rva = v - base;
-        let tag = if rva >= THEMIDA_RVA { " (themida)" } else { "" };
+        let tag = if TEXT.contains(&rva) {
+            "<-TEXT" // the ones worth decompiling
+        } else if THEMIDA.contains(&rva) {
+            "(vm)"
+        } else {
+            "(?)"
+        };
         out.push_str(&format!(" {v:#x}{tag}"));
         found += 1;
     }
