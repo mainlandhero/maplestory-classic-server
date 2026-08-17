@@ -137,6 +137,69 @@ pub(crate) unsafe fn can_read(addr: usize, len: usize) -> bool {
     readable(addr, len)
 }
 
+/// `DAT_143ac1898` — the global holding the launch/session config object.
+const CONFIG_PTR_RVA: usize = 0x143AC1898 - 0x140000000;
+/// The launch mode. `-NXLDEBUG` sets 5.
+const MODE_OFF: usize = 0x68;
+/// The world list. Patching on the way out of this handler is the only correct moment.
+const WORLD_LIST_OPCODE: u16 = 0x000B;
+
+static MODE_PATCHED: AtomicBool = AtomicBool::new(false);
+
+/// Leave launch mode 5, once the world list has landed.
+///
+/// # Why
+///
+/// Mode 5 (`-NXLDEBUG`) makes the client log itself in. `FUN_14112a720`'s per-frame tick,
+/// once `stage+0x108` is set, calls `FUN_141b3ff10` — *the same function the Login button
+/// calls* — so the button never gets a turn. With any other mode, `FUN_141b3fd10` is false,
+/// the tick does nothing, the button still enables (that happens independently of mode),
+/// and clicking it runs `FUN_141b3f050(stage, 4, 600)`: an animated 600 ms transition to
+/// CharSelect, which is the real flow.
+///
+/// # Why here and not on a timer
+///
+/// Too early and `FUN_141b21ea0` takes a different branch and never sends `0x0073` /
+/// `0x0080`. Too late and the tick has already auto-logged-in. Inside the world-list
+/// dispatch is the one window where the flag is set and the frame loop has not run.
+///
+/// Also: `0x000B` is handled by the mode-5 `FUN_141b31ff0` on the way in, which is the
+/// variant whose field order we decoded. Patching on the way *out* keeps that true.
+///
+/// **This patches the client.** It makes the client follow the normal flow; it does not
+/// make the session valid.
+pub unsafe fn patch_mode_after_dispatch(opcode: u16) {
+    if opcode != WORLD_LIST_OPCODE || MODE_PATCHED.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(mode) = mode() else { return };
+    let Some(hex) = mode.strip_prefix("mode=") else {
+        return;
+    };
+    let Ok(want) = u32::from_str_radix(hex.trim().trim_start_matches("0x"), 16) else {
+        log(&format!("session: {mode:?} is not mode=<hex>"));
+        MODE_PATCHED.store(true, Ordering::SeqCst);
+        return;
+    };
+
+    let base = crate::hook::base();
+    let ptr_at = base + CONFIG_PTR_RVA;
+    if !readable(ptr_at, 8) {
+        return;
+    }
+    let obj = *(ptr_at as *const usize);
+    if obj == 0 || !readable(obj + MODE_OFF, 4) || !writable(obj + MODE_OFF) {
+        return;
+    }
+    let was = *((obj + MODE_OFF) as *const u32);
+    *((obj + MODE_OFF) as *mut u32) = want;
+    MODE_PATCHED.store(true, Ordering::SeqCst);
+    log(&format!(
+        "***** SESSION mode patched at {obj:#x}+0x68: {was} -> {want} - the tick should no \
+         longer auto-login, and Login should transition to CharSelect *****"
+    ));
+}
+
 /// Poll the session object and report the two bytes that decide the prompt.
 pub unsafe fn monitor(base: usize) {
     let Some(mode) = mode() else { return };

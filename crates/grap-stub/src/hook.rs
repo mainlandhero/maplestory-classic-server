@@ -179,6 +179,17 @@ unsafe extern "system" fn hooked_dispatch(conn: *mut c_void, view: *mut c_void) 
         std::mem::transmute(TRAMPOLINE.load(Ordering::SeqCst) as usize);
     let ret = tramp(conn, view);
 
+    // Apply the launch-mode patch here, on the way out of the handler that made it
+    // necessary, rather than on a timer.
+    //
+    // Ordering is the whole difficulty. Patch too early and `FUN_141b21ea0` takes a
+    // different branch and never sends `0x0073`/`0x0080` at all; patch too late and the
+    // per-frame tick has already auto-logged-in, because in mode 5 it does not wait for
+    // the Login button. Doing it inside the dispatch, after the world list has set
+    // `stage+0x108` but before control returns to the frame loop, is the one window where
+    // both are true.
+    crate::session::patch_mode_after_dispatch(opcode);
+
     let mut end = 0i64;
     QueryPerformanceCounter(&mut end);
 

@@ -43,7 +43,7 @@ param(
     [string]$Probe = '',
     # Watch/patch the session bytes behind the login prompt: 'watch', 'suppress', or
     # 'status=<hex>'. See crates/grap-stub/src/session.rs.
-    [ValidateScript({ $_ -eq '' -or $_ -eq 'watch' -or $_ -eq 'suppress' -or $_ -match '^status=[0-9a-fA-F]{1,2}$' })]
+    [ValidateScript({ $_ -eq '' -or $_ -eq 'watch' -or $_ -eq 'suppress' -or $_ -match '^status=[0-9a-fA-F]{1,2}$' -or $_ -match '^mode=[0-9a-fA-F]{1,8}$' })]
     [string]$Session = '',
     # Extra launch tokens after <ip> <port>. -NXLDEBUG routes tokens 3 onward into the
     # config's six-slot session array at +0x90, which is what the launcher normally fills.
