@@ -1,0 +1,29 @@
+11:40:26.965 install_once: our code IS running. env=false marker=true -> installing
+11:40:31.966 install: base=0x140000000 target=0x1415d60e0
+11:40:31.966 netwatch: watching ws2_32!connect at 0x7fff127d1a50
+11:40:31.966 netwatch: watching ws2_32!WSAConnect at 0x7fff127f0130
+11:40:31.966 11:40:31.966 netwatch: watching ws2_32!closesocket at 0x7fff127c5000session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2"
+
+11:40:31.967 netwatch: watching ws2_32!shutdown at 0x7fff127d1cc0
+11:40:31.967 netwatch: watching FUN_1415d35f0 (connection teardown) at 0x1415d35f0 (orig 0x48, int3 verified)
+11:40:31.967 netwatch: watching FUN_142c44350 (session destructor) at 0x142c44350 (orig 0x48, int3 verified)
+11:40:31.967 netwatch: watching FUN_142cb8370 (account name - CANARY) at 0x142cb8370 (orig 0x48, int3 verified)
+11:40:31.967 install: hook active
+11:40:31.967 ***** CONNECT -> 127.0.0.1:9 #1 called-from=0x7ffef6bbbe50 *****
+11:40:31.968 ***** CLOSESOCKET socket=0x1538 #2 called-from=0x7ffef6bbbe58 *****
+11:40:31.968 netwatch: SELF-TEST ok - 2 calls were caught while making 2 of our own, so a later absence of lines is a real negative
+11:40:32.167 session: object at 0x5f23538 is now readable
+11:40:32.167 ***** SESSION obj=0x5f23538 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+11:40:32.495 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+11:40:32.495 probe: watching 0x141b2a280 - will report every entry with rcx/rdx/r8/r9 (first 32)
+11:40:32.496     0 opcode=0x0032 elapsed_us=103.7 ret=110018672 flag=0->1 state=0->2
+11:40:32.496 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+11:40:32.569 netwatch: watching CloseHandle at 0x7fff11e74c20 for handle 0x6c0 only
+11:40:32.569 netwatch: watching NtClose at 0x7fff12ded7e0 for handle 0x6c0 only
+11:40:32.569 ***** SOCKET conn=0x5911658 +0x20=0x6c0 - the client holds a socket *****
+11:40:32.940 ***** CLOSESOCKET socket=0x1194 #3 called-from=0x7fff127c4f8a *****
+11:40:32.940 ***** CLOSESOCKET socket=0x1194 #4 called-from=0x7ffecdaa5e61 *****
+11:40:32.941 ***** SHUTDOWN socket=0x1194 how=2 (both) #5 called-from=0x7ffecdaa5fb4 *****
+11:40:32.941 ***** CLOSESOCKET socket=0x1194 #6 called-from=0x7ffecdaa5e61 *****
+11:40:32.970 ***** SOCKET 0x6c0 is now VALID (client still holds it) *****
+11:40:34.975 ***** SESSION obj=0x5f23538 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****

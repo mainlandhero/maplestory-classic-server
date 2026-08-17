@@ -225,7 +225,38 @@ Yet the connection is reset, reproducibly, ~0.3-0.45 s after the client's `0x007
 on an invalid session" is not what is happening, and no amount of answering it will keep the
 socket alive on its own.
 
-### Next: one run that answers both branches
+### FAILED EXPERIMENT: do not int3 a hot function
+
+Watching `CloseHandle`/`NtClose` **killed the client**, ~2 s after arming, before its window
+even appeared. Fixture: `research/fixtures/closehandle-hook-killed-the-client.log`.
+
+```
+11:40:32.569 netwatch: watching CloseHandle at 0x7fff11e74c20 for handle 0x6c0 only
+11:40:32.569 netwatch: watching NtClose  at 0x7fff12ded7e0 for handle 0x6c0 only
+11:40:34.975 (last line)
+```
+
+The cause is structural, not tuning. Every trap does restore-byte / single-step / re-plant,
+and `write_byte` calls **`VirtualProtect` twice per trap**. `NtClose` runs on essentially
+every handle operation in the process, including inside loader and I/O paths, and
+`VirtualProtect` takes process-wide locks of its own. A trap budget does not help: the
+damage is done long before any budget is reached.
+
+**Rule, now recorded in the module: this int3 technique is only for functions called
+rarely.** Anything hot needs an inline trampoline or IAT patching, and neither is worth
+building - the handle-validity poll answers the same question with no hooks at all.
+
+The run was not a total loss. Before it died, two of the three oracles worked:
+
+```
+***** SOCKET conn=0x5911658 +0x20=0x6c0 - the client holds a socket *****
+***** SOCKET 0x6c0 is now VALID (client still holds it) *****
+```
+
+So the socket poll and the OS handle check are both live and reporting. Those are the two
+that were going to answer the question anyway; the hooks were the greedy addition.
+
+### Next: the two oracles that work, on their own
 
 Loaded so a single launch resolves the question whichever way it goes, because the
 instrument is finally trustworthy and the budget is not.
@@ -237,21 +268,14 @@ instrument is finally trustworthy and the budget is not.
    client believes it owns. Polled; every change logged.
 2. **`GetHandleInformation` on that handle**, once a second. Asks the OS whether the handle
    is still open, independently of what the client thinks.
-3. **`CloseHandle` and `NtClose`, filtered to that one handle**, with `called-from` and a
-   stack. Closing a socket by handle skips `ws2_32` *and* the graceful shutdown, which is
-   exactly the observed signature: a reset, no `closesocket`, no `shutdown`.
-
-They are armed **late** - only once the session monitor can read the socket handle - because
-arming them at install would trap on every handle close during startup for nothing.
-`CloseHandle` is hot even so, hence a trap budget that disarms rather than risk slowing the
-client into behaving differently.
+**Removed:** a third oracle hooking `CloseHandle`/`NtClose`. See the failed experiment
+above - it killed the client and the technique cannot be used on hot functions.
 
 **How to read it:**
 
 | Observation | Conclusion |
 |---|---|
-| `CloseHandle`/`NtClose ON THE GAME SOCKET` fires | closer named, with a stack - done |
-| handle goes `INVALID` but nothing fired | closed by a path below `NtClose`, or by another process |
+| handle goes `INVALID` | something closed it behind the client's back |
 | `+0x20` goes to `-1` | `FUN_1415e3b60` ran after all, and the earlier negative needs revisiting |
 | handle stays **VALID** across the reset | nothing closed it: the socket object is alive and the *connection* is what died, which points outside the client entirely - the firewall rule, a filter driver, or our own probe |
 
@@ -259,10 +283,6 @@ That last row is worth taking seriously rather than treating as the leftover. Th
 reproducible to within half a second of the same event every time, and none of the client's
 own teardown machinery is involved.
 
-**A fix to a latent race went in with this.** The re-arm slot was one global; with a hot
-hook two threads can trap at once and the second overwrites the first, leaving an export
-silently unarmed for the rest of the run - a hole in exactly the kind of negative this
-module produces. It is now per-thread.
 
 ### Superseded: is the socket destroyed, or abandoned?
 

@@ -277,9 +277,6 @@ pub unsafe fn monitor(base: usize) {
         if conn != 0 && readable(conn + CONN_SOCKET_OFF, 8) {
             let socket = *((conn + CONN_SOCKET_OFF) as *const u64);
             if last_socket != Some(socket) {
-                if socket != u64::MAX {
-                    crate::netwatch::arm_handle_watch(socket);
-                }
                 log(&format!(
                     "***** SOCKET conn={conn:#x} +0x20={socket:#x} - {} *****",
                     describe_socket(socket)
