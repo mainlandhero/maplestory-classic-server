@@ -21,3 +21,6 @@ __pycache__/
 
 # Socket capture from -Sockets runs
 sockets.log
+
+# pktmon captures are large binaries; the decoded text summary goes in fixtures instead
+/research/pktmon/

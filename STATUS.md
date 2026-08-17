@@ -381,7 +381,42 @@ stops.
 is why this connection works at all. The rule is therefore an unlikely cause, though not
 impossible if a WFP callout driver (AV, or a Nexon component) is involved.
 
-### Next: this needs a decision, not another hook
+### Next: packet capture (the owner chose this)
+
+`tools/pktmon.ps1` wraps Windows' built-in `pktmon`. It changes nothing about the client
+and nothing about the machine's security posture, and the filter is **TCP on port 8484
+only** - so it records this experiment and nothing else.
+
+Two things it gives that no API hook can:
+
+* **the TCP flags on the wire**, so "reset" stops being an inference from a Python
+  exception and becomes an observed RST with a direction;
+* **DROP events with a reason and the component that dropped them**, which is how a filter
+  driver - antivirus, or something Nexon ships - would show up.
+
+`--comp all`, because loopback traffic never traverses a NIC. `--pkt-size 0`, so the TCP
+header is actually present in the log rather than truncated away.
+
+```powershell
+# 1. elevated shell
+powershell -ExecutionPolicy Bypass -File tools\pktmon.ps1 -Start
+# 2. normal shell: the usual run
+powershell -ExecutionPolicy Bypass -File tools	est-one.ps1 ...
+# 3. elevated shell again, once the client has closed
+powershell -ExecutionPolicy Bypass -File tools\pktmon.ps1 -Stop
+```
+
+`-Stop` converts to text and prints a summary of every RST and every drop, so the
+interesting lines do not have to be found by eye.
+
+| What the capture shows | Conclusion |
+|---|---|
+| RST from the **client's** port | the client's stack sent it, with no user-mode call - kernel-side, e.g. a filter driver |
+| RST from **our** port | our probe's socket is being reset, and the fault is on the server side after all |
+| a **Drop** with a component id | that component is the culprit; `pktmon list` names it |
+| neither | the connection is not being reset at the network layer, and "reset by client" needs re-examining |
+
+### Superseded: this needs a decision, not another hook
 
 Three options, and they are the owner's to pick because two touch their machine's configuration:
 
