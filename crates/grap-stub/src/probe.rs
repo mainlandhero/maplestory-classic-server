@@ -125,6 +125,8 @@ static WATCH_BYTE: AtomicU32 = AtomicU32::new(0);
 static WATCH_HITS: AtomicU32 = AtomicU32::new(0);
 /// `u64::MAX` means "do not force"; anything else is written to RDX on every watch hit.
 static FORCE_RDX: AtomicU64 = AtomicU64::new(u64::MAX);
+/// `u64::MAX` means none; anything else is an offset to read from `rcx` and log.
+static PEEK_OFF: AtomicU64 = AtomicU64::new(u64::MAX);
 /// Set between restoring the original byte and re-planting it one instruction later.
 static WATCH_REARM: AtomicU64 = AtomicU64::new(0);
 static CURRENT_OPCODE: AtomicU32 = AtomicU32::new(0);
@@ -348,10 +350,28 @@ pub unsafe fn note_opcode(opcode: u16) {
     // `watch@<VA>` or `watch@<VA>:rdx=<hex>`. The second form rewrites the second integer
     // argument on entry — for asking "what would the client do if this value were X",
     // which is the only question left when the *caller* is virtualised and unreadable.
+    // `:peek=<hex off>` logs the byte and dword at `rcx + off` — for reading the field a
+    // tiny accessor exists to return, which is usually the actual question.
+    let (rest, peek) = match rest.split_once(":peek=") {
+        Some((v, p)) => (v, Some(p)),
+        None => (rest, None),
+    };
     let (va_txt, force) = match rest.split_once(":rdx=") {
         Some((v, f)) => (v, Some(f)),
         None => (rest, None),
     };
+    if let Some(p) = peek {
+        match u64::from_str_radix(p.trim().trim_start_matches("0x"), 16) {
+            Ok(v) => {
+                PEEK_OFF.store(v, Ordering::SeqCst);
+                log(&format!("probe: will log [rcx+{v:#x}] on every entry"));
+            }
+            Err(_) => {
+                log(&format!("probe: {text:?} has an unparseable :peek= offset"));
+                return;
+            }
+        }
+    }
     let Ok(va) = usize::from_str_radix(va_txt.trim().trim_start_matches("0x"), 16) else {
         log(&format!("probe: watch marker {text:?} is not watch@<hex VA>[:rdx=<hex>]"));
         return;
@@ -584,9 +604,22 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             } else {
                 String::new()
             };
+            let peek = match PEEK_OFF.load(Ordering::SeqCst) {
+                u64::MAX => String::new(),
+                off if crate::session::can_read(rcx as usize + off as usize, 4) => {
+                    let at = rcx as usize + off as usize;
+                    format!(
+                        " [rcx+{off:#x}]=u8:{:#04x}/u32:{:#010x}",
+                        *(at as *const u8),
+                        *(at as *const u32)
+                    )
+                }
+                off => format!(" [rcx+{off:#x}]=<unreadable>"),
+            };
             log(&format!(
                 "***** WATCH #{n}: {watch:#x} ENTERED while dispatching opcode 0x{op:04X} \
-                 rcx={rcx:#x}{}{} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x}{ret}{} *****",
+                 rcx={rcx:#x}{}{}{peek} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x}\
+                 {ret}{} *****",
                 deref(rcx),
                 deref_wstr(rcx),
                 rdx as u32 as i32,
@@ -609,15 +642,26 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             }
         }
 
-        // Restore the byte, resume *at* the target so the real first instruction runs,
-        // and set the trap flag so we get a single-step exception immediately after it -
-        // that is where the int3 goes back in. Without the re-arm this observes once.
+        // Restore the byte and resume *at* the target so the real first instruction runs.
         let mut old = 0u32;
         if VirtualProtect(watch as *mut c_void, 1, PAGE_EXECUTE_READWRITE, &mut old) != 0 {
             *(watch as *mut u8) = WATCH_BYTE.load(Ordering::SeqCst) as u8;
             VirtualProtect(watch as *mut c_void, 1, old, &mut old);
         }
         *(ctx.add(CTX_RIP).cast::<u64>()) = watch as u64;
+
+        // Past the cap, stop re-arming entirely instead of trapping forever in silence.
+        // Some useful targets are per-frame accessors - `FUN_141b2a160` is eight bytes and
+        // runs every frame - and an exception plus a single-step on each call would slow
+        // the client to the point where the test itself is what breaks.
+        if n >= WATCH_MAX_HITS {
+            WATCH.store(0, Ordering::SeqCst);
+            log("probe: watch disarmed after the hit limit");
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        // Set the trap flag so we get a single-step exception immediately after that
+        // instruction - that is where the int3 goes back in.
         *(ctx.add(CTX_EFLAGS).cast::<u32>()) |= TRAP_FLAG;
         WATCH_REARM.store(watch as u64, Ordering::SeqCst);
         return EXCEPTION_CONTINUE_EXECUTION;

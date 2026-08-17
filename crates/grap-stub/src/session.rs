@@ -59,6 +59,14 @@ const SESSION_PTR_RVA: usize = 0x143AA84A0 - 0x140000000;
 const FLAGS_OFF: usize = 0x2270;
 /// Status byte selecting which dialog. 0 and any unmapped value mean "trouble logging in".
 const STATUS_OFF: usize = 0x227C;
+/// World id (`FUN_142cb9230`) and channel id (`FUN_142cb9260`).
+///
+/// The login result compares the pair it carries against these two, and calls
+/// `FUN_141b2c7c0` - which searches the world list and *advances the client* - only when
+/// they differ. Sending a matching pair is therefore how to answer `0x0080` without the
+/// client jumping straight to character select, which is not the real flow.
+const WORLD_OFF: usize = 0x2258;
+const CHANNEL_OFF: usize = 0x2260;
 /// The bit of [`FLAGS_OFF`] that `FUN_1415d9210` tests.
 const DIALOG_FLAG: u8 = 4;
 
@@ -182,9 +190,19 @@ pub unsafe fn monitor(base: usize) {
                     _ => "loginTroubleAskSupport  <- the prompt",
                 }
             };
+            let world = if readable(obj + WORLD_OFF, 4) {
+                *((obj + WORLD_OFF) as *const u32) as i64
+            } else {
+                -1
+            };
+            let channel = if readable(obj + CHANNEL_OFF, 4) {
+                *((obj + CHANNEL_OFF) as *const u32) as i64
+            } else {
+                -1
+            };
             log(&format!(
                 "***** SESSION obj={obj:#x} +0x2270={flags:#04x} +0x227c={status:#04x} \
-                 -> {verdict} *****"
+                 world={world} channel={channel} -> {verdict} *****"
             ));
             last = Some((flags, status));
         }
