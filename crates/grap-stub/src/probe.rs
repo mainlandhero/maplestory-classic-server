@@ -487,7 +487,7 @@ const THEMIDA: std::ops::Range<usize> = 0x03D8_7000..0x0517_3000;
 ///
 /// Every slot is checked with `VirtualQuery` first, and non-code values are skipped rather
 /// than reported, so a stack full of data does not produce noise.
-unsafe fn stack_trace(rsp: usize) -> String {
+pub(crate) unsafe fn stack_trace(rsp: usize) -> String {
     let base = crate::hook::base();
     if base == 0 {
         return String::new();

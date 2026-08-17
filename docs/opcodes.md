@@ -283,15 +283,63 @@ weeks.
 
 | Inbound | Handler | Size |
 |---|---|---|
-| **`0x0000`** | `FUN_141b2dd00` | 4475 bytes — also one of the three functions referencing `loginTroubleAskSupport` |
+| **`0x0000`** | `FUN_141b2dd00` | 4475 bytes |
 | **`0x0012`** | `FUN_141b2ee90` | 1868 bytes |
-
-Neither body is decoded yet. `0x0000` opens with a `u8` and a string and branches heavily on
-that `u8`; one branch reads `u8, 8 bytes, string`, and it keys off values like `0x15`-`0x3c`
-and `99`. It is the best candidate for carrying account identity *and* session state.
 
 Found by scanning `.text` for the disp32 `0x22f8` and filtering to the account-manager
 range. **Not** by `xref.py` — a struct-offset store is not a `lea`.
+
+### `0x0000` is a second login result, and a fuller one
+
+Decoded 2026-08-18. The shape is unmistakable once read: `u8 result`, `str message`, and
+then a gate on the result before any of the account fields are touched.
+
+**The gate is `FUN_141b267c0(stage, result, 0, message)` — the same function that turns a
+non-zero [`0x0010`](#0x0010--the-login-result-confirmed-accepted) into a named dialog.** So
+`0x0000` and `0x0010` share their error vocabulary; `docs/client-messages.md` applies to
+both. It returns "proceed" for result `0` **and** result `12`, and raises a notice for
+everything else.
+
+**No mode fork.** Unlike `0x000B`, `FUN_141b2dd00` does not branch on `session+0x68 == 5`,
+so this is the live handler in mode 5 and mode 2 alike — one fewer thing to get wrong.
+
+```text
+u8   result           0 = success
+str  message          the text the failure dialogs display
+u8   verifyState      0 or 1 proceed; 2 or 3 raise "accountHasNotBeenVerified";
+                      anything else raises loginTroubleAskSupport
+u32                   read and discarded
+--- fields below are read only once the gate passes ---
+str  loginName        -> account+0x48
+u64                   read and discarded
+u32  accountId
+u8
+u32  flags            bit 21 calls FUN_140d2d4e0 — keep it clear
+u32, u8, str, u32     the trailing u32 -> account+0x22b8
+u8, u8, 8B, 8B        the two 8-byte fields go through a FILETIME conversion
+u32, str, u32         the trailing u32 -> account+0x28e0
+u8                    read and discarded
+u8                    -> stage+0x1a4
+u8                    -> stage+0xdc
+8B                    -> account+0x2324
+str  accountName      -> account+0x22f8, the string the login screen displays
+```
+
+Built by `net::opcode::account_info`, with a test that re-reads the body the way
+`FUN_141b2dd00` does. Note the failure mode a length check would *not* catch: the readers
+throw only on underrun, so a body that is misaligned but long enough runs to completion and
+quietly hands the account-name setter the wrong bytes.
+
+Three sub-records exist for non-zero results and are not built: `result == 2` reads
+`u8 reason, 8 bytes, str` and produces the account-locked messages (reason `99` = five bad
+attempts, `199` = ten), and `0x2d` / `0x8d` are one-off notices.
+
+### `0x0012` is its shorter sibling
+
+Same opening, same gate — but with `param_3 = 1`, so a failure also sets `stage+0xf0` — and
+no `verifyState` byte or locked-account sub-record. Its middle differs field for field, and
+it ends the same way, with the account name. Kept as the fallback if `0x0000` turns out to
+be the wrong one of the two.
 
 ## 0x000B — the world list
 

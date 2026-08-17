@@ -1,20 +1,27 @@
-//! Log every `connect()` the client attempts, with the address it asked for.
+//! Log the client's socket lifecycle: every `connect()` it attempts, and every teardown of
+//! a socket it already has.
 //!
-//! # The question this answers
+//! # The questions this answers
 //!
-//! After login the client closes our connection. Two explanations fit equally well:
-//!
-//! * it is **migrating** to a channel server - normally a different port - and cannot,
-//!   because we send 256 zero bytes and any address field reads `0.0.0.0:0`;
-//! * it is simply **timing out** after ~8s of silence.
+//! **Does the client migrate?** After login it closes our connection. Two explanations fit
+//! equally well: it is migrating to a channel server and cannot, because we send 256 zero
+//! bytes and any address field reads `0.0.0.0:0`; or it is simply timing out.
 //!
 //! A socket poll cannot separate these. `tools/watch-sockets.ps1` saw one socket and no
 //! second connect, but a client that sanity-checks an address before dialling never
 //! creates a socket at all - so "no socket" is exactly what *both* explanations look like.
+//! Hooking `connect` sees the attempt itself. **Settled: it never calls it again.**
 //!
-//! Hooking `connect` sees the attempt itself, including one to `0.0.0.0:0` that never
-//! becomes a socket. It also proves the negative: if `connect` is never called again, the
-//! client is not trying to go anywhere.
+//! **Who closes the connection, and why?** That is the open one. The close is not an idle
+//! timeout in any obvious sense - the last thing the client sends is `0x007A`, which
+//! `FUN_141b0ef00` emits when its four *loading* phases finish, carrying their durations.
+//! So the close arrives on the heels of loading completing, not of a quiet socket, and the
+//! two have been confounded because they happen at the same moment.
+//!
+//! `closesocket`/`shutdown` are the same kind of decisive test as `connect` was: whoever
+//! calls them names the moment. And unlike the login-failure path, this call is very
+//! unlikely to be virtualised - it is ordinary networking teardown - so `called-from`
+//! should land in `.text` and be decompilable. If it does not, the stack scan is there.
 //!
 //! # Why this is easy where the client is not
 //!
@@ -24,8 +31,8 @@
 //!
 //! # How
 //!
-//! An `int3` on each export, caught by a vectored handler that logs `rdx` (the `sockaddr *`
-//! in both signatures), then restores the byte, single-steps, and re-arms - the same
+//! An `int3` on each export, caught by a vectored handler that logs the arguments that
+//! matter for that export, then restores the byte, single-steps, and re-arms - the same
 //! technique as `probe::watch`. Its own handler and its own state, so it cannot disturb
 //! the opcode probe.
 
@@ -34,16 +41,32 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use crate::hook::log;
 
-/// Presence of this file enables the connect watch.
+/// Presence of this file enables the socket watch.
 pub const NETWATCH_MARKER: &str = "maplecw-hook.netwatch";
 
-/// `connect(SOCKET, const sockaddr *, int)` and
-/// `WSAConnect(SOCKET, const sockaddr *, int, ...)` - `rdx` is the address in both.
-const EXPORTS: [&[u8]; 2] = [b"connect\0", b"WSAConnect\0"];
+/// What a watched export tells us, which decides how its arguments are read.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// `connect(SOCKET, const sockaddr *, int)`, `WSAConnect(SOCKET, const sockaddr *, ...)`
+    /// - `rdx` is the address in both.
+    Connect,
+    /// `closesocket(SOCKET)`, `shutdown(SOCKET, int how)` - `rcx` is the socket, and for
+    /// `shutdown` `rdx` says which directions are being torn down.
+    Close,
+}
+
+const EXPORTS: [(&[u8], Kind); 4] = [
+    (b"connect\0", Kind::Connect),
+    (b"WSAConnect\0", Kind::Connect),
+    (b"closesocket\0", Kind::Close),
+    (b"shutdown\0", Kind::Close),
+];
 
 const MAX_TARGETS: usize = EXPORTS.len();
-static TARGETS: [AtomicU64; MAX_TARGETS] = [AtomicU64::new(0), AtomicU64::new(0)];
-static ORIG: [AtomicU64; MAX_TARGETS] = [AtomicU64::new(0), AtomicU64::new(0)];
+#[allow(clippy::declare_interior_mutable_const)]
+const ZERO: AtomicU64 = AtomicU64::new(0);
+static TARGETS: [AtomicU64; MAX_TARGETS] = [ZERO; MAX_TARGETS];
+static ORIG: [AtomicU64; MAX_TARGETS] = [ZERO; MAX_TARGETS];
 static REARM: AtomicUsize = AtomicUsize::new(usize::MAX);
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 static HITS: AtomicUsize = AtomicUsize::new(0);
@@ -57,6 +80,7 @@ const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
 const EXCEPTION_BREAKPOINT: u32 = 0x8000_0003;
 const EXCEPTION_SINGLE_STEP: u32 = 0x8000_0004;
 const CTX_EFLAGS: usize = 0x44;
+const CTX_RCX: usize = 0x80;
 const CTX_RDX: usize = 0x88;
 const CTX_RSP: usize = 0x98;
 const CTX_RIP: usize = 0xF8;
@@ -126,7 +150,7 @@ pub unsafe fn install() {
     AddVectoredExceptionHandler(1, veh as *const c_void);
 
     let mut armed = 0;
-    for (i, name) in EXPORTS.iter().enumerate() {
+    for (i, (name, _)) in EXPORTS.iter().enumerate() {
         let addr = GetProcAddress(ws2, name.as_ptr()) as usize;
         if addr == 0 {
             continue;
@@ -178,17 +202,51 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         }
         let n = HITS.fetch_add(1, Ordering::SeqCst) + 1;
         if n <= MAX_HITS {
-            let sockaddr = *(ctx.add(CTX_RDX).cast::<u64>()) as usize;
+            let (name, kind) = EXPORTS[i];
+            let label = std::str::from_utf8(&name[..name.len() - 1]).unwrap_or("?");
             let rsp = *(ctx.add(CTX_RSP).cast::<u64>()) as usize;
+            // The breakpoint is on the export's first byte, so the call has just pushed
+            // its return address and `[rsp]` is the immediate caller.
             let from = if crate::session::can_read(rsp, 8) {
                 format!(" called-from={:#x}", *(rsp as *const u64))
             } else {
                 String::new()
             };
-            log(&format!(
-                "***** CONNECT #{n}: -> {}{from} *****",
-                describe(sockaddr)
-            ));
+            let what = match kind {
+                Kind::Connect => {
+                    let sockaddr = *(ctx.add(CTX_RDX).cast::<u64>()) as usize;
+                    format!("CONNECT -> {}", describe(sockaddr))
+                }
+                Kind::Close => {
+                    let socket = *(ctx.add(CTX_RCX).cast::<u64>());
+                    let how = *(ctx.add(CTX_RDX).cast::<u64>()) as u32;
+                    if label == "shutdown" {
+                        // SD_RECEIVE / SD_SEND / SD_BOTH.
+                        let dir = match how {
+                            0 => "recv",
+                            1 => "send",
+                            2 => "both",
+                            _ => "?",
+                        };
+                        format!("SHUTDOWN socket={socket:#x} how={how} ({dir})")
+                    } else {
+                        format!("CLOSESOCKET socket={socket:#x}")
+                    }
+                }
+            };
+            // A close is the thing we are trying to attribute, so spend the stack scan on
+            // it; a connect is already answered by the address alone.
+            let stack = if kind == Kind::Close {
+                let t = crate::probe::stack_trace(rsp);
+                if t.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n          stack: {t}")
+                }
+            } else {
+                String::new()
+            };
+            log(&format!("***** {what} #{n}{from} *****{stack}"));
         }
 
         write_byte(addr, ORIG[i].load(Ordering::SeqCst) as u8);

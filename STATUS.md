@@ -1,53 +1,17 @@
-# Where things stand — 2026-08-17 (login screen to character select reached)
+# Where things stand — 2026-08-18 (`0x0000` decoded, ready to send)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
 
-## THE GOAL (set 2026-08-17, for next session)
+## THE GOAL (set 2026-08-17, extended 2026-08-18)
 
-The owner's goal, in their words, three parts:
+The owner's goal, in their words, now four parts:
 
 1. **A valid session on the client** - not a client-side patch.
 2. **The masked email showing on the login screen.**
 3. **Successfully create a character** by going through the character creation flow.
-
-### Most likely approach
-
-**The account name is server-supplied, and that probably means the session is too.** This
-is the day's last and most useful finding, and it inverts an assumption held for weeks.
-
-`FUN_14112a720` renders `DAT_143aa84a0 + 0x22f8` into `textAccount` when it is non-empty.
-That field is written only by `FUN_142cb8370`, whose **only two callers are login-stage
-packet handlers**:
-
-| Inbound | Handler |
-|---|---|
-| **`0x0000`** | `FUN_141b2dd00`, 4475 bytes |
-| **`0x0012`** | `FUN_141b2ee90`, 1868 bytes |
-
-So the client waits to be *told* who it is. We have never sent either packet. That makes
-the plan:
-
-1. **Decode `0x0000`** (`FUN_141b2dd00`) and send it. It opens with a `u8` and a string and
-   branches hard on that `u8`. It is also one of the three functions that reference
-   `loginTroubleAskSupport`, so it plausibly carries the login state *and* the account name
-   - i.e. goals 1 and 2 in one packet. Read it the way `0x000B` was read.
-2. **Decode `0x0012`** if `0x0000` turns out to be something else.
-3. **Then the character list**, for goal 3. Start with `FUN_141b28570`, called from the
-   login result's success path just before its stage transition; then read the remaining
-   login-stage cases.
-4. **Fallback only:** the `CNM*` interface in `nexon_api_x64.dll` / `nmcogame64.dll`, both
-   unpacked. This was the standing assumption and is now demoted - chase it only if the
-   packets above do not produce a valid session.
-
-**Watch the mode fork.** Handlers branch on `session+0x68 == 5`. With `-Session mode=2` the
-client is mode **2** by the time these packets would arrive, so the **classic** branch is
-the live one - the opposite of `0x000B`, which we decode from the mode-5 side.
-
-**Aim to retire the two client-side patches.** `-Session mode=2` and
-`-Probe watch@141b2a280:rdx=0` make the normal flow reachable but are not a valid session.
-If `0x0000` does what it looks like, both should become unnecessary - and that, not the
-screen, is the test of whether goal 1 is actually met.
+4. **The server keeps the connection alive** once the session is valid, so the client does
+   not give up and disconnect.
 
 ### Where things stand against that goal
 
@@ -56,16 +20,87 @@ screen, is the test of whether goal 1 is actually met.
 | Login screen | reached, `0x0032` |
 | Login button lit and clickable | reached, `0x000B` world entry sets `stage+0x108` |
 | Animated transition to character select | reached, by clicking Login in mode 2 |
+| Masked email | **built, never sent** - `0x0000` is decoded and `net::opcode::account_info` builds it |
+| Valid session | **not started** - the two client patches fake it |
+| Connection stays up | **not started** - and the "idle timeout" reading was wrong, see below |
 | Create a character | **blocked** - client has no character list, and sends nothing |
-| Valid session | **not started** - the two patches fake it |
-| Masked email | **not started** - needs `0x0000` / `0x0012` |
 
 Full recipe for the current state is under "MILESTONE" below.
+
+### `0x0000` is decoded, and it is a second login result
+
+**The account name is server-supplied, and so, it now looks, is the login state.**
+`FUN_14112a720` renders `DAT_143aa84a0 + 0x22f8` into `textAccount` when it is non-empty;
+that field is written only by `FUN_142cb8370`, whose only two callers are the handlers for
+inbound `0x0000` (`FUN_141b2dd00`) and `0x0012` (`FUN_141b2ee90`).
+
+Reading `FUN_141b2dd00` settled what it is: `u8 result`, `str message`, then a gate on the
+result, then ~20 fields ending in the account name. **The gate is `FUN_141b267c0` — the same
+function `0x0010` uses**, so the two packets share an error vocabulary, and result `0` (or
+`12`) proceeds. Full field list in `docs/opcodes.md`; builder and read-back test in
+`crates/net/src/opcode.rs`.
+
+**No mode fork here.** `FUN_141b2dd00` does not branch on `session+0x68 == 5`, so it is live
+in mode 2 and mode 5 alike — unlike `0x000B`, where picking the wrong side costs a pass.
+
+### The next run, and what it decides
+
+Two new things at once, because they are independent and each is its own oracle:
+
+```bash
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on -Session mode=2 -Probe watch@141b2a280:rdx=0 -NetWatch -ReplyTo 0x0080 -ReplySeq "0000:000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a40676d61696c2e636f6d,000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+```
+
+**Do not retype that `0x0000` body** - regenerate it, which is what `packet-hex` is for. The
+world-list pin was once two characters too long and only a test caught it:
+
+```bash
+cargo run --release -p net --bin packet-hex -- account-info maplecw "wisp****@example.com"
+```
+
+| Oracle | Question |
+|---|---|
+| The login screen | does the masked email appear where the account name goes? (goal 2) |
+| `netwatch` `CLOSESOCKET`/`SHUTDOWN` lines | who tears the connection down, and from where? (goal 4) |
+| The wire | does the connection outlive the point where it has always died? |
+
+**No `0x0010` in that sequence, deliberately.** Its success path transitions the stage, and
+the client would leave the login screen before the account name could be looked at.
+
+### After that
+
+1. **Decode `0x0012`** if `0x0000` turns out to be the wrong one of the two.
+2. **The character list**, for goal 3. Start with `FUN_141b28570`, called from the login
+   result's success path just before its stage transition; then read the remaining
+   login-stage cases.
+3. **Fallback only:** the `CNM*` interface in `nexon_api_x64.dll` / `nmcogame64.dll`, both
+   unpacked. This was the standing assumption and is now demoted - chase it only if the
+   packets above do not produce a valid session.
+
+**Aim to retire the two client-side patches.** `-Session mode=2` and
+`-Probe watch@141b2a280:rdx=0` make the normal flow reachable but are not a valid session.
+If `0x0000` does what it looks like, both should become unnecessary - and that, not the
+screen, is the test of whether goal 1 is actually met.
+
+### CORRECTION: the close is not an idle timeout
+
+The client's last packet before dropping the connection is `0x007A`, and it is a
+**loading-complete report**, not a goodbye. `FUN_142c4f490` builds it; its only caller is
+`FUN_141b0ef00`, the boot task loop, which emits it once all four of its load phases have
+finished, carrying their durations (`67, 11, 10, 34, 122` ms in the milestone capture).
+
+So the close coincides with *loading finishing*, not with a quiet socket. Those two have
+been indistinguishable in every run so far, and "~8s idle timeout" was written down on the
+timing alone. Treat it as unproven; the `closesocket` hook is what will settle it.
+
+`FUN_141b0ef00` had no Ghidra function at all - reached only from virtualised code, so
+auto-analysis never made one. `DecompileFunc.java` now creates one when it is missing.
+**For this binary, "no function there" is the normal state for the interesting handlers.**
 
 ## Working right now
 
 ```bash
-cargo test --release          # 57 tests green
+cargo test --release          # 60 tests green
 cargo build --release
 ```
 
@@ -85,10 +120,10 @@ It connects to `127.0.0.1:8484`, and GameGuard never loads.
 | | |
 |---|---|
 | `crates/wz` | WZ parser. **9,994/9,994 images** across 102 archives parse. `wz-dump` CLI. |
-| `crates/net` | **The client's real wire cipher**, verified against captures, plus the recovered inbound opcodes and their bodies. 25 tests. |
+| `crates/net` | **The client's real wire cipher**, verified against captures, plus the recovered inbound opcodes and their bodies, and `packet-hex` to put a body on a command line without typing it. 28 tests. |
 | `crates/store` | SQLite accounts/sessions. argon2id, per-password salt, hashed single-use tokens. 21 tests. |
 | `crates/auth` | Local HTTP auth server (loopback only) + `maplecw-useradd`. Verified end to end. |
-| `crates/grap-stub` | No-op `grap64.dll`; GameGuard never starts. Plus the **in-process dispatcher hook**, the opcode walk / watch probe, a session monitor and patcher, and a `connect()` watch. |
+| `crates/grap-stub` | No-op `grap64.dll`; GameGuard never starts. Plus the **in-process dispatcher hook**, the opcode walk / watch probe, a session monitor and patcher, and a socket watch over `connect`/`closesocket`/`shutdown`. |
 | Client copy | `client-patched/` — original install untouched, firewalled outbound. |
 | Tooling | `handshake_probe.py` decodes the client's live stream; `dump_runtime.py` reads its memory. |
 | Canvas render | `wz-dump canvas` + `tools/wz_png.py` turn WZ canvases into PNGs. **This is how the client's baked UI text gets read** - much of its on-screen wording is pixels, invisible to any string search. Formats 1, 2 and 513. |
@@ -317,9 +352,9 @@ not use.
 reachable; they do **not** make the session valid. Describe results accordingly.
 
 **Everything after the login screen was offline.** The client closed the connection at
-8.4s - it answers `0x0080` expecting a login result and gives up without one - so the
-Login click, the transition and the "Create a character" clicks all happened with no
-server attached, and **sent nothing**. Those transitions are purely client-side.
+8.4s - immediately after sending `0x007A`, its loading-complete report - so the Login click,
+the transition and the "Create a character" clicks all happened with no server attached,
+and **sent nothing**. Those transitions are purely client-side.
 
 **Adding the login result back did not keep the connection alive.** It *was* dispatched and
 handled (`2 opcode=0x0010 ... ret=1`), and the client closed 0.42s later, exactly as it does
@@ -346,8 +381,9 @@ earlier "no second socket" reading was not proof. There was no attempt of any ki
   happens on the one connection we already have.
 * **No address field to find.** The unread fields in the login result are not a server
   address, and looking for one would have been wasted work.
-* **The close is an idle timeout** - about 8 seconds without traffic. Keeping the client
-  alive is a matter of having something to send it.
+* **The close is *not* explained.** It was recorded here as an ~8s idle timeout; that was
+  inferred from timing alone and the timing has a second explanation - see "CORRECTION"
+  above. What is settled is only that no reconnect follows it.
 
 ### The real gap: the client has no character list
 

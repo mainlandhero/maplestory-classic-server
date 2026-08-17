@@ -297,14 +297,16 @@ Found by scanning `.text` for the disp32 `0x22f8` and filtering to the account-m
 range - **not** by `xref.py`, which finds only `lea` and would have missed a struct-offset
 store the same way it missed `FUN_141b2a280`.
 
+**`0x0000` is now decoded** - see `docs/opcodes.md`. It is a second, fuller login result:
+`u8 result`, `str message`, the *same* result gate as `0x0010` (`FUN_141b267c0`), and then
+about twenty fields ending in the account name. `net::opcode::account_info` builds it.
+
 Still open, in order:
 
-1. **Decode `0x0000`** (`FUN_141b2dd00`). Its first fields are a `u8` and a string, and it
-   branches heavily on that `u8` - one branch reads `u8, 8 bytes, string` and another keys
-   off values like `0x15`-`0x3c` and `99`. This is the packet most likely to carry both the
-   account name and the session state.
-2. **Decode `0x0012`** (`FUN_141b2ee90`, 1868 bytes) - the smaller of the two and probably
-   the simpler account-name update.
+1. **Send `0x0000`** and find out whether the account name appears. It is built and tested
+   but has never been on the wire.
+2. **Decode `0x0012`** (`FUN_141b2ee90`, 1868 bytes) - the fallback if `0x0000` turns out to
+   be the wrong one of the two. Same opening, same gate, different middle.
 3. **Find the character-list packet**, for the character-creation half of the goal. Read
    the remaining login-stage cases the way `0x000B` was read, and start with
    `FUN_141b28570`, called from the login result's success path.
@@ -316,7 +318,32 @@ Still open, in order:
 Settled and no longer worth pursuing:
 
 * **The client never migrates.** A `connect` hook on `ws2_32!connect` / `WSAConnect` logged
-  nothing after login. No channel server, no address field - one connection is all there is,
-  and the close is an ~8s idle timeout.
+  nothing after login. No channel server, no address field - one connection is all there is.
 * `DAT_143ac1898 + 0x1b8` (the `0x0073` identity string) is still empty and still unwritten
   by anything we can find, but it did not stop login and is no longer the lead.
+
+## The close is not an idle timeout - correcting an earlier reading
+
+**`0x007A` is a loading-complete report, and the close follows it.** The client's last
+packet before dropping the connection is `0x007A`, body
+`01 01 43 00 00 00 0b 00 00 00 0a 00 00 00 22 00 00 00 7a 00 00 00`. Its builder is
+`FUN_142c4f490`, and its only caller is `FUN_141b0ef00` - the boot task loop, which drives
+four load phases (bits 1, 2, 4, 8 of `+0x34`) and, **once all four have finished**, emits
+this packet carrying `FUN_141b0ebb0`'s per-phase durations. The five `u32`s are
+milliseconds: 67, 11, 10, 34, 122.
+
+So the close arrives on the heels of *loading finishing*, not of a quiet socket. Those two
+have been confounded because in every run so far they happen at the same moment, and
+"~8s idle timeout" was written down on the strength of the timing alone. It is at best
+unproven.
+
+`FUN_141b0ef00` had **no Ghidra function at all** - it is reached only from virtualised
+code, so auto-analysis never created one. `tools/ghidra_scripts/DecompileFunc.java` now
+creates a function when none exists, which is worth knowing generally: for this binary, "no
+function there" is the normal state for the interesting handlers, not a dead end.
+
+**Next:** `netwatch` now also breakpoints `closesocket` and `shutdown` and logs
+`called-from` plus a stack scan. Whoever tears the socket down names the moment, the same
+way the `connect` hook settled migration. Unlike the login-failure path this call is
+ordinary networking teardown and is unlikely to be virtualised, so expect a `.text` address
+that can be decompiled.

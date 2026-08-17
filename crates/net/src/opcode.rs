@@ -122,6 +122,57 @@ pub const WORLD_LIST: u16 = 0x000B;
 /// the client's test is `(char) worldId < 0`.
 pub const WORLD_LIST_END: u8 = 0xFF;
 
+/// The account record: who the client believes it is logged in as.
+///
+/// # How it was established
+///
+/// Read, like [`WORLD_LIST`], from the login stage's switch: `case 0` calls
+/// `FUN_141b2dd00`. Found by working backwards from the screen instead of forwards from
+/// the wire - `FUN_14112a720`, the `ClassicIntro` tick, renders the account object's
+/// `+0x22f8` string whenever it is non-empty, and the *only* writer of that field is
+/// `FUN_142cb8370`, whose only two callers are the handlers for this opcode and
+/// [`ACCOUNT_INFO_ALT`]. So the name on the login screen cannot be computed by the client;
+/// it has to be told.
+///
+/// **No mode fork.** Unlike [`WORLD_LIST`], `FUN_141b2dd00` does not branch on
+/// `session+0x68 == 5`, so this is the live handler whether or not the mode patch is on.
+///
+/// # Body
+///
+/// ```text
+/// u8   result           0 = success, and the only value that reaches the fields below
+/// str  message          shown in the failure dialogs
+/// u8   verifyState      0 or 1 proceed; 2 or 3 raise "accountHasNotBeenVerified"
+/// u32                   read and discarded
+/// // everything past here is read only when the result gate passes:
+/// str  loginName        -> account+0x48
+/// u64                   read and discarded
+/// u32  accountId
+/// u8
+/// u32  flags            bit 21 triggers FUN_140d2d4e0 - keep it clear
+/// u32, u8, str, u32     the u32 lands in account+0x22b8
+/// u8, u8, 8B, 8B        the two eight-byte fields are FILETIMEs
+/// u32, str, u32         the last u32 lands in account+0x28e0
+/// u8                    read and discarded
+/// u8                    -> stage+0x1a4
+/// u8                    -> stage+0xdc
+/// 8B                    -> account+0x2324
+/// str  accountName      -> account+0x22f8, the string the login screen displays
+/// ```
+///
+/// The result gate is `FUN_141b267c0(stage, result, 0, message)`, the same function that
+/// turns a non-zero [`LOGIN_RESULT`] into a named dialog. It returns "proceed" for result
+/// `0` **and** result `12`; every other value raises a notice and stops before the fields.
+pub const ACCOUNT_INFO: u16 = 0x0000;
+
+/// The shorter sibling of [`ACCOUNT_INFO`], `case 0x12` -> `FUN_141b2ee90`.
+///
+/// Same shape - `u8 result`, `str message`, the same result gate, and the same
+/// `FUN_142cb8370` account-name write at the end - but it omits the `verifyState` byte and
+/// the account-blocked sub-record, and its field list in between differs. Kept named
+/// because it is the fallback if [`ACCOUNT_INFO`] turns out to be the wrong one of the two.
+pub const ACCOUNT_INFO_ALT: u16 = 0x0012;
+
 /// A MapleStory string: `u16` length, then the bytes. Mirrors `FUN_1406e9050`.
 fn put_str(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(&(s.len() as u16).to_le_bytes());
@@ -153,6 +204,46 @@ pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
 /// The packet that closes a [`WORLD_LIST`] run, with no notice.
 pub fn world_list_end() -> Vec<u8> {
     vec![WORLD_LIST_END, 0, 0]
+}
+
+/// A successful [`ACCOUNT_INFO`] body: the client is logged in, and this is its name.
+///
+/// Every field the client does not display is zero. That is not laziness - a zero `flags`
+/// keeps bit 21 clear, and the two `FILETIME` fields are handed to a conversion callback
+/// whose behaviour on arbitrary bytes we have not established. The point of this packet is
+/// the last string.
+///
+/// `login_name` is the `+0x48` field the client sends back in later requests;
+/// `account_name` is the `+0x22f8` one that appears on the login screen.
+pub fn account_info(login_name: &str, account_name: &str) -> Vec<u8> {
+    let mut out = vec![LOGIN_OK];
+    put_str(&mut out, ""); // message
+    out.push(0); // verifyState: proceed
+    out.extend_from_slice(&0u32.to_le_bytes()); // discarded
+
+    put_str(&mut out, login_name); // -> account+0x48
+    out.extend_from_slice(&0u64.to_le_bytes()); // discarded
+    out.extend_from_slice(&0u32.to_le_bytes()); // accountId
+    out.push(0);
+    out.extend_from_slice(&0u32.to_le_bytes()); // flags - bit 21 must stay clear
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0);
+    put_str(&mut out, "");
+    out.extend_from_slice(&0u32.to_le_bytes()); // -> account+0x22b8
+    out.push(0);
+    out.push(0);
+    out.extend_from_slice(&0u64.to_le_bytes()); // FILETIME
+    out.extend_from_slice(&0u64.to_le_bytes()); // FILETIME
+    out.extend_from_slice(&0u32.to_le_bytes());
+    put_str(&mut out, "");
+    out.extend_from_slice(&0u32.to_le_bytes()); // -> account+0x28e0
+
+    out.push(0); // discarded
+    out.push(0); // -> stage+0x1a4
+    out.push(0); // -> stage+0xdc
+    out.extend_from_slice(&0u64.to_le_bytes()); // -> account+0x2324
+    put_str(&mut out, account_name); // -> account+0x22f8, shown on screen
+    out
 }
 
 /// Encode a zigzag varint, the length format [`DATA_WZ_PATCH`] expects.
@@ -277,6 +368,99 @@ mod tests {
         assert!((end[0] as i8) < 0, "terminator must have its high bit set");
         // A real world id must not accidentally look like one.
         assert!((world_list_entry(0, "Scania", 1)[0] as i8) >= 0);
+    }
+
+    /// Walks a successful [`ACCOUNT_INFO`] body the way `FUN_141b2dd00` does and returns
+    /// how many bytes it consumed. The client's readers throw on underrun, so a builder
+    /// that is short by one field would abort the handler mid-way - and a builder that is
+    /// merely *misaligned* would silently hand the account-name setter the wrong bytes.
+    /// Both show up here as a length mismatch.
+    fn read_account_info(b: &[u8]) -> usize {
+        let mut i = 0;
+        let take_str = |i: &mut usize| {
+            let n = u16::from_le_bytes([b[*i], b[*i + 1]]) as usize;
+            *i += 2 + n;
+        };
+        assert_eq!(b[i], LOGIN_OK, "only the success path reads the fields below");
+        i += 1; // result
+        take_str(&mut i); // message
+        let verify_state = b[i];
+        assert!(verify_state <= 1, "2 and 3 raise accountHasNotBeenVerified");
+        i += 1;
+        i += 4; // discarded u32
+
+        take_str(&mut i); // loginName
+        i += 8; // discarded u64
+        i += 4; // accountId
+        i += 1;
+        let flags = u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        assert_eq!(flags >> 21 & 1, 0, "bit 21 pulls in FUN_140d2d4e0");
+        i += 4;
+        i += 4;
+        i += 1;
+        take_str(&mut i);
+        i += 4; // -> account+0x22b8
+        i += 1 + 1;
+        i += 8 + 8; // two FILETIMEs
+        i += 4;
+        take_str(&mut i);
+        i += 4; // -> account+0x28e0
+
+        i += 1; // discarded
+        i += 1; // -> stage+0x1a4
+        i += 1; // -> stage+0xdc
+        i += 8; // -> account+0x2324
+        take_str(&mut i); // accountName
+        i
+    }
+
+    #[test]
+    fn the_account_info_body_is_read_back_exactly_as_it_was_built() {
+        for (login, account) in [
+            ("", ""),
+            ("maplecw", "e***@example.com"),
+            ("a-much-longer-login-name", "wisp****@example.com"),
+        ] {
+            let body = account_info(login, account);
+            assert_eq!(
+                read_account_info(&body),
+                body.len(),
+                "client's read sequence disagrees with the builder for {login:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_account_name_is_the_last_thing_in_the_body() {
+        // It is the field the login screen displays, and the one whose position is easiest
+        // to get wrong, so pin it from the other end: the body must end with exactly the
+        // string, length prefix included.
+        let name = "e***@example.com";
+        let body = account_info("maplecw", name);
+        let tail = 2 + name.len();
+        assert_eq!(&body[body.len() - name.len()..], name.as_bytes());
+        assert_eq!(
+            u16::from_le_bytes([body[body.len() - tail], body[body.len() - tail + 1]]) as usize,
+            name.len()
+        );
+    }
+
+    /// Same reason as the world list: these bytes get typed onto a command line by hand.
+    #[test]
+    fn the_account_info_we_actually_send_has_these_exact_bytes() {
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        // Spelled out in pieces rather than as one blob, because the interesting claim is
+        // that the two strings sit at those two positions and everything between them is
+        // zero - which a 204-character literal would hide rather than state.
+        let expected = format!(
+            "{}{}{}{}",
+            "0000000000000000",                     // result, message, verifyState, u32
+            "07006d61706c656377",                   // loginName "maplecw"
+            "0".repeat(134),                        // every field the screen does not show
+            "1000652a2a2a406578616d706c652e636f6d", // accountName "e***@example.com"
+        );
+        assert_eq!(hex(&account_info("maplecw", "e***@example.com")), expected);
+        assert_eq!(expected.len() / 2, 102, "one packet body, 102 bytes");
     }
 
     #[test]

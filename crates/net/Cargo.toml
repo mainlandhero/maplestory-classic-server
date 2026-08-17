@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Packet primitives, framing, and pluggable ciphers for the MapleCW servers."
 
+[[bin]]
+name = "packet-hex"
+path = "src/bin/packet_hex.rs"
+
 [dependencies]
 thiserror.workspace = true
 aes = "0.8"

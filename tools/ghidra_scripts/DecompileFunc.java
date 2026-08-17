@@ -62,7 +62,14 @@ public class DecompileFunc extends GhidraScript {
 
             Function f = getFunctionContaining(addr);
             if (f == null) {
-                out.println("### no function at " + addr);
+                // Auto-analysis only creates functions it can reach, and code reached only
+                // from the Themida VM has no caller in .text - so the interesting handlers
+                // are exactly the ones missing. .pdata still bounds them, so create one.
+                println("no function at " + addr + "; creating one");
+                f = createFunction(addr, null);
+            }
+            if (f == null) {
+                out.println("### no function at " + addr + ", and one could not be created");
                 continue;
             }
 
