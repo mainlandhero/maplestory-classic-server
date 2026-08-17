@@ -96,6 +96,28 @@ pub(crate) static CONN: AtomicUsize = AtomicUsize::new(0);
 ///   that is already dead, so the reset came from outside the client's own logic.
 const CONN_SOCKET_OFF: usize = 0x20;
 
+/// Is this handle still open in our process?
+///
+/// `GetHandleInformation` touches nothing and works on socket handles, which are ordinary
+/// kernel handles. It is the cheapest way to tell "the socket object is gone" from "the
+/// socket object is fine and the *connection* is what died" - and those two point at
+/// completely different culprits.
+unsafe fn handle_is_valid(handle: u64) -> bool {
+    extern "system" {
+        fn GetHandleInformation(handle: usize, flags: *mut u32) -> i32;
+    }
+    let mut flags = 0u32;
+    GetHandleInformation(handle as usize, &mut flags) != 0
+}
+
+fn describe_socket(socket: u64) -> &'static str {
+    if socket == u64::MAX {
+        "closed and cleared by the client (FUN_1415e3b60 ran)"
+    } else {
+        "the client holds a socket"
+    }
+}
+
 #[repr(C)]
 #[derive(Default)]
 struct MemoryBasicInformation {
@@ -242,6 +264,7 @@ pub unsafe fn monitor(base: usize) {
     let mut last: Option<(u8, u8)> = None;
     let mut was_readable: Option<bool> = None;
     let mut last_socket: Option<u64> = None;
+    let mut last_alive: Option<bool> = None;
     let mut ticks: u32 = 0;
     loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -254,15 +277,28 @@ pub unsafe fn monitor(base: usize) {
         if conn != 0 && readable(conn + CONN_SOCKET_OFF, 8) {
             let socket = *((conn + CONN_SOCKET_OFF) as *const u64);
             if last_socket != Some(socket) {
-                let what = if socket == u64::MAX {
-                    "  <- closed and cleared by the client"
-                } else {
-                    "  <- the client still holds a socket"
-                };
+                if socket != u64::MAX {
+                    crate::netwatch::arm_handle_watch(socket);
+                }
                 log(&format!(
-                    "***** SOCKET conn={conn:#x} +0x20={socket:#x}{what} *****"
+                    "***** SOCKET conn={conn:#x} +0x20={socket:#x} - {} *****",
+                    describe_socket(socket)
                 ));
                 last_socket = Some(socket);
+            } else if socket != u64::MAX && ticks.is_multiple_of(5) {
+                // Once a second, ask the OS whether the handle the client still holds is
+                // actually alive. This is the whole question: if the client's field is
+                // unchanged but the handle is dead, something closed it behind the client's
+                // back; if the handle is alive while the connection is not, nothing closed
+                // it at all and the reset came from outside the client.
+                let alive = handle_is_valid(socket);
+                if last_alive != Some(alive) {
+                    log(&format!(
+                        "***** SOCKET {socket:#x} is now {} (client still holds it) *****",
+                        if alive { "VALID" } else { "AN INVALID HANDLE" }
+                    ));
+                    last_alive = Some(alive);
+                }
             }
         }
 

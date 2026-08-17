@@ -225,7 +225,46 @@ Yet the connection is reset, reproducibly, ~0.3-0.45 s after the client's `0x007
 on an invalid session" is not what is happening, and no amount of answering it will keep the
 socket alive on its own.
 
-### Next: is the socket destroyed, or abandoned?
+### Next: one run that answers both branches
+
+Loaded so a single launch resolves the question whichever way it goes, because the
+instrument is finally trustworthy and the budget is not.
+
+**Three independent oracles, none of which interfere:**
+
+1. **`conn + 0x20`, the client's own socket handle.** `FUN_1415d35f0` hands it to
+   `FUN_1415e3b60`, which closes the socket and stores `-1`, so this field is what the
+   client believes it owns. Polled; every change logged.
+2. **`GetHandleInformation` on that handle**, once a second. Asks the OS whether the handle
+   is still open, independently of what the client thinks.
+3. **`CloseHandle` and `NtClose`, filtered to that one handle**, with `called-from` and a
+   stack. Closing a socket by handle skips `ws2_32` *and* the graceful shutdown, which is
+   exactly the observed signature: a reset, no `closesocket`, no `shutdown`.
+
+They are armed **late** - only once the session monitor can read the socket handle - because
+arming them at install would trap on every handle close during startup for nothing.
+`CloseHandle` is hot even so, hence a trap budget that disarms rather than risk slowing the
+client into behaving differently.
+
+**How to read it:**
+
+| Observation | Conclusion |
+|---|---|
+| `CloseHandle`/`NtClose ON THE GAME SOCKET` fires | closer named, with a stack - done |
+| handle goes `INVALID` but nothing fired | closed by a path below `NtClose`, or by another process |
+| `+0x20` goes to `-1` | `FUN_1415e3b60` ran after all, and the earlier negative needs revisiting |
+| handle stays **VALID** across the reset | nothing closed it: the socket object is alive and the *connection* is what died, which points outside the client entirely - the firewall rule, a filter driver, or our own probe |
+
+That last row is worth taking seriously rather than treating as the leftover. The reset is
+reproducible to within half a second of the same event every time, and none of the client's
+own teardown machinery is involved.
+
+**A fix to a latent race went in with this.** The re-arm slot was one global; with a hot
+hook two threads can trap at once and the second overwrites the first, leaving an export
+silently unarmed for the rest of the run - a hole in exactly the kind of negative this
+module produces. It is now per-thread.
+
+### Superseded: is the socket destroyed, or abandoned?
 
 Two possibilities remain, and the connection object's own socket handle separates them.
 `FUN_1415d35f0` hands `conn + 0x20` to `FUN_1415e3b60`, which closes the socket and stores

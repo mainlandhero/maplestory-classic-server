@@ -57,6 +57,19 @@ enum Kind {
     /// the object it acts on.
     Code,
 }
+// `CloseHandle`/`NtClose` deliberately have no `Kind`: they are dispatched by slot index
+// before any of this, because they are hot, filtered, and on their own trap budget.
+
+/// `CloseHandle` and `NtClose`, armed only once the game socket's handle is known.
+///
+/// Closing a socket **by handle** bypasses `ws2_32` entirely and skips the graceful
+/// shutdown, which produces exactly what is observed: a reset, with no `closesocket` and no
+/// `shutdown`. `CloseHandle` forwards to `NtClose`, but a protected binary may call the
+/// latter directly, so both are watched.
+const HANDLE_EXPORTS: [(&[u8], &[u8]); 2] = [
+    (b"kernel32.dll\0", b"CloseHandle\0"),
+    (b"ntdll.dll\0", b"NtClose\0"),
+];
 
 const EXPORTS: [(&[u8], Kind); 4] = [
     (b"connect\0", Kind::Connect),
@@ -90,17 +103,39 @@ const EXTRA: [(&str, usize); 3] = [
     ("FUN_142cb8370 (account name - CANARY)", 0x02cb_8370),
 ];
 
-const MAX_TARGETS: usize = EXPORTS.len() + EXTRA.len();
+const MAX_TARGETS: usize = EXPORTS.len() + EXTRA.len() + HANDLE_EXPORTS.len();
+/// Where the handle-close watches sit in the target table.
+const HANDLE_BASE: usize = EXPORTS.len() + EXTRA.len();
 #[allow(clippy::declare_interior_mutable_const)]
 const ZERO: AtomicU64 = AtomicU64::new(0);
 static TARGETS: [AtomicU64; MAX_TARGETS] = [ZERO; MAX_TARGETS];
 static ORIG: [AtomicU64; MAX_TARGETS] = [ZERO; MAX_TARGETS];
-static REARM: AtomicUsize = AtomicUsize::new(usize::MAX);
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 static HITS: AtomicUsize = AtomicUsize::new(0);
 
+// Which target is mid-re-arm, **per thread**. It used to be one global slot, which is
+// only safe while hits are rare: with `CloseHandle` watched, two threads can trap at once
+// and the second overwrites the first's slot, leaving an export unarmed for the rest of
+// the run - a silent hole in exactly the kind of negative this module exists to produce.
+thread_local! {
+    static REARM: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}
+
+/// The connection's `SOCKET`, once known. `CloseHandle`/`NtClose` are watched for *this*
+/// handle only, because they fire constantly and nothing else about them is interesting.
+static GAME_SOCKET: AtomicU64 = AtomicU64::new(u64::MAX);
+/// Set once the handle watch is armed, so it happens exactly once.
+static HANDLE_WATCH_ARMED: AtomicBool = AtomicBool::new(false);
+/// Traps taken on the handle-close watch, matching or not - the budget for a hot hook.
+static HANDLE_TRAPS: AtomicUsize = AtomicUsize::new(0);
+
 /// Enough to see where it is going without flooding a log if something reconnects in a loop.
 const MAX_HITS: usize = 64;
+
+/// `CloseHandle` is called constantly. Past this many traps the watch disarms itself
+/// rather than risk slowing the client into behaving differently - the same hazard the
+/// opcode probe documents for per-frame accessors.
+const MAX_HANDLE_TRAPS: usize = 300_000;
 
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
@@ -240,6 +275,43 @@ pub unsafe fn install() {
     std::thread::spawn(|| unsafe { self_test() });
 }
 
+/// Start watching `CloseHandle`/`NtClose` for one specific handle: the game socket.
+///
+/// Called by the session monitor as soon as it can read `conn + 0x20`, which is late on
+/// purpose. Arming these at install would trap on every handle close the client makes
+/// during startup - thousands of them, none interesting - and the cost is paid per trap
+/// whether or not the handle matches.
+pub unsafe fn arm_handle_watch(socket: u64) {
+    if socket == 0 || socket == u64::MAX {
+        return;
+    }
+    GAME_SOCKET.store(socket, Ordering::SeqCst);
+    if HANDLE_WATCH_ARMED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    for (i, (module, name)) in HANDLE_EXPORTS.iter().enumerate() {
+        let m = GetModuleHandleA(module.as_ptr());
+        if m.is_null() {
+            continue;
+        }
+        let addr = GetProcAddress(m, name.as_ptr()) as usize;
+        if addr == 0 {
+            continue;
+        }
+        let orig = *(addr as *const u8);
+        if !write_byte(addr, 0xCC) {
+            continue;
+        }
+        let slot = HANDLE_BASE + i;
+        TARGETS[slot].store(addr as u64, Ordering::SeqCst);
+        ORIG[slot].store(orig as u64, Ordering::SeqCst);
+        let label = std::str::from_utf8(&name[..name.len() - 1]).unwrap_or("?");
+        log(&format!(
+            "netwatch: watching {label} at {addr:#x} for handle {socket:#x} only"
+        ));
+    }
+}
+
 /// Prove the hook fires, by calling the thing it watches.
 ///
 /// **This exists because a negative from this hook was once written down as settled.** The
@@ -312,7 +384,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     let ctx = (*info).context.cast::<u8>();
 
     if code == EXCEPTION_SINGLE_STEP {
-        let i = REARM.swap(usize::MAX, Ordering::SeqCst);
+        let i = REARM.with(|r| r.replace(usize::MAX));
         if i < MAX_TARGETS {
             let addr = TARGETS[i].load(Ordering::SeqCst) as usize;
             if addr != 0 {
@@ -332,6 +404,39 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         if addr == 0 || at != addr {
             continue;
         }
+        // The handle watches are hot and filtered, so they get their own budget and log
+        // only the handle we care about. Mixing them into HITS would blow MAX_HITS in the
+        // first second and disarm everything else.
+        if i >= HANDLE_BASE {
+            let traps = HANDLE_TRAPS.fetch_add(1, Ordering::SeqCst) + 1;
+            let handle = *(ctx.add(CTX_RCX).cast::<u64>());
+            if handle == GAME_SOCKET.load(Ordering::SeqCst) {
+                let label = HANDLE_EXPORTS[i - HANDLE_BASE].1;
+                let label = std::str::from_utf8(&label[..label.len() - 1]).unwrap_or("?");
+                let rsp = *(ctx.add(CTX_RSP).cast::<u64>()) as usize;
+                let from = if crate::session::can_read(rsp, 8) {
+                    format!(" called-from={:#x}", *(rsp as *const u64))
+                } else {
+                    String::new()
+                };
+                log(&format!(
+                    "***** {label} ON THE GAME SOCKET {handle:#x}{from} *****\n          \
+                     stack: {}",
+                    crate::probe::stack_trace(rsp)
+                ));
+            }
+            write_byte(addr, ORIG[i].load(Ordering::SeqCst) as u8);
+            *(ctx.add(CTX_RIP).cast::<u64>()) = addr as u64;
+            if traps >= MAX_HANDLE_TRAPS {
+                TARGETS[i].store(0, Ordering::SeqCst);
+                log("netwatch: handle-close trap budget spent, disarmed");
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+            *(ctx.add(CTX_EFLAGS).cast::<u32>()) |= TRAP_FLAG;
+            REARM.with(|r| r.set(i));
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
         let n = HITS.fetch_add(1, Ordering::SeqCst) + 1;
         if n <= MAX_HITS {
             let (label, kind) = if i < EXPORTS.len() {
@@ -400,7 +505,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             return EXCEPTION_CONTINUE_EXECUTION;
         }
         *(ctx.add(CTX_EFLAGS).cast::<u32>()) |= TRAP_FLAG;
-        REARM.store(i, Ordering::SeqCst);
+        REARM.with(|r| r.set(i));
         return EXCEPTION_CONTINUE_EXECUTION;
     }
     EXCEPTION_CONTINUE_SEARCH
