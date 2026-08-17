@@ -244,6 +244,53 @@ or the dialog on screen is a *different* node with similar wording.
 Each of these was a plausible static chain - matching string, matching default case - and
 none survived a run. **Measure before building on a static chain.** Three times now.
 
+### MILESTONE - login screen -> Login button -> character select
+
+**Reached 2026-08-17.** The owner clicked a lit Login button, the client played its animated
+transition into character select, and "Create a character" was the blocker - the goal set
+at the start of the day.
+
+The recipe, all four parts needed together:
+
+```
+powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+  -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on
+  -Session mode=2 -Probe watch@141b2a280:rdx=0 -ReplyTo 0x0080
+  -ReplySeq "000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+```
+
+| Part | Why it is needed |
+|---|---|
+| `0x0032` gate | releases the startup loop; login screen appears |
+| `0x000B` world **entry** | sets `stage+0x108`, which is what enables the Login button |
+| `-Session mode=2` | leaves mode 5 so the per-frame tick stops auto-logging-in and the button gets a turn |
+| `-Probe watch@141b2a280:rdx=0` | suppresses the "trouble logging in" dialog, which otherwise **blocks the tick** and stops the button ever being enabled |
+
+**No terminator.** With the mode patched, a second `0x000B` is handled by the classic
+`FUN_141b2fac0`, whose terminator transitions to WorldSelect - a screen this service does
+not use.
+
+**Two of those four are client-side patches.** They make the client's normal flow
+reachable; they do **not** make the session valid. Describe results accordingly.
+
+**Everything after the login screen was offline.** The client closed the connection at
+8.4s - it answers `0x0080` expecting a login result and gives up without one - so the
+Login click, the transition and the "Create a character" clicks all happened with no
+server attached, and **sent nothing**. Those transitions are purely client-side.
+
+**Next:** keep the connection alive so the clicks have somewhere to go. Add the login
+result back:
+
+```
+-ReplySeq "000b:<entry>,0010:000000/256"
+```
+
+Safe now in a way it was not before: the auto-advance came from the mode-5 tick, which the
+mode patch disables, and `0x0010`'s own world-select call only fires when the world/channel
+it carries differ from the session's - measured as `world=0 channel=0`, which zeros match.
+Then click through to character creation and read what the client sends; that is the first
+unmapped outbound packet of the next phase.
+
 ### SOLVED - `FUN_141b2a280` raises the prompt
 
 `called-from=0x141b2a61e` at a watch on the notice display named it.
