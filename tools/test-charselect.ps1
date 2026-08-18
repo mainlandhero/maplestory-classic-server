@@ -74,7 +74,20 @@ param(
     # caller in .text - the real service enables this from virtualised code. THIS IS A
     # CLIENT PATCH. Use 'mode=2' alone to reproduce the dead button.
     [string]$Session = 'mode=2,create=on',
-    [int]$Port = 8484
+    [int]$Port = 8484,
+    # Strip every client patch: no dispatcher hook, no int3 watches, no session patching.
+    # The client is left byte-identical to the installed copy, so the only difference from
+    # a stock run is our grap64.dll stub and the firewall.
+    #
+    # This is the control for the ~36.9s __fastfail. That deadline is anchored to process
+    # start - 36.96s and 36.89s across two runs, 0.07s apart, while the interval from the
+    # login result moved by 3.2s - so it is not a reaction to anything on the wire. A
+    # process-anchored deadline is exactly what an integrity check over our own patched
+    # .text would produce, and this run removes those patches to test it.
+    #
+    # There is no hook log in this mode, by construction. client-exit.log carries the
+    # answer: the EXIT code line and the lifetime.
+    [switch]$NoPatch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -142,12 +155,27 @@ Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
 Write-Host "reply sequence is $($replySeq.Length) characters"
 
-& powershell -ExecutionPolicy Bypass -File $testOne `
-    -Reply ping -Opcode 0x0032 -Body 00 `
-    -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on `
-    -Session $Session -Probe $Probe `
-    -ReplyTo 0x0080 -ReplySeq $replySeq -Answer $answers `
-    -Keepalive $Keepalive -Port $Port
+# Built as a list rather than a backtick-continued call so -NoPatch can leave the three
+# patch parameters off entirely. Passing them as empty strings would also work, but an
+# empty argument through `powershell -File` is exactly the kind of quoting detail that has
+# already cost one launch here, and omitting them cannot go wrong.
+$testOneArgs = @(
+    '-Reply', 'ping', '-Opcode', '0x0032', '-Body', '00',
+    '-PingFirst', '0x0032', '-PingBody', '00', '-QuietBefore', '4',
+    '-ReplyTo', '0x0080', '-ReplySeq', $replySeq, '-Answer', $answers,
+    '-Keepalive', "$Keepalive", '-Port', "$Port"
+)
+if (-not $NoPatch) {
+    $testOneArgs += @('-HookLog', 'on', '-Session', $Session, '-Probe', $Probe)
+}
+else {
+    Write-Host ''
+    Write-Host 'NoPatch: no dispatcher hook, no int3 watches, no session patch.'
+    Write-Host 'The client will show the "trouble logging in" dialog and will not reach'
+    Write-Host 'character select - that is expected. The only question this run answers is'
+    Write-Host 'whether it still dies at ~36.9 seconds. Do not click anything.'
+}
+& powershell -ExecutionPolicy Bypass -File $testOne @testOneArgs
 
 Write-Host ''
 Write-Host 'On screen:'

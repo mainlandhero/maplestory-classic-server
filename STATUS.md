@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-17 (creation works end to end; the exit is a client `__fastfail`)
+# Where things stand — 2026-08-17 (creation works end to end; the exit is a client `__fastfail` on a fixed deadline)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -11,10 +11,9 @@ and every one of them has been measured, not guessed.
 
 Two things remain, and **the owner set the priority on 2026-08-17: the exit comes first.**
 
-1. **The client `__fastfail`s ~27 seconds after the login result** - exit code
-   `0xC0000409`, measured. It ends itself; nothing external is involved. That caps every
-   run to about one click sequence. The next step is one launch with no clicking at all;
-   see "THE PRIORITY" below.
+1. **The client `__fastfail`s ~36.9 seconds after process start** - exit code
+   `0xC0000409`, measured twice to within 0.07s. It ends itself, on a wall-clock deadline
+   that owes nothing to the wire. Next control is `-NoPatch`; see "THE PRIORITY" below.
 2. **Character creation is not yet done by the server** - the harness answers with canned
    bodies from `packet-hex`. Nothing persists, and the reply cannot read the name out of
    the request. See "What is left of character creation".
@@ -40,7 +39,7 @@ Where the answers land:
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults - **not** `hook.log`, and not the repo root. Before 2026-08-17 this landed in a file called `on` whenever the launching shell was already elevated; fixed |
 | `client-exit.log` | how the client died: exit code, lifetime, CPU time, job membership, and who held a handle to it. Written by `tools/exit-forensics.ps1`. **Read the `EXIT code` line first** |
 
-## THE PRIORITY - the client `__fastfail`s ~27s after the login result
+## THE PRIORITY - the client `__fastfail`s ~36.9s after launch
 
 **How it dies is now measured: exit code `0xC0000409`, `STATUS_STACK_BUFFER_OVERRUN`.** On
 x64 that is `__fastfail` - `int 0x29`. The client ends *itself*, deliberately.
@@ -73,34 +72,65 @@ each fired six times for ordinary thread exits, the last 5.8s before death, with
 200-hit cap nowhere near reached. Neither fired at the exit, exactly as a fail-fast
 predicts.
 
-### The timing, and the one thing it does not yet distinguish
+### SETTLED: the deadline is anchored to process start, not to anything on the wire
 
-| run | login result | exit | interval |
-|---|---|---|---|
-| 1 | 15:52:36 | 15:53:03 | 27s |
-| 2 | 16:03:44 | 16:04:09 | 25s |
-| 3 (keepalives on) | 16:13:52 | 16:14:19 | 27s |
-| 4 (creation completed, enter-game attempted) | 20:50:12 | 20:50:39 | 27s |
+| run | launched | exited | from launch | from login result |
+|---|---|---|---|---|
+| 4 - created a character, attempted to enter the world | 20:50:02.083 | 20:50:39.040 | **36.96s** | 27.0s |
+| 5 - nothing clicked at all | 20:59:42.906 | 21:00:19.793 | **36.89s** | 23.8s |
 
-Four runs, 25-27 seconds, regardless of what was clicked in between - including run 4,
-which created a character and attempted to enter the game. That is a timer, not a reaction
-to any particular packet.
+**0.07 seconds apart from launch; 3.2 seconds apart from the login result.** The client
+`__fastfail`s on a fixed wall-clock deadline of about 36.9 seconds from process start. Not
+a CPU quota either - the two runs burned 12.13s and 11.64s of CPU.
 
-**But which clock it hangs off is not yet established.** In run 4 the client also died
-36.8s after process start, and the client takes about the same time to reach the login
-screen every run, so "27s after the login result" and "~37s after launch" fit the same
-data. They call for opposite next steps:
+Run 5 settles more than it was asked to. The owner touched nothing, and **the client logged
+itself in anyway** at +7.4s, sending `0x00C0`, `0x0073` and `0x0080` on its own. So the
+login-result interval in both runs is the client's own timing rather than a human's, and it
+still moved by 3.2s while the launch interval did not move at all.
 
-* **anchored to the login result** - the client is waiting for something the server owes it
-  after character select, and the fail-fast is a timeout;
-* **anchored to process start** - it is a periodic check, and **our own patching is a live
-  suspect**: the dispatcher detour and the `int3` at `0x141b2a280` sit permanently in
-  `.text`, and an integrity scan over `.text` would find them.
+**Therefore the exit is not a protocol timeout. The server owes the client nothing**, and
+everything measured on the wire is beside the point for this bug.
 
-**The experiment that splits them needs one launch and no clicking.** Start
-`test-charselect.ps1`, then touch nothing for 90 seconds at the login screen. If it dies at
-~37s while still on the login screen, the clock runs from process start. If it is still
-alive at 90s, the clock starts at the login result - click Login then and time it.
+### Correction: `-Session mode=2` does not prevent the auto-login
+
+The mode byte is patched when opcode `0x0000` is dispatched, and in run 5 that landed at
+20:59:56.506 - about 100ms *after* the client had already sent its login sequence at
+20:59:56.4. A patch cannot prevent an auto-login it arrives after. What carries the client
+to character select is the login result, not this patch. Keep the patch (the transition
+behaviour downstream depends on it), but the claim in its log line that "the tick should no
+longer auto-login" is wrong.
+
+### What is left, and the next control
+
+Three suspects remain, all process-anchored, which is exactly why the timing cannot
+separate them:
+
+1. **Our own patches.** The dispatcher detour at `0x1415d60e0` and the `int3` at
+   `0x141b2a280` sit permanently in `.text`, where an integrity check would find them. The
+   two ntdll `int3`s are outside the image but are still writes into a loaded module.
+2. **The GameGuard stub.** `grap64.dll` is ours and does nothing. The stub log shows the
+   client calling ordinal #5 and ordinal #1 once each in the whole run and then never
+   again - whatever it expects the real module to go on doing never happens.
+3. **The firewall.** The patched client is blocked outbound, so a protection component that
+   needs to reach Nexon cannot, and a fixed-deadline fail-fast is what that looks like.
+
+**The next run removes suspect 1 and needs no clicking:**
+
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -NoPatch
+```
+
+No hook, no `int3`, no session patch - the client's image is left exactly as installed. It
+will show the "trouble logging in" dialog and will not reach character select; that is
+expected and does not matter here. There is no hook log in this mode by construction, so
+the answer is the `EXIT code` line in `client-exit.log`:
+
+* **still ~36.9s** - our patches are innocent, and the choice is between suspects 2 and 3.
+  Suspect 3 is the owner's call, because testing it means letting the patched client reach
+  Nexon, which is what the firewall rule exists to prevent.
+* **survives well past 40s** - we are killing it ourselves, and the fix is to stop writing
+  to `.text`: hardware breakpoints through the debug registers modify no memory, which is
+  the natural replacement for the `int3` watches.
 
 ### Where to look once that is answered
 
@@ -167,7 +197,7 @@ That means, end to end and against a real server-side implementation:
 | Name check `0x0081`/`0x0014` | **MEASURED** both ways |
 | Create request `0x008A` | **MEASURED** - virtualised builder, so a capture was the only way |
 | Create result `0x0015` | **MEASURED** - the client returns to CharSelect with the new character |
-| Client exits ~25s after reaching CharSelect | **THE BLOCKER** - see "THE PRIORITY" |
+| Client exits ~36.9s after launch | **THE BLOCKER** - a `__fastfail` on a fixed deadline; see "THE PRIORITY" |
 | Server-side creation | not started - the harness answers with canned bodies |
 | Valid session | still faked by client patches |
 
