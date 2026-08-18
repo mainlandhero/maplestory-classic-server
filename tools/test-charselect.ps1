@@ -36,10 +36,8 @@ param(
     # on the first character-list run.
     [string]$LoginName = 'maplecw',
     [string]$AccountName = 'wisp****@example.com',
-    # The name of the character the create reply hands back. The harness cannot read the
-    # name out of the request, so type this one in the client and the screen stays
-    # coherent - type another and the transaction still completes, it just visibly
-    # comes from the server rather than from what was asked for.
+    # Only used for the on-screen instructions now. The create reply is built from the
+    # request itself, so whatever name is typed in the client is the name that comes back.
     [string]$NewCharacterName = 'Hello',
     # Seconds between keepalive packets. This was a hypothesis - that the client wants a
     # heartbeat - and it is disproven: the 2026-08-17 run logged two keepalives going out,
@@ -173,14 +171,22 @@ $replySeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
 #                      hence <req>, which splices the request's payload in; the trailing
 #                      00 is CharNameResult 0 = available.
 $enterCreation = Get-Packet @('enter-creation')
-$createResult = Get-Packet @('create-result', $NewCharacterName)
 # One semicolon-separated string, not an array: these scripts are invoked through
 # `powershell -File`, which flattens an array into separate command-line words, so the
 # second entry bound positionally to -Variant and killed the run at parameter binding.
 #
 #   0x008A -> 0x0015   the create request, measured off the wire. Its builder is
 #                      virtualised, so the opcode could only ever have come from a capture.
-$answers = "00a8=$enterCreation;0081=0014:<req>00;008a=0015:$($createResult -replace '^0015:','')"
+# 0x0082 is "Choose another world" - leave world (FUN_141b3bfd0). Unanswered, the client
+# blocks its entire UI on the reply, exactly as the Check button did before 0x0081 was
+# answered: no dialog is dismissable and even the quit prompt stops responding. The world
+# list is the reply this screen wants; if it is wrong the client will say so by staying
+# stuck, which is the same symptom, so read probe.log for what it sends next.
+$answers = "00a8=$enterCreation;0081=0014:<req>00;0082=$worldEntry,$worldEnd"
+# 0x008A is built from the request rather than replayed. A canned reply cannot carry the
+# style that was picked - the character came back naked - nor a fresh character id, and
+# sending id 200 twice made the client silently drop the second character.
+$builds = "008a=create-result-from"
 Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
 Write-Host "reply sequence is $($replySeq.Length) characters"
@@ -193,7 +199,7 @@ $testOneArgs = @(
     '-Reply', 'ping', '-Opcode', '0x0032', '-Body', '00',
     '-PingFirst', '0x0032', '-PingBody', '00', '-QuietBefore', '4',
     '-ReplyTo', '0x0080', '-ReplySeq', $replySeq, '-Answer', $answers,
-    '-Keepalive', "$Keepalive", '-Port', "$Port"
+    '-Keepalive', "$Keepalive", '-Port', "$Port", '-Build', $builds
 )
 if ($SkipNetCheck) {
     # 142ef3e44 stays armed: if the client dies anyway, this says whether it was still a
@@ -260,10 +266,14 @@ Write-Host '  1. is the account name back on the login screen?'
 Write-Host '  2. click Login - is there a character called "Maple"?'
 Write-Host "  3. Create a character -> spend all 25 points, name it '$NewCharacterName',"
 Write-Host '     Check, then OK, then confirm. It should land back on character select'
-Write-Host '     with a second character in the list.'
+Write-Host '     with a second character in the list - WEARING WHAT YOU PICKED.'
+Write-Host '  4. Create a third, with a different name and a different style. It should'
+Write-Host '     appear too, as its own character rather than replacing the second.'
+Write-Host '  5. Click "Choose another world". The UI should stay responsive.'
 Write-Host ''
-Write-Host 'Do not close the client by hand - let it exit on its own. How it dies is the'
-Write-Host 'measurement, and a manual close overwrites the answer with our own.'
+Write-Host 'Close the client by hand when you are done - with -SkipNetCheck it no longer'
+Write-Host 'ends itself, so take as long as you like. A clean exit 0 in client-exit.log is'
+Write-Host 'what a hand-close looks like; 0xC0000409 there would mean a second overflow.'
 Write-Host ''
 Write-Host 'Then run this script with -Stop. The answers are in'
 Write-Host '  client-exit.log                   (how the client died - read this one first)'

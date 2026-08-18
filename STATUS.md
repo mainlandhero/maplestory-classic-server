@@ -280,30 +280,32 @@ re-quote "63 `int 0x29` sites" - that was a byte scan, and the real number is 8.
 
 ## What is left of character creation
 
-The protocol is finished. What is missing is the *server*.
+The protocol is finished and every opcode measured. What was missing was that **the harness
+could only replay bodies handed to it on a command line**, and two of the three problems
+from the first unlimited-length session were that one limitation:
 
-| | |
-|---|---|
-| Every opcode in the transaction | **measured** - see the table below |
-| The reply bodies | built in `crates/net/src/opcode.rs`, all tested |
-| Who sends them | `tools/handshake_probe.py`, from canned hex - **this is the gap** |
-| Persistence | none. `crates/store` has accounts and sessions; characters are not stored |
-| The name in the reply | fixed. The harness cannot read it out of the request |
-| The look in the reply | `CreateCharacterRequest::parse` reads it, but only `packet-hex create-result-from <hex>` uses it |
+| seen on screen | cause | now |
+|---|---|---|
+| the created character is naked | the `0x0015` reply was a canned body built from `Character::default()` | built from the request |
+| a second character never appears | that canned body carried **id 200 every time**, so the client was told it had re-created the character it already had | ids increment |
+| "Choose another world" freezes the whole UI | `0x0082` was never answered | answered with the world list |
 
-**The next real step is a server binary**, not more harness features. Everything it needs
-exists: the cipher and framing in `crates/net` (`codec.rs`, `session.rs`), every reply
-builder in `opcode.rs`, `CreateCharacterRequest::parse` for the one request that carries
-data, and SQLite in `crates/store`. The Python probe should stay as the packet-level
-instrument; it is not where server logic belongs.
+The first two are fixed by `--build`, a new probe flag: on a given inbound opcode, run a
+Rust builder over **the request itself** and send what it prints. `packet-hex
+create-result-from <hex> [id]` already parsed the request with
+`CreateCharacterRequest::parse`; it just had no way to be called per-packet, and its id was
+hardcoded. Verified before spending a run - fed the captured `Hello2` request twice, it
+read out `face 21002 hair 31047 skin 3 + 4 equips` and returned ids 200 then 201.
 
-Two client patches are still holding the flow open, and results must be reported as such:
+**This is still not a server.** Nothing persists: the character list in `0x0010` is
+generated from `-Characters` at launch, so a character created in one session is gone in
+the next, and the client is never told about characters it created earlier in the same
+session either - it only knows about them because it added them locally when `0x0015` came
+back. `crates/login` is still the real answer, and now that the client no longer dies after
+37 seconds there is finally time to test one properly.
 
-* `-Session mode=2` - leaves launch mode 5 so the Login button gets a turn;
-* `-Session create=on` - calls `FUN_140c9e230` to set the flag that gates "Create a
-  character". **The real service sets this from virtualised code**, driven by something we
-  do not send. Finding that packet is real remaining protocol work;
-* `-Probe watch@141b2a280:rdx=0` - suppresses the "trouble logging in" dialog.
+Everything a real crate needs exists: `Framer` and the cipher in `crates/net`, every reply
+builder in `opcode.rs`, `CreateCharacterRequest::parse`, and SQLite in `crates/store`.
 
 ## THE GOAL (set 2026-08-17)
 

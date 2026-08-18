@@ -80,6 +80,11 @@ param(
     # `powershell -File`, which flattens an array into separate command-line words, so only
     # the first bound to -Answer and the second landed on -Variant and killed the run.
     [string]$Answer = '',
+    # Semicolon-delimited IN=ELEMENT, for replies a canned body cannot express. The create
+    # result has to carry the face, hair, skin and equipment that were picked, and a
+    # character id that differs every time - a fixed body sent the same id twice and the
+    # client silently refused to add the second character.
+    [string]$Build = '',
     # Record the client's sockets for its whole lifetime, to see whether it ever connects
     # to a second endpoint after login. Writes sockets.log beside probe.log.
     [switch]$Sockets,
@@ -196,6 +201,9 @@ if ($Reply) {
         Write-Host 'standing answers: none'
     }
     foreach ($a in $answerList) { $probeArgs += @('--answer', $a) }
+    $buildList = @($Build -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($b in $buildList) { $probeArgs += @('--build', $b) }
+    if ($buildList) { Write-Host "built answers ($($buildList.Count)): $($buildList -join ' ')" }
     if ($PingFirst) {
         $probeArgs += @('--ping-first', $PingFirst, '--ping-wait', "$PingWait")
     }

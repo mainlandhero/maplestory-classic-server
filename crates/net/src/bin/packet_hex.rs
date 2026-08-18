@@ -61,9 +61,17 @@ fn main() {
                 req.skin,
                 req.character(0).equips.len()
             );
+            // An optional id, because every created character needs a different one. The
+            // harness used to send this reply with a hardcoded 200 for every creation, so
+            // a second character came back carrying the first one's id and the client
+            // simply did not add it to the list.
+            let id = args
+                .get(2)
+                .and_then(|a| a.parse::<u32>().ok())
+                .unwrap_or(200);
             (
                 CREATE_CHARACTER_RESULT,
-                create_character_result(0, &req.character(200)),
+                create_character_result(0, &req.character(id)),
             )
         }
         Some("create-result") => {

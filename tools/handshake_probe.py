@@ -430,6 +430,67 @@ def parse_answer_seq(spec: str):
     return out
 
 
+PACKET_HEX = None
+BUILD_COUNTER = {}
+
+
+def find_packet_hex():
+    """Locate the built packet-hex binary, or None.
+
+    Checked at startup rather than on the first packet: a builder that cannot run is
+    indistinguishable, from the client's side, from a server that never answers - which is
+    the modal "Connecting..." freeze, and looks like a client bug.
+    """
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    for name in ("packet-hex.exe", "packet-hex"):
+        path = os.path.join(root, "target", "release", name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def build_dynamic_body(element: str, request_body: bytes):
+    """Build a reply from the request itself, by calling the Rust builders.
+
+    The harness can only replay bodies it was handed on the command line, and some replies
+    have to be computed from the request: the create result carries the face, hair, skin and
+    equipment that were picked, and a character id that has to differ from every other one.
+    A canned body sent the same id twice and the client silently refused to add the second
+    character to its list.
+
+    Returns (opcode, body) or None.
+    """
+    import subprocess
+    if not PACKET_HEX:
+        return None
+    n = BUILD_COUNTER.get(element, 200)
+    BUILD_COUNTER[element] = n + 1
+    args = [PACKET_HEX, element, request_body.hex(), str(n)]
+    try:
+        out = subprocess.run(args, capture_output=True, timeout=20)
+    except Exception as exc:                                    # noqa: BLE001
+        log(f"    builder {element} failed to run: {exc}")
+        return None
+    if out.returncode != 0:
+        log(f"    builder {element} exited {out.returncode}: "
+            f"{out.stderr.decode('utf-8', 'replace').strip()}")
+        return None
+    note = " ".join(out.stderr.decode("utf-8", "replace").split())
+    line = out.stdout.decode("utf-8", "replace").strip().splitlines()
+    line = next((l for l in line if ":" in l), "")
+    if not line:
+        log(f"    builder {element} printed no packet")
+        return None
+    op_txt, _, body_txt = line.partition(":")
+    try:
+        return int(op_txt, 16), bytes.fromhex(body_txt), note
+    except ValueError as exc:
+        log(f"    builder {element} printed {line!r}: {exc}")
+        return None
+
+
 def build_answer_body(parts, request_body: bytes) -> bytes:
     """Join the literal pieces, splicing the request's payload at each `<req>`."""
     body = parts[0]
@@ -447,8 +508,9 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
           ping_first: int | None = None, ping_wait: float = 10.0,
           quiet_before: float = 5.0, send_iv: int = 0x52307801,
           keepalive: float = 0.0, keepalive_opcode: int = 0x0023,
-          answers: dict | None = None) -> None:
+          answers: dict | None = None, builders: dict | None = None) -> None:
     answers = answers or {}
+    builders = builders or {}
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -657,6 +719,23 @@ def serve(port: int, only: int | None, hold: float, reply: str | None = None,
                         # repeatedly. The client sends 0x00A8 on every click of "Create a
                         # character", so an answer that fires once would look like the
                         # button working the first time and breaking afterwards.
+                        # Built answers: computed from the request by the Rust builders,
+                        # for replies a fixed body cannot express.
+                        element = builders.get(op)
+                        if element:
+                            built = build_dynamic_body(element, pkt["body"][2:])
+                            if built:
+                                b_op, b_body, note = built
+                                frame, what = build_reply(
+                                    "ping", b_op, cipher, 0, b_body)
+                                log(f"[{port}] >>> BUILDING answer to 0x{op:04X} "
+                                    f"with {element}: {note}")
+                                log(f"[{port}] >>> ANSWERING 0x{op:04X} with {what}")
+                                conn.sendall(frame)
+                            else:
+                                log(f"[{port}] !!! builder for 0x{op:04X} produced nothing - "
+                                    f"the client is now waiting on a reply that will not come")
+
                         for step_op, parts, step_pad in answers.get(op, []):
                             # pkt["body"] carries the opcode; the payload starts at 2.
                             step_body = build_answer_body(parts, pkt["body"][2:])
@@ -727,6 +806,13 @@ def main() -> None:
     ap.add_argument("--reply-seq", default=None,
                     help="several packets to send for --reply-to, in order: "
                          "OPCODE:HEXBODY[/PAD],... e.g. 000b:00..,000b:ff0000,0010:000000/256")
+    ap.add_argument("--build", action="append", default=[], metavar="IN=ELEMENT",
+                    help="answer inbound opcode IN by running the Rust builder ELEMENT "
+                         "over the request itself, e.g. '008a=create-result-from'. For "
+                         "replies a fixed body cannot express: the create result carries "
+                         "the face, hair, skin and equipment that were picked, and a "
+                         "character id that has to differ every time. Needs "
+                         "target/release/packet-hex.")
     ap.add_argument("--answer", action="append", default=[],
                     help="a standing answer, repeatable: IN=OPCODE:HEXBODY[/PAD],... "
                          "e.g. 00a8=05f4:0000. Unlike --reply-to this fires every time the "
@@ -786,6 +872,21 @@ def main() -> None:
     seq = parse_reply_seq(args.reply_seq) if args.reply_seq else None
     if seq is not None and args.reply_to is None:
         raise SystemExit("--reply-seq needs --reply-to: it is sent when that opcode arrives")
+
+    builders = {}
+    for spec in (args.build or []):
+        key_txt, sep, element = spec.partition("=")
+        if not sep:
+            raise SystemExit(f"--build needs IN=ELEMENT, got {spec!r}")
+        builders[int(key_txt, 16)] = element.strip()
+    global PACKET_HEX
+    PACKET_HEX = find_packet_hex()
+    if builders:
+        if not PACKET_HEX:
+            raise SystemExit(
+                "--build needs target/release/packet-hex - run: cargo build --release -p net")
+        log(f"built answers via {PACKET_HEX}: "
+            + ", ".join(f"0x{k:04X} -> {v}" for k, v in builders.items()))
 
     answers = {}
     for spec in args.answer:
@@ -851,6 +952,7 @@ def main() -> None:
             quiet_before=args.quiet_before, send_iv=args.send_iv,
             keepalive=args.keepalive, keepalive_opcode=args.keepalive_opcode,
             answers=answers,
+            builders=builders,
         ),
         daemon=True,
     )

@@ -461,6 +461,26 @@ before anything could be learned from waiting.
 This does not settle the `0x0011` lead recorded below; it identifies the *request* the
 client makes, not the reply that moves it into a map.
 
+## Leaving the world: `0x0082`, and what an unanswered packet looks like
+
+"Choose another world" on the character-select screen sends **`0x0082`**
+(`FUN_141b3bfd0`, already named "leave world" in `tools/transport.py`) with an empty body.
+Measured 2026-08-17.
+
+Unanswered, **the client blocks its entire UI**. Not the screen it was on - everything: the
+Back button, the world buttons, and even the OK button of the "Are you ready to exit?"
+prompt all stop responding, and the process sits there until it is killed. This is the same
+modal wait the "Check" button showed before `0x0081` was answered, and it is worth
+recognising by shape, because it reads on screen as the client having crashed:
+
+> a dead UI with a visible dialog usually means a packet went out and nothing came back.
+> Read `probe.log` for the last thing the client sent - the `VERDICT` line names it.
+
+The reply is not yet confirmed. The world list (`0x000B` entries followed by the
+`ff 00 00` terminator) is what this screen wants next and is what the harness now answers
+with; if that is wrong the client stays stuck, which is the same symptom, so the test is
+whether the UI comes back rather than whether a dialog changes.
+
 ## What is *not* established
 
 * **What the real service sends to enable character creation.** The flag `FUN_140c9e3f0`
