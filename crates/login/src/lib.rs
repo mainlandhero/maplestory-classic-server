@@ -36,5 +36,5 @@ pub mod session;
 
 pub use config::{Config, World};
 pub use handshake::greeting;
-pub use server::{list, serve};
+pub use server::{delete, list, serve};
 pub use session::{Reply, Session};

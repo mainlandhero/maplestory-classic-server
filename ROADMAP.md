@@ -199,14 +199,51 @@ the work is listed under Stage 3.5.
 - [x] **The name check is answered from the database.** The harness replied "available" to
       every name including ones it had already handed out; the server now distinguishes
       available, already used, and not allowed.
+- [ ] **The create reply is accepted but the client does not transition.** Measured
+      2026-08-18: the server created `TestChar`, sent `0x0015` with result 0, and the client
+      dispatched it (`ret=1`, no fault, no C++ throw) and stayed on the creation screen. The
+      reply is **byte-identical** to the one that transitioned the client on 2026-08-17
+      except for the two copies of the character id — `1` against `200`. Two candidates
+      left: the id itself, and client state (every working run had a character already in
+      the list; this one had none). The id is eliminated for free by seeding ids at 200;
+      `watch@141b36a10:peek=1c0` measures the world-id gate in the same launch.
 - [ ] **Confirm it on screen.** The end-to-end transport and every reply are verified
       against `tools/login_smoke.py`, a stand-in client built on the independent Python
       transport — including a stop-and-restart with the character still listed. What that
-      cannot show is the client's *reaction*. One launch settles it: create a character,
-      close, relaunch, and look at the list.
-- [ ] **The account is configuration, not a login.** The game socket carries no
-      credentials, so `--account` decides whose characters every connection sees. Closing
-      this is Stage 3.5 — see `docs/launcher.md`.
+      cannot show is the client's *reaction*, which is exactly where the item above bit.
+
+#### Two goals the owner set on 2026-08-18
+
+- [ ] **Real sessions, so more than one account can be served.** Today `--account` decides
+      whose characters *every* connection sees, which is fine for one tester and wrong as
+      soon as there are two. Testing-grade is acceptable for now (the owner's words). The order:
+      1. **Measure whether a launch-argument token reaches the server.** `-NXLDEBUG` puts
+         arguments 3 onward into the config's six-slot session array at `+0x90`; whether
+         outbound `0x0073` transmits them is the open question, and it is the same
+         measurement Stage 3.5 needs. `login.log` now records packet bodies, so passing six
+         distinguishable tokens on a launch answers it as a side effect.
+      2. **If they arrive:** the launcher authenticates against `crates/auth`, passes the
+         single-use token, and the login server resolves the account by calling `/consume`.
+         That is the real design and it is already half-built.
+      3. **If they do not:** fall back to one login server per account on its own port,
+         which works today and needs no protocol. Ugly, but honest and testable.
+      Either way `Session` should take its account from a resolver rather than from
+      configuration, so the swap is one function.
+- [ ] **Enforce the three-character limit properly, not with a client patch.** Partly done
+      and worth separating, because two different gates get conflated:
+      * **The server-side limit is done.** `create_character` refuses past `CHARACTER_SLOTS`
+        with `CREATE_INSUFFICIENT_SLOT`, and `a_full_account_is_refused_with_the_slot_code`
+        pins it. A fourth character cannot be stored however the client behaves.
+      * **The client-side limit is driven by what we send** and should already work:
+        `FUN_141b282d0` computes `slotCount - stage+0xe4 - 1`, clamps at zero and checks
+        whether that slot is occupied, raising `insufficientCharacterSlot` if it is. We now
+        send a truthful list and `slotCount`. **Untested with three characters** — worth a
+        deliberate check once creation transitions.
+      * **`create=on` is a *different* gate** and is what still needs removing: it forces
+        the protected flag that enables the button *at all*, which the real service sets
+        from virtualised code. That is open protocol work, not a limit.
+      * Make the slot count a property of the account rather than the constant
+        `CHARACTER_SLOTS` in `crates/net`.
 - [ ] Find what the real service sends to enable character creation. The flag is set by
       `FUN_140c9e230` from **virtualised** code; we currently call it ourselves from
       `grap-stub` (`-Session create=on`), which is a client patch, not the protocol.

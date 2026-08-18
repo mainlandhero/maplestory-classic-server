@@ -92,6 +92,33 @@ pub fn list(config: &Config) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Delete one character by name, so a test can be repeated without hand-editing SQL.
+///
+/// Ownership is still enforced - the delete is scoped to the configured account - so this
+/// cannot reach into someone else's characters just because it runs from a command line.
+pub fn delete(config: &Config, name: &str) -> std::io::Result<()> {
+    let (store, account) = open(config)?;
+    let characters = store
+        .characters_for(account.id, config.world.id)
+        .map_err(|e| std::io::Error::other(format!("could not read characters: {e}")))?;
+
+    let Some(target) = characters.iter().find(|c| c.name.eq_ignore_ascii_case(name)) else {
+        return Err(std::io::Error::other(format!(
+            "account {:?} has no character named {name:?}",
+            account.name
+        )));
+    };
+    let gone = store
+        .delete_character(account.id, target.id)
+        .map_err(|e| std::io::Error::other(format!("could not delete: {e}")))?;
+    if gone {
+        println!("deleted {:?} (id {})", target.name, target.id);
+    } else {
+        println!("nothing deleted - {:?} is not on this account", target.name);
+    }
+    Ok(())
+}
+
 /// Listen, and serve every connection until the process is stopped.
 pub fn serve(config: Config) -> std::io::Result<()> {
     let config = Arc::new(config);
@@ -134,6 +161,25 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// How much of a packet body goes in the log.
+///
+/// Bodies are logged because not logging them cost a diagnosis: a create reply the client
+/// ignored had to be reconstructed by hand to find that it differed from a working one in
+/// two bytes. Capped so a 600-byte login result does not bury the line either side of it.
+const LOG_BODY_BYTES: usize = 96;
+
+fn hex(body: &[u8]) -> String {
+    let shown = body.len().min(LOG_BODY_BYTES);
+    let mut out = String::with_capacity(shown * 3 + 16);
+    for b in &body[..shown] {
+        out.push_str(&format!("{b:02x}"));
+    }
+    if body.len() > shown {
+        out.push_str(&format!("...(+{} bytes)", body.len() - shown));
+    }
+    out
 }
 
 /// How long a client may say nothing before it is sent the startup gate again.
@@ -199,7 +245,15 @@ fn connection(
                 .get(..2)
                 .map(|b| u16::from_le_bytes([b[0], b[1]]))
                 .unwrap_or(0xFFFF);
-            log(&format!("<- 0x{opcode:04X}, {} byte body", body.len().saturating_sub(2)));
+            log(&format!(
+                "<- 0x{opcode:04X}, {} byte body {}",
+                body.len().saturating_sub(2),
+                hex(&body[2.min(body.len())..])
+            ));
+
+            if let Some(note) = crate::session::describe(opcode, &body[2.min(body.len())..]) {
+                log(&format!("   {note}"));
+            }
 
             let replies = session.handle(&body);
             if replies.is_empty() {
@@ -222,5 +276,6 @@ fn send(
     let framed = tx.frame(packet);
     stream.write_all(&framed)?;
     log(&format!("-> 0x{opcode:04X} {what}"));
+    log(&format!("   body {}", hex(&packet[2.min(packet.len())..])));
     Ok(())
 }

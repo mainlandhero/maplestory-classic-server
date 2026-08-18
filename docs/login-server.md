@@ -14,6 +14,7 @@ argument. Everything else here is in service of that.
 cargo build --release -p login
 ./target/release/maplecw-useradd.exe maplecw          # once; prompts for a password
 ./target/release/maplecw-login.exe --list             # what is stored, without listening
+./target/release/maplecw-login.exe --delete NAME      # clear one character and retest
 ./target/release/maplecw-login.exe                    # listen on 127.0.0.1:8484
 ```
 
@@ -156,6 +157,40 @@ Two instrument bugs it caught on itself, both worth remembering:
   socket, so a packet sitting in the OS receive queue read as "nothing sent" — and because
   it was still there next time, every check after it was offset by one and failed.
 
+## OPEN: the client accepts the create reply but does not transition
+
+**Measured 2026-08-18, on the first real client run.** The server created `TestChar`, sent
+`0x0015` with result 0, and the client stayed on the creation screen. Clicking OK again
+correctly reported the name as taken, which is how we know the create had worked.
+
+What was ruled out, each by measurement rather than reasoning:
+
+* **The client received and dispatched it.** Hook log: `7 opcode=0x0015 ... ret=1`.
+* **Nothing faulted.** No client fault and no C++ throw in the hook log, and the throw
+  logging window was open (it starts at +25s; this was +40s).
+* **The handler was not obviously short-circuited.** Its 111.9 microseconds looks damning
+  until you compare neighbours - `0x0010`, which builds the whole character select screen,
+  took 333 microseconds. Sub-millisecond is normal here and proves nothing either way.
+* **The body was right.** Reconstructed and diffed against the reply that *did* transition
+  the client on 2026-08-17: identical across all 353 bytes **except offsets 5 and 9**, the
+  two copies of the character id - `1` against `200`.
+
+So two candidates remained, and the cheap one is eliminated:
+
+1. **The id.** Character ids now start at 200 (`FIRST_CHARACTER_ID`, seeded through
+   `sqlite_sequence`), which makes the reply byte-identical to the working one. Verified by
+   diffing what the server actually logged against `packet-hex create-result-from`.
+2. **Client state.** Every previously working run had a character already in the list; this
+   one had none. Not yet testable without a launch.
+
+`watch@141b36a10:peek=1c0` is now in the default probe and reads `stage+0x1c0`, the world
+id the create-result handler compares ours against - the documented way this fails silently.
+If the id was innocent, that names the real cause in the same launch.
+
+**The instrument gap this exposed:** `login.log` did not record bodies, so the reply had to
+be reconstructed by hand to find a two-byte difference. It records them now, capped at 96
+bytes per packet.
+
 ## Still standing on client patches
 
 The server is real; the run around it is not yet. `test-server.ps1` still applies:
@@ -172,12 +207,45 @@ column.
 
 ## Next
 
-* Confirm on screen, with a launch: create a character, close, relaunch, and see it in the
-  list. That is the one claim only the client can settle.
-* Delete. `crates/store` has `delete_character` with an ownership clause, and the client has
-  a delete result (`0x0016`, body is a `u32` character id), but the request opcode has not
-  been identified and nothing is wired up.
-* Character slots are a constant `3`. The client computes the free slot from it and the list
-  length, and the server refuses a create past it — but the number should come from the
-  account eventually.
-* The account gap above, which is Stage 3.5.
+* **Settle the transition above.** One launch, and it now measures two things at once.
+* Confirm persistence on screen: create, close, relaunch, see it in the list.
+
+### Two goals the owner set on 2026-08-18
+
+**Real sessions, so more than one account can be served.** `--account` serving everyone is
+fine for one tester and wrong for two. The blocker is that the game socket carries no
+credentials. The order of work:
+
+1. **Measure whether a launch-argument token reaches us.** `-NXLDEBUG` routes arguments 3
+   onward into the client config's six-slot session array at `+0x90`. `0x0073` is now
+   decoded into the log - mode, identity string, machine tail - and `test-server.ps1` takes
+   `-SessionTokens`, so any launch answers it as a side effect.
+2. **If tokens arrive:** the launcher authenticates against `crates/auth`, passes the
+   single-use token, and the login server resolves the account through `/consume`. Half of
+   that already exists.
+3. **If they do not:** one login server per account on its own port. Crude, works today,
+   needs no protocol.
+
+Either way `Session` should take its account from a resolver rather than from config.
+
+**The three-character limit, enforced rather than patched.** Three separate things, and
+conflating them is how a workaround becomes permanent:
+
+* **Server-side: done.** `create_character` refuses past `CHARACTER_SLOTS` with
+  `CREATE_INSUFFICIENT_SLOT`, pinned by `a_full_account_is_refused_with_the_slot_code`. A
+  fourth character cannot be stored whatever the client does.
+* **Client-side: driven by what we send, and untested at three.** `FUN_141b282d0` computes
+  `slotCount - stage+0xe4 - 1`, clamps at zero and checks whether that slot is occupied,
+  raising `insufficientCharacterSlot` if it is. We send a truthful list and slot count, so
+  it should work - worth a deliberate check once creation transitions.
+* **`create=on` is a different gate.** It forces the flag that enables the button *at all*,
+  which the real service sets from virtualised code. Removing that is finding the packet,
+  not enforcing a limit, and it is the honest remaining item.
+* The slot count should become a property of the account rather than a constant in
+  `crates/net`.
+
+### Also open
+
+* Deletion over the protocol. `maplecw-login --delete NAME` exists for testing and
+  `crates/store` enforces ownership in the statement, but the client's delete *request*
+  opcode has not been identified. The result is `0x0016`, body a `u32` character id.

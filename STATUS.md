@@ -106,13 +106,56 @@ agree.
 character is drawn, and drawn correctly. Every packet-level fact in this repo that turned out
 to be wrong was wrong about a body the client read differently, not about a byte count.
 
+### OPEN, and it is the immediate blocker
+
+**The client accepts the create reply and does not transition to character select.**
+Measured on the first real run, 2026-08-18: the server created `TestChar`, sent `0x0015`
+with result 0, the client dispatched it (`ret=1`), and it stayed on the creation screen.
+Clicking OK again reported the name as taken - which is how we know the create had worked.
+
+Ruled out by measurement: the client did receive and dispatch it; nothing faulted and no
+C++ throw was logged with the window open; and the handler's 111.9 microseconds proves
+nothing, because `0x0010` - which builds the whole character select screen - took 333.
+
+**The body was reconstructed and diffed** against the reply that transitioned the client on
+2026-08-17: identical across all 353 bytes **except offsets 5 and 9**, the two copies of the
+character id, `1` against `200`. So the id was the only byte-level variable, and it is now
+eliminated - ids start at 200 (`FIRST_CHARACTER_ID`, seeded through `sqlite_sequence`) and
+the served body has been verified byte-identical to the working one.
+
+The remaining candidate is **client state**: every previously working run had a character
+already in the list, and this one had none. `watch@141b36a10:peek=1c0` is in the default
+probe now and reads the world id the create-result handler compares ours against, which is
+the documented way this fails silently. One launch covers both.
+
+**Instrument gap this exposed, now closed:** `login.log` did not record packet bodies, so
+that reply had to be rebuilt by hand. It records them now, capped at 96 bytes.
+
 ### Still open
 
 * **Confirm on screen.** Create, close, relaunch, look at the list. One launch.
 * **The account is configuration, not a login** - see below.
-* Deletion: `crates/store` has `delete_character` with an ownership clause and the client has
-  a delete result (`0x0016`, body a `u32` id), but the request opcode is unidentified.
+* Deletion over the protocol. `maplecw-login --delete NAME` exists for testing, and the
+  store enforces ownership in the statement, but the client's delete *request* opcode is
+  unidentified. The result is `0x0016`, body a `u32` id.
 * The slot count is the constant `3` rather than a property of the account.
+
+### Two goals the owner set on 2026-08-18
+
+**Real sessions, so more than one account can be served.** `--account` serving every
+connection is fine for one tester and wrong for two. Testing-grade is acceptable for now.
+The blocker is that the game socket carries no credentials, so the order is: measure whether
+a launch-argument token reaches us (`0x0073` is now decoded into the log, and
+`test-server.ps1` takes `-SessionTokens`, so any launch answers it); if it does, wire the
+launcher through `crates/auth` `/consume`; if it does not, run one login server per account
+per port. Either way `Session` should take its account from a resolver, not from config.
+
+**The three-character limit, enforced rather than patched.** Three things that get
+conflated: the **server-side limit is done** and tested, so a fourth character cannot be
+stored whatever the client does; the **client-side limit is driven by the truthful list and
+slot count we now send** and should work, but is untested at three; and **`create=on` is a
+different gate** - it forces the flag that enables the button at all, which is open protocol
+work rather than a limit. Details in `docs/login-server.md`.
 
 ## NOT AUTHENTICATED - say so when reporting
 

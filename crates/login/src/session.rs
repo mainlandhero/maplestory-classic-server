@@ -270,6 +270,45 @@ fn read_str(payload: &[u8]) -> Option<String> {
     Some(String::from_utf8_lossy(bytes).into_owned())
 }
 
+/// The client's session identity, `0x0073`. Built by `FUN_141b21ea0` alongside the login
+/// request. Nothing here answers it - it is decoded only so the log can show what the
+/// client thinks its identity is, which is the open question for multi-account support.
+const CLIENT_SESSION_IDENTITY: u16 = 0x0073;
+
+/// A human-readable note about a packet we do not answer, or `None` if there is nothing
+/// worth saying. Pure, so the interesting decode is testable without a socket.
+///
+/// # Why `0x0073` in particular
+///
+/// It is the only thing the client sends that could carry an account identity, and
+/// **whether it can is unmeasured**. `-NXLDEBUG` routes launch arguments 3 onward into the
+/// client config's six-slot session array at `+0x90`; if those arrive here, a launcher can
+/// pass a single-use token and the server can stop serving every connection as one
+/// configured account. If they do not, multi-account needs a different route entirely.
+///
+/// Decoding it costs nothing and makes any launch answer the question, rather than
+/// spending a launch on it later. Measured so far: a first `u32` of `5` (the launch mode),
+/// then a **zero-length** identity string, then a constant 20-byte tail that is a MAC
+/// address and a machine id - recorded, never authorised on, since the client machine is
+/// not fixed.
+pub fn describe(opcode: u16, payload: &[u8]) -> Option<String> {
+    if opcode != CLIENT_SESSION_IDENTITY {
+        return None;
+    }
+    let mode = payload
+        .get(..4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))?;
+    let identity = read_str(&payload[4..]).unwrap_or_default();
+    let tail_at = 4 + 2 + identity.len();
+    let tail = payload.get(tail_at..).unwrap_or(&[]);
+    Some(format!(
+        "session identity: mode={mode} identity={identity:?} ({} bytes) tail={} \
+         - NOT used to pick the account; see docs/login-server.md",
+        identity.len(),
+        tail.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    ))
+}
+
 /// Build a request body the way the client does: opcode, then payload.
 pub fn request(opcode: u16, payload: &[u8]) -> Vec<u8> {
     let mut out = opcode.to_le_bytes().to_vec();
@@ -547,6 +586,40 @@ mod tests {
         let mut b = Session::new(store, config, theirs);
         let replies = b.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
         assert!(replies.last().unwrap().what.contains("0 character"));
+    }
+
+    #[test]
+    fn the_session_identity_is_decoded_for_the_log() {
+        // The body measured on the wire: mode 5, an empty identity string, then the
+        // 20-byte machine tail.
+        let mut payload = 5u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+
+        let note = describe(CLIENT_SESSION_IDENTITY, &payload).expect("0x0073 is decoded");
+        assert!(note.contains("mode=5"), "{note}");
+        assert!(note.contains(r#"identity="""#), "{note}");
+        assert!(note.contains("aabbccddeeff"), "{note}");
+    }
+
+    #[test]
+    fn a_launcher_token_in_the_identity_would_be_visible_in_the_log() {
+        // The whole point of decoding it: if the session array at +0x90 ever reaches us,
+        // the token shows up as the identity string instead of an empty one.
+        let token = "abc123";
+        let mut payload = 5u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&(token.len() as u16).to_le_bytes());
+        payload.extend_from_slice(token.as_bytes());
+
+        let note = describe(CLIENT_SESSION_IDENTITY, &payload).unwrap();
+        assert!(note.contains(r#"identity="abc123""#), "{note}");
+    }
+
+    #[test]
+    fn describe_says_nothing_about_packets_it_does_not_decode() {
+        assert!(describe(CLIENT_LOGIN_REQUEST, &[]).is_none());
+        // And a truncated identity must not panic.
+        assert!(describe(CLIENT_SESSION_IDENTITY, &[1, 2]).is_none());
     }
 
     #[test]

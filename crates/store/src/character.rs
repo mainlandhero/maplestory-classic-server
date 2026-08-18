@@ -278,6 +278,36 @@ mod tests {
     }
 
     #[test]
+    fn the_first_character_id_is_the_one_the_client_has_accepted() {
+        // Ids start at 200, not 1. On 2026-08-18 a create reply carrying id 1 was
+        // byte-identical to one that had transitioned the client except for the two
+        // copies of this id, and the client did not transition. 200 is the value that
+        // was working.
+        let (store, account) = store_with_account();
+        let first = store.create_character(account, 0, &named("First")).unwrap();
+        assert_eq!(first.id, crate::db::FIRST_CHARACTER_ID);
+    }
+
+    #[test]
+    fn the_id_seed_does_not_add_a_second_sequence_row() {
+        // sqlite_sequence has no UNIQUE constraint on `name`, so an INSERT OR IGNORE
+        // would append a duplicate rather than skip - and two rows for one table is not
+        // something AUTOINCREMENT is defined against. Guarded here because the schema
+        // runs on every open, not just on create.
+        let (store, account) = store_with_account();
+        store.create_character(account, 0, &named("First")).unwrap();
+        let rows: i64 = store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'characters'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
     fn the_assigned_id_is_distinct_per_character() {
         // A canned reply once sent id 200 twice and the client dropped the second
         // character, so distinctness is a protocol requirement rather than tidiness.

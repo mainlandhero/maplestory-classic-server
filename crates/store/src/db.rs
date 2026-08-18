@@ -11,6 +11,9 @@ use crate::session::{hash_token, new_token, NewSession};
 /// How long an issued session stays valid.
 pub const SESSION_TTL_SECS: i64 = 15 * 60;
 
+/// The id the first character gets. See the note beside the `sqlite_sequence` seed.
+pub const FIRST_CHARACTER_ID: u32 = 200;
+
 #[derive(Debug, Clone)]
 pub struct Account {
     pub id: i64,
@@ -120,6 +123,25 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS idx_characters_account
                 ON characters(account_id, world_id);
+
+            -- Character ids start at FIRST_CHARACTER_ID rather than 1.
+            --
+            -- Not cosmetic, and not superstition: on 2026-08-18 a create reply carrying
+            -- id 1 was byte-identical to a reply that had previously transitioned the
+            -- client to character select EXCEPT for the two copies of this id, and the
+            -- client did not transition. Small ids are the untested value; the working
+            -- one was 200. If a measurement later shows the id was innocent this seed
+            -- can go, but a real service does not number characters from 1 anyway.
+            --
+            -- sqlite_sequence already exists because `accounts` is AUTOINCREMENT. It has
+            -- no UNIQUE constraint on `name`, so INSERT OR IGNORE would append a SECOND
+            -- 'characters' row rather than skip - hence the guarded insert and the
+            -- separate raise, which are together idempotent and safe on a database that
+            -- already has characters in it.
+            INSERT INTO sqlite_sequence (name, seq)
+                 SELECT 'characters', 199
+                  WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'characters');
+            UPDATE sqlite_sequence SET seq = 199 WHERE name = 'characters' AND seq < 199;
             "#,
         )?;
         Ok(Self { conn: Mutex::new(conn) })

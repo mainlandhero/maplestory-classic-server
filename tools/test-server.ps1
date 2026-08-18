@@ -48,9 +48,30 @@ param(
     [string]$Database,
     [string]$World = 'Scania',
     [string]$Session = 'mode=2,create=on',
-    # Four watch slots. The first two are load-bearing; the last two report a second
-    # stack-cookie failure if the client dies anyway, which would mean a different bug.
-    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,142e9ebd0:hits=8',
+    # Four watch slots, all used.
+    #
+    #   1415db360:ret     skip the reachability check - without it the client __fastfails
+    #   141b2a280:rdx=0   suppress the login dialog that blocks the Login button's tick
+    #   142ef3e44:hits=8  the /GS site, so a second stack overflow would still be visible
+    #   141b36a10:peek=1c0  the create-result handler, reading stage+0x1c0
+    #
+    # The last slot is the open question. FUN_141b36a10 handles 0x0015 and compares the
+    # world id we send against stage+0x1c0; if they differ it returns having registered
+    # nothing and shown nothing, which is indistinguishable from the packet never arriving.
+    # On 2026-08-18 the client dispatched a successful 0x0015 and stayed on the creation
+    # screen, so this reads the value it compared against. It replaces the watch on
+    # 142e9ebd0 (the virtualised routine), which should never be entered now that the
+    # reachability check is skipped, and was not entered on the last run.
+    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141b36a10:peek=1c0',
+    # Extra launch arguments, space separated. -NXLDEBUG routes arguments 3 onward into the
+    # client config's six-slot session array at +0x90. Whether outbound 0x0073 transmits
+    # them is unmeasured and it is what decides whether a launcher token can identify an
+    # account - so passing six distinguishable tokens answers it as a side effect of a run
+    # that was happening anyway. login.log records packet bodies, so read 0x0073 there.
+    #
+    # One delimited string, not an array: `powershell -File` flattens an array into
+    # separate words and the rest bind positionally, which has already cost a run.
+    [string]$SessionTokens = '',
     [string]$ClientDir
 )
 
@@ -160,8 +181,14 @@ Write-Host "session patches: $Session"
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
 # with "requires elevation".
+$launchArgs = @('-NXLDEBUG', '127.0.0.1', "$Port")
+if ($SessionTokens) {
+    $launchArgs += ($SessionTokens -split '\s+' | Where-Object { $_ })
+    Write-Host "session tokens (config +0x90): $SessionTokens"
+    Write-Host '  -> read login.log for the 0x0073 body and look for them'
+}
 $p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
-    -ArgumentList @('-NXLDEBUG', '127.0.0.1', "$Port") -PassThru
+    -ArgumentList $launchArgs -PassThru
 
 $exitLog = Join-Path $root 'client-exit.log'
 Remove-Item $exitLog -ErrorAction SilentlyContinue
