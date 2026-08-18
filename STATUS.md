@@ -85,10 +85,42 @@ against `test-one.ps1`'s existing flow first, then retire the probe opcode by op
 
 ### Standing constraints for it
 
-* **Passwords hashed and salted** - `crates/store` already does argon2id. Never plain text.
+* **Passwords hashed and salted** - `crates/store` already does argon2id. Never plain text,
+  and never on the game socket: that cipher is obfuscation, not security.
 * The client is a **separate, firewalled copy** in `client-patched/`; the original install
   stays untouched.
-* Loopback only.
+
+### Build it for two machines from the start - see `docs/deployment.md`
+
+The owner will host this on a homelab box, so **the client and the server are not the same
+machine**. Designing for that now is cheap; retrofitting it is not. The three things that
+actually change:
+
+1. **The firewall rule breaks the moment the server moves off-box.** It blocks all outbound
+   from the client, and has been harmless only because *Windows Firewall does not filter
+   loopback* - the script's own docstring says so. Off-box, our own traffic is caught by the
+   rule that blocks Nexon. It has to become a block whose remote address is the complement of
+   the server. The twenty Nexon addresses must stay blocked, so `-SkipNetCheck` is still
+   required either way.
+2. **Bind address is not advertise address.** Whatever packet eventually carries a channel
+   address must carry the address the *client* can reach. Which packet that is has not been
+   established - `0x0011` is the candidate and it is Stage 4.
+3. **Machine identity must not be an authorisation input.** `0x0073` and `0x0078` carry a MAC
+   list and a machine id; record them, never gate on them, or a second machine cannot play.
+
+`crates/auth` already has the right shape for this - `POST /login` for the launcher,
+`POST /consume` for the login server, tokens stored only as hashes. It binds loopback only
+today and will need a configurable bind plus TLS.
+
+### And a launcher - see `docs/launcher.md`
+
+The owner asked for a minimal launcher that applies the client patches and takes a username and
+password, since the real client uses a validated session. The design is written; the piece
+that has to be **measured before it can be finished** is whether the session array at config
+`+0x90` - which `-NXLDEBUG` fills from launch arguments 3 onward - is what outbound `0x0073`
+transmits. One run with six distinguishable tokens answers it. Until `/consume` actually
+gates the login result, the launcher is not authenticating anything and should not be
+described as if it were.
 
 ## SOLVED - the ~37 second exit (kept for the method, not the answer)
 
@@ -410,7 +442,8 @@ That means, end to end and against a real server-side implementation:
 (`--answer`), not one-shots.
 
 ### Read these first
-
+* **`docs/deployment.md`** - running the server on another machine, and what breaks first.
+* **`docs/launcher.md`** - the launcher, the patch inventory, and how each patch retires.
 * **`docs/character.md`** - the whole transaction, the complete record layout, the NewChar
   screen, the create-request body, and what is still not established.
 * `docs/opcodes.md`, `docs/session.md`, `docs/handshake.md`, `docs/transport.md`.

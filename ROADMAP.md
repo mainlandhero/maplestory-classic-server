@@ -126,14 +126,20 @@ Each stage ends in something observable.
       key is a decoy; the real one is read from the running client. See `docs/transport.md`.
 
 ### Stage 2.5 — Auth server + our own launcher
-The client will not get past startup without the session handoff its launcher normally
-performs: bare `WEBSTART` exits cleanly rather than proceeding (`research/client-launch.md`).
-So we build that half ourselves rather than trying to patch the requirement away.
+**Premise corrected 2026-08-17.** This stage used to open "the client will not get past
+startup without the session handoff its launcher normally performs", on the strength of bare
+`WEBSTART` exiting cleanly. That is no longer true of the route we take: **`-NXLDEBUG` puts
+the client in mode 5 and it reaches character select with no launcher at all**, which is how
+every run this month has worked. A launcher is now wanted for the reasons the owner gave - applying
+the client patches without a PowerShell script, and taking a username and password so a
+session is validated - not because startup demands one. Design in **`docs/launcher.md`**;
+the work is listed under Stage 3.5.
 
-- [ ] **Determine the handoff mechanism** — how the launcher passes the session to the
-      game: command line, registry, environment, named pipe, or a token file. This is the
-      open question; answer it from the `WEBSTART` string xrefs in Ghidra, or by watching
-      a launch with Process Monitor.
+- [x] **The handoff mechanism, partly.** `-NXLDEBUG` routes launch arguments from the third
+      onward into the config's six-slot session array at `+0x90`; `test-one.ps1
+      -SessionTokens` exercises it. **Still to measure:** whether that array is what outbound
+      `0x0073` transmits, and in which field - which is what decides whether a launcher-issued
+      token can gate the login result.
 - [ ] `crates/auth`: HTTP/JSON auth server, SQLite accounts, issues short-lived session
       tokens. Stands in for Nexon Passport.
 - [ ] `crates/auth` **user-admin CLI** (`maplecw-useradd`): create/list/disable accounts
@@ -151,9 +157,9 @@ So we build that half ourselves rather than trying to patch the requirement away
   command-line argument.
 - Session tokens are random (from a CSPRNG), short-lived, and stored hashed, so a leaked
   database does not hand over live sessions.
-- [ ] `crates/launcher`: authenticates against `crates/auth`, then starts
-      `MapleStory.exe` in `WEBSTART` mode carrying the session. CLI first; a small GUI
-      later if it is warranted.
+- [ ] `crates/launcher`: authenticates against `crates/auth`, then starts the client. Not
+      `WEBSTART` - `-NXLDEBUG <server> <port> <token...>`, the mode we actually use. See
+      Stage 3.5 and `docs/launcher.md`.
 - [ ] The login server (Stage 3) validates the same session token, so the two agree on
       who the player is.
 
@@ -201,6 +207,32 @@ So we build that half ourselves rather than trying to patch the requirement away
       record already carries an equip map and the create request already carries four items.
       Names must be unique: `0x0081` is a name-availability check, and answering it
       truthfully is the first thing a real server does that the harness cannot.
+
+### Stage 3.5 — Off-box deployment and a launcher  ← *added 2026-08-17*
+The owner will host this on a homelab box, so the client and the server are **not** the same
+machine, and they want a minimal launcher that applies the client patches and takes a
+username and password. Designs: **`docs/deployment.md`** and **`docs/launcher.md`**.
+- [ ] `firewall.ps1 -AllowServer <ip>`: the blanket outbound block has been harmless only
+      because Windows Firewall does not filter loopback. Off-box it blocks our own traffic
+      too, so it must become a block whose remote address is the complement of the server.
+      The twenty Nexon addresses stay blocked, so `-SkipNetCheck` is still required.
+- [ ] Split **bind** from **advertise** in every service config. Whatever packet carries a
+      channel address must carry one the *client* can reach; which packet that is is not yet
+      established (candidate: `0x0011`, Stage 4).
+- [ ] `crates/auth`: configurable bind (it hardcodes `127.0.0.1`) and TLS. Never expose it
+      to the internet. Credentials must never travel on the game socket - that cipher is
+      obfuscation, not security.
+- [ ] **Measure whether the session array at config `+0x90` is what outbound `0x0073`
+      transmits**, and in which field. `-NXLDEBUG` fills it from launch arguments 3 onward
+      and `-SessionTokens` already exercises it; six distinguishable tokens and one capture
+      settles it. This decides whether the launcher's token can gate the login result.
+- [ ] `crates/launcher` (Rust + `eframe`/`egui`, one static exe): verify the client build by
+      hash before patching — every patch is an absolute VA — install `grap64.dll`, write one
+      `maplecw.toml` in place of the marker files, authenticate, launch.
+- [ ] Retire patches rather than accumulate them. `suppress_login_dialog` hides a result
+      code 12 we should be preventing; `enable_creation` stands in for a packet we have not
+      found; `mode=2` may already be unnecessary — it is applied ~100ms *after* the client
+      auto-logs in, so test whether anything breaks without it.
 
 ### Stage 4 — Channel server / enter world
 - [ ] `crates/channel`: accept a migrating client, spawn the character into a map.
