@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-17 (creation works end to end; the 25s exit is the blocker)
+# Where things stand — 2026-08-17 (creation works end to end; the exit is a client `__fastfail`)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -11,9 +11,10 @@ and every one of them has been measured, not guessed.
 
 Two things remain, and **the owner set the priority on 2026-08-17: the exit comes first.**
 
-1. **The client exits ~25 seconds after reaching character select.** It caps every run to
-   about that long, which is barely enough for the click sequence creation needs, and it
-   will block everything after this. See "THE PRIORITY" below.
+1. **The client `__fastfail`s ~27 seconds after the login result** - exit code
+   `0xC0000409`, measured. It ends itself; nothing external is involved. That caps every
+   run to about one click sequence. The next step is one launch with no clicking at all;
+   see "THE PRIORITY" below.
 2. **Character creation is not yet done by the server** - the harness answers with canned
    bodies from `packet-hex`. Nothing persists, and the reply cannot read the name out of
    the request. See "What is left of character creation".
@@ -36,74 +37,81 @@ Where the answers land:
 | file | what is in it |
 |---|---|
 | `probe.log` | every packet in both directions, with bodies |
-| `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults - **not** `hook.log`, and not the repo root |
-| `client-exit.log` | how the client died: exit code, lifetime, CPU time, job membership, and who held a handle to it. Written by `tools/exit-forensics.ps1` |
+| `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults - **not** `hook.log`, and not the repo root. Before 2026-08-17 this landed in a file called `on` whenever the launching shell was already elevated; fixed |
+| `client-exit.log` | how the client died: exit code, lifetime, CPU time, job membership, and who held a handle to it. Written by `tools/exit-forensics.ps1`. **Read the `EXIT code` line first** |
 
-## THE PRIORITY - why the client exits after 25 seconds
+## THE PRIORITY - the client `__fastfail`s ~27s after the login result
 
-Unsolved, and it is the blocker. What is **ruled out**, each by a verified instrument
-rather than by silence:
+**How it dies is now measured: exit code `0xC0000409`, `STATUS_STACK_BUFFER_OVERRUN`.** On
+x64 that is `__fastfail` - `int 0x29`. The client ends *itself*, deliberately.
 
-| ruled out | how |
+That one fact explains every negative collected before it, and they were all real:
+
+| what was seen | why `__fastfail` produces it |
 |---|---|
-| An inbound idle timeout | keepalives at +10s and +20s; it still died at +27s |
-| `ntdll!RtlExitUserProcess` | `int3` planted and read back; never entered |
-| `ntdll!NtTerminateProcess` | same; never entered |
-| Any fault a vectored handler sees | the probe logs client faults; none |
-| A crash or `__fastfail` | the Windows Application log has no error for any of these exits, **and that log works** - it holds a real `MapleStory.exe` `0xc0000005` from 2026-08-14 |
+| no vectored handler ever saw a fault | `int 0x29` traps straight to the kernel and is never dispatched to user-mode handlers |
+| `RtlExitUserProcess` never entered | a fail-fast does not go through the ordinary exit path |
+| `NtTerminateProcess` never entered | same |
+| no thread drain before the process vanished | every thread is torn down at once by the kernel |
+| nothing external held a terminate handle | there is nothing external to find |
 
-The interval is measured from **reaching character select**, not from connection start, and
-our traffic does not restart it:
+**RETRACTED: "a crash or `__fastfail` is ruled out".** That rested on the Windows
+Application log holding no error for these exits. The log does work - it holds a real
+MapleStory `0xc0000005` - but a fail-fast is not required to produce a WER Application
+Error entry, and here it produced none. The log-based negative only ever covered
+WER-reported crashes, and it was stretched past what it could carry.
 
-| run | login result sent | client exits | interval |
+**It is not an external kill, and that is now measured rather than assumed.** The elevated
+handle scan through the client's whole life found only `lsass`, three `svchost`s,
+`RadeonSoftware` and `audiodg` holding handles to it - no Nexon process, no protection
+process, nothing that appeared before the exit. The owner's anticheat-service hypothesis is not
+supported.
+
+**The instruments did speak, which is what makes the silence readable.** Both
+`ntdll!RtlExitUserThread` and `ntdll!NtTerminateThread` armed with verified `int3`s and
+each fired six times for ordinary thread exits, the last 5.8s before death, with the
+200-hit cap nowhere near reached. Neither fired at the exit, exactly as a fail-fast
+predicts.
+
+### The timing, and the one thing it does not yet distinguish
+
+| run | login result | exit | interval |
 |---|---|---|---|
 | 1 | 15:52:36 | 15:53:03 | 27s |
 | 2 | 16:03:44 | 16:04:09 | 25s |
 | 3 (keepalives on) | 16:13:52 | 16:14:19 | 27s |
+| 4 (creation completed, enter-game attempted) | 20:50:12 | 20:50:39 | 27s |
 
-**Two explanations survive:**
+Four runs, 25-27 seconds, regardless of what was clicked in between - including run 4,
+which created a character and attempted to enter the game. That is a timer, not a reaction
+to any particular packet.
 
-1. **Another process kills it.** Its `NtTerminateProcess` runs in *that* process, where our
-   hook is not, which is exactly why an in-process breakpoint sees nothing.
-2. **The last thread ends**, and the kernel reaps the process without any of the functions
-   above being called.
+**But which clock it hangs off is not yet established.** In run 4 the client also died
+36.8s after process start, and the client takes about the same time to reach the login
+screen every run, so "27s after the login result" and "~37s after launch" fit the same
+data. They call for opposite next steps:
 
-**The run that decides it is wired and waiting - it needs one launch.**
-`test-charselect.ps1` now arms both surviving explanations at once:
+* **anchored to the login result** - the client is waiting for something the server owes it
+  after character select, and the fail-fast is a timeout;
+* **anchored to process start** - it is a periodic check, and **our own patching is a live
+  suspect**: the dispatcher detour and the `int3` at `0x141b2a280` sit permanently in
+  `.text`, and an integrity scan over `.text` would find them.
 
-| instrument | answers |
-|---|---|
-| `watch@ntdll!RtlExitUserThread:hits=200` | did a thread of the client end itself |
-| `watch@ntdll!NtTerminateThread:hits=200` | the syscall under that, and under `TerminateThread` |
-| `tools/exit-forensics.ps1` -> `client-exit.log` | the exit code, the lifetime in both wall-clock and CPU time, job membership, and who held a handle to the client carrying `PROCESS_TERMINATE` |
+**The experiment that splits them needs one launch and no clicking.** Start
+`test-charselect.ps1`, then touch nothing for 90 seconds at the login screen. If it dies at
+~37s while still on the login screen, the clock runs from process start. If it is still
+alive at 90s, the clock starts at the login result - click Login then and time it.
 
-**The reading is fixed in advance, so it cannot drift to fit the result.** A `WATCH` on
-either ntdll function at the moment of death means the client ended itself - path 2 - and
-the `called-from` on that line names what decided it. Silence on both, with the hit cap
-demonstrably not reached, means no client code ran on the way out - path 1 - and the last
-handle scan in `client-exit.log` is the suspect list.
+### Where to look once that is answered
 
-**Run the shell elevated.** Unelevated, the handle scan cannot duplicate handles held by
-services running as SYSTEM - the control run could not reach 1087 of 1564 process handles.
-Every scan line reports that count, so a short list is never mistaken for an empty one.
+`.text` holds 63 byte-sequences matching `CD 29` (`int 0x29`), and `.boot` another 140.
+Most will be false positives - x86 is variable-length, so the scan is not
+instruction-aligned - but it is a bounded list to disassemble, and
+`tools/ghidra_scripts/DumpAsm.java` is the tool for confirming which are real
+instructions. Note that `.themida` holds none, so the fail-fast is *not* inside the VM.
 
-**A discarded discriminator, recorded so it is not tried again.** "An orderly shutdown
-drains threads, an external kill does not" is **false**. Measured 2026-08-17 against two
-control processes: one exited normally with code 42, one was killed with
-`TerminateProcess`, and *both* showed 24 live threads in the last sample before they
-vanished. `ExitProcess` ends every other thread in the kernel, running no user code and
-taking no measurable time, so no sample rate separates them. What did separate the controls
-is the exit code - `0xFFFFFFFF` for the killed one, `0x0000002A` for the one that chose its
-own - which is why that is what `client-exit.log` leads with.
-
-**Do not** re-test the keepalive or re-watch `RtlExitUserProcess`. Both are settled. But
-note what ruling out `RtlExitUserProcess` did *not* settle: on path 2 the last thread
-reaches `NtTerminateThread` and the kernel ends the process from there **without** passing
-through `RtlExitUserProcess`, so that negative never argued against path 2 at all.
-
-If it does turn out to be path 1, the question becomes *which* process.
-`NexonAnalytics64.dll` is loaded in-process and has a service side, and the owner's standing
-hypothesis is that an anticheat which cannot reach its server kills the client.
+**Do not** re-test the keepalive, re-watch `RtlExitUserProcess`, or go looking for an
+external killer. All three are settled.
 
 ## What is left of character creation
 

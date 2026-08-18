@@ -238,24 +238,37 @@ if ((-not $probeAlive) -or ($errText -and $errText.Trim())) {
     return
 }
 
-# The dispatcher hook lives in our grap64.dll stub, which the client loads itself, so
-# enabling it is just an environment variable the child process inherits.
+# The dispatcher hook lives in our grap64.dll stub, which the client loads itself.
+#
+# -HookLog is a switch, not a path: every caller passes "on". It used to be assigned
+# straight into MAPLECW_HOOK_LOG, which the DLL treats as a filename - so the log landed in
+# a file literally called "on", next to the client. That only showed up when the launching
+# shell was already elevated: without elevation ShellExecute has to go through UAC and the
+# child inherits no environment, so the DLL fell back to its default name and the bug was
+# invisible. Resolve to an absolute path here and both cases land in the same place.
 if ($HookLog) {
-    if (Test-Path $HookLog) { Remove-Item $HookLog -Force }
-    # Marker file beside the client, read by the hook at startup.
+    $hookLogPath = if ($HookLog -in @('on', 'true', 'yes', '1')) {
+        Join-Path $ClientDir 'maplecw-hook.log'
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path $root $HookLog))
+    }
+    # Marker file beside the client, read by the hook at startup. This is what actually
+    # switches the hook on, because the environment does not always survive the launch.
     New-Item -ItemType File -Path (Join-Path $ClientDir 'maplecw-hook.enable') -Force | Out-Null
-    # The DLL appends, and it writes beside the client rather than to -HookLog when the
-    # env var does not propagate. Clear it, or two runs concatenate and the second looks
-    # like a continuation of the first - which already caused one wrong conclusion.
-    Remove-Item (Join-Path $ClientDir 'maplecw-hook.log') -ErrorAction SilentlyContinue
-    $env:MAPLECW_HOOK_LOG = $HookLog
-    # Also enable the stub's own call log, next to it. If neither file appears, the DLL
-    # is not running our code at all; if only this one does, the hook install is at fault.
-    $env:GRAP_STUB_LOG = "$HookLog.stub"
-    if (Test-Path $env:GRAP_STUB_LOG) { Remove-Item $env:GRAP_STUB_LOG -Force }
-    Write-Host "dispatcher hook enabled -> $HookLog (stub log -> $HookLog.stub)"
+    # Clear it, or two runs concatenate and the second looks like a continuation of the
+    # first - which already caused one wrong conclusion. Clear the DLL's own default name
+    # too, so a stale file from a differently-configured run cannot be read as this one.
+    Remove-Item $hookLogPath -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.log') -Force -ErrorAction SilentlyContinue
+    $env:MAPLECW_HOOK_LOG = $hookLogPath
+    # Also enable the stub's own call log, next to it. If neither file appears, the DLL is
+    # not running our code at all; if only this one does, the hook install is at fault.
+    $env:GRAP_STUB_LOG = "$hookLogPath.stub"
+    Remove-Item $env:GRAP_STUB_LOG -Force -ErrorAction SilentlyContinue
+    Write-Host "dispatcher hook enabled -> $hookLogPath (stub log -> $($env:GRAP_STUB_LOG))"
 } else {
     Remove-Item Env:\MAPLECW_HOOK_LOG -ErrorAction SilentlyContinue
+    Remove-Item Env:\GRAP_STUB_LOG -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.enable') -ErrorAction SilentlyContinue
 }
 

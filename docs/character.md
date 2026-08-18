@@ -430,6 +430,37 @@ out bodies up to 256 bytes.
 one-shots - `handshake_probe.py --answer`. The `0x0014` body must quote the name back,
 which is what `<req>` is for.
 
+## Entering the game: what the client sends, measured 2026-08-17
+
+Clicking a character and pressing the button to enter the world produced three packets in
+one burst, none of which we answer yet. This is the first time any of them has been on the
+wire, so treat the field readings below as decoded-from-one-capture, not confirmed.
+
+| out | bytes | reading |
+|---|---|---|
+| `0x00BC` | `09 04 00 00` x3 | three identical `u32` 0x409. Sent alongside the burst; purpose unknown |
+| `0x0078` | see below | **the select-character / migrate request** |
+| `0x0079` | `u32 200`, `"Hello"`, then eight `u32`s | carries the chosen character's id and name back with a block of numbers |
+
+`0x0078` decodes cleanly against its lengths, which is what makes it readable at all:
+
+```text
+00 00 00 00              u32 0
+01 00 2e                 string "."      <- the placeholder PIC, the same one 0x00A8 sends
+c8 00 00 00              u32 200         <- the character id we assigned in 0x0015
+00                       u8 0
+24 00 "AA-BB-CC-DD-EE-FF, 00-00-00-00-00-00"    string, 36 bytes - the MAC list
+15 00 "AABBCCDDEEFF_DEADBEEF"                   string, 21 bytes - a machine id
+```
+
+That shape - character id, MAC list, machine id - is the classic select-character request,
+and the leading PIC string is the same placeholder the creation screen accepts. **Nothing
+was sent back**, so what the client does with a reply is still unknown, and the run ended
+before anything could be learned from waiting.
+
+This does not settle the `0x0011` lead recorded below; it identifies the *request* the
+client makes, not the reply that moves it into a map.
+
 ## What is *not* established
 
 * **What the real service sends to enable character creation.** The flag `FUN_140c9e3f0`

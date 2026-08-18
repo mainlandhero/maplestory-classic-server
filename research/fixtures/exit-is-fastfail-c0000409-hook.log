@@ -1,0 +1,56 @@
+20:50:03.178 install_once: our code IS running. env=true marker=true -> installing
+20:50:07.138 install: base=0x140000000 target=0x1415d60e0
+20:50:07.139 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+20:50:07.139 probe: watching 0x141b2a280 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+20:50:07.139 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+20:50:07.139 probe: ntdll!RtlExitUserThread resolves to 0x7fff12d9ec30
+20:50:07.139 probe: watch on 0x7fff12d9ec30 will log up to 200 hits
+20:50:07.139 probe: watching 0x7fff12d9ec30 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 200)
+20:50:07.140 probe: ntdll!NtTerminateThread resolves to 0x7fff12dee060
+20:50:07.140 probe: watch on 0x7fff12dee060 will log up to 200 hits
+20:50:07.140 probe: watching 0x7fff12dee060 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 200)
+20:50:07.140 install: hook active
+20:50:07.140 ***** WATCH #1: 0x7fff12d9ec30 ENTERED on tid 129184 while dispatching opcode 0x0000 rcx=0x0 rdx=0x450000 (as i32 4521984) [0x00000000] r8=0x3 r9=0x1 called-from=0x7fff11e6737d *****
+20:50:07.141 ***** WATCH #1: 0x7fff12dee060 ENTERED on tid 129184 while dispatching opcode 0x0000 rcx=0x0 rdx=0x0 (as i32 0) r8=0x3d9000 r9=0x1 called-from=0x7fff12d9ec7e *****
+20:50:07.340 session: object at 0x67941d8 is now readable
+20:50:07.340 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:08.179 ***** WATCH #2: 0x7fff12d9ec30 ENTERED on tid 118908 while dispatching opcode 0x0000 rcx=0x0 rdx=0x450000 (as i32 4521984) [0x00000000] r8=0x2 r9=0x1 called-from=0x7fff11e6737d *****
+20:50:08.180 ***** WATCH #2: 0x7fff12dee060 ENTERED on tid 118908 while dispatching opcode 0x0000 rcx=0x0 rdx=0x0 (as i32 0) r8=0x212000 r9=0x1 called-from=0x7fff12d9ec7e *****
+20:50:08.357     0 opcode=0x0032 elapsed_us=95.5 ret=117647952 flag=0->1 state=0->2
+20:50:08.357 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+20:50:08.543 ***** SOCKET conn=0x5abec68 +0x20=0x6d0 - the client holds a socket *****
+20:50:08.624 ***** WATCH #3: 0x7fff12d9ec30 ENTERED on tid 133468 while dispatching opcode 0x0032 rcx=0x0 rdx=0x9a57ae4 (as i32 161839844) [0x00000000] r8=0x19999999 r9=0x5 called-from=0x7fff11e6737d *****
+20:50:08.625 ***** WATCH #3: 0x7fff12dee060 ENTERED on tid 133468 while dispatching opcode 0x0032 rcx=0x0 rdx=0x0 (as i32 0) r8=0x2d6000 r9=0x1 called-from=0x7fff12d9ec7e *****
+20:50:08.636 ***** WATCH #4: 0x7fff12d9ec30 ENTERED on tid 133460 while dispatching opcode 0x0032 rcx=0x0 rdx=0x0 (as i32 0) r8=0x1 r9=0x0 called-from=0x7fff11e6737d *****
+20:50:08.637 ***** WATCH #4: 0x7fff12dee060 ENTERED on tid 133460 while dispatching opcode 0x0032 rcx=0x0 rdx=0x0 (as i32 0) r8=0x2d2000 r9=0x1 called-from=0x7fff12d9ec7e *****
+20:50:09.144 ***** SOCKET 0x6d0 is now VALID (client still holds it) *****
+20:50:10.147 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:12.474 ***** WATCH #1: 0x141b2a280 ENTERED on tid 131332 while dispatching opcode 0x0032 rcx=0x334480a8 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+20:50:12.475       forced rdx -> 0x0
+20:50:12.523     1 opcode=0x0000 elapsed_us=436.6 ret=1 flag=1->1 state=2->2
+20:50:12.523 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+20:50:12.523     2 opcode=0x000B elapsed_us=240.6 ret=1 flag=1->1 state=2->2
+20:50:12.524     3 opcode=0x000B elapsed_us=159.6 ret=1 flag=1->1 state=2->2
+20:50:12.524 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+20:50:12.524     4 opcode=0x0010 elapsed_us=556.4 ret=1 flag=1->1 state=2->2
+20:50:12.856 ***** WATCH #5: 0x7fff12d9ec30 ENTERED on tid 133456 while dispatching opcode 0x0010 rcx=0x0 rdx=0x0 (as i32 0) r8=0x1 r9=0x0 called-from=0x7fff107a98ca
+      stack: 0x142f0fd0b<-TEXT 0x142f0fe61<-TEXT 0x142f0fca5<-TEXT *****
+20:50:12.857 ***** WATCH #5: 0x7fff12dee060 ENTERED on tid 133456 while dispatching opcode 0x0010 rcx=0x0 rdx=0x0 (as i32 0) r8=0x2d0000 r9=0x1 called-from=0x7fff12d9ec7e
+      stack: 0x142f0fd0b<-TEXT 0x142f0fe61<-TEXT 0x142f0fca5<-TEXT *****
+20:50:13.155 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:16.164 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:18.682     5 opcode=0x05F4 elapsed_us=113.6 ret=1 flag=1->1 state=2->2
+20:50:19.174 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:22.178 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:22.533     6 opcode=0x0023 elapsed_us=112.0 ret=1 flag=1->1 state=2->2
+20:50:25.184 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:25.983     7 opcode=0x0014 elapsed_us=1200431.4 ret=1 flag=1->1 state=2->2
+20:50:25.994     8 opcode=0x0015 elapsed_us=1383.2 ret=1 flag=1->1 state=2->2
+20:50:28.204 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:31.209 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:32.584     9 opcode=0x0023 elapsed_us=102.4 ret=1 flag=1->1 state=2->2
+20:50:33.252 ***** WATCH #6: 0x7fff12d9ec30 ENTERED on tid 132828 while dispatching opcode 0x0023 rcx=0x0 rdx=0x0 (as i32 0) r8=0x1 r9=0x0 called-from=0x7fff107a98ca *****
+20:50:33.253 ***** WATCH #6: 0x7fff12dee060 ENTERED on tid 132828 while dispatching opcode 0x0023 rcx=0x0 rdx=0x0 (as i32 0) r8=0x214000 r9=0x1 called-from=0x7fff12d9ec7e *****
+20:50:34.216 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:50:37.222 ***** SESSION obj=0x67941d8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
