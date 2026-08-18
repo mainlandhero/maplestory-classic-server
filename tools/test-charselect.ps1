@@ -198,12 +198,21 @@ $testOneArgs = @(
 if ($SkipNetCheck) {
     # 142ef3e44 stays armed: if the client dies anyway, this says whether it was still a
     # stack cookie failure - a different overflow - or something else entirely.
+    # 141b2a280:rdx=0 is not optional and was missing from the first version of this mode:
+    # without it the "trouble logging in" dialog blocks the tick that enables the Login
+    # button, exactly as the -Probe parameter above says. Four slots, all used:
+    #   1415db360:ret     skip the reachability check - the fix
+    #   141b2a280:rdx=0   suppress the login dialog
+    #   142ef3e44:hits=8  the /GS site, so a second overflow would still be visible
+    #   142e9ebd0:hits=8  the virtualised routine, which should now never be entered
     $testOneArgs += @('-HookLog', 'on', '-Session', $Session,
-        '-Probe', 'watch@1415db360:ret,142ef3e44:hits=8,142e9ebd0:hits=8')
+        '-Probe', 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,142e9ebd0:hits=8')
     Write-Host ''
     Write-Host 'SkipNetCheck: FUN_1415db360 will return immediately - the client will not'
     Write-Host 'run its server-reachability check at all. THIS IS A CLIENT PATCH.'
-    Write-Host 'If it works, the client lives past ~37s and you can use it normally.'
+    Write-Host 'Confirmed working: the client lived 92.7s and exited 0 when closed by hand.'
+    Write-Host 'The check is periodic - entered at +36s and +66s - so every cycle would'
+    Write-Host 'otherwise have killed it. Use the client normally.'
     Write-Host 'Watch for "probe: entries to 0x1415db360 will RETURN IMMEDIATELY" in'
     Write-Host '  client-patched\maplecw-hook.log'
 }

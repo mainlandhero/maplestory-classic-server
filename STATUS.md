@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-17 (creation works end to end; the ~37s exit is solved, fix untested)
+# Where things stand — 2026-08-17 (creation works end to end; the ~37s exit is fixed and confirmed)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -14,8 +14,8 @@ Two things remain, and **the owner set the priority on 2026-08-17: the exit come
 1. **The ~37s exit is solved.** The client runs a server-reachability check over twenty
    hardcoded IPs about 36s after launch; the firewall makes all twenty fail; the
    virtualised routine that handles that overruns a 512-byte stack buffer into its own
-   `/GS` cookie and `__fastfail`s. **The fix - `-SkipNetCheck` - is written but not yet
-   run.** See "THE PRIORITY" below.
+   `/GS` cookie and `__fastfail`s. **Fixed and confirmed** by `-SkipNetCheck`, which skips
+   the check: 92.7s of life and a clean exit 0. See "THE PRIORITY" below.
 2. **Character creation is not yet done by the server** - the harness answers with canned
    bodies from `packet-hex`. Nothing persists, and the reply cannot read the name out of
    the request. See "What is left of character creation".
@@ -253,10 +253,22 @@ skipped. `-Probe` grew a `:ret` option: log the entry and return immediately, le
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -SkipNetCheck
 ```
 
+**CONFIRMED WORKING.** The client lived **92.7 seconds** and exited with code
+`0x00000000` when closed by hand - no `__fastfail`. And the check turns out to be
+**periodic, not a one-shot**: `FUN_1415db360` was entered at +36.2s, +66.2s and again
+moments later, each returning harmlessly. `rdx` on those entries reads `30000` and `60000` -
+millisecond timer values - and `called-from` is inside `.themida`, so the scheduler is
+virtualised too. Every 30-second cycle would have killed the client.
+
 **This is a client patch, and it does not make anything reachable - it stops the client
 asking.** Report it as a patch. The `/GS` site stays armed alongside it, so if the client
 dies anyway the log says whether it was still a cookie failure - a second overflow - or
 something else.
+
+**`141b2a280:rdx=0` must be in this mode's watch list**, and was missing from its first
+version: without it the "trouble logging in" dialog blocks the tick that enables the Login
+button, which cost a run. All four slots are used now, and the reason for each is in the
+script.
 
 Firewall untouched. Turning it off would presumably also stop the crash, by letting the
 check succeed, but that means letting the patched client reach Nexon - which is what the
@@ -320,7 +332,7 @@ That means, end to end and against a real server-side implementation:
 | Name check `0x0081`/`0x0014` | **MEASURED** both ways |
 | Create request `0x008A` | **MEASURED** - virtualised builder, so a capture was the only way |
 | Create result `0x0015` | **MEASURED** - the client returns to CharSelect with the new character |
-| Client exits ~37s after launch | **SOLVED** - a firewalled reachability check overruns its buffer; fix is `-SkipNetCheck`, untested |
+| Client exits ~37s after launch | **FIXED** - a firewalled reachability check overran its buffer; `-SkipNetCheck` skips it, confirmed |
 | Server-side creation | not started - the harness answers with canned bodies |
 | Valid session | still faked by client patches |
 
