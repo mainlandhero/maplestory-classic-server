@@ -154,6 +154,13 @@ static WATCH_HITS: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
 /// the exit being investigated - a silent negative of the kind this project has already
 /// paid for more than once.
 static WATCH_LIMIT: [AtomicU32; WATCH_SLOTS] = [WATCH_CAP32; WATCH_SLOTS];
+/// Per-target: return straight away instead of running the function.
+///
+/// For a body that cannot be read - `FUN_1415db360` hands twenty hardcoded server IPs to a
+/// Themida-virtualised routine that overruns its own 512-byte stack buffer when none of
+/// them answer, which is every run here because the client is firewalled. The body cannot
+/// be fixed, so the call is skipped.
+static WATCH_RET: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
 /// `u64::MAX` means "do not force"; anything else is written to RDX on every watch hit.
 static FORCE_RDX: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 /// `u64::MAX` means none; anything else is an offset to read from `rcx` and log.
@@ -469,6 +476,8 @@ struct WatchSpec<'a> {
     force: Option<&'a str>,
     peek: Option<&'a str>,
     hits: Option<&'a str>,
+    /// Return from the function immediately instead of running it.
+    ret: bool,
 }
 
 /// `<target>` followed by any number of `:key=value` options. Neither a hex VA nor
@@ -495,6 +504,7 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
         force: None,
         peek: None,
         hits: None,
+        ret: false,
     };
     for opt in fields {
         let opt = opt.trim();
@@ -504,6 +514,8 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
             parsed.peek = Some(v.trim());
         } else if let Some(v) = opt.strip_prefix("hits=") {
             parsed.hits = Some(v.trim());
+        } else if opt == "ret" {
+            parsed.ret = true;
         } else {
             return Err(format!(
                 "watch spec {spec:?} has an unknown option {opt:?} - refusing to arm"
@@ -514,8 +526,8 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
 }
 
 unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
-    let (target_txt, force, peek, hits) = match parse_watch_spec(spec) {
-        Ok(p) => (p.target, p.force, p.peek, p.hits),
+    let (target_txt, force, peek, hits, want_ret) = match parse_watch_spec(spec) {
+        Ok(p) => (p.target, p.force, p.peek, p.hits, p.ret),
         Err(why) => {
             log(&format!("probe: {why}"));
             return;
@@ -527,6 +539,12 @@ unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
         ));
         return;
     };
+    if want_ret {
+        WATCH_RET[slot].store(1, Ordering::SeqCst);
+        log(&format!(
+            "probe: entries to {va:#x} will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH"
+        ));
+    }
     if let Some(h) = hits {
         let Ok(v) = h.trim().parse::<u32>() else {
             log(&format!("probe: {spec:?} has an unparseable :hits= count"));
@@ -830,6 +848,20 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             if n <= cap {
                 log(&format!("      forced rdx -> {force:#x}"));
             }
+        }
+
+        // `:ret` - skip the function entirely. At the entry breakpoint the return address
+        // is on top of the stack, so returning is RIP = [RSP], RSP += 8. Nothing needs to
+        // be restored or re-armed: execution never resumes at the target, so the int3 can
+        // stay planted for the next call.
+        if WATCH_RET[slot].load(Ordering::SeqCst) == 1 {
+            let rsp = *(ctx.add(CTX_RSP).cast::<u64>());
+            if crate::session::can_read(rsp as usize, 8) {
+                *(ctx.add(CTX_RIP).cast::<u64>()) = *(rsp as *const u64);
+                *(ctx.add(CTX_RSP).cast::<u64>()) = rsp + 8;
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+            log("probe: :ret asked for, but the return address is unreadable - running it");
         }
 
         // Restore the byte and resume *at* the target so the real first instruction runs.
@@ -1201,6 +1233,17 @@ mod tests {
         ] {
             assert!(parse_watch_spec(spec).is_ok(), "{spec} must parse");
         }
+    }
+
+    #[test]
+    fn ret_is_a_bare_flag_and_mixes_with_the_others() {
+        let s = parse_watch_spec("1415db360:ret").expect("valid");
+        assert_eq!(s.target, "1415db360");
+        assert!(s.ret);
+        let s = parse_watch_spec("1415db360:ret:hits=40").expect("valid");
+        assert!(s.ret);
+        assert_eq!(s.hits, Some("40"));
+        assert!(!parse_watch_spec("1415db360").expect("valid").ret);
     }
 
     #[test]

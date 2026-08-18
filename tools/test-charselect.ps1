@@ -101,7 +101,23 @@ param(
     # No session patch and no dialog patch: the client dies at the same ~36.7s stuck behind
     # the "trouble logging in" dialog as it does at character select, so the protocol path
     # is irrelevant here and fewer patches makes a cleaner run.
-    [switch]$FastFail
+    [switch]$FastFail,
+    # Skip the client's server-reachability check, which is what kills it.
+    #
+    # FUN_1415db360 runs once, about 36 seconds after launch, and hands twenty hardcoded
+    # server IPs - 10.9.2.131-133, fifteen on 44.234.x.x, two on 166.117.x.x - to
+    # FUN_142e9ebd0 with a count of 20. That function is Themida-virtualised and overruns
+    # the 0x200-byte local sitting directly beneath its own /GS cookie, so the epilogue's
+    # __security_check_cookie fires __report_gsfailure and the process __fastfails with
+    # 0xC0000409. It is a latent bug on the all-unreachable path, which never happens in
+    # production and happens on every run here, because the patched client is firewalled.
+    #
+    # The body cannot be read or fixed, so the call is skipped: `:ret` returns from
+    # FUN_1415db360 the moment it is entered. THIS IS A CLIENT PATCH, and it does not make
+    # the client reachable - it stops it asking. Say so when reporting.
+    #
+    # Full patches stay on, so a surviving client should reach character select as before.
+    [switch]$SkipNetCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,7 +195,19 @@ $testOneArgs = @(
     '-ReplyTo', '0x0080', '-ReplySeq', $replySeq, '-Answer', $answers,
     '-Keepalive', "$Keepalive", '-Port', "$Port"
 )
-if ($FastFail) {
+if ($SkipNetCheck) {
+    # 142ef3e44 stays armed: if the client dies anyway, this says whether it was still a
+    # stack cookie failure - a different overflow - or something else entirely.
+    $testOneArgs += @('-HookLog', 'on', '-Session', $Session,
+        '-Probe', 'watch@1415db360:ret,142ef3e44:hits=8,142e9ebd0:hits=8')
+    Write-Host ''
+    Write-Host 'SkipNetCheck: FUN_1415db360 will return immediately - the client will not'
+    Write-Host 'run its server-reachability check at all. THIS IS A CLIENT PATCH.'
+    Write-Host 'If it works, the client lives past ~37s and you can use it normally.'
+    Write-Host 'Watch for "probe: entries to 0x1415db360 will RETURN IMMEDIATELY" in'
+    Write-Host '  client-patched\maplecw-hook.log'
+}
+elseif ($FastFail) {
     # abort(7), _invoke_watson(5), __report_gsfailure(2), and the generic __fastfail(code)
     # wrapper. Each logs its caller and a stack scan, which is what names the path.
     # 142e9ebd0 is the function that actually failed, found by the first -FastFail run:

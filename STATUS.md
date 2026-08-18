@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-17 (creation works end to end; the exit is a client `__fastfail` on a fixed deadline)
+# Where things stand — 2026-08-17 (creation works end to end; the ~37s exit is solved, fix untested)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -11,9 +11,11 @@ and every one of them has been measured, not guessed.
 
 Two things remain, and **the owner set the priority on 2026-08-17: the exit comes first.**
 
-1. **The client `__fastfail`s ~36.9 seconds after process start** - exit code
-   `0xC0000409`, measured twice to within 0.07s. It ends itself, on a wall-clock deadline
-   that owes nothing to the wire. Next control is `-NoPatch`; see "THE PRIORITY" below.
+1. **The ~37s exit is solved.** The client runs a server-reachability check over twenty
+   hardcoded IPs about 36s after launch; the firewall makes all twenty fail; the
+   virtualised routine that handles that overruns a 512-byte stack buffer into its own
+   `/GS` cookie and `__fastfail`s. **The fix - `-SkipNetCheck` - is written but not yet
+   run.** See "THE PRIORITY" below.
 2. **Character creation is not yet done by the server** - the harness answers with canned
    bodies from `packet-hex`. Nothing persists, and the reply cannot read the name out of
    the request. See "What is left of character creation".
@@ -39,7 +41,7 @@ Where the answers land:
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults - **not** `hook.log`, and not the repo root. Before 2026-08-17 this landed in a file called `on` whenever the launching shell was already elevated; fixed |
 | `client-exit.log` | how the client died: exit code, lifetime, CPU time, job membership, and who held a handle to it. Written by `tools/exit-forensics.ps1`. **Read the `EXIT code` line first** |
 
-## THE PRIORITY - the client `__fastfail`s ~36.9s after launch
+## THE PRIORITY - SOLVED: a firewalled reachability check overruns its own buffer
 
 **How it dies is now measured: exit code `0xC0000409`, `STATUS_STACK_BUFFER_OVERRUN`.** On
 x64 that is `__fastfail` - `int 0x29`. The client ends *itself*, deliberately.
@@ -199,24 +201,66 @@ That Nexon chose to virtualise this particular function says it is security-rele
 4668-byte function taking `(ptr, ptr, int, bool)` that builds something into a 512-byte
 stack buffer on a timer has the shape of a periodic report builder.
 
-### The next run: what is it called with
+### SOLVED: it is a server-reachability check overrunning its own buffer
 
-```bash
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -FastFail
+The second `-FastFail` run answered it. `FUN_142e9ebd0` was entered **exactly once**, and
+`__report_gsfailure` followed 150ms later:
+
+```text
+21:22:34.185 WATCH #1: 0x142e9ebd0 ENTERED ... rcx=0x14cb18 [0x0000067c]
+                       rdx=0x14cb20 [0x0009000a] r8=0x14 r9=0x1 called-from=0x1415db7ac
+21:22:34.335 WATCH #1: 0x142ef3e44 ENTERED ... called-from=0x142e9fe03
+21:22:34.601 EXIT code 0xC0000409 after 36.7s
 ```
 
-`-FastFail` now watches `142e9ebd0` itself with a 40-hit cap, keeping the three CRT paths
-armed so a different route is not mistaken for this one. The watch dereferences `rcx` and
-`rdx` as both bytes and UTF-16, so a format string or a name shows up in the log directly.
+Once, not repeatedly - so it is on a timer, not a loop that eventually goes wrong.
 
-What it decides:
+`.pdata` puts the caller in `0x1415db360 .. 0x1415db7d6`, next door to the packet
+dispatcher at `0x1415d60e0`, and **that function is not virtualised**. It builds a table of
+twenty 4-`u16` groups on its stack and passes it as the second argument with `0x14` - 20 -
+as the third. `rdx` dereferenced to `0x0009000a` in the log, which is `10, 9`: the first two
+octets of the first entry. They are IP addresses:
 
-* **called many times, failing only at ~36.6s** - compare the arguments across calls; the
-  last one differs, and that difference is the overflow.
-* **called once** - it is on a timer, and the arguments say what it was building.
-* **never entered, `int3` verified** - it is reached by a jump from inside the VM rather
-  than a call, and the next move is a hardware breakpoint (debug registers) instead, since
-  those need no memory write and can be set on the `.themida` target.
+```text
+ 1. 10.9.2.131        8. 44.234.161.18     15. 44.234.176.71
+ 2. 10.9.2.132        9. 44.234.171.239    16. 44.234.175.183
+ 3. 10.9.2.133       10. 44.234.78.153     17. 44.234.167.70
+ 4. 44.234.166.161   11. 44.234.182.63     18. 44.234.181.229
+ 5. 44.234.167.163   12. 44.234.171.56     19. 166.117.115.214
+ 6. 44.234.163.43    13. 44.234.162.137    20. 166.117.144.41
+ 7. 44.234.175.85    14. 44.234.159.5
+```
+
+Three Nexon-internal addresses, fifteen on AWS `us-west-2`, two more elsewhere.
+
+**So the mechanism, end to end:** about 36 seconds after launch the client runs a
+server-reachability check over twenty hardcoded addresses. The routine that does the work is
+virtualised and writes its result into a `0x200`-byte stack buffer that sits directly under
+its `/GS` cookie. **The patched client is firewalled, so all twenty fail**, and the
+all-unreachable path overruns that buffer. `__security_check_cookie` catches it in the
+epilogue, `__report_gsfailure` raises `int 0x29`, and the process dies with `0xC0000409`.
+
+It is a latent bug in the client, on a path that never runs in production because the
+servers are always reachable, and runs on every one of ours because they never are.
+
+### The fix, and why it does not touch the firewall
+
+Neither the buffer nor the routine can be fixed - the body is inside the VM. So the call is
+skipped. `-Probe` grew a `:ret` option: log the entry and return immediately, leaving the
+`int3` planted. Pointed at `FUN_1415db360`, the check never runs.
+
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -SkipNetCheck
+```
+
+**This is a client patch, and it does not make anything reachable - it stops the client
+asking.** Report it as a patch. The `/GS` site stays armed alongside it, so if the client
+dies anyway the log says whether it was still a cookie failure - a second overflow - or
+something else.
+
+Firewall untouched. Turning it off would presumably also stop the crash, by letting the
+check succeed, but that means letting the patched client reach Nexon - which is what the
+rule exists to prevent, and is the owner's call rather than ours.
 
 **Do not** re-test the keepalive, re-watch `RtlExitUserProcess`, go looking for an external
 killer, or blame our own patches. All four are settled, each by a measurement. And do not
@@ -276,7 +320,7 @@ That means, end to end and against a real server-side implementation:
 | Name check `0x0081`/`0x0014` | **MEASURED** both ways |
 | Create request `0x008A` | **MEASURED** - virtualised builder, so a capture was the only way |
 | Create result `0x0015` | **MEASURED** - the client returns to CharSelect with the new character |
-| Client exits ~36.9s after launch | **THE BLOCKER** - a `__fastfail` on a fixed deadline; see "THE PRIORITY" |
+| Client exits ~37s after launch | **SOLVED** - a firewalled reachability check overruns its buffer; fix is `-SkipNetCheck`, untested |
 | Server-side creation | not started - the harness answers with canned bodies |
 | Valid session | still faked by client patches |
 
