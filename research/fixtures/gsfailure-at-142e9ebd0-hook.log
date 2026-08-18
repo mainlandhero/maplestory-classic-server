@@ -1,0 +1,15 @@
+21:15:03.983 install_once: our code IS running. env=true marker=true -> installing
+21:15:08.015 install: base=0x140000000 target=0x1415d60e0
+21:15:08.015 probe: watch on 0x142f048cc will log up to 8 hits
+21:15:08.015 probe: watching 0x142f048cc (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+21:15:08.015 probe: watch on 0x142f04834 will log up to 8 hits
+21:15:08.015 probe: watching 0x142f04834 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+21:15:08.016 probe: watch on 0x142ef3e44 will log up to 8 hits
+21:15:08.016 probe: watching 0x142ef3e44 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+21:15:08.016 probe: watch on 0x142ef4c1c will log up to 8 hits
+21:15:08.016 probe: watching 0x142ef4c1c (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+21:15:08.016 install: hook active
+21:15:09.034     0 opcode=0x0032 elapsed_us=101.1 ret=113501360 flag=0->1 state=0->2
+21:15:09.034 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+21:15:39.557 ***** WATCH #1: 0x142ef3e44 ENTERED on tid 140940 while dispatching opcode 0x0032 rcx=0x14c6c0 [0x2f580900] rdx=0x0 (as i32 0) r8=0x1a3540 r9=0x1 called-from=0x142e9fe03
+      stack: 0x142e9fe03<-TEXT *****

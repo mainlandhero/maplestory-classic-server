@@ -182,10 +182,24 @@ $testOneArgs = @(
 if ($FastFail) {
     # abort(7), _invoke_watson(5), __report_gsfailure(2), and the generic __fastfail(code)
     # wrapper. Each logs its caller and a stack scan, which is what names the path.
-    $ffProbe = 'watch@142f048cc:hits=8,142f04834:hits=8,142ef3e44:hits=8,142ef4c1c:hits=8'
+    # 142e9ebd0 is the function that actually failed, found by the first -FastFail run:
+    # __report_gsfailure fired 226ms before the exit, called from 142e9fe03, which .pdata
+    # puts inside 142e9ebd0..142e9fe0c. It homes four arguments, allocates 0x410, plants the
+    # /GS cookie at [RSP+0x400], and then tail-jumps into .themida - so its body is
+    # virtualised and only its frame is readable. Something in that body writes past the
+    # 0x200-byte local at [RSP+0x200] and into the cookie.
+    #
+    # Watching its entry logs the arguments on every call, and the watch dereferences rcx
+    # and rdx as both bytes and UTF-16, so a format string or a name shows up directly. The
+    # question it answers: is this called repeatedly and only fails at ~36.6s - in which
+    # case compare the arguments - or called once, on a timer.
+    #
+    # The three CRT paths stay armed so a different route is not mistaken for this one.
+    $ffProbe = 'watch@142e9ebd0:hits=40,142ef3e44:hits=8,142f048cc:hits=8,142f04834:hits=8'
     $testOneArgs += @('-HookLog', 'on', '-Probe', $ffProbe)
     Write-Host ''
-    Write-Host 'FastFail: watching the four CRT fatal paths that can raise int 0x29.'
+    Write-Host 'FastFail: watching 142e9ebd0 - the function whose stack cookie was clobbered -'
+    Write-Host 'plus the three CRT fatal paths that can raise int 0x29.'
     Write-Host 'The client will sit behind the "trouble logging in" dialog and die at ~36.7s;'
     Write-Host 'that is expected. Do not click anything. The answer is the WATCH line in'
     Write-Host '  client-patched\maplecw-hook.log'

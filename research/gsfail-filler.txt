@@ -1,0 +1,39 @@
+// 142e9e350 .. 142e9e3af   block=.text
+142e9e350  33 d2                             XOR EDX,EDX
+142e9e352  e9 89 06 00 00                    JMP 0x142e9e9e0
+142e9e357  cc                                INT3
+142e9e358  cc                                INT3
+142e9e359  cc                                INT3
+142e9e35a  cc                                INT3
+142e9e35b  cc                                INT3
+142e9e35c  cc                                INT3
+142e9e35d  cc                                INT3
+142e9e35e  cc                                INT3
+142e9e35f  cc                                INT3
+142e9e360  33 d2                             XOR EDX,EDX
+142e9e362  e9 79 06 00 00                    JMP 0x142e9e9e0
+142e9e367  cc                                INT3
+142e9e368  cc                                INT3
+142e9e369  cc                                INT3
+142e9e36a  cc                                INT3
+142e9e36b  cc                                INT3
+142e9e36c  cc                                INT3
+142e9e36d  cc                                INT3
+142e9e36e  cc                                INT3
+142e9e36f  cc                                INT3
+142e9e370  48 83 ec 38                       SUB RSP,0x38
+142e9e374  48 c7 44 24 20 fe ff ff ff        MOV qword ptr [RSP + 0x20],-0x2
+142e9e37d  48 8b 09                          MOV RCX,qword ptr [RCX]
+142e9e380  48 85 c9                          TEST RCX,RCX
+142e9e383  74 06                             JZ 0x142e9e38b
+142e9e385  e8 b6 3d 00 00                    CALL 0x142ea2140
+142e9e38a  90                                NOP
+142e9e38b  48 83 c4 38                       ADD RSP,0x38
+142e9e38f  c3                                RET
+142e9e390  48 89 4c 24 08                    MOV qword ptr [RSP + 0x8],RCX
+142e9e395  48 83 ec 38                       SUB RSP,0x38
+142e9e399  48 c7 44 24 20 fe ff ff ff        MOV qword ptr [RSP + 0x20],-0x2
+142e9e3a2  48 8b 4c 24 40                    MOV RCX,qword ptr [RSP + 0x40]
+142e9e3a7  e8 24 00 00 00                    CALL 0x142e9e3d0
+142e9e3ac  90                                NOP
+142e9e3ad  48 8b 44 24 40                    MOV RAX,qword ptr [RSP + 0x40]

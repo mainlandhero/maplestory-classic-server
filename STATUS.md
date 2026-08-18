@@ -148,31 +148,75 @@ Ghidra disassembled, which is `.text`. `.boot` is Themida's own 12.8 MB and hold
 packer's runtime would not appear in the table above. If none of the four watches below
 fire, that is where to look next.
 
-### The next run: name the path
+### FOUND: a stack cookie failure in a Themida-virtualised function
+
+The `-FastFail` run named it in one launch. Of the four watched CRT entry points, exactly
+one fired:
+
+```text
+21:15:39.557 WATCH #1: 0x142ef3e44 ENTERED on tid 140940 ... called-from=0x142e9fe03
+21:15:39.783 EXIT code 0xC0000409 after 36.6s
+```
+
+`0x142ef3e44` is `__report_gsfailure`, reason code `2`,
+`FAST_FAIL_STACK_COOKIE_CHECK_FAILURE`. **A stack buffer overrun**, 226ms before the
+process died - not `abort`, not the invalid-parameter handler. And it fired on **tid
+140940, the main thread**, which was the first thread in the process.
+
+`.pdata` puts the caller inside **`0x142e9ebd0 .. 0x142e9fe0c`** (4668 bytes).
+`tools/pdata_lookup.py` is new and does this lookup: Ghidra had no function containing that
+address and `getFunctionContaining` returned null, so `DecompileFunc` created one at the
+epilogue, which decompiles to nothing. The PE exception table is authoritative - the linker
+wrote it - and it has 120,981 entries covering every function with unwind data.
+
+The function's frame is readable even though its body is not:
+
+```text
+142e9ebd0  MOV [RSP+0x20],R9B      four arguments homed: ptr, ptr, int, bool
+142e9ebdf  MOV [RSP+0x8],RCX
+142e9ebe4  PUSH RDI
+142e9ebe5  SUB RSP,0x410
+142e9ebec  MOV RAX,[0x143a8b908]   __security_cookie
+142e9ebf3  XOR RAX,RSP
+142e9ebf6  MOV [RSP+0x400],RAX     planted
+142e9ebfe  JMP 0x144f94a9c         <- tail jump into .themida
+...
+142e9fddf  LEA RCX,[RSP+0x200]     a 0x200-byte local
+142e9fde7  CALL 0x142e9e350        a thunk: XOR EDX,EDX; JMP 0x142e9e9e0 - a destructor
+142e9fdfa  MOV RCX,[RSP+0x400]     the cookie, immediately above that local
+           XOR RCX,RSP
+142e9fdfe  CALL 0x142ef44b0        __security_check_cookie
+142e9fe03  ADD RSP,0x410           <- the called-from the watch recorded
+```
+
+**Its body is virtualised.** The prologue plants the cookie in plain code and tail-jumps
+into `.themida`; everything after that address disassembles as noise, which is exactly the
+`halt_baddata()` blind spot, and `Xrefs` finds no references to it because its callers are
+virtualised too. So the overflow happens inside the VM, in a body we cannot read, into the
+`0x200`-byte local that sits directly beneath the cookie.
+
+That Nexon chose to virtualise this particular function says it is security-relevant, and a
+4668-byte function taking `(ptr, ptr, int, bool)` that builds something into a 512-byte
+stack buffer on a timer has the shape of a periodic report builder.
+
+### The next run: what is it called with
 
 ```bash
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -FastFail
 ```
 
-Four watches, one per CRT fatal entry point, each logging its caller and a stack scan. No
-session patch and no dialog patch - run 6 showed the client dies on the same deadline stuck
-behind the "trouble logging in" dialog, so the protocol path is irrelevant and fewer
-patches makes a cleaner run. Nothing to click.
+`-FastFail` now watches `142e9ebd0` itself with a 40-hit cap, keeping the three CRT paths
+armed so a different route is not mistaken for this one. The watch dereferences `rcx` and
+`rdx` as both bytes and UTF-16, so a format string or a name shows up in the log directly.
 
-The probe also now logs C++ throws (`0xE06D7363`), but **only after +25s and capped at 32**.
-They are routine here - the packet decoders raise one on underflow - so logging them all
-would bury the line that matters; the window is chosen to sit just before the ~36.9s
-deadline.
+What it decides:
 
-What the answers mean:
-
-* **a `WATCH` on `142f048cc`** - `abort()`, so almost certainly an uncaught C++ exception.
-  The `called-from` and any `C++ THROW` line name the thrower.
-* **a `WATCH` on `142f04834`** - the CRT was handed an invalid parameter. The stack says by
-  whom.
-* **a `WATCH` on `142ef3e44`** - a stack cookie was corrupted: a real buffer overrun.
-* **nothing fires, with the `int3`s verified** - the fail-fast is in `.boot`, i.e. Themida's
-  own runtime, and the next move is disassembling there rather than in `.text`.
+* **called many times, failing only at ~36.6s** - compare the arguments across calls; the
+  last one differs, and that difference is the overflow.
+* **called once** - it is on a timer, and the arguments say what it was building.
+* **never entered, `int3` verified** - it is reached by a jump from inside the VM rather
+  than a call, and the next move is a hardware breakpoint (debug registers) instead, since
+  those need no memory write and can be set on the `.themida` target.
 
 **Do not** re-test the keepalive, re-watch `RtlExitUserProcess`, go looking for an external
 killer, or blame our own patches. All four are settled, each by a measurement. And do not
@@ -272,6 +316,8 @@ That means, end to end and against a real server-side implementation:
 | `-Probe watch@A,B,C` | up to four `int3` watches, each logging the calling thread id; `<module>!<export>` for relocated modules; options `:rdx=` forces an argument, `:peek=` logs `[rcx+off]`, `:hits=` sets the per-target log cap (default 32) |
 | `tools/exit-forensics.ps1` | how the client died, from outside: exit code, thread table, job membership, handle holders. Started automatically by `test-one.ps1`; verified against a killed and an orderly control |
 | `tools/handle-holders.ps1` | which processes hold a handle to a given pid and may terminate it. Read-only; **needs elevation** or the list is silently short |
+| `tools/pdata_lookup.py` | exact function bounds from the PE exception table - **use when Ghidra has no function** for an address, rather than letting `DecompileFunc` create one at the wrong place |
+| `tools/ghidra_scripts/FindFastFail.java` | the real `int 0x29` sites, by walking the disassembly rather than scanning bytes |
 | `-Session mode=2,create=on` | the client patches, comma separated |
 | `tools/ghidra_scripts/DecompileFunc.java` | decompile by address, creating the function if Ghidra has none |
 | `tools/ghidra_scripts/Xrefs.java` | callers, and data references |

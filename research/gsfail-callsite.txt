@@ -1,0 +1,111 @@
+// 142e9fd60 .. 142e9fe9f   block=.text
+142e9fd60  d7                                XLAT RBX
+142e9fd61  0c 19                             OR AL,0x19
+142e9fd63  d4 b2 ba 17 7a f4 e7 6f 92 ae ce c0 0c 43 93 f4   <no instruction>
+142e9fd64  b2 ba                             MOV DL,0xba
+142e9fd66  17 7a f4 e7 6f 92 ae ce c0 0c 43 93 f4 cd 3c 52   <no instruction>
+142e9fd67  7a f4                             JP 0x142e9fd5d
+142e9fd69  e7 6f                             OUT 0x6f,EAX
+142e9fd6b  92                                XCHG EAX,EDX
+142e9fd6c  ae                                SCASB RDI
+142e9fd6d  ce c0 0c 43 93 f4 cd 3c 52 00 71 c4 f3 59 d9 fe   <no instruction>
+142e9fd6e  c0 0c 43 93                       ROR byte ptr [RBX + RAX*0x2],0x93
+142e9fd72  f4                                HLT
+142e9fd73  cd 3c                             INT 0x3c
+142e9fd75  52                                PUSH RDX
+142e9fd76  00 71 c4                          ADD byte ptr [RCX + -0x3c],DH
+142e9fd79  f3 59                             POP RCX
+142e9fd7b  d9 fe                             FSIN
+142e9fd7d  da 86 16 4e c8 67                 FIADD dword ptr [RSI + 0x67c84e16]
+142e9fd83  6d                                INSD RDI,DX
+142e9fd84  a5                                MOVSD RDI,RSI
+142e9fd85  89 34 7f                          MOV dword ptr [RDI + RDI*0x2],ESI
+142e9fd88  87 25 ad bc 3c c6                 XCHG dword ptr [0x10926ba3b],ESP
+142e9fd8e  bd b1 81 d4 9b                    MOV EBP,0x9bd481b1
+142e9fd93  c8 13 75 5a                       ENTER 0x7513,0x1a
+142e9fd97  0d 24 18 72 10                    OR EAX,0x10721824
+142e9fd9c  ac                                LODSB RSI
+142e9fd9d  64 72 b7                          JC 0x142e9fd57
+142e9fda0  5d                                POP RBP
+142e9fda1  fe 19                             INC byte ptr [RCX]
+142e9fda3  c7 a0 a4 37 46 b7 1e 82 39 33 d0 5a 88 4a 22 3a   <no instruction>
+142e9fda4  a0 a4 37 46 b7 1e 82 39 33        MOV AL,[0x3339821eb74637a4]
+142e9fdad  d0 5a 88                          RCR byte ptr [RDX + -0x78],0x1
+142e9fdb0  4a 22 3a                          AND DIL,byte ptr [RDX]
+142e9fdb3  42 16 78 37 12 70 b7 3e 03 3b a7 e7 8d c0 09 e3   <no instruction>
+142e9fdb4  16 78 37 12 70 b7 3e 03 3b a7 e7 8d c0 09 e3 fb   <no instruction>
+142e9fdb5  78 37                             JS 0x142e9fdee
+142e9fdb7  12 70 b7                          ADC DH,byte ptr [RAX + -0x49]
+142e9fdba  3e 03 3b                          ADD EDI,dword ptr DS:[RBX]
+142e9fdbd  a7                                CMPSD RDI,RSI
+142e9fdbe  e7 8d                             OUT 0x8d,EAX
+142e9fdc0  c0 09 e3                          ROR byte ptr [RCX],0xe3
+142e9fdc3  fb                                STI
+142e9fdc4  a6                                CMPSB RDI,RSI
+142e9fdc5  b2 86                             MOV DL,0x86
+142e9fdc7  8f 62 c2 eb 7c b6 49 d3 b4 ac 61 cb e7 ea d8 b6   <no instruction>
+142e9fdc8  62 c2 eb 7c b6 49 d3 b4 ac 61 cb e7 ea d8 b6 d4   <no instruction>
+142e9fdc9  c2 eb 7c                          RET 0x7ceb
+142e9fdcc  b6 49                             MOV DH,0x49
+142e9fdce  d3 b4 ac 61 cb e7 ea              SHL dword ptr [RSP + RBP*0x4 + -0x1518349f],CL
+142e9fdd5  d8 b6 d4 18 88 c0                 FDIV float ptr [RSI + -0x3f77e72c]
+142e9fddb  88 c0                             MOV AL,AL
+142e9fddd  88 c0                             MOV AL,AL
+142e9fddf  48 8d 8c 24 00 02 00 00           LEA RCX,[RSP + 0x200]
+142e9fde7  e8 64 e5 ff ff                    CALL 0x142e9e350
+142e9fdec  8b 84 24 e4 00 00 00 48 8b 8c 24 00 04 00 00 48   <no instruction>
+142e9fded  84 24 e4 00 00 00 48 8b 8c 24 00 04 00 00 48 33   <no instruction>
+142e9fdee  24 e4                             AND AL,0xe4
+142e9fdf0  00 00                             ADD byte ptr [RAX],AL
+142e9fdf2  00 48 8b                          ADD byte ptr [RAX + -0x75],CL
+142e9fdf5  8c 24 00                          MOV word ptr [RAX + RAX*0x1],FS
+142e9fdf8  04 00                             ADD AL,0x0
+142e9fdfa  00 48 33                          ADD byte ptr [RAX + 0x33],CL
+142e9fdfd  cc                                INT3
+142e9fdfe  e8 ad 46 05 00                    CALL 0x142ef44b0
+142e9fe03  48 81 c4 10 04 00 00              ADD RSP,0x410
+142e9fe0a  5f                                POP RDI
+142e9fe0b  c3                                RET
+142e9fe0c  cc                                INT3
+142e9fe0d  cc                                INT3
+142e9fe0e  cc                                INT3
+142e9fe0f  cc                                INT3
+142e9fe10  48 3b ca                          CMP RCX,RDX
+142e9fe13  0f 84 af 00 00 00                 JZ 0x142e9fec8
+142e9fe19  57                                PUSH RDI
+142e9fe1a  48 83 ec 20                       SUB RSP,0x20
+142e9fe1e  48 89 5c 24 30                    MOV qword ptr [RSP + 0x30],RBX
+142e9fe23  48 8b fa                          MOV RDI,RDX
+142e9fe26  48 89 6c 24 38                    MOV qword ptr [RSP + 0x38],RBP
+142e9fe2b  48 8d 59 20                       LEA RBX,[RCX + 0x20]
+142e9fe2f  48 89 74 24 40                    MOV qword ptr [RSP + 0x40],RSI
+142e9fe34  48 bd ff ff ff ff ff ff ff 7f     MOV RBP,0x7fffffffffffffff
+142e9fe3e  33 f6                             XOR ESI,ESI
+142e9fe40  48 8b 03                          MOV RAX,qword ptr [RBX]
+142e9fe43  48 83 f8 08                       CMP RAX,0x8
+142e9fe47  72 40                             JC 0x142e9fe89
+142e9fe49  48 8b 4b e8                       MOV RCX,qword ptr [RBX + -0x18]
+142e9fe4d  48 ff c0                          INC RAX
+142e9fe50  48 3b c5                          CMP RAX,RBP
+142e9fe53  0f 87 88 00 00 00                 JA 0x142e9fee1
+142e9fe59  48 03 c0                          ADD RAX,RAX
+142e9fe5c  48 3d 00 10 00 00                 CMP RAX,0x1000
+142e9fe62  72 20                             JC 0x142e9fe84
+142e9fe64  f6 c1 1f                          TEST CL,0x1f
+142e9fe67  75 72                             JNZ 0x142e9fedb
+142e9fe69  48 8b 41 f8                       MOV RAX,qword ptr [RCX + -0x8]
+142e9fe6d  48 3b c1                          CMP RAX,RCX
+142e9fe70  73 63                             JNC 0x142e9fed5
+142e9fe72  48 2b c8                          SUB RCX,RAX
+142e9fe75  48 83 f9 08                       CMP RCX,0x8
+142e9fe79  72 54                             JC 0x142e9fecf
+142e9fe7b  48 83 f9 27                       CMP RCX,0x27
+142e9fe7f  77 48                             JA 0x142e9fec9
+142e9fe81  48 8b c8                          MOV RCX,RAX
+142e9fe84  e8 97 59 36 fd                    CALL 0x140205820
+142e9fe89  48 c7 03 07 00 00 00              MOV qword ptr [RBX],0x7
+142e9fe90  48 83 3b 08                       CMP qword ptr [RBX],0x8
+142e9fe94  48 89 73 f8                       MOV qword ptr [RBX + -0x8],RSI
+142e9fe98  72 06                             JC 0x142e9fea0
+142e9fe9a  48 8b 43 e8                       MOV RAX,qword ptr [RBX + -0x18]
+142e9fe9e  eb 04                             JMP 0x142e9fea4

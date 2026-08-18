@@ -1,0 +1,68 @@
+// 142e9ebd0 .. 142e9ec9f   block=.text
+142e9ebd0  44 88 4c 24 20                    MOV byte ptr [RSP + 0x20],R9B
+142e9ebd5  44 89 44 24 18                    MOV dword ptr [RSP + 0x18],R8D
+142e9ebda  48 89 54 24 10                    MOV qword ptr [RSP + 0x10],RDX
+142e9ebdf  48 89 4c 24 08                    MOV qword ptr [RSP + 0x8],RCX
+142e9ebe4  57                                PUSH RDI
+142e9ebe5  48 81 ec 10 04 00 00              SUB RSP,0x410
+142e9ebec  48 8b 05 15 cd be 00              MOV RAX,qword ptr [0x143a8b908]
+142e9ebf3  48 33 c4                          XOR RAX,RSP
+142e9ebf6  48 89 84 24 00 04 00 00           MOV qword ptr [RSP + 0x400],RAX
+142e9ebfe  e9 99 5e 0f 02                    JMP 0x144f94a9c
+142e9ec03  50                                PUSH RAX
+142e9ec04  20 24 9b                          AND byte ptr [RBX + RBX*0x4],AH
+142e9ec07  00 57 ee                          ADD byte ptr [RDI + -0x12],DL
+142e9ec0a  94                                XCHG EAX,ESP
+142e9ec0b  2b 84 e1 00 9c ac f0              SUB EAX,dword ptr [RCX + -0xf536400]
+142e9ec12  f2 db 7b d4                       FSTP extended double ptr [RBX + -0x2c]
+142e9ec16  ad                                LODSD RSI
+142e9ec17  82 64 17 5c 94 92 a0 c9 7e 68 6b 4c 9f 2b f2 c9   <no instruction>
+142e9ec18  64 17 5c 94 92 a0 c9 7e 68 6b 4c 9f 2b f2 c9 bc   <no instruction>
+142e9ec19  17 5c 94 92 a0 c9 7e 68 6b 4c 9f 2b f2 c9 bc 92   <no instruction>
+142e9ec1a  5c                                POP RSP
+142e9ec1b  94                                XCHG EAX,ESP
+142e9ec1c  92                                XCHG EAX,EDX
+142e9ec1d  a0 c9 7e 68 6b 4c 9f 2b f2        MOV AL,[0xf22b9f4c6b687ec9]
+142e9ec26  c9                                LEAVE
+142e9ec27  bc 92 50 71 63                    MOV ESP,0x63715092
+142e9ec2c  d8 f8                             FDIVR ST0,ST0
+142e9ec2e  4e 42 96 dd 9a 38 35 63 72 69 3d 6f cc 5d fe 46   <no instruction>
+142e9ec2f  42 96                             XCHG EAX,ESI
+142e9ec31  dd 9a 38 35 63 72                 FSTP double ptr [RDX + 0x72633538]
+142e9ec37  69 3d 6f cc 5d fe 46 95 cb 79     IMUL EDI,dword ptr [0x14147b8b0],0x79cb9546
+142e9ec41  c5 f1 79 ae 7d 7e 26 13 60 ca 33 37 9e ca 07 3e   <no instruction>
+142e9ec42  f1                                INT1
+142e9ec43  79 ae                             JNS 0x142e9ebf3
+142e9ec45  7d 7e                             JGE 0x142e9ecc5
+142e9ec47  26 13 60 ca                       ADC ESP,dword ptr ES:[RAX + -0x36]
+142e9ec4b  33 37                             XOR ESI,dword ptr [RDI]
+142e9ec4d  9e                                SAHF
+142e9ec4e  ca 07 3e                          RETF 0x3e07
+142e9ec51  a0 b9 1e 24 8e 7c e1 6b 76        MOV AL,[0x766be17c8e241eb9]
+142e9ec5a  71 23                             JNO 0x142e9ec7f
+142e9ec5c  65 bf 3c b7 cb c4                 MOV EDI,0xc4cbb73c
+142e9ec62  66 b0 22                          MOV AL,0x22
+142e9ec65  28 04 5e                          SUB byte ptr [RSI + RBX*0x2],AL
+142e9ec68  81 e1 5d 53 93 18                 AND ECX,0x1893535d
+142e9ec6e  55                                PUSH RBP
+142e9ec6f  3a e0                             CMP AH,AL
+142e9ec71  b5 66                             MOV CH,0x66
+142e9ec73  a1 10 04 2b 70 fc ee cf 9e        MOV EAX,[0x9ecfeefc702b0410]
+142e9ec7c  47 10 7a 7f                       ADC byte ptr [R10 + 0x7f],R15B
+142e9ec80  2f f0 67 24 99 8f b4 a0 95 29 7c 6d 6c 4e f5 54   <no instruction>
+142e9ec81  f0 67 24 99 8f b4 a0 95 29 7c 6d 6c 4e f5 54 e8   <no instruction>
+142e9ec82  67 24 99                          AND AL,0x99
+142e9ec85  8f b4 a0 95 29 7c 6d 6c 4e f5 54 e8 aa 88 65 9f   <no instruction>
+142e9ec86  b4 a0                             MOV AH,0xa0
+142e9ec88  95                                XCHG EAX,EBP
+142e9ec89  29 7c 6d 6c                       SUB dword ptr [RBP + RBP*0x2 + 0x6c],EDI
+142e9ec8d  4e f5                             CMC
+142e9ec8f  54                                PUSH RSP
+142e9ec90  e8 aa 88 65 9f                    CALL 0xe24f753f
+142e9ec95  96                                XCHG EAX,ESI
+142e9ec96  c6 ae fa c6 08 f3 15 e7 c0 53                     <no instruction>
+142e9ec97  ae                                SCASB RDI
+142e9ec98  fa                                CLI
+142e9ec99  c6 08 f3 15 e7 c0 53                              <no instruction>
+142e9ec9a  08 f3                             OR BL,DH
+142e9ec9c  15 e7 c0 53 1c                    ADC EAX,0x1c53c0e7
