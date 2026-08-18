@@ -162,6 +162,15 @@ static PEEK_OFF: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 static VEH_REGISTERED: AtomicBool = AtomicBool::new(false);
 /// Faults reported to the log, capped so a repeating one cannot fill the disk.
 static FAULT_LOGS: AtomicU32 = AtomicU32::new(0);
+/// C++ throws seen, and how many were logged.
+///
+/// These are routine here - the packet decoders raise one on underflow - so logging every
+/// one buries the line that matters. They are logged only inside a window near the
+/// deadline; see [`THROW_LOG_AFTER_MS`].
+static THROWS: AtomicU32 = AtomicU32::new(0);
+static THROW_LOGS: AtomicU32 = AtomicU32::new(0);
+/// `GetTickCount64` when the watches were armed, so the window can be measured.
+static ARMED_AT_MS: AtomicU64 = AtomicU64::new(0);
 /// Set between restoring the original byte and re-planting it one instruction later.
 static WATCH_REARM: AtomicU64 = AtomicU64::new(0);
 static CURRENT_OPCODE: AtomicU32 = AtomicU32::new(0);
@@ -175,6 +184,7 @@ static mut SAVED: Context = Context([0; 1232]);
 extern "system" {
     fn AddVectoredExceptionHandler(first: u32, handler: *const c_void) -> *mut c_void;
     fn GetCurrentThreadId() -> u32;
+    fn GetTickCount64() -> u64;
     fn GetModuleHandleA(name: *const u8) -> *mut c_void;
     fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
     fn RtlCaptureContext(ctx: *mut c_void);
@@ -199,6 +209,19 @@ const TRAP_FLAG: u32 = 0x100;
 /// Stop logging after this many hits, so a function on a per-frame path cannot fill the
 /// disk while someone reads a dialog.
 const WATCH_MAX_HITS: u32 = 32;
+/// A C++ throw (`0xE06D7363`) is only logged once the process is this old.
+///
+/// The client `__fastfail`s on a fixed ~36.9s deadline from launch, and four of the five
+/// sites that can raise it are ordinary CRT fatal paths - `abort` at reason 7, the
+/// invalid-parameter handler at 5, `__report_gsfailure` at 2. An uncaught C++ exception
+/// reaches `abort` through `terminate`, so the throw that kills the client happens shortly
+/// before the deadline. Logging only this window keeps the routine decoder throws out of
+/// the way while catching the one that matters.
+const THROW_LOG_AFTER_MS: u64 = 25_000;
+/// How many throws to log inside that window.
+const THROW_LOG_MAX: u32 = 32;
+/// A C++ exception, as raised by `_CxxThrowException`.
+const CPP_EXCEPTION: u32 = 0xE06D_7363;
 
 #[repr(C)]
 struct ExceptionPointers {
@@ -399,6 +422,7 @@ pub unsafe fn arm_watch() {
     if WATCH_ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
+    ARMED_AT_MS.store(GetTickCount64(), Ordering::SeqCst);
     for (slot, spec) in rest.split(',').filter(|s| !s.trim().is_empty()).enumerate() {
         if slot >= WATCH_SLOTS {
             log(&format!(
@@ -862,6 +886,28 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         //
         // Only faults, and only a few: C++ throws (0xE06D7363) and the debugger traps
         // above are routine here, and logging them would bury the one line that matters.
+        if code == CPP_EXCEPTION {
+            let seen = THROWS.fetch_add(1, Ordering::SeqCst) + 1;
+            let armed = ARMED_AT_MS.load(Ordering::SeqCst);
+            let age = if armed == 0 {
+                0
+            } else {
+                GetTickCount64().saturating_sub(armed)
+            };
+            if age >= THROW_LOG_AFTER_MS {
+                let n = THROW_LOGS.fetch_add(1, Ordering::SeqCst) + 1;
+                if n <= THROW_LOG_MAX {
+                    let rsp = *((*info).context.cast::<u8>().add(CTX_RSP).cast::<u64>()) as usize;
+                    log(&format!(
+                        "***** C++ THROW #{seen} at {at:#x}{} on tid {} at +{age}ms{} *****",
+                        crate::netwatch::module_of(at),
+                        GetCurrentThreadId(),
+                        stack_trace(rsp),
+                    ));
+                }
+            }
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
         if matches!(
             code,
             0xC000_0005 | 0xC000_001D | 0xC000_0025 | 0xC000_008C | 0xC000_008E
@@ -1102,7 +1148,8 @@ pub unsafe fn run(
     let consumed = CONSUMED.load(Ordering::Relaxed);
     let total = to - from;
     log(&format!(
-        "probe: finished 0x{from:04X}..0x{to:04X} with no hit          ({} faults, {consumed}/{total} calls advanced the cursor, {} distinct returns)",
+        "probe: finished 0x{from:04X}..0x{to:04X} with no hit ({} faults, \
+         {consumed}/{total} calls advanced the cursor, {} distinct returns)",
         FAULTS.load(Ordering::Relaxed),
         RET_CHANGES.load(Ordering::Relaxed)
     ));

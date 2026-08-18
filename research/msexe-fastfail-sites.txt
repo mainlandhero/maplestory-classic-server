@@ -1,0 +1,82 @@
+scanned 11684028 instructions, found 8 real `int 0x29` sites
+
+=== 142ef3e61   section=.text   function=FUN_142ef3e44 @ 142ef3e44
+    142ef3e49  SUB RSP,0x38
+    142ef3e4d  MOV ECX,0x17
+    142ef3e52  CALL qword ptr [0x143262740]
+    142ef3e58  TEST EAX,EAX
+    142ef3e5a  JZ 0x142ef3e63
+    142ef3e5c  MOV ECX,0x2
+  > 142ef3e61  INT 0x29
+    callers of FUN_142ef3e44: 1 142ef44c9
+
+=== 142ef3f49   section=.text   function=FUN_142ef3f2c @ 142ef3f2c
+    142ef3f34  MOV ECX,0x17
+    142ef3f39  CALL qword ptr [0x143262740]
+    142ef3f3f  TEST EAX,EAX
+    142ef3f41  JZ 0x142ef3f4b
+    142ef3f43  MOV EAX,dword ptr [RSP + 0x30]
+    142ef3f47  MOV ECX,EAX
+  > 142ef3f49  INT 0x29
+    callers of FUN_142ef3f2c: 1 142ef3f21
+
+=== 142ef4c44   section=.text   function=FUN_142ef4c1c @ 142ef4c1c
+    142ef4c31  MOV EBX,ECX
+    142ef4c33  MOV ECX,0x17
+    142ef4c38  CALL qword ptr [0x143262740]
+    142ef4c3e  TEST EAX,EAX
+    142ef4c40  JZ 0x142ef4c46
+    142ef4c42  MOV ECX,EBX
+  > 142ef4c44  INT 0x29
+    callers of FUN_142ef4c1c: 5 142ef3ccd 142ef4176 142ef49b0 142ef4b35 142ef4b40
+
+=== 142efbf74   section=.text   function=__except_validate_context_record @ 142efbf40
+    142efbf5c  MOV RCX,qword ptr [RCX + 0x98]
+    142efbf63  CMP RCX,qword ptr [RAX + 0x10]
+    142efbf67  JC 0x142efbf6f
+    142efbf69  CMP RCX,qword ptr [RAX + 0x8]
+    142efbf6d  JBE 0x142efbf76
+    142efbf6f  MOV ECX,0xd
+  > 142efbf74  INT 0x29
+    callers of __except_validate_context_record: 4 142ef8b1f 142efaa0c 142efb081 142efb29a
+
+=== 142efbfac   section=.text   function=__except_validate_jump_buffer @ 142efbf78
+    142efbf97  MOV ECX,0xd
+    142efbf9c  MOV R8,qword ptr [RDX + 0x10]
+    142efbfa0  CMP R8,qword ptr [RAX + 0x10]
+    142efbfa4  JC 0x142efbfac
+    142efbfa6  CMP R8,qword ptr [RAX + 0x8]
+    142efbfaa  JBE 0x142efbfae
+  > 142efbfac  INT 0x29
+    callers of __except_validate_jump_buffer: 1 142ef84ef
+
+=== 142efbfb4   section=.text   function=__except_validate_jump_buffer @ 142efbf78
+    142efbfa4  JC 0x142efbfac
+    142efbfa6  CMP R8,qword ptr [RAX + 0x8]
+    142efbfaa  JBE 0x142efbfae
+    142efbfac  INT 0x29
+    142efbfae  CMP qword ptr [RDX],0x0
+    142efbfb2  JNZ 0x142efbfb6
+  > 142efbfb4  INT 0x29
+    callers of __except_validate_jump_buffer: 1 142ef84ef
+
+=== 142f0484c   section=.text   function=_invoke_watson @ 142f04834
+    142f04834  SUB RSP,0x28
+    142f04838  MOV ECX,0x17
+    142f0483d  CALL qword ptr [0x143262740]
+    142f04843  TEST EAX,EAX
+    142f04845  JZ 0x142f0484e
+    142f04847  MOV ECX,0x5
+  > 142f0484c  INT 0x29
+    callers of _invoke_watson: 52 142f0482d 142f047de 142f32a4b 142f322c7 142f41960 142f142d3 142f1430f 142f2b38e ...
+
+=== 142f04901   section=.text   function=FUN_142f048cc @ 142f048cc
+    142f048eb  JZ 0x142f04917
+    142f048ed  MOV ECX,0x17
+    142f048f2  CALL qword ptr [0x143262740]
+    142f048f8  TEST EAX,EAX
+    142f048fa  JZ 0x142f04903
+    142f048fc  MOV ECX,0x7
+  > 142f04901  INT 0x29
+    callers of FUN_142f048cc: 44 142e56bb2 142e56c32 142ed3d84 142f04459 142f31851 142f3c676 142f3efe4 142f0fc3c ...
+

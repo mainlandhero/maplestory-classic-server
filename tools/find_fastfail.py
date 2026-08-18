@@ -1,4 +1,10 @@
-"""Find `int 0x29` (__fastfail) sites in the client image.
+"""Find `int 0x29` (__fastfail) candidate sites in the client image.
+
+SUPERSEDED for .text by tools/ghidra_scripts/FindFastFail.java, which walks the
+disassembly instead. This scan reported 63 sites in .text where the real number is 8:
+x86 is variable-length, so a byte scan is not instruction-aligned and over-reports by
+about eight to one. It is still the only thing that can look at `.boot`, which Ghidra has
+not disassembled, so it is kept for that.
 
 The client exits with 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN, which on x64 is what
 `int 29h` produces. It bypasses vectored handlers entirely, which is why every in-process

@@ -100,48 +100,83 @@ to character select is the login result, not this patch. Keep the patch (the tra
 behaviour downstream depends on it), but the claim in its log line that "the tick should no
 longer auto-login" is wrong.
 
-### What is left, and the next control
+### SETTLED: our own patching is not the cause
 
-Three suspects remain, all process-anchored, which is exactly why the timing cannot
-separate them:
+| run | patches in the image | lifetime |
+|---|---|---|
+| 4 | full, clicked through creation | 36.96s |
+| 5 | full, nothing clicked | 36.89s |
+| 6 | **none** | **36.70s** |
 
-1. **Our own patches.** The dispatcher detour at `0x1415d60e0` and the `int3` at
-   `0x141b2a280` sit permanently in `.text`, where an integrity check would find them. The
-   two ntdll `int3`s are outside the image but are still writes into a loaded module.
-2. **The GameGuard stub.** `grap64.dll` is ours and does nothing. The stub log shows the
-   client calling ordinal #5 and ordinal #1 once each in the whole run and then never
-   again - whatever it expects the real module to go on doing never happens.
-3. **The firewall.** The patched client is blocked outbound, so a protection component that
-   needs to reach Nexon cannot, and a fixed-deadline fail-fast is what that looks like.
+Run 6 used `-NoPatch`: no dispatcher detour, no `int3`, no session patch. The control is
+verifiable rather than assumed - the only line the hook wrote that run is
+`install_once: our code IS running. env=false marker=false -> standing down`, and all three
+marker files were absent. The client's `.text` was exactly as installed, and it still
+`__fastfail`ed on the same deadline.
 
-**The next run removes suspect 1 and needs no clicking:**
+So the `int3` watches are free to use for this. They change nothing.
+
+### The fail-fast is an ordinary CRT fatal error, not an anticheat kill primitive
+
+`tools/ghidra_scripts/FindFastFail.java` walked the disassembly - 11,684,028 instructions -
+and found **8 real `int 0x29` sites**, all in `.text`. The raw byte scan had reported 63,
+because x86 is variable-length and a byte scan is not instruction-aligned; that number was
+eight times too high and should not be quoted again.
+
+Every one sits behind the standard MSVC preamble
+`MOV ECX,0x17; CALL [IsProcessorFeaturePresent]; TEST EAX,EAX; JZ skip`, and the reason
+code loaded into ECX names the path:
+
+| site | reason | what it is |
+|---|---|---|
+| `FUN_142f048cc`, 44 callers | `7` FATAL_APP_EXIT | `abort()` |
+| `_invoke_watson` @ `142f04834`, 52 callers | `5` INVALID_ARG | the CRT invalid-parameter handler |
+| `FUN_142ef3e44` | `2` STACK_COOKIE | `__report_gsfailure` |
+| `FUN_142ef4c1c`, 5 callers | from `EBX` | a generic `__fastfail(code)` wrapper |
+| `FUN_142ef3f2c` | from the stack | another wrapper |
+| `__except_validate_context_record` | `0xd` | SEH context validation |
+| `__except_validate_jump_buffer`, 2 sites | `0xd` | `longjmp` validation |
+
+**This reframes the bug.** A deliberate "protection decided to kill you" would not go
+through `abort` or the invalid-parameter handler. An uncaught C++ exception reaches
+`abort` through `terminate`, and that is a timeout in the client's own code failing in a
+way nobody caught - a very different thing to chase than an anticheat.
+
+**Caveat, stated because it changes what a negative would mean:** this scan covers code
+Ghidra disassembled, which is `.text`. `.boot` is Themida's own 12.8 MB and holds 140 raw
+`CD 29` byte matches that the instruction walk did not see, so a fail-fast inside the
+packer's runtime would not appear in the table above. If none of the four watches below
+fire, that is where to look next.
+
+### The next run: name the path
 
 ```bash
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -NoPatch
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -FastFail
 ```
 
-No hook, no `int3`, no session patch - the client's image is left exactly as installed. It
-will show the "trouble logging in" dialog and will not reach character select; that is
-expected and does not matter here. There is no hook log in this mode by construction, so
-the answer is the `EXIT code` line in `client-exit.log`:
+Four watches, one per CRT fatal entry point, each logging its caller and a stack scan. No
+session patch and no dialog patch - run 6 showed the client dies on the same deadline stuck
+behind the "trouble logging in" dialog, so the protocol path is irrelevant and fewer
+patches makes a cleaner run. Nothing to click.
 
-* **still ~36.9s** - our patches are innocent, and the choice is between suspects 2 and 3.
-  Suspect 3 is the owner's call, because testing it means letting the patched client reach
-  Nexon, which is what the firewall rule exists to prevent.
-* **survives well past 40s** - we are killing it ourselves, and the fix is to stop writing
-  to `.text`: hardware breakpoints through the debug registers modify no memory, which is
-  the natural replacement for the `int3` watches.
+The probe also now logs C++ throws (`0xE06D7363`), but **only after +25s and capped at 32**.
+They are routine here - the packet decoders raise one on underflow - so logging them all
+would bury the line that matters; the window is chosen to sit just before the ~36.9s
+deadline.
 
-### Where to look once that is answered
+What the answers mean:
 
-`.text` holds 63 byte-sequences matching `CD 29` (`int 0x29`), and `.boot` another 140.
-Most will be false positives - x86 is variable-length, so the scan is not
-instruction-aligned - but it is a bounded list to disassemble, and
-`tools/ghidra_scripts/DumpAsm.java` is the tool for confirming which are real
-instructions. Note that `.themida` holds none, so the fail-fast is *not* inside the VM.
+* **a `WATCH` on `142f048cc`** - `abort()`, so almost certainly an uncaught C++ exception.
+  The `called-from` and any `C++ THROW` line name the thrower.
+* **a `WATCH` on `142f04834`** - the CRT was handed an invalid parameter. The stack says by
+  whom.
+* **a `WATCH` on `142ef3e44`** - a stack cookie was corrupted: a real buffer overrun.
+* **nothing fires, with the `int3`s verified** - the fail-fast is in `.boot`, i.e. Themida's
+  own runtime, and the next move is disassembling there rather than in `.text`.
 
-**Do not** re-test the keepalive, re-watch `RtlExitUserProcess`, or go looking for an
-external killer. All three are settled.
+**Do not** re-test the keepalive, re-watch `RtlExitUserProcess`, go looking for an external
+killer, or blame our own patches. All four are settled, each by a measurement. And do not
+re-quote "63 `int 0x29` sites" - that was a byte scan, and the real number is 8.
 
 ## What is left of character creation
 

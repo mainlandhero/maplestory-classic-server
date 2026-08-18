@@ -87,7 +87,21 @@ param(
     #
     # There is no hook log in this mode, by construction. client-exit.log carries the
     # answer: the EXIT code line and the lifetime.
-    [switch]$NoPatch
+    [switch]$NoPatch,
+    # Aim every watch slot at the CRT fatal paths that can raise the __fastfail.
+    #
+    # Ghidra found exactly 8 real `int 0x29` instructions in .text - a raw byte scan
+    # reported 63, because x86 is variable-length and the scan is not instruction-aligned -
+    # and they all sit in the MSVC CRT's own machinery, each behind the standard
+    # `IsProcessorFeaturePresent(0x17)` preamble. The reason code names the path: 7 is
+    # FATAL_APP_EXIT (abort), 5 is INVALID_ARG (the invalid-parameter handler), 2 is a
+    # stack cookie failure. So this is an ordinary runtime fatal error, not a bespoke
+    # anticheat kill, and an entry to any of these four names which one.
+    #
+    # No session patch and no dialog patch: the client dies at the same ~36.7s stuck behind
+    # the "trouble logging in" dialog as it does at character select, so the protocol path
+    # is irrelevant here and fewer patches makes a cleaner run.
+    [switch]$FastFail
 )
 
 $ErrorActionPreference = 'Stop'
@@ -165,7 +179,19 @@ $testOneArgs = @(
     '-ReplyTo', '0x0080', '-ReplySeq', $replySeq, '-Answer', $answers,
     '-Keepalive', "$Keepalive", '-Port', "$Port"
 )
-if (-not $NoPatch) {
+if ($FastFail) {
+    # abort(7), _invoke_watson(5), __report_gsfailure(2), and the generic __fastfail(code)
+    # wrapper. Each logs its caller and a stack scan, which is what names the path.
+    $ffProbe = 'watch@142f048cc:hits=8,142f04834:hits=8,142ef3e44:hits=8,142ef4c1c:hits=8'
+    $testOneArgs += @('-HookLog', 'on', '-Probe', $ffProbe)
+    Write-Host ''
+    Write-Host 'FastFail: watching the four CRT fatal paths that can raise int 0x29.'
+    Write-Host 'The client will sit behind the "trouble logging in" dialog and die at ~36.7s;'
+    Write-Host 'that is expected. Do not click anything. The answer is the WATCH line in'
+    Write-Host '  client-patched\maplecw-hook.log'
+    Write-Host 'and its called-from, plus any "C++ THROW" lines logged after +25s.'
+}
+elseif (-not $NoPatch) {
     $testOneArgs += @('-HookLog', 'on', '-Session', $Session, '-Probe', $Probe)
 }
 else {
