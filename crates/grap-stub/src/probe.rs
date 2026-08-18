@@ -49,6 +49,12 @@
 //!   as well as what we substituted. This patches the client — describe results
 //!   accordingly.
 //!
+//! A watch target takes any number of `:key=value` options: `rdx=`, `peek=<off>`, and
+//! `hits=<n>`, the per-target log cap. Raise the cap on anything where the *last* call is
+//! the interesting one - a thread-exit function in a client that recycles threads would
+//! otherwise spend the default 32 early and disarm before the moment in question, which
+//! reads exactly like a function that never ran. Every hit records the calling thread id.
+//!
 //! `#N` starts the walk on the Nth dispatched packet.
 //!
 //! # Four ways this lies, all of them silently
@@ -134,10 +140,20 @@ const WATCH_ZERO: AtomicU64 = AtomicU64::new(0);
 const WATCH_NONE: AtomicU64 = AtomicU64::new(u64::MAX);
 #[allow(clippy::declare_interior_mutable_const)]
 const WATCH_ZERO32: AtomicU32 = AtomicU32::new(0);
+#[allow(clippy::declare_interior_mutable_const)]
+const WATCH_CAP32: AtomicU32 = AtomicU32::new(WATCH_MAX_HITS);
 
 static WATCH: [AtomicU64; WATCH_SLOTS] = [WATCH_ZERO; WATCH_SLOTS];
 static WATCH_BYTE: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
 static WATCH_HITS: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
+/// Per-target hit cap, `WATCH_MAX_HITS` unless the spec says `:hits=<n>`.
+///
+/// The default exists so a per-frame accessor cannot fill the disk, but it is exactly
+/// wrong for a target where the *last* call is the interesting one. A thread-exit function
+/// in a client that recycles threads would spend the cap early and disarm itself before
+/// the exit being investigated - a silent negative of the kind this project has already
+/// paid for more than once.
+static WATCH_LIMIT: [AtomicU32; WATCH_SLOTS] = [WATCH_CAP32; WATCH_SLOTS];
 /// `u64::MAX` means "do not force"; anything else is written to RDX on every watch hit.
 static FORCE_RDX: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 /// `u64::MAX` means none; anything else is an offset to read from `rcx` and log.
@@ -158,6 +174,7 @@ static mut SAVED: Context = Context([0; 1232]);
 
 extern "system" {
     fn AddVectoredExceptionHandler(first: u32, handler: *const c_void) -> *mut c_void;
+    fn GetCurrentThreadId() -> u32;
     fn GetModuleHandleA(name: *const u8) -> *mut c_void;
     fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
     fn RtlCaptureContext(ctx: *mut c_void);
@@ -417,26 +434,83 @@ unsafe fn resolve_target(target: &str) -> Option<usize> {
     usize::from_str_radix(target.trim_start_matches("0x"), 16).ok()
 }
 
+/// One watch spec, parsed.
+///
+/// Split out of `arm_one` so it can be tested without a client to plant breakpoints in.
+/// A spec that parses wrong is not a compile error and not a crash - it is a run that
+/// looks normal and measures the wrong thing, and every run costs a manual launch.
+#[derive(Debug)]
+struct WatchSpec<'a> {
+    target: &'a str,
+    force: Option<&'a str>,
+    peek: Option<&'a str>,
+    hits: Option<&'a str>,
+}
+
+/// `<target>` followed by any number of `:key=value` options. Neither a hex VA nor
+/// `<module>!<export>` contains a colon, so this splits cleanly.
+///
+///   * `rdx=<hex>` rewrites the second integer argument on entry - for asking "what would
+///     the client do if this value were X", the only question left when the *caller* is
+///     virtualised and unreadable;
+///   * `peek=<hex>` logs the byte and dword at `rcx + off` - for reading the field a tiny
+///     accessor exists to return, which is usually the actual question;
+///   * `hits=<dec>` raises or lowers this target's log cap.
+///
+/// An unrecognised option is an error rather than something to skip, for the same reason
+/// `-Session` rejects an unknown token: a run that looks fine and measures nothing costs
+/// more than a run that refuses to start.
+fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
+    let mut fields = spec.split(':');
+    let target = fields.next().unwrap_or("").trim();
+    if target.is_empty() {
+        return Err(format!("watch spec {spec:?} names no target"));
+    }
+    let mut parsed = WatchSpec {
+        target,
+        force: None,
+        peek: None,
+        hits: None,
+    };
+    for opt in fields {
+        let opt = opt.trim();
+        if let Some(v) = opt.strip_prefix("rdx=") {
+            parsed.force = Some(v.trim());
+        } else if let Some(v) = opt.strip_prefix("peek=") {
+            parsed.peek = Some(v.trim());
+        } else if let Some(v) = opt.strip_prefix("hits=") {
+            parsed.hits = Some(v.trim());
+        } else {
+            return Err(format!(
+                "watch spec {spec:?} has an unknown option {opt:?} - refusing to arm"
+            ));
+        }
+    }
+    Ok(parsed)
+}
+
 unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
-    // `<target>` or `<target>:rdx=<hex>`. The second form rewrites the second integer
-    // argument on entry — for asking "what would the client do if this value were X",
-    // which is the only question left when the *caller* is virtualised and unreadable.
-    // `:peek=<hex off>` logs the byte and dword at `rcx + off` — for reading the field a
-    // tiny accessor exists to return, which is usually the actual question.
-    let (rest, peek) = match spec.split_once(":peek=") {
-        Some((v, p)) => (v, Some(p)),
-        None => (spec, None),
+    let (target_txt, force, peek, hits) = match parse_watch_spec(spec) {
+        Ok(p) => (p.target, p.force, p.peek, p.hits),
+        Err(why) => {
+            log(&format!("probe: {why}"));
+            return;
+        }
     };
-    let (target_txt, force) = match rest.split_once(":rdx=") {
-        Some((v, f)) => (v, Some(f)),
-        None => (rest, None),
-    };
-    let Some(va) = resolve_target(target_txt.trim()) else {
+    let Some(va) = resolve_target(target_txt) else {
         log(&format!(
             "probe: watch spec {spec:?} in {text:?} is not <hex VA> or <module>!<export>"
         ));
         return;
     };
+    if let Some(h) = hits {
+        let Ok(v) = h.trim().parse::<u32>() else {
+            log(&format!("probe: {spec:?} has an unparseable :hits= count"));
+            return;
+        };
+        WATCH_LIMIT[slot].store(v, Ordering::SeqCst);
+        log(&format!("probe: watch on {va:#x} will log up to {v} hits"));
+    }
     if let Some(p) = peek {
         match u64::from_str_radix(p.trim().trim_start_matches("0x"), 16) {
             Ok(v) => {
@@ -476,9 +550,10 @@ unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
         return;
     }
     WATCH[slot].store(va as u64, Ordering::SeqCst);
+    let cap = WATCH_LIMIT[slot].load(Ordering::SeqCst);
     log(&format!(
         "probe: watching {va:#x} (slot {slot}), int3 verified - will report every entry \
-         with rcx/rdx/r8/r9 (first {WATCH_MAX_HITS})"
+         with tid and rcx/rdx/r8/r9 (first {cap})"
     ));
 }
 
@@ -674,12 +749,17 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         let watch = at;
         let ctx = (*info).context.cast::<u8>();
         let n = WATCH_HITS[slot].fetch_add(1, Ordering::SeqCst) + 1;
-        if n <= WATCH_MAX_HITS {
+        let cap = WATCH_LIMIT[slot].load(Ordering::SeqCst);
+        if n <= cap {
             let op = CURRENT_OPCODE.load(Ordering::SeqCst);
             let rcx = *(ctx.add(CTX_RCX).cast::<u64>());
             let rdx = *(ctx.add(CTX_RDX).cast::<u64>());
             let r8 = *(ctx.add(CTX_R8).cast::<u64>());
             let r9 = *(ctx.add(CTX_R9).cast::<u64>());
+            // The thread id matters as much as the arguments on any exit path:
+            // "which thread ended, and in what order" is the whole question when
+            // the surviving explanation is that the last thread simply ran out.
+            let tid = GetCurrentThreadId();
             // The breakpoint sits on the function's first byte, so the `call` that got
             // here has just pushed the return address and RSP points straight at it. That
             // names the *caller*, which is the whole question once a watch confirms the
@@ -703,9 +783,9 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
                 off => format!(" [rcx+{off:#x}]=<unreadable>"),
             };
             log(&format!(
-                "***** WATCH #{n}: {watch:#x} ENTERED while dispatching opcode 0x{op:04X} \
-                 rcx={rcx:#x}{}{}{peek} rdx={rdx:#x} (as i32 {}){}{} r8={r8:#x} r9={r9:#x}\
-                 {ret}{} *****",
+                "***** WATCH #{n}: {watch:#x} ENTERED on tid {tid} while dispatching \
+                 opcode 0x{op:04X} rcx={rcx:#x}{}{}{peek} rdx={rdx:#x} \
+                 (as i32 {}){}{} r8={r8:#x} r9={r9:#x}{ret}{} *****",
                 deref(rcx),
                 deref_wstr(rcx),
                 rdx as u32 as i32,
@@ -713,7 +793,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
                 deref_wstr(rdx),
                 stack_trace(rsp),
             ));
-            if n == WATCH_MAX_HITS {
+            if n == cap {
                 log("probe: watch hit limit reached, further calls will not be logged");
             }
         }
@@ -723,7 +803,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         let force = FORCE_RDX[slot].load(Ordering::SeqCst);
         if force != u64::MAX {
             *(ctx.add(CTX_RDX).cast::<u64>()) = force;
-            if n <= WATCH_MAX_HITS {
+            if n <= cap {
                 log(&format!("      forced rdx -> {force:#x}"));
             }
         }
@@ -740,7 +820,7 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
         // Some useful targets are per-frame accessors - `FUN_141b2a160` is eight bytes and
         // runs every frame - and an exception plus a single-step on each call would slow
         // the client to the point where the test itself is what breaks.
-        if n >= WATCH_MAX_HITS {
+        if n >= cap {
             WATCH[slot].store(0, Ordering::SeqCst);
             log(&format!("probe: watch on {watch:#x} disarmed after the hit limit"));
             return EXCEPTION_CONTINUE_EXECUTION;
@@ -1029,5 +1109,59 @@ pub unsafe fn run(
     if consumed == 0 {
         log("probe: WARNING - the cursor never moved on any call, so the dispatcher was \
              not reading our packet. A broken walk, not an empty range.");
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::parse_watch_spec;
+
+    #[test]
+    fn a_bare_target_carries_no_options() {
+        let s = parse_watch_spec("141b2a280").expect("a bare VA is a valid spec");
+        assert_eq!(s.target, "141b2a280");
+        assert!(s.force.is_none() && s.peek.is_none() && s.hits.is_none());
+    }
+
+    #[test]
+    fn a_module_export_target_survives_the_colon_split() {
+        // The whole reason the split is on ':' and not on '!': ntdll is relocated every
+        // boot, so the thread-exit watches have no VA to write down and must be named.
+        let s = parse_watch_spec("ntdll!RtlExitUserThread:hits=200").expect("valid");
+        assert_eq!(s.target, "ntdll!RtlExitUserThread");
+        assert_eq!(s.hits, Some("200"));
+    }
+
+    #[test]
+    fn options_are_read_in_any_order() {
+        let a = parse_watch_spec("141b36a10:peek=1c0:rdx=0:hits=5").expect("valid");
+        let b = parse_watch_spec("141b36a10:hits=5:rdx=0:peek=1c0").expect("valid");
+        for s in [a, b] {
+            assert_eq!(s.target, "141b36a10");
+            assert_eq!(s.peek, Some("1c0"));
+            assert_eq!(s.force, Some("0"));
+            assert_eq!(s.hits, Some("5"));
+        }
+    }
+
+    #[test]
+    fn the_specs_test_charselect_actually_passes_all_parse() {
+        for spec in [
+            "141b2a280:rdx=0",
+            "ntdll!RtlExitUserThread:hits=200",
+            "ntdll!NtTerminateThread:hits=200",
+        ] {
+            assert!(parse_watch_spec(spec).is_ok(), "{spec} must parse");
+        }
+    }
+
+    #[test]
+    fn an_unknown_option_is_refused_rather_than_ignored() {
+        // Skipping it would arm the watch and measure something other than what was
+        // asked for, which is the failure this project keeps paying for.
+        let err = parse_watch_spec("141b2a280:rcx=0").expect_err("rcx= is not an option");
+        assert!(err.contains("unknown option"), "{err}");
+        assert!(parse_watch_spec("141b2a280:hits").is_err());
     }
 }

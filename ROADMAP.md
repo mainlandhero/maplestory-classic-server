@@ -166,7 +166,7 @@ So we build that half ourselves rather than trying to patch the requirement away
       **`0x008A`** → `0x0015`, and the client returns to character select with the new
       character. Every opcode measured; the create builder is virtualised, so a capture was
       the only route. Full decode in **`docs/character.md`**.
-- [ ] **The ~25s client exit** — ← *the priority the owner set on 2026-08-19*. It caps every run
+- [ ] **The ~25s client exit** — ← *the priority the owner set on 2026-08-17*. It caps every run
       to about the length of one click sequence. Five explanations are ruled out by verified
       instruments; see `STATUS.md` under "THE PRIORITY".
 - [ ] `crates/login` proper: today the "server" is `tools/handshake_probe.py` replaying

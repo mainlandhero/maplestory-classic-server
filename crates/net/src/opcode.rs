@@ -275,7 +275,7 @@ pub fn data_wz_up_to_date() -> Vec<u8> {
 /// body is a single one-character string holding `DAT_143275e10`, which is `.` - a
 /// placeholder, because MapleStory Classic World never used a second password (the owner).
 ///
-/// Measured on the wire 2026-08-19: `01 00 2e`, five times for five clicks.
+/// Measured on the wire 2026-08-17: `01 00 2e`, five times for five clicks.
 pub const CLIENT_ENTER_CREATION_REQUEST: u16 = 0x00A8;
 
 /// The reply to [`CLIENT_ENTER_CREATION_REQUEST`]: may the client open character creation?
@@ -345,7 +345,7 @@ pub const NAME_NOT_ALLOWED: u8 = 0x79;
 /// Its builder is Themida-virtualised - `FUN_141122420`'s OK button calls `FUN_141b3fb10`,
 /// which tail-jumps to `FUN_141b2cf30`, which `JMP`s into `.themida` - so this opcode
 /// appears in neither half of `research/msexe-send-opcodes.txt` and no static scan can
-/// find it. It came off the wire on 2026-08-19, 101 bytes.
+/// find it. It came off the wire on 2026-08-17, 101 bytes.
 ///
 /// # Body, from a real capture
 ///
@@ -1284,7 +1284,7 @@ mod tests {
         );
     }
 
-    /// The exact 101 bytes the client sent on 2026-08-19, creating "Hello" with a
+    /// The exact 101 bytes the client sent on 2026-08-17, creating "Hello" with a
     /// 7/5/7/6 roll... no: 10/4/5/6. Kept verbatim because the builder is virtualised and
     /// this capture is the only specification that exists.
     const CAPTURED_CREATE_REQUEST: &str = "\

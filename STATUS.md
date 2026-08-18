@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-19 (creation works end to end; the 25s exit is the blocker)
+# Where things stand — 2026-08-17 (creation works end to end; the 25s exit is the blocker)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -9,7 +9,7 @@ Character creation **works on the wire, end to end**: the client creates a chara
 returns to character select with it. Every packet in the transaction has been identified
 and every one of them has been measured, not guessed.
 
-Two things remain, and **the owner set the priority on 2026-08-19: the exit comes first.**
+Two things remain, and **the owner set the priority on 2026-08-17: the exit comes first.**
 
 1. **The client exits ~25 seconds after reaching character select.** It caps every run to
    about that long, which is barely enough for the click sequence creation needs, and it
@@ -24,6 +24,9 @@ To get moving in one command:
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1"
 ```
 
+Run it from an **elevated** shell while the exit is the question: the handle scan in
+`client-exit.log` cannot see handles held by SYSTEM services otherwise.
+
 That builds `grap-stub`, installs it into `client-patched/`, starts the probe with every
 answer wired up, and launches the client. Then, on screen: Login -> Create a character ->
 spend all 25 points -> name it `Hello` -> Check -> OK -> confirm. Stop with `-Stop`.
@@ -34,7 +37,7 @@ Where the answers land:
 |---|---|
 | `probe.log` | every packet in both directions, with bodies |
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults - **not** `hook.log`, and not the repo root |
-| `client-exit.log` | the client's process exit code, written by a watcher |
+| `client-exit.log` | how the client died: exit code, lifetime, CPU time, job membership, and who held a handle to it. Written by `tools/exit-forensics.ps1` |
 
 ## THE PRIORITY - why the client exits after 25 seconds
 
@@ -65,15 +68,42 @@ our traffic does not restart it:
 2. **The last thread ends**, and the kernel reaps the process without any of the functions
    above being called.
 
-**Next step, and it needs no new technique:** read `client-exit.log` after any run.
-`test-one.ps1` now starts a watcher that records the exit code. `0xC0000409` is
-`__fastfail`, `0xC0000005` a fault, `0` or `1` a deliberate stop, and a failure to read it
-at all is itself a signal. If it points at (2), watch `ntdll!NtTerminateThread` and
-`ntdll!RtlExitUserThread`. If it points outward, the question becomes *which* process -
-`NexonAnalytics64.dll` is loaded in-process and has a service side, and the owner's standing
-hypothesis is that an anticheat that cannot reach its server kills the client.
+**The run that decides it is wired and waiting - it needs one launch.**
+`test-charselect.ps1` now arms both surviving explanations at once:
 
-**Do not** re-test the keepalive or re-watch `RtlExitUserProcess`. Both are settled.
+| instrument | answers |
+|---|---|
+| `watch@ntdll!RtlExitUserThread:hits=200` | did a thread of the client end itself |
+| `watch@ntdll!NtTerminateThread:hits=200` | the syscall under that, and under `TerminateThread` |
+| `tools/exit-forensics.ps1` -> `client-exit.log` | the exit code, the lifetime in both wall-clock and CPU time, job membership, and who held a handle to the client carrying `PROCESS_TERMINATE` |
+
+**The reading is fixed in advance, so it cannot drift to fit the result.** A `WATCH` on
+either ntdll function at the moment of death means the client ended itself - path 2 - and
+the `called-from` on that line names what decided it. Silence on both, with the hit cap
+demonstrably not reached, means no client code ran on the way out - path 1 - and the last
+handle scan in `client-exit.log` is the suspect list.
+
+**Run the shell elevated.** Unelevated, the handle scan cannot duplicate handles held by
+services running as SYSTEM - the control run could not reach 1087 of 1564 process handles.
+Every scan line reports that count, so a short list is never mistaken for an empty one.
+
+**A discarded discriminator, recorded so it is not tried again.** "An orderly shutdown
+drains threads, an external kill does not" is **false**. Measured 2026-08-17 against two
+control processes: one exited normally with code 42, one was killed with
+`TerminateProcess`, and *both* showed 24 live threads in the last sample before they
+vanished. `ExitProcess` ends every other thread in the kernel, running no user code and
+taking no measurable time, so no sample rate separates them. What did separate the controls
+is the exit code - `0xFFFFFFFF` for the killed one, `0x0000002A` for the one that chose its
+own - which is why that is what `client-exit.log` leads with.
+
+**Do not** re-test the keepalive or re-watch `RtlExitUserProcess`. Both are settled. But
+note what ruling out `RtlExitUserProcess` did *not* settle: on path 2 the last thread
+reaches `NtTerminateThread` and the kernel ends the process from there **without** passing
+through `RtlExitUserProcess`, so that negative never argued against path 2 at all.
+
+If it does turn out to be path 1, the question becomes *which* process.
+`NexonAnalytics64.dll` is loaded in-process and has a service side, and the owner's standing
+hypothesis is that an anticheat which cannot reach its server kills the client.
 
 ## What is left of character creation
 
@@ -102,7 +132,7 @@ Two client patches are still holding the flow open, and results must be reported
   do not send. Finding that packet is real remaining protocol work;
 * `-Probe watch@141b2a280:rdx=0` - suppresses the "trouble logging in" dialog.
 
-## THE GOAL (set 2026-08-18)
+## THE GOAL (set 2026-08-17)
 
 **The server processes an entire character creation transaction.** The owner set this after the
 masked email landed and the "connection dies" problem turned out not to exist.
@@ -166,7 +196,9 @@ That means, end to end and against a real server-side implementation:
 | `packet-hex` | prints a reply body from the Rust builders, so hex is never typed by hand |
 | `tools/handshake_probe.py` | the server side. `--reply-seq` one-shot, `--answer` standing, `<req>` splices the request's payload, `--keepalive` |
 | `tools/transport.py` | the cipher, the framing, and the client-stream decoder |
-| `-Probe watch@A,B,C` | up to four `int3` watches; `<module>!<export>` for relocated modules; `:rdx=` forces an argument, `:peek=` logs `[rcx+off]` |
+| `-Probe watch@A,B,C` | up to four `int3` watches, each logging the calling thread id; `<module>!<export>` for relocated modules; options `:rdx=` forces an argument, `:peek=` logs `[rcx+off]`, `:hits=` sets the per-target log cap (default 32) |
+| `tools/exit-forensics.ps1` | how the client died, from outside: exit code, thread table, job membership, handle holders. Started automatically by `test-one.ps1`; verified against a killed and an orderly control |
+| `tools/handle-holders.ps1` | which processes hold a handle to a given pid and may terminate it. Read-only; **needs elevation** or the list is silently short |
 | `-Session mode=2,create=on` | the client patches, comma separated |
 | `tools/ghidra_scripts/DecompileFunc.java` | decompile by address, creating the function if Ghidra has none |
 | `tools/ghidra_scripts/Xrefs.java` | callers, and data references |
@@ -208,11 +240,18 @@ virtualisation, not of non-existence**.
   delimited strings.
 * **Check the console line `standing answers (N)`** before reading anything into a run. A
   missing answer leaves the client on "Connecting..." and looks like a client problem.
+* **Get the date from `git log`, not from a guess.** Several notes in this repo were
+  written with dates two days ahead of the commits they describe, which made a single
+  afternoon read as three days of separate work. Corrected 2026-08-17.
+* **An instrument that has never been seen working proves nothing by staying silent** -
+  and a *discriminator* has to be shown to discriminate, not just to run. The thread-drain
+  test for the exit ran perfectly and reported confidently, and was still wrong: both
+  controls looked identical under it.
 
 ## Working right now
 
 ```bash
-cargo test --release          # 68 tests green
+cargo test --release          # 73 tests green
 cargo build --release
 ```
 

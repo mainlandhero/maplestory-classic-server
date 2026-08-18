@@ -291,7 +291,7 @@ range. **Not** by `xref.py` — a struct-offset store is not a `lea`.
 
 ### `0x0000` is a second login result, and a fuller one
 
-Decoded 2026-08-18. The shape is unmistakable once read: `u8 result`, `str message`, and
+Decoded 2026-08-17. The shape is unmistakable once read: `u8 result`, `str message`, and
 then a gate on the result before any of the account fields are touched.
 
 **The gate is `FUN_141b267c0(stage, result, 0, message)` — the same function that turns a
@@ -343,7 +343,7 @@ be the wrong one of the two.
 
 ## Characters — see `docs/character.md`
 
-Decoded 2026-08-18, statically. Summary:
+Decoded 2026-08-17, statically. Summary:
 
 | Direction | Opcode | Meaning |
 |---|---|---|

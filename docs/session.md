@@ -318,7 +318,7 @@ Still open, in order:
 
 Settled and no longer worth pursuing:
 
-* ~~**The client never migrates.**~~ **Retracted 2026-08-18.** That rested on a `connect`
+* ~~**The client never migrates.**~~ **Retracted 2026-08-17.** That rested on a `connect`
   hook logging nothing - but the hook has never logged a `CONNECT` line at all, including
   for the connection to our own server, which certainly happened. Until the hook is shown
   to work, its silence is not evidence. `netwatch` now self-tests at install; read that

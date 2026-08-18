@@ -41,33 +41,33 @@ param(
     # coherent - type another and the transaction still completes, it just visibly
     # comes from the server rather than from what was asked for.
     [string]$NewCharacterName = 'Hello',
-    # Seconds between keepalive packets. Both runs so far ended ~25 seconds after the last
-    # packet *we* sent, with the socket Established and idle - the owner's read is that the
-    # client wants a heartbeat, and 10s is well inside that window. Set 0 to reproduce the
-    # short session instead.
+    # Seconds between keepalive packets. This was a hypothesis - that the client wants a
+    # heartbeat - and it is disproven: the 2026-08-17 run logged two keepalives going out,
+    # the last 6.8s before the close, and the client still exited. Kept on because it costs
+    # nothing and rules the idle path out of every future run at a glance. Set 0 to drop it.
     [double]$Keepalive = 10,
-    # Watch targets, comma separated. The first has to stay: without it the "trouble
-    # logging in" dialog blocks the tick that enables the Login button, and the run never
-    # reaches character select at all.
+    # Watch targets, comma separated, four slots. The first has to stay: without it the
+    # "trouble logging in" dialog blocks the tick that enables the Login button, and the
+    # run never reaches character select at all.
     #
-    # The other three are what the 2026-08-19 run left open. It established two clean
-    # negatives - FUN_141b282d0 is never entered, so the create handler does not refuse, it
-    # is not reached; and ntdll!RtlExitUserProcess is never entered either, with its int3
-    # verified, so the client does not leave by that door.
+    # The other two are aimed at the ~25 second exit, which is the priority. Everything
+    # that runs *inside* the process on the way out has already been ruled out with
+    # verified breakpoints - RtlExitUserProcess, NtTerminateProcess, and any fault a
+    # vectored handler can see - so the two survivors are an external kill, which executes
+    # no client code at all, and the last thread ending, which executes exactly these:
     #
-    #   ntdll!NtTerminateProcess - the syscall under every exit path, including the one a
-    #                              *different* process would use to kill this one
-    #   140c9e3f0                - the obfuscated flag guarding the "new" button. Its only
-    #                              callers are that branch and FUN_141b24ba0, so an entry
-    #                              here while clicking proves the branch was reached and
-    #                              therefore that the flag returned zero
-    #   141177a10                - the character-select button dispatcher itself, in case
-    #                              the click never gets that far
-    # 141b36a10 is the create-result handler, and :peek=1c0 logs [stage+0x1c0] on entry -
-    # the world id it compares ours against. A mismatch makes it return having done
-    # nothing, which looks exactly like the reply never arriving, so measure the value
-    # rather than guess it.
-    [string]$Probe = 'watch@141b2a280:rdx=0,141b36a10:peek=1c0',
+    #   ntdll!RtlExitUserThread - every thread that returns from its start routine
+    #   ntdll!NtTerminateThread - the syscall under that, and under TerminateThread
+    #
+    # :hits=200 raises the per-target log cap from the default 32. The default is there so
+    # a per-frame function cannot fill the disk, and it is exactly wrong here: if the client
+    # recycles threads, the cap would be spent long before the exit and the watch would
+    # disarm itself, which reads identically to a function that never ran. Silence on both,
+    # with the cap demonstrably not reached, means nothing inside the client ended it.
+    #
+    # 141b36a10:peek=1c0 held this slot to read the world id the create-result handler
+    # compares ours against. It measured 0 on 2026-08-17 and matched, so the slot is free.
+    [string]$Probe = 'watch@141b2a280:rdx=0,ntdll!RtlExitUserThread:hits=200,ntdll!NtTerminateThread:hits=200',
     # 'mode=2,create=on' calls FUN_140c9e230 after the login result, which sets the
     # protected flag that gates the "Create a character" button. A watch measured
     # FUN_140c9e3f0 returning zero on every click, and the only setter that writes 1 has no
@@ -157,7 +157,11 @@ Write-Host "  3. Create a character -> spend all 25 points, name it '$NewCharact
 Write-Host '     Check, then OK, then confirm. It should land back on character select'
 Write-Host '     with a second character in the list.'
 Write-Host ''
+Write-Host 'Do not close the client by hand - let it exit on its own. How it dies is the'
+Write-Host 'measurement, and a manual close overwrites the answer with our own.'
+Write-Host ''
 Write-Host 'Then run this script with -Stop. The answers are in'
+Write-Host '  client-exit.log                   (how the client died - read this one first)'
 Write-Host '  client-patched\maplecw-hook.log   (not hook.log, and not the repo root)'
 Write-Host '  - "SESSION called FUN_140c9e230" confirms the create flag was patched on'
 Write-Host '  - a WATCH on 141b282d0 means the create handler finally ran'

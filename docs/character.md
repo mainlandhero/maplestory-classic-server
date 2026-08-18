@@ -1,8 +1,8 @@
 # Characters: the list, the record, and the creation transaction
 
-Read statically on 2026-08-18 and 2026-08-19.
+Read statically on 2026-08-17 and 2026-08-17.
 
-**The record and the list are measured.** On 2026-08-19 a `0x0010` carrying one character
+**The record and the list are measured.** On 2026-08-17 a `0x0010` carrying one character
 was sent, the client decoded it without throwing, and character select drew the character.
 That is the first time any of this has been on the wire, and it retires the standing warning
 for everything from the head of `0x0010` through the end of the character record. What is
@@ -22,7 +22,7 @@ taken from this binary rather than from a table.
 
 ## A second source, and what it is good for
 
-`C:\Users\user\Desktop\ModernMapleSource` (the owner, 2026-08-19) holds a Swordie-family server
+`C:\Users\user\Desktop\ModernMapleSource` (the owner, 2026-08-17) holds a Swordie-family server
 for a modern version. It is **not** this protocol - opcode numbers differ, and its record
 has fields this client does not read. What it is good for:
 
@@ -245,7 +245,7 @@ All three inputs arrive in the `0x0010` tail, and all three were inside the zero
 Note the **clamp**: a slot count of `0` does not disable creation, it makes the client
 inspect *the first character*, which is occupied as soon as the list is non-empty.
 
-**Filling all three in did not make the button work** (measured 2026-08-19, second run:
+**Filling all three in did not make the button work** (measured 2026-08-17, second run:
 `probe.log` shows the reply going out and no packet at all on the click). So either the
 refusal branch is being taken for a reason not yet understood, or `FUN_141b282d0` is never
 reached. There is one unexamined gate in front of it:
@@ -286,7 +286,7 @@ handlers (`identifyVerficationFailed`, `goToNexonAuthPageToVerify`), so `1` asse
 
 ### Measured: the gate, and the exchange behind it
 
-On 2026-08-19 the flag was patched on from `grap-stub` and the button worked. Five clicks
+On 2026-08-17 the flag was patched on from `grap-stub` and the button worked. Five clicks
 produced five `WATCH` hits on `FUN_141b282d0` and five packets on the wire:
 
 ```text
@@ -346,7 +346,7 @@ to 4..12 and refuses any increment that would take the total over 25.
 
 **The name check blocks the screen until it is answered.** `FUN_141b28950` calls
 `FUN_141b3fd40(stage, 1)`, which builds a modal at `stage+0x270`; `FUN_141b33f30` dismisses
-it through that object's vtable slot `0x138`. Measured 2026-08-19: clicking "Check" left the
+it through that object's vtable slot `0x138`. Measured 2026-08-17: clicking "Check" left the
 client on "Connecting..." with the dialog blocking every other control, including OK. So
 `0x0014` is not optional for reaching the create request - it is in front of it.
 
@@ -387,7 +387,7 @@ past the `JMP` is garbage decoded from data.
 * Ruled out by reading them, and still ruled out: `0x0074`, `0x0075`, `0x0082`, `0x008B`,
   `0x008C`, `0x008D`, `0x00A8`, `0x00A9`, `0x00C0`, plus every other login-range builder.
 
-**It was measured, on 2026-08-19: the create request is `0x008A`, 101 bytes.**
+**It was measured, on 2026-08-17: the create request is `0x008A`, 101 bytes.**
 
 ```text
 str   name              "Hello"
@@ -462,6 +462,6 @@ which is what `<req>` is for.
   wrong and the next instrument is the exit path -`crates/grap-stub` already detours
   `ExitProcess`/`TerminateProcess`/`RtlExitUserProcess`/`NtTerminateProcess` in walk mode.
 
-**What *is* measured**, as of 2026-08-19: the whole of `0x0010` from the head through the
+**What *is* measured**, as of 2026-08-17: the whole of `0x0010` from the head through the
 character list, and the entire 327-byte character record including the avatar look. The
 client decoded it and drew the character.
