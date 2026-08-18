@@ -157,41 +157,56 @@ Two instrument bugs it caught on itself, both worth remembering:
   socket, so a packet sitting in the OS receive queue read as "nothing sent" — and because
   it was still there next time, every check after it was offset by one and failed.
 
-## OPEN: the client accepts the create reply but does not transition
+## SOLVED: the create reply the client would not act on
 
-**Measured 2026-08-18, on the first real client run.** The server created `TestChar`, sent
-`0x0015` with result 0, and the client stayed on the creation screen. Clicking OK again
-correctly reported the name as taken, which is how we know the create had worked.
+**The character id.** The first real run created `TestChar` and the client stayed on the
+creation screen, having dispatched the reply (`ret=1`, no fault, no C++ throw). The body was
+reconstructed and diffed against the reply that transitioned the client on 2026-08-17:
+identical across all 353 bytes **except offsets 5 and 9**, the two copies of the id - `1`
+against `200`. Ids now start at 200 (`FIRST_CHARACTER_ID`, seeded through `sqlite_sequence`),
+and the owner confirmed creation works on screen.
 
-What was ruled out, each by measurement rather than reasoning:
+**Do not renumber characters from 1.** Why the client cares is not established - only that
+it does - so the constant is documented where it is set rather than explained away.
 
-* **The client received and dispatched it.** Hook log: `7 opcode=0x0015 ... ret=1`.
-* **Nothing faulted.** No client fault and no C++ throw in the hook log, and the throw
-  logging window was open (it starts at +25s; this was +40s).
-* **The handler was not obviously short-circuited.** Its 111.9 microseconds looks damning
-  until you compare neighbours - `0x0010`, which builds the whole character select screen,
-  took 333 microseconds. Sub-millisecond is normal here and proves nothing either way.
-* **The body was right.** Reconstructed and diffed against the reply that *did* transition
-  the client on 2026-08-17: identical across all 353 bytes **except offsets 5 and 9**, the
-  two copies of the character id - `1` against `200`.
+Two method notes worth keeping:
 
-So two candidates remained, and the cheap one is eliminated:
+* **A number means nothing without a baseline.** The handler's 111.9 microseconds looked like
+  proof it had bailed out early, until the neighbours were checked: `0x0010`, which builds
+  the entire character select screen, took 333. Sub-millisecond was simply normal.
+* **`login.log` did not record bodies**, so that reply had to be rebuilt by hand to find a
+  two-byte difference. It records them now, capped at 96 bytes, and that immediately paid
+  for itself by capturing the select-character flow below.
 
-1. **The id.** Character ids now start at 200 (`FIRST_CHARACTER_ID`, seeded through
-   `sqlite_sequence`), which makes the reply byte-identical to the working one. Verified by
-   diffing what the server actually logged against `packet-hex create-result-from`.
-2. **Client state.** Every previously working run had a character already in the list; this
-   one had none. Not yet testable without a launch.
+## The three-character limit needed no new code
 
-`watch@141b36a10:peek=1c0` is now in the default probe and reads `stage+0x1c0`, the world
-id the create-result handler compares ours against - the documented way this fails silently.
-If the id was innocent, that names the real cause in the same launch.
+Confirmed on screen: with three characters stored, "Create a character" is disabled. Nothing
+was added for it - `login_result` already sends a truthful list and `slotCount`, and
+`FUN_141b282d0` computes the free slot from those two. **Telling the truth was the
+implementation.** The server-side refusal was already there and tested, so a fourth character
+cannot be stored either way.
 
-**The instrument gap this exposed:** `login.log` did not record bodies, so the reply had to
-be reconstructed by hand to find a two-byte difference. It records them now, capped at 96
-bytes per packet.
+`create=on` remains, and it is a **different** gate - it enables the button *at all*, which
+the real service sets from virtualised code. Removing it is finding that packet, not
+enforcing a limit.
 
-## Still standing on client patches
+## Captured: the select-character flow
+
+Entering the world sends three packets nothing answers yet. First read, from one capture:
+
+```text
+0x0078  73B  u32 0 | str "." (placeholder PIC) | u32 203   <- the character id
+              | u8 0 | str "AA-BB-CC-DD-EE-FF, 00-00-..." | str "AABBCCDDEEFF_DEADBEEF"
+0x0079  67B  u32 203 | str "TestCharC" | u32s | SYSTEMTIME 2026-08-18 13:36:32
+0x00BC  12B  09040000 09040000 09040000  - 1033 three times
+```
+
+`0x0078` carrying the character id makes it the select-character request, and its reply the
+migration packet - the `0x0011` candidate, which is Stage 4 and where an *advertise* address
+would first be needed (`docs/deployment.md`). The client sat on "Connecting..." because
+nothing answered, which is expected with no channel server.
+
+## Still standing on client patches## Still standing on client patches
 
 The server is real; the run around it is not yet. `test-server.ps1` still applies:
 

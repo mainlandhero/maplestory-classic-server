@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-18 (the login server is real, and characters persist)
+# Where things stand — 2026-08-18 (the login server is real; creation and persistence confirmed on screen)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -19,10 +19,10 @@ It builds, installs the hook into `client-patched/`, starts `maplecw-login`, app
 client patches and launches the client. Close the client by hand when done, then `-Stop`.
 `-ListOnly` prints the stored characters and launches nothing.
 
-**The one thing still unconfirmed is the thing only a launch can confirm**: create a
-character, close the client, run the script again, and see it in the list. The wire side is
-verified end to end against a stand-in client (`tools/login_smoke.py`), including a
-stop-and-restart, but the client's *reaction* has never been observed.
+**Confirmed on screen 2026-08-18:** three characters created against the real server, all
+three persisted, and the "Create a character" button correctly disabled at three. The one
+thing that had to be fixed for it was the **character id** - see the next section, and do
+not renumber characters from 1.
 
 The old harness still exists and still works - `test-charselect.ps1 -SkipNetCheck` - and is
 the right tool for capturing packets or trying a hand-written body. It answers from canned
@@ -106,56 +106,72 @@ agree.
 character is drawn, and drawn correctly. Every packet-level fact in this repo that turned out
 to be wrong was wrong about a body the client read differently, not about a byte count.
 
-### OPEN, and it is the immediate blocker
+### CONFIRMED ON SCREEN 2026-08-18 - creation, persistence, and the slot limit
 
-**The client accepts the create reply and does not transition to character select.**
-Measured on the first real run, 2026-08-18: the server created `TestChar`, sent `0x0015`
-with result 0, the client dispatched it (`ret=1`), and it stayed on the creation screen.
-Clicking OK again reported the name as taken - which is how we know the create had worked.
+The owner created three characters against the real server and reported all three working. This
+closes the priority end to end.
 
-Ruled out by measurement: the client did receive and dispatch it; nothing faulted and no
-C++ throw was logged with the window open; and the handler's 111.9 microseconds proves
-nothing, because `0x0010` - which builds the whole character select screen - took 333.
+| what | evidence |
+|---|---|
+| the create transitions back to character select | on screen |
+| **three characters persist** | ids 201, 202, 203 in `maplecw.db`; a *fresh server* and a *fresh connection* return all three in the login result |
+| **the three-character limit works** | "Create a character" is **disabled** at three, on screen, with no patch for it |
+| entering the world hangs on "Connecting..." | expected - there is no channel server |
 
-**The body was reconstructed and diffed** against the reply that transitioned the client on
-2026-08-17: identical across all 353 bytes **except offsets 5 and 9**, the two copies of the
-character id, `1` against `200`. So the id was the only byte-level variable, and it is now
-eliminated - ids start at 200 (`FIRST_CHARACTER_ID`, seeded through `sqlite_sequence`) and
-the served body has been verified byte-identical to the working one.
+**The transition bug was the character id.** The first run created `TestChar` and the client
+stayed on the creation screen. The reply was byte-identical to the one that worked on
+2026-08-17 **except the two copies of the id** - `1` against `200`. Ids now start at 200
+(`FIRST_CHARACTER_ID`, seeded through `sqlite_sequence`) and the client accepts them.
 
-The remaining candidate is **client state**: every previously working run had a character
-already in the list, and this one had none. `watch@141b36a10:peek=1c0` is in the default
-probe now and reads the world id the create-result handler compares ours against, which is
-the documented way this fails silently. One launch covers both.
+**Do not renumber characters from 1 again.** That is the whole finding.
 
-**Instrument gap this exposed, now closed:** `login.log` did not record packet bodies, so
-that reply had to be rebuilt by hand. It records them now, capped at 96 bytes.
+**The slot limit needed no new code.** `login_result` already sends a truthful list and
+`slotCount`, and `FUN_141b282d0` computes the free slot from them. So the client-side half
+of the owner's "enforce it properly" goal was already satisfied by telling the truth; the
+server-side half was already tested. What remains is `create=on`, which is a **different**
+gate - it enables the button *at all* - and removing it is finding a packet.
+
+### CAPTURED FOR FREE: the select-character flow
+
+Entering the world sent three packets nothing answers yet. Bodies are in `login.log`
+because it records them now. First read, from one capture:
+
+```text
+0x0078  73B  u32 0 | str "." (the placeholder PIC) | u32 203  <- the character id
+              | u8 0 | str "AA-BB-CC-DD-EE-FF, 00-00-..." | str "AABBCCDDEEFF_DEADBEEF"
+0x0079  67B  u32 203 | str "TestCharC" | u32s | SYSTEMTIME 2026-08-18 13:36:32
+0x00BC  12B  09040000 09040000 09040000   - 1033 three times
+```
+
+**`0x0078` carries the character id** (`cb000000` = 203 = `TestCharC`), which makes it the
+select-character request and its reply the migration packet - our `0x0011` candidate, and
+Stage 4. The MAC list and machine id are there again: record, never gate on.
+
+`0x0079` is a client report carrying a timestamp; the client did not block on it.
+
+### NOT MEASURED: whether a launcher token reaches the server
+
+`0x0073` decoded as `mode=5 identity="" tail=aabbccddeeffdeadbeef...` - no token in it. **That
+is not yet a result.** It only rules the route out if `-SessionTokens` was actually passed on
+that launch, and nothing in the logs confirms it was: the script prints the read-back command
+line to the console, not to a file, and no token text appears anywhere in `login.log`.
+
+**An unverified instrument's silence proves nothing** - the standing rule in this repo. Re-run
+with `-SessionTokens "tokA tokB tokC tokD tokE tokF"` and check the console says `session
+tokens (config +0x90)` before reading anything into an empty identity.
 
 ### Still open
 
-* **Confirm on screen.** Create, close, relaunch, look at the list. One launch.
-* **The account is configuration, not a login** - see below.
-* Deletion over the protocol. `maplecw-login --delete NAME` exists for testing, and the
-  store enforces ownership in the statement, but the client's delete *request* opcode is
-  unidentified. The result is `0x0016`, body a `u32` id.
+* **Delete a character.** The owner asked for it. The store side is done - `delete_character` with
+  the ownership clause in the statement, plus `maplecw-login --delete NAME` for testing - and
+  the client's delete *result* is `0x0016` (`FUN_141b34970`). What is missing is the
+  **request opcode**, which has never been seen. Cheapest route, and the one that found
+  `0x008A`: click "Delete a character" on any run and read `login.log`, which now records
+  the opcode and body of everything unanswered. Candidate worth checking first: `0x008B`,
+  one past the create request. **Expect the UI to freeze on that click** until it is
+  implemented - an unanswered request always does - so do it last in a run.
 * The slot count is the constant `3` rather than a property of the account.
-
-### Two goals the owner set on 2026-08-18
-
-**Real sessions, so more than one account can be served.** `--account` serving every
-connection is fine for one tester and wrong for two. Testing-grade is acceptable for now.
-The blocker is that the game socket carries no credentials, so the order is: measure whether
-a launch-argument token reaches us (`0x0073` is now decoded into the log, and
-`test-server.ps1` takes `-SessionTokens`, so any launch answers it); if it does, wire the
-launcher through `crates/auth` `/consume`; if it does not, run one login server per account
-per port. Either way `Session` should take its account from a resolver, not from config.
-
-**The three-character limit, enforced rather than patched.** Three things that get
-conflated: the **server-side limit is done** and tested, so a fourth character cannot be
-stored whatever the client does; the **client-side limit is driven by the truthful list and
-slot count we now send** and should work, but is untested at three; and **`create=on` is a
-different gate** - it forces the flag that enables the button at all, which is open protocol
-work rather than a limit. Details in `docs/login-server.md`.
+* `create=on`: find the packet the real service sends to enable creation.
 
 ## NOT AUTHENTICATED - say so when reporting
 

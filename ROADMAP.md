@@ -199,18 +199,24 @@ the work is listed under Stage 3.5.
 - [x] **The name check is answered from the database.** The harness replied "available" to
       every name including ones it had already handed out; the server now distinguishes
       available, already used, and not allowed.
-- [ ] **The create reply is accepted but the client does not transition.** Measured
-      2026-08-18: the server created `TestChar`, sent `0x0015` with result 0, and the client
-      dispatched it (`ret=1`, no fault, no C++ throw) and stayed on the creation screen. The
-      reply is **byte-identical** to the one that transitioned the client on 2026-08-17
-      except for the two copies of the character id — `1` against `200`. Two candidates
-      left: the id itself, and client state (every working run had a character already in
-      the list; this one had none). The id is eliminated for free by seeding ids at 200;
-      `watch@141b36a10:peek=1c0` measures the world-id gate in the same launch.
-- [ ] **Confirm it on screen.** The end-to-end transport and every reply are verified
-      against `tools/login_smoke.py`, a stand-in client built on the independent Python
-      transport — including a stop-and-restart with the character still listed. What that
-      cannot show is the client's *reaction*, which is exactly where the item above bit.
+- [x] **The create reply the client would not act on - solved.** It was the **character
+      id**. The reply was byte-identical to one that had worked except for the two copies of
+      the id, `1` against `200`. Ids now start at 200, seeded through `sqlite_sequence`.
+      **Do not renumber characters from 1.**
+- [x] **Confirmed on screen 2026-08-18.** The owner created three characters against the real
+      server; all three persist, and a fresh server on a fresh connection returns all three
+      in the login result.
+- [x] **The three-character limit works, with no new code.** "Create a character" disables
+      at three because `login_result` sends a truthful list and `slotCount` and the client
+      computes the free slot from them. Telling the truth was the implementation. The
+      server-side refusal was already tested.
+- [ ] **Delete a character** - the owner asked for it 2026-08-18. Store side is done
+      (`delete_character` with the ownership clause in the statement, plus
+      `maplecw-login --delete NAME`), and the client's delete *result* is `0x0016`
+      (`FUN_141b34970`). Missing: the **request opcode**, never observed. Capture it the way
+      `0x008A` was found - click Delete and read `login.log`, which now records bodies.
+      Candidate to check first: `0x008B`, one past create. Expect a UI freeze on that click
+      until it is answered, so do it last in a run.
 
 #### Two goals the owner set on 2026-08-18
 
@@ -220,8 +226,11 @@ the work is listed under Stage 3.5.
       1. **Measure whether a launch-argument token reaches the server.** `-NXLDEBUG` puts
          arguments 3 onward into the config's six-slot session array at `+0x90`; whether
          outbound `0x0073` transmits them is the open question, and it is the same
-         measurement Stage 3.5 needs. `login.log` now records packet bodies, so passing six
-         distinguishable tokens on a launch answers it as a side effect.
+         measurement Stage 3.5 needs. `0x0073` is decoded into `login.log` now and
+         `test-server.ps1` takes `-SessionTokens`, so a launch answers it as a side effect.
+         **Still unmeasured as of 2026-08-18:** the 2026-08-18 run showed an empty identity,
+         but nothing confirms the tokens were passed on that launch, so it rules nothing
+         out. Check the console prints `session tokens (config +0x90)` first.
       2. **If they arrive:** the launcher authenticates against `crates/auth`, passes the
          single-use token, and the login server resolves the account by calling `/consume`.
          That is the real design and it is already half-built.
