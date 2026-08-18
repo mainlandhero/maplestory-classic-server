@@ -269,6 +269,16 @@ pub fn data_wz_up_to_date() -> Vec<u8> {
     zigzag_varint(0)
 }
 
+/// The client leaving the world it is in - the "Choose another world" button.
+///
+/// Handler `FUN_141b3bfd0`. The body is empty. **It must be answered**: unanswered, the
+/// client blocks its entire UI on the reply - no dialog can be dismissed and even the quit
+/// prompt stops responding, which reads as a crash and is not one. The reply it wants is
+/// the world list again, exactly as at login.
+///
+/// Measured 2026-08-17: answering it with a world entry and terminator restored the UI.
+pub const CLIENT_LEAVE_WORLD_REQUEST: u16 = 0x0082;
+
 /// The client's request to *enter* character creation - the second-password check.
 ///
 /// Sent by `FUN_141b282d0` when "Create a character" is clicked and its gate opens. The
@@ -911,6 +921,17 @@ pub fn create_character_result(world_id: u32, chr: &Character) -> Vec<u8> {
     out.push(1); // return to character select
     out
 }
+
+/// "You have no free character slot" - the account is full.
+///
+/// From the create-result handler's own switch; it maps this code to the
+/// `insufficientCharacterSlot` notice.
+pub const CREATE_INSUFFICIENT_SLOT: u8 = 0x09;
+
+/// A refusal with no specific notice. Anything the handler's switch does not name falls
+/// through to `cannotProcessRequest`, which is the honest answer when the server refused
+/// for a reason the client has no wording for - a duplicate name, or a failed write.
+pub const CREATE_CANNOT_PROCESS: u8 = 0x01;
 
 /// A refused [`CREATE_CHARACTER_RESULT`]. Any non-zero code raises a notice and leaves the
 /// client on the creation screen.

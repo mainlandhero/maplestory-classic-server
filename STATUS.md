@@ -1,94 +1,137 @@
-# Where things stand — 2026-08-17 (the client survives; next is a real server with persistence)
+# Where things stand — 2026-08-18 (the login server is real, and characters persist)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
 
 ## START HERE
 
-**The client no longer kills itself, and character creation works end to end on the wire.**
-As of 2026-08-17 a session runs as long as you want it to. Everything below assumes that.
-
-**The priority is now a real server with persistence** - see the next section. What exists
-today is a Python harness replaying canned bodies, and it has reached the end of what that
-design can do.
+**There is a real server now.** `crates/login` replaced the Python harness on 2026-08-18,
+and **characters persist between launches** - the priority the owner set the day before. The
+client also no longer kills itself, so a session runs as long as you want it to.
 
 One command, from an **elevated** shell:
 
 ```bash
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -SkipNetCheck
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
 ```
 
-`-SkipNetCheck` is not optional. Without it the client `__fastfail`s after ~37 seconds; the
-section after next explains why, and it is a client bug rather than anything we do.
+It builds, installs the hook into `client-patched/`, starts `maplecw-login`, applies the
+client patches and launches the client. Close the client by hand when done, then `-Stop`.
+`-ListOnly` prints the stored characters and launches nothing.
 
-It builds `grap-stub`, installs it into `client-patched/`, starts the probe with every
-answer wired, and launches the client. Close it by hand when done, then `-Stop`.
+**The one thing still unconfirmed is the thing only a launch can confirm**: create a
+character, close the client, run the script again, and see it in the list. The wire side is
+verified end to end against a stand-in client (`tools/login_smoke.py`), including a
+stop-and-restart, but the client's *reaction* has never been observed.
+
+The old harness still exists and still works - `test-charselect.ps1 -SkipNetCheck` - and is
+the right tool for capturing packets or trying a hand-written body. It answers from canned
+bodies and persists nothing.
 
 Where the answers land:
 
 | file | what is in it |
 |---|---|
-| `probe.log` | every packet both ways, with bodies. The `VERDICT` line names the last thing the client sent - **read it first when the UI freezes** |
+| `login.log` | every packet both ways, and **what each reply was** - read this first |
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults. Not `hook.log`, not the repo root |
 | `client-exit.log` | how the client died: exit code, lifetime, job membership, handle holders. A clean `0` is a hand-close; `0xC0000409` is the fail-fast returning |
+| `probe.log` | only when running the old Python harness |
+
+The client patches have not changed and they are still patches - `-SkipNetCheck` is now
+always on, because without it the client `__fastfail`s after ~37 seconds. See
+"SOLVED - the ~37 second exit" below, and `docs/launcher.md` for which patches retire.
 
 **A frozen UI is almost always an unanswered packet, not a crash.** The client blocks its
 whole interface - every button, including the quit prompt's OK - waiting on a reply. That is
 what "Check" did before `0x0081` was answered and what "Choose another world" did before
-`0x0082` was. Read `probe.log`.
+`0x0082` was. **Read `login.log`** - it names every reply and what it answered, so the last
+inbound line with nothing after it is the packet nobody answered. `crates/login` has a test
+for this rule, and no path in it returns an error in place of a reply.
 
-## THE PRIORITY - a real server, and characters that persist
+## DONE - a real server, and characters that persist
 
-**The owner set this on 2026-08-17, replacing the exit:** stop answering the client with canned
-bodies, and make characters survive a relaunch. The account side of the server should hold
-the character name, its data and its inventory.
+**The owner set this on 2026-08-17; built 2026-08-18.** `crates/login` answers the client from a
+database instead of from canned bodies, and a character created in one run is in the
+character list of the next. Full notes in **`docs/login-server.md`**.
 
-The client is no longer the obstacle. It survives indefinitely now, so a server can be
-written and exercised for as long as it takes - which was never true before today.
+### What it is
 
-### Why the harness cannot go further
-
-`handshake_probe.py` replays bodies handed to it on a command line. `--build` now covers the
-one reply that must be computed from its request, by shelling out to `packet-hex`, and that
-is as far as the design stretches. What it cannot do:
-
-* **Persist anything.** The character list in `0x0010` is generated from `-Characters` at
-  launch. A character created in one session is gone in the next, and the client only shows
-  it during the session because it added it locally when `0x0015` came back.
-* **Hold account state.** There is no account, no ownership, no slot accounting - the free
-  slot count is a constant.
-* **Answer anything that depends on what came before**, which is most of what a game server
-  does.
-
-### What to build
-
-`crates/login`, a real server, replacing the probe for everything except packet capture.
-**Every piece it needs already exists** - this is assembly, not research:
-
-| piece | where |
+| module | holds |
 |---|---|
-| framing and the wire cipher | `crates/net` - `Framer`, `MapleCipher`, verified against captures |
-| every reply body | `crates/net/src/opcode.rs`, all pinned by tests |
-| reading the create request | `CreateCharacterRequest::parse` + `.character(id)` |
-| storage, argon2id accounts | `crates/store`, 21 tests |
-| the exact packet order to reproduce | `docs/character.md`, measured, and `probe.log` fixtures |
+| `handshake` | the greeting - 48 bytes, unencrypted, server speaks first |
+| `session` | the whole protocol as a **pure state machine**: bodies in, bodies out |
+| `server` | the socket loop, framing, the log. Nothing protocol-shaped |
 
-Storage wants a `characters` table - id, account, name, gender, skin, face, hair, level,
-job, the four stats, hp/mp, map - plus an `equipment` table keyed by character and slot,
-since the record already carries an equip map and the create request already carries four
-items. Names are unique: `0x0081` is a name-availability check, and answering it truthfully
-is the first thing a real server does that the harness cannot.
+`session` having no socket and no clock is the point: every exchange measured against the
+real client is a unit test, so a change can be checked without spending a client launch.
 
-**Do not start by rewriting the transport.** `tools/transport.py` and `crates/net` agree,
-and the handshake is the one part that is finicky and already working. Bring the server up
-against `test-one.ps1`'s existing flow first, then retire the probe opcode by opcode.
+Storage is `crates/store/src/character.rs`: a `characters` table whose columns match the
+protocol's `Character` field for field, plus an `equipment` table keyed by character and
+slot, both cascading from `accounts`. The row maps to `net::opcode::Character` by
+**exhaustive destructure in both directions**, so adding a protocol field breaks the build
+until a column exists - a separate storage struct would have meant mapping nineteen fields
+by hand, and a missed field is a stat that silently does not persist.
 
-### Standing constraints for it
+Character ids are database rowids, so they are distinct per character. That is a protocol
+requirement: a canned reply that sent id 200 twice made the client drop the second character.
 
-* **Passwords hashed and salted** - `crates/store` already does argon2id. Never plain text,
-  and never on the game socket: that cipher is obfuscation, not security.
-* The client is a **separate, firewalled copy** in `client-patched/`; the original install
-  stays untouched.
+### The rule the whole thing is built around: always answer
+
+**An unanswered request freezes the client's entire UI** - every button, including the OK on
+the quit prompt. No path in `session` returns an error instead of a reply; a database
+failure becomes a refusal the client can render, and the reason travels in the log label.
+Pinned by `every_request_the_client_blocks_on_gets_an_answer`.
+
+### The name check is the first genuinely honest answer
+
+The harness replied "available" to every name, including ones it had already handed out.
+The server checks the database, distinguishes available / already used / not allowed, and
+names are unique across the **whole service** case-insensitively - the client's request
+carries no account to scope by.
+
+### How it was verified without a client launch
+
+`tools/login_smoke.py` is a **stand-in client** built on `tools/transport.py`, an
+implementation written independently of the Rust one from the client's own receive path. So
+agreement between them is evidence, not one module agreeing with itself.
+
+Verified 2026-08-18 against a fresh database: greeting accepted, gate delivered and repeated
+to a quiet client, login answered with four packets in order, creation permitted, a free
+name available and the same name taken immediately after creating it, create accepted, the
+new character in the next login result - then the server **stopped and restarted**, and a
+new connection still listed it. `maplecw-login --list` and an independent `sqlite3` read
+agree.
+
+**What that does not prove is the client's reaction.** Only a launch shows whether the
+character is drawn, and drawn correctly. Every packet-level fact in this repo that turned out
+to be wrong was wrong about a body the client read differently, not about a byte count.
+
+### Still open
+
+* **Confirm on screen.** Create, close, relaunch, look at the list. One launch.
+* **The account is configuration, not a login** - see below.
+* Deletion: `crates/store` has `delete_character` with an ownership clause and the client has
+  a delete result (`0x0016`, body a `u32` id), but the request opcode is unidentified.
+* The slot count is the constant `3` rather than a property of the account.
+
+## NOT AUTHENTICATED - say so when reporting
+
+**Nothing on the game socket proves who the player is.** The client's login request carries
+no credentials; the login form is vestigial and the server supplies both the login result
+*and* the account name. So `--account` decides whose characters every connection sees, and
+two different people connecting are the same account. The server prints this at startup:
+
+```text
+serving every connection as account "maplecw" (id 1), 1 character(s) stored
+NOT AUTHENTICATED: the game socket carries no credentials, so anyone who
+  connects is served as that account. See docs/launcher.md.
+```
+
+Closing it is Stage 3.5: the launcher authenticates over HTTPS against `crates/auth`, gets a
+single-use token, and the token reaches the login server so it can call `/consume`. Whether
+the client will carry that token in `0x0073` is **not yet measured** - `docs/deployment.md`
+has the experiment, and it is one run with six distinguishable tokens. Until `/consume` gates
+the login result, do not describe a session as authenticated.
 
 ### Build it for two machines from the start - see `docs/deployment.md`
 
@@ -102,15 +145,16 @@ actually change:
    rule that blocks Nexon. It has to become a block whose remote address is the complement of
    the server. The twenty Nexon addresses must stay blocked, so `-SkipNetCheck` is still
    required either way.
-2. **Bind address is not advertise address.** Whatever packet eventually carries a channel
-   address must carry the address the *client* can reach. Which packet that is has not been
-   established - `0x0011` is the candidate and it is Stage 4.
+2. **Bind address is not advertise address.** `crates/login` binds `127.0.0.1:8484` by
+   default and takes `--bind`; there is no `advertise` yet, because **nothing we send carries
+   an address**. Whatever packet eventually does must carry one the *client* can reach.
+   `0x0011` is the candidate and it is Stage 4.
 3. **Machine identity must not be an authorisation input.** `0x0073` and `0x0078` carry a MAC
    list and a machine id; record them, never gate on them, or a second machine cannot play.
 
-`crates/auth` already has the right shape for this - `POST /login` for the launcher,
-`POST /consume` for the login server, tokens stored only as hashes. It binds loopback only
-today and will need a configurable bind plus TLS.
+`crates/auth` already has the right shape - `POST /login` for the launcher, `POST /consume`
+for the login server, tokens stored only as hashes. It binds loopback only today and will
+need a configurable bind plus TLS.
 
 ### And a launcher - see `docs/launcher.md`
 
@@ -118,9 +162,7 @@ The owner asked for a minimal launcher that applies the client patches and takes
 password, since the real client uses a validated session. The design is written; the piece
 that has to be **measured before it can be finished** is whether the session array at config
 `+0x90` - which `-NXLDEBUG` fills from launch arguments 3 onward - is what outbound `0x0073`
-transmits. One run with six distinguishable tokens answers it. Until `/consume` actually
-gates the login result, the launcher is not authenticating anything and should not be
-described as if it were.
+transmits. One run with six distinguishable tokens answers it.
 
 ## SOLVED - the ~37 second exit (kept for the method, not the answer)
 
@@ -391,17 +433,19 @@ size rather than reading it, so it passed with the fields transposed.
 `the_avatar_look_puts_face_and_hair_where_the_client_reads_them` now asserts the exact byte
 run, and was checked by putting the bug back - it fails - and taking it out again.
 
-### Still fake, and this is the priority
+### Now persisted
 
-**Nothing persists.** The list in `0x0010` is generated from `-Characters` at launch. A
-character created in one session is gone in the next; the client only shows it during the
-session because it added it locally when `0x0015` came back. There is no account, no
-ownership, and the free-slot count is a constant. See "THE PRIORITY".
+That was all measured against the harness, which generated the list from `-Characters` at
+launch and persisted nothing. `crates/login` stores it. The four fixes above are still the
+reason the transaction works, and the builders they corrected are what the server uses -
+in particular the avatar look field order, which is pinned by a positional test.
 
-## THE GOAL (set 2026-08-17)
+## THE GOAL (set 2026-08-17) - reached on the wire 2026-08-18
 
 **The server processes an entire character creation transaction.** The owner set this after the
-masked email landed and the "connection dies" problem turned out not to exist.
+masked email landed and the "connection dies" problem turned out not to exist. `crates/login`
+does all four steps below against real storage; what has not happened yet is a client launch
+to watch it.
 
 That means, end to end and against a real server-side implementation:
 
@@ -426,10 +470,12 @@ That means, end to end and against a real server-side implementation:
 | Create request `0x008A` | **MEASURED** - virtualised builder, so a capture was the only way |
 | Create result `0x0015` | **MEASURED** - the client returns to CharSelect with the new character |
 | Client exits ~37s after launch | **FIXED** - a firewalled reachability check overran its buffer; `-SkipNetCheck` skips it, confirmed |
-| Server-side creation | not started - the harness answers with canned bodies |
-| Valid session | still faked by client patches |
+| Server-side creation | **done** - `crates/login` reads the request, stores the character, and replies from the stored row |
+| Characters persist between launches | **done on the wire**, verified with a server restart; not yet confirmed on screen |
+| Name check answered truthfully | **done** - available / already used / not allowed, from the database |
+| Valid session | still faked by client patches, and the game socket carries no credentials at all |
 
-### The whole transaction, as measured
+### The whole transaction, as measured - and now as served
 
 | # | client sends | we answer | builder |
 |---|---|---|---|
@@ -438,10 +484,13 @@ That means, end to end and against a real server-side implementation:
 | 3 | `0x0081` check name | `0x0014` name + result | `check_name_result`, or `--answer 0081=0014:<req>00` |
 | 4 | `0x008A` create, 101 bytes | `0x0015` result + record | `create_character_result` |
 
-`0x00A8` and `0x0081` arrive on **every** click, so they need standing answers
-(`--answer`), not one-shots.
+`0x00A8` and `0x0081` arrive on **every** click, so they need standing answers, not
+one-shots. `crates/login` is stateless about all of them except the login request, which it
+remembers only to decide whether to repeat the startup gate to a quiet client.
 
 ### Read these first
+* **`docs/login-server.md`** - the login server: what it answers, how it stores, what is
+  not authenticated, and how it was checked without a client launch.
 * **`docs/deployment.md`** - running the server on another machine, and what breaks first.
 * **`docs/launcher.md`** - the launcher, the patch inventory, and how each patch retires.
 * **`docs/character.md`** - the whole transaction, the complete record layout, the NewChar
@@ -458,10 +507,13 @@ That means, end to end and against a real server-side implementation:
 
 | tool | use |
 |---|---|
-| `tools/test-charselect.ps1` | the whole run in one command; builds, installs, answers, launches |
+| `tools/test-server.ps1` | **the run to use.** Builds, installs the hook, starts `maplecw-login`, applies the client patches, launches the client. `-Stop` tears down, `-ListOnly` prints stored characters |
+| `maplecw-login` | the login server. `--list` prints what is stored without listening; `--bind`, `--db`, `--account`, `--world` |
+| `tools/login_smoke.py` | a **stand-in client** over `transport.py`: proves the transport and every reply without a client launch. `--check-quiet`, `--list-only` |
+| `tools/test-charselect.ps1` | the old harness. Canned bodies, no persistence - still the right tool for capturing packets or trying a hand-written body |
 | `tools/test-one.ps1` | the general harness underneath it |
 | `packet-hex` | prints a reply body from the Rust builders, so hex is never typed by hand |
-| `tools/handshake_probe.py` | the stand-in server. `--answer` standing, `<req>` splices the request's payload, **`--build IN=ELEMENT` computes a reply from the request by running `packet-hex`**, `--keepalive`. Being replaced by `crates/login` |
+| `tools/handshake_probe.py` | the old stand-in server. `--answer` standing, `<req>` splices the request's payload, **`--build IN=ELEMENT` computes a reply from the request by running `packet-hex`**, `--keepalive`. **Superseded by `crates/login`** for serving; kept for capture |
 | `tools/transport.py` | the cipher, the framing, and the client-stream decoder |
 | `-Probe watch@A,B,C` | up to four `int3` watches, each logging the calling thread id; `<module>!<export>` for relocated modules; options `:rdx=` forces an argument, `:peek=` logs `[rcx+off]`, `:hits=` sets the per-target log cap (default 32) |
 | `tools/exit-forensics.ps1` | how the client died, from outside: exit code, thread table, job membership, handle holders. Started automatically by `test-one.ps1`; verified against a killed and an orderly control |
@@ -503,7 +555,11 @@ virtualisation, not of non-existence**.
   They make the normal flow reachable; they do not make the session valid. Say so when
   reporting.
 * **Rebuilding `grap-stub` does not update the client** unless `setup-client.ps1` runs.
-  `test-charselect.ps1` does this itself; anything else must.
+  `test-charselect.ps1` and `test-server.ps1` do this themselves; anything else must.
+* **`cargo test` does not refresh `target/release/maplecw-login.exe`.** The same trap one
+  layer up: a test run leaves the release binary stale, so a manually started server can be
+  a build old enough to predate the feature under test. That happened on 2026-08-18 and the
+  smoke test caught it. `cargo build --release` before starting anything by hand.
 * **`powershell -File` flattens array arguments** into separate words, so a `[string[]]`
   parameter silently takes only its first element and the rest bind positionally. Pass
   delimited strings.
@@ -520,20 +576,23 @@ virtualisation, not of non-existence**.
 ## Working right now
 
 ```bash
-cargo test --release          # 75 tests green
+cargo test --release          # 107 tests green
 cargo build --release
 ```
 
 **The client runs and connects to our server:**
 
 ```bash
-# 1. start a listener/probe
-python -u tools/handshake_probe.py --port 8484
-# 2. launch the patched client (from client-patched/)
+# 1. once: create the account the server serves
+./target/release/maplecw-useradd.exe maplecw
+# 2. start the login server
+./target/release/maplecw-login.exe
+# 3. launch the patched client (from client-patched/)
 MapleStory.exe -NXLDEBUG 127.0.0.1 8484
 ```
 
-It connects to `127.0.0.1:8484`, and GameGuard never loads.
+`tools/test-server.ps1` does all three. The client connects to `127.0.0.1:8484`, and
+GameGuard never loads.
 
 ## Done
 
@@ -541,8 +600,9 @@ It connects to `127.0.0.1:8484`, and GameGuard never loads.
 |---|---|
 | `crates/wz` | WZ parser. **9,994/9,994 images** across 102 archives parse. `wz-dump` CLI. |
 | `crates/net` | **The client's real wire cipher**, verified against captures, plus the recovered inbound opcodes and their bodies, and `packet-hex` to put a body on a command line without typing it. 28 tests. |
-| `crates/store` | SQLite accounts/sessions. argon2id, per-password salt, hashed single-use tokens. 21 tests. |
+| `crates/store` | SQLite accounts/sessions **and characters**. argon2id, per-password salt, hashed single-use tokens; `characters` + `equipment` tables cascading from `accounts`. 33 tests. |
 | `crates/auth` | Local HTTP auth server (loopback only) + `maplecw-useradd`. Verified end to end. |
+| `crates/login` | **The login server.** Greeting, the protocol as a pure state machine, and the socket loop. Characters persist. 21 tests, plus an end-to-end check against a stand-in client. |
 | `crates/grap-stub` | No-op `grap64.dll`; GameGuard never starts. Plus the **in-process dispatcher hook**, the opcode walk / watch probe, a session monitor and patcher, and a socket watch over `connect`/`closesocket`/`shutdown`. |
 | Client copy | `client-patched/` — original install untouched, firewalled outbound. |
 | Tooling | `handshake_probe.py` decodes the client's live stream; `dump_runtime.py` reads its memory. |

@@ -6,6 +6,7 @@ license.workspace = true
 description = "SQLite persistence for MapleCW: accounts, password hashing, and session tokens."
 
 [dependencies]
+net = { path = "../net" }
 thiserror.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 argon2 = "0.5"

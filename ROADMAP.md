@@ -163,7 +163,7 @@ the work is listed under Stage 3.5.
 - [ ] The login server (Stage 3) validates the same session token, so the two agree on
       who the player is.
 
-### Stage 3 — Login server  ← **current**
+### Stage 3 — Login server  ← **current**, and mostly done
 - [x] Reach the login screen (inbound `0x0032`), the **world list** (`0x000B`, which is also
       what enables the Login button), and **character select**.
 - [x] The **account name / masked email** (`0x0000`) — server-supplied, on screen.
@@ -183,16 +183,30 @@ the work is listed under Stage 3.5.
       and `hair` were being written one field too early — see `docs/character.md`.
 - [x] `0x0082` (leave world) answered, and the `0x0080` world sequence made standing, so
       "Choose another world" and re-entering a world both work.
-- [ ] **`crates/login` proper — ← *the priority the owner set on 2026-08-17***, replacing the
-      exit as the top item. No more canned or boilerplate replies: a real server handling
-      client operations, with **characters that persist between launches**. The account side
-      stores the character name, its data and its inventory.
-      Today the "server" is `tools/handshake_probe.py` replaying bodies from `packet-hex`;
-      `--build` computes the one reply that must come from its request, and that is as far
-      as the design goes. Nothing persists, there is no account or ownership, and the free
-      slot count is a constant. Everything a real crate needs exists — cipher and framing in
-      `crates/net`, every reply builder in `opcode.rs`, `CreateCharacterRequest::parse`,
-      SQLite in `crates/store`. See `STATUS.md` under "THE PRIORITY" for the shape.
+- [x] **`crates/login` — built 2026-08-18**, the priority the owner set on 2026-08-17. A real
+      server, no canned bodies, and **characters persist between launches**. Three modules:
+      `handshake` (the greeting), `session` (the protocol as a pure state machine — no
+      socket, no clock, so every measured exchange is a unit test), `server` (the socket
+      loop and the log). `maplecw-login --list` prints what is stored without listening.
+      Run it against the client with **`tools/test-server.ps1`**. Full notes in
+      **`docs/login-server.md`**.
+- [x] **Storage for characters.** `crates/store/src/character.rs`: a `characters` table
+      whose columns match the protocol's `Character` field for field, and an `equipment`
+      table keyed by character and slot, both cascading from `accounts`. The row maps to
+      `net::opcode::Character` by exhaustive destructure in both directions, so a new
+      protocol field breaks the build until a column exists. Names are unique across the
+      service and case-insensitive, which is what makes the name check truthful.
+- [x] **The name check is answered from the database.** The harness replied "available" to
+      every name including ones it had already handed out; the server now distinguishes
+      available, already used, and not allowed.
+- [ ] **Confirm it on screen.** The end-to-end transport and every reply are verified
+      against `tools/login_smoke.py`, a stand-in client built on the independent Python
+      transport — including a stop-and-restart with the character still listed. What that
+      cannot show is the client's *reaction*. One launch settles it: create a character,
+      close, relaunch, and look at the list.
+- [ ] **The account is configuration, not a login.** The game socket carries no
+      credentials, so `--account` decides whose characters every connection sees. Closing
+      this is Stage 3.5 — see `docs/launcher.md`.
 - [ ] Find what the real service sends to enable character creation. The flag is set by
       `FUN_140c9e230` from **virtualised** code; we currently call it ourselves from
       `grap-stub` (`-Session create=on`), which is a client patch, not the protocol.
@@ -201,12 +215,10 @@ the work is listed under Stage 3.5.
 - [ ] `crates/world`: world/channel registry the login server advertises, and the
       migration token store both sides validate against.
 - [ ] `crates/data`: typed loaders over `crates/wz` (mobs, items, skills, maps, strings).
-- [ ] `crates/store`: persistence for accounts and characters (SQLite to start). Wants a
-      `characters` table — id, account, name, gender, skin, face, hair, level, job, the four
-      stats, hp/mp, map — and an `equipment` table keyed by character and slot, since the
-      record already carries an equip map and the create request already carries four items.
-      Names must be unique: `0x0081` is a name-availability check, and answering it
-      truthfully is the first thing a real server does that the harness cannot.
+- [ ] Character **deletion**. `crates/store` has `delete_character` with an ownership
+      clause in the statement, and the client has a delete result (`0x0016`, body a `u32`
+      character id), but the request opcode has not been identified and nothing is wired up.
+- [ ] Character **slot count** comes from the constant `3` rather than from the account.
 
 ### Stage 3.5 — Off-box deployment and a launcher  ← *added 2026-08-17*
 The owner will host this on a homelab box, so the client and the server are **not** the same

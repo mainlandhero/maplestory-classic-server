@@ -1,0 +1,15 @@
+[package]
+name = "login"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The MapleCW login server: the real thing, replacing the canned-body probe."
+
+[dependencies]
+net = { path = "../net" }
+store = { path = "../store" }
+thiserror.workspace = true
+
+[[bin]]
+name = "maplecw-login"
+path = "src/bin/login_server.rs"

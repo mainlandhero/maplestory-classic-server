@@ -77,6 +77,49 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS idx_sessions_account ON sessions(account_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_expiry  ON sessions(expires_at);
+
+            -- One row per character. The column set is deliberately the protocol's
+            -- Character field for field, so crates/store/src/character.rs can map a row
+            -- to it by exhaustive destructure and a new protocol field becomes a
+            -- compile error rather than a stat that silently fails to persist.
+            --
+            -- name is unique across the WHOLE service, not per account: the client's
+            -- name check carries no account to scope by.
+            CREATE TABLE IF NOT EXISTS characters (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                world_id     INTEGER NOT NULL,
+                name         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+                gender       INTEGER NOT NULL,
+                skin         INTEGER NOT NULL,
+                face         INTEGER NOT NULL,
+                hair         INTEGER NOT NULL,
+                level        INTEGER NOT NULL,
+                job          INTEGER NOT NULL,
+                strength     INTEGER NOT NULL,
+                dexterity    INTEGER NOT NULL,
+                intelligence INTEGER NOT NULL,
+                luck         INTEGER NOT NULL,
+                hp           INTEGER NOT NULL,
+                max_hp       INTEGER NOT NULL,
+                mp           INTEGER NOT NULL,
+                max_mp       INTEGER NOT NULL,
+                ap           INTEGER NOT NULL,
+                map_id       INTEGER NOT NULL,
+                created_at   INTEGER NOT NULL
+            );
+
+            -- The avatar's visible equipment, one row per occupied slot. Separate from
+            -- characters because the slot set is sparse and grows with the game.
+            CREATE TABLE IF NOT EXISTS equipment (
+                character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                slot         INTEGER NOT NULL,
+                item_id      INTEGER NOT NULL,
+                PRIMARY KEY (character_id, slot)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_characters_account
+                ON characters(account_id, world_id);
             "#,
         )?;
         Ok(Self { conn: Mutex::new(conn) })
@@ -84,11 +127,11 @@ impl Store {
 
     /// Lock the connection. Poisoning cannot lose data here - the recovered guard is
     /// still a usable connection - so the lock is recovered rather than panicking.
-    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn now() -> i64 {
+    pub(crate) fn now() -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

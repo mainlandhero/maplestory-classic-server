@@ -24,3 +24,13 @@ sockets.log
 
 # pktmon captures are large binaries; the decoded text summary goes in fixtures instead
 /research/pktmon/
+
+# The live database. Accounts (argon2id hashes) and characters - real state, not source,
+# and it holds password hashes, so it never goes in the repo.
+maplecw.db
+maplecw.db-wal
+maplecw.db-shm
+
+# Login server run log
+login.log
+login.log.err

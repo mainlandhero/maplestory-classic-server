@@ -15,6 +15,12 @@ pub enum StoreError {
     #[error("no such account: {name:?}")]
     NoSuchAccount { name: String },
 
+    #[error("character name {name:?} is already taken")]
+    CharacterNameTaken { name: String },
+
+    #[error("character name {name:?} is not allowed")]
+    InvalidCharacterName { name: String },
+
     #[error("account name {name:?} is invalid: {reason}")]
     InvalidAccountName { name: String, reason: &'static str },
 }

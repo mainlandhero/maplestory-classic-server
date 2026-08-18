@@ -13,11 +13,13 @@
 //!   wrong password give the same answer and cost comparable time.
 //! * Nothing in this crate logs or prints a password or a token.
 
+pub mod character;
 pub mod db;
 pub mod error;
 pub mod password;
 pub mod session;
 
+pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
 pub use db::{Account, AuthOutcome, Store, SESSION_TTL_SECS};
 pub use error::{Result, StoreError};
 pub use password::{hash_password, verify_password, MIN_PASSWORD_LEN};
