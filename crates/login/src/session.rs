@@ -19,13 +19,14 @@ use std::sync::Arc;
 
 use net::opcode::{
     account_info, check_name_result, create_character_failed, create_character_result,
-    data_wz_up_to_date, enter_creation_permitted, login_result, world_list_end,
-    world_list_entry, Character, CreateCharacterRequest, ACCOUNT_INFO, CHARACTER_SLOTS,
+    data_wz_up_to_date, delete_character_result, enter_creation_permitted, login_result,
+    world_list_end, world_list_entry, Character, CreateCharacterRequest, ACCOUNT_INFO, CHARACTER_SLOTS,
     CHECK_NAME_RESULT, CLIENT_CHECK_NAME_REQUEST, CLIENT_CREATE_CHARACTER_REQUEST,
-    CLIENT_DATA_WZ_REQUEST, CLIENT_ENTER_CREATION_REQUEST, CLIENT_LEAVE_WORLD_REQUEST,
-    CLIENT_LOGIN_REQUEST, CREATE_CANNOT_PROCESS, CREATE_CHARACTER_RESULT,
-    CREATE_INSUFFICIENT_SLOT, DATA_WZ_PATCH, ENTER_CREATION_RESULT, LOGIN_RESULT,
-    NAME_ALREADY_USED, NAME_AVAILABLE, NAME_NOT_ALLOWED, WORLD_LIST,
+    CLIENT_DATA_WZ_REQUEST, CLIENT_DELETE_CHARACTER_REQUEST, CLIENT_ENTER_CREATION_REQUEST,
+    CLIENT_LEAVE_WORLD_REQUEST, CLIENT_LOGIN_REQUEST, CREATE_CANNOT_PROCESS,
+    CREATE_CHARACTER_RESULT, CREATE_INSUFFICIENT_SLOT, DATA_WZ_PATCH,
+    DELETE_CHARACTER_RESULT, DELETE_FAILED, DELETE_OK, ENTER_CREATION_RESULT,
+    LOGIN_RESULT, NAME_ALREADY_USED, NAME_AVAILABLE, NAME_NOT_ALLOWED, WORLD_LIST,
 };
 use store::{Account, NameCheck, Store};
 
@@ -135,6 +136,7 @@ impl Session {
             )],
             CLIENT_CHECK_NAME_REQUEST => self.check_name(payload),
             CLIENT_CREATE_CHARACTER_REQUEST => self.create_character(payload),
+            CLIENT_DELETE_CHARACTER_REQUEST => self.delete_character(payload),
             _ => Vec::new(),
         }
     }
@@ -259,6 +261,58 @@ impl Session {
                 )]
             }
             Err(e) => refuse(CREATE_CANNOT_PROCESS, format!("create refused: {e}")),
+        }
+    }
+
+    /// Delete a character, if this account owns it.
+    ///
+    /// The request is one `u32` and nothing else - no password, no confirmation token. The
+    /// confirmation is a client-side dialog, so **the server cannot tell a confirmed delete
+    /// from a forged one** and the only protection that means anything is the ownership
+    /// check, which lives inside the SQL statement rather than in a prior read.
+    ///
+    /// Refusals must use [`DELETE_FAILED`] specifically: every other non-zero code falls
+    /// through the client's switch to the branch that removes the character from the list
+    /// anyway, which would show a delete that did not happen.
+    fn delete_character(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some(id) = payload
+            .get(..4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        else {
+            return vec![Reply::new(
+                DELETE_CHARACTER_RESULT,
+                delete_character_result(0, DELETE_FAILED),
+                "delete refused: the request did not parse".to_string(),
+            )];
+        };
+
+        // Look the name up before deleting, so the log says what went, not just an id.
+        let name = self
+            .store
+            .characters_for(self.account.id, self.config.world.id)
+            .ok()
+            .and_then(|cs| cs.into_iter().find(|c| c.id == id).map(|c| c.name))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        match self.store.delete_character(self.account.id, id) {
+            Ok(true) => vec![Reply::new(
+                DELETE_CHARACTER_RESULT,
+                delete_character_result(id, DELETE_OK),
+                format!("deleted {name:?} (id {id})"),
+            )],
+            // Not an error: the account does not own it, or it is already gone. Either way
+            // the answer is the same, and it does not say which - a delete that reports
+            // "no such character" differently from "not yours" is an ownership oracle.
+            Ok(false) => vec![Reply::new(
+                DELETE_CHARACTER_RESULT,
+                delete_character_result(id, DELETE_FAILED),
+                format!("delete refused: id {id} is not on this account"),
+            )],
+            Err(e) => vec![Reply::new(
+                DELETE_CHARACTER_RESULT,
+                delete_character_result(id, DELETE_FAILED),
+                format!("delete refused: {e}"),
+            )],
         }
     }
 }
@@ -586,6 +640,82 @@ mod tests {
         let mut b = Session::new(store, config, theirs);
         let replies = b.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
         assert!(replies.last().unwrap().what.contains("0 character"));
+    }
+
+    fn delete_request(id: u32) -> Vec<u8> {
+        request(CLIENT_DELETE_CHARACTER_REQUEST, &id.to_le_bytes())
+    }
+
+    #[test]
+    fn deleting_removes_the_character_and_frees_its_name() {
+        let mut s = session();
+        s.handle(&create_request("Doomed", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let replies = s.handle(&delete_request(id));
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].opcode, DELETE_CHARACTER_RESULT);
+        assert_eq!(replies[0].body, delete_character_result(id, DELETE_OK));
+
+        assert_eq!(s.store.characters_for(s.account.id, 0).unwrap().len(), 0);
+        // The slot and the name both come back.
+        assert_eq!(s.handle(&name_request("Doomed"))[0].body.last(), Some(&NAME_AVAILABLE));
+    }
+
+    #[test]
+    fn deleting_frees_a_slot_so_creation_is_possible_again() {
+        let mut s = session();
+        for name in ["Alpha", "Bravo", "Charlie"] {
+            s.handle(&create_request(name, 30030, &STYLE));
+        }
+        assert_eq!(s.handle(&create_request("Delta", 30030, &STYLE))[0].body,
+                   vec![CREATE_INSUFFICIENT_SLOT]);
+
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        s.handle(&delete_request(id));
+
+        let replies = s.handle(&create_request("Delta", 30030, &STYLE));
+        assert_eq!(replies[0].body[0], 0, "a freed slot should accept a new character");
+    }
+
+    #[test]
+    fn a_refusal_never_uses_a_code_that_deletes_anyway() {
+        // The trap in the client's switch: every non-zero code it does not name falls
+        // through to the branch that removes the character from the list. Only 6 refuses.
+        // So a refusal that used, say, 1 would show a delete that did not happen.
+        let mut s = session();
+        s.handle(&create_request("Safe", 30030, &STYLE));
+        let mine = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        for body in [delete_request(mine + 999), request(CLIENT_DELETE_CHARACTER_REQUEST, &[1, 2])] {
+            let replies = s.handle(&body);
+            assert_eq!(replies.len(), 1, "a delete must always be answered");
+            assert_eq!(
+                replies[0].body.last(),
+                Some(&DELETE_FAILED),
+                "refusals must use DELETE_FAILED, not any non-zero code"
+            );
+        }
+        assert_eq!(s.store.characters_for(s.account.id, 0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn one_account_cannot_delete_another_accounts_character() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        store.create_account("someone_else", "correct horse battery").unwrap();
+        let config = Arc::new(Config::default());
+        let mine = store.get_account("maplecw").unwrap().unwrap();
+        let theirs = store.get_account("someone_else").unwrap().unwrap();
+
+        let mut owner = Session::new(store.clone(), config.clone(), mine.clone());
+        owner.handle(&create_request("Mine", 30030, &STYLE));
+        let id = store.characters_for(mine.id, 0).unwrap()[0].id;
+
+        let mut thief = Session::new(store.clone(), config, theirs);
+        let replies = thief.handle(&delete_request(id));
+        assert_eq!(replies[0].body.last(), Some(&DELETE_FAILED));
+        assert_eq!(store.characters_for(mine.id, 0).unwrap().len(), 1);
     }
 
     #[test]

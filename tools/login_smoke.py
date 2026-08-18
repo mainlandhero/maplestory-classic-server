@@ -17,18 +17,28 @@ What it proves, and what it does not:
 
 Usage:
 
-    python -u tools/login_smoke.py                      # the whole sequence
-    python -u tools/login_smoke.py --name Smoke01       # pick the character name
-    python -u tools/login_smoke.py --list-only          # just log in and list
+    python -u tools/login_smoke.py --spawn     # the whole sequence, throwaway database
+    python -u tools/login_smoke.py --list-only # read-only, against a server already running
+
+**Use --spawn.** These checks CREATE AND DELETE CHARACTERS, so pointing them at a running
+server writes to whatever database it opened. --spawn builds a throwaway database in a temp
+directory, creates an account in it, starts a server on a free port, runs everything there,
+and deletes the lot. Without it the mutating checks refuse to run, because the alternative
+is what happened on 2026-08-18: this script created and deleted characters in the real
+maplecw.db. --list-only is always safe - it logs in and reads.
 
 Exit code 0 means every check passed; 1 means one did not, and the failing check is named.
 """
 
 import argparse
 import os
+import shutil
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import transport  # noqa: E402
@@ -46,6 +56,12 @@ CLIENT_CHECK_NAME_REQUEST = 0x0081
 CLIENT_LEAVE_WORLD_REQUEST = 0x0082
 CLIENT_CREATE_REQUEST = 0x008A
 CLIENT_ENTER_CREATION_REQUEST = 0x00A8
+CLIENT_DELETE_REQUEST = 0x008B
+
+DELETE_RESULT = 0x0016
+DELETE_OK = 0x00
+DELETE_FAILED = 0x06
+CREATE_INSUFFICIENT_SLOT = 0x09
 
 NAME_AVAILABLE = 0x00
 NAME_ALREADY_USED = 0x7A
@@ -247,6 +263,27 @@ def names_in(body):
     return found
 
 
+def first_character_id(body):
+    """The first id out of a login result's display-order list.
+
+    Counted from the layout in crates/net/src/opcode.rs rather than guessed - an offset
+    picked by eye read 1700031589, which is what a wrong offset looks like:
+
+      u8 result | str message | u8 | 8B FILETIME | u32 world | u32 channel
+      | 4B 4B 4B | u32 | u8            -> 37 bytes when the message is empty
+      | u32 deletionCount (0)          -> 41
+      | u32 orderCount, then that many u32 ids
+    """
+    message_len = struct.unpack("<H", body[1:3])[0]
+    at = 37 + message_len
+    deletions = struct.unpack("<I", body[at:at + 4])[0]
+    at += 4 + deletions * 12          # each is a u32 id and an 8-byte FILETIME
+    order = struct.unpack("<I", body[at:at + 4])[0]
+    if order == 0:
+        return None
+    return struct.unpack("<I", body[at + 4:at + 8])[0]
+
+
 def login(peer):
     """Send the login request and return the four replies."""
     peer.send(CLIENT_LOGIN_REQUEST)
@@ -260,16 +297,98 @@ def login(peer):
     return replies
 
 
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class Throwaway:
+    """A temp database, an account in it, and a server - all torn down on the way out.
+
+    Exists so the safe way to run the mutating checks is also the easy way. They were
+    pointed at the real maplecw.db once, which created and deleted characters in it.
+    """
+
+    def __init__(self, root):
+        self.dir = tempfile.mkdtemp(prefix="maplecw-smoke-")
+        self.db = os.path.join(self.dir, "smoke.db")
+        self.port = free_port()
+        built = os.path.join(root, "target", "release")
+        useradd = os.path.join(built, "maplecw-useradd.exe")
+        login_exe = os.path.join(built, "maplecw-login.exe")
+        for path in (useradd, login_exe):
+            if not os.path.exists(path):
+                raise SystemExit("%s is missing - run: cargo build --release" % path)
+
+        r = subprocess.run([useradd, "--db", self.db, "maplecw"],
+                           input="correct horse battery staple" + chr(10),
+                           text=True, capture_output=True)
+        if r.returncode != 0:
+            raise SystemExit("throwaway account failed: " + r.stderr.strip())
+
+        self.log = open(os.path.join(self.dir, "login.log"), "w")
+        self.proc = subprocess.Popen(
+            [login_exe, "--db", self.db, "--bind", "127.0.0.1:%d" % self.port],
+            stdout=self.log, stderr=subprocess.STDOUT)
+        for _ in range(50):
+            if self.proc.poll() is not None:
+                raise SystemExit("the throwaway server exited immediately")
+            try:
+                socket.create_connection(("127.0.0.1", self.port), timeout=0.2).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            raise SystemExit("the throwaway server never accepted a connection")
+        print("throwaway server on port %d, database %s" % (self.port, self.db))
+
+    def close(self):
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        self.log.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8484)
+    ap.add_argument("--spawn", action="store_true",
+                    help="start a server on a throwaway database and test against it")
+    ap.add_argument("--i-know-this-writes-to-a-live-server", action="store_true",
+                    dest="allow_live", help="run the mutating checks against --port anyway")
     ap.add_argument("--name", default="Smoke01", help="character to create")
     ap.add_argument("--list-only", action="store_true", help="log in and list, create nothing")
     ap.add_argument("--check-quiet", action="store_true",
                     help="say nothing for a while and check the startup gate is repeated")
     ap.add_argument("--timeout", type=float, default=5.0)
     args = ap.parse_args()
+
+    throwaway = None
+    if args.spawn:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        throwaway = Throwaway(root)
+        args.host, args.port = "127.0.0.1", throwaway.port
+    elif not args.list_only and not args.allow_live:
+        raise SystemExit(
+            "refusing to run: these checks create and delete characters, and port %d may be"
+            " a live server." % args.port + chr(10)
+            + "  --spawn      test against a throwaway database (do this)" + chr(10)
+            + "  --list-only  read without writing" + chr(10)
+            + "  --i-know-this-writes-to-a-live-server  override")
+
+    try:
+        return run(args)
+    finally:
+        if throwaway is not None:
+            throwaway.close()
+
+
+def run(args):
 
     print("connecting to %s:%d" % (args.host, args.port))
     peer = Peer(args.host, args.port, args.timeout)
@@ -331,6 +450,13 @@ def main():
 
     peer.send(CLIENT_CREATE_REQUEST, create_payload(args.name))
     opcode, body = peer.recv(1)[0]
+    if opcode == CREATE_RESULT and body and body[0] == CREATE_INSUFFICIENT_SLOT:
+        # Not a failure: the account is full and the server said so, which is the
+        # three-character limit working. Anything after this would measure nothing.
+        check("a full account is refused with the slot code", True,
+              "%d already: %s" % (len(existing), ", ".join(existing)))
+        peer.close()
+        return report()
     check("create is accepted", opcode == CREATE_RESULT and body[0] == 0,
           "0x%04X result 0x%02X" % (opcode, body[0] if body else 0xFF))
 
@@ -343,6 +469,30 @@ def main():
     now = names_in(replies[3][1])
     check("the new character is in the login result", args.name in now,
           "names seen: " + (", ".join(now) or "(none)"))
+
+    # Delete is one u32 and nothing else - the confirmation is a client-side dialog, so the
+    # server cannot tell a confirmed delete from a forged one and ownership is all there is.
+    # A refusal must use code 6 specifically: every other non-zero code falls through the
+    # client's switch to the branch that removes the character from the list anyway.
+    peer.send(CLIENT_DELETE_REQUEST, struct.pack("<I", 0xDEADBEEF))
+    opcode, body = peer.recv(1)[0]
+    check("a delete we do not own is refused with the code that does NOT delete",
+          opcode == DELETE_RESULT and body[-1] == DELETE_FAILED,
+          "0x%04X code 0x%02X" % (opcode, body[-1] if body else 0xFF))
+
+    ours = first_character_id(replies[3][1])
+    peer.send(CLIENT_DELETE_REQUEST, struct.pack("<I", ours or 0))
+    opcode, body = peer.recv(1)[0]
+    deleted = opcode == DELETE_RESULT and body[-1] == DELETE_OK
+    check("our own character is deleted", deleted,
+          "0x%04X code 0x%02X (id %s)" % (opcode, body[-1] if body else 0xFF, ours))
+    if deleted:
+        after = names_in(login(peer)[3][1])
+        check("the deleted character is gone from the login result", args.name not in after,
+              "names seen: " + (", ".join(after) or "(none)"))
+        peer.send(CLIENT_CHECK_NAME_REQUEST, name_payload(args.name))
+        check("its name is free again", peer.recv(1)[0][1][-1] == NAME_AVAILABLE)
+
     peer.close()
     return report()
 

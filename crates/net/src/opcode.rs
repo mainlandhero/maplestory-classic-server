@@ -572,8 +572,67 @@ impl CreateCharacterRequest {
 /// channel server address. Not investigated; noted so it is not rediscovered from scratch.
 pub const CREATE_CHARACTER_RESULT: u16 = 0x0015;
 
-/// The delete result, `FUN_141b34970`. Body is a single `u32` character id.
+/// The client's request to delete a character - the Delete button.
+///
+/// Builder `FUN_141b28750`, and it is **not virtualised**, so this was read rather than
+/// captured. It raises `confirmDeleteCharacterPermanently`, and only if the player confirms
+/// does it build the packet:
+///
+/// ```text
+/// FUN_1406ed520(pkt, 0x8b)      // opcode
+/// FUN_1406ed9d0(pkt, *charId)   // one u32: the selected character's id
+/// FUN_1415d01c0(pkt)            // send
+/// *(stage + 0xd4) = 1           // "delete in flight"
+/// ```
+///
+/// **The in-flight flag is why an unanswered delete is worse than a slow one.** The
+/// function returns early while `stage+0xd4 != 0`, and only [`DELETE_CHARACTER_RESULT`]
+/// clears it - so a delete that is never answered disables the button for the rest of the
+/// session, on top of the usual whole-UI freeze.
+///
+/// Found in `research/msexe-send-opcodes.txt`, which lists it against `FUN_141b28750` and
+/// `FUN_141b2cb70`. Worth noting against the create request, which is *absent* from that
+/// table because its builder is inside the Themida VM: absence there means virtualised,
+/// not non-existent.
+pub const CLIENT_DELETE_CHARACTER_REQUEST: u16 = 0x008B;
+
+/// The delete result, `FUN_141b34970`.
+///
+/// ```text
+/// u32  characterId
+/// u8   result        0 = deleted
+/// ```
+///
+/// **Correction:** this used to be documented as "a single `u32` character id". The handler
+/// reads the id with `FUN_1406e8c20` and then a byte with `FUN_1406e8ae0`, and switches on
+/// the byte. Sending four bytes only would underrun the second read, and the client's
+/// readers throw on underrun.
+///
+/// # The result codes, and the trap in them
+///
+/// The switch names `6`, `9`, `10`, `0x10`, `0x12`, `0x14` and a **default**. The default
+/// branch is the one that calls `FUN_14108d9b0(characterId)` - the removal. So an
+/// unrecognised non-zero code **still deletes the character on screen**, which is the
+/// opposite of what a refusal wants.
+///
+/// Use [`DELETE_FAILED`] to refuse. It is `6`, which raises `loginTroubleAskSupport` and
+/// leaves the list alone.
 pub const DELETE_CHARACTER_RESULT: u16 = 0x0016;
+
+/// Delete succeeded; the client removes the character from its list.
+pub const DELETE_OK: u8 = 0;
+
+/// Refuse a delete. **Not any non-zero value** - see [`DELETE_CHARACTER_RESULT`], where
+/// every code the switch does not name falls through to the branch that removes the
+/// character anyway.
+pub const DELETE_FAILED: u8 = 6;
+
+/// Body of a [`DELETE_CHARACTER_RESULT`].
+pub fn delete_character_result(character_id: u32, code: u8) -> Vec<u8> {
+    let mut out = character_id.to_le_bytes().to_vec();
+    out.push(code);
+    out
+}
 
 /// The client's name field is a **fixed 13-byte block**, not a length-prefixed string.
 /// `FUN_140302e30` reads it with `FUN_1406e9170(packet, record + 0xc, 0xd)`.

@@ -59,6 +59,7 @@ costs the owner a manual, elevated run and the only oracle is what they see on s
 | `0x00A8` open creation | `0x05F4` | |
 | `0x0081` check name | `0x0014` | now **truthful** — see below |
 | `0x008A` create | `0x0015` | persists, then replies from what was stored |
+| `0x008B` delete | `0x0016` | one `u32` id; ownership enforced in the SQL statement |
 | anything else | nothing | version and environment reports and log uploads want no reply |
 
 ### Always answer
@@ -134,9 +135,20 @@ client's own receive path — so agreement between them is evidence rather than 
 agreeing with itself.
 
 ```bash
-python -u tools/login_smoke.py --check-quiet
-python -u tools/login_smoke.py --list-only
+python -u tools/login_smoke.py --spawn        # use this one
+python -u tools/login_smoke.py --list-only    # read-only, against a running server
 ```
+
+**Use `--spawn`.** These checks create and delete characters, so pointing them at a running
+server writes to whatever database it opened - which is exactly what happened on
+2026-08-18, when they created and deleted characters in the real `maplecw.db`. `--spawn`
+builds a throwaway database in a temp directory, creates an account in it, starts a server
+on a free port, runs everything there and deletes the lot. Without it the mutating checks
+now **refuse to run**; `--list-only` is always safe.
+
+The Rust tests never had this problem - `Store::open_in_memory()` gives each one its own
+database - but a test that talks to a socket has to be told which one to talk to, and the
+default was wrong.
 
 Verified 2026-08-18, against a fresh database: greeting accepted, gate delivered (and
 repeated to a quiet client), login answered with four packets, creation permitted, a free
@@ -205,6 +217,48 @@ Entering the world sends three packets nothing answers yet. First read, from one
 migration packet - the `0x0011` candidate, which is Stage 4 and where an *advertise* address
 would first be needed (`docs/deployment.md`). The client sat on "Connecting..." because
 nothing answered, which is expected with no channel server.
+
+## Delete
+
+**`0x008B`, and it was read rather than captured.** `FUN_141b28750` is the Delete button
+handler and is *not* virtualised: it raises `confirmDeleteCharacterPermanently`, and only on
+confirmation writes opcode `0x8b` plus one `u32` - the selected character's id - and sends.
+`research/msexe-send-opcodes.txt` lists it against that function, which is what turned a
+guess into evidence. (The create request is *absent* from that same table because its
+builder is inside the VM: absence there means virtualised, not non-existent.)
+
+The reply, `FUN_141b34970`:
+
+```text
+u32  characterId
+u8   result        0 = deleted
+```
+
+**This corrects an earlier note** that called the body "a single `u32` character id". The
+handler reads the id and *then* a byte, and the client's readers throw on underrun.
+
+### Two traps, both now guarded by tests
+
+* **Refusals must use `6`, not any non-zero code.** The switch names `6`, `9`, `10`, `0x10`,
+  `0x12`, `0x14` and a **default** - and the default is the branch that calls
+  `FUN_14108d9b0(characterId)`, the removal. So an unrecognised code *still deletes the
+  character on screen*. `DELETE_FAILED` is `6`; `a_refusal_never_uses_a_code_that_deletes_anyway`
+  pins it.
+* **An unanswered delete disables the button permanently.** The builder sets
+  `stage+0xd4 = 1` before sending and returns early while it is non-zero; only the result
+  clears it. So the usual whole-UI freeze comes with a button that stays dead for the rest
+  of the session.
+
+### What the server can and cannot check
+
+The request is one `u32`. No password, no confirmation token - the confirmation is a
+client-side dialog, so **the server cannot tell a confirmed delete from a forged one.** The
+only protection that means anything is the ownership check, and it lives inside the `DELETE`
+statement rather than in a prior read, so it cannot be raced. A delete for a character on
+another account is refused with the same code as one that does not exist, which keeps it
+from being an ownership oracle.
+
+`maplecw-login --delete NAME` does the same thing from a command line, for repeating a test.
 
 ## Still standing on client patches## Still standing on client patches
 
