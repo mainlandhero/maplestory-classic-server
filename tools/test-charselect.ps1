@@ -162,7 +162,12 @@ $loginResult = Get-Packet (@('login-result') + $Characters)
 
 # Account first: the name it carries is drawn on the login screen, which the client is
 # still showing when this sequence lands.
-$replySeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
+#
+# Standing, not one-shot. It used to be -ReplyTo/-ReplySeq, which fires once - so after
+# "Choose another world" took the client back to world select, picking a world sent 0x0080
+# again and got nothing, and the client sat on "Connecting..." forever. The same four
+# packets are the right answer both times.
+$worldSeq = "$accountInfo,$worldEntry,$worldEnd,$loginResult"
 # Standing answers - both fire every time, because both are things the user can click
 # repeatedly and a one-shot would look like the button breaking after the first use.
 #
@@ -182,14 +187,14 @@ $enterCreation = Get-Packet @('enter-creation')
 # answered: no dialog is dismissable and even the quit prompt stops responding. The world
 # list is the reply this screen wants; if it is wrong the client will say so by staying
 # stuck, which is the same symptom, so read probe.log for what it sends next.
-$answers = "00a8=$enterCreation;0081=0014:<req>00;0082=$worldEntry,$worldEnd"
+$answers = "0080=$worldSeq;00a8=$enterCreation;0081=0014:<req>00;0082=$worldEntry,$worldEnd"
 # 0x008A is built from the request rather than replayed. A canned reply cannot carry the
 # style that was picked - the character came back naked - nor a fresh character id, and
 # sending id 200 twice made the client silently drop the second character.
 $builds = "008a=create-result-from"
 Write-Host "account name on the login screen: $AccountName"
 Write-Host "characters in the list: $(if ($Characters) { $Characters -join ', ' } else { '(none)' })"
-Write-Host "reply sequence is $($replySeq.Length) characters"
+Write-Host "world sequence is $($worldSeq.Length) characters"
 
 # Built as a list rather than a backtick-continued call so -NoPatch can leave the three
 # patch parameters off entirely. Passing them as empty strings would also work, but an
@@ -198,7 +203,7 @@ Write-Host "reply sequence is $($replySeq.Length) characters"
 $testOneArgs = @(
     '-Reply', 'ping', '-Opcode', '0x0032', '-Body', '00',
     '-PingFirst', '0x0032', '-PingBody', '00', '-QuietBefore', '4',
-    '-ReplyTo', '0x0080', '-ReplySeq', $replySeq, '-Answer', $answers,
+    '-Answer', $answers,
     '-Keepalive', "$Keepalive", '-Port', "$Port", '-Build', $builds
 )
 if ($SkipNetCheck) {

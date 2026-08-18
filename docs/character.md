@@ -461,6 +461,43 @@ before anything could be learned from waiting.
 This does not settle the `0x0011` lead recorded below; it identifies the *request* the
 client makes, not the reply that moves it into a map.
 
+## The avatar look: face and hair, and where they really go
+
+Corrected 2026-08-17, after a created character rendered with the wrong hair and no
+equipment while its name, level and stats were all right - those come from the stat block,
+which was already verified on screen.
+
+`FUN_1402ee8d0` reads:
+
+```text
+u8   gender
+u8   skin
+u32                      unused
+u32  face
+u32  job                 -> +0x1bd, away from the look block
+u8                       read and discarded
+u32  hair                -> +0x39, index 0 of the equipment array
+u8/u32 pairs             -> +0x39 + slot*4, terminated by 0xFF. Slots 1..31 only
+u8/u32 pairs             -> +0xb9 + slot*4, terminated by 0xFF
+u32, u32, u32            -> +0x2d, +0x31, +0x35
+u32                      -> +0x1c1
+u32                      -> +0x1c5, taken modulo 360
+u8                       -> +0x1c9
+u32                      -> +0x1ca
+4B, 128B, u32, 13B
+```
+
+**The destinations are what identify the fields.** `face` and `hair` were originally read as
+the first two `u32`s, which is wrong: the third goes far away to `+0x1bd`, and the last
+lands on index 0 of the equipment array. The pair loop guards with
+`(byte)(slot - 1) < 0x1f`, so it can only write slots 1..31 - index 0 is unreachable from
+it, which is why a standalone field exists to fill it. That field is the hair. Swordie's
+`AvatarLook.encode` names the same run `0, face, job, pad, hair` and agrees.
+
+**Two maps, not three.** The v214 reference writes a third `0xFF`-terminated map for totems;
+this client reads exactly two. Following the reference there would have desynchronised
+every field after it.
+
 ## Leaving the world: `0x0082`, and what an unanswered packet looks like
 
 "Choose another world" on the character-select screen sends **`0x0082`**

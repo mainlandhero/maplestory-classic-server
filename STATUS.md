@@ -1,47 +1,96 @@
-# Where things stand — 2026-08-17 (creation works end to end; the ~37s exit is fixed and confirmed)
+# Where things stand — 2026-08-17 (the client survives; next is a real server with persistence)
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
 
 ## START HERE
 
-Character creation **works on the wire, end to end**: the client creates a character and
-returns to character select with it. Every packet in the transaction has been identified
-and every one of them has been measured, not guessed.
+**The client no longer kills itself, and character creation works end to end on the wire.**
+As of 2026-08-17 a session runs as long as you want it to. Everything below assumes that.
 
-Two things remain, and **the owner set the priority on 2026-08-17: the exit comes first.**
+**The priority is now a real server with persistence** - see the next section. What exists
+today is a Python harness replaying canned bodies, and it has reached the end of what that
+design can do.
 
-1. **The ~37s exit is solved.** The client runs a server-reachability check over twenty
-   hardcoded IPs about 36s after launch; the firewall makes all twenty fail; the
-   virtualised routine that handles that overruns a 512-byte stack buffer into its own
-   `/GS` cookie and `__fastfail`s. **Fixed and confirmed** by `-SkipNetCheck`, which skips
-   the check: 92.7s of life and a clean exit 0. See "THE PRIORITY" below.
-2. **Character creation is not yet done by the server** - the harness answers with canned
-   bodies from `packet-hex`. Nothing persists, and the reply cannot read the name out of
-   the request. See "What is left of character creation".
-
-To get moving in one command:
+One command, from an **elevated** shell:
 
 ```bash
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-charselect.ps1" -SkipNetCheck
 ```
 
-Run it from an **elevated** shell while the exit is the question: the handle scan in
-`client-exit.log` cannot see handles held by SYSTEM services otherwise.
+`-SkipNetCheck` is not optional. Without it the client `__fastfail`s after ~37 seconds; the
+section after next explains why, and it is a client bug rather than anything we do.
 
-That builds `grap-stub`, installs it into `client-patched/`, starts the probe with every
-answer wired up, and launches the client. Then, on screen: Login -> Create a character ->
-spend all 25 points -> name it `Hello` -> Check -> OK -> confirm. Stop with `-Stop`.
+It builds `grap-stub`, installs it into `client-patched/`, starts the probe with every
+answer wired, and launches the client. Close it by hand when done, then `-Stop`.
 
 Where the answers land:
 
 | file | what is in it |
 |---|---|
-| `probe.log` | every packet in both directions, with bodies |
-| `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults - **not** `hook.log`, and not the repo root. Before 2026-08-17 this landed in a file called `on` whenever the launching shell was already elevated; fixed |
-| `client-exit.log` | how the client died: exit code, lifetime, CPU time, job membership, and who held a handle to it. Written by `tools/exit-forensics.ps1`. **Read the `EXIT code` line first** |
+| `probe.log` | every packet both ways, with bodies. The `VERDICT` line names the last thing the client sent - **read it first when the UI freezes** |
+| `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults. Not `hook.log`, not the repo root |
+| `client-exit.log` | how the client died: exit code, lifetime, job membership, handle holders. A clean `0` is a hand-close; `0xC0000409` is the fail-fast returning |
 
-## THE PRIORITY - SOLVED: a firewalled reachability check overruns its own buffer
+**A frozen UI is almost always an unanswered packet, not a crash.** The client blocks its
+whole interface - every button, including the quit prompt's OK - waiting on a reply. That is
+what "Check" did before `0x0081` was answered and what "Choose another world" did before
+`0x0082` was. Read `probe.log`.
+
+## THE PRIORITY - a real server, and characters that persist
+
+**The owner set this on 2026-08-17, replacing the exit:** stop answering the client with canned
+bodies, and make characters survive a relaunch. The account side of the server should hold
+the character name, its data and its inventory.
+
+The client is no longer the obstacle. It survives indefinitely now, so a server can be
+written and exercised for as long as it takes - which was never true before today.
+
+### Why the harness cannot go further
+
+`handshake_probe.py` replays bodies handed to it on a command line. `--build` now covers the
+one reply that must be computed from its request, by shelling out to `packet-hex`, and that
+is as far as the design stretches. What it cannot do:
+
+* **Persist anything.** The character list in `0x0010` is generated from `-Characters` at
+  launch. A character created in one session is gone in the next, and the client only shows
+  it during the session because it added it locally when `0x0015` came back.
+* **Hold account state.** There is no account, no ownership, no slot accounting - the free
+  slot count is a constant.
+* **Answer anything that depends on what came before**, which is most of what a game server
+  does.
+
+### What to build
+
+`crates/login`, a real server, replacing the probe for everything except packet capture.
+**Every piece it needs already exists** - this is assembly, not research:
+
+| piece | where |
+|---|---|
+| framing and the wire cipher | `crates/net` - `Framer`, `MapleCipher`, verified against captures |
+| every reply body | `crates/net/src/opcode.rs`, all pinned by tests |
+| reading the create request | `CreateCharacterRequest::parse` + `.character(id)` |
+| storage, argon2id accounts | `crates/store`, 21 tests |
+| the exact packet order to reproduce | `docs/character.md`, measured, and `probe.log` fixtures |
+
+Storage wants a `characters` table - id, account, name, gender, skin, face, hair, level,
+job, the four stats, hp/mp, map - plus an `equipment` table keyed by character and slot,
+since the record already carries an equip map and the create request already carries four
+items. Names are unique: `0x0081` is a name-availability check, and answering it truthfully
+is the first thing a real server does that the harness cannot.
+
+**Do not start by rewriting the transport.** `tools/transport.py` and `crates/net` agree,
+and the handshake is the one part that is finicky and already working. Bring the server up
+against `test-one.ps1`'s existing flow first, then retire the probe opcode by opcode.
+
+### Standing constraints for it
+
+* **Passwords hashed and salted** - `crates/store` already does argon2id. Never plain text.
+* The client is a **separate, firewalled copy** in `client-patched/`; the original install
+  stays untouched.
+* Loopback only.
+
+## SOLVED - the ~37 second exit (kept for the method, not the answer)
 
 **How it dies is now measured: exit code `0xC0000409`, `STATUS_STACK_BUFFER_OVERRUN`.** On
 x64 that is `__fastfail` - `int 0x29`. The client ends *itself*, deliberately.
@@ -278,34 +327,44 @@ rule exists to prevent, and is the owner's call rather than ours.
 killer, or blame our own patches. All four are settled, each by a measurement. And do not
 re-quote "63 `int 0x29` sites" - that was a byte scan, and the real number is 8.
 
-## What is left of character creation
+## Character creation: what works, and what is still fake
 
-The protocol is finished and every opcode measured. What was missing was that **the harness
-could only replay bodies handed to it on a command line**, and two of the three problems
-from the first unlimited-length session were that one limitation:
+The protocol is finished and every opcode measured. Four problems found in the first
+unlimited-length session, all fixed, all worth knowing about:
 
-| seen on screen | cause | now |
+| seen on screen | cause | fix |
 |---|---|---|
-| the created character is naked | the `0x0015` reply was a canned body built from `Character::default()` | built from the request |
-| a second character never appears | that canned body carried **id 200 every time**, so the client was told it had re-created the character it already had | ids increment |
-| "Choose another world" freezes the whole UI | `0x0082` was never answered | answered with the world list |
+| the created character is naked | the `0x0015` reply was a canned body built from `Character::default()` | `--build`, which runs `packet-hex create-result-from` over the request itself |
+| a second character never appears | that canned body carried **id 200 every time**, so the client was told it had re-created the character it already had | the builder takes an id and increments it |
+| wrong hair, and no equipment | **the avatar look wrote `face` and `hair` one field too early** - see below | field order corrected, and pinned by a test |
+| "Choose another world" freezes the UI, and re-entering a world hangs | `0x0082` was never answered, and the world sequence was one-shot | `0x0082` answered with the world list; the whole `0x0080` sequence is now standing |
 
-The first two are fixed by `--build`, a new probe flag: on a given inbound opcode, run a
-Rust builder over **the request itself** and send what it prints. `packet-hex
-create-result-from <hex> [id]` already parsed the request with
-`CreateCharacterRequest::parse`; it just had no way to be called per-packet, and its id was
-hardcoded. Verified before spending a run - fed the captured `Hello2` request twice, it
-read out `face 21002 hair 31047 skin 3 + 4 equips` and returned ids 200 then 201.
+### The avatar look field order - the subtle one
 
-**This is still not a server.** Nothing persists: the character list in `0x0010` is
-generated from `-Characters` at launch, so a character created in one session is gone in
-the next, and the client is never told about characters it created earlier in the same
-session either - it only knows about them because it added them locally when `0x0015` came
-back. `crates/login` is still the real answer, and now that the client no longer dies after
-37 seconds there is finally time to test one properly.
+`FUN_1402ee8d0` reads `u8 gender`, `u8 skin`, three `u32`s, a discarded byte, one more
+`u32`, then the equipment pairs. We were writing `face` and `hair` into the first two
+`u32`s. The destinations say what those fields really are: the third `u32` goes to
+`+0x1bd`, far from the look block, and the last goes to `+0x39`, which is **index 0 of the
+equipment array** the pair loop fills at `+0x39 + slot*4`. That loop rejects anything
+outside slots 1..31, so index 0 can only be written by the standalone field - and it is the
+hair. The Swordie source names the same run `0, face, job, pad, hair`, and the client's
+reader agrees with it. Correct order:
 
-Everything a real crate needs exists: `Framer` and the cipher in `crates/net`, every reply
-builder in `opcode.rs`, `CreateCharacterRequest::parse`, and SQLite in `crates/store`.
+```text
+u8 gender | u8 skin | u32 0 | u32 face | u32 job | u8 pad | u32 hair | pairs, 0xFF | pairs, 0xFF
+```
+
+**Why the tests did not catch it:** the record round-trip test *skips* the look block by
+size rather than reading it, so it passed with the fields transposed.
+`the_avatar_look_puts_face_and_hair_where_the_client_reads_them` now asserts the exact byte
+run, and was checked by putting the bug back - it fails - and taking it out again.
+
+### Still fake, and this is the priority
+
+**Nothing persists.** The list in `0x0010` is generated from `-Characters` at launch. A
+character created in one session is gone in the next; the client only shows it during the
+session because it added it locally when `0x0015` came back. There is no account, no
+ownership, and the free-slot count is a constant. See "THE PRIORITY".
 
 ## THE GOAL (set 2026-08-17)
 
@@ -369,7 +428,7 @@ That means, end to end and against a real server-side implementation:
 | `tools/test-charselect.ps1` | the whole run in one command; builds, installs, answers, launches |
 | `tools/test-one.ps1` | the general harness underneath it |
 | `packet-hex` | prints a reply body from the Rust builders, so hex is never typed by hand |
-| `tools/handshake_probe.py` | the server side. `--reply-seq` one-shot, `--answer` standing, `<req>` splices the request's payload, `--keepalive` |
+| `tools/handshake_probe.py` | the stand-in server. `--answer` standing, `<req>` splices the request's payload, **`--build IN=ELEMENT` computes a reply from the request by running `packet-hex`**, `--keepalive`. Being replaced by `crates/login` |
 | `tools/transport.py` | the cipher, the framing, and the client-stream decoder |
 | `-Probe watch@A,B,C` | up to four `int3` watches, each logging the calling thread id; `<module>!<export>` for relocated modules; options `:rdx=` forces an argument, `:peek=` logs `[rcx+off]`, `:hits=` sets the per-target log cap (default 32) |
 | `tools/exit-forensics.ps1` | how the client died, from outside: exit code, thread table, job membership, handle holders. Started automatically by `test-one.ps1`; verified against a killed and an orderly control |
@@ -428,7 +487,7 @@ virtualisation, not of non-existence**.
 ## Working right now
 
 ```bash
-cargo test --release          # 73 tests green
+cargo test --release          # 75 tests green
 cargo build --release
 ```
 

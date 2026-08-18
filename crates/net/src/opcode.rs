@@ -704,13 +704,13 @@ fn put_fixed(out: &mut Vec<u8>, s: &str, len: usize) {
 /// // avatar look, FUN_1402ee8d0
 /// u8   gender
 /// u8   skin
+/// u32                      unused
 /// u32  face
-/// u32  hair
-/// u32
+/// u32  job                 stored at +0x1bd, away from the look block
 /// u8                       read and discarded
-/// u32                      equip slot 0
-/// u8/u32 pairs             equipment, terminated by slot 0xFF
-/// u8/u32 pairs             a second map, terminated by slot 0xFF
+/// u32  hair                equipment array index 0; the pair loop cannot reach it
+/// u8/u32 pairs             equipment, terminated by slot 0xFF. Slots 1..31 only
+/// u8/u32 pairs             a second map at +0xb9, terminated by slot 0xFF
 /// u32, u32, u32, u32
 /// u32                      taken modulo 360
 /// u8
@@ -766,13 +766,23 @@ pub fn character_record(chr: &Character, world_id: u32) -> Vec<u8> {
     out.extend_from_slice(&0u64.to_le_bytes());
 
     // --- the avatar look, FUN_1402ee8d0
+    //
+    // The field order here was wrong until 2026-08-17, and the symptom was a created
+    // character rendering with the wrong hair and no equipment while its name, level and
+    // stats - which come from the stat block above - were all correct.
+    //
+    // `FUN_1402ee8d0` reads three `u32`s, a discarded byte, then one more `u32`, and the
+    // destinations say what they are: the third goes to `+0x1bd`, far from the look block,
+    // and the last goes to `+0x39`, which is index 0 of the equipment array the pair loop
+    // fills at `+0x39 + slot*4`. That loop rejects anything outside slots 1..31, so index 0
+    // can *only* be written by this standalone field - and it is the hair.
     out.push(chr.gender);
     out.push(chr.skin);
-    out.extend_from_slice(&chr.face.to_le_bytes());
-    out.extend_from_slice(&chr.hair.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&chr.face.to_le_bytes());
+    out.extend_from_slice(&u32::from(chr.job).to_le_bytes());
     out.push(0); // read and discarded
-    out.extend_from_slice(&0u32.to_le_bytes()); // equip slot 0
+    out.extend_from_slice(&chr.hair.to_le_bytes()); // equipment array index 0
     for (slot, item) in &chr.equips {
         out.push(*slot);
         out.extend_from_slice(&item.to_le_bytes());
@@ -1141,9 +1151,9 @@ mod tests {
         // FUN_1403094b0's own fields
         i += 4 + 8 + 4 + 8;
         // FUN_1402ee8d0, the avatar look
-        i += 1 + 1 + 4 + 4 + 4; // gender, skin, face, hair, u32
+        i += 1 + 1 + 4 + 4 + 4; // gender, skin, unused, face, job
         i += 1; // discarded
-        i += 4; // equip slot 0
+        i += 4; // hair, which is equipment index 0
         for _ in 0..2 {
             while b[i] != 0xFF {
                 i += 1 + 4; // slot, itemId
@@ -1156,6 +1166,49 @@ mod tests {
         i += 4;
         i += 4 + 128 + 4 + CHARACTER_NAME_LEN;
         i
+    }
+
+    #[test]
+    fn the_avatar_look_puts_face_and_hair_where_the_client_reads_them() {
+        // This is the one field order in the record that a round-trip test cannot check:
+        // the round trip above only *skips* the look block by size, so it passed happily
+        // while face and hair were each written one field too early. The symptom was a
+        // created character with the wrong hair and no equipment, and correct name, level
+        // and stats - because those come from the stat block instead.
+        //
+        // `FUN_1402ee8d0` reads exactly this run of bytes, so assert the run itself rather
+        // than an offset computed from the fields before it.
+        let chr = Character {
+            face: 0xAAAA_AAAA,
+            hair: 0xBBBB_BBBB,
+            job: 0x0CCC,
+            gender: 1,
+            skin: 3,
+            ..Character::default()
+        };
+        let record = character_record(&chr, 0);
+
+        let mut want = Vec::new();
+        want.push(1u8); // gender
+        want.push(3u8); // skin
+        want.extend_from_slice(&0u32.to_le_bytes()); // unused
+        want.extend_from_slice(&0xAAAA_AAAAu32.to_le_bytes()); // face
+        want.extend_from_slice(&0x0000_0CCCu32.to_le_bytes()); // job, -> +0x1bd
+        want.push(0); // read and discarded
+        want.extend_from_slice(&0xBBBB_BBBBu32.to_le_bytes()); // hair, -> equip index 0
+
+        let at = record
+            .windows(want.len())
+            .position(|w| w == want)
+            .expect("the avatar look must read gender, skin, 0, face, job, pad, hair");
+
+        // And the equipment map starts immediately after it, so a slot the client would
+        // reject (it takes 1..31 only) cannot be hiding in that gap.
+        assert_eq!(
+            record[at + want.len()],
+            0xFF,
+            "an empty equipment map should terminate straight away"
+        );
     }
 
     #[test]

@@ -1,65 +1,58 @@
-21:32:55.181 watching MapleStory pid 147208, started 21:32:54.956, 15 threads, 280 handles
-21:32:55.185 this shell is elevated
-21:32:55.191 threads at start: 147180:Wait/Unknown 145652:Wait/EventPairLow 145692:Wait/EventPairLow 145676:Wait/EventPairLow 139440:Wait/UserRequest 145488:Wait/EventPairLow 147436:Wait/UserRequest 147032:Wait/Unknown 145688:Wait/UserRequest 144648:Wait/LpcReply 137656:Wait/EventPairLow 139976:Wait/UserRequest 147376:Wait/LpcReply 141784:Wait/UserRequest 135732:Wait/EventPairLow
-21:32:55.272 in a job object: False (common, and true for both controls - only a lead if the lifetime is also constant)
-21:32:55.390 protection/nexon processes at start: cncmd#18984@10:14:36 MapleStory#147208@21:32:54
-21:32:55.678 threads 15 -> 28 started=146984,147076,146840,147080,146856,146200,146304,146260,146280,147116,147276,144992,143712
-21:32:55.783 handles on the client: lsass#1092 svchost#3904 [examined 1501 process handles, 371 unreachable]
-21:32:56.048 threads 28 -> 30 started=139924,144532
-21:32:56.581 threads 30 -> 55 started=147696,147704,147708,147712,147716,147724,147728,147732,147736,147740,147744,147748,147752,147756,147760,147764,147768,147772,147776,147780,147784,147788,147792,147796,147800
-21:32:56.849 threads 55 -> 57 started=147832,147836
-21:32:57.109 threads 57 -> 60 started=148160,148176,148180
-21:33:00.143 handles on the client: lsass#1092 svchost#1292 svchost#3904 RadeonSoftware#13684 [examined 1517 process handles, 375 unreachable]
-21:33:00.416 +5.5s threads=60 handles=1254 cpu=4.39s ws=164MB
-21:33:01.210 threads 60 -> 59 ended=139924
-21:33:01.473 threads 59 -> 74 started=148444,148452,148460,148468,148472,148476,147496,147464,147468,147472,147476,147480,147484,147488,147460
-21:33:04.547 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1523 process handles, 377 unreachable]
-21:33:04.812 threads 74 -> 73 ended=148444
-21:33:05.599 +10.6s threads=73 handles=1436 cpu=9.02s ws=410MB
-21:33:10.769 +15.8s threads=73 handles=1440 cpu=9.58s ws=407MB
-21:33:15.953 +21.0s threads=73 handles=1441 cpu=10.03s ws=390MB
-21:33:21.134 +26.2s threads=73 handles=1445 cpu=10.47s ws=390MB
-21:33:26.311 threads 73 -> 72 ended=144532
-21:33:26.311 +31.4s threads=72 handles=1444 cpu=11.02s ws=394MB
-21:33:31.360 +36.4s threads=72 handles=1443 cpu=11.64s ws=393MB
-21:33:36.536 +41.6s threads=72 handles=1442 cpu=12.08s ws=392MB
-21:33:41.718 +46.8s threads=72 handles=1443 cpu=12.75s ws=394MB
-21:33:46.904 +51.9s threads=72 handles=1443 cpu=13.23s ws=394MB
-21:33:52.077 +57.1s threads=72 handles=1441 cpu=13.81s ws=393MB
-21:33:52.761 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1529 process handles, 378 unreachable]
-21:33:55.139 threads 72 -> 69 ended=145652,145692,145676
-21:33:57.148 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1537 process handles, 381 unreachable]
-21:33:57.406 +62.4s threads=69 handles=1441 cpu=14.53s ws=394MB
-21:34:01.551 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1539 process handles, 381 unreachable]
-21:34:01.816 threads 69 -> 70 started=147628
-21:34:02.608 +67.7s threads=70 handles=1448 cpu=16.67s ws=395MB
-21:34:05.956 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1534 process handles, 380 unreachable]
-21:34:07.805 +72.8s threads=70 handles=1446 cpu=19.25s ws=394MB
-21:34:10.347 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1533 process handles, 380 unreachable]
-21:34:13.000 +78.0s threads=70 handles=1446 cpu=19.91s ws=394MB
-21:34:18.193 +83.2s threads=70 handles=1444 cpu=20.64s ws=394MB
-21:34:23.376 +88.4s threads=70 handles=1446 cpu=21.23s ws=391MB
-21:34:23.539 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1532 process handles, 379 unreachable]
-21:34:27.917 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1533 process handles, 379 unreachable]
-21:34:28.439 +93.5s threads=70 handles=1448 cpu=21.95s ws=391MB
-21:34:31.603 threads 70 -> 69 ended=147628
-21:34:33.610 +98.7s threads=69 handles=1444 cpu=22.52s ws=391MB
-21:34:36.661 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1532 process handles, 379 unreachable]
-21:34:38.774 +103.8s threads=69 handles=1444 cpu=23.05s ws=391MB
-21:34:41.043 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1533 process handles, 380 unreachable]
-21:34:43.948 +109.0s threads=69 handles=1442 cpu=23.61s ws=391MB
-21:34:45.427 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1532 process handles, 379 unreachable]
-21:34:49.152 +114.2s threads=69 handles=1444 cpu=24.20s ws=391MB
-21:34:49.829 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1541 process handles, 381 unreachable]
-21:34:50.615 threads 69 -> 68 ended=148160
-21:34:51.144 EXIT code 0x00000001 (1) after 116.1s of life, 24.34s of CPU
-21:34:51.145 last sample was 0.17s before the exit: threads=68 (peak 74) handles=1442
-21:34:51.147 threads in that sample (data, not a verdict - see the header): 147180:Wait/Suspended 145488:Wait/Suspended 147436:Wait/Suspended 147032:Wait/Suspended 145688:Wait/Suspended 144648:Wait/Suspended 137656:Wait/Suspended 139976:Wait/Suspended 147376:Wait/Suspended 141784:Wait/Suspended 135732:Wait/Suspended 146984:Wait/Suspended 147076:Wait/Suspended 146840:Wait/Suspended 147080:Wait/Suspended 146856:Wait/Suspended 146200:Wait/Suspended 146304:Wait/Suspended 146260:Wait/Suspended 146280:Wait/Suspended 147116:Wait/Suspended 147276:Wait/Suspended 144992:Wait/Suspended 143712:Wait/Suspended 147696:Wait/Suspended 147704:Wait/Suspended 147708:Wait/Suspended 147712:Wait/Suspended 147716:Wait/Suspended 147724:Wait/Suspended 147728:Wait/Suspended 147732:Wait/Suspended 147736:Wait/Suspended 147740:Wait/Suspended 147744:Wait/Suspended 147748:Wait/Suspended 147752:Wait/Suspended 147756:Wait/Suspended 147760:Wait/Suspended 147764:Wait/Suspended 147768:Wait/Suspended 147772:Wait/Suspended 147776:Wait/Suspended 147780:Wait/Suspended 147784:Wait/Suspended 147788:Wait/Suspended 147792:Wait/Suspended 147796:Wait/Suspended 147800:Wait/Suspended 147832:Wait/Suspended 147836:Wait/Suspended 148176:Wait/Suspended 148180:Wait/Suspended 148404:Wait/Suspended 148452:Wait/Suspended 148460:Wait/Suspended 148468:Wait/Suspended 148472:Wait/Suspended 148476:Wait/Suspended 147496:Wait/Suspended 147464:Wait/Suspended 147468:Wait/Suspended 147472:Wait/Suspended 147476:Wait/Suspended 147480:Wait/Suspended 147484:Wait/Suspended 147488:Wait/Suspended 147460:Wait/Suspended
-21:34:51.147 handles on the client, last scan: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1541 process handles, 381 unreachable]
-21:34:51.152 READ: exit code 1 - what taskkill /F passes, and also a perfectly ordinary application exit. Weak on its own; the in-process watches decide it.
-21:34:51.152 READ: the decisive line is in client-patched\maplecw-hook.log, not here - a WATCH on ntdll!RtlExitUserThread or ntdll!NtTerminateThread means the client ended itself; silence on both means it did not.
-21:34:51.160 protection/nexon processes at exit: cncmd#18984@10:14:36
-21:34:51.170 vanished during the run: MapleStory#147208@21:32:54
-21:34:51.180 processes that started after the client did: firefox#148384 smartscreen#121176 svchost#133048 svchost#136320 svchost#147256 svchost#147916 Taskmgr#124384 WmiPrvSE#147652
-21:34:51.359 event: 21:34:51 Application/Application Hang Error - The program MapleStory.exe version 1.1.0.0 stopped interacting with Windows and was closed. To see if more information about the problem is available, check the problem history in the Security and Maintenance control panel.
-21:34:51.359 event: 21:32:56 System/Microsoft-Windows-DistributedCOM Error - The server Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter did not register with DCOM within the required timeout.
+21:43:21.954 watching MapleStory pid 149180, started 21:43:21.733, 7 threads, 196 handles
+21:43:21.957 this shell is elevated
+21:43:21.963 threads at start: 148728:Running 148724:Wait/EventPairLow 149080:Wait/EventPairLow 148552:Wait/EventPairLow 146836:Wait/UserRequest 145764:Wait/EventPairLow 148716:Wait/UserRequest
+21:43:22.044 in a job object: False (common, and true for both controls - only a lead if the lifetime is also constant)
+21:43:22.176 protection/nexon processes at start: cncmd#18984@10:14:36 MapleStory#149180@21:43:21
+21:43:22.452 threads 7 -> 28 started=149140,144872,142140,146896,148560,148704,146160,142348,149240,149096,141264,144604,147440,148844,138604,149044,145124,83576,147844,145380,149508
+21:43:22.563 handles on the client: lsass#1092 svchost#3904 [examined 1493 process handles, 369 unreachable]
+21:43:22.824 threads 28 -> 30 started=149524,149528
+21:43:23.359 threads 30 -> 57 started=149808,149816,149820,149824,149828,149836,149840,149844,149848,149852,149856,149860,149864,149868,149872,149876,149880,149884,149888,149892,149896,149900,149904,149908,149912,149936,149940
+21:43:23.887 threads 57 -> 60 started=150284,150296,150300
+21:43:26.922 handles on the client: lsass#1092 svchost#1292 svchost#3904 RadeonSoftware#13684 [examined 1516 process handles, 374 unreachable]
+21:43:27.448 +5.7s threads=60 handles=1255 cpu=4.59s ws=164MB
+21:43:27.980 threads 60 -> 59 ended=149524
+21:43:28.246 threads 59 -> 75 started=150492,150496,150500,150508,150520,150524,143944,149304,139644,149520,149516,149532,149592,149560,149564,149572
+21:43:29.306 threads 75 -> 74 ended=150496
+21:43:31.317 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1522 process handles, 376 unreachable]
+21:43:32.644 +10.9s threads=74 handles=1445 cpu=8.41s ws=258MB
+21:43:35.975 threads 74 -> 73 ended=150492
+21:43:37.825 +16.1s threads=73 handles=1452 cpu=9.20s ws=408MB
+21:43:42.988 +21.3s threads=73 handles=1449 cpu=9.73s ws=404MB
+21:43:48.156 +26.4s threads=73 handles=1454 cpu=10.08s ws=385MB
+21:43:53.069 threads 73 -> 72 ended=149528
+21:43:53.489 +31.8s threads=72 handles=1451 cpu=10.38s ws=385MB
+21:43:58.654 +36.9s threads=72 handles=1452 cpu=10.73s ws=385MB
+21:44:03.817 +42.1s threads=72 handles=1453 cpu=11.06s ws=386MB
+21:44:08.990 +47.3s threads=72 handles=1452 cpu=11.48s ws=387MB
+21:44:14.169 +52.4s threads=72 handles=1453 cpu=11.84s ws=388MB
+21:44:15.112 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1529 process handles, 377 unreachable]
+21:44:19.342 +57.6s threads=72 handles=1450 cpu=12.34s ws=388MB
+21:44:21.875 threads 72 -> 69 ended=148724,149080,148552
+21:44:23.872 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 audiodg#52436 [examined 1525 process handles, 377 unreachable]
+21:44:24.396 +62.7s threads=69 handles=1447 cpu=12.66s ws=388MB
+21:44:28.505 threads 69 -> 70 started=131412
+21:44:29.571 +67.8s threads=70 handles=1456 cpu=14.44s ws=388MB
+21:44:34.742 +73.0s threads=70 handles=1458 cpu=16.22s ws=388MB
+21:44:39.898 +78.2s threads=70 handles=1453 cpu=16.73s ws=389MB
+21:44:45.072 +83.3s threads=70 handles=1455 cpu=17.31s ws=351MB
+21:44:50.387 +88.7s threads=70 handles=1455 cpu=17.64s ws=343MB
+21:44:55.546 +93.8s threads=70 handles=1455 cpu=17.84s ws=343MB
+21:44:58.194 threads 70 -> 69 ended=131412
+21:45:00.736 +99.0s threads=69 handles=1453 cpu=18.09s ws=341MB
+21:45:03.110 threads 69 -> 62 ended=149908,149912,149940,150296,150300,149564,149572
+21:45:03.281 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 [examined 1530 process handles, 382 unreachable]
+21:45:03.545 threads 62 -> 29 ended=149808,149816,149820,149824,149828,149836,149840,149844,149848,149852,149856,149860,149864,149868,149872,149876,149880,149884,149888,149892,149896,149900,149904,150520,150524,143944,149304,139644,149520,149516,149532,149592,149560
+21:45:04.335 threads 29 -> 25 ended=149140,142140,145124,149936
+21:45:04.599 threads 25 -> 18 ended=144872,149240,149096,147440,148844,138604,149044
+21:45:05.928 +104.2s threads=18 handles=704 cpu=18.27s ws=218MB
+21:45:07.644 handles on the client: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 [examined 1522 process handles, 377 unreachable]
+21:45:09.492 EXIT code 0x00000000 (0) after 107.7s of life, 18.27s of CPU
+21:45:09.492 last sample was 0.23s before the exit: threads=18 (peak 75) handles=704
+21:45:09.493 threads in that sample (data, not a verdict - see the header): 148728:Wait/UserRequest 145764:Wait/EventPairLow 148716:Wait/UserRequest 146896:Wait/EventPairLow 148560:Wait/UserRequest 148704:Wait/EventPairLow 146160:Wait/UserRequest 142348:Wait/EventPairLow 141264:Wait/EventPairLow 144604:Wait/EventPairLow 83576:Wait/UserRequest 147844:Wait/UserRequest 145380:Wait/UserRequest 149508:Wait/EventPairLow 150284:Wait/Executive 150448:Wait/UserRequest 150500:Wait/UserRequest 150508:Wait/UserRequest
+21:45:09.494 handles on the client, last scan: lsass#1092 svchost#1292 svchost#3904 svchost#4984 RadeonSoftware#13684 [examined 1522 process handles, 377 unreachable]
+21:45:09.498 READ: exit code 0. Nothing failed. With RtlExitUserProcess ruled out, a clean 0 fits the last-thread path - check whether ntdll!RtlExitUserThread fired in maplecw-hook.log.
+21:45:09.498 READ: the decisive line is in client-patched\maplecw-hook.log, not here - a WATCH on ntdll!RtlExitUserThread or ntdll!NtTerminateThread means the client ended itself; silence on both means it did not.
+21:45:09.506 protection/nexon processes at exit: cncmd#18984@10:14:36
+21:45:09.509 vanished during the run: MapleStory#149180@21:43:21
+21:45:09.519 processes that started after the client did: firefox#150032 svchost#146716 svchost#149576 svchost#149996
+21:45:09.707 event: 21:43:23 System/Microsoft-Windows-DistributedCOM Error - The server Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter did not register with DCOM within the required timeout.
