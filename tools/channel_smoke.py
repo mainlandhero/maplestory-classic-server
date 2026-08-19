@@ -174,6 +174,12 @@ try:
         # the capture shows arrives only on the very first field entry.
         send(transport.packet(0x00DC, b""))
 
+        # /map typed into the All tab. Chat is fire-and-forget on the client's side, so a
+        # command that does nothing is safe; this one must actually move the character.
+        text = b"/map 104040000"
+        chat = bytes(4) + struct.pack("<H", len(text)) + text + b""
+        send(transport.packet(0x00E7, chat))
+
         # 0x00D1, a transfer-field request, in the form the client actually sends: no
         # explicit target field (0xFFFFFFFF), a named portal, and coordinates after it. This
         # exercises the generated portal table end to end - map 1's "out00" leads to map 10.
@@ -252,7 +258,7 @@ if PROBE:
     AVATAR = 0x0138
     looks = [r for r in replies if r["opcode"] == AVATAR]
 
-    check("the probe answered all three requests", len(replies) == 5,
+    check("the probe answered all four requests", len(replies) == 6,
           "%d replies: %s" % (len(replies), [hex(r["opcode"]) for r in replies]))
     check("one of them is UserAvatarModified - the attempt to dress the character",
           len(looks) == 1, "%d" % len(looks))
@@ -275,8 +281,14 @@ if PROBE:
             i += 5
         check("the equipped slots are the ones the character actually wears",
               slots == [5, 6, 7, 11], "%s" % slots)
-    check("two of them are SetField - the migration and the portal", len(set_fields) == 2,
-          "%d" % len(set_fields))
+    check("three are SetField - the migration, the /map command and the portal",
+          len(set_fields) == 3, "%d" % len(set_fields))
+    if len(set_fields) == 3:
+        gm = set_fields[1]["body"][2:]
+        at = HEAD + 12 + 111 + 84
+        check("the GM /map command moved the character to the map it names",
+              struct.unpack_from("<I", gm, at)[0] == 104_040_000,
+              "map %d" % struct.unpack_from("<I", gm, at)[0])
     check("two of them are NpcEnterField - map 1's Heena and Sera, from the generated table",
           len(npcs) == 2, "%d" % len(npcs))
     if replies:

@@ -1,5 +1,16 @@
 # Why the character is naked, and what dressing it needs
 
+> **SUPERSEDED IN PART, 2026-08-19 - read `research/naked-character.md` first.**
+> The blocker below ("item decode is a vtable call with no RTTI, so the layout cannot be
+> read") is **resolved**: the vtable comes from the constructor, the decode is at `+0x358`
+> (not `+0x330`), and the full 125-byte equip body is now read off the listing.
+> Three claims here are wrong and are corrected in section 6 of that document: the "two
+> `u16`-terminated loops" (there is one, plus four more lists behind two lambdas that
+> re-gate on the *same* presence byte), the role of `FUN_14030b560` (a post-pass for item
+> ids 1660000..1669999, not the decode path), and the unplaced 32-iteration loop.
+> What stands unchanged: `SetField` carries no compact avatar look, and the appearance must
+> come from the equipped list.
+
 **The owner, 2026-08-19, from the screen:** the character stands on map 1 correctly but wears
 nothing, while character select shows its four equips. Stored for `TestCharD` (id 204):
 slot 5 `1040003`, slot 6 `1060002`, slot 7 `1072003`, slot 11 `1302000`.

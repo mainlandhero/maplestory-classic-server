@@ -308,6 +308,31 @@ pub const CLIENT_LEAVE_WORLD_REQUEST: u16 = 0x0082;
 /// client's own builder rather than from the reference.
 pub const CLIENT_SELECT_WORLD: u16 = 0x0076;
 
+/// The client sending a line of chat.
+///
+/// Captured 2026-08-19 - the owner typed "Hello" into the All tab and this went out:
+///
+/// ```text
+/// e7 5b 64 05   u32, a counter or tick - not read
+/// 05 00         u16 length
+/// 48 65 6c 6c 6f  "Hello"
+/// 03            u8, the tab - "All" was 3
+/// ```
+///
+/// Nothing froze when it went unanswered, so chat is fire-and-forget.
+pub const CLIENT_CHAT: u16 = 0x00E7;
+
+/// The text of a [`CLIENT_CHAT`] body, or `None` if it is too short or not valid UTF-8.
+///
+/// The leading `u32` is skipped rather than interpreted - it looks like a tick and nothing
+/// depends on it.
+pub fn parse_chat(body: &[u8]) -> Option<String> {
+    const LEN_AT: usize = 4;
+    let len = u16::from_le_bytes(body.get(LEN_AT..LEN_AT + 2)?.try_into().ok()?) as usize;
+    let text = body.get(LEN_AT + 2..LEN_AT + 2 + len)?;
+    String::from_utf8(text.to_vec()).ok()
+}
+
 /// The client's request to *enter* character creation - the second-password check.
 ///
 /// Sent by `FUN_141b282d0` when "Create a character" is clicked and its gate opens. The

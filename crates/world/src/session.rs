@@ -171,6 +171,7 @@ impl Session {
             CLIENT_MIGRATION_HELLO => {}
             CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
             CLIENT_FIELD_ENTERED => return self.on_field_entered(),
+            net::opcode::CLIENT_CHAT => return self.on_chat(body.get(2..).unwrap_or(&[])),
             _ => return Vec::new(),
         }
         // Always answer. An unanswered packet freezes the client's whole UI - every
@@ -243,6 +244,52 @@ impl Session {
         out
     }
 
+    /// Move a character to a map and tell the client, persisting the move.
+    ///
+    /// Shared by the portal walk and the `/map` GM command, so both go through one path -
+    /// a second copy of this is how the two would drift.
+    fn go_to_map(&mut self, chr: &mut net::opcode::Character, map: u32, portal: u8, why: String)
+        -> Vec<Reply>
+    {
+        chr.map_id = map;
+        chr.portal = portal;
+        let stored = self.store.set_character_map(chr.id, map);
+        let warn = match stored {
+            Ok(()) => String::new(),
+            // Not fatal: the client is told where it is either way, and the next login puts
+            // it back where it was.
+            Err(e) => format!(" - WARNING: not stored ({e}), so this will not survive a relog"),
+        };
+        vec![Reply {
+            opcode: net::opcode::SET_FIELD,
+            body: net::opcode::set_field_with_character(
+                chr,
+                self.config.world_id,
+                self.clock_base(),
+                self.config.channel_id,
+            ),
+            what: format!("SetField, {why}, for character {} ({}){warn}", chr.id, chr.name),
+        }]
+    }
+
+    /// GM commands typed into the chat box.
+    ///
+    /// **This is a debugging tool on a server where nothing authenticates**, so there is no
+    /// permission check to write - every connection is already the same account, and adding
+    /// one here would be theatre. Say so rather than implying otherwise.
+    ///
+    /// Chat is fire-and-forget: the client froze on none of the runs where it went
+    /// unanswered, so a command that does nothing is safe.
+    fn on_chat(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some(text) = net::opcode::parse_chat(payload) else { return Vec::new() };
+        let text = text.trim();
+        let Some(rest) = text.strip_prefix("/map ") else { return Vec::new() };
+        let Ok(map) = rest.trim().parse::<u32>() else { return Vec::new() };
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        // Portal 0 is the map's spawn point, which is where a GM warp should land.
+        self.go_to_map(&mut chr, map, 0, format!("GM /map {map}"))
+    }
+
     /// Answer the client walking into a portal.
     ///
     /// The reply is another `SetField` with `characterData = 1` - the **long** form, the one
@@ -298,35 +345,8 @@ impl Session {
             None => (chr.map_id, "the body was too short to parse - re-sending the current map".to_string()),
         };
 
-        chr.map_id = target;
-        chr.portal = arrival;
-        if let Err(e) = self.store.set_character_map(chr.id, target) {
-            // Not fatal: the client is told where it is either way, and the next login
-            // simply puts it back where it was.
-            return vec![Reply {
-                opcode: net::opcode::SET_FIELD,
-                body: net::opcode::set_field_with_character(
-                    &chr,
-                    self.config.world_id,
-                    self.clock_base(),
-                    self.config.channel_id,
-                ),
-                what: format!("SetField, {note} - WARNING: the new map could not be stored ({e}),                                so this move will not survive a relog"),
-            }];
-        }
-        vec![Reply {
-            opcode: net::opcode::SET_FIELD,
-            body: net::opcode::set_field_with_character(
-                &chr,
-                self.config.world_id,
-                self.clock_base(),
-                self.config.channel_id,
-            ),
-            what: format!(
-                "SetField, characterData=1, {note}, for character {} ({}). Long form - the                  short characterData=0 form is probably right here but its precondition is                  unproven; see research/transfer-field-request.md.",
-                chr.id, chr.name
-            ),
-        }]
+
+        self.go_to_map(&mut chr, target, arrival, note)
     }
 
     /// The character this connection claimed a migration for.
@@ -486,6 +506,46 @@ mod tests {
         assert_eq!(r.portal_name, "out00", "map 1's portal 4, from the WZ");
         assert_eq!(r.position, Some((1107, 365)), "y is exactly the portal's own y");
 
+    }
+
+    /// `/map <id>` typed into the chat box, from the real captured chat body.
+    #[test]
+    fn the_gm_map_command_moves_the_character() {
+        // The exact shape the client sends: u32 tick, u16 length, text, u8 tab.
+        fn chat(text: &str) -> Vec<u8> {
+            let mut b = vec![0u8; 4];
+            b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+            b.extend_from_slice(text.as_bytes());
+            b.push(3); // the All tab
+            b
+        }
+        assert_eq!(net::opcode::parse_chat(&chat("Hello")).as_deref(), Some("Hello"));
+        assert_eq!(net::opcode::parse_chat(&chat("/map 40")).as_deref(), Some("/map 40"));
+
+        // The real 12 bytes the owner sent, so the parser is tested against the client and not
+        // only against its own encoder.
+        let real = [0xe7, 0x5b, 0x64, 0x05, 0x05, 0x00, b'H', b'e', b'l', b'l', b'o', 0x03];
+        assert_eq!(net::opcode::parse_chat(&real).as_deref(), Some("Hello"));
+
+        // Short bodies come off a socket and must not panic.
+        for n in 0..6 {
+            assert_eq!(net::opcode::parse_chat(&real[..n]), None, "{n} bytes");
+        }
+    }
+
+    /// Only `/map` with a number is a command; ordinary chat must stay ordinary.
+    #[test]
+    fn ordinary_chat_is_not_a_command() {
+        let (mut s, _store, _id, _acct) = session();
+        for text in ["Hello", "/map", "/map abc", "/mapabc 1", "map 40", "/warp 40"] {
+            let mut b = vec![0u8; 4];
+            b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+            b.extend_from_slice(text.as_bytes());
+            b.push(3);
+            let mut body = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+            body.extend_from_slice(&b);
+            assert!(s.handle(&body).is_empty(), "{text:?} should not move anybody");
+        }
     }
 
     /// The portal table is generated from the client's `Map.wz`, so the loader has to cope

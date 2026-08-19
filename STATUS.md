@@ -160,6 +160,34 @@ zero, which told the client each channel was **channel 0 of world 0**. They now 
 from its own decoder `FUN_141b2fac0` (the login stage's `case 0xb`); that they mean
 world/channel/adult is **[I]** from the packet family's usual shape.
 
+**UPDATE 2026-08-19, second run: the list now shows CH.1 and CH.2** - the
+`[world_id, index, 0, 0]` fix worked. **But CH.2 cannot be selected**, and clicking it sends
+**nothing at all** (`research/fixtures/channel-list-shows-two-but-unselectable-world.log`,
+whose whole inbound set contains no new opcode). So the client is refusing the selection
+**client-side, before it would send anything** - this is not an unanswered-packet freeze.
+
+### Most likely next steps, in order
+
+1. **Read what makes a channel button enabled.** The dialog is `ChannelChange.img` and its
+   channel numbers are the `ch/0..18` bitmaps, so the client is drawing from its own assets
+   and only the *count* came from us. Find the UI code behind `ChannelChange` and read the
+   predicate that greys a row. That is the direct answer and it is static.
+2. **Suspect the fields we still send as placeholders.** Each channel entry is
+   `str name, u32 userCount, u8 world, u8 index, u8, u8`. The client reads exactly four `u8`s
+   there **[L]**, but only the first two carry meaning we chose; the last two are `0` and the
+   `u32` user count is `0`. A "channel is up" or "adult channel" flag among them would
+   produce exactly this. Cheapest experiment: send a **non-zero user count** and vary the two
+   trailing bytes.
+3. **Check whether the current channel is excluded.** CH.1 is the one the character is on. If
+   the client only enables a *different* channel it should already work, so if CH.2 is grey
+   the predicate is something else - but confirm which row is actually grey before assuming.
+4. **The reply, once a click does send something.** Expect a migrate command: the swap has to
+   mint a migration for the **target** channel, which `store::create_migration` already takes
+   as a parameter, and hand back that channel's address the way `0x0011` does at login.
+
+**Not** the world-list layout in general: the count reaches the client, the entries parse,
+and both rows draw. Only selection fails.
+
 **The startup channel is unchanged.** `world.channel_id` is still `0`, so a login lands
 where it always did. What changed is that `tools/test-server.ps1` now runs **two** channel
 processes by default (`-Channels`, one process per channel, `$ChannelPort + N`) and the login

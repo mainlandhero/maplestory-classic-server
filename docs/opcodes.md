@@ -560,6 +560,8 @@ instrument this project has.
 | `0x0082` | **leave world** - BOTH "Choose another world" and "Back" on the character screen send this, empty body | | **yes**, already |
 | `0x0182` | **party create** | 68 bytes carrying a length-prefixed party name | no |
 | `0x00D9` | movement | every ~510 ms, coordinate-shaped | no |
+| `0x0076` | **select world** | 171 bytes: local IP, then CPU, OS, memory, timezone, country, locale as length-prefixed strings. **Login connection** | **yes** - unanswered it hangs the client on "Connecting to server..." |
+| `0x00F2` | unknown, NPC-shaped | 12 bytes, e.g. `e8030000 e2ff 1301 ffffffff` - an object id we assigned (1000), an `i16` pair, and `-1` | no |
 | `0x013D`, `0x00B8`, `0x02EB`, `0x01ED`, `0x0408`, `0x0184`, `0x0194`, `0x01A5`, `0x02DE`, `0x00ED`, `0x02B2` | undecoded | | no |
 
 **None of the unanswered ones has ever caused a freeze**, so none is a blocking request -
