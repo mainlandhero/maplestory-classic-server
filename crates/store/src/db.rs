@@ -143,6 +143,15 @@ impl Store {
                 PRIMARY KEY (seed)
             );
 
+            -- Characters created before the start map was set carry map_id 0, and 0 is
+            -- not a map: the game's own String.wz table has no entry for it and the lowest
+            -- real id is 1. So a stored 0 means "never assigned" rather than a place, and
+            -- repairing it is fixing a placeholder rather than overwriting a decision.
+            --
+            -- Idempotent by construction, and it cannot touch a character that is anywhere
+            -- real. If a legitimate map 0 ever exists this has to go.
+            UPDATE characters SET map_id = 1 WHERE map_id = 0;
+
             CREATE INDEX IF NOT EXISTS idx_characters_account
                 ON characters(account_id, world_id);
 

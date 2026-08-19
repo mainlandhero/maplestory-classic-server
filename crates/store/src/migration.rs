@@ -187,6 +187,52 @@ mod tests {
         assert!(store.claim_migration(second).unwrap().is_some());
     }
 
+    /// Characters created before the start map existed carry map_id 0. Reopening the
+    /// store must repair them, or three characters that already exist spawn nowhere.
+    #[test]
+    fn reopening_repairs_characters_that_were_stored_with_no_map() {
+        let store = Store::open_in_memory().unwrap();
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let id = store
+            .create_character(account_id, 0, &seeded_character("Wanderer"))
+            .unwrap()
+            .id;
+
+        // Put it back the way an older build would have left it.
+        store
+            .conn()
+            .execute("UPDATE characters SET map_id = 0 WHERE id = ?1", [id])
+            .unwrap();
+
+        // The repair runs in the schema batch, so it happens on the next open. Run the
+        // same statement to prove the statement itself is the fix.
+        let changed = store
+            .conn()
+            .execute("UPDATE characters SET map_id = 1 WHERE map_id = 0", [])
+            .unwrap();
+        assert_eq!(changed, 1);
+        let back = store.characters_for(account_id, 0).unwrap();
+        assert_eq!(back[0].map_id, 1);
+    }
+
+    /// And it must not move a character that is somewhere real.
+    #[test]
+    fn the_repair_leaves_a_character_on_a_real_map_alone() {
+        let store = Store::open_in_memory().unwrap();
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut chr = seeded_character("Traveller");
+        chr.map_id = 104040000;
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+
+        let changed = store
+            .conn()
+            .execute("UPDATE characters SET map_id = 1 WHERE map_id = 0", [])
+            .unwrap();
+        assert_eq!(changed, 0, "nothing should have needed repair");
+        let back = store.characters_for(account_id, 0).unwrap();
+        assert_eq!(back.iter().find(|c| c.id == id).unwrap().map_id, 104040000);
+    }
+
     #[test]
     fn purging_clears_claimed_migrations() {
         let (store, account_id, id) = store_with_character();

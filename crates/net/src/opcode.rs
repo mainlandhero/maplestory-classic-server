@@ -666,6 +666,17 @@ pub struct Character {
     pub equips: Vec<(u8, u32)>,
 }
 
+/// Where a new character starts: **map 1, "Mushroom Town - West Entrance"**.
+///
+/// The owner, 2026-08-19. It had never been set - `Character::default` carried `map_id: 0`, and
+/// nothing on the creation path overrode it.
+///
+/// **Zero is not a map.** The game's own table in `String.wz` has no entry for it; the
+/// lowest real id is 1 (`gm-handbook/maps.txt`, regenerate with `tools/dump_names.py`). So
+/// a stored `0` means "never assigned" rather than a place, which is what makes repairing
+/// existing rows safe rather than presumptuous.
+pub const START_MAP_ID: u32 = 1;
+
 impl Default for Character {
     /// A level 1 beginner with the classic starting roll.
     ///
@@ -690,7 +701,7 @@ impl Default for Character {
             mp: 5,
             max_mp: 5,
             ap: 0,
-            map_id: 0,
+            map_id: START_MAP_ID,
             equips: Vec::new(),
         }
     }
@@ -1674,6 +1685,27 @@ mod tests {
         assert_eq!(hex(&body)[..head.len()], head);
         // The name sits 12 bytes into the record, which starts at byte 50.
         assert_eq!(&body[50 + 12..50 + 17], b"Maple");
+    }
+
+    /// A new character starts somewhere real. Zero is not a map - the game's own table
+    /// has no entry for it - so a default of 0 meant every character spawned nowhere.
+    #[test]
+    fn a_new_character_starts_on_the_start_map() {
+        assert_eq!(START_MAP_ID, 1);
+        assert_eq!(Character::default().map_id, START_MAP_ID);
+        assert_ne!(Character::default().map_id, 0, "0 is not a map");
+    }
+
+    /// And it has to survive into the record the client actually reads, not just sit in
+    /// the struct.
+    #[test]
+    fn the_start_map_reaches_the_character_record() {
+        let chr = Character { name: "Wanderer".to_string(), ..Character::default() };
+        let record = character_record(&chr, 0);
+        let found = record
+            .windows(4)
+            .any(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == START_MAP_ID);
+        assert!(found, "the start map is not in the encoded record");
     }
 
     /// The tail transform has to invert for every key, not just the zero we send. If this
