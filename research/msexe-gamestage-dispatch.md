@@ -11,6 +11,52 @@ direct callers, no vtable entry, and nothing takes its address** - which is the 
 `tools/handler_root.py` documents for a function reached only from the Themida-virtualised
 packet loop. That is how the client reaches it.
 
+All 64 bytes, read by hand out of the image rather than decompiled:
+
+```asm
+1415d59b0  mov  [rsp+18], r8          ; packet
+           mov  [rsp+10], edx         ; opcode
+           mov  [rsp+08], rcx         ; "this" - saved, then never used
+           sub  rsp, 38
+           call 140caa750             ; -> cmp qword [143aa84a0], 0 / setne al / ret
+           movzx eax, al
+           test eax, eax
+           jz   1415d59ee             ; nothing to dispatch to: drop the packet
+           call 140caa510             ; -> mov rax, [143aa84a0] / ret
+           mov  [rsp+20], rax
+           mov  r8,  [rsp+50]         ; packet
+           mov  edx, [rsp+48]         ; opcode
+           mov  rcx, [rsp+20]         ; the object
+           call 142cbaa80
+           add  rsp, 38
+           ret
+```
+
+which is:
+
+```c
+void FUN_1415d59b0(void *ignored, int opcode, CInPacket *packet) {
+    if (DAT_143aa84a0 != NULL)
+        FUN_142cbaa80(DAT_143aa84a0, opcode, packet);
+}
+```
+
+**Two things follow, and both matter operationally.**
+
+1. `FUN_142cbaa80` is a method on the global `DAT_143aa84a0` - the in-game world object.
+   The same global is read all over the client (5459 RIP-relative references) and is
+   **written in exactly two places**: `FUN_142ca5c50` sets it and `FUN_142ca88c0` clears
+   it. Found with `tools/dataref.py`, which was written for this and which sees the
+   read/write forms `tools/xref.py` is documented as missing.
+2. **If `DAT_143aa84a0` is null, the packet is dropped in silence** - no dialog, no log,
+   no error. So a game-stage reply sent before the client has built that object does
+   nothing at all, and would look exactly like a reply the client did not understand.
+   Whether it is non-null while the client sits on "Connecting..." is **not established**,
+   and it is the first thing a run should be made to answer.
+
+The address arithmetic above was checked against an independent instrument: the third
+call target computed by hand, `142cbaa80`, is the same edge the `E8 rel32` scanner found.
+
 The two stages are disjoint, and that is what makes the identification safe:
 
 | stage | dispatcher | inbound opcodes | code lives at |
@@ -65,8 +111,11 @@ a suspicion, not a finding - `research/msexe-setfield.md` is where it gets settl
 
 ## Not yet established
 
-* What `FUN_1415d59b0` actually does with its 64 bytes, and whether it gates on anything
-  before forwarding. It was not decompiled when this note was written.
+* **Whether `DAT_143aa84a0` is non-null when the client is waiting on the channel.** If it
+  is null, every game-stage reply is discarded silently. See above.
+* When `FUN_142ca5c50` runs. Its callers are `FUN_142c43970` <- `FUN_142c42f30` <-
+  `FUN_142ef49e4`, and that last one has no callers and no address taken either, so the
+  chain runs off into the virtualised region and static reading stops there.
 * Whether the login connection reaches `FUN_141b25f30` through this same entry or through
   the vtable it does sit in (slot 76 of `0x1433fd540`).
 * Opcodes `0x60..0x6f`, which neither dispatcher claims.
