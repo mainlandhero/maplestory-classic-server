@@ -1,5 +1,35 @@
 # `SetField` - inbound `0x01A0`, handler `FUN_142097f80`
 
+> **CONFIRMED ON A LIVE CLIENT, 2026-08-19.** Not inferred any more. The client's own
+> dispatcher entered `FUN_142097f80` *while dispatching opcode `0x01A0`*, and the probe
+> caught it:
+>
+> ```
+> WATCH: 0x142097f80 ENTERED on tid 141492 while dispatching opcode 0x01A0
+>        called-from=0x141b26567
+> WATCH: 0x142cfb500 ENTERED ... [rcx+0x33f4]=u8:0x00  called-from=0x142097ff8
+> ```
+>
+> Three predictions landed in one run:
+>
+> * **`0x01A0` is `SetField`.** The block arithmetic, the channel-change string and the
+>   8-byte clock base were all pointing at the right function.
+> * **No stage transition is needed.** `called-from=0x141b26567` is inside `FUN_141b25f30`,
+>   the **login** stage's `OnPacket` (which spans to `0x141b265da`) - the
+>   `if (opcode - 0x1a0 < 4)` chain to the stage base class, exactly as read.
+> * **The latch is clear at migrate time.** `[world+0x33f4] = 0`, so neither early return
+>   fired. That had been an expectation, not a measurement; now it is measured.
+>
+> The client then **faulted** at `FUN_1402fa540+0x1c` (`0xC0000005`), one millisecond later.
+> That call site is `142098685`, on the **`characterData == 0` branch**, between its first
+> `u8` and its next `u32`. Which is what the short form should do here: it is the
+> "same character, new map" packet and it assumes a character and a field that a freshly
+> migrated client does not have yet. **The crash is the short branch being the wrong branch,
+> not evidence against the opcode.**
+>
+> So the next packet must carry `characterData = 1` and a real character record.
+
+
 The packet that answers a migration hello and puts a character into a map. This is the
 layout as the client reads it, decoded 2026-08-19.
 
@@ -26,13 +56,11 @@ happened. That is the main hazard in testing this.
 
 * `world == NULL` - [[maplecw-inbound-dispatch]] establishes the world object is already
   live before the channel socket opens, so this should not fire.
-* `world+0x33f4` is a latch. It is **set to 1 by `FUN_142cfb470`**, which also builds and
+* `world+0x33f4` is a latch, **measured as `0x00` at migrate time** so it does not fire. It is **set to 1 by `FUN_142cfb470`**, which also builds and
   sends outbound `0x1BE` - i.e. the client sets it when *it* asks to change field. It is
   **cleared by `FUN_142d3c670`**, which runs in the world-init chain (`FUN_142c42f30` ->
   `FUN_142d3c970`... -> the constructor `FUN_142ca5c50` that writes `DAT_143aa84a0`).
-  On a fresh migration nothing should have set it. **That is an expectation, not a
-  measurement** - the constructor's own store is `mov [rdi+0x33f4], bl` and `bl` was not
-  traced.
+  On a fresh migration nothing has set it, and the probe read it as `0x00` on the wire.
 
 ## The fixed head: 33 bytes, unconditional
 
@@ -101,9 +129,9 @@ reference server does too: its whole answer to a migrate-in is one `SetField` wi
    is not.
 2. **The string block's loop bound.** Avoidable by sending `0`, so this is not on the
    critical path.
-3. **The short `characterData == 0` path**, unread past its first byte. Worth reading only
-   if the full record turns out to be a wall - but a freshly migrated client has no
-   character data at all, so the short form is unlikely to be the right answer here.
-4. **Whether `world+0x33f4` is really 0 at migrate time.** Cheap to settle in the same run
-   that tests the packet, and worth doing deliberately, because if it is not, the run is
-   silence and says nothing.
+3. ~~The short `characterData == 0` path~~ - **answered by the run, and not the way to go.**
+   It faults at `FUN_1402fa540+0x1c`, reached from `142098685`, before its second field
+   read. It is the "same character, new map" form and assumes state a freshly migrated
+   client does not have.
+4. ~~Whether `world+0x33f4` is really 0 at migrate time~~ - **measured: it is `0x00`.**
+   Neither early return fires.

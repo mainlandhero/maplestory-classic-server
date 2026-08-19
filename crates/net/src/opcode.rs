@@ -1110,6 +1110,11 @@ fn migrate_tail_word(plain: u32, key: u32, offset: u32) -> u32 {
 /// **`SetField`** - the packet that puts a character into a map, and the one the client is
 /// waiting for after it migrates. Handler `FUN_142097f80`, 11726 bytes.
 ///
+/// **CONFIRMED on a live client 2026-08-19**: the client's dispatcher entered
+/// `FUN_142097f80` *while dispatching opcode `0x01A0`*, reached from `0x141b26567` - inside
+/// the **login** stage's `OnPacket`, which is the `if (opcode - 0x1a0 < 4)` chain described
+/// below - and passed both early returns.
+///
 /// Identified statically 2026-08-19. Three lines agree, and the body layout is a separate
 /// question written up in `research/msexe-stage-setfield.md`:
 ///
