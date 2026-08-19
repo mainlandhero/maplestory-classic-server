@@ -405,6 +405,58 @@ just before a `SetField`.**
 > resync point. **Text on screen is not a quest**, though - no quest-result packet has been
 > found, so state will not advance.
 
+### 2e. RUN OF 2026-08-19 (evening): what it settled, and the best lead yet on unequip
+
+Preserved as `research/fixtures/stats-work-then-map-loses-them-world.log`.
+
+**Working on screen, confirmed by the owner:** idle chatter (Robin cycling their lines), item stats
+on the tooltips, the `!map` chat notice for both a bad id and a good one, and **Log Out**
+returning to the login screen.
+
+**The tooltip investigation was chasing my own bug.** Items had correct stats on entering the
+world and lost them the moment `!map` was used, because `go_to_map` still sent the *bare*
+record. Every earlier tooltip observation was made on map 40, reached with `!map`. There was
+no second object.
+
+**World select cannot change channels, and that hypothesis is dead.** The owner: *"So I actually
+cannot change channel via world select. This client doesn't implement that. When I go to
+world select, the moment I choose 'Classic', I am redirected to the classic login screen with
+my masked email."* So the run where CH.1 and CH.2 listed is still unexplained, and **all
+three** attributions so far - the four trailing bytes, the enable byte, the world-select
+route - are retracted. Whatever populates that list, nothing yet proposed does it.
+
+#### The unequip still never reaches the wire, and there is now a strong candidate why
+
+The owner tried repeatedly to unequip the Undershirt. **The capture contains no `0x0107` at all**,
+confirming `research/npc-click.md` §4: the client drops it inside `FUN_142cc5b00`, before
+building anything, at one of six pre-send gates.
+
+> **Leading hypothesis, and it is cheap to test: the bag has no slots.** An unequip needs
+> somewhere to put the item. In this game family the character record carries five inventory
+> slot counts - equip, use, set-up, etc, cash - immediately after the character-stat block,
+> and **we send four zero bytes there**, currently labelled "one `u8` and three
+> optional-string flags" at record offsets 219-222. That labelling came from a read that only
+> had to explain *skipping*, and zero skips either way, so nothing has ever tested it. A
+> zero-slot bag would make the client refuse every unequip client-side, silently, which is
+> exactly what happens. **[I]**, but it explains the symptom with no extra machinery.
+>
+> **The one-variant test:** send a plausible slot count (24) in those bytes and see whether
+> a drag starts producing `0x0107`. If the record still decodes, the labelling was wrong and
+> the bag is real; if world entry breaks, they are what the old read said they were.
+
+#### And a client state dump nobody had seen: `0x0420`-`0x0426`
+
+Six packets arrive together, once, ~7 minutes in. `0x0421` is **1115 bytes** and carries the
+character id (204), the name `TestCharD`, and **our four item ids** - `1040003`, `1060002`,
+`1072003`, `1302000` - in equipped-slot order. `0x0420` carries a timestamp string and the
+**NPC object ids we assigned** (1000, 1001, 1002). `0x0426` is 20 bytes beginning
+`ffffffffffffffff`.
+
+This is the client reporting its own world state back, and it is a **free read-back
+instrument** of exactly the kind `research/equip-stats.md` wished for: it says what the
+client thinks it is wearing, in its own words. Nobody has decoded it. None of the six is
+answered and none has caused a freeze.
+
 ### 2d. The unequip request never reached the wire - and the gate that ate it is a hazard
 
 The owner tried to unequip the Undershirt on 2026-08-19 and was not sure whether anything was
