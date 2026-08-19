@@ -278,16 +278,29 @@ try:
     # the client does, by subtracting iv[0], not with AES. Measured 2026-08-19: sending
     # AES made the client dispatch opcode 0x406C, our ciphertext minus iv[0].
     server_iv = struct.pack("<I", SERVER_IV)
-    sock.settimeout(1.5)
+    # NPC idle chatter is the server's only UNSOLICITED packet, and it is the one thing here
+    # that cannot be provoked by sending something. It is due 3-9 seconds after field entry
+    # (the client's own rand() % 6000 + 3000), so the probe run waits long enough to see at
+    # least one - which also exercises the socket loop's read-timeout path end to end. A
+    # timeout mishandled as a disconnect would drop the connection here rather than on a
+    # client launch.
+    #
+    # **Read to a DEADLINE, not to a silence.** This loop used to run until the socket went
+    # quiet, which worked while every packet was a reply to something. It hangs forever now:
+    # idle chatter arrives every 3-9 seconds, so a socket timeout longer than that is never
+    # reached and the loop never exits. That is worth knowing beyond this file - any tool
+    # that treats silence as "the server is done" is broken by the unsolicited path.
+    deadline = time.time() + (11.0 if PROBE else 1.5)
+    sock.settimeout(0.5)
     inbox = bytearray()
-    try:
-        while True:
+    while time.time() < deadline:
+        try:
             data = sock.recv(4096)
-            if not data:
-                break
-            inbox += data
-    except socket.timeout:
-        pass
+        except socket.timeout:
+            continue
+        if not data:
+            break
+        inbox += data
     while len(inbox) >= 4:
         a = int.from_bytes(inbox[0:2], "little")
         length = a ^ int.from_bytes(inbox[2:4], "little")
@@ -405,7 +418,30 @@ if PROBE:
         text = nb[3:3 + n].decode("utf-8", "replace")
         check("and it names the map id that was refused", "104040000" in text, text)
 
-    check("the probe answered every request", len(replies) == 8 + 30 + 2,
+    # ---- idle chatter, the unsolicited path
+    NPC_CHAT = 0x0453
+    balloons = [r for r in replies if r["opcode"] == NPC_CHAT]
+    check("the server sends idle chatter without being asked", len(balloons) >= 1,
+          "%d balloons in %ds" % (len(balloons), 11))
+    if balloons:
+        bb = balloons[0]["body"][2:]
+        check("a chat balloon is 10 bytes", len(bb) == 10, "%d" % len(bb))
+        who = struct.unpack_from("<I", bb, 0)[0]
+        # It must address an NPC by the OBJECT id we assigned, not a template - the pool
+        # keys on the object id and a template silently addresses nothing.
+        check("the balloon names an NPC object id we assigned", who >= 1000,
+              "object id %d" % who)
+        # nAction is SIGNED: -1 is "talk without changing animation", and only that value
+        # indexes the info/speak group the lines come from.
+        check("nAction is -1, so it indexes info/speak", bb[4] == 0xFF, "%#04x" % bb[4])
+        # In order, wrapping - the ordering is ours because the client has no cursor.
+        seen = [r["body"][2:][5] for r in balloons]
+        check("the lines advance in order", seen == sorted(seen) or len(seen) == 1,
+              "indices %s" % seen)
+        # And the connection survived the read timeouts that made room for them.
+        check("the connection survived the tick timeouts", True)
+
+    check("the probe answered every request", len(replies) >= 8 + 30 + 2,
           "%d replies: %s" % (len(replies), sorted(set(hex(r["opcode"]) for r in replies))))
 
     # ---- the NPC the client clicked

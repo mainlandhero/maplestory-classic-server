@@ -143,6 +143,14 @@ pub struct Session {
     /// Drives the chatter cadence. Seeded per session so two connections do not speak in
     /// lockstep, and seedable so a test can pin the sequence.
     rng: Xorshift,
+    /// The last time [`Session::tick`] was called, in milliseconds since the connection
+    /// opened.
+    ///
+    /// **A field entry needs to know the clock and does not get one**: `handle` takes bytes,
+    /// not time. Without this, `reset_chatter` scheduled from zero, so an NPC on a map
+    /// entered at t = 30 s came due at 3-9 s - already in the past - and the whole field
+    /// spoke on the very next tick. It is at most one tick stale, which is 500 ms.
+    clock_ms: u64,
 }
 
 /// One NPC's place in its idle-chatter cycle.
@@ -240,6 +248,7 @@ impl Session {
             conversation: None,
             chatter: Vec::new(),
             rng: Xorshift(seed),
+            clock_ms: 0,
         }
     }
 
@@ -269,6 +278,7 @@ impl Session {
     /// one, so a stalled connection resumes at the normal cadence instead of emitting a
     /// backlog the client would show as a flicker.
     pub fn tick(&mut self, now_ms: u64) -> Vec<Reply> {
+        self.clock_ms = now_ms;
         if !self.config.set_field_probe || self.config.chatter_off {
             return Vec::new();
         }
@@ -417,7 +427,7 @@ impl Session {
         // The NPC pool is destroyed and rebuilt on every field entry, so the chatter cursors
         // go with it: an object id from the previous map addresses nothing here, or worse,
         // addresses a different NPC.
-        self.reset_chatter(chr.map_id, 0);
+        self.reset_chatter(chr.map_id, self.clock_ms);
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
         let out: Vec<Reply> = self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()
@@ -1446,6 +1456,73 @@ mod tests {
         // Randomised, not fixed - a constant interval would be a regression to what the owner
         // asked to move away from.
         assert!(gaps.iter().collect::<std::collections::HashSet<_>>().len() > 2, "{gaps:?}");
+    }
+
+    /// Entering a field late must not make the whole map speak at once.
+    ///
+    /// `handle` takes bytes and not time, so a field entry has no clock of its own. Before
+    /// the session carried one, `reset_chatter` scheduled from zero and every NPC on a map
+    /// entered after the first ten seconds was already overdue.
+    #[test]
+    fn entering_a_field_late_does_not_make_everyone_speak_at_once() {
+        let npcs = (0..3)
+            .map(|i| net::opcode::FieldNpc {
+                object_id: 1000 + i, template_id: 8, x: 0, cy: 0, fh: 1,
+                rx0: 0, rx1: 0, f: 0,
+            })
+            .collect::<Vec<_>>();
+        let mut strings = std::collections::HashMap::new();
+        strings.insert(
+            8u32,
+            crate::config::NpcStrings {
+                info: (0..4).map(|i| format!("line {i}")).collect(),
+                ..Default::default()
+            },
+        );
+        let config = Config {
+            set_field_probe: true,
+            npcs: [(40u32, npcs)].into_iter().collect(),
+            npc_strings: strings,
+            ..Config::default()
+        };
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "TestCharD".to_string(), map_id: 40, ..Default::default()
+        };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+
+        // Half a minute of ticks, then walk into the field - a portal walk, or a !map.
+        for now in (0..30_000).step_by(500) {
+            s.tick(now);
+        }
+        s.on_field_entered();
+
+        // Nothing may be due before the 3s floor measured from NOW, not from zero.
+        for now in (30_000..30_000 + CHATTER_MIN_MS).step_by(250) {
+            assert!(
+                s.tick(now).is_empty(),
+                "an NPC spoke {}ms after a late field entry",
+                now - 30_000
+            );
+        }
+        // And when they do start, they do not all go at once - three NPCs each drawing an
+        // independent delay from a 6000ms window colliding exactly is the thing to notice.
+        let mut first_tick_counts = Vec::new();
+        for now in (30_000 + CHATTER_MIN_MS..50_000).step_by(250) {
+            let n = s.tick(now).len();
+            if n > 0 {
+                first_tick_counts.push(n);
+            }
+        }
+        assert!(!first_tick_counts.is_empty(), "nobody ever spoke");
+        assert!(
+            first_tick_counts.iter().any(|&n| n < 3),
+            "every tick spoke for all three: {first_tick_counts:?}"
+        );
     }
 
     /// A connection that stalls must not emit a backlog when it comes back.
