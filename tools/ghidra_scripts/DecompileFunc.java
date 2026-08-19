@@ -1,6 +1,10 @@
 // Decompile functions by address.
 //
 //   -postScript DecompileFunc.java <out-file> 142c94bd0 [more addresses...] [+callees]
+//   -postScript DecompileFunc.java <out-file> @addresses.txt
+//
+// "@file" reads one hex address per line - cmd.exe truncates a command line at 8191
+// characters, which is fewer than a few hundred addresses.
 //
 // Output goes straight to <out-file>: Ghidra's logger flattens multi-line println
 // output, which mangles decompiled C when scraped from stdout.
@@ -26,15 +30,31 @@ public class DecompileFunc extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args == null || args.length < 2) {
-            println("usage: DecompileFunc <out-file> <hex-address> [...] [+callees]");
+            println("usage: DecompileFunc <out-file> <hex-address|@listfile> [...] [+callees]");
             return;
         }
 
         PrintWriter out = new PrintWriter(args[0], "UTF-8");
         boolean withCallees = false;
         Set<Address> targets = new LinkedHashSet<>();
+        java.util.List<String> words = new java.util.ArrayList<>();
         for (int i = 1; i < args.length; i++) {
-            String a = args[i];
+            // "@file" reads one hex address per line. cmd.exe truncates a command line at
+            // 8191 characters, so a sweep of several hundred handlers cannot be passed
+            // as arguments at all.
+            if (args[i].startsWith("@")) {
+                for (String line : java.nio.file.Files.readAllLines(
+                        java.nio.file.Paths.get(args[i].substring(1)))) {
+                    String t = line.trim();
+                    if (!t.isEmpty() && !t.startsWith("#")) {
+                        words.add(t);
+                    }
+                }
+            } else {
+                words.add(args[i]);
+            }
+        }
+        for (String a : words) {
             if (a.equalsIgnoreCase("+callees")) {
                 withCallees = true;
                 continue;
