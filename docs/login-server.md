@@ -374,6 +374,38 @@ That is the next thread to pull, and it costs no client run.
 Also checked and empty: `nexon_api_x64.dll` and `nmcogame64.dll`, both unpacked, hold no
 creation- or entitlement-shaped strings, which weakens the "platform entitlement" theory.
 
+### The live thread, decompiled - and it is a dead end
+
+`FUN_140c9ef80` and its caller were decompiled (`research/msexe-createflag-live.c`).
+
+`FUN_140c950a0` is a **one-shot initialiser**, not a create-flag path:
+
+```c
+if ((iRam143ac7d90 != 0) && (FUN_1408fcaa0(iRam143ac7d90, 10000, param_1) == 0)) return;
+iRam143ac7d90 = param_1;
+if ((FUN_142e0ea90() != 0) && (func_140c9ec90(), cRam143ac7d3f == 0)) {
+    cRam143ac7d3f = 1;          // run-once latch
+    FUN_140c9ef80();
+}
+```
+
+`FUN_140c9ef80` is the same obfuscated stack machinery as the rest of the cluster - it seeds
+protected values (constants `0` and `1` written through the scrambler), and **it does not
+call the setter**. So this is the protection scheme starting itself up, which is why it has
+a readable caller when nothing else in the cluster does.
+
+**Static analysis is now finished on this question.** Every readable route has been checked
+and controlled: no direct call, no pointer, and the one function in the cluster reachable
+from readable code turns out to be initialisation. `FUN_14003fb80` remains an orphan of the
+same shape as the setter. The conclusion the evidence supports is that the flag is flipped
+from Themida-virtualised code and no amount of reading the image will name what triggers it.
+
+**One scan is still not trustworthy and should not be quoted:** references to the blob
+pointer `DAT_143ac8170` come back as zero even after adding the REX.R forms, which cannot be
+right when three functions dereference it. Something about how those accesses are encoded
+defeats the prefix approach - likely a folded base register shared with the counter. The
+counter scan works and found the cluster; that is the one to trust.
+
 ### What this means for the ask
 
 **"Find the packet" may be the wrong question.** No readable code path leads from a packet
