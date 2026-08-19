@@ -111,17 +111,34 @@ try:
 
     # Anything coming back is on the K chain. There is nothing to read yet; this decodes
     # whatever appears so that the first real reply is checked the moment it exists.
-    decoder = transport.ClientDecoder(SERVER_IV, key, shuffle, transport.RECV_CONST)
+    # The channel is ASYMMETRIC: we send AES and receive the byte subtract from the
+    # client, but the client RECEIVES the byte subtract - so read our own stream the way
+    # the client does, by subtracting iv[0], not with AES. Measured 2026-08-19: sending
+    # AES made the client dispatch opcode 0x406C, our ciphertext minus iv[0].
+    server_iv = struct.pack("<I", SERVER_IV)
     sock.settimeout(1.5)
+    inbox = bytearray()
     try:
         while True:
             data = sock.recv(4096)
             if not data:
                 break
-            for pkt in decoder.feed(data):
-                replies.append(pkt)
+            inbox += data
     except socket.timeout:
         pass
+    while len(inbox) >= 4:
+        a = int.from_bytes(inbox[0:2], "little")
+        length = a ^ int.from_bytes(inbox[2:4], "little")
+        if len(inbox) < 4 + length:
+            break
+        want = (((int.from_bytes(server_iv, "little") >> 16) & 0xFFFF)
+                ^ transport.RECV_CONST) & 0xFFFF
+        raw = bytes(inbox[4:4 + length])
+        del inbox[:4 + length]
+        plain = bytes((b - server_iv[0]) & 0xFF for b in raw)
+        replies.append({"opcode": int.from_bytes(plain[:2], "little"), "body": plain,
+                        "header_ok": a == want})
+        server_iv = transport.next_iv(server_iv, shuffle)
     sock.close()
 finally:
     proc.terminate()

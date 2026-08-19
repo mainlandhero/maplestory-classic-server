@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use net::handshake::{channel_greeting, CLIENT_RX_IV, CLIENT_TX_IV};
 use net::names::{body_hex, label, opcode_name};
-use net::{Direction, Framer, MapleCipher};
+use net::{ByteShiftCipher, Direction, Framer, MapleCipher, Shift};
 use store::Store;
 
 use crate::config::Config;
@@ -31,7 +31,7 @@ pub fn log(msg: &str) {
 
 fn send(
     stream: &mut TcpStream,
-    tx: &mut Framer<MapleCipher>,
+    tx: &mut Framer<ByteShiftCipher>,
     opcode: u16,
     packet: &[u8],
     what: &str,
@@ -62,11 +62,20 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
     // `0x0070` with the identical body the client sends on the login connection, and packet
     // 2 as `0x007D` carrying character id 204 and the machine's MAC. Reading the client had
     // said otherwise; the wire is what settled it.
-    log("cipher: AES-256-OFB, same as login - measured from the first channel packets");
+    log("cipher: ASYMMETRIC - the client SENDS AES-256-OFB and RECEIVES a byte subtract,");
+        log("  so we decrypt with AES and encrypt by adding iv[0]. Measured 2026-08-19.");
     let mut rx =
         Framer::new(MapleCipher::new(CLIENT_TX_IV.to_le_bytes(), Direction::ClientToServer));
-    let mut tx =
-        Framer::new(MapleCipher::new(CLIENT_RX_IV.to_le_bytes(), Direction::ServerToClient));
+    // **The channel is asymmetric, and this is measured, not inferred.** The client sends
+    // AES-256-OFB and *receives* the byte subtract - `out[i] = in[i] - iv[0]`. Sending it
+    // AES produced a body it decoded as opcode 0x406C, which is exactly our AES ciphertext
+    // minus iv[0]; the run of 2026-08-19 is the arithmetic. So we ADD on send and its
+    // subtract recovers the plaintext.
+    let mut tx = Framer::new(ByteShiftCipher::new(
+        CLIENT_RX_IV.to_le_bytes(),
+        Direction::ServerToClient,
+        Shift::Add,
+    ));
 
     let mut session = Session::new(store, config.clone());
     for reply in session.on_connect() {

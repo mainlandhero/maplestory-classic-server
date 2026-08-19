@@ -386,17 +386,29 @@ pub fn shift_body(body: &mut [u8], iv: [u8; 4], shift: Shift) {
     }
 }
 
-/// A wrapping byte shift over the body: `FUN_1406ef9f0`, read faithfully.
+/// The game channel's **server -> client** cipher: `FUN_1406ef9f0`, a wrapping byte shift.
 ///
-/// **Nothing uses this, and it is NOT the game channel's cipher.** It was built for the
-/// channel on the strength of `conn+0x48` appearing to select the body transform - non-zero
-/// (login) runs `FUN_140c75880`, AES-256-OFB, zero appears to run this. The first real
-/// channel connection disproved it: the client's packets decode under **AES**, the same as
-/// login, and under nothing else. `crates/world` uses [`MapleCipher`].
+/// **A channel is asymmetric, and each half was measured separately.**
 ///
-/// Kept because the transform is real code and this is an accurate, tested reading of it.
-/// Whatever path does use it has not been found. Do not wire it to a connection without
-/// measuring first - that is the mistake this comment exists to record.
+/// | direction | transform |
+/// |---|---|
+/// | client -> server | AES-256-OFB, the same as login ([`MapleCipher`]) |
+/// | **server -> client** | **this**, `out[i] = in[i] - iv[0]` on the client's side |
+///
+/// So a server **adds** `iv[0]` on send and the client's subtract recovers the plaintext.
+///
+/// This took three passes to get right, and the middle one was committed as fact:
+///
+/// 1. Read statically from `conn+0x48`, which selects the transform. Correct.
+/// 2. **Retracted** when the first real channel packets decoded under AES - but those were
+///    packets the client *sent*, which is the other half of the connection. The retraction
+///    generalised one direction to both.
+/// 3. Restored 2026-08-19 by arithmetic on a live run: a `SetField` sent under AES was
+///    dispatched by the client as opcode `0x406C`, and `0x406C` is exactly that ciphertext
+///    with `iv[0] = 0x02` subtracted from each byte.
+///
+/// The lesson worth keeping: **"the channel is AES" was never one claim.** It was two, and
+/// only one of them had been tested.
 ///
 /// See `docs/transport.md`.
 pub struct ByteShiftCipher {
