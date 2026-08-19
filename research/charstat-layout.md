@@ -480,3 +480,32 @@ for or against any offset in this document.
 nothing else. `charrecord-reuse.md` **D4** (face/hair naming), **D5** (which obfuscated `u32`
 is which of hp/maxHp/mp/maxMp) and **D6** (portal) are all untouched by this pass — none of
 those reads has an identified consumer, and I did not look for one.
+
+---
+
+## Addendum from the main session: the fields immediately after the map id
+
+Read from `research/msexe-charstats.c`, straight after the loop that encodes the map id into
+the obfuscated slot (`} while (uVar10 < 4);`):
+
+```c
+uVar5  = FUN_1406e8ae0(param_2);  *(byte *)  (param_1 + 0x10b) = uVar5;   // "portal", offset 88
+uVar7  = FUN_1406e8b80(param_2);  *(ushort *)(param_1 + 0x43)  = uVar7;   // subJob,   offset 89
+bVar18 = FUN_1406e8ae0(param_2);  *(uint *)  (param_1 + 0x10e) = bVar18;  // u8 -> uint, offset 91
+         FUN_1406e9170(param_2, local_58, 8);
+         (*DAT_1432625b0)(local_58, param_1 + 0x112);                     // raw 8,    offset 92
+local_5c = FUN_1406e8c20(param_2);                                        // u32,      offset 100
+local_60 = FUN_1406e8c20(param_2);
+         (*DAT_1432625b0)(&local_60, param_1 + 0x126);                    // u32,      offset 104
+```
+
+**[L]** The `portal` byte is **stored plainly** at `record + 0x10b` and is not consumed
+inside the stat decoder. Whether the client later treats it as a **portal index** or as a
+**spawn-point id** is **still unsettled** - `tools/xref.py --field 0x10b --size byte` finds
+17 writes across 13 functions, but `0x10b` is a generic struct offset so most of those are
+unrelated types, and it does not search reads at all. **That instrument does not answer this
+question; do not read its output as if it did.**
+
+It is **moot for map 1**, where portals 0-3 are all type-0 `sp` spawns
+(`research/map1-exists.md`), so `portal = 0` lands on the spawn either way. It will matter
+on a map where the index and the id differ.
