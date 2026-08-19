@@ -59,58 +59,74 @@ for this rule, and no path in it returns an error in place of a reply.
 
 ### Where the client actually is right now
 
-Confirmed on screen 2026-08-19, end to end: login -> character select -> pick TestCharD ->
-"Connecting..." -> **the enter-success sound plays** -> the client closes the login socket,
-connects to `127.0.0.1:8485`, accepts the channel greeting, and sends two packets:
+Measured 2026-08-19, end to end. Login -> character select -> pick a character ->
+"Connecting..." -> the enter-success sound -> it closes the login socket, connects to
+`127.0.0.1:8485`, accepts the channel greeting, and sends `0x0070` then `0x007D` (the
+migration hello, character id at offset 8).
 
-```text
-0x0070   an environment report, the same one it sends on the login connection
-0x007D   the migration hello: character id 204, then the MAC and machine id
-```
+**We now answer it, and the answer reaches the right handler.** A probe caught the client's
+own dispatcher entering `FUN_142097f80` *while dispatching opcode `0x01A0`*. Everything
+between the migration and `SetField` is settled:
 
-Then it waits, and nothing answers, so the screen never fades in. **That silence is the
-whole of what is left between here and a playable character.**
+| | |
+|---|---|
+| the channel's dispatcher | `FUN_142cbaa80`, 273 cases, `0x70..0x39a` - `research/msexe-gamestage-dispatch.md` |
+| the cipher | **asymmetric**: client sends AES, receives a byte subtract, so we **add** `iv[0]` |
+| `SetField` | inbound **`0x01A0`**, handler `FUN_142097f80` - confirmed on the wire |
+| the routing | reached from the **login** stage's `OnPacket`, so **no stage transition is needed first** |
+| both early returns | pass - `[world+0x33f4]` measured `0x00` |
+| the 33-byte fixed head | decoded field by field, `research/msexe-stage-setfield.md` |
 
-### 1. Find the channel stage's packet switch
+### 1. The character record - the last wall
 
-This is the next real decode, and the method is one this project has used successfully four
-times: the **login** stage's `OnPacket` (`FUN_141b25f30`) is an ordinary decompilable
-`switch`, and reading it gave the world list, the login result, the character list, the name
-check, create, delete and the migration. **The channel stage will have the same shape.**
+`SetField` must carry `characterData = 1`, and that branch calls **`FUN_140304b20`**, an
+18525-byte decoder with **117 packet reads**. Sending `characterData = 0` instead **faults
+the client** at `FUN_1402fa540+0x1c`: that short form is "same character, new map" and
+assumes state a freshly migrated client does not have. Measured, not guessed.
 
-How to find it:
+What is already known, in `research/charrecord-decode.md`:
 
-* `research/msexe-stage-onpacket.c` already holds several `OnPacket` functions found by the
-  same search - start there, one of them may already be the channel's.
-* Stage objects register through `FUN_141b3...`-family code; `research/msexe-stagereg.c` is
-  the note on that.
-* The client is *in* the channel stage when it sends `0x007D`, so a `-Probe` walk during a
-  migrated run would name the dispatcher directly if static reading stalls. That costs a
-  client launch, so read first.
+* **No presence mask** - zero `BT`, zero `TEST` against an immediate in the whole function.
+  The sequence is fixed and **loop counts are the only lever**.
+* **Field 1 is a fixed 100-byte raw block.** The decompiler renders its size as computed and
+  it is a constant.
+* **All 11 raw reads are constant-sized**: 100 once, 8 bytes ten times. 180 bytes, fixed.
+* **No length prefix anywhere at the top level.** A wrong width desyncs everything after it
+  and there is no resynchronisation point - this record works completely or not at all.
+* `FUN_140302e30`, the stat decoder **we already build for the character list**, is called
+  at `140304e71`. That part is known ground.
 
-What to look for once found: the case for **`0x007D`**, and what the client expects back.
-That reply is the one that ends the wait.
+Companion passes: `charrecord-loops.md` (loop census and the straight-line spine),
+`charrecord-reuse.md` (what `crates/net` already emits), `charrecord-v214-shape.md`
+(candidate names from the reference - candidates only, the method scored 1 of 8 on a
+held-out control).
 
-### 2. Answer `0x007D`, then whatever it asks for next
+**Read the listing, not the decompiler, for field order.** They disagree by five `u32`
+reads; the listing is complete and authoritative. `research/charrecord-decode.md` shows the
+working.
 
-`crates/world` deliberately answers nothing today - a wrong reply moves the client into a
-state nobody has read, which is worse than silence. Once the switch is readable, add cases
-one at a time and re-run. `map_id` is already 1 on every character, and the login result
-already carries it, so the map itself needs no further work to *name*; loading it is the
-client's job.
+### 2. Then send it and run
+
+`crates/world --set-field-probe` already builds and sends the head with `characterData = 0`.
+Swap in the real record, check it with `python tools/channel_smoke.py --set-field-probe`
+first - that validates framing, the cipher and every field offset without spending a client
+launch - then run
+`powershell -ExecutionPolicy Bypass -File tools/test-server.ps1 -SetFieldProbe`.
 
 ### 3. Then the ordinary game-stage work
 
-Whatever the client asks for after the map loads - it will be new territory, and the same
-loop applies: read the switch, build one reply, run, read the log.
+Whatever the client asks for once the map loads. `research/msexe-gamestage-outbound.txt` is
+the set of 175 client -> server opcodes the game subsystem builds, which is what to expect.
 
 ### Standing, and unchanged by any of this
 
 * **Nothing authenticates.** The channel claims a migration by character id and the row is
   single-use; that is not a proof of identity. Say so when reporting.
 * **`0x00BC` is still undecoded** and deliberately unnamed, so it logs in full.
-* **`conn+0x48` did not mean what the code appeared to say** about the channel cipher. The
-  greeting half of that finding held; the cipher half did not. Why is unresolved.
+* **`conn+0x48` meant exactly what the code said** - that question is closed. All three of
+  its readings hold; a channel is simply **asymmetric**, and the retraction that once stood
+  here had generalised a measurement of one direction to both. See
+  [[maplecw-connection-type]] and `docs/transport.md`.
 
 
 ### BUILT 2026-08-19: the channel greeting, and a cipher that turned out to be wrong
