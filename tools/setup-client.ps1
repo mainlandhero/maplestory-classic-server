@@ -14,9 +14,9 @@
     Nothing is installed system-wide: no service is created and no driver is loaded.
 
 .EXAMPLE
-    pwsh tools/setup-client.ps1 -Verify
-    pwsh tools/setup-client.ps1
-    pwsh tools/setup-client.ps1 -Restore
+    powershell -ExecutionPolicy Bypass -File tools/setup-client.ps1 -Verify
+    powershell -ExecutionPolicy Bypass -File tools/setup-client.ps1
+    powershell -ExecutionPolicy Bypass -File tools/setup-client.ps1 -Restore
 #>
 [CmdletBinding()]
 param(

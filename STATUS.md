@@ -1562,8 +1562,8 @@ rejected handshake.
 ## Housekeeping
 
 - Firewall rule `MapleCW - block patched client outbound` is **active**. Remove with
-  `pwsh tools/firewall.ps1 -Remove` (needs elevation).
-- `client-patched/` has the GameGuard stub installed; `pwsh tools/setup-client.ps1
+  `powershell -ExecutionPolicy Bypass -File tools/firewall.ps1 -Remove` (needs elevation).
+- `client-patched/` has the GameGuard stub installed; `powershell -ExecutionPolicy Bypass -File tools/setup-client.ps1
   -Restore` puts the real DLL back.
 - Ghidra projects in `research/ghidra/` (~1.2 GB, gitignored). `msexe`, `grap64`,
   `mssecure`, `nexoncm` are all analysed — reuse them rather than re-importing.

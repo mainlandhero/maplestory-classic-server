@@ -17,9 +17,9 @@
     The rule is named so it is easy to find and remove; -Remove undoes it.
 
 .EXAMPLE
-    pwsh tools/firewall.ps1 -Status
-    pwsh tools/firewall.ps1 -Add
-    pwsh tools/firewall.ps1 -Remove
+    powershell -ExecutionPolicy Bypass -File tools/firewall.ps1 -Status
+    powershell -ExecutionPolicy Bypass -File tools/firewall.ps1 -Add
+    powershell -ExecutionPolicy Bypass -File tools/firewall.ps1 -Remove
 #>
 [CmdletBinding()]
 param(
