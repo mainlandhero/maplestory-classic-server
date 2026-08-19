@@ -54,16 +54,20 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
     stream.write_all(&hello)?;
     log(&format!("-> channel greeting, {} bytes (no A..F, no version block)", hello.len()));
 
-    // AES-256-OFB, the same as the login connection. **Measured, 2026-08-19.**
+    // **The channel is asymmetric.** Both halves are measured, on different runs:
     //
-    // `docs/transport.md` said a channel used the byte subtract (`FUN_1406ef9f0`), selected
-    // by `conn+0x48`. It does not: the two packets the client sent on its first channel
-    // connection decode cleanly under AES and under nothing else. Packet 1 came out as
-    // `0x0070` with the identical body the client sends on the login connection, and packet
-    // 2 as `0x007D` carrying character id 204 and the machine's MAC. Reading the client had
-    // said otherwise; the wire is what settled it.
+    // * client -> server is **AES-256-OFB**, same key as login. The two packets the client
+    //   sent on its first channel connection decode under AES and nothing else - `0x0070`
+    //   with the body it also sends on login, and `0x007D` carrying character id 204.
+    // * server -> client is the **byte subtract** `FUN_1406ef9f0` selects from `conn+0x48`,
+    //   so we ADD `iv[0]` and the client's subtract recovers the plaintext. A `SetField`
+    //   sent under AES was dispatched by the client as opcode `0x406C`, which is that
+    //   ciphertext minus `iv[0] = 0x02` byte for byte.
+    //
+    // The first bullet was briefly written up as covering both directions. It never did:
+    // "the channel is AES" was two claims, and only one had been tested.
     log("cipher: ASYMMETRIC - the client SENDS AES-256-OFB and RECEIVES a byte subtract,");
-        log("  so we decrypt with AES and encrypt by adding iv[0]. Measured 2026-08-19.");
+    log("  so we decrypt with AES and encrypt by adding iv[0]. Measured 2026-08-19.");
     let mut rx =
         Framer::new(MapleCipher::new(CLIENT_TX_IV.to_le_bytes(), Direction::ClientToServer));
     // **The channel is asymmetric, and this is measured, not inferred.** The client sends
