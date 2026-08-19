@@ -49,10 +49,28 @@ void FUN_1415d59b0(void *ignored, int opcode, CInPacket *packet) {
    it. Found with `tools/dataref.py`, which was written for this and which sees the
    read/write forms `tools/xref.py` is documented as missing.
 2. **If `DAT_143aa84a0` is null, the packet is dropped in silence** - no dialog, no log,
-   no error. So a game-stage reply sent before the client has built that object does
+   no error. A game-stage reply sent before the client has built that object would do
    nothing at all, and would look exactly like a reply the client did not understand.
-   Whether it is non-null while the client sits on "Connecting..." is **not established**,
-   and it is the first thing a run should be made to answer.
+
+   **It is not null by the time the channel connection exists.** The login stage's migrate
+   handler `FUN_141b36f60` - the `0x0011` case, the packet we already send - does
+
+   ```c
+   local_80 = DAT_143aa84a0;          // no null check
+   ...
+   FUN_142cb9560(local_80, ...);      // and then nine setters on it, unconditionally
+   FUN_142cb9590(local_80, ...);
+   FUN_142cb95a0(local_80, ...);
+   ...
+   FUN_142caebe0(local_80);
+   ```
+
+   on the success path, in the same `0x142ca..0x142cb` subsystem that owns the dispatcher.
+   The client would fault if that global were null there, so the world object is already
+   live **before** it opens the channel socket, and the gate in `FUN_1415d59b0` will pass.
+
+   This is an argument from an absent null check rather than from a positive construction
+   trace, so it is strong but not proof - see "Not yet established".
 
 The address arithmetic above was checked against an independent instrument: the third
 call target computed by hand, `142cbaa80`, is the same edge the `E8 rel32` scanner found.
@@ -111,9 +129,9 @@ a suspicion, not a finding - `research/msexe-setfield.md` is where it gets settl
 
 ## Not yet established
 
-* **Whether `DAT_143aa84a0` is non-null when the client is waiting on the channel.** If it
-  is null, every game-stage reply is discarded silently. See above.
-* When `FUN_142ca5c50` runs. Its callers are `FUN_142c43970` <- `FUN_142c42f30` <-
+* A positive trace of **when `FUN_142ca5c50` runs**. The argument above says the world
+  object is live by migrate time because the migrate handler dereferences it without a
+  check; it does not say when it was built. Its callers are `FUN_142c43970` <- `FUN_142c42f30` <-
   `FUN_142ef49e4`, and that last one has no callers and no address taken either, so the
   chain runs off into the virtualised region and static reading stops there.
 * Whether the login connection reaches `FUN_141b25f30` through this same entry or through
