@@ -214,7 +214,7 @@ $ErrorActionPreference = 'Stop'
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140302e30:hits=200,140304100:hits=200'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,1402fd610:peek=b2:hits=60'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -375,16 +375,19 @@ if ($SetFieldProbe) {
     Write-Host "  0x0138 UserAvatarModified is NO LONGER SENT - it is dead code at byte level."
     Write-Host ""
     Write-Host "In client-patched\maplecw-hook.log, two watches answer two questions:" -ForegroundColor Cyan
-    Write-Host "  140302e30   the character-stat decoder. THE POSITIVE CONTROL - it fires"
-    Write-Host "              three times at CHARACTER SELECT before anything else happens."
-    Write-Host "              NO WATCH LINES AT ALL means the hook never armed. Conclude"
-    Write-Host "              nothing from a silent log until you have seen these."
-    Write-Host "  140304100   the type-1 equip decode, vtable+0x358. It FIRED FOUR TIMES"
-    Write-Host "              on the last run, once per stored item, from the equipped-list"
-    Write-Host "              loop at 0x140306223 - so the layout is CONFIRMED and any"
-    Write-Host "              remaining nakedness is a VALUE (dateExpire first). What the"
-    Write-Host "              last run could not show is whether the character LOOKS dressed,"
-    Write-Host "              because the mob packet killed the client first."
+    Write-Host "  1402fd610   the item's vtable+0x200, on the TRADE-LINE path. RCX is the"
+    Write-Host "              item, and peek=b2 dumps the four raw bytes of its Weapon Def."
+    Write-Host "              slot. The stored value is ((b3^b1)<<8)|(b2^b0) and must be 6."
+    Write-Host "              This runs even when the stat section does not, so it is also"
+    Write-Host "              the positive control: no lines here at all means the hook"
+    Write-Host "              never armed, and a silent log proves nothing."
+    Write-Host "  1426afdc0   183 bytes past the ITEMINFO gate, called unconditionally - so"
+    Write-Host "              its presence IS the gate. RDX is the item the stat section"
+    Write-Host "              reads, R8 the ITEMINFO."
+    Write-Host "     silent while 1402fd610 fires -> the gate closed, ITEMINFO came back null"
+    Write-Host "     both fire, pointers MATCH, peek 6 -> the line was built and dropped"
+    Write-Host "     both fire, pointers DIFFER -> the tooltip renders a COPY of the item"
+    Write-Host "     peek reads 0 -> the value never landed; suspect the instrument first"
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
@@ -439,6 +442,12 @@ if ($SetFieldProbe) {
     Write-Host '       - a "Weapon Def.: +6" line, where before there was no stat line at all'
     Write-Host '       - "Remaining Enhancements: 7", not 0'
     Write-Host '       - NO "Cannot be Traded when equipped"'
+    Write-Host '     HOVER THE COAT OR TROUSERS, NOT THE SWORD, for the watch to mean'
+    Write-Host '     anything - Weapon Def. is only set on those.'
+    Write-Host '     AND ANSWER THIS EVEN IF NOTHING CHANGED: are the Remaining'
+    Write-Host '     Enhancements and Scissors Usages lines PRESENT AT ALL? Both sit behind'
+    Write-Host '     the same gate as the stat lines, so "they are there and the stats are'
+    Write-Host '     not" and "all three are gone" are completely different diagnoses.'
     Write-Host '     On the sword expect a weapon attack of 17.'
     Write-Host '     still no stat line -> the packet value is not what the tooltip reads.'
     Write-Host '     wrong NUMBER      -> the bit order is off; say which stat shows which.'
