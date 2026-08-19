@@ -99,7 +99,7 @@ code against. Launches are for confirming, and two of these can share one.
 | ~~1~~ | ~~**Build the equipped-item block**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See "6. Equipment" below for what to watch on the run. | `research/naked-character.md`, goal 6 |
 | ~~2~~ | ~~**Answer `0x0151` with a `0x055B` Say**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See goal 2 below for what to watch. | `research/npc-dialogue.md`, goal 2 |
 | 3 | **Finish the mob body** - read `FUN_14046fba0`'s movement-path framing | The owner made mobs a priority. Everything else about the spawn is read; only the path's element count and dispatch value are missing. | `research/mob-spawn.md`, goal 3 |
-| 4 | **Read what greys a channel row** in `ChannelChange` | Cheapest of the four, but the least valuable - it unblocks one dialog. | goal 2a |
+| ~~4~~ | ~~**Read what greys a channel row**~~ - **FOUND and the one-byte fix is in. Unconfirmed on screen** | See goal 2a. | `research/channel-select.md` |
 
 **Then one launch** confirms 1, 2 and 3 together. They are independent - equipment is in the
 record, dialogue is a reply to a click, mobs are a separate pool - so a failure in one does
@@ -236,24 +236,66 @@ world/channel/adult is **[I]** from the packet family's usual shape.
 whose whole inbound set contains no new opcode). So the client is refusing the selection
 **client-side, before it would send anything** - this is not an unanswered-packet freeze.
 
-### Most likely next steps, in order
+### SOLVED 2026-08-19: the predicate is the 4th trailing `u8`, and we were sending 0
 
-1. **Read what makes a channel button enabled.** The dialog is `ChannelChange.img` and its
-   channel numbers are the `ch/0..18` bitmaps, so the client is drawing from its own assets
-   and only the *count* came from us. Find the UI code behind `ChannelChange` and read the
-   predicate that greys a row. That is the direct answer and it is static.
-2. **Suspect the fields we still send as placeholders.** Each channel entry is
-   `str name, u32 userCount, u8 world, u8 index, u8, u8`. The client reads exactly four `u8`s
-   there **[L]**, but only the first two carry meaning we chose; the last two are `0` and the
-   `u32` user count is `0`. A "channel is up" or "adult channel" flag among them would
-   produce exactly this. Cheapest experiment: send a **non-zero user count** and vary the two
-   trailing bytes.
-3. **Check whether the current channel is excluded.** CH.1 is the one the character is on. If
-   the client only enables a *different* channel it should already work, so if CH.2 is grey
-   the predicate is something else - but confirm which row is actually grey before assuming.
-4. **The reply, once a click does send something.** Expect a migrate command: the swap has to
-   mint a migration for the **target** channel, which `store::create_migration` already takes
-   as a parameter, and hand back that channel's address the way `0x0011` does at login.
+Full working, every link read off the listing: **`research/channel-select.md`**.
+
+**`FUN_142cb9510`** is a 15-byte leaf that returns `arr[i]` from the per-channel `int` array
+at `singleton+0x2cc8`. It has six callers - Draw, the mouse hit test, the Change button and
+three keyboard navigators - and **all six test the result with a bare `test eax, eax`**.
+There is no enum and no magic value: **any non-zero int enables the row.** **[L]**
+
+The chain from the wire:
+
+```text
+4th trailing u8 of the channel entry
+  -> chan+0x18         FUN_141b2fac0, the login case 0xb - four sequential u8 reads into
+                       +0x0c, +0x10, +0x14, +0x18
+  -> vecB[i]           FUN_141b2c7c0 at 141b2ca89
+  -> singleton+0x2cc8  FUN_142cb8e10, argument 6, at 142cb8ed9
+  -> FUN_142cb9510(i)  must be non-zero
+```
+
+The mouse gate at `142a31810` takes `je` on zero, which is exactly "the click produces
+nothing on the wire" - what the owner measured when they clicked CH.2 and the whole capture
+contained no new opcode.
+
+**The fix is one byte**, and it is in: the channel entry now ends `[world_id, i, 0, 1]`
+instead of `[world_id, i, 0, 0]`. **The third byte stays 0 on purpose** - it feeds a
+*different* array, `+0x2cc0` via `FUN_142cb9490`, checked with the **opposite** polarity at
+`142a317f1`, where non-zero **blocks** the row. Setting both would mask the result.
+
+> **What to watch:** CH.2 turning **cream** rather than grey; a single click turning it
+> **blue** (that is only `[+0x298] = i`, a highlight move, not a send); and a packet
+> appearing only on **double-click or the Change button**.
+
+**Which row is grey, confirmed rather than assumed.** The dialog loads four sibling canvases
+`channel0..channel3`, all 68x20 - exactly the hit rectangle (`lea eax,[r9+0x44]` /
+`lea eax,[rcx+0x14]`). Rendered from `_Canvas_000.wz`: `channel0` cream (normal),
+`channel1` grey (current), `channel2` blue (selected), `channel3` grey (disabled). OnCreate
+sets `selection := current` and Draw checks selection first, so **CH.1 draws blue**. The
+current channel *is* excluded from clicking (`142a31803`), but that is not the cause -
+**CH.2 is the grey one, and it is grey for the disabled reason.** The two greys differ by
+about six RGB points, which is why they cannot be told apart by eye.
+
+**`userCount` is ruled out, and the old advice here was wrong.** This section used to
+propose a non-zero user count as the cheapest experiment. Enumerating *every* memory operand
+in `FUN_141b2c7c0` and dropping the `rsp`-based ones leaves `[rax]` x4, `[rax+0x14]` and
+`[rax+0x18]` and nothing else, so the `u32` reaches no gate at all.
+
+**And the Change Channel opcode is `0x00D2`**, which this file listed as unknown.
+`FUN_142a316e0`, the Change button, re-checks the same predicate and then calls
+`FUN_1418287f0` - which `research/msexe-packet-fields.txt:86` already named as the `0x00D2`
+builder. What was missing was that this is the Change Channel action. Body: `u8
+targetChannel` (**0-based**, matching this repo's numbering), a `u32`, and the shared
+14-byte `FUN_140c7b890` preamble. The field **set** is **[L]**; the field **order** is
+**[D]** and unsettled - `0x00D1` calls that preamble first while `0x00D2` calls it last, and
+there is no capture to decide. **Do not build the answer from that ordering** until a click
+produces one.
+
+> **The reply, once a click does send something.** Expect a migrate command: the swap has to
+> mint a migration for the **target** channel, which `store::create_migration` already takes
+> as a parameter, and hand back that channel's address the way `0x0011` does at login.
 
 **Not** the world-list layout in general: the count reaches the client, the entries parse,
 and both rows draw. Only selection fails.

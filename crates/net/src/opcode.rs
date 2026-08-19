@@ -194,21 +194,50 @@ pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
         put_str(&mut out, &format!("{name}-{i}"));
         out.extend_from_slice(&0u32.to_le_bytes()); // user count
         // The client reads exactly four u8s here - confirmed in its own decoder
-        // `FUN_141b2fac0`, the login stage's `case 0xb`. These were all zero until
-        // 2026-08-19, which told the client that **every** channel was channel 0 of world 0.
-        // The owner's Change Channel dialog then listed none at all.
+        // `FUN_141b2fac0`, the login stage's `case 0xb`, which reads them into chan+0x0c,
+        // +0x10, +0x14 and +0x18. These were all zero until 2026-08-19, which told the
+        // client that **every** channel was channel 0 of world 0, and the Change Channel
+        // dialog then listed none at all.
         //
-        // `[world, index, ...]` is [I] - the shape matches this packet family, where the
-        // bytes after the user count are worldId, channelId and an adult-channel flag - but
-        // it is not read out of this binary. What IS read [L] is that there are four of them
-        // and that the loop runs `channels` times.
-        out.extend_from_slice(&[world_id, i, 0, 0]);
+        // `[world, index, ...]` is [I] - the shape matches this packet family - but the
+        // **fourth byte is [D] and it is the one that makes a row clickable**. The chain,
+        // every link read off the listing (`research/channel-select.md`):
+        //
+        //     chan+0x18  ->  vecB[i]  (FUN_141b2c7c0 at 141b2ca89)
+        //                ->  singleton+0x2cc8  (FUN_142cb8e10, arg 6, at 142cb8ed9)
+        //                ->  FUN_142cb9510(i), which returns arr[i]
+        //
+        // `FUN_142cb9510` has six callers - Draw, the mouse hit test, the Change button and
+        // three keyboard navigators - and **all six test the result with a bare
+        // `test eax, eax`**. There is no enum and no magic value: any non-zero int enables
+        // the row. The mouse gate at `142a31810` takes `je` on zero, which is precisely
+        // "the click produces nothing on the wire", and that is what the owner measured when they
+        // clicked CH.2 and the capture contained no new opcode at all.
+        //
+        // **The third byte stays 0 on purpose.** It feeds a *different* array, +0x2cc0 via
+        // `FUN_142cb9490`, which is checked with the opposite polarity at `142a317f1` -
+        // non-zero there **blocks** the row. Setting both would mask the result of this one,
+        // and one client run only settles one variant.
+        //
+        // Not the user count: enumerating every memory operand in `FUN_141b2c7c0` and
+        // dropping the rsp-based ones leaves `[rax]` x4, `[rax+0x14]` and `[rax+0x18]` and
+        // nothing else, so the `u32` above reaches no gate. An earlier note in `STATUS.md`
+        // proposed a non-zero user count as the cheapest experiment; that was wrong.
+        out.extend_from_slice(&[world_id, i, 0, CHANNEL_ENABLED]);
     }
     out.extend_from_slice(&0u16.to_le_bytes()); // balloonCount
     out.extend_from_slice(&0u32.to_le_bytes());
     out.push(0); // hasExtra
     out
 }
+
+/// The fourth trailing `u8` of a channel entry: whether the Change Channel dialog will let
+/// the row be clicked.
+///
+/// Any non-zero value works - all six callers of `FUN_142cb9510` test it with a bare
+/// `test eax, eax`. `1` is sent because it is the smallest thing that is not the value that
+/// was measured to fail. **[D]**, working in `research/channel-select.md`.
+pub const CHANNEL_ENABLED: u8 = 1;
 
 /// The packet that closes a [`WORLD_LIST`] run, with no notice.
 pub fn world_list_end() -> Vec<u8> {
@@ -2047,9 +2076,23 @@ mod tests {
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
         assert_eq!(
             hex(&world_list_entry(0, "Scania", 1)),
-            "0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+            "0006005363616e6961000000000108005363616e69612d30000000000000000100000000000000"
         );
         assert_eq!(hex(&world_list_end()), "ff0000");
+
+        // The fourth trailing u8 of each channel entry is what makes its row clickable in
+        // the Change Channel dialog, and the third must stay 0 - it feeds a second array
+        // that is checked with the OPPOSITE polarity, so a non-zero value there blocks the
+        // row. Pin both, because the difference between them is one byte and one sign.
+        let two = world_list_entry(0, "Scania", 2);
+        let mut at = 1 + 2 + 6 + 1 + 2 + 1 + 1; // id, name, flag, "", flag, channel count
+        for i in 0..2u8 {
+            at += 2 + "Scania-0".len() + 4; // the channel name and its user count
+            assert_eq!(&two[at..at + 4], &[0, i, 0, CHANNEL_ENABLED], "channel {i}");
+            assert_ne!(CHANNEL_ENABLED, 0, "a zero here is what made CH.2 unclickable");
+            assert_eq!(two[at + 2], 0, "the blocking flag must stay clear");
+            at += 4;
+        }
     }
 
     #[test]
