@@ -1220,6 +1220,77 @@ fn migrate_tail_word(plain: u32, key: u32, offset: u32) -> u32 {
 /// so it chains to the stage base class for exactly this range. The client will act on
 /// `SetField` while it still believes it is in the login stage, which is where it sits
 /// while showing "Connecting...".
+/// One NPC standing on a field, as the client's NPC pool reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldNpc {
+    /// The pool's hash key. **Must be unique per NPC on the field.** A repeat makes the
+    /// handler take its "already present" path and return after 4 bytes without reading the
+    /// rest of the body, which desynchronises nothing but silently drops the NPC.
+    pub object_id: u32,
+    /// Goes straight into `Npc/%07d.img`. On a miss the client fires assert `0x431` and then
+    /// decodes anyway, down an untested path - so send one that exists.
+    pub template_id: u32,
+    pub x: i16,
+    pub cy: i16,
+    /// Foothold id, looked up in the field's foothold map and used without a null check.
+    pub fh: u16,
+    /// Walk range.
+    pub rx0: i16,
+    pub rx1: i16,
+    /// Facing. Worst case a wrong value makes the NPC face the other way.
+    pub f: u8,
+}
+
+/// `NpcEnterField` - put one NPC on the field the client is standing in.
+///
+/// **Routing, established 2026-08-19** (`research/npc-spawn.md`): the NPC pool's dispatcher
+/// is `FUN_141e75800` over `0x44F..0x468`, reached from **`FUN_141820080`** - a dispatcher
+/// this project had not previously found, covering `0x1a4..0x5ab`, which is the range
+/// `research/msexe-gamestage-dispatch.md` left unexplained.
+///
+/// **The client does not spawn NPCs from the map WZ.** Its field loader walks `life` only to
+/// preload `Npc/%07d.img` resources; the only code that produces a populated NPC takes a
+/// `CInPacket *`. So every NPC on every field is the server's job.
+pub const NPC_ENTER_FIELD: u16 = 0x044F;
+
+/// The body of an [`NPC_ENTER_FIELD`]: **64 bytes**, every field mandatory.
+///
+/// The layout was proved mechanically rather than by eye - the decoder has a single `RET`,
+/// deleting any one read makes the rest unreachable, and that same walk proves address order
+/// is execution order. The `raw[8]` length is read from the two dominating `mov edi,8`.
+///
+/// The zeros are not filler that happens to work: read 20 explicitly treats `0` as "use the
+/// template's default", and read 21 is only consumed when non-zero. The remainder have no
+/// readable consumer on this path - which is the weaker class of argument, and is called out
+/// as such in `research/npc-spawn.md`.
+pub fn npc_enter_field(npc: &FieldNpc) -> Vec<u8> {
+    let mut b = Vec::with_capacity(NPC_ENTER_FIELD_LEN);
+    b.extend_from_slice(&npc.object_id.to_le_bytes());
+    b.extend_from_slice(&npc.template_id.to_le_bytes());
+    b.extend_from_slice(&npc.x.to_le_bytes());
+    b.extend_from_slice(&npc.cy.to_le_bytes());
+    b.extend_from_slice(&[0u8; 8]); // reads 5 and 6
+    b.push(npc.f);
+    b.push(0); // action
+    b.extend_from_slice(&npc.fh.to_le_bytes());
+    b.extend_from_slice(&npc.rx0.to_le_bytes());
+    b.extend_from_slice(&npc.rx1.to_le_bytes());
+    b.extend_from_slice(&[0u8; 4]); // reads 12 and 13
+    b.push(0); // read 14
+    b.extend_from_slice(&[0u8; 8]); // reads 15 and 16
+    b.push(0); // read 17
+    b.extend_from_slice(&[0u8; 4]); // read 18
+    b.extend_from_slice(&[0u8; 8]); // raw[8]
+    b.extend_from_slice(&[0u8; 4]); // read 20 - zero means "template default"
+    b.extend_from_slice(&[0u8; 4]); // read 21 - only consumed when non-zero
+    b.extend_from_slice(&0u16.to_le_bytes()); // a zero-length string
+    debug_assert_eq!(b.len(), NPC_ENTER_FIELD_LEN);
+    b
+}
+
+/// Length of an [`npc_enter_field`] body.
+pub const NPC_ENTER_FIELD_LEN: usize = 64;
+
 pub const SET_FIELD: u16 = 0x01A0;
 
 /// The 33-byte **fixed head** of a `SetField`, and nothing after it.
@@ -1395,6 +1466,43 @@ pub const SET_FIELD_MINIMAL_TAIL: usize = 12 + 112 + 1 + 384;
 
 #[cfg(test)]
 mod set_field_tests {
+    /// The NPC body is a fixed 64 bytes with every field mandatory, and the client's decoder
+    /// has no length prefix anywhere - one wrong width desynchronises the rest.
+    #[test]
+    fn an_npc_enter_field_body_is_64_bytes_with_the_fields_where_the_client_reads_them() {
+        let heena = FieldNpc {
+            object_id: 1000, template_id: 1, x: -46, cy: 305, fh: 66, rx0: -64, rx1: -26, f: 1,
+        };
+        let b = npc_enter_field(&heena);
+        assert_eq!(b.len(), NPC_ENTER_FIELD_LEN);
+        assert_eq!(b.len(), 64);
+
+        assert_eq!(&b[0..4], &1000u32.to_le_bytes(), "objectId");
+        assert_eq!(&b[4..8], &1u32.to_le_bytes(), "templateId");
+        // Negative coordinates are sign-extended, not clamped: -46 goes out as D2 FF.
+        assert_eq!(&b[8..10], &[0xD2, 0xFF], "x = -46");
+        assert_eq!(&b[10..12], &305i16.to_le_bytes(), "cy");
+        assert_eq!(b[20], 1, "f, the facing");
+        assert_eq!(&b[22..24], &66u16.to_le_bytes(), "fh, the foothold");
+        assert_eq!(&b[24..26], &[0xC0, 0xFF], "rx0 = -64");
+        assert_eq!(&b[26..28], &[0xE6, 0xFF], "rx1 = -26");
+        assert_eq!(&b[62..64], &0u16.to_le_bytes(), "a zero-length trailing string");
+    }
+
+    /// Two NPCs on one field must not share an object id: the pool keys on it, and a repeat
+    /// makes the client's handler return after four bytes and silently drop the NPC.
+    #[test]
+    fn npcs_on_a_field_have_distinct_object_ids() {
+        let a = FieldNpc {
+            object_id: 1000, template_id: 1, x: -46, cy: 305, fh: 66, rx0: -64, rx1: -26, f: 1,
+        };
+        let b = FieldNpc {
+            object_id: 1001, template_id: 2, x: 833, cy: 125, fh: 8, rx0: 783, rx1: 883, f: 0,
+        };
+        assert_ne!(a.object_id, b.object_id);
+        assert_ne!(npc_enter_field(&a)[0..4], npc_enter_field(&b)[0..4]);
+    }
+
     use super::*;
 
     /// The head's length is load-bearing: every offset in

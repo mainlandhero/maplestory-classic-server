@@ -18,7 +18,7 @@ import re
 import sys
 
 CASE = re.compile(r"^\s*case (0x[0-9a-fA-F]+|\d+):\s*$")
-CALL = re.compile(r"\b(FUN_[0-9a-f]+)\s*\(")
+CALL = re.compile(r"\b((?:thunk_)?FUN_[0-9a-f]+)\s*\(")  # thunk_FUN_* is a callee too
 FORWARD = re.compile(r"^\s*(FUN_[0-9a-f]+)\((?:param_1|param_1 \+ -0x18),param_3\);\s*$")
 END = re.compile(r"^\s*(break|return|goto \w+);\s*$")
 
@@ -48,13 +48,20 @@ def main():
             want = depth + opens
             depth += opens - closes
             continue
-        inside = want is not None and depth == want
+        # A `case` label and a case-ending `break` sit at exactly the switch's own depth.
+        # The BODY can be deeper - anything nested in an `if` or a `for` inside the case.
+        # Testing `depth == want` for both silently discarded every nested statement, so a
+        # case whose only call sat inside an `if` was reported as "(no calls)". That is how
+        # `0x00be` came to be recorded as INLINE with no calls when it calls FUN_141e75800,
+        # and it was wrong for 11 of the 273 cases in msexe-gamestage-cases.txt.
+        at_case_level = want is not None and depth == want
+        inside = want is not None and depth >= want
         depth += opens - closes
         if want is not None and depth < want:
             break                          # the outer switch closed
         if not inside:
             continue
-        m = CASE.match(line)
+        m = CASE.match(line) if at_case_level else None
         if m:
             if acc:                       # a body ended without break: flush it
                 out.append((pending, acc)); pending, acc = [], []
@@ -62,7 +69,9 @@ def main():
             continue
         if not pending:
             continue
-        if END.match(line):
+        # Only a `break`/`return` at the switch's own depth ends the case - one inside a
+        # nested loop belongs to that loop.
+        if at_case_level and END.match(line):
             out.append((pending, acc)); pending, acc = [], []
             continue
         acc.append(line)

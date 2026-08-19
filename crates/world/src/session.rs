@@ -77,6 +77,19 @@ pub const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 /// the end. Parse the string first and let it tell you where they are.
 pub const CLIENT_TRANSFER_FIELD: u16 = 0x00D1;
 
+/// The client announcing it has finished entering a field.
+///
+/// Both are built back to back by `FUN_142caa4e0`, the world object's field-entry reset,
+/// with empty bodies. That same function **destroys and rebuilds the NPC pool empty** ~285
+/// lines earlier, which is what makes these two the safe moment to populate it: an
+/// `NpcEnterField` sent before the rebuild is silently discarded - no dialog, no fault.
+///
+/// We answer the first and ignore the second; sending twice would be harmless (a repeated
+/// object id makes the client's handler return after 4 bytes) but pointless.
+pub const CLIENT_FIELD_ENTERED: u16 = 0x0238;
+/// The sibling of [`CLIENT_FIELD_ENTERED`], sent in the same millisecond. Not acted on.
+pub const CLIENT_FIELD_ENTERED_SIBLING: u16 = 0x024D;
+
 /// What the client asked for in a [`CLIENT_TRANSFER_FIELD`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferFieldRequest {
@@ -152,6 +165,7 @@ impl Session {
         match opcode {
             CLIENT_MIGRATION_HELLO => {}
             CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
+            CLIENT_FIELD_ENTERED => return self.on_field_entered(),
             _ => return Vec::new(),
         }
         // Always answer. An unanswered packet freezes the client's whole UI - every
@@ -180,6 +194,29 @@ impl Session {
             ),
         };
         vec![Reply { opcode: net::opcode::SET_FIELD, body, what }]
+    }
+
+    /// Populate the field the client has just finished entering.
+    ///
+    /// The client does **not** spawn NPCs from the map WZ - its field loader walks `life`
+    /// only to preload art. The only code that builds a populated NPC takes a packet, so
+    /// every NPC on every field is ours to send, and ours to re-send after every `SetField`
+    /// because the pool is destroyed and rebuilt empty on each field entry.
+    ///
+    /// `research/npc-spawn.md` has the working, including how the routing was found.
+    fn on_field_entered(&mut self) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        npcs_for_map(chr.map_id)
+            .iter()
+            .map(|npc| Reply {
+                opcode: net::opcode::NPC_ENTER_FIELD,
+                body: net::opcode::npc_enter_field(npc),
+                what: format!(
+                    "NpcEnterField: template {} at ({}, {}) on foothold {}, object id {} -                      the client cannot spawn this itself, it only preloads the art.",
+                    npc.template_id, npc.x, npc.cy, npc.fh, npc.object_id
+                ),
+            })
+            .collect()
     }
 
     /// Answer the client walking into a portal.
@@ -321,6 +358,29 @@ impl Session {
     /// The migration this connection claimed, if any.
     pub fn claimed(&self) -> Option<&ClaimedMigration> {
         self.claimed.as_ref()
+    }
+}
+
+/// Which NPCs stand on a map.
+///
+/// **A stub, and the same wrong shape as [`resolve_portal`].** The real data is the `life`
+/// node of every field image in the client's own `Map.wz` - `type`, `id`, `x`, `cy`, `fh`,
+/// `rx0`, `rx1`, `f` - which is exactly where the two entries below were read from
+/// (`research/npc-spawn.md` §5). The right fix is one tool that dumps portals **and** life
+/// out of the WZ into `gm-handbook/`, beside the map and item names that are already
+/// generated rather than typed.
+///
+/// Object ids are assigned here and only have to be unique within a field.
+fn npcs_for_map(map_id: u32) -> &'static [net::opcode::FieldNpc] {
+    use net::opcode::FieldNpc;
+    // Map 1, "Mushroom Town - West Entrance". Heena and Sera, read from the WZ.
+    const MAP1: &[FieldNpc] = &[
+        FieldNpc { object_id: 1000, template_id: 1, x: -46, cy: 305, fh: 66, rx0: -64, rx1: -26, f: 1 },
+        FieldNpc { object_id: 1001, template_id: 2, x: 833, cy: 125, fh: 8, rx0: 783, rx1: 883, f: 0 },
+    ];
+    match map_id {
+        1 => MAP1,
+        _ => &[],
     }
 }
 
