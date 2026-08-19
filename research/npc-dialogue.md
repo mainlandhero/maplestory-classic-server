@@ -8,6 +8,12 @@
 Labels: **[L]** read from the listing or a capture, **[D]** derived from two or more [L]
 facts, **[I]** inferred, including from the v214 reference (candidate only).
 
+> **Directions are separate namespaces.** `0x0151` here is always the **client -> server**
+> quest request. There is also an inbound `case 0x151` in the channel dispatcher
+> (`FUN_142da9d00`, reads one `u32`); it is unrelated. Likewise the inbound script message
+> `0x055B` has nothing to do with any outbound `0x055B`. `crates/net` currently defines
+> neither `0x055B` nor `0x00F3`.
+
 ---
 
 ## 0. The headline, and one correction to `STATUS.md`
@@ -193,9 +199,11 @@ The brief suggested looking for an inbound handler shaped `u8, u32, u8, string`.
 read-shape extractor over **every** function in the image that calls one of the seven
 documented read primitives (2159 of them) and searched. **Exactly one match exists:
 `FUN_142dd4f10`, the channel dispatcher's `case 0x0194`.** Reading it, it is not the script
-message — it compares the `u32` against `FUN_142cb9550(this)` (our own character id), skips
-if equal, and routes the string to `FUN_142d05490(this, 1, otherId, &msg)`. That is a
-name-addressed **message/whisper**, not NPC dialogue.
+message — it compares the `u32` against `FUN_142cb9550(this)` and **skips the whole body if
+they are equal** (i.e. "this is me, ignore it"), then routes the string to
+`FUN_142d05490(this, 1, otherId, &msg)`. That is a per-character **message/whisper** [L];
+that `FUN_142cb9550` returns our own character id is **[I]**. Either way it is not NPC
+dialogue.
 
 *Instrument check before believing that negative*: the same extractor reproduces
 `0x142097f80` (`SetField`) as `raw8,u32,u8,u32,u8,u32,u32,u32,u8,u16,str,str,...`, which
@@ -313,8 +321,9 @@ if (r != 3) { <answer 0x00F3 immediately> }
 `[ui+0x2a8] = 0` is what makes `CreateLayout` pick `FUN_142a65740`, i.e.
 `UI/UtilDlgEx.img/UtilDlgEx`. **[D]**
 
-The other 70 types are in the same table; 26 of them jump straight to the common exit and do
-nothing. Types worth knowing: `1 → FUN_141f6fe40` (`str, u8, u8, u32` — an ask-style
+The other 70 types are in the same table; **25 of them** (`0x0f`, `0x14`-`0x18`,
+`0x21`-`0x25`, `0x28`, `0x2c`, `0x2d`, `0x2f`-`0x33`, `0x36`, `0x3a`, `0x3d`-`0x3f`, `0x41`)
+jump straight to the common exit and do nothing. Types worth knowing: `1 → FUN_141f6fe40` (`str, u8, u8, u32` — an ask-style
 dialog), `2 → FUN_141f70110`, `3 → FUN_141f70820`, `4 → FUN_141f70df0`,
 `0x47` = **force-close the open dialog** (`u8 result`, then `FUN_1410dea80` on the global
 UI at `0x143aca0f0`) — the only type accepted while the latch is held.

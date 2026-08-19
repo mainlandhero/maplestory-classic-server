@@ -69,6 +69,17 @@ pub struct Config {
     /// field's `life` node. The client **cannot** spawn these itself - its field loader walks
     /// `life` only to preload art - so they are the server's to send, after every `SetField`.
     pub npcs: HashMap<u32, Vec<net::opcode::FieldNpc>>,
+
+    /// Every map id that has a field image in `Map.wz`.
+    ///
+    /// The authoritative "does this map exist" list, and **not** the same as `String.wz`'s
+    /// name table: a survey of this client found **12 ids named but absent** and **6 present
+    /// but unnamed**. Sending a character to an id with no field image strands it, and one
+    /// with no name entry can take the client into a branch that does not return
+    /// (`research/map1-exists.md`).
+    ///
+    /// Empty means "unknown", not "nothing exists" - see [`Config::map_exists`].
+    pub fields: std::collections::HashSet<u32>,
 }
 
 impl Config {
@@ -108,6 +119,31 @@ impl Config {
             }
         }
         (links, index)
+    }
+
+    /// Is this a map the client can actually load?
+    ///
+    /// **An empty table answers `true` for everything**, deliberately. The table is generated
+    /// game data and a missing file must not turn every warp into a refusal - that would fail
+    /// closed on a tool problem rather than a real one. When it is loaded it is exact.
+    pub fn map_exists(&self, map: u32) -> bool {
+        self.fields.is_empty() || self.fields.contains(&map)
+    }
+
+    /// Load one map id per line, ignoring blanks and `#` comments.
+    pub fn load_fields(path: &std::path::Path) -> std::collections::HashSet<u32> {
+        let mut out = std::collections::HashSet::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Ok(id) = line.parse::<u32>() {
+                out.insert(id);
+            }
+        }
+        out
     }
 
     /// Load `map, template, x, cy, fh, rx0, rx1, f` rows into per-map NPC lists.
@@ -162,6 +198,7 @@ impl Default for Config {
             portals: HashMap::new(),
             portal_index: HashMap::new(),
             npcs: HashMap::new(),
+            fields: std::collections::HashSet::new(),
         }
     }
 }

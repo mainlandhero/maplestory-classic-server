@@ -140,8 +140,23 @@ way it named the portal. **`0x0151` is the NPC interaction packet**, captured in
 The object id matches one we assigned (`1000` = map 1's Heena) and the template id matches
 the WZ, so the first three fields are **read off our own data**, not guessed.
 
-> **Next step:** decode `0x0151` properly - the leading `u8` and the tail are unexplained -
-> then find the reply. The reply is a script/say packet, and nothing about it is known yet.
+**The reply is inbound `0x055B`, the script message.** Routed by `CField::OnPacket`
+(`FUN_141820080`) - the same range chain that already delivers our working `0x044F` - to
+`FUN_141f6f350`. Head: `u32 handle, u8, u32 speakerNpcTemplateId, u8 hasOverride,
+[u32 override], u8 messageType, u16 flags, u8`. Type **0 = Say**: `u32 echo,
+[u32 speakerOverride if flags & 4], str text, u8 prev, u8 next, u32`. The speaker field is
+**read, not inferred** - it lands in `[ui+0x2cc]` and is fed to `FUN_141e77b70`, the NPC
+template loader `npc-spawn.md` already identified. Full working: `research/npc-dialogue.md`.
+
+**Ordering constraint that would have cost a run:** `FUN_142caa4e0` - the routine that emits
+`0x0238`/`0x024D` on field entry - resets the script manager. **Never send a script with or
+just before a `SetField`.**
+
+> **Next step:** build the 32-byte minimum-viable Say and send it in answer to `0x0151`. The
+> values that matter are in the research file: the speaker template must be a real `Npc.wz`
+> id (`0` is not one), and `hasOverride` and `flags & 4` each change the body length with no
+> resync point. **Text on screen is not a quest**, though - no quest-result packet has been
+> found, so state will not advance.
 
 ### 2a. Channel swapping - two channels now run
 
@@ -217,7 +232,7 @@ That method has now identified four requests and cost no static analysis at all.
 | opcode | what | body, as far as it is read |
 |---|---|---|
 | `0x00D1` | transfer field (portal) | fully decoded, `research/transfer-field-request.md` |
-| `0x0151` | **NPC click** | `u8 type, u32 objectId, u32 templateId, i16 x, i16 y, u32` - 17 bytes for type 1, 13 for type 4. The objectId and templateId match values **we** assigned, so those are read, not guessed |
+| `0x0151` | **quest request** | `u8 action, u32 questId, u32 npcTemplateId, [i16 x, i16 y], [u32 selection]`, builder `FUN_141f0e4c0`. **RETRACTED:** this was recorded as "NPC click" with the first `u32` as an objectId "read off our own data". It is a **quest id**. Our own logs disprove the old reading - every map's first NPC is given `object_id = 1000`, yet the client answered 1000/1002/1003/1005 for four NPCs, the same values in both sessions despite opposite visit orders. The listing agrees: that field keys six accessors on a quest table and is range-tested against 40000-40999 and 30051-30079. The **second** `u32` really is the template we sent, in all four captures |
 | `0x00E7` | **chat** | `u32`, then a `u16`-length string, then a `u8` - `...05 00 "Hello" 03` |
 | `0x0182` | **party create** | 68 bytes carrying the length-prefixed string `"TestCharD's Party"` |
 

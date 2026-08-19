@@ -555,7 +555,7 @@ instrument this project has.
 | `0x00D1` | transfer field (portal) | fully decoded, `research/transfer-field-request.md` | yes |
 | `0x00DC` | **field entered** | empty. **Once per `SetField`, every time** - this is the per-field marker | yes, with NPCs |
 | `0x0238` / `0x024D` | entered the world | empty. **First field entry only**, never again - not a per-field marker | no |
-| `0x0151` | **NPC click** | `u8 type, u32 objectId, u32 templateId, i16 x, i16 y, u32`; 17 bytes for type 1, 13 for type 4 | **no** - this is why NPCs do not talk |
+| `0x0151` | **quest request** | `u8 action, u32 questId, u32 npcTemplateId, [i16 x, i16 y], [u32 selection]`. Builder `FUN_141f0e4c0`. **Not an "NPC click", and the first `u32` is a quest id, not an object id** - see the retraction below | **no** - this is why quests do nothing |
 | `0x00E7` | **chat** | `u32`, `u16`-length string, `u8` | no |
 | `0x0082` | **leave world** - BOTH "Choose another world" and "Back" on the character screen send this, empty body | | **yes**, already |
 | `0x0182` | **party create** | 68 bytes carrying a length-prefixed party name | no |

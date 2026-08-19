@@ -176,9 +176,18 @@ try:
 
         # /map typed into the All tab. Chat is fire-and-forget on the client's side, so a
         # command that does nothing is safe; this one must actually move the character.
-        text = b"/map 104040000"
+        # A map that ACTUALLY EXISTS. 104040000 was used here until the /map guard landed
+        # and refused it - correctly: this client has only Map0 and Map9, so that id has no
+        # field image at all. The guard failing this check is the guard working.
+        text = b"/map 40"
         chat = bytes(4) + struct.pack("<H", len(text)) + text + b""
         send(transport.packet(0x00E7, chat))
+
+        # A map that does not exist must move nobody. 104040000 has no field image in this
+        # client at all, so the guard must refuse it - and refusing means NO extra reply,
+        # which is what the reply count below is really asserting.
+        bogus = b"/map 104040000"
+        send(transport.packet(0x00E7, bytes(4) + struct.pack("<H", len(bogus)) + bogus + b""))
 
         # 0x00D1, a transfer-field request, in the form the client actually sends: no
         # explicit target field (0xFFFFFFFF), a named portal, and coordinates after it. This
@@ -287,7 +296,7 @@ if PROBE:
         gm = set_fields[1]["body"][2:]
         at = HEAD + 12 + 111 + 84
         check("the GM /map command moved the character to the map it names",
-              struct.unpack_from("<I", gm, at)[0] == 104_040_000,
+              struct.unpack_from("<I", gm, at)[0] == 40,
               "map %d" % struct.unpack_from("<I", gm, at)[0])
     check("two of them are NpcEnterField - map 1's Heena and Sera, from the generated table",
           len(npcs) == 2, "%d" % len(npcs))

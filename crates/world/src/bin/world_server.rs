@@ -35,6 +35,7 @@ fn main() -> ExitCode {
     let mut config = Config::default();
     let mut portals_path = PathBuf::from("gm-handbook/portals.txt");
     let mut npcs_path = PathBuf::from("gm-handbook/npcs.txt");
+    let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -59,6 +60,7 @@ fn main() -> ExitCode {
             }
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),
             "--npcs" => value().map(|v| npcs_path = PathBuf::from(v)),
+            "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
             other => Err(format!("unknown argument {other}")),
         };
         if let Err(e) = outcome {
@@ -75,6 +77,14 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no portals loaded from {} - portal walks will re-send the              current map. Regenerate with: python tools/dump_portals.py",
             portals_path.display()
+        );
+    }
+
+    config.fields = world::config::Config::load_fields(&fields_path);
+    if config.fields.is_empty() {
+        eprintln!(
+            "maplecw-world: no field list from {} - map ids will NOT be validated, so a              bad /map can strand a character. Regenerate with: python tools/dump_portals.py",
+            fields_path.display()
         );
     }
 

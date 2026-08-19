@@ -285,6 +285,15 @@ impl Session {
         let text = text.trim();
         let Some(rest) = text.strip_prefix("/map ") else { return Vec::new() };
         let Ok(map) = rest.trim().parse::<u32>() else { return Vec::new() };
+
+        // Refuse a map the client cannot load. A character sent to an id with no field image
+        // is stranded with no way back except another command, and an id with no String.wz
+        // name entry can take the client into a branch that does not return - see
+        // research/map1-exists.md. Chat is fire-and-forget, so refusing is silent on screen;
+        // the log line is the only feedback there is until an outbound notice exists.
+        if !self.config.map_exists(map) {
+            return Vec::new();
+        }
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         // Portal 0 is the map's spawn point, which is where a GM warp should land.
         self.go_to_map(&mut chr, map, 0, format!("GM /map {map}"))
@@ -531,6 +540,40 @@ mod tests {
         for n in 0..6 {
             assert_eq!(net::opcode::parse_chat(&real[..n]), None, "{n} bytes");
         }
+    }
+
+    /// A map that does not exist must not move the character anywhere.
+    ///
+    /// Being stranded is the mild failure. `research/map1-exists.md` found that a map with no
+    /// `String.wz` name entry sends the client down a branch containing a **non-returning**
+    /// `E_POINTER` call, and that 12 ids are named-but-absent while 6 are present-but-unnamed
+    /// - so "it has a name" is not the same question as "it has a field".
+    #[test]
+    fn the_map_command_refuses_a_map_that_does_not_exist() {
+        fn chat(text: &str) -> Vec<u8> {
+            let mut body = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+            body.extend_from_slice(&[0u8; 4]);
+            body.extend_from_slice(&(text.len() as u16).to_le_bytes());
+            body.extend_from_slice(text.as_bytes());
+            body.push(3);
+            body
+        }
+
+        let (mut s, _st, _id, _acct) = session();
+        // With a field list loaded, only ids in it are allowed.
+        let cfg = crate::config::Config {
+            fields: [1u32, 10, 40].into_iter().collect(),
+            ..(*s.config).clone()
+        };
+        s.config = std::sync::Arc::new(cfg);
+        assert!(s.handle(&chat("/map 999999999")).is_empty(), "a nonexistent map moves nobody");
+        assert!(s.handle(&chat("/map 0")).is_empty(), "0 is not a map");
+
+        // And an EMPTY list must not refuse everything - that would fail closed on a missing
+        // generated file rather than on a real problem.
+        let cfg = crate::config::Config { fields: Default::default(), ..(*s.config).clone() };
+        assert!(cfg.map_exists(999_999_999), "an unknown table allows, it does not refuse");
+        assert!(cfg.map_exists(1));
     }
 
     /// Only `/map` with a number is a command; ordinary chat must stay ordinary.
