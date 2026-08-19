@@ -117,16 +117,33 @@ its own singleton:
 | entry | guard / owner global | dispatcher | inbound opcodes |
 |---|---|---|---|
 | `FUN_1415d59b0` | `DAT_143aa84a0` | `FUN_142cbaa80` | **`0x70..0x39a`**, 273 cases |
-| `FUN_1415d5a00` | `DAT_143ac97e0` | `FUN_142279c50` | `0x5c5..0x5d2`, 12 cases |
-| `FUN_1415d5a50` | `DAT_143ace378` | `FUN_14177b7e0` | not yet read |
+| `FUN_1415d5a00` | `DAT_143ac97e0` | `FUN_142279c50` | `0x05c5..0x05d2`, 12 cases |
+| `FUN_1415d5a50` | `DAT_143ace378` | `FUN_14177b7e0` | `0x05d5..0x05dc`, 8 cases |
 
 In all three the gate and the getter resolve to the **same** global - `cmp qword [g],0` and
 `mov rax,[g]` - so each entry is "if this subsystem exists, hand it the packet". The other
 two prologue matches (`0x140c8fec5`, `0x140cad410`) have different bodies and are not
 entries.
 
-`FUN_14177b7e0` and `FUN_142279c50` are monolithic handlers rather than case switches -
-they call the u32/string/raw decoders directly - so they are subsystems, not stages.
+Both of the smaller two **are** case switches after all - the earlier note called them
+monolithic because they call the decoders directly, and they do, but from *inside* their
+case bodies rather than instead of having any. Every case is inlined, which is why a
+single-call extraction saw nothing; `tools/switch_cases.py` reads them fine. Decompilation
+in `research/msexe-dispatch-entries.c`.
+
+So the inbound opcode space is now accounted for end to end:
+
+| range | dispatcher | reached by |
+|---|---|---|
+| `0x0000..0x005f` | `FUN_141b25f30` | the current stage's vtable |
+| `0x0051..0x006f` | `FUN_141b82b00` | chained from the login stage's `default` |
+| `0x0070..0x039a` | `FUN_142cbaa80` | singleton entry `FUN_1415d59b0` |
+| `0x01a0..0x01a3` | `FUN_142097ee0` | chained from the login stage's `default` - **`SetField`** |
+| `0x05ac..0x05bf` | `FUN_141072ec0` | a stage vtable |
+| `0x05c5..0x05d2` | `FUN_142279c50` | singleton entry `FUN_1415d5a00` |
+| `0x05d5..0x05dc` | `FUN_14177b7e0` | singleton entry `FUN_1415d5a50` |
+
+The overlap at `0x51..0x5f` is not one: the login switch matches its own cases first.
 
 **The login stage is not in this table**, and that is the interesting part. `FUN_141b25f30`
 is a virtual method, slot 76 of vtable `0x1433fd540`. So the virtualised packet loop does
