@@ -1561,6 +1561,24 @@ rejected handshake.
 
 ## Housekeeping
 
+**Run scripts with Windows PowerShell, from an elevated shell:**
+
+```
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+```
+
+`pwsh` is **not installed** on this machine - PowerShell 7 was never set up and the shell is
+5.1 - so anything written as `pwsh tools/...` errors with "not recognized". This file said
+exactly that in two places, and `firewall.ps1` and `setup-client.ps1` in three more, until
+2026-08-19.
+
+Elevation matters separately: `exit-forensics.ps1` runs from `test-server.ps1` and cannot
+see SYSTEM-owned handles without it. It reports how many it could not reach, so a short
+list is never misread as an empty one.
+
+When editing these scripts, remember what 5.1 does not have: `&&`, `||`, ternary,
+null-coalescing.
+
 - Firewall rule `MapleCW - block patched client outbound` is **active**. Remove with
   `powershell -ExecutionPolicy Bypass -File tools/firewall.ps1 -Remove` (needs elevation).
 - `client-patched/` has the GameGuard stub installed; `powershell -ExecutionPolicy Bypass -File tools/setup-client.ps1
