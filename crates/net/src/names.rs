@@ -61,18 +61,30 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x007D => "CLIENT_MIGRATION_HELLO (carries the migration seed)",
         0x008F | 0x0090 | 0x0091 => "CLIENT_ELOG (the client's own error log; decode_elog.py)",
 
-        // GUESSED, NOT ESTABLISHED. These names were inferred from what the bytes looked
-        // like and nothing has confirmed them. They are marked in every log line, because
-        // an unverified name printed as a fact is worse than no name: it is the kind of
-        // thing that gets quoted back later as though it were measured.
-        0x0079 => "guess:CHARACTER_REPORT?",
-        0x007A => "guess:DISCONNECT_NOTICE?",
-        0x00BC => "guess:LOCALE? (1033 three times)",
-        0x00C0 => "guess:HELLO? (first u32 is the launch mode)",
-        0x0070 => "guess:VERSION_ECHO?",
-        0x0071 => "guess:VERSION_DETAIL? (echoes our low/high/temp)",
-        0x00A6 => "guess:ASSET_TICK?",
-        0x00BF => "guess:READY? (empty body)",
+        // Established 2026-08-19 by finding each builder in the client. Five of the eight
+        // names previously here were WRONG - they had been inferred from the shape of the
+        // bytes. Evidence per opcode in `research/msexe-client-opcodes.md`.
+        //
+        // 0x00C0 is the one that mattered: it was logged as "CLIENT_HELLO", and it is the
+        // opposite of a hello. FUN_141b2a660 builds it *only* when the auth call
+        // FUN_141d60eb0(user, pass, 0xc9, 0) fails, and the body is the launch mode plus
+        // the error code. Our captures carry 0x4E20 = 20000, a Nexon Passport error - so
+        // the client has been reporting a failed login on every run and the log called it
+        // a greeting.
+        0x00C0 => "CLIENT_AUTH_FAILURE_REPORT (mode, then a Passport error code)",
+        0x0070 => "CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version)",
+        0x0071 => "CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours)",
+        0x0079 => "CLIENT_LOAD_TIMING_REPORT",
+        0x007A => "CLIENT_TASK_TIMING_REPORT (four task durations, then their sum)",
+        0x00A6 => "CLIENT_STATUS_CODE",
+        0x00BF => "CLIENT_TITLE_SCREEN_READY",
+
+        // 0x00BC is deliberately NOT named. Three u32 of 1033 look like an en-US LCID
+        // triple, but that is a guess about a value rather than a reading of code, and the
+        // builder could not be found. The negative is trustworthy for a reason worth
+        // keeping: the same search cannot find 0x0078 either, and 0x0078 is confirmed,
+        // answered and working - so the method cannot see whatever emits these. Leaving it
+        // unnamed makes it log in full, which is what an undecoded packet deserves.
 
         _ => return None,
     })
@@ -185,24 +197,24 @@ mod tests {
         assert!(hex.len() < 300);
     }
 
-    /// A name we guessed must say so in the log line, every time. This is a correctness
-    /// property, not a style one: these were invented from the shape of the bytes, and the
-    /// project has already lost time to an inference that got quoted back as a measurement.
+    /// Nothing may assert a `guess:` name any more - the eight that did were checked
+    /// against the client's own builders and five of them were wrong. If a future opcode
+    /// genuinely cannot be established, leave it unnamed so it logs in full.
     #[test]
-    fn guessed_names_are_marked_as_guesses() {
-        for op in [0x0070u16, 0x0071, 0x0079, 0x007A, 0x00A6, 0x00BC, 0x00BF, 0x00C0] {
-            let name = opcode_name(op).expect("still named");
-            assert!(name.starts_with("guess:"), "0x{op:04X} asserts {name:?} as fact");
+    fn no_name_is_still_an_unverified_guess() {
+        for op in 0u16..=0xFFFF {
+            if let Some(name) = opcode_name(op) {
+                assert!(!name.starts_with("guess:"), "0x{op:04X} still asserts a guess: {name:?}");
+            }
         }
     }
 
-    /// And a name we did establish must NOT be marked as a guess.
+    /// 0x00BC has no located builder, so it must stay unnamed and therefore untruncated.
     #[test]
-    fn established_names_are_not_marked_as_guesses() {
-        for op in [LOGIN_RESULT, MIGRATE_COMMAND, CLIENT_SELECT_CHARACTER_REQUEST, 0x008F] {
-            let name = opcode_name(op).expect("named");
-            assert!(!name.starts_with("guess:"), "0x{op:04X} understates itself: {name:?}");
-        }
+    fn the_undecoded_locale_packet_stays_unknown_and_whole() {
+        assert_eq!(opcode_name(0x00BC), None);
+        assert!(label(0x00BC).contains("UNKNOWN"));
+        assert_eq!(body_hex(0x00BC, &vec![0xABu8; 500]).len(), 1000);
     }
 
     #[test]
