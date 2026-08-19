@@ -43,6 +43,19 @@ pub struct Config {
     /// authenticates anybody. See `STATUS.md` NEXT GOALS.
     pub set_field_probe: bool,
 
+    /// Override every character's inventory slot counts, for one run.
+    ///
+    /// **A test lever, not a game rule.** The real value is per-character and persisted
+    /// (`characters.slots_*`); this replaces it in the record the moment before it goes out,
+    /// so a client launch can put a number on screen that could not have come from anywhere
+    /// else.
+    ///
+    /// That matters because the default, 24, is also the number this game family's client
+    /// would plausibly have arrived at on its own - so a run at 24 cannot tell "the server
+    /// sized the bag" from "the server changed nothing". A run at 32 can: the bag either
+    /// shows 32 slots or it does not.
+    pub inventory_slots: Option<u16>,
+
     /// Where every portal leads, keyed by `(map, portal name)`.
     ///
     /// Generated from the client's own `Map.wz` by `tools/dump_portals.py` - the data is the
@@ -769,6 +782,7 @@ impl Default for Config {
             world_id: 0,
             channel_id: 0,
             set_field_probe: false,
+            inventory_slots: None,
             portals: HashMap::new(),
             portal_index: HashMap::new(),
             npcs: HashMap::new(),

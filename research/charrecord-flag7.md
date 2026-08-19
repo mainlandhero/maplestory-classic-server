@@ -259,6 +259,12 @@ off  len  addr           what                                       value
 **[D]** With `job = 0` the stat block is 108 and the record is **224**. With a job that takes
 the plain-`u16 sp` branch it is 109 and the record is **225**.
 
+**That 224 is the bare region and still the control**, but it is no longer what the server
+sends. Two more presence bytes are set now, and each opens a block this table does not
+draw: `presence[2]` the equipped list (`research/naked-character.md`) and, since
+2026-08-19, `presence[7]` **twelve bytes of inventory sizes** between offset 222 and the
+equipped list (`research/inventory-slots.md`). A dressed level-1 with four equips is 755.
+
 **[L] Byte values that are load-bearing rather than cosmetic:**
 
 * offset 110 **must** be `00`. A non-zero byte there pulls in a `u32` count, a raw-8 loop,

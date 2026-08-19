@@ -375,7 +375,12 @@ class Throwaway:
         # the smoke test - the point here is that the login server hands out the right
         # address, not that the world answers.
         self.channel_port = free_port()
-        built = os.path.join(root, "target", "release")
+        # `target/release` unless MAPLECW_BIN_DIR says otherwise. A server left running
+        # from a client launch holds these files open, and on Windows that makes
+        # `cargo build --release` fail with "Access is denied" - so without the override
+        # this suite would silently check the binary from BEFORE the change. Same escape
+        # hatch as tools/channel_smoke.py, and the same reason.
+        built = os.environ.get("MAPLECW_BIN_DIR") or os.path.join(root, "target", "release")
         useradd = os.path.join(built, "maplecw-useradd.exe")
         login_exe = os.path.join(built, "maplecw-login.exe")
         for path in (useradd, login_exe):

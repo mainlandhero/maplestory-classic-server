@@ -19,7 +19,7 @@
 //! (`0x0081`) be answered truthfully, which is the first thing a real server does that
 //! the harness could not: the harness always replied "available".
 
-use crate::db::Store;
+use crate::db::{Store, INVENTORY_SLOT_COLUMNS};
 use crate::error::{Result, StoreError};
 use net::opcode::Character;
 
@@ -98,6 +98,7 @@ impl Store {
             ap,
             map_id,
             equips,
+            inventory_slots,
         } = chr;
 
         match self.check_character_name(name)? {
@@ -113,12 +114,15 @@ impl Store {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         tx.execute(
-            "INSERT INTO characters (
-                 account_id, world_id, name, gender, skin, face, hair, level, job,
-                 strength, dexterity, intelligence, luck,
-                 hp, max_hp, mp, max_mp, ap, map_id, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                       ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            &format!(
+                "INSERT INTO characters (
+                     account_id, world_id, name, gender, skin, face, hair, level, job,
+                     strength, dexterity, intelligence, luck,
+                     hp, max_hp, mp, max_mp, ap, map_id, created_at, {}
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                           ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                INVENTORY_SLOT_COLUMNS.join(", ")
+            ),
             rusqlite::params![
                 account_id,
                 world_id,
@@ -140,6 +144,12 @@ impl Store {
                 ap,
                 map_id,
                 Store::now(),
+                inventory_slots[0],
+                inventory_slots[1],
+                inventory_slots[2],
+                inventory_slots[3],
+                inventory_slots[4],
+                inventory_slots[5],
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -165,14 +175,15 @@ impl Store {
     /// would tie. The id breaks the tie.
     pub fn characters_for(&self, account_id: i64, world_id: u32) -> Result<Vec<Character>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT id, name, gender, skin, face, hair, level, job,
                     strength, dexterity, intelligence, luck,
-                    hp, max_hp, mp, max_mp, ap, map_id
+                    hp, max_hp, mp, max_mp, ap, map_id, {}
                FROM characters
               WHERE account_id = ?1 AND world_id = ?2
               ORDER BY created_at, id",
-        )?;
+            INVENTORY_SLOT_COLUMNS.join(", ")
+        ))?;
         let rows = stmt.query_map(rusqlite::params![account_id, world_id], |row| {
             Ok(Character {
                 id: row.get::<_, i64>(0)? as u32,
@@ -195,6 +206,14 @@ impl Store {
                 ap: row.get(16)?,
                 map_id: row.get(17)?,
                 equips: Vec::new(),
+                inventory_slots: [
+                    row.get(18)?,
+                    row.get(19)?,
+                    row.get(20)?,
+                    row.get(21)?,
+                    row.get(22)?,
+                    row.get(23)?,
+                ],
             })
         })?;
         let mut characters: Vec<Character> = rows.collect::<rusqlite::Result<_>>()?;
@@ -267,6 +286,45 @@ mod tests {
 
     fn named(name: &str) -> Character {
         Character { name: name.to_string(), ..Character::default() }
+    }
+
+    /// A new character gets a bag, and it survives the round trip.
+    ///
+    /// The client is *told* its slot counts - `presence[7]` in the record - so a zero here
+    /// is not "the client falls back to a default", it is an inventory the client believes
+    /// has no slots. See `net::opcode::PRESENCE_INVENTORY_SIZE`.
+    #[test]
+    fn a_new_character_gets_a_bag_with_slots_in_it() {
+        let (store, account) = store_with_account();
+        let made = store.create_character(account, 0, &named("Wanderer")).unwrap();
+        assert_eq!(
+            made.inventory_slots,
+            [net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT]
+        );
+
+        let loaded = store.characters_for(account, 0).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].inventory_slots, made.inventory_slots);
+        assert!(
+            loaded[0].inventory_slots.iter().all(|&n| n > 0),
+            "a zero-slot inventory is a bag that refuses everything"
+        );
+    }
+
+    /// A raised slot count persists. This is the whole reason the counts are columns rather
+    /// than a constant: buying slots has to survive a relog or it is not a purchase.
+    #[test]
+    fn a_bought_slot_survives_a_reload() {
+        let (store, account) = store_with_account();
+        let mut chr = named("Buyer");
+        chr.inventory_slots[1] = 48;
+        store.create_character(account, 0, &chr).unwrap();
+
+        let loaded = store.characters_for(account, 0).unwrap();
+        assert_eq!(loaded[0].inventory_slots[1], 48);
+        // And only that one moved.
+        assert_eq!(loaded[0].inventory_slots[0], net::opcode::DEFAULT_INVENTORY_SLOTS);
+        assert_eq!(loaded[0].inventory_slots[2], net::opcode::DEFAULT_INVENTORY_SLOTS);
     }
 
     #[test]

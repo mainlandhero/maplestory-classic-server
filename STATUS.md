@@ -100,6 +100,7 @@ the state after the owner's five runs of 2026-08-19.
 | | |
 |---|---|
 | the world | a character on a map, **wearing its items with their real stats** |
+| the bag | six inventories, sized by the server - **built, not yet seen on screen** |
 | NPCs | visible, clickable, speaking the game's own `Quest.wz` and `String.wz` lines on **both** click paths, and showing **idle chatter** on the client's own 3-9 second cadence |
 | quests | clicking an NPC opens the real dialogue; **Accept answers with the quest's `yes` branch** |
 | movement | portals both ways onto the connecting door, and `!map <id>` |
@@ -114,7 +115,7 @@ one thing that still kills the client.
 | # | do this | why it is here | spec |
 |---|---|---|---|
 | 1 | **Re-run mobs** - the crash is understood and fixed, one byte | `move_action` (body offset 35) was `0`. That byte is `action*2 + facing`, and **action 0 alone** takes a callback at `141c50da5` into an interface `encodeInit` does not build until `0x148` bytes later - so the read lands on a null pointer. Now `2`. **Pass = no `141c81040` line at all, and `141c532ab` firing with cursor `0x71`** | `research/mob-spawn.md` §11 |
-| 2 | **Give the bag some slots** | The unequip request never reaches the wire. The record's four zero bytes at offsets 219-222, labelled "a `u8` and three optional-string flags", are where this game family puts the **five inventory slot counts** - and a zero-slot bag would make the client refuse every unequip, silently, client-side. **One-variant test: send 24 and see whether a drag produces `0x0107`** | §2d, §2e |
+| 2 | **Confirm the bag** - BUILT 2026-08-19, unconfirmed on screen | `presence[7]` now sends **six `u16` slot counts**, twelve bytes between the string flags and the equipped list, read off the client's own six-turn loop at `0x140305de8`. Default 24, per character, persisted. **The guess in this row was wrong twice over**: it is not offsets 219-222 and there are not five of them. **Run it with `-InventorySlots 32`** - 24 is a number the client could have defaulted to on its own, so a run at 24 proves nothing. Pass = the tab shows 32, and six `140305e48` lines whose cursors step by 2 | `research/inventory-slots.md` |
 | 3 | **Decode `0x0420`-`0x0426`** | The client volunteers its **own world state** once per session: `0x0421` is 1115 bytes carrying the character id, the name and **our four item ids in equipped-slot order**; `0x0420` carries the NPC object ids we assigned. It is a free read-back instrument - it says what the client *thinks* it has, in its own words - and nothing else here can do that | §2e |
 | 4 | **Read what populates the Change Channel list** | **All three explanations are now retracted** (the four trailing bytes, the enable byte, the route through world select). Two client runs went on the first two. Nothing yet proposed populates that list, so the next step is to find what calls `FUN_142cb8e10` and when - upstream, not downstream | `research/channel-select.md` §0 |
 | 5 | **Quest state** | Goal A below. Everything else about quests works; nothing persists | §"NEW GOAL ... quest state" |
@@ -571,18 +572,36 @@ The owner tried repeatedly to unequip the Undershirt. **The capture contains no 
 confirming `research/npc-click.md` §4: the client drops it inside `FUN_142cc5b00`, before
 building anything, at one of six pre-send gates.
 
-> **Leading hypothesis, and it is cheap to test: the bag has no slots.** An unequip needs
-> somewhere to put the item. In this game family the character record carries five inventory
-> slot counts - equip, use, set-up, etc, cash - immediately after the character-stat block,
-> and **we send four zero bytes there**, currently labelled "one `u8` and three
-> optional-string flags" at record offsets 219-222. That labelling came from a read that only
-> had to explain *skipping*, and zero skips either way, so nothing has ever tested it. A
-> zero-slot bag would make the client refuse every unequip client-side, silently, which is
-> exactly what happens. **[I]**, but it explains the symptom with no extra machinery.
+> **Leading hypothesis: the bag has no slots.** An unequip needs somewhere to put the item,
+> and until 2026-08-19 the server never told the client how big any inventory was.
+
+**BUILT the same day, and the hypothesis above was right about the symptom and wrong about
+every detail of the mechanism.** The full working is `research/inventory-slots.md`; what
+this section had wrong is worth keeping, because the two errors are the two this project
+keeps making.
+
+* It said the counts sit at **record offsets 219-222**, in the bytes labelled "one `u8` and
+  three optional-string flags". **They do not.** They are at offset **223**, in a block that
+  did not exist in the layout at all, switched on by `presence[7]`. The old labelling of
+  219-222 was never wrong - it just was not the thing being looked for.
+* It said there are **five**. There are **six**: the loop's trip count is the literal
+  `MOV R15D,0x6` at `0x140305def`.
+
+Both errors came from the same place - reasoning from the reference server's shape instead
+of reading this client's loop - and both were the *reference being right about the concept
+and wrong about the numbers*, which is exactly the failure `CLAUDE.md` scores it 1 of 8 for.
+Ten minutes on the listing gave the right answer, and the listing had been sitting in
+`research/msexe-charrecord-full.txt` the whole time.
+
+> **What is still open** is the part that mattered: whether a null inventory array is why
+> the unequip never reaches the wire. The arithmetic is measured - a null array makes the
+> default slot count `-1`, and `CMP dword ptr [RSP+0x60],0x0 / JL` at `0x140305f09` then
+> skips that inventory's whole slot walk - but **whether these arrays start null has not
+> been read**, and it lives in a constructor nobody has opened. **[I]** with a mechanism.
 >
-> **The one-variant test:** send a plausible slot count (24) in those bytes and see whether
-> a drag starts producing `0x0107`. If the record still decodes, the labelling was wrong and
-> the bag is real; if world entry breaks, they are what the old read said they were.
+> **The one-variant test: `-InventorySlots 32`.** Not 24: 24 is a number this client could
+> plausibly have arrived at on its own, so a run at 24 cannot tell a working field from no
+> field at all. Then count the slots, and drag an equip off and watch for `0x0107`.
 
 #### And a client state dump nobody had seen: `0x0420`-`0x0426`
 

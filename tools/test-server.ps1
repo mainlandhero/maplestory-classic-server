@@ -126,6 +126,13 @@ param(
     # EXPECT THIS TO END THE SESSION until the body is fixed - test it LAST.
     [switch]$Mobs,
     [int]$MobLimit = 0,
+    # Give every inventory this many slots instead of the character's own count.
+    #
+    # A test lever. The bag is 24 by default, which is also the number this client could
+    # plausibly have arrived at on its own - so a run at 24 cannot tell "the server sized
+    # the bag" from "the server changed nothing". 32 can: the bag either shows 32 or it
+    # does not.
+    [int]$InventorySlots = 0,
     [string]$ClientDir
 )
 
@@ -234,7 +241,18 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   body bytes are byte-exact. Anything else says the layout is off by cursor-113.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c81040:peek=2b8:hits=20,141c532ab:peek=24:hits=20'
     } else {
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,140304100:hits=200'
+        # 140305e48:peek=24 - the u16 that sizes ONE inventory, inside the record decoder's
+        #   fixed six-turn loop. RCX is the CInPacket and +0x24 is its read cursor, so this
+        #   prints where in the packet each of the six reads happened. EXPECT SIX HITS, EACH
+        #   EXACTLY 2 APART. That is the criterion, and it is origin-independent: it does
+        #   not matter what the cursor counts from, only that the client took twelve
+        #   contiguous bytes where we put twelve contiguous bytes. Fewer than six, or a gap
+        #   that is not 2, means presence[7] is not the byte we think it is - and everything
+        #   after those bytes in the record is then being misread.
+        # 140304100:hits=200 - the equip decode, which fires at world entry. THE POSITIVE
+        #   CONTROL: no lines at all means the hook never armed, and a silent log proves
+        #   nothing. See CLAUDE.md, "verify the instrument before believing it".
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200'
     }
 }
 
@@ -282,13 +300,6 @@ if ($Stop) {
     exit 0
 }
 
-Push-Location $root
-try {
-    & cargo build --release -p login -p store -p grap-stub
-    if ($LASTEXITCODE -ne 0) { throw 'build failed' }
-}
-finally { Pop-Location }
-
 # The account has to exist. Creating one here would mean inventing a password, and this
 # repo does not do that - it prompts, and it hashes.
 if (-not (Test-Path $Database)) {
@@ -298,10 +309,37 @@ if (-not (Test-Path $Database)) {
     throw 'no database'
 }
 
+# -ListOnly answers a question about the DATABASE, so it runs before anything is killed or
+# rebuilt. It used to sit after the build, which made it neither cheap nor side-effect-free:
+# it would stop a running server and fail on a build it did not need.
 if ($ListOnly) {
+    if (-not (Test-Path $loginExe)) {
+        throw "$loginExe is missing - run without -ListOnly once to build it"
+    }
     & $loginExe --list --db $Database --account $Account --world $World
     exit $LASTEXITCODE
 }
+
+# Kill the previous run BEFORE building, not after.
+#
+# A server from the last launch holds target/release/maplecw-world.exe open, and on Windows
+# cargo cannot replace a running executable: the build fails outright with "Access is denied"
+# and the whole run stops before it starts. Stop-All used to run further down, after the
+# build, which meant a second launch in a row could not work at all. Found 2026-08-19 when
+# the servers from the owner mob run blocked a rebuild.
+Stop-All
+Start-Sleep -Milliseconds 300
+
+Push-Location $root
+try {
+    # -p world is NOT optional, and it was missing until 2026-08-19. The script starts
+    # target/release/maplecw-world.exe but never built it, so every change to the channel
+    # server reached a run only if someone had happened to build it by hand - the same
+    # silent-stale-binary failure the grap-stub note above warns about, one crate over.
+    & cargo build --release -p login -p world -p store -p grap-stub
+    if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+}
+finally { Pop-Location }
 
 # Rebuilding grap-stub does not update the client: cargo writes target/release/grap64.dll
 # and the client loads client-patched/grap64.dll. Skipping this is the most expensive kind
@@ -344,6 +382,7 @@ foreach ($ch in 0..($Channels - 1)) {
     if ($SetFieldProbe) { $chArgs += '--set-field-probe' }
     if ($Mobs) { $chArgs += '--mobs' }
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
+    if ($InventorySlots -gt 0) { $chArgs += @('--inventory-slots', "$InventorySlots") }
     $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
         -WindowStyle Hidden `
         -ArgumentList $chArgs `
@@ -378,51 +417,66 @@ Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
     Write-Host ""
-    Write-Host "EQUIPMENT + DIALOGUE + MOBS + CHANNEL ROW." -ForegroundColor Cyan
-    Write-Host "  Four builds, none of them yet seen on screen. They are disjoint - the"
-    Write-Host "  record, a reply to a click, a separate pool, the login world list - so a"
-    Write-Host "  failure in one does not explain a failure in another."
-    Write-Host "    - the character record now carries the EQUIPPED LIST: presence[2], and"
-    Write-Host "      743 bytes for a dressed character against 224 for a bare one."
-    Write-Host "    - 0x0151 (the QUEST request, not an NPC click) is answered with a 0x055B"
-    Write-Host "      script Say, spoken by the template the client itself named."
-    Write-Host "    - EQUIPPED ITEMS NOW CARRY THEIR Character.wz STATS. The shirt should"
-    Write-Host "      read Weapon Def. +6 and 7 enhancements, and no item should say"
-    Write-Host "      'Cannot be Traded when equipped'. Items are 129 bytes, record 759."
-    Write-Host "    - BOTH NPC-click packets are answered now, 0x00F2 as well as 0x0151."
+    Write-Host "THE BAG. That is what this run is for." -ForegroundColor Cyan
+    Write-Host "  The character record now sizes the six inventories: presence[7], twelve"
+    Write-Host "  bytes, one u16 each, between the string flags and the equipped list. Until"
+    Write-Host "  today the server never sent them, and a bag whose array is null decodes to"
+    Write-Host "  a slot count of -1 - which the client reads as an inventory with no slots"
+    Write-Host "  at all. That is the leading explanation for the unequip that never"
+    Write-Host "  reached the wire on 2026-08-19. It is a candidate, not a finding."
+    Write-Host ""
+    Write-Host "  WHAT TO DO, in this order:" -ForegroundColor Yellow
+    Write-Host "    1. Open the inventory. Count the slots in the EQUIP tab."
+    Write-Host "       -InventorySlots 32 makes that count decisive: 32 could not have come"
+    Write-Host "       from anywhere but us. At the default 24 a correct result and no"
+    Write-Host "       result look the same."
+    Write-Host "    2. Check the other tabs - Use, Set-up, Etc, Cash. All six sizes are sent"
+    Write-Host "       and all six should agree. If ONE tab differs, the field order is"
+    Write-Host "       wrong and the name in INVENTORY_SLOT_ORDER for that index is wrong."
+    Write-Host "    3. Try to UNEQUIP something by dragging it into the bag. That is the"
+    Write-Host "       behaviour the bag was blamed for. If it now produces a 0x0107 in"
+    Write-Host "       world.log, the slot count was the whole problem."
+    Write-Host "    4. Then !map 1 and check the items STILL have their stats and the bag is"
+    Write-Host "       still the right size. Every SetField carries the bag, not just the"
+    Write-Host "       first - that is exactly the regression the stats hit."
+    Write-Host ""
+    Write-Host "  WHAT FAILURE LOOKS LIKE, and it is loud:" -ForegroundColor Yellow
+    Write-Host "    The record has NO length prefix and NO resync point, so if the twelve"
+    Write-Host "    bytes are in the wrong place the equipped list behind them is garbage."
+    Write-Host "    You would see an UNDRESSED character, or no world entry at all - not a"
+    Write-Host "    wrong slot count. So: character dressed = the position is right."
+    Write-Host ""
+    Write-Host "  Already confirmed on screen and NOT under test - if one of these breaks,"
+    Write-Host "  the bag broke it: equipment with real stats, NPC dialogue on both click"
+    Write-Host "  paths, Accept answering the quest yes-branch, idle chatter, !map both"
+    Write-Host "  ways, chat feedback, Log Out."
+    if ($InventorySlots -le 0) {
+        Write-Host ""
+        Write-Host "  NO -InventorySlots SET. The bag will be 24, which is the value this" -ForegroundColor Yellow
+        Write-Host "  run cannot distinguish from the client's own default. Consider" -ForegroundColor Yellow
+        Write-Host "  -InventorySlots 32." -ForegroundColor Yellow
+    }
     if ($Mobs) {
-        Write-Host "    - MOBS ARE ON, and they killed the client last time. Do this LAST."
-        Write-Host "      THE BODY IS NOT THE SUSPECT ANY MORE. Its 35 unconditional reads"
-        Write-Host "      match what we send exactly, and mob+0x2b8 - the null pointer - is"
-        Write-Host "      filled by the CLIENT via QueryInterface inside encodeInit, from a"
-        Write-Host "      block that dominates the rest of the body. Our packet cannot make"
-        Write-Host "      it null. The watches ask WHY it was null anyway."
-        Write-Host "      Use -MobLimit 1: it reproduces the fault (the crash was on the"
-        Write-Host "      FIRST mob, not the fortieth) and keeps the log short."
+        Write-Host ""
+        Write-Host "  MOBS ARE ALSO ON, and that is two variants in one run." -ForegroundColor Red
+        Write-Host "  The mob crash is understood - move_action 0 took a callback into an"
+        Write-Host "  interface encodeInit had not built yet, and we now send 2 - but it is"
+        Write-Host "  UNCONFIRMED. If the client dies you will not know which change did it."
+        Write-Host "  Test the bag first, mobs on their own run. CLAUDE.md: one variant."
         if ($MobLimit -le 0) {
-            Write-Host "      NO CAP SET - consider -MobLimit 1."
+            Write-Host "  If you do run mobs, -MobLimit 1 keeps the log short."
         }
     }
-    Write-Host "    - MOBS ARE OFF: the 137-byte body faulted the client on the last run."
-    Write-Host "      0xC0000005 at 0x141c810b0 - mob+0x2b8 null - on the FIRST 0x03C6,"
-    Write-Host "      after both NPCs had dispatched cleanly. --mobs sends them anyway."
-    Write-Host "    - the channel entry's 4th trailing byte is 1, not 0. That byte is the"
-    Write-Host "      Change Channel row's enable flag."
-    Write-Host "  0x0138 UserAvatarModified is NO LONGER SENT - it is dead code at byte level."
     Write-Host ""
-    Write-Host "In client-patched\maplecw-hook.log, two watches answer two questions:" -ForegroundColor Cyan
-    Write-Host "  140304100   the equip decode. RCX is every item pointer we decoded, and it"
-    Write-Host "              fires at world entry - so it is also the POSITIVE CONTROL. No"
-    Write-Host "              lines at all means the hook never armed, and a silent log"
-    Write-Host "              proves nothing."
-    Write-Host "  1426afdc0   inside the tooltip's stat section. RDX is the object the"
-    Write-Host "              TOOLTIP reads, and the probe's stack trace names who built it."
-    Write-Host "  THE QUESTION IS POINTER IDENTITY. Hover the TROUSERS (slot 6, 1060002)."
-    Write-Host "     RDX is NOT among the 140304100 pointers -> the window renders a second"
-    Write-Host "        object; the <-TEXT frames in its stack trace name the builder, and"
-    Write-Host "        that is the whole remaining question."
-    Write-Host "     RDX IS among them -> our object is holding zeros, so the bug is in the"
-    Write-Host "        DECODE, not the tooltip - much more tractable."
+    Write-Host "In client-patched\maplecw-hook.log, two watches:" -ForegroundColor Cyan
+    Write-Host "  140305e48   the inventory-size read. EXPECT SIX LINES, and the peeked"
+    Write-Host "              cursor rising by exactly 2 each time. That is the whole test"
+    Write-Host "              at byte level, and it does not depend on what the cursor"
+    Write-Host "              counts from. Fewer than six, or an uneven step: presence[7]"
+    Write-Host "              is not the byte we think it is."
+    Write-Host "  140304100   the equip decode, at world entry. POSITIVE CONTROL - no lines"
+    Write-Host "              at all means the hook never armed and the log proves nothing."
+    Write-Host "              The hook arms ~4.5s after connect; see docs."
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails

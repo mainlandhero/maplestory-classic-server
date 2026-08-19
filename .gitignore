@@ -48,3 +48,7 @@ world.log.err
 # Name tables extracted from String.wz by tools/dump_names.py. Game data, not project
 # source - the repo carries the code to regenerate them, not the content.
 gm-handbook/
+
+# A side target directory, used to build the servers when a run still holds
+# target/release open. See tools/channel_smoke.py MAPLECW_BIN_DIR.
+/target-smoke

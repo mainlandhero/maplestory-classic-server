@@ -70,6 +70,14 @@ EQUIPS = ((5, 1040003), (6, 1060002), (7, 1072003), (11, 1302000))
 # no length prefix anywhere in the record, so this decoder has to walk it exactly as the
 # client does - which is the point of the Python side being an independent implementation.
 EQUIPPED_ITEM_BARE_LEN = 125
+# The bag. presence[7] switches on a fixed six-turn loop in the record decoder that reads
+# one u16 an inventory - the slot count - and the twelve bytes sit between the three
+# optional-string flags and the equipped list. That POSITION is what this file really
+# checks: the record has no length prefix and no resync point, so twelve bytes in the wrong
+# place would leave the equipped list unparseable and the character undressed.
+INVENTORY_COUNT = 6
+INVENTORY_SIZE_BLOCK_LEN = INVENTORY_COUNT * 2
+DEFAULT_INVENTORY_SLOTS = 24
 # FUN_140303b40's 21 optional fields, in mask-bit order, by width in bytes.
 EQUIP_OPTION_WIDTHS = [1, 1, 2, 1, 1, 8, 4, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 8, 4]
 
@@ -112,10 +120,27 @@ SERVER_IV = 0x52307802        # K, the chain it decrypts with
 
 key, shuffle = transport.load_tables()
 
+# Where the server binaries are. `target/release` unless MAPLECW_BIN_DIR says otherwise.
+#
+# The override exists because a server left running from a client launch holds
+# `target/release/maplecw-world.exe` open, and on Windows that makes `cargo build
+# --release` fail outright with "Access is denied" - so the suite would be checking the
+# binary from BEFORE the change it is meant to verify, or not running at all. Building to
+# a side target directory and pointing this at it leaves the running servers alone:
+#
+#     CARGO_TARGET_DIR=target-smoke cargo build --release --workspace
+#     MAPLECW_BIN_DIR=target-smoke/release python tools/channel_smoke.py --set-field-probe
+BIN_DIR = os.environ.get("MAPLECW_BIN_DIR") or os.path.join("target", "release")
+
+
+def binary(name):
+    return os.path.join(BIN_DIR, name + ".exe" if os.name == "nt" else name)
+
+
 tmp = tempfile.mkdtemp(prefix="maplecw-ch-")
 db = os.path.join(tmp, "ch.db")
 port = free_port()
-subprocess.run([os.path.join("target", "release", "maplecw-useradd.exe"), "--db", db, "maplecw"],
+subprocess.run([binary("maplecw-useradd"), "--db", db, "maplecw"],
                input="correct horse battery staple\n", text=True, capture_output=True)
 
 
@@ -198,7 +223,7 @@ logf = open(logpath, "w")
 # real client on 2026-08-19 (0xC0000005 at 0x141c810b0, mob+0x2b8 null). The builder is
 # still covered here so a byte-level regression in it cannot pass unnoticed, but this
 # suite proves the BYTES, not that the client accepts them - and on that it is wrong.
-cmd = [os.path.join("target", "release", "maplecw-world.exe"), "--db", db, "--mobs",
+cmd = [binary("maplecw-world"), "--db", db, "--mobs",
        "--bind", "127.0.0.1:%d" % port]
 if PROBE:
     cmd.append("--set-field-probe")
@@ -533,7 +558,8 @@ if PROBE:
               "presence[2] = %d" % body[rec + 2])
         # The stat mask of the first equipped item must be non-zero. A record whose items
         # are all bare parses perfectly and looks identical in every other check.
-        parsed = [(L, parse_equipped(body, rec + 111 + L + 4)) for L in (108, 109)]
+        parsed = [(L, parse_equipped(body, rec + 111 + L + 4 + INVENTORY_SIZE_BLOCK_LEN))
+                  for L in (108, 109)]
         good = [r for _, r in parsed if r is not None]
         if good:
             worn = good[0][0]
@@ -587,7 +613,9 @@ if PROBE:
                   "presence[0]=%d" % presence[0])
             check("presence[2] is set, so the equipped list decodes", presence[2] == 1,
                   "presence[2]=%d" % presence[2])
-            stray = [i for i, b in enumerate(presence) if b and i not in (0, 2)]
+            check("presence[7] is set, so the bag gets a size", presence[7] == 1,
+                  "presence[7]=%d" % presence[7])
+            stray = [i for i, b in enumerate(presence) if b and i not in (0, 2, 7)]
             check("no other presence flag is set", not stray, "also set: %s" % stray[:6])
 
             # The six head fields between the array and the gate are counts and flags the
@@ -620,13 +648,25 @@ if PROBE:
             # plain one. Rather than assume the job, parse at both and require exactly one
             # to be a well-formed block - that IS the discriminator, and a layout error
             # shows up here as "neither parses" rather than as a client fault.
-            parsed = [(L, parse_equipped(body, stat + L + 4)) for L in (108, 109)]
+            parsed = [(L, parse_equipped(body, stat + L + 4 + INVENTORY_SIZE_BLOCK_LEN))
+                      for L in (108, 109)]
             good = [(L, r) for L, r in parsed if r is not None]
             check("the equipped block parses at exactly one stat-block length",
                   len(good) == 1,
                   "parsed at %s" % [L for L, _ in good])
             if len(good) == 1:
                 stat_len, (worn, end) = good[0]
+
+                # The bag, at the offset the equipped parse just settled on. Reading it
+                # anywhere else - or at whichever offset happened to look like 24s - would
+                # make this check confirm itself.
+                sizes = struct.unpack_from("<6H", body, stat + stat_len + 4)
+                check("all six inventories get a non-zero slot count",
+                      all(v > 0 for v in sizes), "%s" % (sizes,))
+                check("the bag is the default size",
+                      all(v == DEFAULT_INVENTORY_SLOTS for v in sizes),
+                      "%s, wanted six of %d" % (sizes, DEFAULT_INVENTORY_SLOTS))
+
                 check("the equipped list carries every item the character wears",
                       [(sl, it) for sl, it, _ in worn] == list(EQUIPS),
                       "%s, wanted %s" % ([(sl, it) for sl, it, _ in worn], list(EQUIPS)))

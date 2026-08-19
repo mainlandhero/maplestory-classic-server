@@ -972,11 +972,18 @@ impl Session {
     /// character id is unique within those.
     fn claimed_character(&self) -> Option<net::opcode::Character> {
         let claimed = self.claimed.as_ref()?;
-        self.store
+        let mut chr = self
+            .store
             .characters_for(claimed.account_id, claimed.world_id)
             .ok()?
             .into_iter()
-            .find(|c| c.id == claimed.character_id)
+            .find(|c| c.id == claimed.character_id)?;
+        // The bag override, applied here rather than at either SetField site so a portal
+        // walk and a migration cannot disagree about it. See Config::inventory_slots.
+        if let Some(slots) = self.config.inventory_slots {
+            chr.inventory_slots = [slots; net::opcode::INVENTORY_COUNT];
+        }
+        Some(chr)
     }
 
     /// The 8 bytes the client stores as a server clock base, stamping its own tick beside
@@ -1537,7 +1544,14 @@ mod tests {
         s.claim_for_character(id);
 
         // Half a minute of ticks, then walk into the field - a portal walk, or a !map.
-        for now in (0..30_000).step_by(500) {
+        //
+        // **Inclusive of 30_000 on purpose.** `on_field_entered` schedules from the
+        // session's own clock, which is the last tick it was given - so a range ending at
+        // 29_500 would put the floor at 32_500 while the assertion below measured it from
+        // 30_000. That is a real 500ms window, and with three NPCs each drawing from a
+        // 6000ms spread it made this test fail about one run in six, on a seed that comes
+        // from a heap address and so changes with what else the suite ran.
+        for now in (0..=30_000).step_by(500) {
             s.tick(now);
         }
         s.on_field_entered();
@@ -1564,6 +1578,65 @@ mod tests {
             first_tick_counts.iter().any(|&n| n < 3),
             "every tick spoke for all three: {first_tick_counts:?}"
         );
+    }
+
+    /// The record carries a bag, and `--inventory-slots` can change what is in it.
+    ///
+    /// The default and the override are checked in the SAME test on purpose: 24 is also the
+    /// number a client could plausibly have defaulted to on its own, so only a value that
+    /// could not have come from anywhere else proves the field is being read. That is the
+    /// same argument the flag's doc makes for spending a client launch at 32 rather than 24.
+    #[test]
+    fn the_record_sizes_the_bag_and_the_override_reaches_it() {
+        fn record_of(config: Config) -> Vec<u8> {
+            let store = Arc::new(Store::open_in_memory().unwrap());
+            let account = store.create_account("maplecw", "correct horse battery").unwrap();
+            let chr = net::opcode::Character {
+                name: "TestCharD".to_string(), map_id: 1, ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            let mut s = Session::new(store, Arc::new(config));
+            s.claim_for_character(id);
+            let chr = s.claimed_character().expect("the claimed character");
+            net::opcode::character_record_for_set_field(&chr, 0)
+        }
+
+        // Where the six u16 live: after the 100-byte presence array, the eleven head bytes,
+        // the stat block and the four string flags.
+        let sizes_at = net::opcode::STAT_BLOCK_AT + net::opcode::stat_block_len(0) + 4;
+        let read = |record: &[u8]| -> Vec<u16> {
+            (0..net::opcode::INVENTORY_COUNT)
+                .map(|i| {
+                    let at = sizes_at + i * 2;
+                    u16::from_le_bytes([record[at], record[at + 1]])
+                })
+                .collect()
+        };
+
+        let plain = record_of(Config { set_field_probe: true, ..Config::default() });
+        assert_eq!(
+            read(&plain),
+            vec![net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT],
+            "a new character reached the wire with no bag"
+        );
+        assert_eq!(plain[net::opcode::PRESENCE_INVENTORY_SIZE], 1);
+
+        let forced = record_of(Config {
+            set_field_probe: true,
+            inventory_slots: Some(32),
+            ..Config::default()
+        });
+        assert_eq!(read(&forced), vec![32u16; net::opcode::INVENTORY_COUNT]);
+        // And nothing else moved: same length, and the only differing bytes are the twelve.
+        assert_eq!(plain.len(), forced.len());
+        let differing: Vec<usize> =
+            (0..plain.len()).filter(|&i| plain[i] != forced[i]).collect();
+        assert!(
+            differing.iter().all(|&i| (sizes_at..sizes_at + 12).contains(&i)),
+            "the override changed bytes outside the bag: {differing:?}"
+        );
+        assert!(!differing.is_empty(), "the override changed nothing at all");
     }
 
     /// A connection that stalls must not emit a backlog when it comes back.

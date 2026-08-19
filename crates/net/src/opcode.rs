@@ -771,6 +771,14 @@ pub struct Character {
     pub portal: u8,
     /// `(slot, itemId)` pairs for the avatar's visible equipment.
     pub equips: Vec<(u8, u32)>,
+    /// How many slots each of the six inventories has - the size of the bag.
+    ///
+    /// **The client does not assume this; it is told.** See [`INVENTORY_SLOT_ORDER`] for
+    /// what each index is and [`inventory_size_block`] for how it reaches the wire. It is
+    /// on the character rather than in config because a slot count is per-character and
+    /// increasable - buying slots is a thing this game does - so a constant here would be
+    /// a value that could never go up.
+    pub inventory_slots: [u16; INVENTORY_COUNT],
 }
 
 /// Where a new character starts: **map 1, "Mushroom Town - West Entrance"**.
@@ -811,6 +819,7 @@ impl Default for Character {
             map_id: START_MAP_ID,
             portal: 0, // the map's spawn point
             equips: Vec::new(),
+            inventory_slots: [DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT],
         }
     }
 }
@@ -1578,7 +1587,11 @@ pub fn set_field_minimal(clock: u64, channel: u32) -> Vec<u8> {
 
 /// The character record `FUN_140304b20` reads, with the character-stat block switched on.
 ///
-/// **224 bytes** for an extended-SP job, 225 for a plain-`u16 sp` one. Layout from
+/// **The bare region is 224 bytes** for an extended-SP job, 225 for a plain-`u16 sp` one -
+/// that is the figure the whole walk was controlled against, and it is what this table
+/// describes. What the server actually sends is longer, because two more presence bytes are
+/// set: `+12` for the inventory sizes and `+11` plus 127 per equip for the equipped list.
+/// A dressed level-1 with four equips is 755 bytes. Layout from
 /// `research/charrecord-flag7.md`, which re-assembled the region out of the binary and
 /// diffed all 322 bytes against `client-patched/MapleStory.exe` with zero mismatches:
 ///
@@ -1596,9 +1609,16 @@ pub fn set_field_minimal(clock: u64, channel: u32) -> Vec<u8> {
 /// 220    1  u8   optional-string flag A                 0 skips the string
 /// 221    1  u8   optional-string flag B                 0
 /// 222    1  u8   optional-string flag C                 0
-/// ---------- gate #7 region ends; gates #8..#40 all skip ----------
-/// 223    1  u8   ungated, after every gate              0
+/// ---------- gate #7 region ends ----------
+/// 223   12  six u16 inventory sizes, loop #6            24 each  (gate #13, presence[7])
+/// ---------- gate #6's second region: the equipped list ----------
+/// 235    1  u8   ungated, after every gate              0
 /// ```
+///
+/// The last row is genuinely last: it is the read at `0x140308b3f`, past every gate, so the
+/// equipped list goes **in front of it** rather than after. The two gated blocks are drawn
+/// in the order the client reads them, which is the order their gates appear in the
+/// function - loop #6 at `0x140305de8`, then the equipped list's gate at `0x1403061a0`.
 ///
 /// **Why `presence[0]`.** `FUN_1402fa9a0` is a 100-byte bytewise AND: a gate computes
 /// `out[i] = presence[i] & key[i]` and runs its block if any byte of `out` is set. Each
@@ -1632,11 +1652,17 @@ pub fn character_record_for_set_field_with(
     let mut out = vec![0u8; PRESENCE_ARRAY_LEN];
     out[PRESENCE_CHARACTER_STAT] = 1;
     out[PRESENCE_EQUIPPED] = 1;
+    out[PRESENCE_INVENTORY_SIZE] = 1;
     out.extend_from_slice(&[0u8; 11]); // the six head fields at 100..111, all zero
     debug_assert_eq!(out.len(), STAT_BLOCK_AT);
     out.extend_from_slice(&character_stat_block(chr, world_id));
     // 219..223: one u8, then the three optional-string flags. A zero flag skips its string.
     out.extend_from_slice(&[0u8; 4]);
+    // Loop #6 runs here, six turns, and gate entry 13 takes one u16 a turn because
+    // presence[7] is set. It is BEFORE the equipped list: the loop is at 0x140305de8 and
+    // the equipped list's gate is at 0x1403061a0. The record has no length prefix and no
+    // resync point, so this order is the whole of what makes the bytes after it readable.
+    out.extend_from_slice(&inventory_size_block(&chr.inventory_slots));
     // Gate entry 6 fires here, because presence[2] is set.
     out.extend_from_slice(&equipped_block_with(equips));
     out.push(0); // the final ungated read, at 0x140308b3f
@@ -1670,6 +1696,90 @@ pub const STAT_BLOCK_AT: usize = 111;
 ///
 /// Full working: `research/naked-character.md`.
 pub const PRESENCE_EQUIPPED: usize = 2;
+
+/// The presence byte that switches on the **six inventory sizes** - gate entry 13.
+///
+/// This is the bag. With this byte clear the client sizes each inventory from whatever the
+/// array already holds, and the server never gets a say.
+///
+/// **Read off the listing rather than inferred.** `FUN_140304b20` runs a loop of exactly
+/// **six** turns - `MOV R15D,0x6` at `0x140305def`, `SUB R15,0x1 / JNZ` at `0x14030608e` -
+/// over six pointers based at `char+0x5d8`, stepping `8` a turn (`ADD RSI,0x8`). Inside
+/// that loop, gate entry 13 - key `0x143abf0c0`, whose CRT initialiser sets byte **7** -
+/// guards exactly one packet read: the `u16` at `0x140305e48`. A sweep of the whole loop
+/// body, `0x140305de8` to `0x140306098`, finds **no other call to any of the eight read
+/// primitives**, so this byte costs six `u16` and nothing else. **[L]**
+///
+/// **What the value means.** The client reads `V`, and if `V` differs from the array's
+/// current `count - 1` it resizes the array to `V + 1` (`INC EDX` at `0x140305e69`, then
+/// `FUN_14030ee00`). It then walks slot indices `0..=V`. So `V` is the **slot count**, with
+/// index 0 the unused hole that makes MapleStory's slots 1-based.
+///
+/// **And this is why a bag can refuse everything.** When the byte is clear the value used
+/// is `count - 1` computed at `0x140305e0f` - and the two instructions before it,
+/// `TEST RAX,RAX / MOV EAX,EDI`, make `count` **zero** for a null array, so the default is
+/// **-1**. The very next thing the client does with it is `CMP dword [RSP+0x60],0 / JL` at
+/// `0x140305f09`, which skips that inventory's whole slot walk. A negative bag has no slots
+/// at all. **[L]** for the arithmetic; whether these arrays *are* null at decode time is
+/// **not** established - that lives in the constructor of the character-data object, which
+/// has not been read. It is the leading explanation for the unequip that never reaches the
+/// wire, not a proven one.
+pub const PRESENCE_INVENTORY_SIZE: usize = 7;
+
+/// How many inventories the record sizes: **six**, from the loop's own trip count.
+pub const INVENTORY_COUNT: usize = 6;
+
+/// What each index of [`Character::inventory_slots`] is.
+///
+/// The order is the client's, taken from the **jump table at `0x1403093bc`** that picks each
+/// turn's gate key from the loop counter. Its six entries resolve to keys `0x143abedb0`,
+/// `ed40`, `ecd0`, `ec60`, `ebf0`, `eb80` - gate entries 6, 5, 4, 3, 2, 1, whose presence
+/// bytes are **2, 3, 4, 5, 6 and 44**. **[L]**
+///
+/// Byte 2 is measured elsewhere: it is the byte that switches on the equipped-item list
+/// (`research/naked-character.md`), so index 0 is the equip inventory. **[D]**
+///
+/// The four names after it are **[I]**. They come from the reference server's `DBChar`
+/// ordinals, where `Character` is 0 and `ItemSlotEquip` is 2 - the same two indices this
+/// client measures - and the next four ordinals are Consume, Install, Etc and Cash. Two
+/// matched points is corroboration, not proof, and `CLAUDE.md` scores that tree 1 of 8.
+/// The sixth, presence byte 44, is **not identified at all**.
+///
+/// **Nothing on the wire depends on these names**, because the server sends every inventory
+/// the same size. A wrong name here costs a comment, not a byte.
+pub const INVENTORY_SLOT_ORDER: [&str; INVENTORY_COUNT] =
+    ["equip", "use", "setup", "etc", "cash", "unidentified (presence byte 44)"];
+
+/// The bag a new character gets: **24 slots** in each inventory.
+///
+/// 24 is this game family's own starting size. It is a **default, not a limit** - the field
+/// is a `u16` and the client resizes to whatever arrives, which is what makes buying slots
+/// expressible - and [`MAX_INVENTORY_SLOTS`] is the ceiling the server will send.
+pub const DEFAULT_INVENTORY_SLOTS: u16 = 24;
+
+/// The largest slot count the server will put in a record.
+///
+/// **This is our limit, not a measured client one.** Nothing in the decoder bounds `V`; it
+/// is a `u16` and the resize takes it. The cap exists because the value drives an
+/// allocation and a per-slot walk on the client, six times over, and a typo should not be
+/// able to ask for 65535 slots. 96 is the ceiling this game family uses.
+pub const MAX_INVENTORY_SLOTS: u16 = 96;
+
+/// The six inventory sizes, in the order the client reads them.
+///
+/// Twelve bytes, always - six `u16`, no count and no terminator, because the loop's trip
+/// count is baked into the client at `0x140305def`. Each value is clamped to
+/// [`MAX_INVENTORY_SLOTS`]; see there for why that cap is ours rather than the client's.
+pub fn inventory_size_block(slots: &[u16; INVENTORY_COUNT]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(INVENTORY_SIZE_BLOCK_LEN);
+    for &count in slots {
+        b.extend_from_slice(&count.min(MAX_INVENTORY_SLOTS).to_le_bytes());
+    }
+    b
+}
+
+/// What [`inventory_size_block`] adds to the record: six `u16`, unconditionally.
+pub const INVENTORY_SIZE_BLOCK_LEN: usize = INVENTORY_COUNT * 2;
 
 /// One equipped item on the wire, for item type 1, **with every bitmask zero**.
 ///
@@ -3196,30 +3306,58 @@ mod tests {
         assert!(chr.equips.is_empty(), "the default character wears nothing");
         let record = character_record_for_set_field(&chr, 0);
         let fixed = PRESENCE_ARRAY_LEN + 11 + stat_block_len(chr.job) + 4 + 1;
-        assert_eq!(record.len(), fixed + EQUIPPED_BLOCK_OVERHEAD);
+        assert_eq!(
+            record.len(),
+            fixed + INVENTORY_SIZE_BLOCK_LEN + EQUIPPED_BLOCK_OVERHEAD
+        );
         assert!(uses_extended_sp(chr.job), "the default job is on the extended-SP branch");
         assert_eq!(
             record.len(),
-            235,
-            "224 bytes of record plus the 11 the equipped gate costs even when empty"
+            247,
+            "224 bytes of record, 12 for the six inventory sizes, and the 11 the equipped \
+             gate costs even when empty"
         );
 
         // And a plain-SP job is one byte longer - the stat block's SP fork is real and
         // encoded, and it shifts everything after it including the equipped block.
         let plain = Character { job: 900, ..chr.clone() };
         assert!(!uses_extended_sp(plain.job));
-        assert_eq!(character_record_for_set_field(&plain, 0).len(), 236);
+        assert_eq!(character_record_for_set_field(&plain, 0).len(), 248);
+
+        // The bag: six u16 between the string flags and the equipped list, every one of
+        // them the default. Their POSITION is the load-bearing part - the record has no
+        // resync point, so twelve bytes in the wrong place silently ruins the equipped
+        // list behind them.
+        let sizes_at = STAT_BLOCK_AT + stat_block_len(chr.job) + 4;
+        assert_eq!(
+            &record[sizes_at..sizes_at + INVENTORY_SIZE_BLOCK_LEN],
+            &inventory_size_block(&[DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT])[..]
+        );
+        for i in 0..INVENTORY_COUNT {
+            let at = sizes_at + i * 2;
+            assert_eq!(
+                u16::from_le_bytes([record[at], record[at + 1]]),
+                DEFAULT_INVENTORY_SLOTS,
+                "inventory {} ({}) did not get the default bag",
+                i,
+                INVENTORY_SLOT_ORDER[i]
+            );
+        }
 
         // presence[0] switches on gate entry 7 (the stat block) and presence[2] on entry 6
         // (the equipped list). Every other flag must stay clear - each one that is set pulls
         // in a whole block we do not build, and the record has no resync point.
         assert_eq!(record[PRESENCE_CHARACTER_STAT], 1, "the stat block is not switched on");
         assert_eq!(record[PRESENCE_EQUIPPED], 1, "the equipped list is not switched on");
+        assert_eq!(record[PRESENCE_INVENTORY_SIZE], 1, "the bag is not sized");
+        let expected = [PRESENCE_CHARACTER_STAT, PRESENCE_EQUIPPED, PRESENCE_INVENTORY_SIZE];
         assert!(
-            record[..PRESENCE_ARRAY_LEN].iter().enumerate().all(|(i, &b)| {
-                i == PRESENCE_CHARACTER_STAT || i == PRESENCE_EQUIPPED || b == 0
-            }),
-            "a presence flag other than the stat block and the equipped list is set"
+            record[..PRESENCE_ARRAY_LEN]
+                .iter()
+                .enumerate()
+                .all(|(i, &b)| expected.contains(&i) || b == 0),
+            "a presence flag other than the stat block, the equipped list and the \
+             inventory sizes is set"
         );
 
         // The six head fields between the array and the gate are counts and flags the
@@ -3650,7 +3788,7 @@ mod tests {
             ..Character::default()
         };
         let record = character_record_for_set_field(&chr, 0);
-        assert_eq!(record.len(), 743, "four equips take the record from 224 bytes to 743");
+        assert_eq!(record.len(), 755, "four equips and a bag take the record to 755");
 
         // The stat block is still where the gate leaves the stream pointer, and still
         // carries the map. Equipment must not have moved it.
@@ -3666,9 +3804,9 @@ mod tests {
         );
 
         // 219..223: the u8 and the three optional-string flags, all zero so no string is
-        // read. Then the gate fires.
+        // read. Then loop #6's six inventory sizes, then the gate fires.
         assert_eq!(&record[block_at..block_at + 4], &[0, 0, 0, 0]);
-        let equipped_at = block_at + 4;
+        let equipped_at = block_at + 4 + INVENTORY_SIZE_BLOCK_LEN;
         assert_eq!(
             &record[equipped_at..record.len() - 1],
             &equipped_block(&chr.equips)[..]

@@ -11,6 +11,25 @@ use crate::session::{hash_token, new_token, NewSession};
 /// How long an issued session stays valid.
 pub const SESSION_TTL_SECS: i64 = 15 * 60;
 
+/// One column per inventory, in the order the client reads them.
+///
+/// Six, not five: the record's sizing loop runs a fixed six turns. What each index is - and
+/// which of the names are measured and which are inferred - is
+/// [`net::opcode::INVENTORY_SLOT_ORDER`]. The sixth has no known name, so it is called what
+/// it is.
+///
+/// Per-column rather than one number for the whole bag because buying slots is per-tab in
+/// this game, and a single column could not express a character who has bought Use slots
+/// and not Etc ones.
+pub const INVENTORY_SLOT_COLUMNS: [&str; net::opcode::INVENTORY_COUNT] = [
+    "slots_equip",
+    "slots_use",
+    "slots_setup",
+    "slots_etc",
+    "slots_cash",
+    "slots_sixth",
+];
+
 /// The id the first character gets. See the note beside the `sqlite_sequence` seed.
 pub const FIRST_CHARACTER_ID: u32 = 200;
 
@@ -175,7 +194,46 @@ impl Store {
             UPDATE sqlite_sequence SET seq = 199 WHERE name = 'characters' AND seq < 199;
             "#,
         )?;
+        Self::add_inventory_slot_columns(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
+    }
+
+    /// The six inventory slot counts, added to `characters` after the fact.
+    ///
+    /// **Not in the `CREATE TABLE` above, and that is on purpose.** `CREATE TABLE IF NOT
+    /// EXISTS` does nothing at all to a table that already exists, so a column added there
+    /// would appear only in databases created from scratch - and the owner's has characters in
+    /// it. Every other repair in this schema is an idempotent `UPDATE` for the same reason.
+    ///
+    /// `ALTER TABLE ADD COLUMN` is not idempotent - it fails with "duplicate column name" -
+    /// so the existing columns are read first. `PRAGMA table_info` rather than the
+    /// `pragma_table_info` table-valued function, because the pragma works on every SQLite
+    /// build and the TVF needs introspection left enabled.
+    ///
+    /// A character created before this existed gets [`net::opcode::DEFAULT_INVENTORY_SLOTS`]
+    /// through the column default, which is the same bag a new one gets.
+    fn add_inventory_slot_columns(conn: &Connection) -> Result<()> {
+        let mut existing = std::collections::HashSet::new();
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(characters)")?;
+            let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            for name in names {
+                existing.insert(name?);
+            }
+        }
+        for column in INVENTORY_SLOT_COLUMNS {
+            if existing.contains(column) {
+                continue;
+            }
+            conn.execute(
+                &format!(
+                    "ALTER TABLE characters ADD COLUMN {column} INTEGER NOT NULL DEFAULT {}",
+                    net::opcode::DEFAULT_INVENTORY_SLOTS
+                ),
+                [],
+            )?;
+        }
+        Ok(())
     }
 
     /// Lock the connection. Poisoning cannot lose data here - the recovered guard is
@@ -432,6 +490,82 @@ mod tests {
 
     fn store() -> Store {
         Store::open_in_memory().unwrap()
+    }
+
+    /// Opening the same file twice must not fail on the slot columns.
+    ///
+    /// `ALTER TABLE ADD COLUMN` is not idempotent - it raises "duplicate column name" - and
+    /// the whole schema is applied on **every** open, not once. An in-memory store cannot
+    /// catch this: it is a fresh database each time, so the second open never happens. This
+    /// test needs a real file for exactly that reason.
+    ///
+    /// It also covers the upgrade the deployed database will actually do: the first open
+    /// creates `characters` WITHOUT the columns, because they are not in the `CREATE TABLE`.
+    #[test]
+    fn reopening_a_database_does_not_re_add_the_slot_columns() {
+        let dir = std::env::temp_dir().join(format!("maplecw-reopen-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("reopen.db");
+        let _ = std::fs::remove_file(&path);
+
+        let first = Store::open(&path).unwrap();
+        let account = first.create_account("wisp", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Wanderer".to_string(),
+            ..Default::default()
+        };
+        first.create_character(account, 0, &chr).unwrap();
+        drop(first);
+
+        // The second open runs the same schema again. If the guard were missing this is
+        // where it would fail, and it would fail for every existing database - the owner's
+        // included - rather than in a test.
+        let second = Store::open(&path).unwrap();
+        let loaded = second.characters_for(account, 0).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(
+            loaded[0].inventory_slots,
+            [net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT]
+        );
+        drop(second);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A character row written before the columns existed still comes back with a bag.
+    ///
+    /// The column default is what does it, and this proves it rather than assuming it: the
+    /// row is inserted by hand into a table the ALTER has not touched yet, which is exactly
+    /// the shape of every character already in the owner's database.
+    #[test]
+    fn a_character_from_before_the_columns_still_gets_the_default_bag() {
+        let s = store();
+        let account = s.create_account("wisp", "correct horse battery").unwrap();
+        {
+            let conn = s.conn();
+            for column in INVENTORY_SLOT_COLUMNS {
+                conn.execute(&format!("ALTER TABLE characters DROP COLUMN {column}"), [])
+                    .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO characters (
+                     account_id, world_id, name, gender, skin, face, hair, level, job,
+                     strength, dexterity, intelligence, luck,
+                     hp, max_hp, mp, max_mp, ap, map_id, created_at
+                 ) VALUES (?1, 0, 'Oldtimer', 0, 0, 20000, 30000, 1, 0,
+                           12, 5, 4, 4, 50, 50, 5, 5, 0, 1, 0)",
+                params![account],
+            )
+            .unwrap();
+            Store::add_inventory_slot_columns(&conn).unwrap();
+        }
+
+        let loaded = s.characters_for(account, 0).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(
+            loaded[0].inventory_slots,
+            [net::opcode::DEFAULT_INVENTORY_SLOTS; net::opcode::INVENTORY_COUNT],
+            "a character made before the bag existed came back with no slots"
+        );
     }
 
     #[test]

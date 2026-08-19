@@ -124,9 +124,11 @@ off   len  what                                             value
 220     1  u8  optional-string flag A                       0
 221     1  u8  optional-string flag B                       0
 222     1  u8  optional-string flag C                       0
+---------- loop #6 runs here, six turns, one u16 each -------
+223    12  six u16 INVENTORY SIZES, gated by presence[7]     24 each
 ---------- entry-6 gate at 0x1403061a0 fires here ----------
-223     1  u8  flagA          0x1403061cc                   0
-224   ...  the equipped list, below
+235     1  u8  flagA          0x1403061cc                   0
+236   ...  the equipped list, below
   +     2  u16 0x0000  terminator of the equipped list
   +     2  u16 0x0000  FUN_14030b6f0's list   (present only when flagA == 0)
   +     6  u16 0x0000 x3  FUN_14030b9e0's three lists
@@ -134,7 +136,13 @@ off   len  what                                             value
   +     1  u8  the final ungated read at 0x140308b3f        0
 ```
 
-With four equips at 125 bytes each the record is **743 bytes** (today it is 224).
+With four equips at 125 bytes each the record is **743 bytes** (the bare region is 224).
+
+> **Since 2026-08-19 it is 755**, because `presence[7]` adds twelve bytes ahead of the
+> equipped list: six `u16` inventory sizes, from a fixed six-turn loop at `0x140305de8`.
+> They are drawn in the table above. The equipped list did not move relative to its own
+> gate - the loop is simply earlier in the same function - but every offset after 222 did.
+> `research/inventory-slots.md`.
 
 ### 3.2 The equipped list
 

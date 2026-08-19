@@ -20,6 +20,8 @@ maplecw-world - one channel of the MapleCW game world
   --db PATH        the SQLite file                (default maplecw.db)
   --world-id N     which world                    (default 0)
   --channel N      which channel                  (default 0)
+  --inventory-slots N  give every inventory N slots instead of the character's own,
+                   so a client run can read the number off the screen (1..=96)
   --set-field-probe   answer the migration hello with the fixed head of a SetField
                       and nothing after it. OFF by default. It cannot put a character
                       in a map; it exists so a run can tell an ignored packet apart
@@ -71,6 +73,21 @@ fn main() -> ExitCode {
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
             "--quests" => value().map(|v| quests_path = PathBuf::from(v)),
+            "--inventory-slots" => value().and_then(|v| {
+                v.parse::<u16>()
+                    .map_err(|e| format!("--inventory-slots {v}: {e}"))
+                    .and_then(|n| {
+                        if n == 0 || n > net::opcode::MAX_INVENTORY_SLOTS {
+                            Err(format!(
+                                "--inventory-slots {n}: must be 1..={}",
+                                net::opcode::MAX_INVENTORY_SLOTS
+                            ))
+                        } else {
+                            config.inventory_slots = Some(n);
+                            Ok(())
+                        }
+                    })
+            }),
             "--mob-limit" => value().and_then(|v| {
                 v.parse()
                     .map(|n: usize| config.mob_limit = Some(n))
