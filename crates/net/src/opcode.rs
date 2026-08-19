@@ -192,8 +192,17 @@ pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
     out.push(channels);
     for i in 0..channels {
         put_str(&mut out, &format!("{name}-{i}"));
-        out.extend_from_slice(&0u32.to_le_bytes()); // capacity
-        out.extend_from_slice(&[0, 0, 0, 0]);
+        out.extend_from_slice(&0u32.to_le_bytes()); // user count
+        // The client reads exactly four u8s here - confirmed in its own decoder
+        // `FUN_141b2fac0`, the login stage's `case 0xb`. These were all zero until
+        // 2026-08-19, which told the client that **every** channel was channel 0 of world 0.
+        // The owner's Change Channel dialog then listed none at all.
+        //
+        // `[world, index, ...]` is [I] - the shape matches this packet family, where the
+        // bytes after the user count are worldId, channelId and an adult-channel flag - but
+        // it is not read out of this binary. What IS read [L] is that there are four of them
+        // and that the loop runs `channels` times.
+        out.extend_from_slice(&[world_id, i, 0, 0]);
     }
     out.extend_from_slice(&0u16.to_le_bytes()); // balloonCount
     out.extend_from_slice(&0u32.to_le_bytes());

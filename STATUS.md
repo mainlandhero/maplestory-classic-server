@@ -149,6 +149,17 @@ The owner, 2026-08-19: *"In the classic world startup, the user is defaulted to 
 server. We're not trying to change that behavior, we're trying to allow the client to swap
 channels from 1 to 2 and vice versa."*
 
+**UPDATE 2026-08-19: the dialog opens but lists no channels**, and opening it sends
+**nothing** - so the list is built entirely from login data, client-side. The server did
+advertise two (`world Scania id 0 with 2 channel(s)`, both addresses logged) and the world
+list went out, so the count reached the wire.
+
+The likely cause, now fixed but **untested**: every channel entry's four trailing `u8`s were
+zero, which told the client each channel was **channel 0 of world 0**. They now carry
+`[world_id, index, 0, 0]`. That the client reads exactly four bytes there is **[L]**, read
+from its own decoder `FUN_141b2fac0` (the login stage's `case 0xb`); that they mean
+world/channel/adult is **[I]** from the packet family's usual shape.
+
 **The startup channel is unchanged.** `world.channel_id` is still `0`, so a login lands
 where it always did. What changed is that `tools/test-server.ps1` now runs **two** channel
 processes by default (`-Channels`, one process per channel, `$ChannelPort + N`) and the login
@@ -170,15 +181,55 @@ to `0x0078`. Answering it will also mean minting a migration for the *target* ch
 > listed and (b) what the client sends when one is picked. Same method that named `0x00D1`
 > and `0x0151` - the client identifies its own request far more cheaply than a static search.
 
-### 3. NPC quests
+### 2b. Newly identified packets - the client keeps naming its own requests
+
+Every one of these came from the owner using a feature and the capture showing what went out.
+That method has now identified four requests and cost no static analysis at all.
+
+| opcode | what | body, as far as it is read |
+|---|---|---|
+| `0x00D1` | transfer field (portal) | fully decoded, `research/transfer-field-request.md` |
+| `0x0151` | **NPC click** | `u8 type, u32 objectId, u32 templateId, i16 x, i16 y, u32` - 17 bytes for type 1, 13 for type 4. The objectId and templateId match values **we** assigned, so those are read, not guessed |
+| `0x00E7` | **chat** | `u32`, then a `u16`-length string, then a `u8` - `...05 00 "Hello" 03` |
+| `0x0182` | **party create** | 68 bytes carrying the length-prefixed string `"TestCharD's Party"` |
+
+None is answered yet. **None has caused a freeze**, so none is a blocking request.
+
+### 3. Mob spawns and mob drops - **priority, set by the owner 2026-08-19**
+
+*"there should be tutorial monsters spawning on East Entrance to Mushroom Town (ID 30), can
+we also put mob spawns and in turn mob drops as a priority please?"*
+
+The foundation is in:
+
+* **The data is generated.** `tools/dump_portals.py` now emits `gm-handbook/mobs.txt` from
+  each field's WZ `life` node where `type == "m"` - **9928 spawns across 289 maps**. Map 30
+  has its six snails (template 1), which is exactly what the owner expects to see.
+* **The opcode is identified.** The mob pool is `0x3C6..0x44E` on the singleton at
+  `[0x143ABFE00]`, dispatcher `FUN_141D30E80`, and **`case 0x3c6` calls `FUN_141d33630`** -
+  mob enter field, the exact analogue of the NPC pool's `0x44F`.
+* Mobs are **server-sent** for the same reason NPCs are: the client's field loader walks
+  `life` only to preload `Mob/%07d.img`. `research/npc-spawn.md` established this for both.
+
+> **Next step:** decompile `FUN_141d33630` and read its body off the **listing**, the way the
+> NPC one was. Do not trust a reference layout for the field *values* - the NPC body was
+> structurally perfect and still produced nothing, because `enabled` and `alpha` were zero.
+
+Drops follow spawns: a mob has to exist before it can drop.
+
+### 4. NPC quests
 
 **Not started, and it depends on goal 2.** One thing already known: the quest record is a
 presence-gated block in the character record, so it will need the same gate work
 `presence[0]` needed - see `research/charrecord-presence-map.md` for the 40-row table.
 
-### 4. Map portal transitions completely working
+### 5. Map portal transitions completely working - **DONE 2026-08-19**
 
-**Mostly working.** Map 1 -> 10 confirmed on screen. The stub that stranded the character on
+Confirmed on screen by the owner: *"When I walk through the portal, the portal does spawn me in
+the right connecting portal. That's fixed."* Both directions work and arrival lands on the
+connecting door rather than the map spawn.
+
+*Original notes below.* **Mostly working.** Map 1 -> 10 confirmed on screen. The stub that stranded the character on
 map 10 is gone: `tools/dump_portals.py` generates **1135 portals across all 426 field
 images** from the client's own `Map.wz`, and the server loads it at startup.
 
@@ -191,7 +242,7 @@ Two things left, both known:
   precondition, measured `0x00` on the first `SetField` and **non-zero on every later one**.
   We still send the long form, which works; switching is an optimisation, not a fix.
 
-### 5. Equipment and consumables actually do something
+### 6. Equipment and consumables actually do something
 
 **The big one, and the only goal with a hard blocker.** Equipping, unequipping and using a
 consumable each need two halves: the item data the client is holding, and the packets that
