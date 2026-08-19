@@ -1,0 +1,28 @@
+06:11:46.551 world 0 channel 0 listening on 127.0.0.1:8485
+06:11:46.551 database C:\MapleCW\maplecw.db
+06:11:46.552 NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending
+06:11:46.552   migration rather than proving who is on the far end. It is single-use.
+06:11:46.552 SET-FIELD PROBE IS ON. The migration hello is answered with a MINIMAL SetField:
+06:11:46.552   characterData=1, every presence flag clear, every count zero - the smallest
+06:11:46.553   body the client reads without faulting (research/charrecord-loops.md).
+06:11:46.553   It does NOT put the character on map 1. With characterData=1 the map comes
+06:11:46.553   from the character record, and the record is all zeros, so the map is 0 -
+06:11:46.553   and 0 is not a map. This tests ACCEPTANCE: does a well-formed SetField stop
+06:11:46.553   the fault at FUN_1402fa540 that the characterData=0 form caused? What the
+06:11:46.553   client does next is what says where the map id belongs.
+06:11:55.727 connection from ch0 #1 127.0.0.1:60219
+06:11:55.727 -> channel greeting, 22 bytes (no A..F, no version block)
+06:11:55.728 cipher: ASYMMETRIC - the client SENDS AES-256-OFB and RECEIVES a byte subtract,
+06:11:55.728   so we decrypt with AES and encrypt by adding iv[0]. Measured 2026-08-19.
+06:11:55.728 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 45 byte body 0264000000000000000000000002000000a1a1af24ea110e9b02fc7359d43af13037220f5c0000000000000000
+06:11:55.728    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session.rs
+06:11:55.730 <- 0x007D CLIENT_MIGRATION_HELLO (character id at offset 8, then MAC and machine id), 99 byte body 0000000000000000cc000000aabbccddeeffdeadbeef00000000764d0000230000000100000092d3332296d33322d5a85dfc1e00000028947d75402c352840462c2c32522899b5857d64704954524757544a5470006400000031720000000000...(+3 bytes, known opcode so capped)
+06:11:55.730    MIGRATION HELLO: character id 204
+06:11:55.730    claimed the migration for character 204 of account 1 (world 0 channel 0)
+06:11:55.730 -> 0x01A0 UNKNOWN SetField, characterData=1, minimal record - every presence flag clear                    and every count zero, which research/charrecord-loops.md measures as                    the smallest body this client reads without faulting. It does NOT put                    the character on map 1: the map comes from the record and the record is                    zeros. It tests acceptance, and what the client does next says where                    the map id goes.
+06:11:55.730    body 80474aa2a12fdd01000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+06:11:56.152 <- 0x0238 UNKNOWN, 0 byte body 
+06:11:56.152    0x0238 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+06:11:56.152 <- 0x024D UNKNOWN, 0 byte body 
+06:11:56.152    0x024D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+06:12:01.678 ch0 #1 127.0.0.1:60219 ended: An existing connection was forcibly closed by the remote host. (os error 10054)

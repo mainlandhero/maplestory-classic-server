@@ -1,0 +1,38 @@
+02:11:48.320 install_once: our code IS running. env=true marker=true -> installing
+02:11:48.371 install: .text settled after 50 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+02:11:48.371 install: base=0x140000000 target=0x1415d60e0
+02:11:48.372 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+02:11:48.372 02:11:48.372session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+ probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+02:11:48.372 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+02:11:48.372 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+02:11:48.372 probe: watching 0x142097f80 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+02:11:48.372 probe: will log [rcx+0x33f4] on every entry to 0x142cfb500
+02:11:48.373 probe: watching 0x142cfb500 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+02:11:48.373 install: hook active
+02:11:48.572 session: object at 0x5b3ad78 is now readable
+02:11:48.573 ***** SESSION obj=0x5b3ad78 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+02:11:49.358     0 opcode=0x0032 elapsed_us=64.7 ret=113583024 flag=0->1 state=0->2
+02:11:49.359 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+02:11:49.375 ***** SOCKET conn=0x5b18dd8 +0x20=0x684 - the client holds a socket *****
+02:11:49.601     1 opcode=0x0032 elapsed_us=50.6 ret=1 flag=1->1 state=2->2
+02:11:50.377 ***** SOCKET 0x684 is now VALID (client still holds it) *****
+02:11:51.380 ***** SESSION obj=0x5b3ad78 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+02:11:52.070 ***** WATCH #1: 0x141b2a280 ENTERED on tid 159276 while dispatching opcode 0x0032 rcx=0x3775edb8 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+02:11:52.071       forced rdx -> 0x0
+02:11:52.125     2 opcode=0x0000 elapsed_us=401.0 ret=1 flag=1->1 state=2->2
+02:11:52.125 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+02:11:52.125     3 opcode=0x000B elapsed_us=260.4 ret=1 flag=1->1 state=2->2
+02:11:52.126     4 opcode=0x000B elapsed_us=152.1 ret=1 flag=1->1 state=2->2
+02:11:52.126 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+02:11:52.126     5 opcode=0x0010 elapsed_us=392.2 ret=1 flag=1->1 state=2->2
+02:11:54.384 ***** SESSION obj=0x5b3ad78 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+02:11:55.728     6 opcode=0x0011 elapsed_us=1488.6 ret=1 flag=1->1 state=2->2
+02:11:55.737 ***** WATCH #1: 0x142097f80 ENTERED on tid 159276 while dispatching opcode 0x01A0 rcx=0x3775edb8 [0x433fd668] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x14e920 r9=0x20 called-from=0x141b26567
+      stack: 0x141b26567<-TEXT 0x143d143b4(?) 0x143d143b4(?) *****
+02:11:55.737 ***** WATCH #1: 0x142cfb500 ENTERED on tid 159276 while dispatching opcode 0x01A0 rcx=0x5b3ad78 [0x434938f0] [rcx+0x33f4]=u8:0x00/u32:0x00000000 rdx=0x2034 (as i32 8244) r8=0x7ffe0008 r9=0x7ffe0010 called-from=0x142097ff8
+      stack: 0x142097ff8<-TEXT *****
+02:11:57.390 ***** SESSION obj=0x5b3ad78 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+02:11:59.153 ***** CLIENT FAULT #1: code=0xc0000005 at 0x140ce89d6 in MapleStory.exe - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. *****
+02:12:00.409 ***** SESSION obj=0x5b3ad78 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****

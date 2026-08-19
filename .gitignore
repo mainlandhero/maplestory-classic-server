@@ -31,6 +31,11 @@ maplecw.db
 maplecw.db-wal
 maplecw.db-shm
 
+# Client exit forensics, rewritten by every run. Was tracked by accident until
+# 2026-08-19, so it showed as pending after every launch. Runs worth keeping are
+# copied into research/fixtures/ under a name that says what they prove.
+client-exit.log
+
 # Login server run log
 login.log
 login.log.err
