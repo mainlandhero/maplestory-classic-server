@@ -62,7 +62,13 @@ param(
     # screen, so this reads the value it compared against. It replaces the watch on
     # 142e9ebd0 (the virtualised routine), which should never be entered now that the
     # reachability check is skipped, and was not entered on the last run.
-    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142ef3e44:hits=8,141b36a10:peek=1c0',
+    # 1415db360:ret and 141b2a280:rdx=0 are mandatory - without them the client dies at
+    # ~37s and the "trouble connecting" dialog blocks the screen. The third slot watches
+    # FUN_141b36f60, the migration handler: it is the difference between "the client
+    # ignored our 0x0011" and "it never got there", and that handler bails silently on
+    # several paths. Swap it back to 141b36a10:peek=1c0 when the create reply is the
+    # subject again.
+    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8',
     # Extra launch arguments, space separated. -NXLDEBUG routes arguments 3 onward into the
     # client config's six-slot session array at +0x90. Whether outbound 0x0073 transmits
     # them is unmeasured and it is what decides whether a launcher token can identify an
