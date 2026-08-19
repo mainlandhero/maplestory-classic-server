@@ -51,13 +51,17 @@ param(
     [string]$DisplayName = 'wisp****@example.com',
     [string]$Database,
     [string]$World = 'Scania',
-    # mode=2 is GONE by default, on purpose. It was there to stop mode 5's auto-login,
-    # but it is applied when opcode 0x0000 is dispatched - our *reply* to the login
-    # request - so it always landed after the auto-login it was meant to prevent. It never
-    # did its job, and it changes session+0x68, which FUN_1415d10e0 reads on **every**
-    # connection including the one the client makes to a channel. Fewer client patches on
-    # the migration path is worth more than a button flow we do not need.
-    [string]$Session = 'create=on',
+    # REVERTED 2026-08-19. Dropping mode=2 was tried and the client crashed with an
+    # access violation at 0x141177f4a right after the second 0x000B, before the login
+    # screen. Server bytes were identical to the known-good run up to the login result, so
+    # the regression is client-side: either this or the 141804870 watch, and both changed
+    # at once. Back to the configuration that reached character select and migrated.
+    #
+    # mode=2 still does not do what it was added for - it is applied on 0x0000 dispatch,
+    # our reply to the login request, so it lands after the auto-login it should prevent -
+    # but it also routes 0x000B to the classic handler, and THAT is load-bearing. Change
+    # one of these at a time, not both.
+    [string]$Session = 'mode=2,create=on',
     # Four watch slots, all used.
     #
     #   1415db360:ret     skip the reachability check - without it the client __fastfails
@@ -75,17 +79,14 @@ param(
     # 1415db360:ret and 141b2a280:rdx=0 are mandatory - without them the client dies at
     # ~37s and the "trouble connecting" dialog blocks the screen.
     #
-    # 141804870 is the one that matters for the migration work: FUN_140cc2350,
-    # FUN_1415e0e30 and FUN_1415e0fb0 - every "The client is outdated" raiser in the
-    # handshake - all funnel into it, so one watch names which gate failed. rdx is the
-    # site id and r8 is the error code:
+    # The 141804870 watch is GONE. It was armed to name which handshake gate raises "the
+    # client is outdated", and it never fired - but the client's own uploaded error log
+    # (0x0090) carries a full call stack that names the site for free, so the watch bought
+    # nothing and was one of two suspects for the crash. `python tools/decode_elog.py`.
     #
-    #   rdx=0x348  G/H gate            rdx=0x2df  L gate
-    #   rdx=0x33b  second connect      rdx=0x327  first connect
-    #   r8=0x22000007 "client is outdated"   r8=0x22000001 "cannot access the game"
-    #
-    # 141b36f60 is the migration handler, so the log still shows the migration happening.
-    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141804870,141b36f60',
+    # 141b36f60 is the migration handler; 142ef3e44 is __report_gsfailure, kept because a
+    # silent 37s death is the failure mode this project spends the most runs on.
+    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8',
     [string]$SessionTokens = '',
     [string]$ClientDir
 )

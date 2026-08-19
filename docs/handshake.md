@@ -1,6 +1,59 @@
 # Connection handshake
 
-Status: **SOLVED.** The greeting below is accepted by the client — no error dialog, and it
+Status: **ACCEPTED, BUT NOT CORRECT.** The greeting below gets the client to the login
+screen and through to character select, with no dialog. It does **not** pass the client's
+own version check.
+
+## CORRECTION 2026-08-19: the client has been reporting INVALID_CLIENT_VERSION all along
+
+The client uploads its own error log as plain text in `0x008F`/`0x0090`, and it says:
+
+```text
+ELog|2|VERSION|100|...|Socket|127.0.0.1:8484|0|121|throw CTerminateException|-|840
+     |HR|570425351|INVALID_CLIENT_VERSION||
+```
+
+`570425351` is `0x22000007` - "The client is outdated". This is thrown on the **login**
+connection, twice, about 7 ms after the client replies to our greeting, on every run. It is
+caught there and the client carries on, which is why nothing ever showed on screen.
+
+**It is not caught on the migrated connection.** That is the dialog that ended the first
+run that entered the world.
+
+`0x0090` carries a full call stack, and reading it bottom-up names the site exactly:
+
+```text
+0x1415D2784   inside FUN_1415d10e0, the handshake      <- the call site
+0x140CC2394   FUN_140cc2350 + 0x44                     <- the raiser
+0x141804958   FUN_141804870 + 0xE8
+0x1418043E7   FUN_141804740
+```
+
+and the bytes immediately before that call site are unambiguous:
+
+```text
+1415d2763  0f b7 44 24 60     movzx eax, word [rsp+0x60]
+1415d2768  83 f8 01           cmp   eax, 1
+1415d276b  74 17              je    past the raise
+1415d276d  41 b8 07 00 00 22  mov   r8d, 0x22000007
+1415d2773  ba 48 03 00 00     mov   edx, 0x348
+1415d277f  e8 cc fb 6e ff     call  FUN_140cc2350
+```
+
+**Site `0x348` is the `G == 1 && H == 1` gate** - the one this document already calls "the
+one that mattered". So the greeting is *not* satisfying it, despite sending `G = 1` and
+`H = 1`, and the most likely reason is that the **gated blocks are not being parsed**: both
+the leading `A..F` block and the version block are read only when `cfg+0x48 != 0`, and if
+that is zero the client reads `G` from where we put `A` - which is `00 00`.
+
+That is a hypothesis, not a measurement. What is measured is the site.
+
+**Cost of finding this: zero client runs.** The packets were arriving all along; the server
+truncated them at 96 bytes. `python tools/decode_elog.py login.log`.
+
+The original text follows and its byte layout is still accurate.
+
+Status was: **SOLVED.** The greeting below is accepted by the client — no error dialog, and it
 proceeds to send packets and wait for a login server. The gate that had hidden everything
 was `G == 1 && H == 1`. See `docs/client-messages.md` for how the client's dialogs are
 decoded back to error codes, and `docs/transport.md` for what happens next on the wire.
