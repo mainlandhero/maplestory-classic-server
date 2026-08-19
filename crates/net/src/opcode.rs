@@ -1196,6 +1196,51 @@ pub const SET_FIELD_HEAD_LEN: usize = 33;
 /// `characterData = 0` - the short branch, which carries no character record.
 pub const SET_FIELD_NO_CHARACTER_DATA: u8 = 0;
 
+/// `characterData = 1` - the branch that carries a character record, and the only one that
+/// can put a character in a map. The short branch **faults this client**, measured.
+pub const SET_FIELD_WITH_CHARACTER_DATA: u8 = 1;
+
+/// The smallest `SetField` this client will read without faulting.
+///
+/// Everything after the 33-byte head is **zero**, and that is not laziness - it is what the
+/// census in `research/charrecord-loops.md` says the minimum is:
+///
+/// ```text
+/// head[33]     characterData = 1, string count = 0
+/// u32 x3       read before the record decoder is called
+/// raw[100]     the record's presence array - all flags clear
+/// u8 u32 u8 u32 u8 u8    the record's 7-field minimum, all zero
+/// u8 = 0       terminator: at 142098435 a zero here jumps past the next seven reads
+/// ...          zeros, so any read past the traced path takes a zero
+/// ```
+///
+/// **Why a zero tail is safe and a short body is not.** The frame carries its own length,
+/// so bytes the client never reads are simply ignored - surplus costs nothing. Running
+/// *out* of body mid-read makes it throw. Every gate on the traced path skips on zero, so
+/// zeros are also the value that keeps it on the shortest path.
+///
+/// **What this cannot do is land the character on map 1.** With `characterData = 1` the
+/// field comes from the record, and the record is all zeros, so the map id is zero - and
+/// `0` is not a map. Which flag in the presence array carries the map is the open question
+/// (`research/charrecord-loops.md` could not prove the index-to-byte mapping). So this
+/// packet tests one thing: whether a well-formed minimal `SetField` is *accepted* instead
+/// of faulting. What the client does next is what says where the map id goes.
+pub fn set_field_minimal(clock: u64, channel: u32) -> Vec<u8> {
+    let mut b = set_field_head(clock, channel, 0);
+    b[SET_FIELD_CHARACTER_DATA_AT] = SET_FIELD_WITH_CHARACTER_DATA;
+    b.resize(SET_FIELD_HEAD_LEN + SET_FIELD_MINIMAL_TAIL, 0);
+    b
+}
+
+/// Offset of the `characterData` byte in the head, read off the disassembly at `142098169`.
+pub const SET_FIELD_CHARACTER_DATA_AT: usize = 30;
+
+/// Zeros after the head: 12 for the three `u32`s, 112 for the record's minimum, 1 for the
+/// terminator, and a margin so a read past the traced path still takes a zero rather than
+/// running the body out.
+pub const SET_FIELD_MINIMAL_TAIL: usize = 12 + 112 + 1 + 384;
+
+
 #[cfg(test)]
 mod set_field_tests {
     use super::*;
@@ -1218,6 +1263,37 @@ mod set_field_tests {
     #[test]
     fn the_tree_reset_byte_is_not_set() {
         assert_eq!(set_field_head(0, 0, 0)[12 + 5], 0);
+    }
+
+    /// The one byte that decides which branch the client takes, and the branch it does
+    /// *not* take faults it. Worth a test of its own.
+    #[test]
+    fn the_minimal_packet_asks_for_the_character_record_branch() {
+        let b = set_field_minimal(1, 0);
+        assert_eq!(b[SET_FIELD_CHARACTER_DATA_AT], SET_FIELD_WITH_CHARACTER_DATA);
+        assert_eq!(b[SET_FIELD_CHARACTER_DATA_AT], 1);
+    }
+
+    /// Everything after the head is zero: the presence array, the record, the terminator.
+    /// A stray non-zero byte would set a flag and pull in a block we have not built.
+    #[test]
+    fn everything_after_the_head_is_zero() {
+        let b = set_field_minimal(0x1122_3344_5566_7788, 3);
+        assert!(
+            b[SET_FIELD_HEAD_LEN..].iter().all(|&x| x == 0),
+            "a non-zero byte after the head sets a presence flag"
+        );
+        assert_eq!(&b[8..12], &3u32.to_le_bytes(), "the head still carries the channel");
+        assert_eq!(&b[31..33], &0u16.to_le_bytes(), "the string count is still zero");
+    }
+
+    /// The body has to outlast the reads the client makes, because running out mid-read
+    /// makes it throw, while surplus is simply never read.
+    #[test]
+    fn the_body_is_longer_than_the_minimum_the_client_reads() {
+        let b = set_field_minimal(0, 0);
+        let traced = SET_FIELD_HEAD_LEN + 12 + 112 + 1;
+        assert!(b.len() > traced, "{} is not longer than the traced path {}", b.len(), traced);
     }
 
     #[test]

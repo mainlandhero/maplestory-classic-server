@@ -50,11 +50,6 @@ impl Reply {
 /// carries.
 pub const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 
-/// Zero bytes appended after the `SetField` head, because the `characterData == 0` branch
-/// keeps reading and a body that runs out mid-read makes the client throw rather than
-/// stop. **This length is a guess** - that branch is unread past its first byte.
-const SET_FIELD_PROBE_PAD: usize = 256;
-
 /// One channel connection.
 pub struct Session {
     store: Arc<Store>,
@@ -93,14 +88,9 @@ impl Session {
         }
         vec![Reply {
             opcode: net::opcode::SET_FIELD,
-            body: net::opcode::set_field_head(
-                self.clock_base(),
-                self.config.channel_id,
-                SET_FIELD_PROBE_PAD,
-            ),
-            what: format!(
-                "SetField HEAD ONLY, characterData=0 - a delivery probe, not a playable                  field. It answers \"did 0x01A0 reach FUN_142097f80\" and nothing else;                  arm a watch there or the run says nothing. See                  research/msexe-stage-setfield.md"
-            ),
+            body: net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
+            what: "SetField, characterData=1, minimal record - every presence flag clear                    and every count zero, which research/charrecord-loops.md measures as                    the smallest body this client reads without faulting. It does NOT put                    the character on map 1: the map comes from the record and the record is                    zeros. It tests acceptance, and what the client does next says where                    the map id goes."
+                .to_string(),
         }]
     }
 

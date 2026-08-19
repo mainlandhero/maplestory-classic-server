@@ -185,9 +185,18 @@ if PROBE:
                   116444736000000000 < clock < 160000000000000000, "%d" % clock)
             check("offset 8 is the channel id", struct.unpack_from("<I", body, 8)[0] == 0)
             check("offset 17, the tree-reset byte, is 0", body[17] == 0)
-            check("offset 30, characterData, is 0", body[30] == 0, "%d" % body[30])
+            check("offset 30, characterData, is 1 - the record branch; the other one "
+                  "faults this client", body[30] == 1, "%d" % body[30])
             check("offset 31, the string count, is 0",
                   struct.unpack_from("<H", body, 31)[0] == 0)
+            # A stray non-zero byte after the head sets a presence flag and pulls in a
+            # block nobody has built. This is the check that would catch that.
+            tail = body[HEAD:]
+            nz = [i for i, b in enumerate(tail) if b]
+            check("everything after the 33-byte head is zero", not nz,
+                  "non-zero at head+%s" % nz[:6])
+            check("the body outlasts the traced read path (33+12+112+1)",
+                  len(body) > HEAD + 12 + 112 + 1, "%d bytes" % len(body))
 elif replies:
     check("the probe is off, so nothing should come back", False,
           "%d unexpected replies" % len(replies))

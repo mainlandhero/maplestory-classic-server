@@ -179,12 +179,14 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     log("NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending");
     log("  migration rather than proving who is on the far end. It is single-use.");
     if config.set_field_probe {
-        log("SET-FIELD PROBE IS ON. The migration hello is answered with the 33-byte fixed");
-        log("  head of a SetField, characterData=0, and a 256-byte zero pad whose length is");
-        log("  a GUESS. This CANNOT put a character in a map - that needs the character");
-        log("  record, an 18525-byte decoder nobody has read. It answers one question:");
-        log("  did 0x01A0 reach FUN_142097f80? Both of that handler's early returns are");
-        log("  silent, so WITHOUT a watch armed on 142097f80 this run measures nothing.");
+        log("SET-FIELD PROBE IS ON. The migration hello is answered with a MINIMAL SetField:");
+        log("  characterData=1, every presence flag clear, every count zero - the smallest");
+        log("  body the client reads without faulting (research/charrecord-loops.md).");
+        log("  It does NOT put the character on map 1. With characterData=1 the map comes");
+        log("  from the character record, and the record is all zeros, so the map is 0 -");
+        log("  and 0 is not a map. This tests ACCEPTANCE: does a well-formed SetField stop");
+        log("  the fault at FUN_1402fa540 that the characterData=0 form caused? What the");
+        log("  client does next is what says where the map id belongs.");
     } else {
         log("Packets are logged and NOT ANSWERED. The stage is no longer undecoded:");
         log("  SetField is inbound 0x01A0, confirmed on a live client, and its 33-byte");
