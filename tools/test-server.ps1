@@ -119,6 +119,13 @@ param(
     # silent, so without the watches the run cannot tell an ignored packet from one that
     # never arrived, which is the whole reason for spending the launch.
     [switch]$SetFieldProbe,
+    # -Mobs sends monsters. OFF by default because the body killed the client on
+    # 2026-08-19 (0xC0000005 at 0x141c810b0, mob+0x2b8 null) on the FIRST 0x03C6.
+    # -MobLimit caps how many go out per field: the fault could be the body being wrong or
+    # thirty objects arriving at once, and -MobLimit 1 tells those apart in one run.
+    # EXPECT THIS TO END THE SESSION until the body is fixed - test it LAST.
+    [switch]$Mobs,
+    [int]$MobLimit = 0,
     [string]$ClientDir
 )
 
@@ -321,6 +328,8 @@ foreach ($ch in 0..($Channels - 1)) {
     Remove-Item $chLog -Force -ErrorAction SilentlyContinue
     $chArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$chPort", '--channel', "$ch")
     if ($SetFieldProbe) { $chArgs += '--set-field-probe' }
+    if ($Mobs) { $chArgs += '--mobs' }
+    if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
     $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
         -WindowStyle Hidden `
         -ArgumentList $chArgs `
@@ -367,6 +376,15 @@ if ($SetFieldProbe) {
     Write-Host "      read Weapon Def. +6 and 7 enhancements, and no item should say"
     Write-Host "      'Cannot be Traded when equipped'. Items are 129 bytes, record 759."
     Write-Host "    - BOTH NPC-click packets are answered now, 0x00F2 as well as 0x0151."
+    if ($Mobs) {
+        Write-Host "    - MOBS ARE ON, and they killed the client last time. Do this LAST."
+        if ($MobLimit -gt 0) {
+            Write-Host "      Capped at $MobLimit per field: a crash with 1 means the BODY is"
+            Write-Host "      wrong, and no crash with 1 means it was the COUNT."
+        } else {
+            Write-Host "      NO CAP. Consider -MobLimit 1 - it splits body from count."
+        }
+    }
     Write-Host "    - MOBS ARE OFF: the 137-byte body faulted the client on the last run."
     Write-Host "      0xC0000005 at 0x141c810b0 - mob+0x2b8 null - on the FIRST 0x03C6,"
     Write-Host "      after both NPCs had dispatched cleanly. --mobs sends them anyway."
