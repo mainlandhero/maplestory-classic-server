@@ -5,6 +5,7 @@ A dispatcher mostly does not read the packet - it switches on the opcode and for
 `CInPacket*` to a handler. The handlers do read it, through five known primitives:
 
     FUN_1406e8ae0  u8      FUN_1406e8b80  u16     FUN_1406e8c20  u32
+    FUN_1406e8f00  u32 (a thunk to the above)     FUN_1406e8f10  u64
     FUN_1406e9050  string  FUN_1406e9170  n raw bytes
 
 So: a **handler** is any function that calls one of those. A **dispatcher** is a function
@@ -31,10 +32,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rtti import load_pe  # noqa: E402
 
+# **Seven entries, not five.** A census of every `0x1406e8xxx`/`0x1406e9xxx` call target in
+# two decoded handlers turned up two more after the first five had been used for weeks:
+# `0x1406e8f10` reads a **u64**, and `0x1406e8f00` is a bare `JMP 0x1406e8c20` - a thunk to
+# the u32 reader that a grep for the target address cannot see. Missing them made a field
+# census short by nine reads in one function and produced a confident, wrong story about the
+# decompiler duplicating call sites. Enumerate the call targets before trusting a list.
 DECODERS = {
     0x1406E8AE0: "u8",
     0x1406E8B80: "u16",
     0x1406E8C20: "u32",
+    0x1406E8F00: "u32 (thunk to 0x1406e8c20)",
+    0x1406E8F10: "u64",
     0x1406E9050: "str",
     0x1406E9170: "raw",
 }

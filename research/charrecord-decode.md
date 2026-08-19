@@ -9,22 +9,44 @@ Companion files, written in parallel and each owned by a different pass:
 (candidate names from the reference server - **candidates only**, see the control score in
 `research/msexe-gamestage-opcodes.md`).
 
-## The instrument, before anything read with it
+## The instrument, before anything read with it - and it was wrong twice
 
-The decompiled body reports **122** packet reads. The disassembly reports **117**. That gap
-had to be resolved before either could be used, because five unaccounted reads is five
-fields in the wrong place.
+The decompiled body reported **122** packet reads and the disassembly **117**. Resolving
+that gap mattered, because five unaccounted reads is five fields in the wrong place.
 
-* The listing covers `0x140304b20..0x14030937e` with **zero discontinuities** and no bad
-  instruction data - so it is complete, and Themida has not hidden anything here.
-* Per decoder, the two agree exactly on `u8` (16), `u16` (34), `string` (7) and `raw` (11).
-  **The entire discrepancy is `u32`: 54 decompiled against 49 in the listing.**
-* There are **no tail jumps** to a decoder, so the listing is not missing call-shaped edges.
+**First conclusion, and it was wrong.** The listing covers `0x140304b20..0x14030937e` with
+zero discontinuities and no bad instruction data, and the two agreed exactly on `u8`, `u16`,
+`string` and `raw` - the whole gap was `u32`, 54 against 49. So the decompiler had
+duplicated five call sites while reconstructing control flow, and the listing was
+authoritative. That story was tidy, plausible, and false.
 
-So the decompiler emitted five `FUN_1406e8c20` calls more than once - the usual artifact of
-reconstructing control flow that reaches one call site from several predecessors.
-**The listing is authoritative: 117 reads.** Take the field *order* from the listing and the
-field *meaning* from the decompilation, which is the same split that worked for `SetField`.
+**What was actually happening.** Enumerating *every* `0x1406e8xxx`/`0x1406e9xxx` call target
+in the function - rather than grepping for the five addresses already believed to be the
+whole set - turned up two more:
+
+| | |
+|---|---|
+| `0x1406e8f00` | a bare `JMP 0x1406e8c20` - a **thunk** to the u32 reader. Called 5 times. |
+| `0x1406e8f10` | reads a **u64**: checks 8 bytes remain, reads a qword, `pos += 8`. Called 4 times. |
+
+The five thunked calls are exactly the five the decompiler "duplicated" - it resolves the
+thunk and reports the target, so **its 54 was right and the listing grep's 49 was the
+error.** And both counts were short by the four `u64` reads, which neither instrument was
+asked about.
+
+**The true total is 126:**
+
+| u8 | u16 | u32 | string | raw | u64 |
+|---|---|---|---|---|---|
+| 16 | 34 | 54 (49 direct + 5 thunked) | 7 | 11 | 4 |
+
+The decompilation and the listing now agree exactly, which is the first time either has been
+worth trusting on this function.
+
+**The lesson, and it is the same one twice in a day**: an instrument that searches for a
+known list finds only what is on the list. The `BT`-scan missed a byte-array mask because it
+looked for the wrong *shape*; this missed nine reads because it looked for the wrong *set*.
+Both returned a clean, confident number. **Enumerate before you filter.**
 
 ## Signature
 
@@ -105,7 +127,8 @@ The 11 `FUN_1406e9170` calls, with the constant that reaches `R8D`:
 | `140304cc6`, `140304d1f`, `140304e2d`, `140304ff5`, `140306c1c` | 8 each |
 | `140306ce2`, `140306cf7`, `140306dcf`, `140307042`, `1403075df` | 8 each |
 
-**100 + 10x8 = 180 bytes of raw fields, all fixed.** Ten 8-byte reads in a MapleStory record
+**100 + 10x8 = 180 bytes of raw fields, all fixed** - plus 4 x 8 = 32 bytes of `u64`,
+which the first census of this function missed entirely. Ten 8-byte reads in a MapleStory record
 are almost certainly `FILETIME` expiry stamps, which is a guess about *meaning*; that they
 are 8 bytes each and not variable is read from the listing.
 

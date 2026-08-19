@@ -423,6 +423,8 @@ Read off the primitives themselves rather than inferred from use:
 | `FUN_1406e8ae0` | **u8** (`pos += 1`) |
 | `FUN_1406e8b80` | **u16** (`pos += 2`) |
 | `FUN_1406e8c20` | **u32** (`pos += 4`) |
+| `FUN_1406e8f00` | **u32** - a bare `JMP 0x1406e8c20`, invisible to a search for the target |
+| `FUN_1406e8f10` | **u64** (`pos += 8`) |
 | `FUN_1406e9050` | **string**: `u16 len`, then `len` bytes (`pos += len + 2`) |
 | `FUN_1406e9170(p, dst, n)` | **n raw bytes** |
 | `FUN_1406e9b20` | **not a reader** — `mov eax,[rcx+0x24]; ret`, the current position |
