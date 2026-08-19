@@ -213,7 +213,9 @@ Entering the world sends three packets nothing answers yet. First read, from one
 0x00BC  12B  09040000 09040000 09040000  - 1033 three times
 ```
 
-`0x0078` carrying the character id makes it the select-character request, and its reply the
+Confirmed twice, with different characters: id 203 on one run and **204** (`cc000000`,
+`TestCharD`) on the next. `0x0078` carrying the character id makes it the
+select-character request, and its reply the
 migration packet - the `0x0011` candidate, which is Stage 4 and where an *advertise* address
 would first be needed (`docs/deployment.md`). The client sat on "Connecting..." because
 nothing answered, which is expected with no channel server.
@@ -236,6 +238,17 @@ u8   result        0 = deleted
 
 **This corrects an earlier note** that called the body "a single `u32` character id". The
 handler reads the id and *then* a byte, and the client's readers throw on underrun.
+
+**CONFIRMED ON SCREEN 2026-08-18, first try.** The owner deleted `TestCharB` and the client
+removed it; the request was `0x008B` with body `ca000000` (202), answered with
+`0x0016 deleted "TestCharB" (id 202)`. Reading the handler beat capturing it - no launch was
+spent finding the opcode, which is the payoff for checking
+`research/msexe-send-opcodes.txt` before guessing.
+
+**Ids are not reused.** The freed 202 was not handed to the next character: `TestCharD` got
+**204**. That falls out of `AUTOINCREMENT` and is worth keeping - the client has already
+shown it cares about character ids, and reissuing one that a client might still have in a
+list is the kind of thing that would fail confusingly.
 
 ### Two traps, both now guarded by tests
 
