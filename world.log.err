@@ -1,1 +1,0 @@
-maplecw-world: mobs are loaded but NOT SENT. The body faults this client -              0xC0000005 at 0x141c810b0, mob+0x2b8 null - measured 2026-08-19. Pass --mobs              to send them anyway, and only when the mob body is the variant under test.

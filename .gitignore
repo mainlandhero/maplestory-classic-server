@@ -42,6 +42,7 @@ login.log.err
 world.log
 # One log per channel: channel 0 keeps world.log, the rest are world-ch<N>.log.
 world-ch*.log
+world-ch*.log.err
 world.log.err
 
 # Name tables extracted from String.wz by tools/dump_names.py. Game data, not project
