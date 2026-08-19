@@ -275,6 +275,12 @@ if ($LASTEXITCODE -ne 0) { throw 'setup-client.ps1 failed - the client would run
 Stop-All
 Start-Sleep -Milliseconds 300
 
+# Built on its own line rather than inline in the -ArgumentList, and that is not style:
+# see the note at the '--channels' argument below. A syntax check does NOT catch the inline
+# form - the script parses fine and the server gets one mangled argument - so this was found
+# only when the owner ran it. Verify a change to this block by STARTING the server, not by parsing.
+$channelList = (0..($Channels - 1) | ForEach-Object { "127.0.0.1:$($ChannelPort + $_)" }) -join ','
+
 Remove-Item $serverLog -Force -ErrorAction SilentlyContinue
 $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
     -WindowStyle Hidden `
@@ -283,7 +289,11 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
         # One address per channel. The client connects to this when it enters the world,
         # so it must be reachable from the *client* machine - loopback here, a LAN address
         # once the server moves to the homelab.
-        '--channels', (0..($Channels - 1) | ForEach-Object { "127.0.0.1:$($ChannelPort + $_)" }) -join ',',
+        # The -join MUST be fully parenthesised. PowerShell's -join binds looser than the
+        # commas of an array literal, so `(...) -join ',', '--account', $Account` makes the
+        # rest of the argument list part of the join's right operand and collapses the whole
+        # thing into one string - the server then sees a single argument "--db,...".
+        '--channels', $channelList,
         '--account', $Account, '--display-name', "`"$DisplayName`"", '--world', $World
     ) `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
