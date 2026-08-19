@@ -429,6 +429,79 @@ pub fn script_force_close(result: u8) -> Vec<u8> {
 ///
 /// **There is also an unrelated inbound `case 0x151`** in the channel dispatcher
 /// (`FUN_142da9d00`). Directions are separate namespaces; do not conflate them.
+
+/// Message type **0x10**: the quest yes/no prompt, `BtQYes` / `BtQNo`.
+///
+/// **This is what an "Accept" button actually needs, and sending a Say instead is why
+/// The owner's Accept did nothing on 2026-08-19.** A type-0 Say with `next = 0` draws `BtOK` and
+/// `BtClose` - not Accept and Decline - so pressing it returned the same `action = 1` an OK
+/// does, and the server had nothing to branch on. **[L]**, `research/script-reply.md`.
+///
+/// Type **3** is the plain `BtYes`/`BtNo` pair; `0x10` is the quest-flavoured one, and with
+/// `flags & 0x10` it draws `BtQStart`/`BtQAfter` instead.
+pub const SCRIPT_TYPE_QUEST_YES_NO: u8 = 0x10;
+
+/// Message type 3: the plain `BtYes` / `BtNo` prompt.
+pub const SCRIPT_TYPE_YES_NO: u8 = 0x03;
+
+/// A yes/no prompt. Body after the shared head is just `[u32 speaker if flags & 4], str`.
+///
+/// **On this box the answer byte is unambiguous** - `1` Yes, `0` No, `0xFF` closed - which
+/// is exactly what a Say cannot tell you, because the client rewrites `BtOK` to the `Next`
+/// result at `142a59fb5` and both come back as `1`.
+pub fn npc_ask(speaker_template: u32, text: &str, quest_flavoured: bool) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(0); //                                    handle
+    w.u8(0); //                                     head field 2
+    w.u32(speaker_template);
+    w.u8(0); //                                     hasOverride
+    w.u8(if quest_flavoured { SCRIPT_TYPE_QUEST_YES_NO } else { SCRIPT_TYPE_YES_NO });
+    w.u16(0); //                                    flags: no body speaker, no BtQStart pair
+    w.u8(0); //                                     head field 8
+    w.str(text);
+    w.into_vec()
+}
+
+/// What the user pressed, from a [`CLIENT_SCRIPT_REPLY`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptReply {
+    pub handle: u32,
+    /// The **echoed message type** - the same literal the server put in the head. This is
+    /// the reliable "which box is this answering" discriminator.
+    ///
+    /// The first reading of this packet put it after the second `u32`; the capture could not
+    /// tell, because all nine leading bytes were zero either way. The builder can. **[L]**
+    pub message_type: u8,
+    pub echo: u32,
+    /// The text of the box, echoed back byte for byte. Confirmed at two lengths in one
+    /// capture: 16 bytes for an NPC's `d0` line, 162 for a quest opening.
+    pub text: String,
+    /// **Signed.** On a Say: `1` = Next *or* OK (the client collapses them), `0` = Prev,
+    /// `-1` = END CHAT. On a yes/no box: `1` = Yes, `0` = No, `-1` = closed.
+    pub action: i8,
+}
+
+/// The client's answer to a script message.
+pub const CLIENT_SCRIPT_REPLY: u16 = 0x00F3;
+
+/// Decode a [`CLIENT_SCRIPT_REPLY`] body (no opcode).
+pub fn parse_script_reply(body: &[u8]) -> Option<ScriptReply> {
+    let mut r = PacketReader::new(body);
+    let handle = r.u32().ok()?;
+    let message_type = r.u8().ok()?;
+    let echo = r.u32().ok()?;
+    let text = r.str().ok()?;
+    let action = r.u8().ok()? as i8;
+    Some(ScriptReply { handle, message_type, echo, text, action })
+}
+
+/// The answer byte for Yes, and for Next on a Say.
+pub const SCRIPT_ACTION_YES: i8 = 1;
+/// No on a yes/no box; Prev on a Say.
+pub const SCRIPT_ACTION_NO: i8 = 0;
+/// The user closed the box. **Send nothing more** - the conversation is over.
+pub const SCRIPT_ACTION_CLOSED: i8 = -1;
+
 pub const CLIENT_QUEST_REQUEST: u16 = 0x0151;
 
 /// The plain "I clicked this NPC" request. **Not** [`CLIENT_QUEST_REQUEST`].

@@ -136,11 +136,37 @@ pub struct Session {
     config: Arc<Config>,
     /// The migration this connection claimed, once it has claimed one.
     claimed: Option<ClaimedMigration>,
+    /// The NPC conversation in progress, if any.
+    conversation: Option<Conversation>,
+}
+
+/// Where a conversation with an NPC currently is.
+///
+/// **This exists because `0x00F3` carries no line index.** The client answers a script box
+/// with the box's own text echoed back and a single action byte, so which line the user was
+/// on, and whether the box even had a Next button, are the server's to remember. Getting
+/// that wrong is not a crash - `0x00F3` is not one of the latch setters - it is a
+/// conversation that stops or repeats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Conversation {
+    npc_template: u32,
+    /// `None` for a plain talk (`0x00F2`), which is a one-line conversation.
+    quest_id: Option<u32>,
+    /// The `Say` path being walked - `"0"`, then `"0.yes"` or `"0.no"` after a branch.
+    path: String,
+    /// The index of the line last sent.
+    sent: usize,
+    /// Whether the last box was a yes/no prompt. On those the answer byte is unambiguous.
+    awaiting_yes_no: bool,
+    /// Whether the last box was sent with `next` set. **The client collapses OK and Next
+    /// into the same answer**, so this is the only thing that separates "advance" from
+    /// "the user dismissed the last box".
+    sent_with_next: bool,
 }
 
 impl Session {
     pub fn new(store: Arc<Store>, config: Arc<Config>) -> Self {
-        Session { store, config, claimed: None }
+        Session { store, config, claimed: None, conversation: None }
     }
 
     /// What the channel sends the moment the client connects: **nothing**.
@@ -185,6 +211,9 @@ impl Session {
             net::opcode::CLIENT_CHAT => return self.on_chat(body.get(2..).unwrap_or(&[])),
             net::script::CLIENT_QUEST_REQUEST => {
                 return self.on_quest_request(body.get(2..).unwrap_or(&[]))
+            }
+            net::script::CLIENT_SCRIPT_REPLY => {
+                return self.on_script_reply(body.get(2..).unwrap_or(&[]))
             }
             net::script::CLIENT_NPC_CLICK => {
                 return self.on_npc_click(body.get(2..).unwrap_or(&[]))
@@ -337,28 +366,29 @@ impl Session {
         let Some(req) = net::script::parse_quest_request(body) else {
             return Vec::new();
         };
-        // The quest's own opening line, from Quest.wz. The quest itself still does not
-        // advance - no quest-result packet has been found and there is no quest state at
-        // all - so the same line comes back every time. What changed is that it is the
-        // game's line rather than a notice about the server.
-        let text = self.quest_line(req.quest_id, req.action, req.npc_template_id);
-        vec![Reply {
-            opcode: net::script::SCRIPT_MESSAGE,
-            body: net::script::npc_say(req.npc_template_id, &text, false, false),
-            what: format!(
-                "ScriptMessage Say from NPC template {} for quest {} \"{}\" (action {}) - \
-                 line 1 only, because paging needs 0x00F3 and that is undecoded. No \
-                 quest-result packet is known, so no state advances.",
-                req.npc_template_id,
-                req.quest_id,
-                self.config
-                    .quests
-                    .get(&req.quest_id)
-                    .map(|q| q.name.as_str())
-                    .unwrap_or("unknown quest"),
-                req.action
-            ),
-        }]
+        // Which half of the quest's Say tree the action selects. With no quest state, a
+        // start and an opening script both land on "0".
+        let state = match req.action {
+            net::script::QUEST_ACTION_COMPLETE | net::script::QUEST_ACTION_COMPLETE_SCRIPT => "1",
+            _ => "0",
+        };
+        let quest = self.config.quests.get(&req.quest_id);
+        // An unknown quest falls back to the NPC's own line - a one-line conversation
+        // rather than silence.
+        let path = match quest {
+            Some(q) if q.say.contains_key(state) => Some(state.to_string()),
+            Some(q) if q.say.contains_key("0") => Some("0".to_string()),
+            _ => None,
+        };
+        self.conversation = Some(Conversation {
+            npc_template: req.npc_template_id,
+            quest_id: path.as_ref().map(|_| req.quest_id),
+            path: path.unwrap_or_default(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        self.say_line(0)
     }
 
     /// Make an NPC with **no quest** speak. This is the other half of goal 2.
@@ -395,49 +425,126 @@ impl Session {
             return Vec::new();
         };
 
-        let text = self.npc_line(template);
-        vec![Reply {
-            opcode: net::script::SCRIPT_MESSAGE,
-            body: net::script::npc_say(template, &text, false, false),
-            what: format!(
-                "ScriptMessage Say from NPC template {} (object id {}, the id we assigned on \
-                 map {}) - the NO-QUEST click path, 0x00F2. Text on screen only.",
-                template, click.npc_object_id, chr.map_id
-            ),
-        }]
+        // A quest-less NPC is a one-line conversation: its own `d0`. Going through the
+        // same state machine means its OK is handled the way a quest's is, rather than
+        // leaving a stale conversation behind for the next 0x00F3 to walk into.
+        let _ = (click.npc_object_id, chr.map_id);
+        self.conversation = Some(Conversation {
+            npc_template: template,
+            quest_id: None,
+            path: String::new(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        self.say_line(0)
     }
 
-    /// The line a quest conversation opens with.
+    /// Send the box for `index` of the conversation's current path, and remember what we
+    /// sent so the answer can be interpreted.
     ///
-    /// `Quest.wz` gives every quest a `Say` tree: `"0"` is the opening conversation and
-    /// `"1"` the completion one, each a list of numbered lines, with `yes` / `no` / `stop` /
-    /// `lost` / `ask` branches beside them. The `0x0151` request carries the quest id and an
-    /// action, and the action is what picks the state.
-    ///
-    /// **Only the first line is sent, and that is deliberate rather than unfinished.**
-    /// Paging needs the `next` flag on the Say body, and a box with `next` set asks the
-    /// client to send a `0x00F3` when the user presses it. `0x00F3`'s body is not decoded,
-    /// so the server could not answer - and an unanswered request does not merely do
-    /// nothing here. `research/npc-click.md` found `player->[0x2330]`, a
-    /// one-request-outstanding latch set by 37 functions and cleared only by inbound
-    /// handlers: leaving one outstanding silently kills every later request in its class,
-    /// with no dialog and nothing in any log. One line that ends cleanly is worth more than
-    /// four that wedge the client.
-    ///
-    /// Falls back to the NPC's own `d0` line, and then to a notice, so a quest the table
-    /// does not have still produces something rather than silence.
-    fn quest_line(&self, quest_id: u32, action: u8, npc_template: u32) -> String {
-        let state = match action {
-            net::script::QUEST_ACTION_COMPLETE | net::script::QUEST_ACTION_COMPLETE_SCRIPT => "1",
-            _ => "0",
+    /// **The last line of a branchable conversation goes out as a yes/no prompt, not a Say**,
+    /// and that is the whole reason the owner's Accept did nothing: a type-0 Say with `next = 0`
+    /// draws `BtOK` and `BtClose`, so pressing it returns the same `action = 1` an OK does
+    /// and the server has nothing to branch on. A type `0x10` box draws `BtQYes`/`BtQNo` and
+    /// answers `1` for Yes and `0` for No, unambiguously. **[L]**, `research/script-reply.md`.
+    fn say_line(&mut self, index: usize) -> Vec<Reply> {
+        let Some(convo) = self.conversation.clone() else { return Vec::new() };
+        let Some(lines) = self.say_lines(&convo) else {
+            self.conversation = None;
+            return Vec::new();
         };
-        self.config
-            .quests
-            .get(&quest_id)
-            .and_then(|q| q.say.get(state).or_else(|| q.say.get("0")))
-            .and_then(|lines| lines.first())
-            .cloned()
-            .unwrap_or_else(|| self.npc_line(npc_template))
+        let Some(text) = lines.get(index).cloned() else {
+            self.conversation = None;
+            return Vec::new();
+        };
+
+        let last = index + 1 >= lines.len();
+        let branches = last && convo.quest_id.is_some() && self.has_branch(&convo, "yes");
+        let has_next = !last;
+
+        let body = if branches {
+            net::script::npc_ask(convo.npc_template, &text, true)
+        } else {
+            net::script::npc_say(convo.npc_template, &text, false, has_next)
+        };
+        let what = format!(
+            "ScriptMessage {} from NPC template {}{}, line {} of {} on path \"{}\"",
+            if branches { "yes/no prompt" } else { "Say" },
+            convo.npc_template,
+            convo.quest_id.map(|q| format!(" for quest {q}")).unwrap_or_default(),
+            index + 1,
+            lines.len(),
+            convo.path,
+        );
+
+        if let Some(c) = self.conversation.as_mut() {
+            c.sent = index;
+            c.awaiting_yes_no = branches;
+            c.sent_with_next = has_next;
+        }
+        vec![Reply { opcode: net::script::SCRIPT_MESSAGE, body, what }]
+    }
+
+    /// The lines of the path the conversation is currently on.
+    fn say_lines(&self, convo: &Conversation) -> Option<Vec<String>> {
+        match convo.quest_id {
+            Some(q) => self.config.quests.get(&q)?.say.get(&convo.path).cloned(),
+            // No quest: the NPC's own d0 line, as a one-line conversation.
+            None => Some(vec![self.npc_line(convo.npc_template)]),
+        }
+    }
+
+    /// Does the current path have a `yes` / `no` branch under it?
+    fn has_branch(&self, convo: &Conversation, branch: &str) -> bool {
+        let Some(q) = convo.quest_id.and_then(|q| self.config.quests.get(&q)) else {
+            return false;
+        };
+        q.say.contains_key(&format!("{}.{}", convo.path, branch))
+    }
+
+    /// The client's answer to a script box.
+    ///
+    /// **An unanswered one costs a dead conversation and nothing else** - `0x00F3` is *not*
+    /// one of the 37 functions that set `player->[0x2330]`, the one-request-outstanding
+    /// latch, and the dialog is destroyed and the script-manager latch released before the
+    /// packet is even built. So ending a conversation by sending nothing is safe, which is
+    /// what this does whenever there is nothing left to say. **[L]**
+    ///
+    /// **The Say answer cannot distinguish OK from Next** - the client rewrites `BtOK` to
+    /// the Next result at `142a59fb5`, so both arrive as `1`. The server therefore has to
+    /// remember whether the box it sent had `next` set, and it does: `sent_with_next`. That
+    /// is inference from our own state rather than something read off the wire, and it is
+    /// worth knowing which of the two it is.
+    fn on_script_reply(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };
+        let Some(convo) = self.conversation.clone() else { return Vec::new() };
+
+        if reply.action == net::script::SCRIPT_ACTION_CLOSED {
+            self.conversation = None;
+            return Vec::new();
+        }
+
+        if convo.awaiting_yes_no {
+            let branch = if reply.action == net::script::SCRIPT_ACTION_YES { "yes" } else { "no" };
+            if !self.has_branch(&convo, branch) {
+                self.conversation = None;
+                return Vec::new();
+            }
+            if let Some(c) = self.conversation.as_mut() {
+                c.path = format!("{}.{}", convo.path, branch);
+                c.sent = 0;
+            }
+            // The quest itself still does not advance - there is no quest-result packet -
+            // so this shows the branch's text and nothing more.
+            return self.say_line(0);
+        }
+
+        if !convo.sent_with_next {
+            self.conversation = None; // that was an OK on the last box
+            return Vec::new();
+        }
+        self.say_line(convo.sent + 1)
     }
 
     /// What an NPC should actually say when talked to.
@@ -878,6 +985,119 @@ mod tests {
         for n in 0..body.len() {
             let _ = s.on_npc_click(&body[..n]);
         }
+    }
+
+    /// Quest 1000's whole opening conversation, walked the way the client walks it.
+    ///
+    /// Four lines, then a yes/no prompt, then the branch. The thing this pins hardest is
+    /// that the **last** box is a yes/no and not a Say: a type-0 Say with `next = 0` draws
+    /// `BtOK`, whose answer the client rewrites to the same `1` a Next produces - which is
+    /// exactly why the owner's "Accept" did nothing on 2026-08-19.
+    #[test]
+    fn a_quest_conversation_pages_then_branches() {
+        let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+        if !path.exists() {
+            return; // generated data, gitignored
+        }
+        let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+        let opening = config.quests[&1000].say["0"].clone();
+        assert_eq!(opening.len(), 4);
+        assert!(config.quests[&1000].say.contains_key("0.yes"));
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+
+        // The real click the owner's client sent for Heena: action 1, quest 1000, template 1.
+        let click = hex("01e8030000010000000c046d0100000000");
+        let mut replies = s.on_quest_request(&click);
+
+        // Walk the three Next presses. Each box must be a Say with `next` set, and each
+        // must carry the NEXT line - a conversation that repeats a line is the failure this
+        // catches.
+        for (i, want) in opening.iter().enumerate() {
+            assert_eq!(replies.len(), 1, "line {i}");
+            let b = replies[0].body.clone();
+            let (message_type, text, after) = script_text(&b);
+            assert_eq!(&text, want, "line {i} of the opening");
+
+            let last = i + 1 == opening.len();
+            assert_eq!(
+                message_type,
+                if last { net::script::SCRIPT_TYPE_QUEST_YES_NO } else { net::script::SCRIPT_TYPE_SAY },
+                "line {i}: the last box must be a yes/no prompt, the rest Says"
+            );
+            if !last {
+                // prev, next - a Say carries them; the yes/no box does not.
+                assert_eq!(b[after], 0, "prev");
+                assert_eq!(b[after + 1], 1, "next must be set on line {i}");
+            }
+            replies = s.on_script_reply(&reply_bytes(&text, message_type, 1));
+        }
+
+        // Yes lands on the yes branch, and its text is the WZ's.
+        assert_eq!(replies.len(), 1, "pressing Yes must produce the yes branch");
+        let b = replies[0].body.clone();
+        let (message_type, text, _) = script_text(&b);
+        assert!(text.contains("hill to the east"), "the yes branch's first line: {text}");
+
+        // And OK on that last box ends the conversation rather than looping.
+        let done = s.on_script_reply(&reply_bytes(&text, message_type, 1));
+        assert!(done.is_empty(), "the conversation must end, not repeat");
+    }
+
+    /// A 0x00F3 whose action is -1 - the user closed the box - ends the conversation and
+    /// sends nothing. An unanswered 0x00F3 costs only a dead conversation: it is not one of
+    /// the 37 setters of the player->[0x2330] latch.
+    #[test]
+    fn closing_a_box_ends_the_conversation_silently() {
+        let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+        if !path.exists() {
+            return;
+        }
+        let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+        s.on_quest_request(&hex("01e8030000010000000c046d0100000000"));
+
+        assert!(s.on_script_reply(&reply_bytes("anything", 0, -1i8 as u8)).is_empty());
+        // And a second reply with no conversation open must not panic or answer.
+        assert!(s.on_script_reply(&reply_bytes("anything", 0, 1)).is_empty());
+        // Short bodies come off a socket.
+        for n in 0..12 {
+            let _ = s.on_script_reply(&vec![0u8; n]);
+        }
+    }
+
+    /// Pull the text out of a script-message body. The shared head is 14 bytes; a Say then
+    /// has a `u32 echo` before its string and a yes/no box does not.
+    fn script_text(body: &[u8]) -> (u8, String, usize) {
+        let message_type = body[10];
+        let at = if message_type == net::script::SCRIPT_TYPE_SAY { 18 } else { 14 };
+        let len = u16::from_le_bytes([body[at], body[at + 1]]) as usize;
+        let text = String::from_utf8(body[at + 2..at + 2 + len].to_vec()).unwrap();
+        (message_type, text, at + 2 + len)
+    }
+
+    /// The client's 0x00F3, in the shape the captures show: the box's own text echoed back.
+    fn reply_bytes(text: &str, message_type: u8, action: u8) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&0u32.to_le_bytes()); // handle
+        b.push(message_type);
+        b.extend_from_slice(&0u32.to_le_bytes()); // echo
+        b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+        b.extend_from_slice(text.as_bytes());
+        b.push(action);
+        b
     }
 
     /// `!map <id>` typed into the chat box, from the real captured chat body.
