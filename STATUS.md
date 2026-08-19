@@ -63,7 +63,7 @@ what "Check" did before `0x0081` was answered and what "Choose another world" di
 inbound line with nothing after it is the packet nobody answered. `crates/login` has a test
 for this rule, and no path in it returns an error in place of a reply.
 
-## NEXT GOALS - read this first when picking up
+## WHERE THINGS STAND - read this first when picking up
 
 ## THE GOAL IS MET — 2026-08-19, seen on screen
 
@@ -84,58 +84,112 @@ Everything the pre-flight analysis predicted held, and nothing it deferred bit: 
 all-zero randomiser seeds, the zero pair at head offsets 22/26, and the zero at offset 17 were
 all sent as-is and none of them mattered.
 
-### What is missing now, reported from the screen
+## NEXT GOALS - set by the owner, 2026-08-19
 
-| | |
-|---|---|
-| **The character is naked** | equipment shows in character select and not in the world. The record we send carries the stat block only; the equip inventory is a different presence-gated block we do not build. |
-| **Map 1's two NPCs do not appear** | `0000001`/`0000002`, Heena and Sera. They are in the WZ `life` nodes, so the question is what the **server** owes. |
-| **The portal does nothing** | the client sends **`0x00D1`, 34 bytes**, carrying the ASCII portal name **`out00`** (`u16` length 5), `0xFFFFFFFF`, and an x/y pair - a transfer-field request. We answer nothing. |
+Login and world entry are done. These five are the work now, in their order. Each carries what
+is already established, so nobody re-derives it, and the **one concrete next step**.
 
-Also unanswered and undecoded: **`0x00D9`** (every ~510 ms, 76-169 bytes, coordinate-shaped -
-almost certainly movement), **`0x013D`**, **`0x00B8`**.
+### 1. NPCs show up on maps
 
-### Two of the three are now built and measured
+**Built, not working yet.** `NpcEnterField` is **`0x044F`**, a fixed **64-byte** body, routed
+through **`FUN_141820080`** (`0x1a4..0x5ab`) to the NPC pool dispatcher `FUN_141e75800`
+(`0x44F..0x468`). `FUN_141820080` is a dispatcher this project had not found; it fills the
+gap `research/msexe-gamestage-dispatch.md` left open. Full layout: `research/npc-spawn.md`.
 
-Verified **without a client launch** by `python tools/channel_smoke.py --set-field-probe`,
-which now drives the whole field-entry path over the independent Python transport - 38 checks.
+Settled, not assumed: **the client cannot spawn NPCs itself.** Its field loader walks the WZ
+`life` node only to preload `Npc/%07d.img` art; the only code that builds a populated NPC
+takes a `CInPacket *`. And the pool is **destroyed and rebuilt empty on every field entry**,
+so NPCs must be re-sent after *every* `SetField`, not once.
 
-* **The portal works.** `0x00D1` is decoded field by field
-  (`research/transfer-field-request.md`); the parser is tested against the **real 34 captured
-  bytes**, the 31-byte nameless form, and truncation. The reply is a `SetField` for the target
-  map, and the move is persisted so a relog keeps it. The **long** `characterData = 1` form is
-  used deliberately: the short form is the shape designed for "same character, new map" and is
-  probably right now, but its precondition (`world+0x2358`) could not be proven populated, so
-  the next run **measures** it via `142cfb500:peek=2358` instead of guessing.
-* **NPCs are sent by the server**, settled rather than assumed - the client's field loader
-  walks the WZ `life` node only to preload art. `NpcEnterField` is **`0x044F`**, a fixed
-  64-byte body, routed through **`FUN_141820080`** (`0x1a4..0x5ab`) - a dispatcher this project
-  had not found, filling the gap `msexe-gamestage-dispatch.md` left. The trigger is `0x0238`,
-  because the pool is destroyed and rebuilt **empty** on every field entry and a spawn sent
-  before that is silently discarded. So NPCs must be re-sent after **every** `SetField`.
-* **The character is still naked**, and that one is real work: item decode is a vtable call at
-  `+0x330` and the item classes carry no RTTI. `research/equip-block.md`.
-  **The empty inventory UI is NOT part of this** - the owner, 2026-08-19: worn items are
-  equipped and do not occupy a bag slot, so an empty bag is correct for a character
-  carrying nothing. What is missing is the **equipped list**, which fits the shape found:
-  a `u8` then **two** `u16`-terminated loops, i.e. equipped and equipped-cash.
+The trigger was wrong and is fixed: `0x0238` fires **only on the very first field entry** -
+measured, three portal walks produced none - while **`0x00DC`** arrives once per `SetField`,
+every time, ~420 ms after. It is now `0x00DC`.
 
-**Both new tables are stubs and say so.** Portal targets and field `life` both live in the
-client's WZ, and belong in a generator beside `tools/dump_names.py` rather than typed into
-source. An unknown portal is **not** guessed - the server re-sends the current map and logs it.
+> **Next step:** one launch. The probe watches `141e75800`; if it fires while dispatching
+> `0x044F` the routing and timing are right and the **body** is wrong, and if it stays silent
+> the packet is never dispatched at all.
 
-**One prediction for the next run:** the minimap reads NPC x/y straight from the WZ without
-the pool, so minimap dots on an empty field is the expected picture *today*. If the NPCs now
-appear in the world too, the spawn worked.
+Also needed regardless: the NPC table is a **stub covering map 1 only**. The real data is
+every field's WZ `life` node, and it belongs in a generator beside `tools/dump_portals.py`.
+
+### 2. NPCs have dialogue when clicked
+
+**Not started.** Nothing is decoded on either side yet: neither the outbound packet the
+client sends when an NPC is clicked, nor the script/say packet that answers it.
+
+> **Next step:** get NPCs on screen first (goal 1), then click one and read `world.log` - the
+> client will name its own request, the way `0x00D1` named the portal. That is far cheaper
+> than searching for it statically.
+
+### 3. NPC quests
+
+**Not started, and it depends on goal 2.** One thing already known: the quest record is a
+presence-gated block in the character record, so it will need the same gate work
+`presence[0]` needed - see `research/charrecord-presence-map.md` for the 40-row table.
+
+### 4. Map portal transitions completely working
+
+**Mostly working.** Map 1 -> 10 confirmed on screen. The stub that stranded the character on
+map 10 is gone: `tools/dump_portals.py` generates **1135 portals across all 426 field
+images** from the client's own `Map.wz`, and the server loads it at startup.
+
+Two things left, both known:
+
+* **The arrival portal is ignored.** The WZ gives `tn`, the target portal's name, and we send
+  portal `0` - the spawn - so the character always arrives at the map's spawn point rather
+  than at the matching door. `tn` is already in the generated table's fourth column.
+* **The short `characterData = 0` form is now known to be usable.** `[world+0x2358]`, its
+  precondition, measured `0x00` on the first `SetField` and **non-zero on every later one**.
+  We still send the long form, which works; switching is an optimisation, not a fix.
+
+### 5. Equipment and consumables actually do something
+
+**The big one, and the only goal with a hard blocker.** Equipping, unequipping and using a
+consumable each need two halves: the item data the client is holding, and the packets that
+act on it.
+
+**The blocker is the item data.** The `SetField` record carries no avatar look, and the
+equipped list's item decode is a **vtable call at `+0x330`** whose item classes carry **no
+RTTI** - `tools/rtti.py` finds 1764 type descriptors and not one of them is an item class.
+So the layout cannot be read off linearly the way the stat block was.
+`research/equip-block.md` has the working.
+
+**Scope correction from the owner, 2026-08-19, worth keeping:** worn items are *equipped* and do
+**not** occupy a bag slot. The inventory is the bag; ours is genuinely empty and showing it
+empty is **correct**, not a symptom. So this goal is about the **equipped list** plus a real
+bag later - not one "inventory system". That also explains the shape found: the gated region
+reads a `u8` then **two** `u16`-terminated loops, which is equipped and equipped-cash.
+
+> **Next step, in order.** (a) The cheap route first: `0x0138` carries the *compact* avatar
+> look we already build, and its handler **reaches its apply** - `142797be0` fired, so the
+> local character really is in the pool it searches. The next launch watches `1420dd920`, the
+> single call site inside that apply's loop, which separates "applied but did not render"
+> from "the loop was empty". (b) If that is a dead end, crack the vtable with the owner's ELog
+> idea: send a deliberately **truncated** equipped block so the reader throws on underrun.
+> The ELog has no symbols but its stack frames are section-relative RVAs that rebase to
+> `0x140000000+`, so `tools/pdata_lookup.py` turns them into functions.
+
+### Undecoded traffic seen alongside all of this
+
+`0x00D9` (every ~510 ms, coordinate-shaped - almost certainly movement), `0x013D`, `0x00B8`,
+`0x02EB`, `0x01ED`, `0x0408`, `0x0184`, `0x0194`, `0x01A5`, `0x02DE`, `0x00ED`, `0x02B2`.
+None is answered. None has caused a freeze, so none of them is a blocking request.
+
+---
 
 **Nothing authenticates.** The game socket still carries no credentials; the character is
 identified by the migration row and nothing else.
 
 ---
 
-Everything below is the history of getting here, and is still accurate.
+## History - how the goal above was reached
 
-### Where the client actually is right now
+Everything below is the record of getting a character onto map 1. It is still accurate and
+several parts are load-bearing reference - the presence-array table, the stat-block layout
+and the pre-flight analysis are all cited by the goals above. It is **not** a to-do list;
+the work is in NEXT GOALS.
+
+### Where the client was before world entry worked
 
 Measured 2026-08-19, end to end. Login -> character select -> pick a character ->
 "Connecting..." -> the enter-success sound -> it closes the login socket, connects to
