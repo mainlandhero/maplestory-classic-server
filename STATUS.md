@@ -147,11 +147,27 @@ is then released during teardown.
 Which is exactly what an all-zero record predicts. **The client accepted the packet,
 transitioned, tried to load map `0`, failed, and faulted cleaning up.** `0` is not a map.
 
-**So the next step is no longer "build the record" - it is "put the map id in it".** Find
-which presence flag carries the field, set that byte, and give it `START_MAP_ID`. The
-census (`research/charrecord-loops.md`) has the flag-to-region table; what it could not
-prove is the mapping from flag index to byte offset inside the 100-byte array, and that is
-now the one thing standing between here and a character on map 1.
+**So the next step is no longer "build the record" - it is "put the map id in it".**
+
+### 1a-i. SETTLED 2026-08-19: the byte is `presence[0]`
+
+The mapping the census could not prove is now read out of the client's own startup code,
+with no client run. Full working in **`research/charrecord-presence-map.md`**.
+
+* `FUN_1402fa9a0` is not an accessor. It is a **100-byte bytewise AND**:
+  `out[i] = presence[i] & key[i]`. The gate runs its block if **any** byte of `out` is set,
+  so every gate carries its own 100-byte key mask.
+* Those masks sit in the uninitialised tail of `.data` and are built by **40 CRT dynamic
+  initialisers** (pointer array at `.rdata 0x143264a00`), each of which zeroes 100 bytes and
+  then sets **exactly one** to 1. So a gate fires **iff its one presence byte is non-zero** -
+  40 gates, 40 distinct bytes.
+* The gate guarding `FUN_140302e30`, the stat decoder, is entry 7. **Its byte is
+  `presence[0]`** - which is byte **45** of the `SetField` body (33-byte head + three `u32`s).
+
+**The census's own labelled guess - "key #k reads array byte k" - was wrong.** The mapping
+is a permutation: entry 7 -> byte 0, entry 8 -> byte 62, entry 1 -> byte 44. Both research
+documents that recorded the guess now say so. Building on it would have put every flag in
+the wrong byte, and a client that skips every block looks exactly like one sent nothing.
 
 `research/msexe-setfield-aftermath.c` has the fault site and `FUN_142caa4e0`, the builder
 of the two packets the client sent on entering.

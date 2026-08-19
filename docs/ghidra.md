@@ -119,6 +119,7 @@ Reach for these first; a headless run costs minutes and these cost seconds.
 | `tools/pdata_lookup.py` | which function contains this address, and what are its exact bounds |
 | `tools/xref.py` | what takes the address of this string or symbol (**`lea` only** — see below) |
 | `tools/dataref.py` | what **reads, writes or tests** this global — the half `xref.py` cannot see. `--writes` alone usually finds a singleton's constructor and destructor |
+| `tools/callers.py` | every `call rel32` to a function - the question **neither** of the two above can answer |
 | `tools/dispatchers.py` | which functions are inbound packet dispatchers, by call-graph shape |
 | `tools/switch_cases.py` | every case of a decompiled switch, **including inlined bodies**, brace-depth aware so nested switches are not merged in |
 | `tools/rtti.py` | class names and vtables from RTTI — but there is **no `CStage`, `CLogin` or `CField`**; the stage classes carry none |
@@ -126,6 +127,17 @@ Reach for these first; a headless run costs minutes and these cost seconds.
 `tools/xref.py` returning "0 references" means *nothing takes its address*, not *nothing
 uses it*. That blind spot hid the "trouble logging in" raiser for three sessions.
 `tools/dataref.py` exists to close it.
+
+**Neither of them sees a `CALL`.** `xref.py --callers --va 0x1402fa9a0` returns
+"0 code references" for a function with **43** call sites - `--callers` annotates
+`--string` results and does not scan `call rel32` at all. `tools/callers.py` does, and its
+docstring carries the positive control: 43 calls, all in `0x140304b20`, first `0x140304e49`,
+last `0x1403091e7`. Run the control before believing any zero from any of the three.
+
+`tools/dataref.py` had a matching hole: its opcode table lacked `0xC6`
+(`mov byte [rip+d], imm8`) *and* `--writes` filtered on a label the opcode would not have
+carried, so it reported **1** write to the character-record flag table where there are
+**41**. Two independent filters, both dropping the same evidence, both silently.
 
 ## Traps particular to this binary
 

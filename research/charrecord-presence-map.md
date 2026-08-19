@@ -74,6 +74,19 @@ client would have skipped every block - which is indistinguishable, on screen, f
 nothing. The gate labels `#k` in the census are correct as *entry* numbers; they are not
 byte offsets.
 
+## The reference server agrees, on the one thing it is allowed to vote on
+
+`Char.encode` in the v214 tree writes **100 bytes of `1`** and then, after a handful of
+small fixed fields, `if (mask.isInMask(DBChar.Character)) getAvatarData().getCharacterStat().encode(...)`.
+`DBChar.Character` is `0x1` - **ordinal 0**, the first flag after `None`. The client's first
+gated block is the stat decoder and its byte is **`presence[0]`**, the same ordinal.
+
+Per `CLAUDE.md` the reference is a different game version and scored 1 of 8 against a
+held-out control, so this is **[I] corroboration, not evidence** - it could not have
+overturned the initialisers. But it was derived from a completely different artefact and it
+lands on the same index, and the structural echo either side (100 bytes, then small fixed
+fields, then a gated stat block) is hard to get by chance.
+
 ## The table
 
 `presence byte` is the one to set. `entry` is the census's `#k`. Regions and read counts are
