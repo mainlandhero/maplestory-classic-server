@@ -117,6 +117,45 @@ held-out control).
 reads; the listing is complete and authoritative. `research/charrecord-decode.md` shows the
 working.
 
+### 1a. RUN OF 2026-08-19: the record was accepted, and the map is what is missing
+
+The owner reported it plainly: enter-success sound, **the screen faded to black**, and a few
+seconds later the client exited. That fade is the stage transition, and it had never
+happened before.
+
+What the logs show, in order:
+
+```text
+0x01A0 accepted   142097f80 entered, latch 0x00, both early returns passed
++422 ms           the client SENDS 0x0238 and 0x024D, both empty bodies, both built by
+                  FUN_142caa4e0 in the world-object subsystem - it entered the game stage
++3.4 s            CLIENT FAULT 0xC0000005 at 0x140ce89d6
+```
+
+**The fault moved**, which was the outcome to hope for. It is no longer `FUN_1402fa540`
+(the `characterData = 0` short form). `FUN_140ce89c0` is a **reference-counted release**:
+
+```c
+obj = holder->[8];
+if (obj != 0) { ... atomic_dec(obj->[0x28]); ... }   // faults reading [RBX+0x28]
+```
+
+The null check passes and the dereference still faults, so the holder contains a **non-null
+but invalid** pointer - the signature of an object that was never properly constructed and
+is then released during teardown.
+
+Which is exactly what an all-zero record predicts. **The client accepted the packet,
+transitioned, tried to load map `0`, failed, and faulted cleaning up.** `0` is not a map.
+
+**So the next step is no longer "build the record" - it is "put the map id in it".** Find
+which presence flag carries the field, set that byte, and give it `START_MAP_ID`. The
+census (`research/charrecord-loops.md`) has the flag-to-region table; what it could not
+prove is the mapping from flag index to byte offset inside the 100-byte array, and that is
+now the one thing standing between here and a character on map 1.
+
+`research/msexe-setfield-aftermath.c` has the fault site and `FUN_142caa4e0`, the builder
+of the two packets the client sent on entering.
+
 ### 1b. The minimum record is 112 bytes
 
 Settled by the loop census, `research/charrecord-loops.md`. With every presence flag clear,
