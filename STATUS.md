@@ -55,6 +55,23 @@ for this rule, and no path in it returns an error in place of a reply.
 
 ## NEXT GOALS - read this first when picking up
 
+### 2026-08-19: the client has been reporting a failed login, and we called it a greeting
+
+`0x00C0` was in the log table as `CLIENT_HELLO`. It is a **login failure report**.
+`FUN_141b2a660` builds it *only* when `FUN_141d60eb0(user, pass, 0xc9, 0)` returns
+non-zero, and the body is the launch mode followed by the error code. Every capture we have
+carries **`0x4E20` = 20000, a Nexon Passport error**, twice per run.
+
+That matters beyond the name. `docs/session.md` says the login form is vestigial and the
+server supplies the identity - which is still true of what reaches *us* - but the client is
+evidently making a local auth call and getting a failure, and it says so on the wire. Nobody
+had read it. Whether that failure is connected to the handshake's `INVALID_CLIENT_VERSION`
+is **not established**; they are two separate reports from the same run.
+
+Five of eight inferred opcode names were wrong. Evidence per opcode in
+`research/msexe-client-opcodes.md`; the corrected table is `crates/net/src/names.rs`.
+
+
 ### 2026-08-19: the migration works, and then the client says it is outdated
 
 **Confirmed on screen.** The client selected a character, `FUN_141b36f60` was entered while
