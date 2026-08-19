@@ -19,10 +19,15 @@ It builds, installs the hook into `client-patched/`, starts `maplecw-login`, app
 client patches and launches the client. Close the client by hand when done, then `-Stop`.
 `-ListOnly` prints the stored characters and launches nothing.
 
-**Confirmed on screen 2026-08-18:** three characters created against the real server, all
-three persisted, and the "Create a character" button correctly disabled at three. The one
-thing that had to be fixed for it was the **character id** - see the next section, and do
-not renumber characters from 1.
+**The character-select screen is finished and server-driven**, all confirmed on screen:
+the list, create, a truthful name check, the three-slot limit, **delete**, and persistence
+across relaunches. Two things that cost real effort and must not be relearned:
+
+* **Never renumber characters from 1.** A create reply carrying id 1 was byte-identical to a
+  known-good one except the two copies of the id, and the client silently refused to
+  transition. Ids start at 200.
+* **Do not pass `-SessionTokens`.** The measurement it existed for is done (the answer is no),
+  and passing them causes a "trouble connecting" dialog from a path we do not suppress.
 
 The old harness still exists and still works - `test-charselect.ps1 -SkipNetCheck` - and is
 the right tool for capturing packets or trying a hand-written body. It answers from canned
@@ -47,6 +52,37 @@ what "Check" did before `0x0081` was answered and what "Choose another world" di
 `0x0082` was. **Read `login.log`** - it names every reply and what it answered, so the last
 inbound line with nothing after it is the packet nobody answered. `crates/login` has a test
 for this rule, and no path in it returns an error in place of a reply.
+
+## NEXT GOALS - read this first when picking up
+
+In the order that unblocks the most. Everything above the line is done and confirmed on
+screen; nothing here is speculative work.
+
+1. **Enter the game world.** `0x0078` is the select-character request and carries the
+   character id - captured twice, with 203 and 204. It is unanswered, which is why the client
+   sits on "Connecting...". Its reply is the migration packet, the `0x0011` candidate, and it
+   is where an **advertise** address is first needed for the homelab move. This is Stage 4
+   and the biggest single step left.
+2. **Real sessions for multiple accounts** (the owner, 2026-08-18; testing-grade is fine). The
+   token-in-`0x0073` route is measured dead, so this is one login server per account per
+   port, or the `grap-stub` identity patch. `Session` should take its account from a resolver
+   rather than from `Config` either way, so the swap is one function.
+3. **`create=on`, the last honest patch.** Static analysis is exhausted (see below). The
+   remaining route is the **in-process opcode walk** with `FUN_140c9e230` as the oracle: one
+   launch covers the whole inbound opcode space. **Blocked on a small change** - `-Probe`
+   takes either a walk range *or* watch targets, and this needs a walk plus the two mandatory
+   patches (`1415db360:ret`, `141b2a280:rdx=0`) or the client dies at ~37s and the dialog
+   blocks the screen. If the walk comes back empty, `create=on` is a permanent workaround for
+   a client-side entitlement rather than a placeholder for protocol - which is worth knowing,
+   because it turns a TODO into a fact.
+4. **The auto-login ordering**, which the owner spotted. `mode=2` is applied when opcode `0x0000`
+   is dispatched - and `0x0000` is our *reply to* the login request, so it lands after the
+   auto-login it is meant to prevent. Patch the mode when the session object first becomes
+   readable (the hook log shows that at +4s, long before login) instead of on a dispatched
+   opcode. Hook work, not protocol.
+5. **Stage 3.5 off-box**: the firewall carve-out, `crates/auth` with a configurable bind and
+   TLS, `crates/launcher`. See `docs/deployment.md` and `docs/launcher.md`.
+6. Smaller: the slot count should come from the account rather than the constant `3`.
 
 ## DONE - a real server, and characters that persist
 
@@ -149,29 +185,77 @@ Stage 4. The MAC list and machine id are there again: record, never gate on.
 
 `0x0079` is a client report carrying a timestamp; the client did not block on it.
 
-### NOT MEASURED: whether a launcher token reaches the server
+### MEASURED: a launch-argument token does NOT reach the server
 
-`0x0073` decoded as `mode=5 identity="" tail=aabbccddeeffdeadbeef...` - no token in it. **That
-is not yet a result.** It only rules the route out if `-SessionTokens` was actually passed on
-that launch, and nothing in the logs confirms it was: the script prints the read-back command
-line to the console, not to a file, and no token text appears anywhere in `login.log`.
+**Settled 2026-08-18**, and it closes a question open since the launcher was designed. The owner
+launched with `-SessionTokens "tokA tokB tokC tokD tokE tokF"` and `0x0073` came back
+**byte-identical to the run without them**:
 
-**An unverified instrument's silence proves nothing** - the standing rule in this repo. Re-run
-with `-SessionTokens "tokA tokB tokC tokD tokE tokF"` and check the console says `session
-tokens (config +0x90)` before reading anything into an empty identity.
+```text
+26B  05000000 0000 aabbccddeeff deadbeef 00000000 764d0000 0000
+     mode=5   ""   MAC          machine id
+```
+
+No token text anywhere in the log. `-NXLDEBUG` does route arguments 3 onward into the client
+config at `+0x90`, but **nothing carries them onto the wire**.
+
+**This kills the design where the launcher's single-use token rides in `0x0073`.** See
+"Next goals" below for what replaces it.
+
+**The tokens also broke that run:** a "trouble connecting" dialog appeared immediately after
+the splash, and `FUN_141b2a280` - the function we suppress - was **never entered** (its watch
+was armed and logs every call; the hook log has no `WATCH` lines). So it came from a
+different path. **Do not pass `-SessionTokens` in ordinary runs.**
+
+### DONE: delete a character
+
+**`0x008B`, confirmed on screen 2026-08-18, first try.** The owner deleted `TestCharB`; the request
+was `0x008B` with body `ca000000` (202), answered `0x0016 deleted "TestCharB" (id 202)`.
+
+**It was read, not captured.** `FUN_141b28750` is the Delete button handler and is not
+virtualised; `research/msexe-send-opcodes.txt` already listed the opcode against it. Checking
+that table before guessing saved a launch. The counterexample is `0x008A`, which *is*
+virtualised - **absence from that table means virtualised, not non-existent.**
+
+Reply is `u32 characterId, u8 result`, correcting an earlier note that called it a single
+`u32`. Two traps, both now pinned by tests:
+
+* **A refusal must use `6`.** The switch names `6, 9, 10, 0x10, 0x12, 0x14` and a *default* -
+  and the default is the branch that removes the character. Any other non-zero code deletes
+  it anyway.
+* **An unanswered delete disables the button for the session.** The builder sets
+  `stage+0xd4` before sending and returns early while it is set; only the result clears it.
+
+Ids are **not reused**: the freed 202 was not handed to the next character, which got 204.
+
+### SETTLED: `create=on` cannot be resolved by reading the image
+
+The owner asked for the packet that sets the create-character flag. **Static analysis is finished
+and the answer is that no readable code sets it.** Every route checked, each with a control
+proving the instrument finds things:
+
+| scan | result | control |
+|---|---|---|
+| direct `call` to the setter `FUN_140c9e230` | **0** | the getter: 2 found |
+| its address as a qword (vtable / fn table) | **0** | `FUN_141b25f30`, a known vtable entry: found in `.rdata` |
+| the one cluster function with a live caller | initialisation | decompiled: a run-once latch that seeds protected values and never calls the setter |
+
+The flag is a six-byte self-checksumming blob that reallocates every 0x6f accesses, seeded
+during the connection handshake. `FUN_14003fb80` is a second orphan of the same shape. The
+unpacked Nexon DLLs hold no creation-shaped strings.
+
+**The evidence supports the flag being flipped from Themida-virtualised code.** The remaining
+route is runtime - see "Next goals".
+
+**One scan is not trustworthy and must not be quoted:** references to the blob pointer
+`DAT_143ac8170` come back zero even with REX.R forms added, which cannot be right when three
+functions dereference it. The *counter* scan (`DAT_143ac8168`) works and is what found the
+cluster.
 
 ### Still open
 
-* **Delete a character.** The owner asked for it. The store side is done - `delete_character` with
-  the ownership clause in the statement, plus `maplecw-login --delete NAME` for testing - and
-  the client's delete *result* is `0x0016` (`FUN_141b34970`). What is missing is the
-  **request opcode**, which has never been seen. Cheapest route, and the one that found
-  `0x008A`: click "Delete a character" on any run and read `login.log`, which now records
-  the opcode and body of everything unanswered. Candidate worth checking first: `0x008B`,
-  one past the create request. **Expect the UI to freeze on that click** until it is
-  implemented - an unanswered request always does - so do it last in a run.
 * The slot count is the constant `3` rather than a property of the account.
-* `create=on`: find the packet the real service sends to enable creation.
+* Entering the world: `0x0078` is unanswered, which is why the client sits on "Connecting...".
 
 ## NOT AUTHENTICATED - say so when reporting
 
@@ -186,11 +270,18 @@ NOT AUTHENTICATED: the game socket carries no credentials, so anyone who
   connects is served as that account. See docs/launcher.md.
 ```
 
-Closing it is Stage 3.5: the launcher authenticates over HTTPS against `crates/auth`, gets a
-single-use token, and the token reaches the login server so it can call `/consume`. Whether
-the client will carry that token in `0x0073` is **not yet measured** - `docs/deployment.md`
-has the experiment, and it is one run with six distinguishable tokens. Until `/consume` gates
-the login result, do not describe a session as authenticated.
+Closing it was to be Stage 3.5: the launcher authenticates against `crates/auth`, gets a
+single-use token, and the token reaches the login server so it can call `/consume`. **The
+route that design assumed is now measured and dead** - the client does not put launch
+arguments on the wire, so the token cannot ride in `0x0073`. What is left:
+
+* **one login server per account, each on its own port**, the launcher choosing the port.
+  Crude, needs no protocol, works today, and the owner said testing-grade is acceptable for now;
+* or write the identity string at `DAT_143ac1898+0x1b8` from `grap-stub`, which is already
+  in-process. `0x0073` sends it as its second field and it is empty because nothing computes
+  it. That is a **client patch standing in for a real session**, honest only if labelled.
+
+Until `/consume` gates the login result, do not describe a session as authenticated.
 
 ### Build it for two machines from the start - see `docs/deployment.md`
 

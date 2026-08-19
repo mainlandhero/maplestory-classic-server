@@ -137,7 +137,7 @@ the work is listed under Stage 3.5.
 
 - [x] **The handoff mechanism, partly.** `-NXLDEBUG` routes launch arguments from the third
       onward into the config's six-slot session array at `+0x90`; `test-one.ps1
-      -SessionTokens` exercises it. **Still to measure:** whether that array is what outbound
+      -SessionTokens` exercises it. **MEASURED 2026-08-18: that array is NOT what outbound
       `0x0073` transmits, and in which field - which is what decides whether a launcher-issued
       token can gate the login result.
 - [ ] `crates/auth`: HTTP/JSON auth server, SQLite accounts, issues short-lived session
@@ -210,27 +210,25 @@ the work is listed under Stage 3.5.
       at three because `login_result` sends a truthful list and `slotCount` and the client
       computes the free slot from them. Telling the truth was the implementation. The
       server-side refusal was already tested.
-- [ ] **Delete a character** - the owner asked for it 2026-08-18. Store side is done
-      (`delete_character` with the ownership clause in the statement, plus
-      `maplecw-login --delete NAME`), and the client's delete *result* is `0x0016`
-      (`FUN_141b34970`). Missing: the **request opcode**, never observed. Capture it the way
-      `0x008A` was found - click Delete and read `login.log`, which now records bodies.
-      Candidate to check first: `0x008B`, one past create. Expect a UI freeze on that click
-      until it is answered, so do it last in a run.
+- [x] **Delete a character - done and confirmed on screen 2026-08-18.** `0x008B`, one `u32`
+      character id; reply `0x0016` is `u32 id, u8 result`. **Read out of `FUN_141b28750`
+      rather than captured** - it is not virtualised, and `research/msexe-send-opcodes.txt`
+      already listed the opcode against it, so no launch was spent finding it. Two traps
+      pinned by tests: a refusal must use code `6` (every other non-zero code falls through
+      to the branch that deletes anyway), and an unanswered delete disables the button for
+      the whole session. Ids are not reused.
 
 #### Two goals the owner set on 2026-08-18
 
 - [ ] **Real sessions, so more than one account can be served.** Today `--account` decides
       whose characters *every* connection sees, which is fine for one tester and wrong as
       soon as there are two. Testing-grade is acceptable for now (the owner's words). The order:
-      1. **Measure whether a launch-argument token reaches the server.** `-NXLDEBUG` puts
-         arguments 3 onward into the config's six-slot session array at `+0x90`; whether
-         outbound `0x0073` transmits them is the open question, and it is the same
-         measurement Stage 3.5 needs. `0x0073` is decoded into `login.log` now and
-         `test-server.ps1` takes `-SessionTokens`, so a launch answers it as a side effect.
-         **Still unmeasured as of 2026-08-18:** the 2026-08-18 run showed an empty identity,
-         but nothing confirms the tokens were passed on that launch, so it rules nothing
-         out. Check the console prints `session tokens (config +0x90)` first.
+      1. **MEASURED 2026-08-18 and the answer is NO:** six distinguishable tokens produced a
+      `0x0073` byte-identical to a run without them. `-NXLDEBUG` fills the client config at
+      `+0x90`, but nothing puts it on the wire, so a launcher token cannot ride in `0x0073`.
+      What is left: one login server per account per port (works today, no protocol), or
+      writing the empty identity string at `DAT_143ac1898+0x1b8` from `grap-stub` as an
+      admitted client patch. Either way `Session` should take its account from a resolver.
       2. **If they arrive:** the launcher authenticates against `crates/auth`, passes the
          single-use token, and the login server resolves the account by calling `/consume`.
          That is the real design and it is already half-built.
@@ -280,10 +278,12 @@ username and password. Designs: **`docs/deployment.md`** and **`docs/launcher.md
 - [ ] `crates/auth`: configurable bind (it hardcodes `127.0.0.1`) and TLS. Never expose it
       to the internet. Credentials must never travel on the game socket - that cipher is
       obfuscation, not security.
-- [ ] **Measure whether the session array at config `+0x90` is what outbound `0x0073`
-      transmits**, and in which field. `-NXLDEBUG` fills it from launch arguments 3 onward
-      and `-SessionTokens` already exercises it; six distinguishable tokens and one capture
-      settles it. This decides whether the launcher's token can gate the login result.
+- [x] **MEASURED 2026-08-18 and the answer is NO:** six distinguishable tokens produced a
+      `0x0073` byte-identical to a run without them. `-NXLDEBUG` fills the client config at
+      `+0x90`, but nothing puts it on the wire, so a launcher token cannot ride in `0x0073`.
+      What is left: one login server per account per port (works today, no protocol), or
+      writing the empty identity string at `DAT_143ac1898+0x1b8` from `grap-stub` as an
+      admitted client patch. Either way `Session` should take its account from a resolver.
 - [ ] `crates/launcher` (Rust + `eframe`/`egui`, one static exe): verify the client build by
       hash before patching — every patch is an absolute VA — install `grap64.dll`, write one
       `maplecw.toml` in place of the marker files, authenticate, launch.

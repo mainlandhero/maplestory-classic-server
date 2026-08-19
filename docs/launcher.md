@@ -88,29 +88,44 @@ For a permanent patch, writing `0xC3` (`ret`) at `FUN_1415db360`'s entry is a be
 function returns void, so a bare `ret` is a correct no-op, and it costs no exception at all.
 Keep `:ret` for investigation; ship the byte.
 
-## The session token, and the honest state of it
+## The session token: the route this design assumed is dead
 
-**Measured:** `-NXLDEBUG` puts the client in mode 5 and routes launch arguments from the
-third onward into the config's six-slot session array at `+0x90` - that is what
-`test-one.ps1 -SessionTokens` already exercises. Outbound `0x0073` (session identity) carries
-a first `u32` of `05`, a MAC list and a machine id.
+**Measured 2026-08-18, and it changes this document.** `-NXLDEBUG` does route launch
+arguments from the third onward into the client config's six-slot session array at `+0x90`.
+**But nothing puts them on the wire.** Six distinguishable tokens were passed and outbound
+`0x0073` came back byte-identical to a run without them:
 
-**Needs measuring, and it decides the design:** whether the session array at `+0x90` is what
-`0x0073` transmits, and in which field. Pass six distinguishable tokens, capture `0x0073`,
-and read which one lands where - the harness can already do this, and it is one run.
+```text
+26B  05000000 0000 aabbccddeeff deadbeef 00000000 764d0000 0000
+     mode=5   ""   MAC          machine id
+```
 
-* **If the token reaches the server in `0x0073`**, the design above is complete: launcher
-  authenticates, passes the token, login server calls `/consume`, and a client that did not
-  come through the launcher has no valid token.
-* **If it does not**, the launcher still authenticates but the token has to reach the server
-  another way - most likely a field in the login packet we currently answer without reading.
-  That is a protocol question, not a launcher question, and it should be settled before the
-  launcher is written rather than after.
+No token text anywhere in the capture. So **the launcher cannot hand the server a token
+through `0x0073`**, and the "launcher authenticates, passes the token, login server calls
+`/consume`" chain has no transport.
 
-Until then the login result is server-supplied and `0x0000` carries the account name
-(`docs/session.md`), so the launcher can be built and tested end to end with the token
-plumbed but not yet enforced. **Do not describe it as authenticated until `/consume` is
-actually gating the login result.**
+**Passing those tokens also broke the run** - a "trouble connecting" dialog immediately after
+the splash, from a path that is *not* the `FUN_141b2a280` we suppress (its watch was armed
+and never fired). Do not pass them in ordinary runs.
+
+### What is left, and neither is pretty
+
+1. **One login server per account, each on its own port**, with the launcher choosing the
+   port after it authenticates. Needs no protocol at all, works today, and the owner has said
+   testing-grade is acceptable for now. The account stops being global configuration and
+   becomes per-instance, which is the only property that actually matters for testing.
+2. **Write the identity string from `grap-stub`.** `0x0073`'s second field is a `char *` at
+   `DAT_143ac1898+0x1b8`, sent as a **zero-length string because nothing computes it**. The
+   stub is already in-process and could write a token there before the packet is built. That
+   would carry a real token to a real `/consume` - but it is a **client patch standing in for
+   a session**, and it belongs in the patch inventory above with a retirement column, not
+   described as authentication.
+
+Either way `Session` should take its account from a resolver rather than from `Config`, so
+whichever route wins is one function.
+
+**Nothing here is authenticated today**, and the login server says so at startup. Do not
+describe it otherwise until `/consume` is gating the login result.
 
 ## Implementation notes
 
