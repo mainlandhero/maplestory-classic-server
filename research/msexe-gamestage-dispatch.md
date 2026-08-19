@@ -190,6 +190,44 @@ anchor** for aligning the rest of the enum.
 
 Being the first case in the switch means nothing about being the first packet on the wire.
 
+## SetField is `0x01A0`, and it is a *stage* packet, not a world packet
+
+Established 2026-08-19 by three independent lines that agree.
+
+**1. The block boundary is exact.** `FUN_142d51930` is InventoryOperation, and in the v214
+reference `InventoryOperation = 0x37` is `BEGIN_CHARACTERDATA` - the first opcode of its
+block. In mscw it is `0x0070`, the first case of the game dispatcher. The dispatcher then
+runs to `0x019f` and stops: **271 cases spanning exactly 304 values**, and v214's
+CHARACTERDATA block (`0x37..0x166`) is **also exactly 304 values**. Same block, shifted by
+`+0x39`. Two stray cases sit above it, `0x0275` and `0x039a`.
+
+So mscw `0x01a0` = v214 `0x167` = `BEGIN_STAGE` = **`SetField`**.
+
+**2. A different dispatcher takes over at exactly that boundary.** `0x01a0..0x01a3` is
+handled by `FUN_142097ee0`, which is not reached through the singleton entries at all - it
+is the **virtual `OnPacket` of a stage object**, slot `anchor+26` of the six-class vtable
+family. Which is correct: `SetField` is addressed to the stage, and the stage is what
+changes. `FUN_142097ee0` forwards `0x1a0` to **`FUN_142097f80`** (11726 bytes).
+
+**3. The handler says so itself.** It reads a `u32`, a `u8` and a `u32` into world setters,
+brackets them with `FUN_142cb9260(world)` read before and after, and when the two differ it
+builds and displays the string
+
+```
+"Cha n	ne
+l"        -> "Channel", with control characters spliced in
+```
+
+That is a channel-change announcement, which is `SetField`'s job. The junk bytes are an
+anti-string-search measure and are why a plain search for "Channel" never found it.
+
+Note what this rehabilitates: **the six-vtable family was not a dead end after all.** The
+mistake was the derivation (COMDAT folding, above), not the family. `FUN_142097ee0` is a
+real stage `OnPacket`, and two of the six override it - `FUN_141b82b00` (`0x51..0x6f`) and
+`FUN_141df5940` (`0x1001+`, `0x8002+`, `0xa002+`).
+
+Full layout: `research/msexe-stage-setfield.md`.
+
 ## Not yet established
 
 * A positive trace of **when `FUN_142ca5c50` runs**. The argument above says the world
