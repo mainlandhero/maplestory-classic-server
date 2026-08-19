@@ -130,7 +130,19 @@ impl Session {
                 self.seen_login_request = true;
                 self.world_and_characters("login request")
             }
-            CLIENT_LEAVE_WORLD_REQUEST => self.world_and_characters("leave world"),
+            // "Choose another world" and "Back" send the SAME empty 0x0082, so the server
+            // cannot tell them apart - whatever makes Back go back one step is client-side.
+            // What the server does control is which screen the reply lands on.
+            //
+            // The world-list TERMINATOR transitions the client to screen 2, WorldSelect:
+            // `FUN_141b2fac0`'s end-of-list branch calls `FUN_141b3f050(stage, 2, 400)`, and
+            // `docs/session.md` has the stage table read out of `FUN_141127730`, which
+            // registers each id against a screen name - 2 is WorldSelect, 4 is CharSelect.
+            //
+            // So the terminator was already putting the client on WorldSelect and the
+            // LOGIN RESULT that followed was yanking it straight to CharSelect. Leaving the
+            // login result off is the whole change.
+            CLIENT_LEAVE_WORLD_REQUEST => self.world_list_only("leave world"),
             CLIENT_ENTER_CREATION_REQUEST => vec![Reply::new(
                 ENTER_CREATION_RESULT,
                 enter_creation_permitted(),
@@ -150,6 +162,32 @@ impl Session {
     /// still showing; the world entry is what enables the Login button *and* fills the list
     /// the login result searches; the login result names a world that must already be in
     /// that list or the client stops without saying why.
+    /// The world list and nothing after it, which leaves the client on **WorldSelect**.
+    ///
+    /// Answering is not optional - an unanswered packet freezes the client's whole UI - but
+    /// the *login result* is, and it is what drives CharSelect. Three packets go out.
+    fn world_list_only(&mut self, cause: &str) -> Vec<Reply> {
+        self.world_head(cause)
+    }
+
+    /// Account info, the world entry, and the end-of-list terminator.
+    fn world_head(&mut self, cause: &str) -> Vec<Reply> {
+        let world = &self.config.world;
+        vec![
+            Reply::new(
+                ACCOUNT_INFO,
+                account_info(&self.account.name, &self.config.display_name),
+                format!("{cause}: account info"),
+            ),
+            Reply::new(
+                WORLD_LIST,
+                world_list_entry(world.id as u8, &world.name, world.channel_count()),
+                format!("{cause}: world {}", world.name),
+            ),
+            Reply::new(WORLD_LIST, world_list_end(), format!("{cause}: end of worlds")),
+        ]
+    }
+
     fn world_and_characters(&mut self, cause: &str) -> Vec<Reply> {
         let world = &self.config.world;
         let mut out = vec![
@@ -529,9 +567,34 @@ mod tests {
         let mut s = session();
         let first = s.handle(&request(CLIENT_LEAVE_WORLD_REQUEST, &[]));
         let second = s.handle(&request(CLIENT_LEAVE_WORLD_REQUEST, &[]));
-        assert_eq!(opcodes(&first), vec![ACCOUNT_INFO, WORLD_LIST, WORLD_LIST, LOGIN_RESULT]);
+        assert_eq!(opcodes(&first), vec![ACCOUNT_INFO, WORLD_LIST, WORLD_LIST]);
         assert_eq!(first.iter().map(|r| &r.body).collect::<Vec<_>>(),
                    second.iter().map(|r| &r.body).collect::<Vec<_>>());
+    }
+
+    /// Leaving the world must **not** send a login result, and that is the whole point.
+    ///
+    /// The world-list terminator transitions the client to screen 2, WorldSelect
+    /// (`FUN_141b2fac0`'s end-of-list branch calls `FUN_141b3f050(stage, 2, 400)`; the stage
+    /// table in `docs/session.md` is read out of `FUN_141127730` and registers 2 as
+    /// WorldSelect, 4 as CharSelect). A login result after it drags the client to CharSelect,
+    /// which is why "Choose another world" always landed back on the character screen.
+    ///
+    /// The login REQUEST still sends one - that path is meant to reach CharSelect.
+    #[test]
+    fn leaving_the_world_sends_no_login_result_so_the_client_stays_on_world_select() {
+        let mut s = session();
+        let leave = s.handle(&request(CLIENT_LEAVE_WORLD_REQUEST, &[]));
+        assert!(
+            !opcodes(&leave).contains(&LOGIN_RESULT),
+            "a login result here pulls the client off WorldSelect and onto CharSelect"
+        );
+        assert!(!leave.is_empty(), "still answered - silence freezes the client's whole UI");
+        assert_eq!(*opcodes(&leave).last().expect("a reply"), WORLD_LIST,
+                   "the terminator must be the last thing the client sees");
+
+        let login = s.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        assert!(opcodes(&login).contains(&LOGIN_RESULT), "the login path still reaches CharSelect");
     }
 
     #[test]

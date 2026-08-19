@@ -908,7 +908,8 @@ never a crash in the parser - mode 2 was simply never reached.
 
 **Mode 2 is not the mode we want anyway.** The login screen's buttons fork on `mode == 5`
 (`FUN_14112a570`): `login` calls `FUN_141b3ff10` (the login request) in mode 5, and
-`FUN_141b3f050(stage, 4, 600)` otherwise - a 600 ms fade to **screen 4, world select**.
+`FUN_141b3f050(stage, 4, 600)` otherwise - a 600 ms fade to **screen 4, CharSelect**.
+(This line said "world select" until 2026-08-19; see the retraction below.)
 So mode 2 restores the classic WorldSelect -> ChannelSelect flow; it does **not** make the
 client authenticate, so it does nothing for multi-account. It also silently kills the
 login-screen Quit button, which reads as a freeze.
@@ -1864,10 +1865,19 @@ why the flow does not match a normal server.
 (`session+0x68`) from `grap-stub` once the world list has landed. Then the tick's
 auto-login goes false, the button still enables (that happens as a side effect of the
 `+0x108` check, independent of mode), and clicking Login takes
-`FUN_141b3f050(stage, 4, 600)`. **Corrected 2026-08-19:** that is not "straight to
-CharSelect" - `FUN_141b3f050(stage, screen, ms)` is a screen transition, and screen 4 is
-**world select**, which is why a world-list terminator sent with the mode patch on landed
-there. Switching modes sends `0x000B` to the
+`FUN_141b3f050(stage, 4, 600)`.
+
+> **RETRACTED 2026-08-19 (second pass).** A "correction" here previously said screen 4 was
+> **world select** and that the original "straight to CharSelect" reading was wrong. **The
+> correction was the error.** `docs/session.md` carries the stage table read out of
+> `FUN_141127730`, which registers each id against a screen *name* - data, not inference:
+> **1 Title, 2 WorldSelect, 3 ClassicIntro, 4 CharSelect, 5 NewChar.** So screen 4 is
+> CharSelect and the original claim was right.
+>
+> What actually lands on world select is the **world-list terminator**: its branch in
+> `FUN_141b2fac0` calls `FUN_141b3f050(param_1, 2, 400)` - screen **2**, WorldSelect. That is
+> why sending the terminator put the client there, and it is the lever for
+> "Choose another world". Switching modes sends `0x000B` to the
 classic handler `FUN_141b2fac0` instead of `FUN_141b31ff0`, which is safe: their read
 sequences were compared field by field and are identical. **Be honest about what this is** -
 it makes the client follow the normal flow, it does not make the session valid.

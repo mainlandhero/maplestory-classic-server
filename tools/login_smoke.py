@@ -490,10 +490,18 @@ def run(args):
 
     # Leaving the world is answered the same way, every time. A one-shot answer left the
     # client on "Connecting..." forever when a world was picked a second time.
+    #
+    # It stops at the world-list TERMINATOR and sends no login result, and that is
+    # deliberate: the terminator transitions the client to screen 2, WorldSelect, and a login
+    # result after it drags it to screen 4, CharSelect. That is why "Choose another world"
+    # used to land back on the character screen.
     peer.send(CLIENT_LEAVE_WORLD_REQUEST)
-    again = [op for op, _ in peer.recv(4)]
-    check("leave-world is answered like a login", again == [ACCOUNT_INFO, WORLD_LIST, WORLD_LIST, LOGIN_RESULT],
+    again = [op for op, _ in peer.recv(3)]
+    check("leave-world is answered with the world list and NO login result",
+          again == [ACCOUNT_INFO, WORLD_LIST, WORLD_LIST],
           "got " + ", ".join("0x%04X" % o for o in again))
+    check("leave-world ends on the terminator, so the client stays on WorldSelect",
+          again and again[-1] == WORLD_LIST, "last was 0x%04X" % (again[-1] if again else 0))
 
     peer.send(CLIENT_ENTER_CREATION_REQUEST, b"\x01\x00\x2e")
     opcode, body = peer.recv(1)[0]

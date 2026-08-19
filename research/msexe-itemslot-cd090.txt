@@ -1,0 +1,18 @@
+// 1402cd090 .. 1402cd0ce   block=.text
+1402cd090  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+1402cd095  57                                PUSH RDI
+1402cd096  48 83 ec 20                       SUB RSP,0x20
+1402cd09a  48 8b fa                          MOV RDI,RDX
+1402cd09d  41 b8 08 00 00 00                 MOV R8D,0x8
+1402cd0a3  48 8d 54 24 38                    LEA RDX,[RSP + 0x38]
+1402cd0a8  48 8b d9                          MOV RBX,RCX
+1402cd0ab  e8 c0 c0 41 00                    CALL 0x1406e9170
+1402cd0b0  48 8b 44 24 38                    MOV RAX,qword ptr [RSP + 0x38]
+1402cd0b5  48 8b cb                          MOV RCX,RBX
+1402cd0b8  48 89 47 20                       MOV qword ptr [RDI + 0x20],RAX
+1402cd0bc  e8 5f bb 41 00                    CALL 0x1406e8c20
+1402cd0c1  48 8b 5c 24 30                    MOV RBX,qword ptr [RSP + 0x30]
+1402cd0c6  89 47 28                          MOV dword ptr [RDI + 0x28],EAX
+1402cd0c9  48 83 c4 20                       ADD RSP,0x20
+1402cd0cd  5f                                POP RDI
+1402cd0ce  c3                                RET

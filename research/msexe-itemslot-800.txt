@@ -1,0 +1,187 @@
+// 140303800 .. 140303a6c   block=.text
+140303800  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+140303805  48 89 6c 24 10                    MOV qword ptr [RSP + 0x10],RBP
+14030380a  48 89 74 24 18                    MOV qword ptr [RSP + 0x18],RSI
+14030380f  57                                PUSH RDI
+140303810  48 83 ec 20                       SUB RSP,0x20
+140303814  48 8b d9                          MOV RBX,RCX
+140303817  48 8b f2                          MOV RSI,RDX
+14030381a  48 8b ca                          MOV RCX,RDX
+14030381d  e8 fe 53 3e 00                    CALL 0x1406e8c20
+140303822  33 ff                             XOR EDI,EDI
+140303824  8b e8                             MOV EBP,EAX
+140303826  a8 01                             TEST AL,0x1
+140303828  74 0a                             JZ 0x140303834
+14030382a  48 8b ce                          MOV RCX,RSI
+14030382d  e8 4e 53 3e 00                    CALL 0x1406e8b80
+140303832  eb 02                             JMP 0x140303836
+140303834  8b c7                             MOV EAX,EDI
+140303836  48 8b d3                          MOV RDX,RBX
+140303839  0f b7 c8                          MOVZX ECX,AX
+14030383c  e8 cf 37 ff ff                    CALL 0x1402f7010
+140303841  89 43 04                          MOV dword ptr [RBX + 0x4],EAX
+140303844  40 f6 c5 02                       TEST BPL,0x2
+140303848  74 0a                             JZ 0x140303854
+14030384a  48 8b ce                          MOV RCX,RSI
+14030384d  e8 2e 53 3e 00                    CALL 0x1406e8b80
+140303852  eb 02                             JMP 0x140303856
+140303854  8b c7                             MOV EAX,EDI
+140303856  48 8d 53 08                       LEA RDX,[RBX + 0x8]
+14030385a  0f b7 c8                          MOVZX ECX,AX
+14030385d  e8 ae 37 ff ff                    CALL 0x1402f7010
+140303862  89 43 0c                          MOV dword ptr [RBX + 0xc],EAX
+140303865  40 f6 c5 04                       TEST BPL,0x4
+140303869  74 0a                             JZ 0x140303875
+14030386b  48 8b ce                          MOV RCX,RSI
+14030386e  e8 0d 53 3e 00                    CALL 0x1406e8b80
+140303873  eb 02                             JMP 0x140303877
+140303875  8b c7                             MOV EAX,EDI
+140303877  48 8d 53 10                       LEA RDX,[RBX + 0x10]
+14030387b  0f b7 c8                          MOVZX ECX,AX
+14030387e  e8 8d 37 ff ff                    CALL 0x1402f7010
+140303883  89 43 14                          MOV dword ptr [RBX + 0x14],EAX
+140303886  40 f6 c5 08                       TEST BPL,0x8
+14030388a  74 0a                             JZ 0x140303896
+14030388c  48 8b ce                          MOV RCX,RSI
+14030388f  e8 ec 52 3e 00                    CALL 0x1406e8b80
+140303894  eb 02                             JMP 0x140303898
+140303896  8b c7                             MOV EAX,EDI
+140303898  48 8d 53 18                       LEA RDX,[RBX + 0x18]
+14030389c  0f b7 c8                          MOVZX ECX,AX
+14030389f  e8 6c 37 ff ff                    CALL 0x1402f7010
+1403038a4  89 43 1c                          MOV dword ptr [RBX + 0x1c],EAX
+1403038a7  40 f6 c5 10                       TEST BPL,0x10
+1403038ab  74 0a                             JZ 0x1403038b7
+1403038ad  48 8b ce                          MOV RCX,RSI
+1403038b0  e8 cb 52 3e 00                    CALL 0x1406e8b80
+1403038b5  eb 02                             JMP 0x1403038b9
+1403038b7  8b c7                             MOV EAX,EDI
+1403038b9  48 8d 53 20                       LEA RDX,[RBX + 0x20]
+1403038bd  0f b7 c8                          MOVZX ECX,AX
+1403038c0  e8 4b 37 ff ff                    CALL 0x1402f7010
+1403038c5  89 43 24                          MOV dword ptr [RBX + 0x24],EAX
+1403038c8  40 f6 c5 20                       TEST BPL,0x20
+1403038cc  74 0a                             JZ 0x1403038d8
+1403038ce  48 8b ce                          MOV RCX,RSI
+1403038d1  e8 aa 52 3e 00                    CALL 0x1406e8b80
+1403038d6  eb 02                             JMP 0x1403038da
+1403038d8  8b c7                             MOV EAX,EDI
+1403038da  48 8d 53 28                       LEA RDX,[RBX + 0x28]
+1403038de  0f b7 c8                          MOVZX ECX,AX
+1403038e1  e8 2a 37 ff ff                    CALL 0x1402f7010
+1403038e6  89 43 2c                          MOV dword ptr [RBX + 0x2c],EAX
+1403038e9  40 f6 c5 40                       TEST BPL,0x40
+1403038ed  74 0a                             JZ 0x1403038f9
+1403038ef  48 8b ce                          MOV RCX,RSI
+1403038f2  e8 89 52 3e 00                    CALL 0x1406e8b80
+1403038f7  eb 02                             JMP 0x1403038fb
+1403038f9  8b c7                             MOV EAX,EDI
+1403038fb  48 8d 53 30                       LEA RDX,[RBX + 0x30]
+1403038ff  0f b7 c8                          MOVZX ECX,AX
+140303902  e8 09 37 ff ff                    CALL 0x1402f7010
+140303907  89 43 34                          MOV dword ptr [RBX + 0x34],EAX
+14030390a  40 84 ed                          TEST BPL,BPL
+14030390d  79 0a                             JNS 0x140303919
+14030390f  48 8b ce                          MOV RCX,RSI
+140303912  e8 69 52 3e 00                    CALL 0x1406e8b80
+140303917  eb 02                             JMP 0x14030391b
+140303919  8b c7                             MOV EAX,EDI
+14030391b  48 8d 53 38                       LEA RDX,[RBX + 0x38]
+14030391f  0f b7 c8                          MOVZX ECX,AX
+140303922  e8 e9 36 ff ff                    CALL 0x1402f7010
+140303927  89 43 3c                          MOV dword ptr [RBX + 0x3c],EAX
+14030392a  0f ba e5 08                       BT EBP,0x8
+14030392e  73 0a                             JNC 0x14030393a
+140303930  48 8b ce                          MOV RCX,RSI
+140303933  e8 48 52 3e 00                    CALL 0x1406e8b80
+140303938  eb 02                             JMP 0x14030393c
+14030393a  8b c7                             MOV EAX,EDI
+14030393c  48 8d 53 40                       LEA RDX,[RBX + 0x40]
+140303940  0f b7 c8                          MOVZX ECX,AX
+140303943  e8 c8 36 ff ff                    CALL 0x1402f7010
+140303948  89 43 44                          MOV dword ptr [RBX + 0x44],EAX
+14030394b  0f ba e5 09                       BT EBP,0x9
+14030394f  73 0a                             JNC 0x14030395b
+140303951  48 8b ce                          MOV RCX,RSI
+140303954  e8 27 52 3e 00                    CALL 0x1406e8b80
+140303959  eb 02                             JMP 0x14030395d
+14030395b  8b c7                             MOV EAX,EDI
+14030395d  48 8d 53 48                       LEA RDX,[RBX + 0x48]
+140303961  0f b7 c8                          MOVZX ECX,AX
+140303964  e8 a7 36 ff ff                    CALL 0x1402f7010
+140303969  89 43 4c                          MOV dword ptr [RBX + 0x4c],EAX
+14030396c  0f ba e5 0a                       BT EBP,0xa
+140303970  73 0a                             JNC 0x14030397c
+140303972  48 8b ce                          MOV RCX,RSI
+140303975  e8 06 52 3e 00                    CALL 0x1406e8b80
+14030397a  eb 02                             JMP 0x14030397e
+14030397c  8b c7                             MOV EAX,EDI
+14030397e  48 8d 53 50                       LEA RDX,[RBX + 0x50]
+140303982  0f b7 c8                          MOVZX ECX,AX
+140303985  e8 86 36 ff ff                    CALL 0x1402f7010
+14030398a  89 43 54                          MOV dword ptr [RBX + 0x54],EAX
+14030398d  0f ba e5 0b                       BT EBP,0xb
+140303991  73 0a                             JNC 0x14030399d
+140303993  48 8b ce                          MOV RCX,RSI
+140303996  e8 e5 51 3e 00                    CALL 0x1406e8b80
+14030399b  eb 02                             JMP 0x14030399f
+14030399d  8b c7                             MOV EAX,EDI
+14030399f  48 8d 53 58                       LEA RDX,[RBX + 0x58]
+1403039a3  0f b7 c8                          MOVZX ECX,AX
+1403039a6  e8 65 36 ff ff                    CALL 0x1402f7010
+1403039ab  89 43 5c                          MOV dword ptr [RBX + 0x5c],EAX
+1403039ae  0f ba e5 0c                       BT EBP,0xc
+1403039b2  73 0a                             JNC 0x1403039be
+1403039b4  48 8b ce                          MOV RCX,RSI
+1403039b7  e8 c4 51 3e 00                    CALL 0x1406e8b80
+1403039bc  eb 02                             JMP 0x1403039c0
+1403039be  8b c7                             MOV EAX,EDI
+1403039c0  48 8d 53 60                       LEA RDX,[RBX + 0x60]
+1403039c4  0f b7 c8                          MOVZX ECX,AX
+1403039c7  e8 44 36 ff ff                    CALL 0x1402f7010
+1403039cc  89 43 64                          MOV dword ptr [RBX + 0x64],EAX
+1403039cf  0f ba e5 0d                       BT EBP,0xd
+1403039d3  73 0a                             JNC 0x1403039df
+1403039d5  48 8b ce                          MOV RCX,RSI
+1403039d8  e8 a3 51 3e 00                    CALL 0x1406e8b80
+1403039dd  eb 02                             JMP 0x1403039e1
+1403039df  8b c7                             MOV EAX,EDI
+1403039e1  48 8d 53 68                       LEA RDX,[RBX + 0x68]
+1403039e5  0f b7 c8                          MOVZX ECX,AX
+1403039e8  e8 23 36 ff ff                    CALL 0x1402f7010
+1403039ed  89 43 6c                          MOV dword ptr [RBX + 0x6c],EAX
+1403039f0  0f ba e5 0e                       BT EBP,0xe
+1403039f4  73 0a                             JNC 0x140303a00
+1403039f6  48 8b ce                          MOV RCX,RSI
+1403039f9  e8 82 51 3e 00                    CALL 0x1406e8b80
+1403039fe  eb 02                             JMP 0x140303a02
+140303a00  8b c7                             MOV EAX,EDI
+140303a02  48 8d 53 70                       LEA RDX,[RBX + 0x70]
+140303a06  0f b7 c8                          MOVZX ECX,AX
+140303a09  e8 02 36 ff ff                    CALL 0x1402f7010
+140303a0e  89 43 74                          MOV dword ptr [RBX + 0x74],EAX
+140303a11  0f ba e5 0f                       BT EBP,0xf
+140303a15  73 0a                             JNC 0x140303a21
+140303a17  48 8b ce                          MOV RCX,RSI
+140303a1a  e8 61 51 3e 00                    CALL 0x1406e8b80
+140303a1f  eb 02                             JMP 0x140303a23
+140303a21  8b c7                             MOV EAX,EDI
+140303a23  48 8d 53 78                       LEA RDX,[RBX + 0x78]
+140303a27  0f b7 c8                          MOVZX ECX,AX
+140303a2a  e8 e1 35 ff ff                    CALL 0x1402f7010
+140303a2f  89 43 7c                          MOV dword ptr [RBX + 0x7c],EAX
+140303a32  0f ba e5 10                       BT EBP,0x10
+140303a36  73 0b                             JNC 0x140303a43
+140303a38  48 8b ce                          MOV RCX,RSI
+140303a3b  e8 40 51 3e 00                    CALL 0x1406e8b80
+140303a40  0f b7 f8                          MOVZX EDI,AX
+140303a43  48 8d 93 80 00 00 00              LEA RDX,[RBX + 0x80]
+140303a4a  0f b7 cf                          MOVZX ECX,DI
+140303a4d  e8 be 35 ff ff                    CALL 0x1402f7010
+140303a52  48 8b 6c 24 38                    MOV RBP,qword ptr [RSP + 0x38]
+140303a57  48 8b 74 24 40                    MOV RSI,qword ptr [RSP + 0x40]
+140303a5c  89 83 84 00 00 00                 MOV dword ptr [RBX + 0x84],EAX
+140303a62  48 8b 5c 24 30                    MOV RBX,qword ptr [RSP + 0x30]
+140303a67  48 83 c4 20                       ADD RSP,0x20
+140303a6b  5f                                POP RDI
+140303a6c  c3                                RET
