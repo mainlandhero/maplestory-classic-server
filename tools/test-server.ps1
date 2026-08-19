@@ -163,7 +163,23 @@ $ErrorActionPreference = 'Stop'
 # its own control - the first SetField should read 0, and the second says whether the short
 # form is safe to use next time.
 #
-# Retired 2026-08-19, both answered:
+# Retired 2026-08-19 (round two), both answered on the run that made NPCs appear:
+#   141e75800  FIRED on 0x044F from inside CField::OnPacket - the NPC routing was right all
+#              along, and the body's `enabled` and `alpha` zeros were what made them invisible.
+#   1420dd920  NEVER fired - 0x0138's apply loop does not run, so it is a dead end for
+#              dressing the local character.
+#
+# **For the channel-swap run the probe is NOT the instrument - world.log is.** The swap
+# request's opcode is unknown, so there is no handler to watch; the client will name its own
+# request in the log the way it named 0x00D1 and 0x0151. These two slots are free
+# confirmations rather than a measurement, and neither can affect the client:
+#   142cfb500:peek=2358  the world object's CUserLocal slot, once per SetField - including
+#                        any SetField a channel swap produces.
+#   140302e30:hits=200   the character-stat decoder; it fires at character select and again
+#                        per world entry, so it confirms the record path on whichever
+#                        channel the client ends up on.
+#
+# Retired earlier, and kept for the record:
 #   142cfb500:peek=2358 -> [world+0x2358] read 0x00 on the FIRST SetField and NON-ZERO on
 #     every later one. So the CUserLocal slot IS populated once a field has loaded, and the
 #     short characterData=0 SetField's precondition holds for map CHANGES. Measured, not
@@ -198,7 +214,7 @@ $ErrorActionPreference = 'Stop'
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141e75800,1420dd920'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cfb500:peek=2358,140302e30:hits=200'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
