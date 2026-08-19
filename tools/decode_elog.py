@@ -24,6 +24,16 @@ import sys
 IMAGE_BASE = 0x140000000
 
 # Error codes the client names, from docs/client-messages.md.
+# Raise sites, by source line. See docs/client-messages.md for the full table.
+SITES = {
+    735: "FUN_1415d10e0 - the L gate",
+    807: "FUN_1415d10e0 - first-connect version check",
+    827: "FUN_1415d10e0 - second-connect version check",
+    840: "FUN_1415d10e0 - the G == 1 && H == 1 gate",
+    846: "FUN_1415d10e0 - cannot access the game",
+    1327: "FUN_142c45e50 - a handler re-reporting a caught code, not a new failure",
+}
+
 CODES = {
     0x22000001: "cannot access the game",
     0x22000005: "client is outdated (short form)",
@@ -56,6 +66,14 @@ def main():
                     code = int(hr)
                     name = CODES.get(code, "unknown code")
                     print("        HR %d = %#010x  (%s)" % (code, code, name))
+                # The number just before HR is a __LINE__, and docs/client-messages.md
+                # has the complete table of raise sites keyed by it.
+                for site in re.findall(r"\|(\d+)\|HR\|", line):
+                    n = int(site)
+                    print("        raised at line %d (%#06x) - see the raise-site table in"
+                          " docs/client-messages.md" % (n, n))
+                    if n in SITES:
+                        print("            %s" % SITES[n])
             elif args.stack and re.match(r"^[0-9A-F]{16} ", line):
                 addr = int(line[:16], 16)
                 # The client prints VA - 0x100000000; put the image base back.

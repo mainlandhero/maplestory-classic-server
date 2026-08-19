@@ -56,28 +56,47 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         CLIENT_DATA_WZ_REQUEST => "CLIENT_DATA_WZ_REQUEST",
         CLIENT_ENTER_CREATION_REQUEST => "CLIENT_ENTER_CREATION_REQUEST",
 
-        // Seen on the wire and identified, but nothing acts on them. Naming them keeps
-        // them out of the UNKNOWN bucket, which is reserved for genuinely unread packets.
+        // Established by reading the client, not by guessing at the bytes.
         0x0073 => "CLIENT_SESSION_IDENTITY (never answered)",
         0x007D => "CLIENT_MIGRATION_HELLO (carries the migration seed)",
-        0x0079 => "CLIENT_CHARACTER_REPORT (never answered)",
-        0x007A => "CLIENT_DISCONNECT_NOTICE (never answered)",
-        0x00BC => "CLIENT_LOCALE (1033 three times, never answered)",
-        0x00C0 => "CLIENT_HELLO (never answered)",
-        0x0070 => "CLIENT_VERSION_ECHO (never answered)",
-        0x0071 => "CLIENT_VERSION_DETAIL (never answered)",
-        0x00A6 => "CLIENT_ASSET_TICK (never answered)",
-        0x00BF => "CLIENT_READY (never answered)",
+        0x008F | 0x0090 | 0x0091 => "CLIENT_ELOG (the client's own error log; decode_elog.py)",
+
+        // GUESSED, NOT ESTABLISHED. These names were inferred from what the bytes looked
+        // like and nothing has confirmed them. They are marked in every log line, because
+        // an unverified name printed as a fact is worse than no name: it is the kind of
+        // thing that gets quoted back later as though it were measured.
+        0x0079 => "guess:CHARACTER_REPORT?",
+        0x007A => "guess:DISCONNECT_NOTICE?",
+        0x00BC => "guess:LOCALE? (1033 three times)",
+        0x00C0 => "guess:HELLO? (first u32 is the launch mode)",
+        0x0070 => "guess:VERSION_ECHO?",
+        0x0071 => "guess:VERSION_DETAIL? (echoes our low/high/temp)",
+        0x00A6 => "guess:ASSET_TICK?",
+        0x00BF => "guess:READY? (empty body)",
 
         _ => return None,
     })
 }
 
-/// One packet as a log line body: hex, truncated only if the opcode is known.
+/// Packets that must be logged **whole** even though they have a name.
 ///
-/// Returns the hex and whether anything was left out, so the caller can say so.
+/// Having a name is normally the licence to truncate, because a named packet is one we
+/// already understand. The client's own error log is the exception that proves the rule:
+/// it is named, it is 500-2600 bytes, and every byte of it is evidence. Naming it without
+/// this exemption would have quietly re-broken the instrument that found
+/// `INVALID_CLIENT_VERSION` - the truncation is what hid it for weeks in the first place.
+fn never_truncate(opcode: u16) -> bool {
+    matches!(opcode, 0x008F | 0x0090 | 0x0091)
+}
+
+/// One packet as a log line body: hex, truncated only when we both know the opcode and do
+/// not need its bytes.
 pub fn body_hex(opcode: u16, body: &[u8]) -> String {
-    let cap = if opcode_name(opcode).is_some() { KNOWN_BODY_BYTES } else { usize::MAX };
+    let cap = if opcode_name(opcode).is_some() && !never_truncate(opcode) {
+        KNOWN_BODY_BYTES
+    } else {
+        usize::MAX
+    };
     let shown = body.len().min(cap);
     let mut out = String::with_capacity(shown * 2 + 24);
     for b in &body[..shown] {
@@ -145,12 +164,45 @@ mod tests {
         assert!(!hex.contains("capped"));
     }
 
+    /// The regression this nearly shipped: naming the ELog opcodes made them truncatable,
+    /// which would have silently disabled the cheapest instrument in the project.
+    #[test]
+    fn the_client_error_log_is_logged_whole_even_though_it_is_named() {
+        let body = vec![0xABu8; 2600];
+        for op in [0x008Fu16, 0x0090, 0x0091] {
+            assert!(opcode_name(op).is_some(), "0x{op:04X} should be named");
+            let hex = body_hex(op, &body);
+            assert_eq!(hex.len(), 5200, "0x{op:04X} was truncated");
+            assert!(!hex.contains("capped"));
+        }
+    }
+
     #[test]
     fn a_known_body_is_capped_so_it_does_not_bury_its_neighbours() {
         let body = vec![0xABu8; 4096];
         let hex = body_hex(LOGIN_RESULT, &body);
         assert!(hex.contains("capped"), "{hex}");
         assert!(hex.len() < 300);
+    }
+
+    /// A name we guessed must say so in the log line, every time. This is a correctness
+    /// property, not a style one: these were invented from the shape of the bytes, and the
+    /// project has already lost time to an inference that got quoted back as a measurement.
+    #[test]
+    fn guessed_names_are_marked_as_guesses() {
+        for op in [0x0070u16, 0x0071, 0x0079, 0x007A, 0x00A6, 0x00BC, 0x00BF, 0x00C0] {
+            let name = opcode_name(op).expect("still named");
+            assert!(name.starts_with("guess:"), "0x{op:04X} asserts {name:?} as fact");
+        }
+    }
+
+    /// And a name we did establish must NOT be marked as a guess.
+    #[test]
+    fn established_names_are_not_marked_as_guesses() {
+        for op in [LOGIN_RESULT, MIGRATE_COMMAND, CLIENT_SELECT_CHARACTER_REQUEST, 0x008F] {
+            let name = opcode_name(op).expect("named");
+            assert!(!name.starts_with("guess:"), "0x{op:04X} understates itself: {name:?}");
+        }
     }
 
     #[test]

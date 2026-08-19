@@ -111,3 +111,53 @@ throws.
 That pair is what makes the "truncate after L" experiment work as a discriminator: the
 same `L=1` payload gives the *outdated* dialog when complete and the *cannot access*
 dialog when truncated, proving the L gate was passed and the failure moved later.
+
+## Every error-dialog raise site in the image
+
+**Complete, 2026-08-19.** Found by scanning `.text` for `mov r8d, <error code>` and pairing
+each with the `mov edx, <n>` beside it, then resolving the containing function from
+`.pdata`. Fourteen sites.
+
+| at | in function | `edx` | decimal | code |
+|---|---|---|---|---|
+| `1415d1eea` | `FUN_1415d10e0` | `0x2df` | 735 | `0x22000007` client is outdated |
+| `1415d25d3` | `FUN_1415d10e0` | `0x327` | 807 | `0x22000007` client is outdated |
+| `1415d273d` | `FUN_1415d10e0` | `0x33b` | 827 | `0x22000007` client is outdated |
+| **`1415d276d`** | `FUN_1415d10e0` | **`0x348`** | **840** | `0x22000007` client is outdated |
+| `1415d134e` | `FUN_1415d10e0` | `0x23d` | 573 | `0x22000001` cannot access the game |
+| `1415d27a4` | `FUN_1415d10e0` | `0x34e` | 846 | `0x22000001` cannot access the game |
+| `142c49ebf` | `FUN_142c48ca0` | `0x73a` | 1850 | `0x22000001` cannot access the game |
+| `1415d1399` | `FUN_1415d10e0` | `0x243` | 579 | `0x21000001` |
+| `1415d27bd` | `FUN_1415d10e0` | `0x34e` | 846 | `0x21000001` |
+| `142c4ce98` | `FUN_142c4c6e0` | `0x7e4` | 2020 | `0x22000005` client is outdated (short) |
+| `142c95b71` | `FUN_142c94bd0` | `0x195` | 405 | `0x22000009` launch error |
+| `142c95bba` | `FUN_142c94bd0` | `0x1a4` | 420 | `0x22000009` launch error |
+| `141b3b170` | `FUN_141b3b110` | `0xfa5` | 4005 | `0x22000009` launch error |
+| `141b3b1f4` | `FUN_141b3b110` | `0xfb2` | 4018 | `0x22000009` launch error |
+
+**Ten of the fourteen are in `FUN_1415d10e0`.** The connection handshake is where almost
+every fatal client-side error in this project comes from.
+
+### The second argument is a source line number
+
+`FUN_140cc2350(&DAT_143271f04, 0x348, 0x22000007)` reads as
+`report(module, line, code)`. `DAT_143271f04` is **not** a string - it is a dword holding
+`45`, so it is a module id, and the `edx` value is a `__LINE__`.
+
+That is what makes the client's `ELog` upload directly usable: the number immediately before
+`HR` in a record **is** this table's decimal column. `840` is the `G == 1 && H == 1` gate,
+with no ambiguity and no client run.
+
+### The two records in one failure
+
+A single failure produces **two** `ELog` records, not two failures:
+
+* line **840** - the raise, in `FUN_1415d10e0`.
+* line **1327** - not a raise site at all. The only `mov edx, 1327` in `.text` that is
+  followed by a report call is at `142c462ec` in `FUN_142c45e50`, and there the code comes
+  from a **variable** (`mov r8d, [rsp+0x44]`) rather than an immediate - which is why the
+  immediate scan above does not list it. That is a handler re-reporting a code it caught,
+  near `main` (`FUN_142c42f30`). The other `mov edx, 1327` (`142cf5a57`) sits in a run of
+  consecutive constants `0x52e, 0x52f, 0x530, 0x531` - a switch, not a raiser.
+
+So: one throw, one catch, two log lines.
