@@ -124,7 +124,11 @@ if PROBE:
     plant_character_and_migration(db, CHARACTER_ID)
 
 logf = open(logpath, "w")
-cmd = [os.path.join("target", "release", "maplecw-world.exe"), "--db", db,
+# --mobs because the server does NOT send mobs by default any more: the body faulted a
+# real client on 2026-08-19 (0xC0000005 at 0x141c810b0, mob+0x2b8 null). The builder is
+# still covered here so a byte-level regression in it cannot pass unnoticed, but this
+# suite proves the BYTES, not that the client accepts them - and on that it is wrong.
+cmd = [os.path.join("target", "release", "maplecw-world.exe"), "--db", db, "--mobs",
        "--bind", "127.0.0.1:%d" % port]
 if PROBE:
     cmd.append("--set-field-probe")
@@ -300,7 +304,12 @@ if PROBE:
     # Map 1 has none - it is the tutorial start - so the first field entry must produce
     # zero, and the second, on map 40, must produce that map's 40. Getting a mob onto the
     # WRONG map is the failure this asymmetry catches.
-    check("map 40's mobs are sent on entering it", len(mobs) == 40, "%d" % len(mobs))
+    # 40 spawn POINTS, but a spawn point is not a mob: the server caps how many are alive
+    # at 75% for a solo player, so 30. That figure is [I] from a fan site, not from the WZ -
+    # map 40's info node has a mobRate and no capacity of any name. See
+    # world::config::solo_spawn_capacity.
+    check("map 40 sends 30 mobs, not one per spawn point", len(mobs) == 30,
+          "%d" % len(mobs))
     if mobs:
         mb = mobs[0]["body"][2:]
         # 137 = 11-byte head + the 20-byte temp-stat mask + the 106-byte encodeInit. The
@@ -329,7 +338,7 @@ if PROBE:
         check("no mob is sent with hp = 0 - that is a mob at 0 percent",
               hps and all(h != 0 for h in hps), "%s" % hps[:3])
 
-    check("the probe answered every request", len(replies) == 6 + 40 + 2,
+    check("the probe answered every request", len(replies) == 6 + 30 + 2,
           "%d replies: %s" % (len(replies), sorted(set(hex(r["opcode"]) for r in replies))))
 
     # ---- the NPC the client clicked

@@ -244,14 +244,33 @@ impl Session {
         // is destroyed and rebuilt empty on every field entry, so they must be re-sent
         // after every SetField rather than once.
         //
-        // **Unconfirmed on screen, and the body is the least certain thing this server
-        // sends.** Two blocks inside it are decided by the WZ *template* rather than by us
-        // (`template+0x104` adds 16 bytes, `+0x1a0` adds 4), and what writes those flags was
-        // not found - so if the tutorial snail is a patrol mob, every byte after that point
-        // is misread. See net::mob::mob_enter_field's ranked uncertainty list.
+        // **OFF BY DEFAULT since the run of 2026-08-19, because the body faults the
+        // client.** TestCharD entered map 40 (Snail Hunting Ground I, 40 spawns); the two
+        // NPCs dispatched cleanly and the client then died on the FIRST 0x03C6 with
+        // 0xC0000005 at `0x141c810b0`. That is inside `FUN_141c81040`, and the faulting
+        // instruction is `CMP qword ptr [RCX],RDX` after
+        // `MOV RAX,[RSI+0x2b8] / LEA RCX,[RAX+0x828] / CMOVE RCX,RDX` - so **`mob+0x2b8`
+        // was null** and the client dereferenced without a guard.
+        //
+        // Everything else on that entry worked, which is what makes the diagnosis narrow:
+        // the character record decoded, the equipped list decoded all four items, and both
+        // NPCs went through. Mobs are the only thing that changed the outcome.
+        //
+        // Turn back on with `--mobs` when the body is the variant under test.
         let no_mobs: Vec<net::mob::FieldMob> = Vec::new();
         let mut out = out;
-        out.extend(self.config.mobs.get(&chr.map_id).unwrap_or(&no_mobs).iter().map(|mob| {
+        let mobs = if self.config.send_mobs {
+            self.config.mobs.get(&chr.map_id).unwrap_or(&no_mobs)
+        } else {
+            &no_mobs
+        };
+        // A spawn point is not a mob. Map 40 has 40 spawn points and a real server keeps
+        // about 30 of them filled for a solo player, so sending one per point
+        // over-populates the field. The cap is NOT in the WZ - map 40's info node has a
+        // mobRate but no capacity of any name - so it is our policy; see
+        // config::solo_spawn_capacity for what is measured and what is inferred.
+        let alive = crate::config::solo_spawn_capacity(mobs.len());
+        out.extend(mobs.iter().take(alive).map(|mob| {
             Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(mob),

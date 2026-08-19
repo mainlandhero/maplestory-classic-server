@@ -115,6 +115,86 @@ outcome - the `ELog` names the mis-sized field - but it is why "nothing worked" 
 put `0x00D2` on the wire for the first time, and nothing answers it. An unanswered packet
 freezes the client's whole UI, which would end the session.
 
+### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
+
+The owner entered the world with `TestCharD` on **map 40** and the client exited immediately.
+Preserved as `research/fixtures/mob-body-faults-client-{world,hook,exit}.log`.
+
+**This run answered three questions and only one badly.**
+
+```text
+14:27:49.788  140302e30 x3  from 0x1403094d0   character select - THE POSITIVE CONTROL
+14:27:52.421  140302e30     from 0x140304e76   while dispatching 0x01A0: the record decoded
+14:27:52.421  140304100 x4  from 0x140309686 <- 0x140306223 <- 0x140309f70
+14:27:52.951  opcode=0x044F  dispatched
+14:27:52.952  opcode=0x044F  dispatched
+14:27:52.952  CLIENT FAULT 0xC0000005 at 0x141c810b0
+```
+
+**The equipped-item block works.** `140304100` is the type-1 equip decode at `vtable+0x358`,
+and it fired **four times** - once per stored item - from inside the equipped-list loop at
+`0x140306223`. Its `rcx` points at an object whose first qword is `0x14327E1D8`, the type-1
+vtable, exactly as `research/naked-character.md` predicted. So `presence[2]`, the block's
+position at record offset 223, the `u16` slot loop and the 125-byte item body are all
+**right**, and the record decoded past them into the NPC dispatch.
+
+**What is still unknown is whether the character LOOKS dressed**, because the client died
+before the owner could see it. Decode confirmed; appearance not.
+
+**The mob body faults the client, and the fault names the field.** `0x141c810b0` is
+`+0x70` into `FUN_141c81040`:
+
+```asm
+141c81094  MOV   RAX,qword ptr [RSI + 0x2b8]
+141c8109b  MOV   EDX,0x848
+141c810a0  TEST  RAX,RAX
+141c810a3  LEA   RCX,[RAX + 0x828]
+141c810aa  CMOVE RCX,RDX              ; RAX == 0  ->  RCX = 0x848
+141c810ae  XOR   EDX,EDX
+141c810b0  CMP   qword ptr [RCX],RDX  ; <-- faults reading 0x848
+```
+
+So **`mob+0x2b8` was null** and the client dereferenced it with no guard. It died on the
+**first** `0x03C6`, after both `0x044F` NPCs had dispatched cleanly - so mobs are the only
+thing that changed the outcome, and the other three builds are not implicated.
+
+This is the failure `research/mob-spawn.md` ranked **first**: the body is structurally wrong
+somewhere, and the WZ-template-driven blocks (`template+0x104` adds 16 bytes, `+0x1a0` adds
+4) are the leading suspect, because a wrong length there misreads every field after it -
+which is exactly how a pointer field ends up null.
+
+> **Next instrument:** find who *writes* `template+0x104` and `+0x1a0` and read the WZ
+> property name beside it, or dump `Mob.wz` template 2 directly and look for the properties
+> that would set them. Then find what assigns `mob+0x2b8`, which names the field that did
+> not arrive.
+
+**Mobs are OFF by default now** (`send_mobs`, `--mobs` to re-enable), so the next run gets
+the other three builds in front of the client without waiting for this. The world server
+prints a line saying so on startup.
+
+### Mob capacity: a spawn point is not a mob
+
+The owner, 2026-08-19: map 40 has 40 spawn points but a real server keeps about **30** alive on
+it, and the cap rises with player count.
+
+**Checked in the WZ, and it is not there.** Map 40's whole `info` node is `AmbientBGM(v)`,
+`MR*`/`VR*`, `bgm`, `cloud`, `fieldLimit`, `fieldLimit2`, `fieldLimit_tw`, `fieldScript`,
+`fieldType`, `fly`, `forcedReturn`, `hideMinimap`, `mapDesc`, `mapMark`, **`mobRate`**,
+`moveLimit`, `noMapCmd`, `onFirstUserEnter`, `onUserEnter`, `partyStandAlone`,
+`personalShop`, `quarterView`, `returnMap`, `standAlone`, `swim`, `town`, `version`. **No
+capacity field of any name.** `mobRate` is `1.0` and is a respawn *rate*, not a cap. Its
+`life` node has 42 entries: 40 mobs plus Robin and Sam, which also confirms the generated
+table.
+
+So the cap is **server policy**. `world::config::solo_spawn_capacity` applies **75%**, which
+The owner flagged as coming from an unofficial fan site rather than from the game - **[I]**, and
+nothing in this client corroborates it. The one datapoint is 40 -> 30, and floor and ceiling
+of `3n/4` both give 30 from 40, so **the rounding is unsettled**; the code uses floor, and a
+small map is where the two would differ (6 -> 4 or 5).
+
+The full spawn-point list stays intact in `Config::mobs`; the cap is applied where they are
+*sent*, because respawn will need the points that are not currently filled.
+
 ### THE RUN - what to do, in this order, and what each outcome means
 
 All four builds are pre-flighted: `cargo test` (210), `channel_smoke.py`,
@@ -138,7 +218,7 @@ chat and the quest reply. It stopped being a probe some time ago.
 |---|---|---|---|
 | 0 | Log in and enter the world with a character that has equipment | does a character appear on the map at all? | **This is the gate.** The equipment change is inside the character record, which has no length prefix and no resync point. If world entry breaks - a fault, or a freeze on "Connecting..." - the record desynchronised, and **nothing below can be observed**. Read the `ELog` (`0x008F`/`0x0090`) and run `tools/pdata_lookup.py` on its RVAs; that names the mis-sized field |
 | 1 | Look at the character, then open the Equipment window | is it dressed? does the window list items? | **Dressed** - done. **Naked, window empty, no fault** - the layout is right and a *value* is wrong; `dateExpire` first. **Naked but the window lists items** - the items decoded and the avatar is not being rebuilt, which is a different and much smaller problem |
-| 2 | Walk to map 30 (`!map 30` in any chat tab) | are there snails? | Map 30 has **six** of template 1. **None, no fault** - a value. **A fault or a freeze on arrival** - the body desynchronised, and the WZ-template blocks are the first suspect |
+| 2 | ~~Walk to map 30~~ **SKIP - mobs are off.** | - | The mob body faulted the client on 2026-08-19 and `send_mobs` is now `false`. Re-enable with `--mobs` only when the mob body is the variant under test |
 | 3 | Click Heena or Roger | does a dialog box appear with our text? | **Text** - the whole `0x0151` -> `0x055B` chain works. **Nothing, no fault** - check `world.log` shows the `0x055B` going out, then suspect the type/flags |
 | 4 | Open Change Channel | is CH.2 **cream** rather than grey? does clicking it turn it blue? | Cream means the enable byte is right. Blue on click is only a highlight move, not a send |
 | 5 | **LAST.** Click the Change button | anything | **A freeze here is the measurement, not a crash.** Nothing answers `0x00D2` yet, and an unanswered packet freezes the client's whole UI - including the quit prompt's OK. `world.log`'s last inbound line names the packet, which is what this step is for |

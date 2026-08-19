@@ -363,7 +363,9 @@ if ($SetFieldProbe) {
     Write-Host "      743 bytes for a dressed character against 224 for a bare one."
     Write-Host "    - 0x0151 (the QUEST request, not an NPC click) is answered with a 0x055B"
     Write-Host "      script Say, spoken by the template the client itself named."
-    Write-Host "    - MOBS: 0x03C6, 137 bytes. Map 30 has six snails, map 40 has forty."
+    Write-Host "    - MOBS ARE OFF: the 137-byte body faulted the client on the last run."
+    Write-Host "      0xC0000005 at 0x141c810b0 - mob+0x2b8 null - on the FIRST 0x03C6,"
+    Write-Host "      after both NPCs had dispatched cleanly. --mobs sends them anyway."
     Write-Host "    - the channel entry's 4th trailing byte is 1, not 0. That byte is the"
     Write-Host "      Change Channel row's enable flag."
     Write-Host "  0x0138 UserAvatarModified is NO LONGER SENT - it is dead code at byte level."
@@ -373,11 +375,12 @@ if ($SetFieldProbe) {
     Write-Host "              three times at CHARACTER SELECT before anything else happens."
     Write-Host "              NO WATCH LINES AT ALL means the hook never armed. Conclude"
     Write-Host "              nothing from a silent log until you have seen these."
-    Write-Host "  140304100   the type-1 equip decode, vtable+0x358."
-    Write-Host "              FIRES  -> an item was DECODED, so the layout is right and any"
-    Write-Host "                        remaining nakedness is a VALUE (dateExpire first)."
-    Write-Host "              SILENT -> the gate never opened; presence[2] or the block's"
-    Write-Host "                        position in the record is wrong."
+    Write-Host "  140304100   the type-1 equip decode, vtable+0x358. It FIRED FOUR TIMES"
+    Write-Host "              on the last run, once per stored item, from the equipped-list"
+    Write-Host "              loop at 0x140306223 - so the layout is CONFIRMED and any"
+    Write-Host "              remaining nakedness is a VALUE (dateExpire first). What the"
+    Write-Host "              last run could not show is whether the character LOOKS dressed,"
+    Write-Host "              because the mob packet killed the client first."
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
@@ -432,11 +435,12 @@ if ($SetFieldProbe) {
     Write-Host '     naked, but window LISTS items-> items decoded, avatar not rebuilt. A'
     Write-Host '                                     different and much smaller problem.'
     Write-Host ''
-    Write-Host '  2. TYPE  !map 30  IN ANY CHAT TAB. ARE THERE SNAILS?' -ForegroundColor Cyan
-    Write-Host '     The prefix is ! and not / - the client swallows unknown slash lines and'
-    Write-Host '     never puts them on the wire. Map 30 should have SIX of template 1.'
-    Write-Host '     none, no fault -> a value. fault or freeze on arrival -> the body'
-    Write-Host '     desynchronised, and the WZ-template blocks are the first suspect.'
+    Write-Host '  2. MOBS ARE OFF. Nothing to test here.' -ForegroundColor DarkGray
+    Write-Host '     The mob body faulted the client on 2026-08-19: 0xC0000005 at'
+    Write-Host '     0x141c810b0, mob+0x2b8 null, on the FIRST 0x03C6. --mobs re-enables'
+    Write-Host '     them, and only when the mob body is the variant under test.'
+    Write-Host '     !map <id> still works and the prefix is ! not / - the client swallows'
+    Write-Host '     unknown slash lines and never puts them on the wire.'
     Write-Host ''
     Write-Host '  3. CLICK AN NPC (Heena or Roger). DOES A DIALOG BOX APPEAR?' -ForegroundColor Cyan
     Write-Host '     It will say the quest is not implemented. That is the point - there is'

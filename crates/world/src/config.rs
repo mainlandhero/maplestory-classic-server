@@ -74,6 +74,15 @@ pub struct Config {
     /// Server-sent for the same reason NPCs are: the client's field loader walks the WZ
     /// `life` node only to preload `Mob/%07d.img` art. 9928 spawns across 289 maps.
     pub mobs: HashMap<u32, Vec<net::mob::FieldMob>>,
+    /// Whether to actually send them. **Default `false`, and that is a measurement.**
+    ///
+    /// The run of 2026-08-19 faulted the client at `0x141c810b0` on the **first** `0x03C6`,
+    /// after two `0x044F` NPCs had dispatched cleanly. The mob body is wrong, and it is the
+    /// only one of the four builds that is - so the flag exists to get the other three back
+    /// in front of a client without waiting for the mob layout to be fixed.
+    ///
+    /// Turn it on with `--mobs`, and only when the mob body is the variant under test.
+    pub send_mobs: bool,
 
     /// Every map id that has a field image in `Map.wz`.
     ///
@@ -236,6 +245,34 @@ impl Config {
     }
 }
 
+/// How many of a map's spawn points may hold a live mob at once.
+///
+/// **A spawn point is not a mob.** Map 40, "Snail Hunting Ground I", has **40 mob spawn
+/// points** in its WZ `life` node - checked, it is `42` life entries, 40 of type `m` plus
+/// Robin and Sam - and a real server keeps roughly **30** alive on it for a solo player.
+/// Sending one mob per spawn point over-populates every map.
+///
+/// **The cap is not in the WZ, and that is measured rather than assumed.** Map 40's whole
+/// `info` node is `AmbientBGM(v)`, `MR*`/`VR*` bounds, `bgm`, `cloud`, `fieldLimit`,
+/// `fieldLimit2`, `fieldLimit_tw`, `fieldScript`, `fieldType`, `fly`, `forcedReturn`,
+/// `hideMinimap`, `mapDesc`, `mapMark`, **`mobRate`**, `moveLimit`, `noMapCmd`,
+/// `onFirstUserEnter`, `onUserEnter`, `partyStandAlone`, `personalShop`, `quarterView`,
+/// `returnMap`, `standAlone`, `swim`, `town` and `version`. There is **no** capacity field
+/// of any name. `mobRate` is there (`1.0` for map 40) but that is a respawn *rate*, not a
+/// cap. So the cap is **server policy**, and it has to come from us.
+///
+/// **The 75% figure is [I], from an unofficial fan site**, which the owner flagged as such when
+/// they raised it: capacity = spawn points x a player scalar, 75% solo rising to 100% at six
+/// or more players. Nothing in this client corroborates it. The single datapoint we have is
+/// **40 spawn points -> 30**, and floor and ceiling of `3n/4` both produce 30 from 40, so
+/// the rounding is **unsettled**; this uses floor. A map with a handful of spawns is where
+/// the two would differ (6 -> 4 by floor, 5 by ceiling), and nothing here decides it.
+///
+/// This server has one player, so the solo scalar is the only one that applies today.
+pub fn solo_spawn_capacity(spawn_points: usize) -> usize {
+    (spawn_points * 3) / 4
+}
+
 /// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
 ///
 /// **Not zero, deliberately.** Zero is structurally legal and draws a mob at 0% health,
@@ -257,6 +294,7 @@ impl Default for Config {
             portal_index: HashMap::new(),
             npcs: HashMap::new(),
             mobs: HashMap::new(),
+            send_mobs: false,
             fields: std::collections::HashSet::new(),
         }
     }

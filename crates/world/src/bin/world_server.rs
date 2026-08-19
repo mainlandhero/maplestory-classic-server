@@ -62,7 +62,11 @@ fn main() -> ExitCode {
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),
             "--npcs" => value().map(|v| npcs_path = PathBuf::from(v)),
             "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
-            "--mobs" => value().map(|v| mobs_path = PathBuf::from(v)),
+            "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
+            "--mobs" => {
+                config.send_mobs = true;
+                Ok(())
+            }
             other => Err(format!("unknown argument {other}")),
         };
         if let Err(e) = outcome {
@@ -103,6 +107,11 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no mobs loaded from {} - maps will have no monsters.              Regenerate with: python tools/dump_portals.py",
             mobs_path.display()
+        );
+    }
+    if !config.send_mobs {
+        eprintln!(
+            "maplecw-world: mobs are loaded but NOT SENT. The body faults this client -              0xC0000005 at 0x141c810b0, mob+0x2b8 null - measured 2026-08-19. Pass --mobs              to send them anyway, and only when the mob body is the variant under test."
         );
     }
 
