@@ -160,7 +160,7 @@ impl Session {
             ),
             Reply::new(
                 WORLD_LIST,
-                world_list_entry(world.id as u8, &world.name, world.channels),
+                world_list_entry(world.id as u8, &world.name, world.channel_count()),
                 format!("{cause}: world {}", world.name),
             ),
             Reply::new(WORLD_LIST, world_list_end(), format!("{cause}: end of worlds")),
@@ -355,30 +355,32 @@ impl Session {
             return refuse(format!("REFUSED - id {id} is not on this account"));
         };
 
-        let addr = self.config.advertise;
-        let seed = migration_seed(id);
+        let world = &self.config.world;
+        let channel = world.channel_id;
+        let Some(addr) = world.channel_address(channel) else {
+            return refuse(format!(
+                "REFUSED - world {} has no address for channel {channel}; the client would                  be sent nowhere",
+                world.id
+            ));
+        };
+
+        // The seed is minted here and claimed by the channel server out of the same
+        // database. It is a u32 - all the packet has room for - so it identifies a pending
+        // migration rather than proving anything. What it does buy is single use.
+        let seed = match self.store.create_migration(self.account.id, id, world.id, channel) {
+            Ok(seed) => seed,
+            Err(e) => return refuse(format!("REFUSED - could not mint a migration: {e}")),
+        };
+
         vec![Reply::new(
             MIGRATE_COMMAND,
             migrate(addr, id, seed),
             format!(
-                "migrate {:?} (id {id}) to {addr}, seed {seed:#010x} -                  NOT a session token, see migration_seed",
-                chosen.name
+                "migrate {:?} (id {id}) to world {} channel {channel} at {addr},                  seed {seed:#010x} - single use, NOT authentication",
+                chosen.name, world.id
             ),
         )]
     }
-}
-
-/// The `u32` handed to the client in the migration packet, which it stashes at
-/// `DAT_143ac80b0` and sends back in outbound `0x007D` on the new connection.
-///
-/// **This is a placeholder, not a session token.** It is derived from the character id so
-/// that the first migration run can be read straight off the log: whatever comes back in
-/// `0x007D` either matches this or it does not, and that one comparison verifies the whole
-/// tail decode. A real token has to be random, single-use, and stored - which needs a
-/// registry shared between connections, and that belongs with proper sessions rather than
-/// here. Say "placeholder" when reporting what this proves.
-fn migration_seed(character_id: u32) -> u32 {
-    0xC0DE_0000 ^ character_id
 }
 
 /// Read a `u16`-length-prefixed string from the front of a payload.
@@ -463,6 +465,7 @@ pub fn seed_character(name: &str) -> Character {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::World;
 
     fn session() -> Session {
         let store = Arc::new(Store::open_in_memory().unwrap());
@@ -857,19 +860,73 @@ mod tests {
         let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].opcode, MIGRATE_COMMAND);
-        assert_eq!(replies[0].body, migrate(s.config.advertise, id, migration_seed(id)));
+
+        // The seed is minted in the store, so read it back out of the packet and check the
+        // channel server would be able to claim exactly that migration.
+        let body = &replies[0].body;
+        let key = u32::from_le_bytes(body[47..51].try_into().unwrap());
+        let raw = u32::from_le_bytes(body[55..59].try_into().unwrap());
+        let seed = {
+            let t = (key ^ raw).wrapping_add(0x369F_144D).wrapping_add(key >> 7);
+            t ^ 0xAAAA_BBBBu32
+        };
+        assert_eq!(*body, migrate(s.config.world.channel_address(0).unwrap(), id, seed));
+        let claimed = s.store.claim_migration(seed).unwrap().expect("the seed was minted");
+        assert_eq!(claimed.character_id, id);
     }
 
-    /// The address in the packet is the one the *client* must reach, so it tracks
-    /// `advertise` and not `bind`. Getting this backwards sends the client to itself.
+    /// A world that advertises a channel it has no address for would send the client
+    /// nowhere, so the login server refuses rather than building a packet with a hole.
     #[test]
-    fn the_migration_carries_advertise_rather_than_bind() {
+    fn a_channel_with_no_address_is_refused_rather_than_migrated_to() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let mut world = World::default();
+        world.channel_id = 3;
+        let mut s = Session::new(store, Arc::new(Config { world, ..Config::default() }), account);
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        assert_eq!(replies[0].body[0], net::opcode::MIGRATE_REFUSED);
+        assert!(replies[0].what.contains("no address for channel 3"), "{}", replies[0].what);
+    }
+
+    /// A migration is single use: the channel claims it once, and a replay gets nothing.
+    #[test]
+    fn a_migration_cannot_be_claimed_twice() {
+        let mut s = session();
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let body = s
+            .handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)))
+            .remove(0)
+            .body;
+        let key = u32::from_le_bytes(body[47..51].try_into().unwrap());
+        let raw = u32::from_le_bytes(body[55..59].try_into().unwrap());
+        let seed = {
+            let t = (key ^ raw).wrapping_add(0x369F_144D).wrapping_add(key >> 7);
+            t ^ 0xAAAA_BBBBu32
+        };
+        assert!(s.store.claim_migration(seed).unwrap().is_some());
+        assert!(s.store.claim_migration(seed).unwrap().is_none());
+    }
+
+    /// The address in the packet is the one the *client* must reach, and it is the
+    /// **channel's**, not this server's. Getting it backwards sends the client to the
+    /// login server, which is what produced "The client is outdated" on 2026-08-19.
+    #[test]
+    fn the_migration_carries_the_channel_address_rather_than_bind() {
         let store = Arc::new(Store::open_in_memory().unwrap());
         store.create_account("maplecw", "correct horse battery").unwrap();
         let account = store.get_account("maplecw").unwrap().unwrap();
         let config = Config {
             bind: "0.0.0.0:8484".parse().unwrap(),
-            advertise: "192.168.1.50:8484".parse().unwrap(),
+            world: World {
+                channels: vec!["192.168.1.50:8485".parse().unwrap()],
+                ..World::default()
+            },
             ..Config::default()
         };
         let mut s = Session::new(store, Arc::new(config), account);
@@ -880,6 +937,7 @@ mod tests {
             .remove(0)
             .body;
         assert_eq!(&body[4..8], &[192, 168, 1, 50]);
+        assert_eq!(&body[8..10], &8485u16.to_le_bytes(), "the channel's port, not login's");
     }
 
     /// An id the login result never sent makes the client skip its whole action block in

@@ -7,8 +7,8 @@
 //!
 //! # The shape, and why it is split this way
 //!
-//! * [`handshake`] builds the greeting. Unencrypted, server speaks first, and the client
-//!   drops the connection if it is wrong.
+//! * The greeting lives in `net::handshake` - it is the transport's, not login's, and the
+//!   channel server needs the identical bytes.
 //! * [`session`] is the whole protocol as a **pure state machine**: bodies in, bodies out,
 //!   no socket and no cipher. Every exchange measured against the real client is a unit
 //!   test there, which is the only way this stays honest without a client launch per
@@ -30,11 +30,9 @@
 //! it is, do not describe a session here as authenticated.
 
 pub mod config;
-pub mod handshake;
 pub mod server;
 pub mod session;
 
 pub use config::{Config, World};
-pub use handshake::greeting;
 pub use server::{delete, list, serve};
 pub use session::{Reply, Session};

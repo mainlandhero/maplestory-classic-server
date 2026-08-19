@@ -12,14 +12,42 @@ use std::path::PathBuf;
 pub struct World {
     pub id: u32,
     pub name: String,
-    pub channels: u8,
-    /// Which channel the login result puts the player on.
+    /// **One address per channel**, and the channel count is `channels.len()`.
+    ///
+    /// Not a count plus a single address. A channel is its own server process, and the
+    /// login server's job at migration time is to hand the client the address of the
+    /// channel it is entering - so a channel with no address is a channel nobody can
+    /// enter. Making the list the only source of the count means the two cannot drift:
+    /// you cannot advertise five channels and run one.
+    ///
+    /// These are `SocketAddrV4` because the migration packet carries four octets straight
+    /// into the client's `sockaddr_in`, so IPv6 is not representable - and they are what
+    /// the **client machine** must be able to reach, not what any server bound.
+    pub channels: Vec<SocketAddrV4>,
+    /// Which channel the login result puts the player on, and which one it migrates to.
     pub channel_id: u32,
+}
+
+impl World {
+    /// How many channels the world list advertises.
+    pub fn channel_count(&self) -> u8 {
+        self.channels.len().min(u8::MAX as usize) as u8
+    }
+
+    /// Where a channel listens, as the client must reach it.
+    pub fn channel_address(&self, channel_id: u32) -> Option<SocketAddrV4> {
+        self.channels.get(channel_id as usize).copied()
+    }
 }
 
 impl Default for World {
     fn default() -> Self {
-        World { id: 0, name: "Scania".to_string(), channels: 1, channel_id: 0 }
+        World {
+            id: 0,
+            name: "Scania".to_string(),
+            channels: vec!["127.0.0.1:8485".parse().expect("a literal address")],
+            channel_id: 0,
+        }
     }
 }
 
@@ -34,18 +62,6 @@ pub struct Config {
     /// to be reshaped before an off-box server can be reached at all.
     pub bind: SocketAddr,
 
-    /// **The address the client is told to reconnect to when it enters the world.**
-    ///
-    /// Not the same thing as [`Config::bind`], and the difference is the whole reason this
-    /// field exists. `bind` is where *this process* listens; `advertise` is what goes into
-    /// the migration packet, so it has to be an address the **client machine** can reach.
-    /// On loopback they are the same; the moment the server moves to the homelab they are
-    /// not, and a server that advertises its own bind address sends the client to itself.
-    ///
-    /// It is `SocketAddrV4` rather than `SocketAddr` on purpose: the migration packet
-    /// carries four octets straight into the client's `sockaddr_in`, so an IPv6 address is
-    /// not representable and should fail at the type level rather than at runtime.
-    pub advertise: SocketAddrV4,
 
     /// The SQLite file. Characters live here, and this is the whole point of the crate.
     pub db_path: PathBuf,
@@ -71,7 +87,6 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             bind: "127.0.0.1:8484".parse().expect("a literal address"),
-            advertise: "127.0.0.1:8484".parse().expect("a literal address"),
             db_path: PathBuf::from("maplecw.db"),
             account: "maplecw".to_string(),
             display_name: "maplecw".to_string(),

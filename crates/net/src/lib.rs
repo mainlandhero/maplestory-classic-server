@@ -22,6 +22,8 @@
 
 pub mod codec;
 pub mod error;
+pub mod handshake;
+pub mod names;
 pub mod opcode;
 pub mod packet;
 pub mod session;

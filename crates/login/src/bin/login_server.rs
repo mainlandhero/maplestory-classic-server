@@ -17,15 +17,17 @@ const USAGE: &str = "\
 maplecw-login - the MapleCW login server
 
   --bind ADDR           what to listen on           (default 127.0.0.1:8484)
-  --advertise ADDR      what the client is told to reconnect to when it enters the
-                        world (default 127.0.0.1:8484). Must be reachable from the
-                        *client* machine, not from the server - see docs/deployment.md
   --db PATH             the SQLite file             (default maplecw.db)
   --account NAME        which account every connection is served as (default maplecw)
   --display-name NAME   what the login screen shows (default: the account name)
   --world NAME          world name                  (default Scania)
   --world-id N          world id                    (default 0)
-  --channels N          how many channels to list   (default 1)
+  --channels A,B,...    one address per channel, in channel order (default
+                        127.0.0.1:8485). These are what the client is told to connect to
+                        when it enters the world, so they must be reachable from the
+                        *client* machine, not from the server. IPv4 only: the migration
+                        packet carries four octets. Run one maplecw-world per address.
+  --channel N           which channel a player entering the world is sent to (default 0)
   --list                print the stored characters and exit, without listening
   --delete NAME         delete one character on --account, then exit
   -h, --help            this
@@ -50,11 +52,6 @@ fn main() -> ExitCode {
             "--bind" => value().and_then(|v| {
                 v.parse().map(|b| config.bind = b).map_err(|e| format!("--bind {v}: {e}"))
             }),
-            "--advertise" => value().and_then(|v| {
-                v.parse()
-                    .map(|a| config.advertise = a)
-                    .map_err(|e| format!("--advertise {v}: {e} (IPv4 only - the migration                                           packet carries four octets)"))
-            }),
             "--list" => {
                 list_only = true;
                 Ok(())
@@ -68,9 +65,16 @@ fn main() -> ExitCode {
                 v.parse().map(|n| config.world.id = n).map_err(|e| format!("--world-id {v}: {e}"))
             }),
             "--channels" => value().and_then(|v| {
+                v.split(',')
+                    .map(|a| a.trim().parse())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|c| config.world.channels = c)
+                    .map_err(|e| format!("--channels {v}: {e} (IPv4 host:port, comma separated)"))
+            }),
+            "--channel" => value().and_then(|v| {
                 v.parse()
-                    .map(|n| config.world.channels = n)
-                    .map_err(|e| format!("--channels {v}: {e}"))
+                    .map(|n| config.world.channel_id = n)
+                    .map_err(|e| format!("--channel {v}: {e}"))
             }),
             other => Err(format!("unknown argument {other}")),
         };
@@ -82,8 +86,23 @@ fn main() -> ExitCode {
 
     // The login screen shows the account name unless something better is configured.
     config.display_name = display_name.unwrap_or_else(|| config.account.clone());
-    let World { id, channels, .. } = config.world;
-    debug_assert!(id <= u32::from(u8::MAX) && channels > 0);
+    let World { id, ref channels, channel_id, .. } = config.world;
+    if channels.is_empty() {
+        eprintln!("--channels: at least one channel address is required
+
+{USAGE}");
+        return ExitCode::FAILURE;
+    }
+    if channel_id as usize >= channels.len() {
+        eprintln!(
+            "--channel {channel_id}: there are only {} channel(s)
+
+{USAGE}",
+            channels.len()
+        );
+        return ExitCode::FAILURE;
+    }
+    debug_assert!(id <= u32::from(u8::MAX));
 
     let outcome = match (list_only, delete_name.as_deref()) {
         (_, Some(name)) => login::delete(&config, name),

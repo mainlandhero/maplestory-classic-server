@@ -12,7 +12,8 @@ use net::{Direction, Framer, MapleCipher};
 use store::{Account, Store};
 
 use crate::config::Config;
-use crate::handshake::{greeting, CLIENT_RX_IV, CLIENT_TX_IV};
+use net::handshake::{greeting, CLIENT_RX_IV, CLIENT_TX_IV};
+use net::names::{body_hex, label};
 use crate::session::Session;
 
 /// Timestamped, one line, to stdout.
@@ -126,19 +127,17 @@ pub fn serve(config: Config) -> std::io::Result<()> {
 
     let listener = TcpListener::bind(config.bind)?;
     log(&format!("listening on {}", config.bind));
-    log(&format!(
-        "advertising {} to the client on migration{}",
-        config.advertise,
-        if config.advertise.ip().is_loopback() && !config.bind.ip().is_loopback() {
-            " - WARNING: bind is not loopback but advertise is, so an off-box client              will be sent to itself"
-        } else {
-            ""
+    for (id, addr) in config.world.channels.iter().enumerate() {
+        log(&format!("channel {id} advertised to the client at {addr}"));
+        if addr.ip().is_loopback() && !config.bind.ip().is_loopback() {
+            log("  WARNING: bind is not loopback but this channel is advertised as one, so");
+            log("  an off-box client will be sent back to itself. See docs/deployment.md.");
         }
-    ));
+    }
     log(&format!("database {}", config.db_path.display()));
     log(&format!(
         "world {} id {} with {} channel(s)",
-        config.world.name, config.world.id, config.world.channels
+        config.world.name, config.world.id, config.world.channel_count()
     ));
     let characters = store.character_count(account.id, config.world.id).unwrap_or(0);
     log(&format!(
@@ -176,25 +175,6 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         }
     }
     Ok(())
-}
-
-/// How much of a packet body goes in the log.
-///
-/// Bodies are logged because not logging them cost a diagnosis: a create reply the client
-/// ignored had to be reconstructed by hand to find that it differed from a working one in
-/// two bytes. Capped so a 600-byte login result does not bury the line either side of it.
-const LOG_BODY_BYTES: usize = 96;
-
-fn hex(body: &[u8]) -> String {
-    let shown = body.len().min(LOG_BODY_BYTES);
-    let mut out = String::with_capacity(shown * 3 + 16);
-    for b in &body[..shown] {
-        out.push_str(&format!("{b:02x}"));
-    }
-    if body.len() > shown {
-        out.push_str(&format!("...(+{} bytes)", body.len() - shown));
-    }
-    out
 }
 
 /// How long a client may say nothing before it is sent the startup gate again.
@@ -260,19 +240,29 @@ fn connection(
                 .get(..2)
                 .map(|b| u16::from_le_bytes([b[0], b[1]]))
                 .unwrap_or(0xFFFF);
+            let payload = &body[2.min(body.len())..];
             log(&format!(
-                "<- 0x{opcode:04X}, {} byte body {}",
-                body.len().saturating_sub(2),
-                hex(&body[2.min(body.len())..])
+                "<- {}, {} byte body {}",
+                label(opcode),
+                payload.len(),
+                body_hex(opcode, payload)
             ));
 
-            if let Some(note) = crate::session::describe(opcode, &body[2.min(body.len())..]) {
+            if let Some(note) = crate::session::describe(opcode, payload) {
                 log(&format!("   {note}"));
             }
 
             let replies = session.handle(&body);
             if replies.is_empty() {
-                log(&format!("   0x{opcode:04X} needs no reply"));
+                log(&format!(
+                    "   {} is not answered by this server{}",
+                    label(opcode),
+                    if net::names::opcode_name(opcode).is_none() {
+                        " - and it is UNKNOWN, so the full body is above"
+                    } else {
+                        ""
+                    }
+                ));
             }
             for reply in replies {
                 send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
@@ -290,7 +280,7 @@ fn send(
 ) -> std::io::Result<()> {
     let framed = tx.frame(packet);
     stream.write_all(&framed)?;
-    log(&format!("-> 0x{opcode:04X} {what}"));
-    log(&format!("   body {}", hex(&packet[2.min(packet.len())..])));
+    log(&format!("-> {} {what}", label(*opcode)));
+    log(&format!("   body {}", body_hex(*opcode, &packet[2.min(packet.len())..])));
     Ok(())
 }

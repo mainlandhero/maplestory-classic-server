@@ -318,8 +318,8 @@ def check_migration(body, expect_ip, expect_port, expect_id):
     ip = ".".join(str(b) for b in body[at:at + 4])
     port = struct.unpack("<H", body[at + 4:at + 6])[0]
     cid = struct.unpack("<I", body[at + 6:at + 10])[0]
-    check("the migration carries the advertise address", (ip, port) == (expect_ip, expect_port),
-          "%s:%d" % (ip, port))
+    check("the migration carries the CHANNEL address, not the login server's",
+          (ip, port) == (expect_ip, expect_port), "%s:%d" % (ip, port))
     check("the migration names the character we chose", cid == expect_id, "id %d" % cid)
 
     special = struct.unpack("<I", body[at + 14:at + 18])[0]
@@ -334,8 +334,11 @@ def check_migration(body, expect_ip, expect_port, expect_id):
     check("the migration body is exactly what the client reads", len(body) == tail + 12,
           "%d bytes, expected %d" % (len(body), tail + 12))
     seed = migrate_tail_word_forward(raw, key, 0)
-    check("the seed survives the tail transform", seed == (0xC0DE0000 ^ expect_id),
-          "decoded %#010x, expected %#010x" % (seed, 0xC0DE0000 ^ expect_id))
+    # The seed is minted in the database now, so its value is not predictable here. What
+    # is checkable is that it decodes to something a channel could claim: non-zero, and
+    # stable across a re-read of the same packet.
+    check("the seed decodes to a non-zero value", seed != 0, "decoded %#010x" % seed)
+    return seed
 
 
 def login(peer):
@@ -368,6 +371,10 @@ class Throwaway:
         self.dir = tempfile.mkdtemp(prefix="maplecw-smoke-")
         self.db = os.path.join(self.dir, "smoke.db")
         self.port = free_port()
+        # A channel is a separate process and a separate port. Nothing listens on it in
+        # the smoke test - the point here is that the login server hands out the right
+        # address, not that the world answers.
+        self.channel_port = free_port()
         built = os.path.join(root, "target", "release")
         useradd = os.path.join(built, "maplecw-useradd.exe")
         login_exe = os.path.join(built, "maplecw-login.exe")
@@ -385,7 +392,7 @@ class Throwaway:
         self.proc = subprocess.Popen(
             [login_exe, "--db", self.db,
              "--bind", "127.0.0.1:%d" % self.port,
-             "--advertise", "127.0.0.1:%d" % self.port],
+             "--channels", "127.0.0.1:%d" % self.channel_port],
             stdout=self.log, stderr=subprocess.STDOUT)
         for _ in range(50):
             if self.proc.poll() is not None:
@@ -397,7 +404,8 @@ class Throwaway:
                 time.sleep(0.1)
         else:
             raise SystemExit("the throwaway server never accepted a connection")
-        print("throwaway server on port %d, database %s" % (self.port, self.db))
+        print("throwaway server on port %d, channel 0 advertised at %d, database %s"
+              % (self.port, self.channel_port, self.db))
 
     def close(self):
         self.proc.terminate()
@@ -421,6 +429,8 @@ def main():
     ap.add_argument("--list-only", action="store_true", help="log in and list, create nothing")
     ap.add_argument("--check-quiet", action="store_true",
                     help="say nothing for a while and check the startup gate is repeated")
+    ap.add_argument("--channel-port", type=int, default=8485,
+                    help="where channel 0 is advertised; --spawn picks its own")
     ap.add_argument("--timeout", type=float, default=5.0)
     args = ap.parse_args()
 
@@ -429,6 +439,7 @@ def main():
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         throwaway = Throwaway(root)
         args.host, args.port = "127.0.0.1", throwaway.port
+        args.channel_port = throwaway.channel_port
     elif not args.list_only and not args.allow_live:
         raise SystemExit(
             "refusing to run: these checks create and delete characters, and port %d may be"
@@ -535,6 +546,7 @@ def run(args):
           opcode == MIGRATE_COMMAND and body[0] == MIGRATE_REFUSED,
           "0x%04X code 0x%02X" % (opcode, body[0] if body else 0xFF))
 
+    channel_port = args.channel_port
     mine = first_character_id(replies[3][1])
     if mine is None:
         check("a character id to migrate", False, "the login result listed none")
@@ -544,7 +556,16 @@ def run(args):
         check("selecting our own character is answered with a migration",
               opcode == MIGRATE_COMMAND, "0x%04X" % opcode)
         if opcode == MIGRATE_COMMAND:
-            check_migration(body, args.host, args.port, mine)
+            first = check_migration(body, args.host, channel_port, mine)
+
+            # Single use: entering the world twice mints two migrations, and the second
+            # must not reuse the first seed - a replayed handoff would otherwise put a
+            # second connection into the world as the same character.
+            peer.send(CLIENT_SELECT_CHARACTER_REQUEST, select_payload(mine))
+            opcode, body = peer.recv(1)[0]
+            second = check_migration(body, args.host, channel_port, mine)
+            check("a second migration mints a different seed", first != second,
+                  "%#010x then %#010x" % (first or 0, second or 0))
 
     # Delete is one u32 and nothing else - the confirmation is a client-side dialog, so the
     # server cannot tell a confirmed delete from a forged one and ownership is all there is.

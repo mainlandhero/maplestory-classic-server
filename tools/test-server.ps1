@@ -39,6 +39,10 @@ param(
     # run actually save the character?" without spending a client launch on it.
     [switch]$ListOnly,
     [int]$Port = 8484,
+    # The channel server's port. A channel is a separate process: the login server hands
+    # the client this address and the client connects to it, so nothing enters the world
+    # unless maplecw-world is listening here.
+    [int]$ChannelPort = 8485,
     # The account every connection is served as. The game socket carries no credentials,
     # so this is not a login - it decides whose characters appear. Create it first with
     #   .\target\release\maplecw-useradd.exe <name>
@@ -88,8 +92,10 @@ if (-not $ClientDir) { $ClientDir = Join-Path $root 'client-patched' }
 if (-not $Database) { $Database = Join-Path $root 'maplecw.db' }
 $exe = Join-Path $ClientDir 'MapleStory.exe'
 $loginExe = Join-Path $root 'target\release\maplecw-login.exe'
+$worldExe = Join-Path $root 'target\release\maplecw-world.exe'
 $userAdd = Join-Path $root 'target\release\maplecw-useradd.exe'
 $serverLog = Join-Path $root 'login.log'
+$worldLog = Join-Path $root 'world.log'
 
 function Stop-All {
     # Never pipe a native command's stderr under PowerShell 5.1: it wraps each line in an
@@ -104,6 +110,9 @@ function Stop-All {
         }
         if (Get-Process maplecw-login -ErrorAction SilentlyContinue) {
             taskkill /F /IM maplecw-login.exe | Out-Null
+        }
+        if (Get-Process maplecw-world -ErrorAction SilentlyContinue) {
+            taskkill /F /IM maplecw-world.exe | Out-Null
         }
     } finally {
         $ErrorActionPreference = $prev
@@ -156,12 +165,22 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
     -WindowStyle Hidden `
     -ArgumentList @(
         '--db', "`"$Database`"", '--bind', "127.0.0.1:$Port",
-        # The client reconnects to whatever the migration packet names, so the advertise
-        # address has to track -Port. Loopback here; a homelab server needs its LAN address.
-        '--advertise', "127.0.0.1:$Port",
+        # One address per channel. The client connects to this when it enters the world,
+        # so it must be reachable from the *client* machine - loopback here, a LAN address
+        # once the server moves to the homelab.
+        '--channels', "127.0.0.1:$ChannelPort",
         '--account', $Account, '--display-name', "`"$DisplayName`"", '--world', $World
     ) `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
+
+Remove-Item $worldLog -Force -ErrorAction SilentlyContinue
+$worldSrv = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
+    -WindowStyle Hidden `
+    -ArgumentList @(
+        '--db', "`"$Database`"", '--bind', "127.0.0.1:$ChannelPort", '--channel', '0'
+    ) `
+    -RedirectStandardOutput $worldLog -RedirectStandardError "$worldLog.err"
+Write-Host "channel 0 on 127.0.0.1:$ChannelPort (pid $($worldSrv.Id)), log $worldLog"
 
 # Never launch the client against a dead server. A server that exited - a missing account
 # is the usual reason - leaves the client on "Connecting..." forever, which looks like a

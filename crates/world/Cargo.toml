@@ -1,0 +1,14 @@
+[package]
+name = "world"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The MapleCW game world: one server per channel, entered by migration from character select."
+
+[dependencies]
+net = { path = "../net" }
+store = { path = "../store" }
+
+[[bin]]
+name = "maplecw-world"
+path = "src/bin/world_server.rs"
