@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-18 (the login server is real; creation and persistence confirmed on screen)
+# Where things stand — 2026-08-19: **a character stands on map 1, playable**
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -65,7 +65,42 @@ for this rule, and no path in it returns an error in place of a reply.
 
 ## NEXT GOALS - read this first when picking up
 
-**THE GOAL: a character standing on map 1, playable.** Everything below serves that.
+## THE GOAL IS MET — 2026-08-19, seen on screen
+
+A character stands on **map 1, Mushroom Town - West Entrance**, playable. The minimap and
+street name are right, HP/MP/EXP are live, the tutorial NPC dialog fired, and there was **no
+client fault**. Run preserved as `research/fixtures/character-on-map1-playable-*.log`.
+
+The probe discriminated exactly as it was designed to:
+
+```text
+0x0010  140302e30 x3   from 0x1403094d0   the character-LIST path - the armed positive control
+0x01A0  140304b20      from 0x142098432   the record decoder ran
+0x01A0  140302e30      from 0x140304e76   the gate OPENED and the stat block decoded
+        (no CLIENT FAULT line)
+```
+
+Everything the pre-flight analysis predicted held, and nothing it deferred bit: the three
+all-zero randomiser seeds, the zero pair at head offsets 22/26, and the zero at offset 17 were
+all sent as-is and none of them mattered.
+
+### What is missing now, reported from the screen
+
+| | |
+|---|---|
+| **The character is naked** | equipment shows in character select and not in the world. The record we send carries the stat block only; the equip inventory is a different presence-gated block we do not build. |
+| **Map 1's two NPCs do not appear** | `0000001`/`0000002`, Heena and Sera. They are in the WZ `life` nodes, so the question is what the **server** owes. |
+| **The portal does nothing** | the client sends **`0x00D1`, 34 bytes**, carrying the ASCII portal name **`out00`** (`u16` length 5), `0xFFFFFFFF`, and an x/y pair - a transfer-field request. We answer nothing. |
+
+Also unanswered and undecoded: **`0x00D9`** (every ~510 ms, 76-169 bytes, coordinate-shaped -
+almost certainly movement), **`0x013D`**, **`0x00B8`**.
+
+**Nothing authenticates.** The game socket still carries no credentials; the character is
+identified by the migration row and nothing else.
+
+---
+
+Everything below is the history of getting here, and is still accurate.
 
 ### Where the client actually is right now
 
