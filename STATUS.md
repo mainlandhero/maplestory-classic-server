@@ -89,6 +89,29 @@ all sent as-is and none of them mattered.
 Login and world entry are done. These five are the work now, in their order. Each carries what
 is already established, so nobody re-derives it, and the **one concrete next step**.
 
+### START HERE - what to do next, in order
+
+Nothing below needs a client launch to *build*; every one is specified well enough to write
+code against. Launches are for confirming, and two of these can share one.
+
+| # | do this | why it is first | spec |
+|---|---|---|---|
+| 1 | **Build the equipped-item block** - `presence[2]`, four extra `u16` terminators, a 125-byte item at record offset 223 | The blocker broke. It is the loudest remaining symptom (naked character, empty Equipment window) and it is now fully specified. | `research/naked-character.md`, goal 6 |
+| 2 | **Answer `0x0151` with a `0x055B` Say** - a 32-byte body | Also fully specified, and it makes NPCs talk, which is the visible half of goals 2-4. | `research/npc-dialogue.md`, goal 2 |
+| 3 | **Finish the mob body** - read `FUN_14046fba0`'s movement-path framing | The owner made mobs a priority. Everything else about the spawn is read; only the path's element count and dispatch value are missing. | `research/mob-spawn.md`, goal 3 |
+| 4 | **Read what greys a channel row** in `ChannelChange` | Cheapest of the four, but the least valuable - it unblocks one dialog. | goal 2a |
+
+**Then one launch** confirms 1, 2 and 3 together. They are independent - equipment is in the
+record, dialogue is a reply to a click, mobs are a separate pool - so a failure in one does
+not confound the others.
+
+**Two rules that have each cost a run:**
+
+* **Never send a script (`0x055B`) with or just before a `SetField`.** Field entry runs
+  `FUN_142caa4e0`, which resets the script manager.
+* **The character record has no length prefix and no resync point.** One wrong width
+  desynchronises everything after it, silently.
+
 ### 1. NPCs show up on maps - **DONE 2026-08-19**
 
 Visible and clickable. `NpcEnterField` is `0x044F`; the routing was right from the start and
@@ -305,32 +328,53 @@ Two things left, both known:
   precondition, measured `0x00` on the first `SetField` and **non-zero on every later one**.
   We still send the long form, which works; switching is an optimisation, not a fix.
 
-### 6. Equipment and consumables actually do something
+### 6. Equipment and consumables - **the blocker is broken; this is now buildable**
 
-**The big one, and the only goal with a hard blocker.** Equipping, unequipping and using a
-consumable each need two halves: the item data the client is holding, and the packets that
-act on it.
+The owner keeps reporting the character as naked and the Equipment window as empty, and this is
+the goal that fixes it. **It is no longer blocked.** Full working:
+`research/naked-character.md`.
 
-**The blocker is the item data.** The `SetField` record carries no avatar look, and the
-equipped list's item decode is a **vtable call at `+0x330`** whose item classes carry **no
-RTTI** - `tools/rtti.py` finds 1764 type descriptors and not one of them is an item class.
-So the layout cannot be read off linearly the way the stat block was.
-`research/equip-block.md` has the working.
+**What was wrong with the old reading, and both halves were wrong.** This section used to say
+the decode was a vtable call at `+0x330` on classes with no RTTI.
 
-**Scope correction from the owner, 2026-08-19, worth keeping:** worn items are *equipped* and do
-**not** occupy a bag slot. The inventory is the bag; ours is genuinely empty and showing it
-empty is **correct**, not a symptom. So this goal is about the **equipped list** plus a real
-bag later - not one "inventory system". That also explains the shape found: the gated region
-reads a `u8` then **two** `u16`-terminated loops, which is equipped and equipped-cash.
+* **`+0x330` is not the decode.** For item type 1 it is `FUN_1402fbb30` = `return this+0x242`,
+  an accessor. **The decode is at `+0x358` = `FUN_140304100`**, listing in
+  `research/msexe-itemslot-equip-decode.txt`.
+* **RTTI was never needed.** The pooled factory `FUN_1403095e0` reads a `u8 type` and calls a
+  per-type allocator whose fallback runs the constructor, and the constructor stores its
+  vtable with `LEA RAX,[0x14327E1D8]`. Positive control: `vtable+0x88` is literally
+  `return 1` for type 1 and `return 2` for type 2 - the same 1/2/3 the release function
+  switches on.
 
-> **Next step, in order.** (a) The cheap route first: `0x0138` carries the *compact* avatar
-> look we already build, and its handler **reaches its apply** - `142797be0` fired, so the
-> local character really is in the pool it searches. The next launch watches `1420dd920`, the
-> single call site inside that apply's loop, which separates "applied but did not render"
-> from "the loop was empty". (b) If that is a dead end, crack the vtable with the owner's ELog
-> idea: send a deliberately **truncated** equipped block so the reader throws on underrun.
-> The ELog has no symbols but its stack frames are section-relative RVAs that rebase to
-> `0x140000000+`, so `tools/pdata_lookup.py` turns them into functions.
+**A minimal equipped item is 125 bytes**, because three fields are `u32` bitmasks whose bits
+each gate one optional read (17 `u16` in `FUN_140303800`, 21 mixed-width in `FUN_140303b40`).
+All-zero masks read nothing past the mask.
+
+> **The trap that would wreck the record.** `presence[2]` gates the equipped list **and both
+> helper lists called right after it** - `FUN_14030b6f0` and `FUN_14030b9e0` re-gate through
+> the same byte, and the second reads **three** lists. Setting `presence[2]` therefore costs
+> **four extra `u16` terminators**. Omit them and the record desynchronises, and it has no
+> resync point.
+
+**Where it goes:** record offset **223**, between the three string flags (220-222) and the
+final ungated `u8`. Verified by walking all 18660 bytes of `FUN_140304b20`: with
+`presence={0}` it reproduces today's 224-byte record exactly.
+
+**Ruled out, so nobody spends a run on them again:**
+
+* **`0x0138` is dead code at byte level.** Its apply is guarded by a call to
+  `0x1407f5ce0`, which is three bytes of `xor eax,eax; ret`, then `TEST/JZ`. No trigger or
+  timing would ever have worked. The earlier "the list at `user+0x1200` was empty"
+  explanation was **wrong**.
+* **`0x0107` only logs** - it formats `"[BP:%02d] %d"` for 32 body parts and applies nothing.
+  (Potentially a free read-back instrument.)
+* **`0x0114` never reaches the avatar-apply primitive**, by a reachability walk with the
+  `0x0138` path as a passing control.
+* **No inbound opcode reaches `FUN_140f80140`** (the apply primitive) by direct call - all 23
+  callers checked against the 273-case table.
+
+**One value to watch, per the NPC lesson:** `dateExpire`, the `u64` at `+0x40`, is zero =
+1601-01-01. If a run comes back "no fault, still naked", that is the first suspect.
 
 ### Undecoded traffic seen alongside all of this
 
