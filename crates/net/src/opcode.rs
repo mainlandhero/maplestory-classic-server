@@ -1777,7 +1777,7 @@ pub const EQUIP_OPTION_BITS: usize = 21;
 /// `01040002.img/info/incPDD`. Each field below names the WZ property it mirrors, and
 /// [`EQUIP_STAT_WZ_PROPERTIES`] gives the same mapping in bit order for a generator.
 ///
-/// # The print guard is real, and it is **not** what suppressed the stat section
+/// # The print guard is real, and a run has now tested it
 ///
 /// `FUN_142699710` opens with a guard, at `0x142699749`:
 ///
@@ -1792,26 +1792,43 @@ pub const EQUIP_OPTION_BITS: usize = 21;
 /// The WZ value is **not** in the guard, so it can never make a line appear on its own, and
 /// a zero here would suppress its own line. All **[L]**.
 ///
-/// **What is retracted is that this explains the screenshot.** The run of 2026-08-19 sent
-/// `inc_pdd = 6` and `inc_wat = 17`, `FUN_140304100` fired 26 times, there was no fault, the
-/// character is dressed - and the tooltip still shows no stat line of any kind, not even a
-/// weapon-attack line on a sword carrying 17. A guard on the packet value predicts a line
-/// and there is none, so the guard is not the cause.
+/// **The run-1 tooltip screenshot tests this and it holds.** That item's `ITEMINFO.incPDD`
+/// is 6 and we sent 0, and the box has **no** `Weapon Def.` line - which is what "the guard
+/// is on arg 5" predicts and nothing else does. The same screenshot has
+/// `Remaining Enhancements: 0` and `Scissors Usages Available : 0` in it, and both are
+/// emitted **behind** `FUN_1426b20f0`'s `ITEMINFO` gate (`TEST R15,R15 / JZ 0x1426b3d8e` at
+/// `0x1426b223e`, emits at `0x1426b3a72` and `0x1426b3cb3`), so that gate was open, all four
+/// stat helpers ran without throwing, and `FUN_14269a1d0` was not silently dropping lines.
+/// **[D]**, transcript in `research/equip-stats.md` section 11.4.1.
 ///
-/// Everything the packet can influence in that tooltip is behind **one** gate:
-/// `FUN_1426b20f0` does `TEST R15,R15 / JZ 0x1426b3d8e` at `0x1426b223e`, where `R15` is
-/// `FUN_140388c60(ItemInfoMgr, itemId)` - and that lookup returns 0 when
-/// `FUN_1403e18a0(itemId)` yields an empty name. All four stat helpers, the Speed and Jump
-/// lines, `Remaining Enhancements` and `Scissors Usages Available` are past it;
-/// `Cannot be Traded when equipped` is **not** (it is built by `FUN_1426e10e0`, a sibling
-/// call in `FUN_14264f750` at `0x14264f8ae`, 3741 bytes before the `FUN_1426b20f0` call at
-/// `0x14265074b`, into a different sink). "The trade line prints and nothing else does" is
-/// therefore a single-fault state. **[L]**,
-/// `research/msexe-equiptooltip.txt`.
+/// # Run 2 is the one that is not explained
 ///
-/// Which branch the client takes is **not established** and no packet change is indicated
-/// by it. `research/equip-stats.md` section 11.6 gives the two-watch probe that separates
-/// the gate from the two alternatives.
+/// Sending `inc_pdd = 6` and `inc_wat = 17` produced no stat line either. Every link is
+/// measured except the observation: the wire is verified byte for byte out of `world.log`,
+/// the decode is structural, the gate was open in run 1 and nothing we changed feeds it
+/// (its only input is the itemId at `item+0x20`), a from-template copy would have shown the
+/// template's 6 in run 1 and did not (`FUN_1403d2200` fills the stat block from `ITEMINFO`),
+/// and the guard is corroborated above.
+///
+/// **The run-2 tooltip transcript settles what it is not.** For 1060002 (trousers, sent
+/// `incPDD = 4`, `tuc = 7`, `scissorUses = 0xFF`) the box reads `Remaining Enhancements: 0`
+/// and `Scissors Usages Available : 0` beside the missing stat line. Those two are direct
+/// prints of `item+0xfa` and `item+0x1a6` through `FUN_1401b0050`, and they printed rather
+/// than throwing - so the checksums are valid and the values really are zero. **Three
+/// fields, two widths, one object, all zero, with the `ITEMINFO` gate open.** The tooltip's
+/// object carries none of our optional fields while its identity fields are right.
+///
+/// **No packet change is indicated by any of it**, and four candidate homes for that object
+/// are eliminated statically: the equipped array at `record + 0x1a8 + slot*0x10` stores the
+/// decoded object by refcounted pointer (`INC.LOCK [RBX+8]` / `MOV [RDI+8],RBX` at
+/// `0x14030629b`/`0x1403062ac`, no copy); `FUN_14030b560` is dead unless the itemId is in
+/// 1660000..1669999; the four lists `presence[2]` opens beside the equipped list are the
+/// **bag** inventories, where empty is correct and yields no item at all; and
+/// `FUN_1403d2200`, the client's build-an-item-from-an-id utility, fills the stat block from
+/// `ITEMINFO` and would have printed `Weapon Def.: +4`. `research/equip-stats.md` 11.4.5.
+///
+/// What is left is a second object versus our object holding zeros, separated by pointer
+/// identity in one run - section 11.6.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EquipStatSet {
     /// bit 0 - `STR: +%d` (0x0663). WZ template: `info/incSTR`, `ITEMINFO+0xba`
@@ -2187,11 +2204,18 @@ impl EquipStats {
     /// against the template, so an item sent with zeros is an item with no stats, and
     /// `FUN_142699710`'s guard would suppress each zero field's own line.
     ///
-    /// **Sending the real values did not produce a stat line**, on the run of 2026-08-19.
-    /// The bytes are right - `world.log`'s `0x01A0` body parses to four 129-byte items with
-    /// mask 1 = `0x400`/value 6 for 1040003 and `0x10000`/value 17 for 1302000 - and the
-    /// suppression is downstream of the packet. See the `EquipStatSet` docs and
-    /// `research/equip-stats.md` section 11. Nothing here is known to need changing.
+    /// **Sending the real values did not produce a stat line**, on the run of 2026-08-19,
+    /// and that is still unexplained. The bytes are right - `world.log`'s `0x01A0` body
+    /// parses to four 129-byte items with mask 1 = `0x400`/value 6 for 1040003 and
+    /// `0x10000`/value 17 for 1302000 - so the suppression is downstream of the packet.
+    /// Nothing here is known to need changing; see the `EquipStatSet` docs and
+    /// `research/equip-stats.md` section 11.
+    ///
+    /// One loose end this call has: `tuc` is sent **equal** to `ITEMINFO.tuc`, which is the
+    /// "not fresh" side of `FUN_14038d3c0`'s `CMP AL, byte ptr [RDI+0xb8] / JNC` at
+    /// `0x14038d41c`. `tools/callers.py` finds 0 direct callers of that function, but it
+    /// only sees `call rel32` and cannot see a vtable or indirect call, so that zero is not
+    /// evidence of absence. `tuc - 1` is the cheap variant if a run ever needs one.
     ///
     /// `tuc` is the item's WZ `info/tuc`. The client compares this field against
     /// `ITEMINFO.tuc`, so it must not exceed it; `tuc` itself is the unused-item value.
@@ -2243,7 +2267,11 @@ pub fn equipped_item(item_id: u32, stats: &EquipStats) -> Vec<u8> {
     let mut b = Vec::with_capacity(EQUIPPED_ITEM_LEN + stats.extra_len());
     b.push(EQUIPPED_ITEM_TYPE); // 1403095fb  u8   the factory's type byte
 
-    // FUN_1403035a0, the base decode shared by all three item types.
+    // FUN_1403035a0, the base decode shared by all three item types. **[L]** - the read list
+    // below was verified 2026-08-19 by enumerating every call target in its listing
+    // (`research/msexe-itemslot-base.txt`, 0x1403035a0..0x1403037f5): 2x 0x1406e8c20,
+    // 2x 0x1406e8ae0, 2x 0x1406e9170 and three non-readers. Nothing else reads the packet
+    // here, which is what fixes the offset the three mask u32s land on.
     b.extend_from_slice(&item_id.to_le_bytes()); //           1403035c5  u32  itemId
     b.push(0); //                                             140303787  u8   hasCashSN
     // A non-zero hasCashSN pulls in a u64 cash serial at 14030379d and drops the raw[8] at

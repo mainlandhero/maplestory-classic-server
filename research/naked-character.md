@@ -1,5 +1,18 @@
 # Why the character is naked, and the route that dresses it
 
+> **OUTCOME, 2026-08-19: this worked. The character is dressed on screen.** The equipped
+> list in the `SetField` character record is what does it, exactly as section 1 recommended,
+> and route 2 was never needed.
+>
+> **What it did not fix is the item tooltips.** The Equipment window shows every item with
+> both bitmask blocks reading back as **zero** - no stat lines, `Remaining Enhancements: 0`
+> where the server sent the template's `tuc`, `Scissors Usages Available : 0` where it sent
+> `0xFF`, and "Cannot be Traded when equipped" still printed - while the same item's name,
+> icon and `Type:` are right and the **avatar is correctly dressed**. So the avatar path
+> reads a populated item and the window's tooltip does not. That is a different problem from
+> the one this file solved, and it is tracked in `research/equip-stats.md` §11.
+
+
 **Written 2026-08-19, entirely statically. No client run was spent.**
 
 The blocker `research/equip-block.md` recorded - "item decode is a vtable call at `+0x330`

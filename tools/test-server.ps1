@@ -221,7 +221,7 @@ $ErrorActionPreference = 'Stop'
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,1402fd610:peek=b2:hits=60'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,140304100:hits=200'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -393,19 +393,18 @@ if ($SetFieldProbe) {
     Write-Host "  0x0138 UserAvatarModified is NO LONGER SENT - it is dead code at byte level."
     Write-Host ""
     Write-Host "In client-patched\maplecw-hook.log, two watches answer two questions:" -ForegroundColor Cyan
-    Write-Host "  1402fd610   the item's vtable+0x200, on the TRADE-LINE path. RCX is the"
-    Write-Host "              item, and peek=b2 dumps the four raw bytes of its Weapon Def."
-    Write-Host "              slot. The stored value is ((b3^b1)<<8)|(b2^b0) and must be 6."
-    Write-Host "              This runs even when the stat section does not, so it is also"
-    Write-Host "              the positive control: no lines here at all means the hook"
-    Write-Host "              never armed, and a silent log proves nothing."
-    Write-Host "  1426afdc0   183 bytes past the ITEMINFO gate, called unconditionally - so"
-    Write-Host "              its presence IS the gate. RDX is the item the stat section"
-    Write-Host "              reads, R8 the ITEMINFO."
-    Write-Host "     silent while 1402fd610 fires -> the gate closed, ITEMINFO came back null"
-    Write-Host "     both fire, pointers MATCH, peek 6 -> the line was built and dropped"
-    Write-Host "     both fire, pointers DIFFER -> the tooltip renders a COPY of the item"
-    Write-Host "     peek reads 0 -> the value never landed; suspect the instrument first"
+    Write-Host "  140304100   the equip decode. RCX is every item pointer we decoded, and it"
+    Write-Host "              fires at world entry - so it is also the POSITIVE CONTROL. No"
+    Write-Host "              lines at all means the hook never armed, and a silent log"
+    Write-Host "              proves nothing."
+    Write-Host "  1426afdc0   inside the tooltip's stat section. RDX is the object the"
+    Write-Host "              TOOLTIP reads, and the probe's stack trace names who built it."
+    Write-Host "  THE QUESTION IS POINTER IDENTITY. Hover the TROUSERS (slot 6, 1060002)."
+    Write-Host "     RDX is NOT among the 140304100 pointers -> the window renders a second"
+    Write-Host "        object; the <-TEXT frames in its stack trace name the builder, and"
+    Write-Host "        that is the whole remaining question."
+    Write-Host "     RDX IS among them -> our object is holding zeros, so the bug is in the"
+    Write-Host "        DECODE, not the tooltip - much more tractable."
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails

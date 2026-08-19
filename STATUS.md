@@ -91,29 +91,66 @@ is already established, so nobody re-derives it, and the **one concrete next ste
 
 ### START HERE - what to do next, in order
 
-Nothing below needs a client launch to *build*; every one is specified well enough to write
-code against. Launches are for confirming, and two of these can share one.
+**The four items that were here on the morning of 2026-08-19 are all resolved** - the
+equipped block, the NPC Say, the mob body and the channel row. Two worked, one was retracted
+and one is still failing for a reason now narrowed. What follows is the state after the owner's
+three runs that day.
 
-| # | do this | why it is first | spec |
+**WORKING and confirmed on screen:** a character on a map, dressed; NPCs visible, clickable,
+and speaking the game's own lines on **both** click paths; portals both ways landing on the
+connecting door; world select; `!map <id>`; and quest NPCs opening with the real
+`Quest.wz` line.
+
+| # | do this | why it is here | spec |
 |---|---|---|---|
-| ~~1~~ | ~~**Build the equipped-item block**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See "6. Equipment" below for what to watch on the run. | `research/naked-character.md`, goal 6 |
-| ~~2~~ | ~~**Answer `0x0151` with a `0x055B` Say**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See goal 2 below for what to watch. | `research/npc-dialogue.md`, goal 2 |
-| ~~3~~ | ~~**Finish the mob body**~~ - **BUILT 2026-08-19, unconfirmed on screen, and the least certain of the four** | See goal 3 below: two blocks inside the body are decided by the WZ **template**, not by us. | `research/mob-spawn.md`, goal 3 |
-| ~~4~~ | ~~**Read what greys a channel row**~~ - **FOUND and the one-byte fix is in. Unconfirmed on screen** | See goal 2a. | `research/channel-select.md` |
+| 1 | **Answer `0x00F3`** so a conversation can continue past its first box | The owner's clearest ask: pressing **Accept** on a quest sends this and nothing comes back, so every quest dialogue dies at line 1. It also unblocks paging, yes/no, and the whole of goal 2. **Three real bodies are captured** against known inputs | `research/script-reply.md`, `research/npc-dialogue.md` |
+| 2 | **Find out why item tooltips read zero** - it is now a **two-way fork settled by pointer identity** | The character is dressed but every tooltip shows both bitmask blocks as zero while the avatar is right. Four candidate homes are eliminated; what is left is (a) the window renders a **second object** built somewhere else, or (b) **our** object is holding zeros and the bug is in the decode. The armed watch answers it in one hover | `research/equip-stats.md` §11.4.6 |
+| 3 | **Fix the mob body** | `mob+0x2b8` null, dereferenced unguarded, on the first `0x03C6`. Mobs are **off by default**; `--mobs --mob-limit 1` splits "the body is wrong" from "thirty objects at once" | `research/mob-spawn.md` |
+| 4 | **Answer `0x01BE`, log out** | The owner clicked Log Out and could not get back to the login screen. Zero-byte body, unanswered | `research/talking-back.md` |
+| 5 | **Find the chat-display packet** | `!map` refuses a bad id in silence because there is no outbound "tell the player something". The owner asked for it directly | `research/talking-back.md` |
+| 6 | **Read what populates the Change Channel list** | Not the world list: those bytes were **byte-identical** between a run that listed CH.1/CH.2 and one that listed nothing. The route through world select is the live hypothesis and testing it costs nothing | `research/channel-select.md` §0 |
 
-**All four are built. One launch confirms them**, and they are independent - equipment is
-in the record, dialogue is a reply to a click, mobs are a separate pool, the channel byte is
-in the login world list - so a failure in one does not confound the others.
+**Two things that are NOT open any more, so nobody re-opens them:**
 
-**One asymmetry to know before reading the results:** the equipment change is inside the
-character record, which has no length prefix and no resync point. If *it* is wrong, world
-entry breaks and none of the other three can be observed at all. That is still a valid
-outcome - the `ELog` names the mis-sized field - but it is why "nothing worked" would mean
-"look at the record first" rather than "all four are wrong".
+* **The White Map is not broken.** `!map 900000000` crashed the client, and then the owner logged
+  in with that map stored and it loaded fine. The crash is in the mid-session *transition*,
+  not the destination - and `!map 1` and `!map 40` worked mid-session in the same run.
+* **The channel entry's trailing bytes are not the channel list's problem.** Two runs were
+  spent on that byte and both attributions are retracted.
 
-**And do the Change Channel test LAST.** Now that a row is clickable, the Change button can
-put `0x00D2` on the wire for the first time, and nothing answers it. An unanswered packet
-freezes the client's whole UI, which would end the session.
+### THE NEW GOALS - set by the owner, 2026-08-19, later in the day
+
+These are goals rather than tasks; each is bigger than a sitting.
+
+#### A. Quest state that actually advances
+
+**Nothing about quests persists or changes.** Accepting does nothing, the same line comes
+back every time, and the journal never fills. Full write-up is in its own section below
+("NEW GOAL ... quest state that actually advances"). In short it needs the **presence-gated
+quest block** in the character record - the third block of the same shape as `presence[0]`
+and `presence[2]`, both of which are worked examples - a **quest-result packet that has
+never been found in either direction**, a `quest_state` table, and the `Check`/`Act` rules,
+which are a pure function over data already generated.
+
+**Depends on item 1 above:** a quest cannot be *accepted* until the client can answer a
+yes/no box.
+
+#### B. NPC idle chatter
+
+The owner, 2026-08-19: NPCs should cycle their idle lines **in order, on a cooldown**. The data
+is generated - `gm-handbook/npcstrings.txt`, 441 chatter lines across 266 NPCs, and Robin's
+ten match an outside listing exactly, in order.
+
+**What is not settled is whether the server sends it at all.** The client may well do this
+itself, the way its minimap reads the WZ directly and the way it picks its own
+`0x00F2`-vs-`0x0151` click path out of `Quest.wz`. If it is client-side, the answer is a
+**field in the `0x044F` body** - and that body has form: every NPC was invisible for days
+because `isEnabled` and `alpha` were zero while the layout was perfect. Several fields there
+are still placeholders.
+
+#### C. Mob drops
+
+Follows the mob body. A mob has to exist before it can drop, so this is blocked on item 3.
 
 ### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
 
@@ -249,7 +286,7 @@ chat and the quest reply. It stopped being a probe some time ago.
 | # | do | what to look at | what it means |
 |---|---|---|---|
 | 0 | Log in and enter the world with a character that has equipment | does a character appear on the map at all? | **This is the gate.** The equipment change is inside the character record, which has no length prefix and no resync point. If world entry breaks - a fault, or a freeze on "Connecting..." - the record desynchronised, and **nothing below can be observed**. Read the `ELog` (`0x008F`/`0x0090`) and run `tools/pdata_lookup.py` on its RVAs; that names the mis-sized field |
-| 1 | **Hover the coat or trousers - not the sword - and read the tooltip** | the Grey T-Shirt should now say **Weapon Def.: +6**, **Remaining Enhancements: 7**, and **no** "Cannot be Traded when equipped". The starter sword should show **17** attack | Being dressed is already confirmed; what is new is what each item *says*. **No stat line at all** - the packet value is not what the tooltip reads. **A wrong number** - the bit order is off, and which stat shows which number names the bit. **Fault or freeze** - the record desynchronised; items are **129** bytes now and the record **759**, so a width error is live again. **Answer this even if nothing changed:** are the `Remaining Enhancements` and `Scissors Usages Available` lines present *at all*? They sit behind the same `ITEMINFO` gate as the stat lines, so "those two are there and the stats are not" and "all three are gone" are completely different diagnoses |
+| 1 | **Hover the TROUSERS (slot 6, item 1060002) and read the tooltip** | the Grey T-Shirt should now say **Weapon Def.: +6**, **Remaining Enhancements: 7**, and **no** "Cannot be Traded when equipped". The starter sword should show **17** attack | Being dressed is already confirmed; what is new is what each item *says*. **No stat line at all** - the packet value is not what the tooltip reads. **A wrong number** - the bit order is off, and which stat shows which number names the bit. **Fault or freeze** - the record desynchronised; items are **129** bytes now and the record **759**, so a width error is live again. **Answer this even if nothing changed:** are the `Remaining Enhancements` and `Scissors Usages Available` lines present *at all*? They sit behind the same `ITEMINFO` gate as the stat lines, so "those two are there and the stats are not" and "all three are gone" are completely different diagnoses |
 | 2 | ~~Walk to map 30~~ **SKIP - mobs are off.** | - | The mob body faulted the client on 2026-08-19 and `send_mobs` is now `false`. Re-enable with `--mobs` only when the mob body is the variant under test |
 | 3 | Click a **quest** NPC (Heena, map 1) **and** a **quest-less** one (Robin, map 40) | does a dialog box appear for both? | They take different paths through the client - Heena's click sends `0x0151`, Robin's `0x00F2` - and only the first was answered before, which is exactly why Robin was silent. **Text on both** - the whole chain works. **Nothing, no fault** - check `world.log` shows the `0x055B` going out, then suspect the message type or the flags |
 | 4 | Open Change Channel | is CH.2 **cream** rather than grey? does clicking it turn it blue? | Cream means the enable byte is right. Blue on click is only a highlight move, not a send |

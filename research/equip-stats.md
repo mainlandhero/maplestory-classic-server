@@ -6,8 +6,10 @@
 > The run of 2026-08-19 sent the absolute values section 8 concluded, the items decoded, the
 > character is dressed - and there is still no stat line. Section 11 settles the encoding
 > question ([L], both directions, and the answer is "the server has nothing to encode"),
-> corrects nothing in section 2, and moves the search downstream to a single gate. It also
-> **retracts two past-tense claims in sections 5 and 7** that were predictions.
+> corrects nothing in section 2, and moves the search downstream. **Section 11.4.1 carries
+> the run-1 tooltip transcript**, which proves the pipeline was intact and section 8's guard
+> reading correct - and makes run 2, not run 1, the thing that needs explaining. Section 12
+> is the two-line lesson this file has now paid for twice.
 
 `research/naked-character.md` established the 125-byte type-1 item body and said the three
 `u32` bitmasks gate "17 optional `u16`" and "21 optional mixed-width fields" without naming
@@ -24,7 +26,7 @@ different game version and is a candidate, never a fact.
 
 | question | answer | label |
 |---|---|---|
-| Do the stat fields carry the item's stats? | **Yes - they are the item's TOTAL stats, and a fresh Undershirt must be sent with `inc_pdd = 6`.** The tooltip prints the packet value alone and *subtracts* `ITEMINFO.incPDD` from it; a separate function compares the two directly in the same units. Zeros are suppressed by a print guard. Section 8. **But the guard is not what emptied the screenshot** - sending 6 produced no line either. Section 11 | [L] for the guard; the screenshot's cause is **not established** |
+| Do the stat fields carry the item's stats? | **Yes - they are the item's TOTAL stats, and a fresh Undershirt must be sent with `inc_pdd = 6`.** The tooltip prints the packet value alone and *subtracts* `ITEMINFO.incPDD` from it; a separate function compares the two directly in the same units. Zeros are suppressed by a print guard, which is why the run-1 screenshot has no stat section. Section 8, and the run-1 transcript in 11.4.1 tests it: template 6, packet 0, **no line** | [L] |
 | Why "Cannot be Traded when equipped"? | Because we send **`scissor_uses = 0`**. `FUN_1402fd610` (`vtable+0x200`) returns true for any item with `scissor_uses <= 20`, and that makes `FUN_14038cf10` report a trade restriction. The wording then comes from the WZ. **The fix is one packet byte:** option-mask **bit 18** set to a value **> 0x14**. | [L] |
 | Are the six `REQ` zeros wrong? | **No.** No requirement value exists anywhere in the 125-byte body; `reqLevel/STR/DEX/INT/LUK/POP/Job` live in `ITEMINFO`, loaded from the WZ, and `01040002.img/info` really does have all of them at 0. Nothing to fix. | [L] |
 
@@ -271,18 +273,16 @@ CALL 0x140910eb0 / TEST EAX,EAX / SETNZ CL / MOV [R14+0x1b4],ECX` at `0x1403b6a9
 
 Substituting our packet - attribute 0, cash serial 0, scissor uses 0 - and the WZ's zeros,
 `FUN_14038cf10` returns **1** and the wording is **0x03C6**. That is exactly the line on
-The owner's screen, and the same `vtable+0x200` would also make
-`Scissors Usages Available : 0` print (`FUN_1403e8c40` ends in
-`JMP qword ptr [RAX+0x200]`). **[D]**
+The owner's screen, and the same `vtable+0x200` also explains why
+`Scissors Usages Available : 0` printed (`FUN_1403e8c40` ends in
+`JMP qword ptr [RAX+0x200]`). **Both wrong lines have one cause.** **[D]**
 
-> **Corrected 2026-08-19, section 11.4.1.** This paragraph used to end *"...also explains why
-> `Scissors Usages Available : 0` **printed**. Both wrong lines have one cause."* **The
-> scissors line was never reported as being on screen** - the only first-hand account of that
-> screenshot is the commit message of `7a59910`, which names the trade line and "no stats"
-> and nothing else. A prediction was written in the past tense. It matters: the two lines do
-> **not** have one cause, because the scissors line is inside `FUN_1426b20f0` and behind the
-> `ITEMINFO` gate at `0x1426b223e`, while the trade line is a sibling call in
-> `FUN_14264f750` and is not.
+> **This paragraph was retracted on 2026-08-19 and the retraction is WITHDRAWN.** Section
+> 11.4.1 argued that "printed" was a prediction written in the past tense, because the only
+> account of that screenshot then on file was the commit message of `7a59910`. The
+> **screenshot itself** was posted by the owner and transcribed by the coordinator, and it does
+> carry the line. The transcript is in section 11.4.1; the paragraph above stands as
+> written. What the commit message summarised, the image recorded.
 
 ### 5.1 What to change
 
@@ -349,15 +349,15 @@ fallback.
 | `Remaining Enhancements: %d` (0x039E) | **0** | 0xfa | **No.** The line only prints when `ITEMINFO.tuc != 0` (`*(char *)(itemInfo+0xb8)`), and `01040002.img/info/tuc` is **7**, so a fresh Undershirt should read **7**. **[L]** for the field, the guard, **and now the range**: `FUN_14038d3c0` compares this field against `ITEMINFO.tuc` directly (`CMP AL,byte ptr [RDI+0xb8]` at `0x14038d41c`), so it is constrained to `0..=tuc` - `>= tuc` reads as "not fresh" on one path and `> tuc` on the other. **[I]** remains only on "`tuc` exactly is the fresh value" rather than some smaller number; nothing writes it |
 | `Scissors Usages Available : %d` (0x03A0) | **18** | 0x1a6 | **No** - and this is the trade bug. Section 5 |
 
-The `Remaining Enhancements` guard is
-`if (itemInfo[0x328] == 0 && !trialMode && itemInfo[0xb8] != 0)`. `+0xb8` is WZ
+The `Remaining Enhancements` guard is worth writing down because it is why the line appeared
+at all: `if (itemInfo[0x328] == 0 && !trialMode && itemInfo[0xb8] != 0)`. `+0xb8` is WZ
 `tuc`, `+0x328` is WZ `exceptUpgrade`. **[L]**, `research/msexe-tooltip.c` around line 840.
 
-> **Corrected 2026-08-19, section 11.4.1.** This used to open *"the guard is worth writing
-> down because it is why the line **appeared** at all"*. Nothing on record says a
-> `Remaining Enhancements` line was ever on screen. The guard is real; the appearance was an
-> inference. Both the guard **and** this whole line live behind the `ITEMINFO` gate at
-> `0x1426b223e` (section 11.4), so its absence is equally consistent with the gate closing.
+> **This sentence was retracted on 2026-08-19 and the retraction is WITHDRAWN.** The
+> screenshot has `Remaining Enhancements: 0` in it - transcript in section 11.4.1. The line
+> did appear, and because it sits **behind** the `ITEMINFO` gate at `0x1426b223e`
+> (section 11.4), its appearance proves that gate was **open** in that run. That turned out
+> to be the single most useful fact in this document.
 
 ---
 
@@ -617,7 +617,8 @@ order: 11.1 answers the question that was asked, 11.4 answers the question that 
 |---|---|---|
 | Does the `u16` we send reach `item + 0x62 + 8k`? | **Yes.** Section 2's `base + 8k` is correct and the base really is `item + 0x62`. | [L] |
 | Do the write path and the tooltip read path use the same encoding? | **Yes, and there was never a way for them not to.** `FUN_1402f7010` (write) and `FUN_1401ab420` (read) are an exact inverse pair, and **the wire carries a raw `u16`** - the client generates the key, encodes and checksums *inside the same function that reads the packet*. There is nothing for the server to encode. | [L] |
-| So why is there no stat line? | **Not settled, and it is not in the packet.** Everything downstream of the packet is behind **one** gate - `FUN_1426b20f0`'s `TEST R15,R15 / JZ` at `0x1426b223e`, where `R15` is the item's `ITEMINFO`. That gate also hides `Remaining Enhancements` and `Scissors Usages Available`, and it does **not** hide `Cannot be Traded when equipped`. Section 11.4, and the watch in 11.6 separates it from the two alternatives. | [L] for the gate, **not established** for which branch the client takes |
+| So why is there no stat line **in run 2**? | **The tooltip's object carries none of our optional fields.** The run-2 transcript (11.4.5) has `Remaining Enhancements: 0` where we sent 7 and `Scissors Usages Available : 0` where we sent 0xFF, beside the missing stat line - three fields, two widths, one object, all zero, with the `ITEMINFO` gate demonstrably **open**. | [D] |
+| So where does that object come from? | **Not established, and it is the only question left.** Not the equipped array (it stores the decoded object by refcounted pointer, 11.4.5 step 1), not `FUN_14030b560` (dead unless itemId is 1660000..1669999, step 2), not the bag lists (empty, and empty yields no item at all, step 3), not `FUN_1403d2200` (it fills stats from `ITEMINFO`, so it would have printed `+4`). The remaining fork is **a second object** vs **our object holding zeros**, and pointer identity separates them: section 11.6 | **not established** |
 
 ### 11.1 The obfuscated-slot hypothesis, disproved
 
@@ -728,7 +729,7 @@ times running, which is the discriminator: a width error would not close.
 `item + 0xb2` (or `+0xe2`) when the tooltip reads it.** Everything from here is about what
 happens *after* that.
 
-### 11.4 One gate hides everything the packet could have shown - and it is not the print guard
+### 11.4 One gate hides everything the packet could have shown - and in run 1 it was open
 
 New listing this pass: `research/msexe-equiptooltip.txt`, the whole of `FUN_1426b20f0`,
 `0x1426b20f0 .. 0x1426b3e1a`, bounded by `.pdata`. The decompiler and the listing agree
@@ -771,24 +772,314 @@ the wrong renderer: `python tools/callers.py 0x142699710` gives **17 call sites 
 functions** - `FUN_1426af680` (4), `FUN_1426af8c0` (2), `FUN_1426afdc0` (9), `FUN_1426b20f0`
 (2) - and `FUN_1426b20f0` itself has exactly **one** caller. **[L]**
 
-#### 11.4.1 Retraction: section 5's "`Scissors Usages Available : 0` printed"
+#### 11.4.1 The run-1 screenshot, and the retraction that is WITHDRAWN
 
-Section 5 says *"the same `vtable+0x200` also explains why `Scissors Usages Available : 0`
-printed"*, and section 7 says the `Remaining Enhancements` guard is *"why the line appeared
-at all"*. **Neither is supported by anything on record.** The only first-hand report of that
-screenshot is the commit message of `7a59910`: *"the equipped items carry no stats and say
-'Cannot be Traded when equipped'"*. Two predictions were written in the past tense, which is
-the same failure section 8.0 retracted - an inference stated as an observation.
+An earlier version of this section retracted section 5's *"`Scissors Usages Available : 0`
+printed"* and section 7's *"why the line appeared at all"* as predictions written in the past
+tense, on the grounds that the only account of that screenshot on file was the commit message
+of `7a59910`. **That retraction is withdrawn.** The owner posted the image and the coordinator
+transcribed it directly:
 
-It matters now, because the listing above makes those two lines and the whole stat section
-share one gate. If neither line was ever on screen, **one missing `ITEMINFO` explains the
-entire screenshot**, then and now, and section 8's print-guard reading - which is correct
-about the guard - was never the thing suppressing the section.
+```text
+Undershirt (M)
+Cannot be Traded when equipped
+[icon]
+REQ LEV : 0    REQ STR : 0    REQ DEX : 0
+REQ INT : 0    REQ LUK : 0    REQ FAM : 0
+BEGINNER WARRIOR MAGICIAN BOWMAN THIEF
+Type: Top
+Remaining Enhancements: 0
+Scissors Usages Available : 0
+```
 
-**This is answerable for free, without a launch, if the owner still has the tooltip:** does it
-show a `Remaining Enhancements` line or a `Scissors Usages Available` line *at all*, and did
-`Cannot be Traded when equipped` disappear this run? We now send `remaining_enhancements = 7`
-and `scissor_uses = 0xFF`, so all three are live discriminators on the same item pointer.
+Sections 5 and 7 are restored. The commit message summarised the complaint; the image is the
+record.
+
+**This is the most informative thing in the document, and it points the other way.** Read it
+against the gate in 11.4:
+
+| observation, run 1 (everything we sent was zero) | what it proves | label |
+|---|---|---|
+| `Remaining Enhancements: 0` is on screen - emitted at `0x1426b3a72`, **behind** the gate | `FUN_140388c60` returned non-null: **the gate was OPEN** | [D] |
+| `Scissors Usages Available : 0` is on screen - `0x1426b3cb3`, also behind it | the same, independently | [D] |
+| both lines rendered at all | `FUN_1426aed50`, `FUN_1426af680`, `FUN_1426af8c0` and `FUN_1426afdc0` all ran to completion **without throwing** - they are called at `0x1426b22b6..0x1426b22f5`, before both | [D] |
+| both lines rendered at all | `FUN_14269a1d0` was **not** dropping lines: its silent discard needs `*(int *)(tooltip + 0xa0) == 0x22`, and these two go through the same appender with the same `param_1` | [D] |
+| **no** `Weapon Def.` line, while `ITEMINFO.incPDD` for this item is **6** | `FUN_142699710`'s guard is **not** on the template value. Section 8's reading is **corroborated by a run**, not undermined: arg 3 = 6 with arg 5 = 0 printed nothing | [D] |
+
+So run 1 is completely coherent: **gate open, whole pipeline intact, guard on the packet
+field, our zeros suppressed every stat line.** Nothing about it is anomalous, and section 8's
+model predicts it exactly.
+
+**Run 2 is the anomaly.** Same items, same itemIds, `incPDD = 6 / 4 / 2` and `incWAT = 17`
+on the wire (11.3), the record decoded 26 times with no fault, the character is dressed - and
+the report is still "no stat lines, not even a weapon-attack line on the sword".
+
+#### 11.4.2 The three candidates, weighed against run 1
+
+**(1) Did something we started sending in run 2 close the gate?** **No mechanism exists.**
+The gate's only input is `FUN_1401b0340(item + 0x20)` - the itemId - fed to
+`FUN_140388c60`. Run 2 changed three things and none of them is `item + 0x20`: mask-1 stat
+values, mask-2 bit 0 (`tuc`), mask-2 bit 18 (`scissorUses`). The itemId bytes are identical
+and at the same wire offset, ahead of every mask. Nor can a helper have started throwing:
+every obfuscated slot is written by the client with a checksum the client computes, so no
+checksum can mismatch, and `FUN_140396250` - the only pre-helper function that reads optional
+fields - reads mask-2 bit 11 (`item+0x16e`) and bit 19 (`item+0x1ae`), both still zero.
+**And it is falsifiable from the run-2 screenshot**: if the gate had closed,
+`Remaining Enhancements` and `Scissors Usages Available` would both have vanished too.
+
+*One honest loose end under (1).* We now send `remaining_enhancements = tuc` exactly, and
+`FUN_14038d3c0` tests that field with `CMP AL, byte ptr [RDI+0xb8] / JNC -> return 1` at
+`0x14038d41c` - so `== tuc` lands on the "not fresh" side of the boundary section 7 flagged.
+`python tools/callers.py 0x14038d3c0` reports **0 call sites**, but *that tool sees only
+`call rel32`*: it cannot see a vtable slot or an indirect call, and this binary reaches a lot
+of code that way. The positive control from the same session is `FUN_1402f7010` -> **499**
+call sites, so the tool speaks; the zero is simply not evidence of absence. The cheap variant
+for a future run is to send `tuc - 1`. **Not** indicated by anything measured.
+
+**(2) Is the tooltip reading a copy?** **Very unlikely, and run 1 is what rules it out.**
+
+A copy that *loses* the stat values cannot be a byte copy: the slots are opaque
+`{key, key^value, checksum}` bytes, so `memcpy` or a compiler-generated `operator=` carries
+key, value and checksum across together and the value survives intact. A copy can only lose
+them by being a **reconstruction** - a fresh object plus field-by-field assignment.
+
+This client has exactly one such reconstruction, and it argues against (2):
+**`FUN_1403d2200(mgr, out, itemId, ...)`** builds a `GW_ItemSlotEquip` from an itemId, and
+it fills the stat block **from `ITEMINFO`** (`research/msexe-itemclone.c`):
+
+```c
+FUN_1402f7010(*(u16 *)(ITEMINFO + 0xba), item + 0x62);   // incSTR  -> bit 0
+FUN_1402f7010(*(u16 *)(ITEMINFO + 0xbc), item + 0x6a);   // incDEX  -> bit 1
+...
+FUN_1402f7010(*(u16 *)(ITEMINFO + 0xca), item + 0xe2);   // incWAT  -> bit 16
+FUN_1402f7010(*(u16 *)(ITEMINFO + 0xcc), item + 0xa2);   // incPAD  -> bit 8
+FUN_1402f7010(*(u16 *)(ITEMINFO + 0xd0), item + 0xb2);   // incPDD  -> bit 10
+```
+
+`python tools/callers.py 0x1403d2200` gives **98 call sites in 88 functions** - it is the
+general "make me an item for this id" utility the whole UI uses for shop rows, quest-reward
+previews and the like. **[L]**
+
+So the client's own idea of a display item built from an id carries the **template's** stats.
+Run 1's tooltip showed **no** `Weapon Def.` line on an item whose template is 6. A
+`FUN_1403d2200` item would have shown `Weapon Def.: +6` in run 1. **It did not, so the
+tooltip is not rendering a from-template copy.** **[D]** The only copy shape left is a
+bare-constructed item with nothing filled in at all, which is a strange thing for a tooltip
+to render and which run 2's screenshot tests directly (see 11.4.3).
+
+*A bonus worth recording:* `FUN_1403d2200` is a **fourth, fully independent instrument**
+confirming section 2's whole bit -> `ITEMINFO` map, including the two that matter here -
+bit 16 <- `+0xca` (`incWAT`) and bit 8 <- `+0xcc` (`incPAD`). It was found by enumerating the
+callers of the type-1 constructor `FUN_1402f7da0` (**5 sites in 4 functions**), not by
+searching for it.
+
+**(3) Is the guard not what section 8 read?** **Least likely of the three, and run 1 is why.**
+The guard reading now has three legs: the listing at `0x142699745`, the decompilation of
+`FUN_1426af680` (arg 5 is the `item + 0x62 + 8k` read, arg 3 the `ITEMINFO` one), and
+frame arithmetic done twice from scratch (`LEA RBP,[RSP-0x1f]` after five pushes puts
+`[RBP+0x6f]` at `entry + 0x28`, which is arg 5). Run 1 then **tested** it: a template value of
+6 with a packet value of 0 printed nothing, which is exactly and only what "the guard is on
+arg 5" predicts. A wrong reading of the guard would have had to produce a line there.
+
+#### 11.4.3 ANSWERED - the run-2 transcript arrived
+
+This section asked for a transcription of the run-2 tooltip instead of a paraphrase, because
+it was the only unmeasured link in the chain. It arrived, and it is section 11.4.5. The
+prediction table below stood: the outcome was **row 2, all three lines unchanged from run 1**.
+
+Every link in run 2's chain has a listing or a capture behind it **except one**. The wire is
+measured (11.3). The decode is structural (11.1, 11.2). The gate was open in run 1 and
+nothing we changed feeds it. The guard is corroborated by run 1. What is **not** measured is
+the run-2 observation itself: *"Equipment stats are still not in, I do not see any correct
+stats for any equipment, the sword does not even have a weapon attack line"* is a paraphrase,
+and this document has now been wrong twice about a screen state that nobody transcribed.
+
+**So: transcribe the run-2 tooltip box the way run 1's was transcribed.** No launch is
+needed if the screenshot exists. Three lines in it are already-sent, independent
+discriminators, and they separate (2) from (3) outright:
+
+| line in the run-2 box | reads | what it settles |
+|---|---|---|
+| `Remaining Enhancements:` | **7** | the packet's optional fields reach the tooltip's object -> **(2) is dead**, and a mask-1 value must be in there too |
+| | **0** | the object the tooltip reads does not carry our fields -> **(2)**, a bare-constructed item |
+| `Scissors Usages Available :` | **absent** | `scissorUses = 0xFF` arrived, so `vtable+0x200` is false -> same conclusion as `7` |
+| | still `: 0` | same conclusion as `0` |
+| `Cannot be Traded when equipped` | **absent** | decided by `FUN_14038cf10` on **`R12`** - the *identical pointer* `FUN_14264f750` passes to `FUN_1426b20f0` at `0x142650745`. Not a correlation: the same object |
+| any `Weapon Def.:` or `Weapon Attack:` line | **present** | there is no bug to find; the paraphrase was about the values being wrong, not about the lines being absent |
+
+If those three lines are unchanged from run 1, the answer is **(2)** and the next static step
+is 11.4.4. If they changed, the answer is **(3)-adjacent** - the object holds our data, the
+guard passed, and the line was built and lost between `FUN_142699710`'s `sprintf` at
+`0x142699771` and `FUN_14269a1d0`.
+
+#### 11.4.4 ANSWERED - the three static steps, and what each returned
+
+All three were taken; the results are in 11.4.5. Steps 1 and 2 came off listings already on
+disk, step 3 off `research/msexe-equiplists.c`. The list below is kept because it is the
+reasoning that chose them.
+
+1. **The per-slot cell.** `0x140306229` - `LEA EAX,[RCX-1] / CMP EAX,0x1e / JA` - stores the
+   decoded item at `record + 0x1a8 + slot*0x10` for `1 <= slot <= 31`
+   (`naked-character.md`, and the `EQUIP_SLOTS` doc in `crates/net`). **16 bytes per slot is
+   wider than a pointer.** Dump that region and read what the cell holds: a `{ptr, refcount}`
+   or shared-pointer pair means one shared object and **(2) is dead outright**; a value copy
+   of anything is the copy, named.
+2. **`FUN_1402fbb30` = `return this + 0x242`** is the item's `vtable+0x330`, and it is what
+   `FUN_14030b560` calls to insert the item into its map. Read what the map stores - the
+   object or an interior copy.
+3. **Do not try to enumerate the writers of the stat slots.**
+   `python tools/callers.py 0x1402f7010` is **499 call sites in 121 functions**; that is not
+   a list anyone will read correctly, and filtering it by shape is the mistake `CLAUDE.md`
+   names. The tractable enumeration is the one already done - the **constructor**
+   `FUN_1402f7da0` has **5 call sites in 4 functions** (`0x14030ddb0` the type-1 allocator,
+   plus `0x1402cc180`, `0x1402d4100`, `0x1403d2200`), because a reconstruction has to
+   allocate. Only `FUN_1403d2200` fills the stat block, and 11.4.2 rules it out.
+
+
+#### 11.4.5 The run-2 transcript, and the three no-run steps it bought
+
+The owner posted the run-2 screenshot; the coordinator transcribed it. The item is
+**Brown Cotton Shorts (M)**, itemId **1060002**, equip slot 6 - sent with `incPDD = 4`
+(mask-1 bit 10), `remaining_enhancements = 7` (mask-2 bit 0) and `scissor_uses = 0xFF`
+(mask-2 bit 18).
+
+```text
+Brown Cotton Shorts (M)
+Cannot be Traded when equipped
+[icon]
+REQ LEV : 0    REQ STR : 0    REQ DEX : 0
+REQ INT : 0    REQ LUK : 0    REQ FAM : 0
+BEGINNER WARRIOR MAGICIAN BOWMAN THIEF
+Type: Bottom
+Remaining Enhancements: 0
+Scissors Usages Available : 0
+```
+
+**Three packet fields, two widths, one object, all zero.** [D]
+
+| line | reads | the field it reads | so |
+|---|---|---|---|
+| `Remaining Enhancements: 0` | 0, sent 7 | `FUN_1401b0050(item + 0xfa, [item + 0xfe])`, a `u8` slot | `item + 0xfa` is 0, **with a valid checksum** - it printed instead of throwing |
+| `Scissors Usages Available : 0` | 0, sent 0xFF | `FUN_1401b0050(item + 0x1a6, [item + 0x1aa])`, a `u8` slot | `item + 0x1a6` is 0. And the line printing **at all** means `FUN_1403e8c40` -> `vtable+0x200` found `<= 0x14`, which 0xFF is not |
+| no `Weapon Def.` line | -, sent 4 | `FUN_1401ab420(item + 0xb2, [item + 0xb6])`, a `u16` slot | `item + 0xb2` is 0, or `FUN_142699710`'s guard would have printed `+4` |
+| both option lines printing | - | both are emitted behind the `ITEMINFO` gate | **the gate is open**, and the whole pipeline still runs |
+
+`Cannot be Traded when equipped` is *consistent* with `scissorUses = 0` but is **not**
+independent evidence, and section 5's derivation was for 1040002: `FUN_14038cf10` returns 1
+at `0x14038cf47` - before it ever consults `vtable+0x200` - if `FUN_14038ce90`
+(`exchangeableOnce || equipTradeBlock`) is set, and nobody has checked those two WZ
+properties for **1060002**. The two `: 0` lines are the evidence; the trade line is a
+bystander here.
+
+**So the tooltip's object carries none of our optional fields while its identity fields -
+name, icon, `Type: Bottom` - are right.** Those identity fields come from `ITEMINFO`, reached
+through `FUN_1401b0340(param_2 + 0x20)`, so all they prove is that `param_2 + 0x20` holds
+1060002. An object of the same class with only the itemId set fits every line above.
+
+##### Step 1: `record + 0x1a8 + slot*0x10` holds **the decoded object itself**. No copy
+
+Off the listing already on disk, `research/msexe-charrecord-full.txt`,
+`0x1403061c9 .. 0x1403062ff`:
+
+```text
+1403061fc  CALL 0x1406e8b80              ; u16 slot, 0 ends the list
+14030621e  CALL 0x1403095e0              ; the factory decodes into [RBP+0x30];
+                                         ;   the item pointer lands at [RBP+0x38]
+140306229  LEA  EAX,[RCX + -0x1]
+14030622c  CMP  EAX,0x1e
+14030622f  JA   0x1403062bc              ; slot outside 1..31 -> released, discarded
+140306238  SHL  RAX,0x4                  ; slot * 0x10
+14030623c  LEA  RDI,[R15 + 0x1a8]
+140306243  ADD  RDI,RAX                  ; RDI = the cell
+14030627b  MOV  RBX,qword ptr [RBP + 0x38]   ; the decoded object
+14030629b  INC.LOCK qword ptr [RBX + 0x8]    ; refcount++
+1403062a4  MOV  RCX,RDI / CALL 0x1401abd80   ; release the previous occupant
+1403062ac  MOV  qword ptr [RDI + 0x8],RBX    ; store the POINTER at cell+8
+```
+
+The 16-byte cell is a refcounted handle - `{?, ptr}` with the pointer at `+8` and an
+interlocked refcount at `object + 8`. **The array stores the very object `FUN_1403095e0`
+produced, by pointer.** There is no value copy here and (2)-via-the-equipped-array is dead.
+**[L]**
+
+##### Step 2: `FUN_14030b560` never runs for our items
+
+`equip-block.md` called the `vtable+0x330` call inside `FUN_14030b560` "the blocker". It is
+not on our path at all - the whole body is behind one range test:
+
+```c
+iVar4 = FUN_14019a5d0(item + 0x20);          // the itemId
+if (iVar4 - 0x195460U < 10000) { ... }       // 0x195460 = 1660000
+```
+
+So `FUN_14030b560` does nothing unless the itemId is in **1660000..1669999**. Ours are
+1040003, 1060002, 1072003 and 1302000. Whatever that map is, it is not where our tooltip's
+item comes from. **[L]**, `research/msexe-equiplists.c`. (Same family as the
+`FUN_1402cb4f0` post-pass at `0x14030435e`, which `equipped_item`'s `debug_assert` already
+guards.)
+
+##### Step 3: the four extra lists are the **bag**, and empty is correct
+
+`presence[2]` opens `FUN_14030b6f0(ctx, 1)` and `FUN_14030b9e0` (run for indices 2, 3 and 4).
+Both resolve a per-inventory-type key through `FUN_1403023d0(out, N)`, read a `u16`, and run
+the **same** item factory `FUN_1403095e0` in a loop until the `u16` is zero - the identical
+shape to the equipped list, one per inventory type. These are **inventory types 1..4: the
+bag**. **[L]**, `research/msexe-equiplists.c`.
+
+An empty bag is the correct thing to send for a character carrying nothing, and - this is the
+point - an empty list produces **no item at all**. It cannot produce a window entry with a
+correct name, icon and `Type: Bottom`. So "the Equipment window renders from one of the lists
+we send empty" does not fit the transcript and is **ruled out**. **[D]**
+
+##### And the last unverified link in the wire model is now [L]
+
+`FUN_1403035a0`, the base decode shared by all three item types, was the one step this pass
+had taken from a source comment rather than a listing. Enumerating **every** call target in
+`research/msexe-itemslot-base.txt` (`0x1403035a0 .. 0x1403037f5`) gives 2x `0x1406e8c20`,
+2x `0x1406e8ae0`, 2x `0x1406e9170` and three non-readers - so, in order:
+
+| read | at | into |
+|---|---|---|
+| `u32` itemId | `0x1403035c5` | the secure slot at `item+0x20` |
+| `u8` hasCashSN | `0x140303787` | - |
+| `raw[8]` cash serial, **only if non-zero** | `0x14030379d` | `item+0x38` |
+| `raw[8]` dateExpire | `0x1403037b9` | `item+0x40` |
+| `u32` | `0x1403037c1` | `item+0x48` |
+| `u8` | `0x1403037cc` | `item+0x4c` |
+
+Exactly what `crates/net::equipped_item` sends, in that order. **[L]** So the mask `u32`s are
+read at the wire offsets we write them to.
+
+#### 11.4.6 What is left: two objects, or one object with zeros
+
+Everything above eliminates a copy *store*. It does not eliminate a copy. Two possibilities
+remain, and they are separated by **pointer identity**, not by any further reading:
+
+**(2a) A different object.** The tooltip is handed a distinct `GW_ItemSlotEquip` carrying the
+right itemId and nothing else. It is **not** from the equipped array (step 1), **not** from
+`FUN_14030b560` (step 2), **not** from the bag (step 3), and **not** from `FUN_1403d2200` -
+that one fills the stat block from `ITEMINFO`, so a `FUN_1403d2200` item for 1060002 would
+have printed `Weapon Def.: +4`, and the transcript has no line at all. Where it does come from
+is not established, and the three forwarders into `FUN_14264f750` (`FUN_142656500`,
+`FUN_142664790`, `FUN_142687b40`) have **33 call sites between them** - too many to walk
+blind, which is what 11.6 now solves with a stack trace instead.
+
+**(2b) The same object, holding zeros.** Our decoded item itself never received the values,
+because `FUN_140303800` stored zeros - which needs the client to have read the masks as 0.
+The argument against it is that the client would then consume 4 fewer bytes per item, the
+record has no resync point, and world entry, the avatar, portals and NPCs all work in run 2 -
+but that argument is **[D], not [L]**, and it is the cheaper of the two to be wrong about.
+It was treated as closed earlier in this pass and it should not have been.
+
+*Ruled out by arithmetic rather than by reading:* "something zeroed the stat block after the
+decode" cannot be it. `FUN_1402fb7e0(base)` zeroes exactly 17 slots, `base+0` to `base+0x80`;
+applied at `item+0x62` that covers `0x62..0xea` and **cannot** touch `item+0xfa` or
+`item+0x1a6`, both of which also read zero. No single zeroing pass explains all three fields.
+**[D]**
+
+*One positive control that bounds all of this:* the **avatar is correct**. Whatever the
+character's appearance is built from has our items in it, so the decode ran and stored
+something usable, and the problem is specific to the tooltip's path.
 
 ### 11.5 What the server must write: **nothing new**
 
@@ -801,39 +1092,47 @@ No byte of `crates/net::equipped_item` is indicated by this pass, and changing o
 evidence is the mistake this document already made once. `EquipStats::default()` still
 produces the 125-byte body; `EquipStats::fresh` still produces 129 for the starter items.
 
-### 11.6 The three surviving explanations, and the watch that separates them
+### 11.6 The watch that separates them
 
-`tools/test-server.ps1` has two free probe slots (`1415db360:ret` and `141b2a280:rdx=0` are
-not negotiable). The probe logs `rcx/rdx/r8/r9`, the return address, the first dword at any
-pointer register, and - with `:peek=<off>` - the byte and dword at **`rcx + off`**. It does
-**not** log stack arguments, which rules out watching `FUN_142699710`: its packet value is
-arg 5 and arrives on the stack, so a watch there would only say it was called.
+**The question has changed.** It was "does the tooltip's object hold our value" - the run-2
+transcript answered that: **no**, on three fields at once (11.4.5). It is now "**which object
+is it**", and that is settled by comparing pointers, not by peeking at bytes. The probe pair
+changes accordingly.
+
+`tools/test-server.ps1` has two free slots (`1415db360:ret` and `141b2a280:rdx=0` are not
+negotiable). The probe logs `rcx/rdx/r8/r9`, the first dword behind any pointer register, the
+return address, `:peek=<off>` at **`rcx + off`** - and, on every hit, **a stack trace**: up to
+16 return-address-shaped values from the first `0x400` bytes of stack, each tagged `<-TEXT`,
+`(vm)` or `(?)` (`crates/grap-stub/src/probe.rs`, `stack_trace`). That trace is what makes
+this cheap: it names the Equipment-window chain that owns the tooltip's item, which statically
+would mean walking **33 call sites** across the three forwarders into `FUN_14264f750`.
+
+It does **not** log stack arguments, which still rules out watching `FUN_142699710` - its
+packet value is arg 5 and arrives on the stack.
 
 ```text
-$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,1402fd610:peek=b2:hits=60'
+$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,140304100:hits=200'
 ```
 
-| watch | why this one | registers at entry |
+| watch | why | what to read |
 |---|---|---|
-| `1426afdc0:hits=60` | it is the **first thing after the gate** that only equips reach - `FUN_1426b20f0` calls it unconditionally at `0x1426b22f5`, 183 bytes past the `JZ`. Its presence or absence *is* the gate | `rcx` tooltip, **`rdx` = the item the stat section reads**, **`r8` = `ITEMINFO`**, `r9` = the baseline struct |
-| `1402fd610:peek=b2:hits=60` | `FUN_1402fd610` is the item's `vtable+0x200`; `RCX` **is the item**, and it runs on the *trade-line* path (`FUN_1426e10e0` -> `FUN_14038cf10`), which is **before** the gate. So it reports even when the stat section does not | `rcx` = the item; `[rcx+0xb2]` = the four raw bytes of the Weapon Def. slot |
+| `1426afdc0:hits=60` | the first thing past the `ITEMINFO` gate that only equips reach (`0x1426b22f5`, 183 bytes after the `JZ`) | **`rdx` = the object the stat section reads**, `r8` = `ITEMINFO`, and the **stack trace**, which names its owner |
+| `140304100:hits=200` | the type-1 equip decode; already known to fire 4x per `SetField` | **`rcx` = every decoded item pointer**, the set to compare `rdx` against |
 
-**Decoding the peek.** `[rcx+0xb2]=u32:0xB3B2B1B0` little-endian gives bytes `b0 b1 b2 b3`;
-the stored value is `((b3 ^ b1) << 8) | (b2 ^ b0)`. For the Grey T-Shirt (1040003) that must
-come out **6**. Bit 10 is only set on the coat, the pants and the cape, so **hover one of
-those**, not the sword - the sword's 17 is at `+0xe2`.
+**Hover the trousers (slot 6, 1060002)** - the item the run-2 transcript is for - so the
+pointer comparison is against a known line of the box.
 
-| outcome | what it means | next step |
+| outcome | which branch | next step |
 |---|---|---|
-| **No `1426afdc0` line at all** while `1402fd610` fires on a hover | The gate at `0x1426b223e` took the early exit: `ITEMINFO` is null for this item. The stat section, `Remaining Enhancements` and `Scissors Usages Available` have **never** run, and no packet value could ever have printed | Read `FUN_1403e18a0` (the itemId -> WZ-name step inside `FUN_140388c60`) and find why it returns empty for 1040003 |
-| **`1426afdc0` fires, `r8` non-zero, `rdx` == the `rcx` `1402fd610` reported, and the peek decodes to 6** | The section ran, on our object, with a real `ITEMINFO`, holding the right value - so `FUN_142699710`'s guard passed and a line was built. The failure is in the **append**, not the packet | Read `FUN_14269a1d0`: it discards the line outright when `*(int *)(tooltip + 0xa0) == 0x22`. That is the only silent drop found in it |
-| **`1426afdc0` fires but `rdx` differs from `1402fd610`'s `rcx`** | Two different item objects are in play; the tooltip's stat section is reading something we never filled | Find who makes the copy - start from `FUN_14264f750`'s arg 4 |
-| **The peek decodes to 0** | The value is not in the object the tooltip holds even though the wire carried it. That contradicts 11.1-11.3 and the instrument is the first suspect | Re-arm with `140304100:hits=200` to get the decoder's own `rcx` values and compare pointers |
-| **Neither watch fires on a hover** | `FUN_14264f750` is not the tooltip on screen, or it returns before `0x14264f8ae` | `tools/callers.py 0x14264f750` gives 4 call sites in 3 functions; walk them |
+| **`rdx` is NOT one of the `140304100` `rcx` values** | **(2a)**, a second object - the expected result | Read the `<-TEXT` frames of the stack trace. They name the function that built it, and that is the whole remaining question. Nothing about the packet changes until it is answered |
+| **`rdx` IS one of them** | **(2b)**, our own decoded object holds zeros | The bug is in the decode, not the tooltip, and it is much more tractable. Re-arm `1402f7010:hits=200`: `rcx` is the **raw `u16` being stored** and `rdx` the destination, so `rcx=6 rdx=<item+0xb2>` proves the store and its absence names the mask read. Also re-check the item's byte length against `FUN_140304b20`'s consumption |
+| **`1426afdc0` never fires on a hover** | the gate closed between run 1 and run 2 | Contradicts 11.4.5 - both option lines printed, and they are behind the same gate. Suspect the watch, not the client: confirm it is armed by checking `140304100` fired in the same log |
+| **`r8` is 0** | impossible if the gate is what 11.4 says | the same: verify the instrument first |
 
-`1402fd610` is also reached from `FUN_1403e8c40` and from equip/unequip checks, so read the
-`called-from=` field: `0x14038cf...` is the trade-line path, which is the one that proves the
-tooltip is being drawn.
+The `1402fd610:peek=b2` watch this section used to recommend is retired. Its question - "is 6
+in the object" - is answered by `Scissors Usages Available : 0` and `Remaining
+Enhancements: 0` in the transcript, for free and on two more fields than a peek would have
+covered.
 
 ### 11.7 Files from this pass
 
@@ -842,3 +1141,31 @@ tooltip is being drawn.
 | `research/msexe-equiptooltip.txt` | the **listing** of `FUN_1426b20f0`, `0x1426b20f0..0x1426b3e1a`. The authority for 11.4 - the one gate, and what is behind it |
 | `research/msexe-tooltip-af680.txt`, `research/msexe-tooltip-af8c0.txt` | listings of the bits 0-3 and bits 4-5 helpers |
 | `research/msexe-iteminfo-lookup.c` / `.txt` | `FUN_140388c60` (the `ITEMINFO` lookup that can return 0), `FUN_140396250` (the baseline struct), `FUN_1402fd610` (`vtable+0x200`, `RCX` = the item) |
+| `research/msexe-itemclone.c` | the three non-factory callers of the type-1 constructor. `FUN_1403d2200` is the client's build-an-item-from-an-id utility and fills the stat block from `ITEMINFO` - the fourth instrument confirming section 2's bit map, and what rules out a from-template copy |
+| `research/msexe-equiplists.c` | `FUN_14030b560` (dead outside itemId 1660000..1669999), `FUN_14030b6f0` and `FUN_14030b9e0` (the four **bag** inventory lists), `FUN_14030ca50`, `FUN_1401abd80` |
+| `research/msexe-tooltip-callers.c` / `msexe-tooltip-caller-664790.txt` | the three forwarders into `FUN_14264f750`. All three pass the item straight through from their own callers - 33 call sites, which is why 11.6 gets the answer from a stack trace instead |
+
+---
+
+## 12. The tell this file has now paid for twice
+
+Both errors in this document have the **same shape**: *a prediction recorded in the past
+tense.*
+
+| # | what was written | what it actually was |
+|---|---|---|
+| 1 | Section 8.0 - "the tooltip renders `ITEMINFO.incPDD + packet.incPDD`", labelled **[L]** | an inference from *which arguments were passed*. `FUN_142699710` was never opened |
+| 2 | Section 11.4.1's first version - "the scissors line was never on screen", used to retract sections 5 and 7 | an inference from *which document mentioned it*. The screenshot was never asked for |
+
+Error 2 is the mirror of error 1 and cost a whole diagnostic detour: it moved the search onto
+a gate that a five-line transcript proves was open.
+
+**The tell, both times: a sentence about what the client did, with no capture, screenshot or
+listing cited beside it.** Neither error is visible in the prose - both read as confident
+statements of fact.
+
+**The rule that catches it.** Every claim about *what appeared on screen* carries its source
+inline, the way section 11.4.1 now does: the transcript, the `world.log` timestamp, or the
+`maplecw-hook.log` WATCH line. If the source is "a commit message", "an earlier section", or
+nothing, the claim is **[I]** no matter how certain it feels - and if it is load-bearing, the
+next step is to ask for the artefact, not to reason around it. Asking cost one message here.

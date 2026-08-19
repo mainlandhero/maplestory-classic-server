@@ -21,8 +21,11 @@ Markers: **[L]** read out of the listing or the image, **[D]** derived from two 
 | what the last pass missed | **two more decoders**, both of which read the packet: `FUN_141cc9410` -> `FUN_14085acd0` (57 bytes, gated by a byte we control) and the **virtual** `vtable+0x38` = `FUN_141c4ff80` (52 reads, 106 bytes minimum) - which is where position, foothold and HP actually live [L] |
 | implemented in | `crates/net/src/mob.rs` |
 
-**Nothing here has been sent to the client.** Everything below is static analysis of
-`client-patched\MapleStory.exe`. No client run, no capture.
+**It has now been sent to a client, and it killed it** - `0xC0000005 at 0x141c810b0` on the
+**first** `0x03C6`. Section 11 is that run and what the crash actually proves. The short
+version: **the 137-byte body is not the bug.** The field the client dereferenced,
+`mob+0x2b8`, is a COM interface pointer the client obtains from *itself*; no byte of the
+packet can set it or clear it. Sections 1-7 below were written before that run and stand.
 
 ---
 
@@ -377,17 +380,11 @@ three special template ids are `8910000, 8910100, 9990033` in the reference; in 
 
 ## 8. What is NOT settled
 
-1. **The three template-driven optional blocks.** `template[0x104]` adds 16 bytes,
-   `template[0x1a0]` adds 4, and three specific template ids add 1. The accessors are
-   `FUN_140479e60` (`template+0x83`), `FUN_140479e70` (`template+0x1a0`) and the inline
-   `CMP byte [RCX+0x104]` at `141c50520`. **I did not find which WZ property fills any of
-   them** - `FUN_140495990` is a cache and registry, not the parser. If the tutorial mob is a
-   patrol mob the body is 16 bytes longer and the client will desync. The reference calls
-   `template[0x104]` "isPatrolMob", which for an ordinary field mob is false. **[I], and it is
-   the single most likely reason a first attempt fails.**
-   *Next instrument:* find the function that writes `template+0x104`, and read the WZ property
-   name it is next to; or dump the mob template for id 1 / 100100 out of `Mob.wz` and look for
-   patrol data.
+1. ~~**The three template-driven optional blocks.**~~ **SETTLED 2026-08-19, section 11.2.**
+   `template[0x104]` is the WZ node **`patrol`**; `template[0x1a0]` is the WZ property
+   **`targetFromSvr`**. **No mob image in this client sets either** - all 193 of them were
+   dumped and checked. Both blocks are absent for every mob in the game, so 137 bytes is
+   right and this is *not* why the first attempt failed. [L]
 2. **Meanings for 17 of the 35 `encodeInit` fields.** They are sent as zero. That is the same
    "no readable consumer" argument `research/setfield-zero-audit.md` was written about, and it
    is weaker than a measurement.
@@ -397,7 +394,9 @@ three special template ids are `8910000, 8910100, 9990033` in the reference; in 
    change-controller opcode (`FUN_141d30e80` case `0x3d2`, `u8 flag; u32 objectId;` then either
    a removal or `FUN_141d34a70(pool, flag, id, u8, packet)`). Not decoded, not needed to
    create the object. [L]
-5. **Nothing has been sent to a client.** No run, no capture, no confirmation.
+5. ~~**Nothing has been sent to a client.**~~ It has - see section 11. What is still open is
+   **why the client called `FUN_141c81040` on a mob whose `+0x2b8` had not been filled yet**,
+   which section 11.5 turns into two watches.
 
 ---
 
@@ -431,3 +430,218 @@ three special template ids are `8910000, 8910100, 9990033` in the reference; in 
 * **Bounding a call census to a function is not bounding it to a code path.**
   `FUN_141cc9410` contains no read primitive and reads 57 bytes; the reads are one call deeper.
   Chase every callee that receives the `CInPacket *`, and only those.
+* **`.pdata` does not cover every function.** The template accessors `FUN_140479e60` and
+  `FUN_140479e70` are `MOVZX EAX,byte [RCX+d]; RET` with no unwind data and therefore **no
+  `.pdata` entry**, and so does about a third of every mob vtable. A vtable walk that stops
+  at the first entry which is not a `.pdata` function start truncates the base mob vtable at
+  **slot 1**. Walk while the qword lands in an executable section instead.
+* **A linear capstone sweep stops silently at the first undecodable byte.** `.text` needed
+  20 034 resyncs and `.boot` 646 905; without a resync everything after the first bad byte in
+  a section is never examined and the scan reports a confident zero. And resync by re-slicing
+  `bytes` is `O(n^2)` - it never finished on `.boot`. Slice a `memoryview`.
+
+---
+
+## 11. The first client run - 2026-08-19 - and what the crash proves
+
+Capture: `research/fixtures/mob-body-faults-client-{world,hook,exit}.log`. Map 40,
+character 204, 40 mobs of template 2 sent in one burst after two `0x044F` NPCs.
+
+```
+0xC0000005 at 0x141c810b0
+```
+
+### 11.1 It faulted inside the FIRST `0x03C6`, not half a second later [L]
+
+`crates/grap-stub/src/hook.rs:285` writes the `N opcode=0x…… elapsed_us=` line **after** the
+trampoline returns. The fixture's last such line is `9 opcode=0x044F`; there is **no line for
+any `0x03C6`**. So the first mob dispatch never returned - the fault is inside
+`FUN_141d33630`'s call tree, synchronously. (An earlier reading of this fixture called it a
+per-tick or per-render virtual arriving ~0.5 s later. That was wrong: `world.log` is local
+time and `maplecw-hook.log` is UTC, and the sub-second fields agree - 52.929 to 52.952.)
+
+It is also the **first** mob, not the 40th: ten dispatches completed (`0x0032` x3, `0x0000`,
+`0x000B` x2, `0x0010`, `0x0011`, `0x044F` x2) and the next packet in the stream is mob #1.
+**`-MobLimit 1` will reproduce it.** Volume is not the variable.
+
+### 11.2 `template[0x104]` is `patrol`, `template[0x1a0]` is `targetFromSvr` - both absent [L]
+
+The parser is `FUN_14047d990` (44 762 bytes; found by `tools/xref.py --string bodyAttack`).
+
+```asm
+140483bea  LEA  RDX,[rip -> u"patrol"]        ; GetItem(node, "patrol")
+140483c5e  JE   140483d23                     ; absent
+140483c64  MOV  byte ptr [RAX + 0x104],1      ; present
+140483d23  MOV  byte ptr [RAX + 0x104],0
+
+14048094f  LEA  RDX,[rip -> u"targetFromSvr"] ; GetInt(node, "targetFromSvr", 0)
+140480962  TEST EAX,EAX / SETNE SIL
+140480979  MOV  byte ptr [R13 + 0x1a0],SIL
+```
+
+`client-patched/Data/Mob/` is one partition (`Mob.ini` says `LastWzIndex|0`) holding
+**193 mob images**. Every one was dumped with `wz-dump cat` and searched:
+
+| key | images carrying it |
+|---|---|
+| `bodyAttack` | 193 |
+| `link` | 37 |
+| `boss` | 13 |
+| `firstAttack` | 15 |
+| `notAttack`, `noFlip`, `fixedDamage` | 1 each |
+| **`patrol`** | **0** |
+| **`targetFromSvr`** | **0** |
+
+The 1-image and 13-image rows are the positive control: the search resolves keys that are
+present in a single file, so **0 is a real zero**, not a broken search. Templates **1** (map
+30's snail) and **2** (map 40) carry neither, and neither does any other mob in the client.
+
+> `research/mob-spawn.md` section 8 used to call these "the single most likely reason a first
+> attempt fails". They are not a reason at all. **137 bytes is correct for every mob in this
+> client.**
+
+### 11.3 The body layout is right - verified by a third instrument [L]
+
+Independently of the earlier hand trace and shortest-path solve:
+
+* **52 packet reads** in `FUN_141c4ff80`, bounded by `.pdata` to `0x141c4ff80..0x141c54054`
+  (9 u8, 4 u16, 2 u16-thunk, 34 u32, 1 u64, 1 str, 1 raw). Same as section 5.1.
+* A dominator test over the function's CFG asks of each read: *can the last read
+  `0x141c536df` be reached without executing it?* **Exactly 35 reads dominate it**, and those
+  35 are **character-for-character the set `crates/net/src/mob.rs` emits** - no unconditional
+  read is missing and no gated read is being sent. 35 + the 17 gated = 52.
+* Controls for the dominator tool: the HP read `0x141c504e9` dominates (it should); the
+  patrol read `0x141c5052c` does not (it should not).
+
+### 11.4 `mob+0x2b8` is a COM interface the client gives itself. No byte of ours reaches it [L]
+
+The faulting sequence, read with an eight-byte guard against the two undecodable bytes at the
+end of the function:
+
+```asm
+141c81094  MOV   RAX,[RSI + 0x2b8]
+141c8109b  MOV   EDX,0x848
+141c810a0  TEST  RAX,RAX
+141c810a3  LEA   RCX,[RAX + 0x828]
+141c810aa  CMOVE RCX,RDX            ; RAX == 0  ->  RCX = 0x848
+141c810b0  CMP   qword ptr [RCX],RDX
+```
+
+`0x848 = 0x20 + 0x828`, which is exactly `&((Obj*)nullptr)->field` for a pointer that aims at
+`obj+0x20`. That is a self-consistent read of the constant and it is the whole bug: **null is
+unguarded here.**
+
+**What writes `mob+0x2b8`.** A whole-image sweep with resync (18 524 276 instructions,
+666 939 resync points) for every `[reg + 0x2b8]` memory operand found 3 906 hits, 1 956 of
+them writes. Positive controls: the sweep found `141c50505 MOV [RSI+0xb60],EAX` and
+`141c81094 MOV RAX,[RSI+0x2b8]`, both of which had been read by hand first. Filtered to the
+**174 distinct methods in the eight mob vtables**, exactly **two** write the field:
+
+| where | what |
+|---|---|
+| `141c4d1dd` in `FUN_141c4cee0`, the mob base ctor | `MOV [RSI+0x2b8],R14` with `R14 = 0` (`XOR R14D,R14D` at `141c4cf2b`) - **zero-initialised** |
+| `141c50c9c` in `FUN_141c4ff80`, **`encodeInit` itself** | the assignment below |
+
+Nothing else in mob code touches it; `FUN_141d33630`, `FUN_141c76190`, `FUN_141cc9410`,
+`FUN_141d3a540` and the eight constructors contain no write to it.
+
+**The value is not from the packet.** At `141c50bed`, immediately after the offset-103 count
+loop:
+
+```asm
+141c50c26  CALL 0x142af7be0          ; new 0x10b8-byte object; null only if the allocator fails
+141c50c35  JE   141c50c6d            ; null -> ECX = 0x80004002 (E_NOINTERFACE), RBX = 0
+141c50c41  LEA  RCX,[RAX + 0x20]     ; an embedded interface sub-object
+141c50c52  LEA  RDX,[rip -> 0x143273488]   ; {F28BD1ED-3DEB-4F92-9EEC-10EF5A1C3FB4}
+141c50c59  CALL R9                   ; slot 0 = QueryInterface
+141c50c63  CMOVNS RBX,[RBP + 0x1f8]  ; SUCCEEDED -> RBX = the interface
+141c50c90  MOV  RCX,[RSI + 0x2b8]
+141c50c97  CMP  RCX,RBX
+141c50c9a  JE   141c50cb2            ; unchanged -> no store
+141c50c9c  MOV  [RSI + 0x2b8],RBX    ; *** the only real writer ***
+```
+
+The `QueryInterface` on the far end is `FUN_142bcea20` (slot 0 of the vtable
+`0x14348c928` that `FUN_142abe3b0` installs at `obj+0x20`). It compares the caller's IID
+against four accepted ones and **`0x143273488` is the fourth of them** - `142bcea81` compares
+the first qword against `[0x143273488]` and `142bcea8e` the second against `[0x143273490]`,
+then falls into `142bcea97 LEA RAX,[RCX-0x20] / MOV [R8],RCX / XOR EAX,EAX`, i.e. it hands
+back a non-null pointer and `S_OK`. Only an IID matching none of the four takes
+`142bceab4 MOV EAX,0x80004002` and writes null. So on the normal path
+**`mob+0x2b8` ends up non-null.** [L]
+
+**And that block is unavoidable.** `0x141c50c90` **dominates** `0x141c532ab`, the read at body
+offset 107 - there is no path from the entry of `encodeInit` to the tail of the body that
+skips the assignment. (`0x141c50c9c` itself does not dominate it, only because of the
+`CMP RCX,RBX / JE` idempotence check one instruction earlier.)
+
+> **Conclusion, and it is the answer to "is the body implicated".** The 137-byte body cannot
+> make `mob+0x2b8` null. If the field was null when `FUN_141c81040` ran, then either
+> **(a)** that virtual ran *before* `encodeInit` reached `0x141c50c90`, or **(b)** `encodeInit`
+> threw before getting there. **[D]**
+
+### 11.5 Which of (a) and (b) - and the two watches that separate them
+
+`FUN_141c81040` appears as a qword in **exactly eight** aligned `.rdata` slots and they are
+the eight mob vtables, so whatever calls it, **the receiver is a mob** and `[rcx+0x2b8]` is
+this field. (It sits at slot 46 in `0x1434077e8` and slot 48 in six others, while slot 7 and
+slot 28 are identical across all eight - so it is one address serving more than one virtual,
+the `/OPT:ICF` shape. It has **zero** direct callers.)
+
+For **(b)**: an over-read raises rather than returning zeros. `FUN_1406e8c20` is
+
+```asm
+1406e8c32  MOV  EDI,[RCX + 0x18]     ; length
+1406e8c35  SUB  EDI,[RCX + 0x24]     ; - cursor  = remaining
+1406e8c79  CMP  EDI,4
+1406e8c7c  JB   1406e8c91            ; short -> build an exception object and throw
+```
+
+so `CInPacket` is `+0x10` data, `+0x18` length, **`+0x24` cursor**. The fixture logs no C++
+throw - but that is **not evidence**: `probe.rs`'s `THROW_LOG_AFTER_MS` is **25 000 ms** and
+the fault landed **11.7 s** after the hook armed, so a throw at that moment could not have
+been logged. [L]
+
+A direct-call graph of the whole image (100 977 callers) rooted at every function on the
+spawn path - `FUN_141d33630`, the factory, the eight constructors, `FUN_141c543e0`,
+`FUN_141cc9410`, `FUN_141c76190`, `FUN_141cc15c0` (`vtable+0xe0`, called unconditionally at
+`141c76563` *before* `encodeInit`), `FUN_141c9c210`, `FUN_14046fba0` - reaches 2 464 functions
+and contains **three** indirect call sites at a vtable offset where `FUN_141c81040` lives, all
+`CALL [RAX+0x170]`. Two are behind `FUN_141c9c210 -> FUN_140dc17f0 -> FUN_140e5afa0`; one is
+`FUN_141c76190 -> FUN_141c77860 -> FUN_141c7a610`, and *that* one is inside the block
+`141c764e8` guards with `TEST RCX,RCX / JE` on `mob+0x2b8` itself, so it cannot be the
+faulting call. **This does not settle it** - the graph has only direct edges, and every step
+of the real path goes through a vtable. Stop inferring here.
+
+**Watch 1 - `141c81040:peek=2b8:hits=20`.** At the entry `rcx` is the mob, so the probe's
+`peek` prints `[rcx+0x2b8]`, and `deref(rcx)` prints the low dword of the mob's vtable.
+
+| what the line says | what it means |
+|---|---|
+| `[rcx+0x2b8]=…/u32:0x00000000` | the field is null when the crash function runs - the diagnosis above is confirmed, and `called-from=` plus the stack trace finally **name the caller of a virtual with no direct callers** |
+| `[rcx+0x2b8]` non-zero | the field is fine and `0x141c810b0` is faulting on `[p+0x828]` for some other reason - a different bug, and the body is exonerated outright |
+| the `[…]` after `rcx=` is `0x434077e8` / `0x4341f548` / `0x4341e510` / `0x4341e758` / `0x433765c0` / `0x4341ede0` / `0x433767f0` / `0x4341eff0` | the receiver is a mob of that class |
+| no line at all, and the client still faults | the int3 did not arm - check the `int3 verified` line, not the theory |
+
+**Watch 2 - `141c532ab:peek=24:hits=20`.** `141c532a8` is `MOV RCX,R12`, so at `141c532ab`
+`rcx` **is the `CInPacket`** and `peek=24` reads the **cursor**. `141c532ab` is body offset
+107, and `0x141c50c90` dominates it.
+
+| what the line says | what it means |
+|---|---|
+| fires, cursor `0x71` (113 = 6 + 107) | `encodeInit` reached offset 107, so it **executed the `+0x2b8` assignment**, and the first 107 bytes of the body are byte-exact. Case (a). |
+| fires, cursor anything else | the body layout is off by `cursor - 113` bytes at that point - and the number says by how much. Fix `mob.rs`. |
+| never fires | `encodeInit` did not get that far: case (a) with the virtual firing early, or case (b), a throw. Watch 1's stack trace tells which. |
+
+Run them together, with `-Mobs -MobLimit 1`, and change **nothing else** - the body is the one
+thing already verified three ways, and altering it would confound the reading.
+
+### 11.6 Two smaller corrections to this file
+
+* Section 6.1 says the `objectId` at `141d3368e` "goes to `mob+0x3a0`". It does not: it goes
+  to the stack local `[rbp-0x71]` and thence to `FUN_141d4f320(pool+0x68, &objectId, &mob)`,
+  the pool's map insert. **`mob+0x3a0` and `mob+0x3a8` are both template pointers** -
+  `141c50aad` passes `[rsi+0x3a8]` to the `template+0x1a0` accessor, and `141c8108d` uses
+  `[rsi+0x3a0]` as a fallback template. [L]
+* Section 5 lists `0x1434077e8` as the base vtable. That is right - slot 7 is `0x141c4ff80`
+  and slot 28 is `0x141cc15c0` in all eight tables, which is the alignment check.

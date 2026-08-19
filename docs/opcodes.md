@@ -542,13 +542,25 @@ instrument this project has.
 
 | opcode | name | body | status |
 |---|---|---|---|
-| `0x01A0` | `SetField` | 33-byte head, three `u32`s, then the character record - **235 bytes undressed, 743 wearing four items** | **works** - puts a character on a map. Since 2026-08-19 it also carries the equipped list, which is built but **not yet confirmed on screen**. `research/msexe-stage-setfield.md`, `research/charrecord-flag7.md`, `research/naked-character.md` |
+| `0x01A0` | `SetField` | 33-byte head, three `u32`s, then the character record - **235 bytes undressed, 759 wearing four items with stats** | **works, and the character is dressed on screen.** The equipped list was confirmed 2026-08-19. What is *not* working is the item **tooltips**: both stat masks read back as zero in the Equipment window while the avatar is correct, so something in that window renders a different object. `research/naked-character.md`, `research/equip-stats.md` §11 |
 | `0x044F` | `NpcEnterField` | fixed **64 bytes** | **works** - NPCs on screen. Two of its fields being zero (`enabled`, `alpha`) made every NPC invisible while the layout was perfect. `research/npc-spawn.md` |
 | `0x055B` | `ScriptMessage` | 14-byte head, then per message type; type 0 `Say` is 26 bytes plus the text | **built 2026-08-19, unconfirmed on screen** - answers `0x0151`. Never send one with or just before a `SetField`: field entry runs `FUN_142caa4e0`, which resets the script manager and tears the dialog down silently. `research/npc-dialogue.md` |
 | `0x0138` | `UserAvatarModified` | `u32` character id, then the compact avatar look | **dead code in the client, and no longer sent.** The apply is guarded by a call to `0x1407f5ce0`, which is three bytes - `33 c0 c3`, `xor eax,eax; ret` - then `TEST/JZ`, so the branch is always taken. **Corrected 2026-08-19:** this row used to say "the handler reaches its apply but the apply's loop never runs. Measured." The measurement (a watch that never fired) was right; the *explanation* was wrong, and the real one needs no run. `research/naked-character.md` §5.1 |
 | `0x03C6` | mob enter field | `u8, u32 objectId, u8, u32 templateId, u8`, a 20-byte block, then a **variable-length** movement path | **not built** - `research/mob-spawn.md` |
 
 ### Outbound - what the client sends
+
+**Added or corrected 2026-08-19.** Each of these came from the client naming its own request
+in a capture, which has now identified seven and cost no static search at all.
+
+| opcode | what | body | answered? |
+|---|---|---|---|
+| `0x00F3` | **the client's answer to a script message** | `u32 handle, u32 echo, u8, u16-length string, u8`. **The string is the text the server sent**, echoed back byte for byte - confirmed at two different lengths in one capture (16 bytes for Robin's `d0`, 162 for quest 1000's opening) | **no**, and this is what stops a quest conversation dead: pressing Accept sends this and nothing comes back |
+| `0x01BE` | **log out**, empty body | zero bytes, sent the instant the owner clicked Log Out | **no** - the client then cannot reach world select or the login screen |
+| `0x0107` | inventory move / unequip | `u32 tick, u8 invType, i16 srcSlot, i16 dstSlot, i16 count`. **Negative slots mean equipped**, read not assumed | never reaches the wire - the client drops it at one of six gates inside its own builder. `research/npc-click.md` §4 |
+| `0x00D2` | change channel | `u8 targetChannel` (**0-based**), a `u32`, and a shared 14-byte preamble. Field *set* is read; field *order* is derived and unsettled | **no**. Reachable only once a channel row is selectable |
+
+
 
 | opcode | what | body | answered? |
 |---|---|---|---|
@@ -562,7 +574,7 @@ instrument this project has.
 | `0x0182` | **party create** | 68 bytes carrying a length-prefixed party name | no |
 | `0x00D9` | movement | every ~510 ms, coordinate-shaped | no |
 | `0x0076` | **select world** | 171 bytes: local IP, then CPU, OS, memory, timezone, country, locale as length-prefixed strings. **Login connection** | **yes** - unanswered it hangs the client on "Connecting to server..." |
-| `0x00F2` | unknown, NPC-shaped | 12 bytes, e.g. `e8030000 e2ff 1301 ffffffff` - an object id we assigned (1000), an `i16` pair, and `-1` | no |
+| `0x00F2` | **NPC click, the no-quest path** | `u32 npcObjectId, i16 charX, i16 charY, u32` - 12 bytes. Field 1 is `[npc+0x190]`, the object id **we** assigned; fields 2-3 are the **character's** position, not the NPC's, and the first reading of this had that wrong | **yes** - a `0x055B` Say, spoken by the template the object id maps back to. `research/npc-click.md` |
 | `0x013D`, `0x00B8`, `0x02EB`, `0x01ED`, `0x0408`, `0x0184`, `0x0194`, `0x01A5`, `0x02DE`, `0x00ED`, `0x02B2` | undecoded | | no |
 
 **None of the unanswered ones has ever caused a freeze**, so none is a blocking request -
