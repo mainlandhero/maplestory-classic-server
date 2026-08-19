@@ -69,6 +69,38 @@ impl Store {
         Err(StoreError::MigrationSeedExhausted { tries: 10 })
     }
 
+    /// Claim the pending migration for a character. `None` if there is no live one.
+    ///
+    /// Keyed on the character rather than the seed, because the capture on 2026-08-19
+    /// showed the seed does **not** come back: `0x007D` carries the character id and no
+    /// trace of the `u32` the migration packet handed over. Single use is carried by
+    /// `consumed_at` either way - it always was, since a `u32` on the wire was never a
+    /// secret.
+    ///
+    /// Picks the newest live migration if somehow more than one exists, so a stale row
+    /// cannot shadow a fresh entry.
+    pub fn claim_migration_for_character(&self, character_id: u32) -> Result<Option<ClaimedMigration>> {
+        let now = Store::now();
+        // The guard is scoped so it is dropped before `claim_migration` runs. std's Mutex
+        // is not reentrant, so holding it across that call deadlocks the process - which is
+        // exactly what happened the first time this was written.
+        let seed: Option<u32> = {
+            let conn = self.conn();
+            conn.query_row(
+                "SELECT seed FROM migrations
+                  WHERE character_id = ?1 AND consumed_at IS NULL AND created_at >= ?2
+                  ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                rusqlite::params![character_id, now - MIGRATION_TTL_SECS],
+                |row| row.get(0),
+            )
+            .optional()?
+        };
+        match seed {
+            Some(seed) => self.claim_migration(seed),
+            None => Ok(None),
+        }
+    }
+
     /// Claim a migration. Returns `None` if there is no unconsumed, unexpired one.
     ///
     /// The consume is inside the `UPDATE`'s `WHERE`, so two connections racing the same

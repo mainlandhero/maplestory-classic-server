@@ -19,7 +19,6 @@
 
 use std::sync::Arc;
 
-use net::{shift_body, Shift};
 use store::{ClaimedMigration, Store};
 
 use crate::config::Config;
@@ -79,19 +78,23 @@ impl Session {
         Vec::new()
     }
 
-    /// Claim the migration a seed refers to, and say what happened.
+    /// Claim the pending migration for a character, and say what happened.
     ///
-    /// Called by the server once it has recovered a seed from `0x007D`. Kept separate from
-    /// [`Session::handle`] because the seed's position in that packet is not known yet, so
-    /// the recovery is a search rather than a parse - and a search belongs where it can be
-    /// logged, not buried in the state machine.
-    pub fn claim(&mut self, seed: u32) -> String {
-        match self.store.claim_migration(seed) {
+    /// **The seed does not come back.** It was the design's assumption that the `u32` handed
+    /// over in `0x0011` would return in `0x007D`; the capture says otherwise - it is absent
+    /// from the body both plainly and under the obfuscated-block search - and what the
+    /// client sends instead is the character id.
+    ///
+    /// So single use is carried entirely by the database row, which is where it always
+    /// actually lived: a `u32` on the wire was never a secret, and this only removes the
+    /// pretence that it was. Nothing here authenticates anybody.
+    pub fn claim_for_character(&mut self, character_id: u32) -> String {
+        match self.store.claim_migration_for_character(character_id) {
             Ok(Some(claimed)) => {
                 let wrong_channel = claimed.world_id != self.config.world_id
                     || claimed.channel_id != self.config.channel_id;
                 let note = format!(
-                    "claimed migration {seed:#010x}: character {} of account {} \
+                    "claimed the migration for character {} of account {} \
                      (world {} channel {})",
                     claimed.character_id, claimed.account_id, claimed.world_id, claimed.channel_id
                 );
@@ -106,10 +109,10 @@ impl Session {
                 }
             }
             Ok(None) => format!(
-                "seed {seed:#010x} matches no unconsumed migration - either it is not the \
-                 seed, or it was already claimed, or it expired"
+                "character {character_id} has no unconsumed migration - it was never \
+                 minted, or already claimed, or it expired"
             ),
-            Err(e) => format!("seed {seed:#010x} could not be checked: {e}"),
+            Err(e) => format!("character {character_id} could not be checked: {e}"),
         }
     }
 
@@ -119,60 +122,26 @@ impl Session {
     }
 }
 
-/// Read an already-decrypted body the way the **other** cipher polarity would have.
+/// Where the character id sits in a `0x007D` body.
 ///
-/// `body` came off the wire as `raw` and was decrypted with `used`, so it currently holds
-/// `raw` shifted one way. Applying `used.inverse()` once recovers `raw`; applying it a
-/// second time gives what the opposite polarity would have produced. Hence twice, which
-/// looks like a mistake and is not - a test pins it.
+/// **Measured from a real capture, 2026-08-19**, decrypted with AES once the channel's
+/// cipher was settled:
 ///
-/// This exists because static analysis pinned the channel cipher's transform but not its
-/// direction, and the header is unciphered, so a body can be shown both ways from one run.
-pub fn other_polarity_body(body: &[u8], iv: [u8; 4], used: Shift) -> Vec<u8> {
-    let mut other = body.to_vec();
-    shift_body(&mut other, iv, used.inverse());
-    shift_body(&mut other, iv, used.inverse());
-    other
-}
+/// ```text
+/// u32  0
+/// u32  0
+/// u32  characterId      <- 204, TestCharD
+/// u8[6] MAC
+/// u32  machine id
+/// ...                    the same trailing identity block 0x0073 carries
+/// ```
+const HELLO_CHARACTER_AT: usize = 8;
 
-/// Undo one aligned word of the client's obfuscation, in the direction the *client*
-/// applies when it writes.
-///
-/// The migration packet's tail and `0x007D`'s payload use the same arithmetic, so this is
-/// the forward transform from `crates/net`'s builder, restated here because the search
-/// below needs it. Kept as a free function so it is testable on its own.
-pub fn deobfuscate_word(raw: u32, key: u32, offset: u32) -> u32 {
-    let t = (key ^ raw).wrapping_add(0x369F_144D).wrapping_add(key >> 7);
-    (t ^ 0xAAAA_BBBB).wrapping_sub(offset.wrapping_mul(key))
-}
-
-/// Look for a migration seed in a `0x007D` body.
-///
-/// The layout of the prefix is unknown, so this walks every position where a
-/// `(key, length, word)` triple could start and reports the candidates. It is a **search,
-/// not a parse**, and it is honest about that: it returns every position that decodes to a
-/// plausible seed rather than claiming to know where the field is.
-///
-/// A candidate is a position where the `u32` at `at + 4` is a length of at least 4 that
-/// fits in the remaining body. That is exactly the constraint `FUN_1406e8460` enforces on
-/// the read side, so it rules out most of the body without assuming anything else.
-pub fn seed_candidates(body: &[u8]) -> Vec<(usize, u32)> {
-    let word = |at: usize| -> Option<u32> {
-        body.get(at..at + 4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    };
-    let mut out = Vec::new();
-    for at in 0..body.len().saturating_sub(11) {
-        let (Some(key), Some(len), Some(raw)) = (word(at), word(at + 4), word(at + 8)) else {
-            continue;
-        };
-        let after = at + 8;
-        if len < 4 || len as usize > body.len() - after {
-            continue;
-        }
-        out.push((at, deobfuscate_word(raw, key, 0)));
-    }
-    out
+/// The character id out of a `0x007D` body, or `None` if it is too short to hold one.
+pub fn migration_hello_character(payload: &[u8]) -> Option<u32> {
+    payload
+        .get(HELLO_CHARACTER_AT..HELLO_CHARACTER_AT + 4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
 #[cfg(test)]
@@ -197,108 +166,57 @@ mod tests {
     }
 
     #[test]
-    fn a_valid_seed_is_claimed_once_and_remembered() {
+    fn a_pending_migration_is_claimed_once_and_remembered() {
         let (mut s, store, account_id, id) = session();
-        let seed = store.create_migration(account_id, id, 0, 0).unwrap();
+        store.create_migration(account_id, id, 0, 0).unwrap();
 
-        let note = s.claim(seed);
-        assert!(note.contains("claimed migration"), "{note}");
+        let note = s.claim_for_character(id);
+        assert!(note.contains("claimed the migration"), "{note}");
         assert!(!note.contains("WRONG CHANNEL"), "{note}");
         assert_eq!(s.claimed().unwrap().character_id, id);
 
         let mut other = Session::new(store, Arc::new(Config::default()));
-        assert!(other.claim(seed).contains("matches no unconsumed migration"));
+        assert!(other.claim_for_character(id).contains("no unconsumed migration"));
     }
 
     #[test]
-    fn a_seed_for_another_channel_is_reported_rather_than_silently_accepted() {
+    fn a_migration_for_another_channel_is_reported_rather_than_silently_accepted() {
         let (_, store, account_id, id) = session();
-        let seed = store.create_migration(account_id, id, 0, 7).unwrap();
+        store.create_migration(account_id, id, 0, 7).unwrap();
         let config = Config { channel_id: 0, ..Config::default() };
         let mut s = Session::new(store, Arc::new(config));
-        assert!(s.claim(seed).contains("WRONG CHANNEL"));
+        assert!(s.claim_for_character(id).contains("WRONG CHANNEL"));
     }
 
     #[test]
-    fn an_unknown_seed_says_so_instead_of_failing() {
+    fn a_character_with_no_migration_says_so_instead_of_failing() {
         let (mut s, _, _, _) = session();
-        assert!(s.claim(0xDEADBEEF).contains("matches no unconsumed migration"));
+        assert!(s.claim_for_character(999).contains("no unconsumed migration"));
     }
 
-    /// The transform has to round-trip against the builder in `crates/net`, or the seed
-    /// we look for is not the seed we sent.
+    /// The offset came from a real capture; this is that capture.
     #[test]
-    fn deobfuscate_undoes_the_migration_builder() {
-        let addr = "127.0.0.1:8485".parse().unwrap();
-        for seed in [1u32, 0xDEAD_BEEF, 0xFFFF_FFFF, 0x1234_5678] {
-            let body = net::opcode::migrate(addr, 200, seed);
-            let key = u32::from_le_bytes(body[47..51].try_into().unwrap());
-            let raw = u32::from_le_bytes(body[55..59].try_into().unwrap());
-            assert_eq!(deobfuscate_word(raw, key, 0), seed);
-        }
-    }
-
-    /// The search must actually find a seed planted in a body-shaped buffer, at a
-    /// position it was not told about.
-    #[test]
-    fn the_search_finds_a_planted_seed() {
-        let seed = 0x1BAD_C0DE;
-        let key = 0x5EED_5EEDu32;
-        // A 26-byte prefix of the shape FUN_1415d10e0 writes, then key, length, payload.
-        let mut body = vec![0x11u8; 26];
-        body.extend_from_slice(&key.to_le_bytes());
-        body.extend_from_slice(&4u32.to_le_bytes());
-        // Invert the client's forward transform to get the raw word it would have written.
-        let raw = {
-            let t: u32 = (seed ^ 0xAAAA_BBBBu32)
-                .wrapping_sub(0x369F_144D)
-                .wrapping_sub(key >> 7);
-            t ^ key
-        };
-        body.extend_from_slice(&raw.to_le_bytes());
-
-        let found = seed_candidates(&body);
-        assert!(
-            found.iter().any(|&(at, value)| at == 26 && value == seed),
-            "planted seed not among {found:?}"
+    fn the_character_id_is_read_out_of_a_real_0x007d_body() {
+        let body = hex(
+            "0000000000000000cc000000aabbccddeeffdeadbeef00000000764d0000230000\
+             00020000007d29595a7929595a3fc073dd1e000000",
         );
-    }
-
-    /// The double-inverse has to reproduce exactly what the other polarity would have
-    /// decoded. Built from a known plaintext through a real cipher in each direction, so
-    /// this checks the arithmetic against the cipher rather than against itself.
-    #[test]
-    fn the_other_polarity_reading_matches_what_that_polarity_would_decode() {
-        use net::{ByteShiftCipher, Cipher, Direction};
-
-        for iv in [[1u8, 2, 3, 4], [0x7F, 9, 9, 9], [0xFE, 0, 0, 0]] {
-            let plain: Vec<u8> = (0..64u8).collect();
-
-            // The client sent `raw`; whichever way it shifted, we see one of these two.
-            let mut raw = plain.clone();
-            ByteShiftCipher::new(iv, Direction::ClientToServer, Shift::Add)
-                .encrypt(&mut raw);
-
-            let mut as_sub = raw.clone();
-            ByteShiftCipher::new(iv, Direction::ClientToServer, Shift::Sub)
-                .decrypt(&mut as_sub)
-                .unwrap();
-            let mut as_add = raw.clone();
-            ByteShiftCipher::new(iv, Direction::ClientToServer, Shift::Add)
-                .decrypt(&mut as_add)
-                .unwrap();
-
-            assert_eq!(other_polarity_body(&as_sub, iv, Shift::Sub), as_add, "sub -> add");
-            assert_eq!(other_polarity_body(&as_add, iv, Shift::Add), as_sub, "add -> sub");
-            // And the Sub reading is the true plaintext here, since the client used Add.
-            assert_eq!(as_sub, plain);
-        }
+        assert_eq!(migration_hello_character(&body), Some(204));
     }
 
     #[test]
-    fn the_search_does_not_panic_on_short_or_empty_bodies() {
-        for len in 0..16 {
-            seed_candidates(&vec![0xAB; len]);
+    fn a_short_hello_yields_no_character_rather_than_panicking() {
+        for len in 0..12 {
+            migration_hello_character(&vec![0u8; len]);
         }
+        assert_eq!(migration_hello_character(&[0u8; 11]), None);
+        assert_eq!(migration_hello_character(&[0u8; 12]), Some(0));
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+        (0..clean.len() / 2)
+            .map(|i| u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).unwrap())
+            .collect()
     }
 }

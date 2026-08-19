@@ -13,11 +13,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use net::handshake::{channel_greeting, CLIENT_RX_IV, CLIENT_TX_IV};
 use net::names::{body_hex, label, opcode_name};
-use net::{ByteShiftCipher, Direction, Framer, Shift};
+use net::{Direction, Framer, MapleCipher};
 use store::Store;
 
 use crate::config::Config;
-use crate::session::{seed_candidates, Session, CLIENT_MIGRATION_HELLO};
+use crate::session::{Session, CLIENT_MIGRATION_HELLO};
 
 /// Timestamped, one line, to stdout. Same rule as the login server: an untimestamped line
 /// once read as happening where it sat in the file and cost eight client launches.
@@ -31,7 +31,7 @@ pub fn log(msg: &str) {
 
 fn send(
     stream: &mut TcpStream,
-    tx: &mut Framer<ByteShiftCipher>,
+    tx: &mut Framer<MapleCipher>,
     opcode: u16,
     packet: &[u8],
     what: &str,
@@ -54,29 +54,21 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
     stream.write_all(&hello)?;
     log(&format!("-> channel greeting, {} bytes (no A..F, no version block)", hello.len()));
 
-    // And not AES either: the same `conn+0x48` selects a byte shift for the body. The
-    // header and the IV chain are unchanged, which is why only the cipher type differs.
-    let (rx_shift, tx_shift) = (config.polarity.on_receive(), config.polarity.on_send());
-    log(&format!(
-        "cipher: byte shift, {:?} on receive / {:?} on send ({:?}) - the polarity is a GUESS, \
-         see Config::polarity",
-        rx_shift, tx_shift, config.polarity
-    ));
-    let mut rx = Framer::new(ByteShiftCipher::new(
-        CLIENT_TX_IV.to_le_bytes(),
-        Direction::ClientToServer,
-        rx_shift,
-    ));
-    let mut tx = Framer::new(ByteShiftCipher::new(
-        CLIENT_RX_IV.to_le_bytes(),
-        Direction::ServerToClient,
-        tx_shift,
-    ));
+    // AES-256-OFB, the same as the login connection. **Measured, 2026-08-19.**
+    //
+    // `docs/transport.md` said a channel used the byte subtract (`FUN_1406ef9f0`), selected
+    // by `conn+0x48`. It does not: the two packets the client sent on its first channel
+    // connection decode cleanly under AES and under nothing else. Packet 1 came out as
+    // `0x0070` with the identical body the client sends on the login connection, and packet
+    // 2 as `0x007D` carrying character id 204 and the machine's MAC. Reading the client had
+    // said otherwise; the wire is what settled it.
+    log("cipher: AES-256-OFB, same as login - measured from the first channel packets");
+    let mut rx =
+        Framer::new(MapleCipher::new(CLIENT_TX_IV.to_le_bytes(), Direction::ClientToServer));
+    let mut tx =
+        Framer::new(MapleCipher::new(CLIENT_RX_IV.to_le_bytes(), Direction::ServerToClient));
 
     let mut session = Session::new(store, config.clone());
-    // The dual reading is only interesting for the first packet - after that the answer is
-    // known and repeating it is noise.
-    let mut settled_polarity = false;
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
     }
@@ -93,9 +85,6 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
         };
         rx.feed(&buf[..read]);
         loop {
-            // The IV the next packet will be shifted by, captured before `next_packet`
-            // rolls it - the alternative reading below needs it.
-            let iv = rx.cipher().iv();
             let body = match rx.next_packet() {
                 Ok(Some(body)) => body,
                 Ok(None) => break,
@@ -112,11 +101,6 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
                 payload.len(),
                 body_hex(opcode, payload)
             ));
-
-            if !settled_polarity {
-                settled_polarity = true;
-                report_other_polarity(&body, iv, rx_shift);
-            }
 
             if opcode == CLIENT_MIGRATION_HELLO {
                 describe_hello(&mut session, payload);
@@ -141,65 +125,28 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
     }
 }
 
-/// Log what the first packet would have said under the **other** polarity.
+/// Read the client's `0x007D` and claim the migration it belongs to.
 ///
-/// Static analysis could not settle which side of the channel cipher subtracts, and rather
-/// than guess in silence this prints both readings of the first body the client sends. The
-/// header is never ciphered, so the framing above is correct either way and only the body
-/// is in question: whichever reading yields a plausible opcode is the right polarity.
+/// **Decoded from a real capture, 2026-08-19.** The seed the migration packet handed over
+/// does **not** come back here - it is absent from the body, plainly and under the
+/// obfuscated-block search. What the client sends instead is its **character id**, at
+/// offset 8, followed by the same MAC and machine id it puts in `0x0073`.
 ///
-/// `body` has already been decrypted under `used`, so undoing that and applying the inverse
-/// recovers the alternative.
-fn report_other_polarity(body: &[u8], iv: [u8; 4], used: Shift) {
-    let other = crate::session::other_polarity_body(body, iv, used);
-    let opcode_of = |b: &[u8]| {
-        b.get(..2).map(|o| u16::from_le_bytes([o[0], o[1]])).unwrap_or(0xFFFF)
-    };
-    log("   POLARITY CHECK - the channel cipher direction is not yet settled:");
-    log(&format!(
-        "     as decoded ({:?}):  opcode 0x{:04X}  {}",
-        used,
-        opcode_of(body),
-        hex_head(body)
-    ));
-    log(&format!(
-        "     the other way:      opcode 0x{:04X}  {}",
-        opcode_of(&other),
-        hex_head(&other)
-    ));
-    log("   Whichever names a plausible packet is right; set Config::polarity to it.");
-}
-
-fn hex_head(body: &[u8]) -> String {
-    body.iter().take(24).map(|b| format!("{b:02x}")).collect()
-}
-
-/// Search a `0x007D` body for the migration seed and try to claim it.
-///
-/// The field's position is unknown, so this is a search over every place a
-/// `(key, length, word)` triple could sit. Every candidate is logged with its offset, and
-/// the first one the store recognises wins - which means a run either finds the seed and
-/// says where it was, or lists what it tried. Both outcomes are useful; a silent failure
-/// would not be.
+/// So the handoff is keyed on the character, and the single-use migration row is what makes
+/// it safe rather than the seed being secret. Which was always the honest description of a
+/// `u32` anyway.
 fn describe_hello(session: &mut Session, payload: &[u8]) {
-    let candidates = seed_candidates(payload);
-    log(&format!(
-        "   MIGRATION HELLO: {} candidate seed position(s) in {} bytes",
-        candidates.len(),
-        payload.len()
-    ));
-    for &(at, seed) in &candidates {
-        log(&format!("     offset {at:3}: {seed:#010x}"));
-    }
-    for &(at, seed) in &candidates {
-        let note = session.claim(seed);
-        if session.claimed().is_some() {
-            log(&format!("   SEED FOUND AT OFFSET {at} - {note}"));
-            return;
+    match crate::session::migration_hello_character(payload) {
+        Some(id) => {
+            log(&format!("   MIGRATION HELLO: character id {id}"));
+            log(&format!("   {}", session.claim_for_character(id)));
         }
+        None => log(&format!(
+            "   MIGRATION HELLO: {} bytes, too short to hold a character id - read the hex \
+             above",
+            payload.len()
+        )),
     }
-    log("   no candidate matched a pending migration - the seed is elsewhere in this body, \
-         or the tail transform differs in this direction. Read the body hex above.");
 }
 
 /// Listen on one channel until the process is stopped.
