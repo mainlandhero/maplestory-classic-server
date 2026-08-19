@@ -55,6 +55,23 @@ for this rule, and no path in it returns an error in place of a reply.
 
 ## NEXT GOALS - read this first when picking up
 
+### RETRACTED 2026-08-19: the login handshake was never failing
+
+An `ELog` record showing `INVALID_CLIENT_VERSION` at the `G`/`H` gate was reported here as
+the login connection failing on every run. **It was the previous run's migrated connection.**
+The upload is a file replay - `FUN_1415ddd10` reads a log file and deletes it - so a record
+that arrives at startup describes an *earlier* failure. `docs/handshake.md` carries the full
+retraction and `tools/decode_elog.py` now carries the drain/experiment/re-read protocol.
+
+The `conn+0x48` explanation is untouched and is now the *only* explanation needed: a channel
+connection skips the greeting's gated blocks, so it reads `G` from our `A` field and raises
+`0x348`. Login passes. Channel fails. One cause.
+
+Two corrections fall out. A site-`840` record means the handshake **died** - `FUN_140cc2350`
+reaches `_CxxThrowException` then `INT3`, and `FUN_1415d10e0` has zero catch funclets. And
+**"First Connect" is dead code**: all three call sites pass `param_3 = 0`, which retires the
+`high == 100` gate.
+
 ### 2026-08-19: the client has been reporting a failed login, and we called it a greeting
 
 `0x00C0` was in the log table as `CLIENT_HELLO`. It is a **login failure report**.
