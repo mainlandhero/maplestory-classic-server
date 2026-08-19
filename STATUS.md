@@ -115,6 +115,33 @@ outcome - the `ELog` names the mis-sized field - but it is why "nothing worked" 
 put `0x00D2` on the wire for the first time, and nothing answers it. An unanswered packet
 freezes the client's whole UI, which would end the session.
 
+### THE RUN - what to do, in this order, and what each outcome means
+
+All four builds are pre-flighted: `cargo test` (210), `channel_smoke.py`,
+`channel_smoke.py --set-field-probe` and `login_smoke.py --spawn` all pass, so framing, the
+cipher and every field offset are already checked over an independent Python transport. What
+a launch adds is the only thing those cannot: **what the client does with the bytes.**
+
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+```
+
+**Do them in this order. The last one can end the session.**
+
+| # | do | what to look at | what it means |
+|---|---|---|---|
+| 0 | Log in and enter the world with a character that has equipment | does a character appear on the map at all? | **This is the gate.** The equipment change is inside the character record, which has no length prefix and no resync point. If world entry breaks - a fault, or a freeze on "Connecting..." - the record desynchronised, and **nothing below can be observed**. Read the `ELog` (`0x008F`/`0x0090`) and run `tools/pdata_lookup.py` on its RVAs; that names the mis-sized field |
+| 1 | Look at the character, then open the Equipment window | is it dressed? does the window list items? | **Dressed** - done. **Naked, window empty, no fault** - the layout is right and a *value* is wrong; `dateExpire` first. **Naked but the window lists items** - the items decoded and the avatar is not being rebuilt, which is a different and much smaller problem |
+| 2 | Walk to map 30 (`!map 30` in any chat tab) | are there snails? | Map 30 has **six** of template 1. **None, no fault** - a value. **A fault or a freeze on arrival** - the body desynchronised, and the WZ-template blocks are the first suspect |
+| 3 | Click Heena or Roger | does a dialog box appear with our text? | **Text** - the whole `0x0151` -> `0x055B` chain works. **Nothing, no fault** - check `world.log` shows the `0x055B` going out, then suspect the type/flags |
+| 4 | Open Change Channel | is CH.2 **cream** rather than grey? does clicking it turn it blue? | Cream means the enable byte is right. Blue on click is only a highlight move, not a send |
+| 5 | **LAST.** Click the Change button | anything | **A freeze here is the measurement, not a crash.** Nothing answers `0x00D2` yet, and an unanswered packet freezes the client's whole UI - including the quit prompt's OK. `world.log`'s last inbound line names the packet, which is what this step is for |
+
+**One variant at a time still holds** - these are four disjoint subsystems with four disjoint
+observables (the record, a separate pool, a reply to a click, the login world list), so a
+failure in one does not explain a failure in another. The single exception is step 0, which
+gates everything.
+
 **Two rules that have each cost a run:**
 
 * **Never send a script (`0x055B`) with or just before a `SetField`.** Field entry runs
