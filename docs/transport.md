@@ -220,7 +220,10 @@ of further decompiling will recover them.
    it; `handshake_probe.py --reply` exercises it.
 2. If the client -> server direction is needed later, it will take dynamic analysis
    (breakpoint after `FUN_1406e99e0` and read the buffer) rather than more decompiling.
-3. Remember the **game/channel connection uses mode 2**, so none of this AES applies there.
+3. **On a channel, AES applies to what the client SENDS and not to what it receives.** This
+   line used to say "the game/channel connection uses mode 2, so none of this AES applies
+   there" - half right, and the wrong half in the direction that matters to a server. See
+   the asymmetry table at the top of this file.
 
 ## The client's outbound opcode map
 

@@ -186,9 +186,11 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         log("  did 0x01A0 reach FUN_142097f80? Both of that handler's early returns are");
         log("  silent, so WITHOUT a watch armed on 142097f80 this run measures nothing.");
     } else {
-        log("This stage is UNDECODED: packets are logged and not answered. See");
-        log("  crates/world/src/session.rs before adding a reply, or pass");
-        log("  --set-field-probe to send the SetField delivery probe.");
+        log("Packets are logged and NOT ANSWERED. The stage is no longer undecoded:");
+        log("  SetField is inbound 0x01A0, confirmed on a live client, and its 33-byte");
+        log("  head is in research/msexe-stage-setfield.md. What is missing is the");
+        log("  character record it must carry - see research/charrecord-decode.md.");
+        log("  Pass --set-field-probe to send the head alone as a delivery probe.");
     }
 
     let mut nth = 0u64;

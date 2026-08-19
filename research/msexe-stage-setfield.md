@@ -34,7 +34,9 @@ The packet that answers a migration hello and puts a character into a map. This 
 layout as the client reads it, decoded 2026-08-19.
 
 **Method.** The decompiled body and a full disassembly of all 11726 bytes were read
-together. Both contain **exactly 50 calls to the five packet-read primitives**, so nothing
+together. Both contain **exactly 50 calls to the packet-read primitives** - checked again
+after two more primitives turned up (a `u64` reader and a thunk to the `u32` one); this
+function uses neither, so 50 stands. Nothing
 is hidden behind a Themida gap or an unfollowed tail jump in this function, and the
 disassembly is what fixes the *order* - the decompiler's ordering stops being trustworthy
 once it reaches the string machinery. Every offset below is read from the listing.
@@ -123,10 +125,10 @@ reference server does too: its whole answer to a migrate-in is one `SetField` wi
 
 ## What is left
 
-1. **The character record** (`FUN_140304b20`). The big one. It is the only caller of
-   `FUN_140302e30`, the character-stat decoder we have already documented and already
-   build for the character list, so the *head* of the record is known ground and the rest
-   is not.
+1. **The character record** (`FUN_140304b20`). The big one. It **shares**
+   `FUN_140302e30`, the character-stat decoder, with the character-list path
+   `FUN_1403094b0` - literally the same function, so 108 bytes of it are already built and
+   proven. (This entry used to call `FUN_140304b20` its *only* caller. It is not.)
 2. **The string block's loop bound.** Avoidable by sending `0`, so this is not on the
    critical path.
 3. ~~The short `characterData == 0` path~~ - **answered by the run, and not the way to go.**

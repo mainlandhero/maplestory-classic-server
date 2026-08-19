@@ -518,6 +518,12 @@ The reply is not yet confirmed. The world list (`0x000B` entries followed by the
 with; if that is wrong the client stays stuck, which is the same symptom, so the test is
 whether the UI comes back rather than whether a dialog changes.
 
+> **Superseded.** That was written while the harness was guessing. The world list and the
+> whole character screen are now served by `crates/login` from the database and confirmed
+> on screen; `docs/login-server.md` is the current account. The passage is kept because the
+> *symptom* it names - a dead UI with a dialog means a packet went out and nothing came
+> back - is still how this client fails, and it has cost several runs since.
+
 ## What is *not* established
 
 * **What the real service sends to enable character creation.** The flag `FUN_140c9e3f0`

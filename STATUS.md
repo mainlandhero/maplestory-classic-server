@@ -15,9 +15,11 @@ One command, from an **elevated** shell:
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
 ```
 
-It builds, installs the hook into `client-patched/`, starts `maplecw-login`, applies the
-client patches and launches the client. Close the client by hand when done, then `-Stop`.
-`-ListOnly` prints the stored characters and launches nothing.
+It builds, installs the hook into `client-patched/`, starts **both servers** -
+`maplecw-login` on 8484 and `maplecw-world` on 8485 - applies the client patches and
+launches the client. Close the client by hand when done, then `-Stop`. `-ListOnly` prints
+the stored characters and launches nothing. `-SetFieldProbe` makes the channel answer the
+migration hello; see NEXT GOALS.
 
 **The character-select screen is finished and server-driven**, all confirmed on screen:
 the list, create, a truthful name check, the three-slot limit, **delete**, and persistence
@@ -37,14 +39,17 @@ Where the answers land:
 
 | file | what is in it |
 |---|---|
-| `login.log` | every packet both ways, and **what each reply was** - read this first |
+| `login.log` | every packet both ways on the **login** connection, and what each reply was |
+| `world.log` | the same for the **channel**, from the migration hello onward - read this one for anything past character select |
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults. Not `hook.log`, not the repo root |
 | `client-exit.log` | how the client died: exit code, lifetime, job membership, handle holders. A clean `0` is a hand-close; `0xC0000409` is the fail-fast returning |
 | `probe.log` | only when running the old Python harness |
 
-The client patches have not changed and they are still patches - `-SkipNetCheck` is now
-always on, because without it the client `__fastfail`s after ~37 seconds. See
-"SOLVED - the ~37 second exit" below, and `docs/launcher.md` for which patches retire.
+The client patches are still patches. The reachability check that `__fastfail`s the client
+after ~37 seconds is now neutralised by the **probe patch** `watch@1415db360:ret`, which is
+what `test-server.ps1` arms - which is why the launch line carries no `-SkipNetCheck`. The
+argument still works and the old harness still uses it. See "SOLVED - the ~37 second exit"
+below, and `docs/launcher.md` for which patches retire.
 
 **A frozen UI is almost always an unanswered packet, not a crash.** The client blocks its
 whole interface - every button, including the quit prompt's OK - waiting on a reply. That is
@@ -139,12 +144,11 @@ the set of 175 client -> server opcodes the game subsystem builds, which is what
   zero-read raised "The client is outdated". **Confirmed on screen**: the client accepted it
   and went on to send packets.
 
-* **`net::ByteShiftCipher`** - `out[i] = in[i] - iv[0]`, an accurate reading of
-  `FUN_1406ef9f0` and **not the channel's cipher**. The channel is AES-256-OFB, the same as
-  login, measured off the wire from the first two packets a real client sent. Nothing uses
-  the shift; it is kept because the transform is real and whatever path does use it has not
-  been found. `Config::polarity` and `ShiftPolarity` existed only to make its two directions
-  constructible while the question was open, and both are **deleted**.
+* **`net::ByteShiftCipher`** - `out[i] = in[i] - iv[0]`, and it **is** the channel's
+  server -> client cipher. `crates/world` sends with it in `Shift::Add`, because the client
+  subtracts on receive; it decrypts the client with `MapleCipher`, because the client sends
+  AES. This entry said the opposite for most of a day - see the three-pass history in
+  `docs/transport.md`, which is the more useful thing to read than this bullet.
 
   The methodological point outlasts the code: the polarity was going to be settled by
   logging a body under both readings and seeing which named a plausible opcode. That
@@ -512,7 +516,10 @@ default. Worth one run only if something is ever traced to the region.
 ### Still open
 
 * The slot count is the constant `3` rather than a property of the account.
-* Entering the world: `0x0078` is unanswered, which is why the client sits on "Connecting...".
+* Entering the world. **`0x0078` is answered** - with `0x0011`, and the client migrates. What
+  is left is the character record `SetField` must carry; see NEXT GOALS. (This entry used to
+  say `0x0078` was unanswered and that this was why the client sat on "Connecting...". Both
+  halves stopped being true on 2026-08-19.)
 
 ## NOT AUTHENTICATED - say so when reporting
 
@@ -878,9 +885,9 @@ That means, end to end and against a real server-side implementation:
 | Name check `0x0081`/`0x0014` | **MEASURED** both ways |
 | Create request `0x008A` | **MEASURED** - virtualised builder, so a capture was the only way |
 | Create result `0x0015` | **MEASURED** - the client returns to CharSelect with the new character |
-| Client exits ~37s after launch | **FIXED** - a firewalled reachability check overran its buffer; `-SkipNetCheck` skips it, confirmed |
+| Client exits ~37s after launch | **FIXED** - a firewalled reachability check overran its buffer. `-SkipNetCheck` skips it; the runs since use the probe patch `watch@1415db360:ret` instead, which is what `test-server.ps1` arms and why the launch line carries no `-SkipNetCheck` |
 | Server-side creation | **done** - `crates/login` reads the request, stores the character, and replies from the stored row |
-| Characters persist between launches | **done on the wire**, verified with a server restart; not yet confirmed on screen |
+| Characters persist between launches | **CONFIRMED on screen** - the same three characters have come back on every launch since |
 | Name check answered truthfully | **done** - available / already used / not allowed, from the database |
 | Valid session | still faked by client patches, and the game socket carries no credentials at all |
 
