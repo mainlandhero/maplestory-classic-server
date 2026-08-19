@@ -77,6 +77,9 @@ impl Store {
         // Exhaustive destructure: a new field on Character breaks this line, not a run.
         let Character {
             id: _,
+            // Not persisted: `portal` is where a character ARRIVES on a map, which is a
+            // property of the walk that got them there, not of the character.
+            portal: _,
             name,
             gender,
             skin,
@@ -173,6 +176,7 @@ impl Store {
         let rows = stmt.query_map(rusqlite::params![account_id, world_id], |row| {
             Ok(Character {
                 id: row.get::<_, i64>(0)? as u32,
+                portal: 0, // the spawn point; a portal walk overrides it per arrival
                 name: row.get(1)?,
                 gender: row.get(2)?,
                 skin: row.get(3)?,

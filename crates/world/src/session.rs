@@ -269,11 +269,24 @@ impl Session {
             }];
         };
 
+        // Where the character ARRIVES. The source portal names its destination portal in
+        // the WZ's `tn`, and the stat block wants that portal's index on the target map.
+        // Without it every walk lands on the map's spawn point, which is right for a login
+        // and wrong for a door - the character pops out somewhere else entirely.
+        let mut arrival = 0u8;
         let (target, note) = match &req {
             Some(r) => match r.target_field.or_else(|| {
-                self.config.portals.get(&(chr.map_id, r.portal_name.clone())).copied()
+                self.config.portals.get(&(chr.map_id, r.portal_name.clone())).map(|(to, tn)| {
+                    arrival = self
+                        .config
+                        .portal_index
+                        .get(&(*to, tn.clone()))
+                        .copied()
+                        .unwrap_or(0);
+                    *to
+                })
             }) {
-                Some(t) => (t, format!("portal {:?} -> map {t}", r.portal_name)),
+                Some(t) => (t, format!("portal {:?} -> map {t} portal {arrival}", r.portal_name)),
                 None => (
                     chr.map_id,
                     format!(
@@ -286,6 +299,7 @@ impl Session {
         };
 
         chr.map_id = target;
+        chr.portal = arrival;
         if let Err(e) = self.store.set_character_map(chr.id, target) {
             // Not fatal: the client is told where it is either way, and the next login
             // simply puts it back where it was.
@@ -485,27 +499,35 @@ mod tests {
         let path = dir.join("portals.txt");
         std::fs::write(
             &path,
-            "# map, portal, target map, target portal
+            "# map, index, portal, target map, target portal
 
-1, out00, 10, in00
-             10, in00, 1, out00
-10, out00, 20, in00
-not, a, valid, row
+             1, 0, sp, 0, 
+1, 4, out00, 10, in00
+             10, 0, sp, 0, 
+10, 1, in00, 1, out00
+10, 2, out00, 20, in00
+             not, a, valid, row, here
 ",
         )
         .expect("write");
 
-        let t = crate::config::Config::load_portals(&path);
-        assert_eq!(t.get(&(1, "out00".to_string())), Some(&10), "map 1 leads to map 10");
-        assert_eq!(t.get(&(10, "in00".to_string())), Some(&1), "and map 10 leads back");
-        assert_eq!(t.get(&(10, "out00".to_string())), Some(&20));
-        assert_eq!(t.get(&(1, "in00".to_string())), None, "keyed on the SOURCE map, not just the name");
-        assert_eq!(t.len(), 3, "the malformed row is skipped, not fatal");
-
-        assert!(
-            crate::config::Config::load_portals(std::path::Path::new("no-such-file")).is_empty(),
-            "a missing file is empty, not a panic - the server still answers"
+        let (links, index) = crate::config::Config::load_portals(&path);
+        assert_eq!(
+            links.get(&(1, "out00".to_string())),
+            Some(&(10, "in00".to_string())),
+            "map 1's out00 leads to map 10's in00"
         );
+        assert_eq!(links.get(&(10, "in00".to_string())), Some(&(1, "out00".to_string())));
+        assert_eq!(links.get(&(1, "in00".to_string())), None, "keyed on the SOURCE map");
+
+        // The arrival lookup is the other direction, and spawn points must be in it even
+        // though they lead nowhere - `sp` is a perfectly good place to arrive.
+        assert_eq!(index.get(&(10, "in00".to_string())), Some(&1), "map 10's in00 is index 1");
+        assert_eq!(index.get(&(1, "sp".to_string())), Some(&0), "spawns are indexed too");
+        assert_eq!(index.get(&(1, "out00".to_string())), Some(&4));
+
+        let (l, i) = crate::config::Config::load_portals(std::path::Path::new("no-such-file"));
+        assert!(l.is_empty() && i.is_empty(), "a missing file is empty, not a panic");
     }
 
     /// The client omits BOTH coordinates when the portal name is empty, so the body is 31

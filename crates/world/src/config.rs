@@ -44,7 +44,16 @@ pub struct Config {
     ///
     /// This replaced a hand-typed two-row stub that let a character walk from map 1 to map
     /// 10 and then stranded it: every portal out of map 10 was "not in the table".
-    pub portals: HashMap<(u32, String), u32>,
+    /// `(map, portal name)` -> `(target map, target portal name)`.
+    pub portals: HashMap<(u32, String), (u32, String)>,
+
+    /// `(map, portal name)` -> that portal's **index** on its own map.
+    ///
+    /// Separate from [`Self::portals`] because arrival needs the reverse direction: the
+    /// source portal names its destination portal (`tn`), and the stat block wants that
+    /// portal's index. Spawn points are in here too - they lead nowhere but are perfectly
+    /// valid arrival points, and `sp` is what an ordinary login uses.
+    pub portal_index: HashMap<(u32, String), u8>,
 
     /// Every NPC standing on every map, keyed by map id.
     ///
@@ -60,23 +69,37 @@ impl Config {
     /// A missing file is **not** an error: the server runs without portals and logs each
     /// unresolved request. A malformed line is skipped rather than aborting startup, because
     /// this file is regenerated from game data and one bad row should not stop a test run.
-    pub fn load_portals(path: &std::path::Path) -> HashMap<(u32, String), u32> {
-        let mut out = HashMap::new();
-        let Ok(text) = std::fs::read_to_string(path) else { return out };
+    #[allow(clippy::type_complexity)]
+    pub fn load_portals(
+        path: &std::path::Path,
+    ) -> (HashMap<(u32, String), (u32, String)>, HashMap<(u32, String), u8>) {
+        let (mut links, mut index) = (HashMap::new(), HashMap::new());
+        let Ok(text) = std::fs::read_to_string(path) else { return (links, index) };
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let mut f = line.split(',').map(str::trim);
-            let (Some(map), Some(name), Some(target)) = (f.next(), f.next(), f.next()) else {
+            // map, index, name, target map, target portal
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            if f.len() < 5 {
+                continue;
+            }
+            let (Ok(map), Ok(idx), Ok(target)) =
+                (f[0].parse::<u32>(), f[1].parse::<u32>(), f[3].parse::<u32>())
+            else {
                 continue;
             };
-            if let (Ok(map), Ok(target)) = (map.parse::<u32>(), target.parse::<u32>()) {
-                out.insert((map, name.to_string()), target);
+            // The stat block's portal field is one byte, so an index past 255 cannot be
+            // expressed. Skip rather than truncate - a wrong portal is worse than the spawn.
+            if let Ok(idx) = u8::try_from(idx) {
+                index.insert((map, f[2].to_string()), idx);
+            }
+            if target != 0 {
+                links.insert((map, f[2].to_string()), (target, f[4].to_string()));
             }
         }
-        out
+        (links, index)
     }
 
     /// Load `map, template, x, cy, fh, rx0, rx1, f` rows into per-map NPC lists.
@@ -129,6 +152,7 @@ impl Default for Config {
             channel_id: 0,
             set_field_probe: false,
             portals: HashMap::new(),
+            portal_index: HashMap::new(),
             npcs: HashMap::new(),
         }
     }

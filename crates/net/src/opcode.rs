@@ -662,6 +662,13 @@ pub struct Character {
     pub max_mp: u32,
     pub ap: u16,
     pub map_id: u32,
+    /// Which portal on [`Self::map_id`] the character stands at.
+    ///
+    /// Not persisted - it is per-arrival, not per-character. `0` is the map's spawn point,
+    /// which is where a login should put you. A portal walk sets this to the index of the
+    /// portal named by the source portal's `tn`, so the character arrives at the matching
+    /// door rather than back at the spawn.
+    pub portal: u8,
     /// `(slot, itemId)` pairs for the avatar's visible equipment.
     pub equips: Vec<(u8, u32)>,
 }
@@ -702,6 +709,7 @@ impl Default for Character {
             max_mp: 5,
             ap: 0,
             map_id: START_MAP_ID,
+            portal: 0, // the map's spawn point
             equips: Vec::new(),
         }
     }
@@ -952,7 +960,7 @@ pub fn character_stat_block(chr: &Character, world_id: u32) -> Vec<u8> {
     out.extend_from_slice(&0u32.to_le_bytes()); // fame
     debug_assert_eq!(out.len(), stat_block_map_id_at(chr.job), "the map id moved");
     out.extend_from_slice(&chr.map_id.to_le_bytes()); // <- the field id
-    out.push(0); // portal
+    out.push(chr.portal); // which portal on the map the character arrives at
     out.extend_from_slice(&0u16.to_le_bytes()); // subJob
     out.push(0);
     out.extend_from_slice(&0u64.to_le_bytes()); // FILETIME

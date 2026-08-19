@@ -372,6 +372,16 @@ if PROBE:
         check("the portal reply still switches the stat block on",
               moved[HEAD + 12] == 1, "presence[0]=%d" % moved[HEAD + 12])
 
+        # The arrival portal, immediately after the map id. Map 1's "out00" names map 10's
+        # "in00", which is index 1 there - so walking that door must NOT put the character
+        # back on the spawn (index 0), which is where a login goes.
+        arrival = moved[stat + 88]
+        check("the character arrives at the matching door, not the map spawn",
+              arrival == 1, "portal index %d (0 = spawn, which is the login position)" % arrival)
+        first = set_fields[0]["body"][2:]
+        check("a fresh login still arrives at the spawn", first[stat + 88] == 0,
+              "portal index %d" % first[stat + 88])
+
         # And the move has to survive a relog, which means it reached the database.
         con = sqlite3.connect(db)
         stored = con.execute("SELECT map_id FROM characters WHERE id=?", (CHARACTER_ID,)).fetchone()[0]
