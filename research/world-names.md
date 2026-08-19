@@ -46,24 +46,45 @@ question. **Ids 0-16 are read directly and are the trustworthy part.**)
 **0, 1, 3, 4, 5, 10, 16, 29, 43, 44, 50** - so those are the worlds this client's login
 screen is built to show.
 
-## What is NOT explained: where 15 comes from
+## SETTLED: "Windia" is a hardcoded bitmap in the Change Channel UI
 
-We send world id **0** in `world_list_entry` (the first byte) and in `login_result`. The
-client shows **15**. That is a real discrepancy and I have not found its source.
+**RETRACTION.** This section previously said the client was "showing world 15" and that this
+was "a live signal that one of our packets is not laid out the way we think", with three
+candidate causes about `world_list_entry` and `login_result` being misparsed. **All of that
+was wrong.** It came from assuming the Change Channel UI draws from
+`Login.img/WorldSelect/world/<world id>`, the table above - and the owner said plainly they were
+talking about the **Change Channel** dialog, not world select, which is a different UI with
+its own assets.
 
-Candidates, none verified:
+What is actually there **[L]**:
 
-* Our `world_list_entry` layout was built partly by inference. If the client parses a later
-  field of it as the world id for the in-game UI, a misalignment would produce a wrong id
-  while the first byte still reads 0.
-* `login_result`'s world/channel `u32`s may not be at the offsets we assume.
-* The in-game UI may take the world id from the channel connection rather than from login,
-  and the channel never sends one.
+```
+UI/_Canvas/_Canvas_000.wz  ChannelChange.img
+  Channel/
+    world/
+      0            <- a bitmap reading "WINDIA", and the ONLY child
+    ch/ 0..18      <- the channel number bitmaps
+    channel0..3, BtChange, BtCancel, t, c, s
+```
 
-**It is cosmetic** - it does not affect entering the world, portals, or the channel swap. But
-it is a live signal that one of those packets is not laid out the way we think, which is
-worth more than the wrong name is.
+`Channel/world` has **exactly one entry**. There is no index to select with, so no world id
+we send can change it. The Change Channel dialog in this client build says WINDIA
+unconditionally - it is a leftover asset, not a reflection of anything on the wire.
 
-> **Next step:** find what reads the world id in the Change Channel UI, or bisect by sending
-> a distinctive world id (say 4, ZENITH) and seeing what the client then displays. The second
-> costs one launch and would say immediately whether the client is reading our field at all.
+**Nothing is wrong with our packets, and nothing here needs fixing.** Changing it would mean
+editing the WZ, which is a client modification and not something this project does for
+cosmetics.
+
+## The world-select screen is a third thing again
+
+The owner: *"the 'world' on the world selection is actually 'Classic'... that's going to get
+displayed on 'Choose another world'."* So that screen shows neither our name string nor
+`WorldSelect/world/0` (which renders SCANIA). `Login.img` has a top-level **`ClassicIntro`**
+node which is the obvious candidate **[I]** - not chased, because nothing depends on it.
+
+## The lesson, since this is the second time
+
+The table below is correct and was worth rendering. The mistake was reaching a conclusion
+about **which UI** was involved without checking, then attaching a confident causal story to
+it. "The client is showing world 15" was never observed - it was inferred from a table that
+turned out to belong to a different dialog. Read the asset the user is actually looking at.
