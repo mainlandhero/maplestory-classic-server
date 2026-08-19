@@ -289,11 +289,28 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 
 Write-Host ''
 Write-Host 'On screen:'
-Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
-Write-Host '  2. create one. Check the name first - a name already used is now refused'
-Write-Host '     by the server rather than always accepted.'
-Write-Host '  3. close the client, run this script again, and click Login. The character'
-Write-Host '     should still be listed. That is the whole point of this run.'
+if ($SetFieldProbe) {
+    Write-Host '  1. wait out the splash, then click Login.'
+    Write-Host '  2. pick an existing character and enter the world.'
+    Write-Host '  3. you should hear the enter-success sound and see "Connecting...".'
+    Write-Host '  4. WAIT about 30 seconds without touching anything. The client closed the'
+    Write-Host '     channel socket ~20s in on the last run, so the window is short.'
+    Write-Host ''
+    Write-Host '  Watch for, and report, any of these:' -ForegroundColor Cyan
+    Write-Host '    - a "Channel" message or toast. That is SetField announcing a channel'
+    Write-Host '      change, and it would mean the packet got past BOTH early returns.'
+    Write-Host '    - any dialog at all: report the exact wording, it names the failure.'
+    Write-Host '    - the screen fading, loading, or changing in any way.'
+    Write-Host '    - whether the client stays alive past ~30s or exits by itself.'
+    Write-Host ''
+    Write-Host '  Nothing visible is the EXPECTED result. The answer is in the hook log.' -ForegroundColor Yellow
+} else {
+    Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
+    Write-Host '  2. create one. Check the name first - a name already used is now refused'
+    Write-Host '     by the server rather than always accepted.'
+    Write-Host '  3. close the client, run this script again, and click Login. The character'
+    Write-Host '     should still be listed. That is the whole point of this run.'
+}
 Write-Host ''
 Write-Host 'Logs:'
 Write-Host "  $serverLog                 every packet both ways, and what each reply was"
