@@ -211,7 +211,8 @@ impl Session {
     /// `research/npc-spawn.md` has the working, including how the routing was found.
     fn on_field_entered(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let mut out: Vec<Reply> = npcs_for_map(chr.map_id)
+        let empty: Vec<net::opcode::FieldNpc> = Vec::new();
+        let mut out: Vec<Reply> = self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()
             .map(|npc| Reply {
                 opcode: net::opcode::NPC_ENTER_FIELD,
@@ -383,29 +384,6 @@ impl Session {
     /// The migration this connection claimed, if any.
     pub fn claimed(&self) -> Option<&ClaimedMigration> {
         self.claimed.as_ref()
-    }
-}
-
-/// Which NPCs stand on a map.
-///
-/// **A stub, and the same wrong shape as [`resolve_portal`].** The real data is the `life`
-/// node of every field image in the client's own `Map.wz` - `type`, `id`, `x`, `cy`, `fh`,
-/// `rx0`, `rx1`, `f` - which is exactly where the two entries below were read from
-/// (`research/npc-spawn.md` §5). The right fix is one tool that dumps portals **and** life
-/// out of the WZ into `gm-handbook/`, beside the map and item names that are already
-/// generated rather than typed.
-///
-/// Object ids are assigned here and only have to be unique within a field.
-fn npcs_for_map(map_id: u32) -> &'static [net::opcode::FieldNpc] {
-    use net::opcode::FieldNpc;
-    // Map 1, "Mushroom Town - West Entrance". Heena and Sera, read from the WZ.
-    const MAP1: &[FieldNpc] = &[
-        FieldNpc { object_id: 1000, template_id: 1, x: -46, cy: 305, fh: 66, rx0: -64, rx1: -26, f: 1 },
-        FieldNpc { object_id: 1001, template_id: 2, x: 833, cy: 125, fh: 8, rx0: 783, rx1: 883, f: 0 },
-    ];
-    match map_id {
-        1 => MAP1,
-        _ => &[],
     }
 }
 

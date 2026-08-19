@@ -34,6 +34,7 @@ character select is claimed here. See crates/world/src/lib.rs.";
 fn main() -> ExitCode {
     let mut config = Config::default();
     let mut portals_path = PathBuf::from("gm-handbook/portals.txt");
+    let mut npcs_path = PathBuf::from("gm-handbook/npcs.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -57,6 +58,7 @@ fn main() -> ExitCode {
                 Ok(())
             }
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),
+            "--npcs" => value().map(|v| npcs_path = PathBuf::from(v)),
             other => Err(format!("unknown argument {other}")),
         };
         if let Err(e) = outcome {
@@ -73,6 +75,14 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no portals loaded from {} - portal walks will re-send the              current map. Regenerate with: python tools/dump_portals.py",
             portals_path.display()
+        );
+    }
+
+    config.npcs = world::config::Config::load_npcs(&npcs_path);
+    if config.npcs.is_empty() {
+        eprintln!(
+            "maplecw-world: no NPCs loaded from {} - maps will be empty. Regenerate with:              python tools/dump_portals.py",
+            npcs_path.display()
         );
     }
 

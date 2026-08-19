@@ -277,8 +277,8 @@ if PROBE:
               slots == [5, 6, 7, 11], "%s" % slots)
     check("two of them are SetField - the migration and the portal", len(set_fields) == 2,
           "%d" % len(set_fields))
-    check("two of them are NpcEnterField - map 1's Heena and Sera", len(npcs) == 2,
-          "%d" % len(npcs))
+    check("two of them are NpcEnterField - map 1's Heena and Sera, from the generated table",
+          len(npcs) == 2, "%d" % len(npcs))
     if replies:
         pkt = replies[0]
         op = pkt["opcode"]

@@ -45,6 +45,13 @@ pub struct Config {
     /// This replaced a hand-typed two-row stub that let a character walk from map 1 to map
     /// 10 and then stranded it: every portal out of map 10 was "not in the table".
     pub portals: HashMap<(u32, String), u32>,
+
+    /// Every NPC standing on every map, keyed by map id.
+    ///
+    /// Also generated from the client's `Map.wz` by `tools/dump_portals.py`, out of each
+    /// field's `life` node. The client **cannot** spawn these itself - its field loader walks
+    /// `life` only to preload art - so they are the server's to send, after every `SetField`.
+    pub npcs: HashMap<u32, Vec<net::opcode::FieldNpc>>,
 }
 
 impl Config {
@@ -71,6 +78,46 @@ impl Config {
         }
         out
     }
+
+    /// Load `map, template, x, cy, fh, rx0, rx1, f` rows into per-map NPC lists.
+    ///
+    /// **Object ids are assigned here**, sequentially within each map. They only have to be
+    /// unique on the field: the client's pool keys on the id, and a repeat makes its handler
+    /// return after four bytes and silently drop the NPC - which would show as one NPC where
+    /// two should stand, with nothing in any log.
+    pub fn load_npcs(path: &std::path::Path) -> HashMap<u32, Vec<net::opcode::FieldNpc>> {
+        let mut out: HashMap<u32, Vec<net::opcode::FieldNpc>> = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            if f.len() < 8 {
+                continue;
+            }
+            let n = |i: usize| f[i].parse::<i64>().ok();
+            let (Some(map), Some(template), Some(x), Some(cy), Some(fh), Some(rx0), Some(rx1),
+                 Some(fl)) = (n(0), n(1), n(2), n(3), n(4), n(5), n(6), n(7))
+            else {
+                continue;
+            };
+            let list = out.entry(map as u32).or_default();
+            let object_id = 1000 + list.len() as u32;
+            list.push(net::opcode::FieldNpc {
+                object_id,
+                template_id: template as u32,
+                x: x as i16,
+                cy: cy as i16,
+                fh: fh as u16,
+                rx0: rx0 as i16,
+                rx1: rx1 as i16,
+                f: fl as u8,
+            });
+        }
+        out
+    }
 }
 
 impl Default for Config {
@@ -82,6 +129,7 @@ impl Default for Config {
             channel_id: 0,
             set_field_probe: false,
             portals: HashMap::new(),
+            npcs: HashMap::new(),
         }
     }
 }

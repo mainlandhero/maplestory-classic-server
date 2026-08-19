@@ -301,29 +301,23 @@ Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
     Write-Host ""
-    Write-Host "SET-FIELD RUN. The client is answered with a FULL character record:" -ForegroundColor Cyan
-    Write-Host "  characterData=1, presence[0] set so the character-stat block decodes,"
-    Write-Host "  and that block carries the character's real map id."
+    Write-Host "NPC + PORTAL + AVATAR RUN." -ForegroundColor Cyan
+    Write-Host "  Three changes since the last launch, and the log tells them apart:"
+    Write-Host "    - NPCs now come from the client's own Map.wz (308 across 150 maps),"
+    Write-Host "      and are triggered on 0x00DC, not 0x0238. 0x0238 fires only once ever."
+    Write-Host "    - Portals come from Map.wz too: 1135 across all 426 field images."
+    Write-Host "    - The avatar look is still sent, unchanged."
     Write-Host ""
-    Write-Host "  ONE thing changed since the run that faded to black: the record now" -ForegroundColor Cyan
-    Write-Host "  switches the stat block on and carries a map. Nothing else moved."
-    Write-Host ""
-    Write-Host "In client-patched\maplecw-hook.log, two WATCH lines decide this:"
-    Write-Host "  no WATCH lines at all        the hook never armed. Re-run; conclude nothing."
-    Write-Host "  140302e30 at CHARACTER SELECT is the positive control - it means the probe"
-    Write-Host "                               is armed and working, whatever happens later."
-    Write-Host "  140304b20 but NOT 140302e30  the record decoded and the gate SKIPPED the"
-    Write-Host "                               stat block: presence[0] is the wrong byte."
-    Write-Host "  BOTH, after the migration    the gate opened and the stats decoded."
-    Write-Host ""
-    Write-Host "Then: is there a CLIENT FAULT line?" -ForegroundColor Cyan
-    Write-Host "  fault at 140ce89d6   unchanged from last run - the map still did not load."
-    Write-Host "  fault ELSEWHERE      it got further; the address says how far."
-    Write-Host "  NO fault at all      the record was accepted end to end."
-    Write-Host ""
-    Write-Host "  This run CAN put a character on screen. That is the thing to watch for." -ForegroundColor Yellow
-    Write-Host "  Unlike every previous run, 'nothing visible' is now a FAILURE, not the" -ForegroundColor Yellow
-    Write-Host "  expected result." -ForegroundColor Yellow
+    Write-Host "In client-patched\maplecw-hook.log, two watches answer two questions:" -ForegroundColor Cyan
+    Write-Host "  141e75800   the NPC pool dispatcher."
+    Write-Host "              FIRES while dispatching 0x044F -> routing and timing are right,"
+    Write-Host "                                              so the 64-byte BODY is wrong."
+    Write-Host "              SILENT                       -> the packet is never dispatched;"
+    Write-Host "                                              the trigger or the stage is wrong."
+    Write-Host "  1420dd920   the ONLY call site inside the avatar apply's loop."
+    Write-Host "              FIRES  -> the look WAS applied and something ignores it."
+    Write-Host "              SILENT -> the loop body never ran; 0x0138 is a dead end and the"
+    Write-Host "                        equipped list is the only route left."
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
@@ -363,24 +357,24 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  1. wait out the splash, then click Login.'
-    Write-Host '  2. pick an existing character and enter the world.'
-    Write-Host '  3. you should hear the enter-success sound, then the screen fades to black.'
-    Write-Host '     Both of those already happened last run - they are not the news.'
-    Write-Host '  4. WAIT about 40 seconds without touching anything. Last run the client'
-    Write-Host '     faulted about 3.4s after the fade, so the interesting window is short,'
-    Write-Host '     but let it sit in case it survives.'
+    Write-Host '  1. log in and enter the world with ANY character - they all have NPCs now.'
+    Write-Host '     TestCharD is on map 10 (1 NPC); TestCharA and TestCharC are on map 1 (2).'
     Write-Host ''
-    Write-Host '  The question this run answers: does the map LOAD?' -ForegroundColor Cyan
-    Write-Host '    - a character standing on a map, however broken it looks - that is the'
-    Write-Host '      goal, and anything at all drawn after the fade counts. Say what you see:'
-    Write-Host '      terrain, a character sprite, a UI bar, a loading bar, anything.'
-    Write-Host '    - black screen then exit, same as last time - the map still did not load.'
-    Write-Host '    - any dialog: report the exact wording, it names the failure.'
-    Write-Host '    - a freeze with the UI unresponsive means an unanswered packet, NOT a'
-    Write-Host '      crash - read world.log for the last inbound line with nothing after it.'
+    Write-Host '  2. ARE THERE NPCs ON THE MAP?' -ForegroundColor Cyan
+    Write-Host '     Map 1 should have two, map 10 one. Minimap dots do NOT count - the minimap'
+    Write-Host '     reads the WZ directly and has always shown them. Only a figure standing in'
+    Write-Host '     the world counts.'
     Write-Host ''
-    Write-Host '  Something visible after the fade is now the target, not a surprise.' -ForegroundColor Yellow
+    Write-Host '  3. WALK THE PORTALS, BOTH WAYS.' -ForegroundColor Cyan
+    Write-Host '     Map 1 -> 10 worked last time. The new ones to try are 10 -> 1 (portal in00)'
+    Write-Host '     and 10 -> 20 (out00), which both bounced you back before.'
+    Write-Host '     Expect to arrive at the map SPAWN, not at the matching door - the arrival'
+    Write-Host '     portal is a known gap, not a new bug.'
+    Write-Host ''
+    Write-Host '  4. Is the character still naked? Expected: yes. The watch says why.'
+    Write-Host ''
+    Write-Host '  5. Report any dialog wording exactly, and whether the UI ever freezes -'
+    Write-Host '     a freeze is an unanswered packet, not a crash; world.log names it.'
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'
