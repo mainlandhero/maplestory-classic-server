@@ -1,23 +1,23 @@
-﻿    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\MicrosoftCodeAnalyzer\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\SwiftDemangler\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\WildcardAssembler\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\SystemEmulation\ghidra_scripts
-    C:\MapleCW\tools\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\JVM\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\PIC\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\FunctionID\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\FileFormats\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\DATA\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\GnuDemangler\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\PyGhidra\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\Base\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\Atmel\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Debug\Debugger\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\BytePatterns\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Processors\8051\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Debug\Debugger-rmi-trace\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\BSim\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\Decompiler\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\PDB\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\VersionTracking\ghidra_scripts
-    C:\Users\user\Desktop\ghidra_12.1.2_PUBLIC\Ghidra\Features\DecompilerDependent\ghidra_scripts (HeadlessAnalyzer)  
+# Launch keywords and the mode-2 IP whitelist, as they sit in .rdata
+#
+#   python tools/dump_va.py 0x143493028 208
+#
+# Regenerated 2026-08-19. The previous contents of this file were Ghidra's
+# script-path listing, scraped by mistake - not client strings at all.
+
+image base 0x140000000   section .rdata   file offset 0x3492028
+  000143493028  6e 00 00 00 22 20 00 00 57 45 42 53 54 41 52 54  n..." ..WEBSTART
+  000143493038  00 00 00 00 2d 4e 58 4c 00 00 00 00 00 00 00 00  ....-NXL........
+  000143493048  2d 4e 58 4c 44 45 42 55 47 00 00 00 00 00 00 00  -NXLDEBUG.......
+  000143493058  2d 4e 58 4c 50 54 53 00 53 54 45 41 4d 53 54 41  -NXLPTS.STEAMSTA
+  000143493068  52 54 00 00 47 46 4e 00 47 41 4d 45 4c 41 55 4e  RT..GFN.GAMELAUN
+  000143493078  43 48 49 4e 47 00 00 00 4b 52 00 00 00 00 00 00  CHING...KR......
+  000143493088  31 30 2e 39 2e 32 2e 31 33 33 00 00 00 00 00 00  10.9.2.133......
+  000143493098  34 34 2e 32 33 34 2e 31 36 36 2e 31 36 31 00 00  44.234.166.161..
+  0001434930a8  34 34 2e 32 33 34 2e 31 36 37 2e 31 36 33 00 00  44.234.167.163..
+  0001434930b8  68 74 74 70 3a 2f 2f 6d 61 70 6c 65 73 74 6f 72  http://maplestor
+  0001434930c8  79 2e 6e 65 78 6f 6e 2e 6e 65 74 2f 6d 69 63 72  y.nexon.net/micr
+  0001434930d8  6f 2d 73 69 74 65 2f 32 30 37 30 31 00 00 00 00  o-site/20701....
+  0001434930e8  49 50 50 4f 52 54 00 00 60 f8 c9 42 01 00 00 00  IPPORT..`..B....
+
+dwords:

@@ -252,6 +252,62 @@ route is runtime - see "Next goals".
 functions dereference it. The *counter* scan (`DAT_143ac8168`) works and is what found the
 cluster.
 
+### SETTLED: the launch keyword is not a lever - stay on `-NXLDEBUG`
+
+**The owner's hunch, checked statically 2026-08-19, entirely by reading the image - no client
+run.** Full write-up in `docs/launch-protocol.md`; new decompilation in
+`research/msexe-launchmode.c`, `msexe-launchconfig.c`, `msexe-modeclass.c`,
+`msexe-loginbutton-modes.c`.
+
+**`-NXLDEBUG` is not a debug mode.** The chain is short and now fully verified:
+
+```text
+argv[0] keyword -> cfg+0x38 -> FUN_142c95c90(cfg) -> session+0x68 -> FUN_142c4a810(session)
+```
+
+`FUN_142c95c90` is `return *(u32*)(cfg+0x38)` and has exactly **two** callers; the session
+constructor `FUN_142c43db0` writes `session+0x68` from it **once**, and nothing else in
+readable code writes that field. And `-NXL`, `-NXLDEBUG` and `-NXLPTS` all write the same
+value: **5**. So `-NXLDEBUG` selects the identical mode the real Nexon Launcher passes; the
+`DEBUG` suffix only changes which argv slots map to IP and port. It sets no debug flag and
+relaxes no check.
+
+| keyword | mode | reachable? |
+|---|---|---|
+| `GAMELAUNCHING`, `IPPORT` | 2 | only with a whitelisted IP (below) |
+| `WEBSTART` | 3 | needs token 1 non-empty |
+| `STEAMSTART` | 4 | (the doc previously mis-attributed mode 4 to "no keyword") |
+| `-NXL`, `-NXLDEBUG`, `-NXLPTS` | 5 | what we use |
+| anything else | *unset* | opens the Nexon micro-site and returns |
+
+**Why `IPPORT` "crashed":** it `strcmp`s the IP against six hard-coded literals
+(`10.9.2.131/132/133`, `44.234.166.161`, `44.234.167.163`, `44.234.163.43`) and on a miss
+opens the micro-site, reports error `0x18a`, and returns **without setting a mode**. It was
+never a crash in the parser - mode 2 was simply never reached.
+
+**Mode 2 is not the mode we want anyway.** The login screen's buttons fork on `mode == 5`
+(`FUN_14112a570`): `login` calls `FUN_141b3ff10` (the login request) in mode 5, and
+`FUN_141b3f050(stage, 4, 600)` otherwise - a 600 ms fade to **screen 4, world select**.
+So mode 2 restores the classic WorldSelect -> ChannelSelect flow; it does **not** make the
+client authenticate, so it does nothing for multi-account. It also silently kills the
+login-screen Quit button, which reads as a freeze.
+
+**`-NXLPTS` buys nothing:** its `cfg+0xc8` has no reader, and its `DAT_143a88df8 = 0` is
+read in exactly one place, `FUN_141b5bb50`, the login-screen draw.
+
+**The client's own classifier** is `FUN_1401e7bf0(mode) { return mode==3||mode==4||mode==5; }`
+- "a launcher started me" vs "I was started directly". Worth grepping for alongside `== 5`.
+
+**Static confirmation of the token measurement.** `FUN_142c95f20(cfg,out,i)` reads
+`cfg+0x90+i*8` - the six session tokens - and `Xrefs` returns **no callers**, in a run where
+sibling accessors did return callers, so the instrument was working. Two independent
+instruments (this and the wire capture) now agree that a launcher token cannot ride in
+`+0x90`.
+
+**Only remaining launch-line option worth anything:** `-NXL <anything> <region> <ip> <port>`,
+purely to set the region string at `cfg+0xc0`, which `-NXLDEBUG` leaves at the config
+default. Worth one run only if something is ever traced to the region.
+
 ### Still open
 
 * The slot count is the constant `3` rather than a property of the account.
@@ -309,10 +365,12 @@ need a configurable bind plus TLS.
 ### And a launcher - see `docs/launcher.md`
 
 The owner asked for a minimal launcher that applies the client patches and takes a username and
-password, since the real client uses a validated session. The design is written; the piece
-that has to be **measured before it can be finished** is whether the session array at config
-`+0x90` - which `-NXLDEBUG` fills from launch arguments 3 onward - is what outbound `0x0073`
-transmits. One run with six distinguishable tokens answers it.
+password, since the real client uses a validated session. The design is written, but the
+route it assumed is **dead**: the session array at config `+0x90` - which `-NXLDEBUG` fills
+from launch arguments 3 onward - is not transmitted in `0x0073` (measured on the wire) and
+has no reader in readable code (`FUN_142c95f20`, `Xrefs` with working controls). So the
+launcher cannot hand the server a token through a launch argument. See
+`docs/launcher.md` for the two routes that remain.
 
 ## SOLVED - the ~37 second exit (kept for the method, not the answer)
 
@@ -762,8 +820,11 @@ GameGuard never loads.
 
 - **WZ data version 779**, hash `0x0000E73A`, **zero** string key.
 - **Network protocol version is 100** — unrelated to 779. Don't conflate them again.
-- Launch: **`-NXLDEBUG <ip> <port>`** is the only mode that runs *and* connects.
-  `IPPORT` crashes; `WEBSTART` needs six session fields we cannot yet fake.
+- Launch: **`-NXLDEBUG <ip> <port>`** is the only mode that runs *and* connects, and it is
+  **not** a debug mode - it sets the same launch mode (5) as `-NXL`, which is what the real
+  Nexon Launcher passes. `IPPORT` does not crash in the parser: it whitelists the IP against
+  six Nexon literals and bails without setting a mode. `WEBSTART` needs token 1 non-empty.
+  Settled statically 2026-08-19; see `docs/launch-protocol.md`.
 - Handshake framing: **`u16` little-endian body length, then the body** (length excludes
   itself; the client rewinds over the prefix). Confirmed working.
 - `MapleStory.exe` is **Themida**-protected with a rebuilt IAT — do not patch it on disk.
@@ -924,7 +985,8 @@ if (FUN_142c4a810(DAT_143ac1898) == 5) { <other handler>(...); return; }
 ```
 
 `session+0x68` is **5** in our client - transmitted as the first `u32` of `0x0073`, captured
-as `05 00 00 00`. Mode 5 is what **`-NXLDEBUG`** sets, which is how we launch. So the
+as `05 00 00 00`. Mode 5 is what **`-NXL`, `-NXLDEBUG` and `-NXLPTS` all** set, so it is the
+production Nexon-Launcher mode rather than a debug one, and it is how we launch. So the
 mode-5 branch is always the live one and the handler the switch names first is dead code
 for us. `0x000B`, the login flow, and the Login button all fork this way. Decoding the
 wrong side costs a full analysis pass. Table in `docs/opcodes.md`.
@@ -1170,14 +1232,18 @@ arms from `install()`, which also removes the race that twice brought the dialog
 
 **The auto-advance is not a bug.** In mode 5 the `ClassicIntro` tick calls
 `FUN_141b3ff10` - *the same function the Login button calls* - as soon as `0x000B` sets
-`stage+0x108`. `-NXLDEBUG` is a debug launch mode that logs in without the button, which is
+`stage+0x108`. Mode 5 is the **Nexon-Launcher** mode, not a debug one (`-NXL` sets it too):
+a launcher-started client already holds a session, so it logs in without the button. That is
 why the flow does not match a normal server.
 
 **To get the click-the-button flow**, write anything but `5` to `[0x143ac1898] + 0x68`
 (`session+0x68`) from `grap-stub` once the world list has landed. Then the tick's
 auto-login goes false, the button still enables (that happens as a side effect of the
-`+0x108` check, independent of mode), and clicking Login takes the readable
-`FUN_141b3f050(stage, 4, 600)` straight to CharSelect. Switching modes sends `0x000B` to the
+`+0x108` check, independent of mode), and clicking Login takes
+`FUN_141b3f050(stage, 4, 600)`. **Corrected 2026-08-19:** that is not "straight to
+CharSelect" - `FUN_141b3f050(stage, screen, ms)` is a screen transition, and screen 4 is
+**world select**, which is why a world-list terminator sent with the mode patch on landed
+there. Switching modes sends `0x000B` to the
 classic handler `FUN_141b2fac0` instead of `FUN_141b31ff0`, which is safe: their read
 sequences were compared field by field and are identical. **Be honest about what this is** -
 it makes the client follow the normal flow, it does not make the session valid.
