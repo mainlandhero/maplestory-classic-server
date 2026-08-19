@@ -108,6 +108,45 @@ functions do you call" put `FUN_142cbaa80` first with 170, and recovered the alr
   evidence of a shared base class in this binary.** The 41 switches it did turn up were
   real and are still useful, but the derivation was wrong and should not be repeated.
 
+## There are exactly three entries like this, and none of them is the login stage
+
+The 64-byte body above is a template. Searching the whole image for its 18-byte prologue
+found **five** functions; three match the full body byte for byte, and each is guarded by
+its own singleton:
+
+| entry | guard / owner global | dispatcher | inbound opcodes |
+|---|---|---|---|
+| `FUN_1415d59b0` | `DAT_143aa84a0` | `FUN_142cbaa80` | **`0x70..0x39a`**, 181 cases |
+| `FUN_1415d5a00` | `DAT_143ac97e0` | `FUN_142279c50` | `0x5c5..0x5d2`, 12 cases |
+| `FUN_1415d5a50` | `DAT_143ace378` | `FUN_14177b7e0` | not yet read |
+
+In all three the gate and the getter resolve to the **same** global - `cmp qword [g],0` and
+`mov rax,[g]` - so each entry is "if this subsystem exists, hand it the packet". The other
+two prologue matches (`0x140c8fec5`, `0x140cad410`) have different bodies and are not
+entries.
+
+`FUN_14177b7e0` and `FUN_142279c50` are monolithic handlers rather than case switches -
+they call the u32/string/raw decoders directly - so they are subsystems, not stages.
+
+**The login stage is not in this table**, and that is the interesting part. `FUN_141b25f30`
+is a virtual method, slot 76 of vtable `0x1433fd540`. So the virtualised packet loop does
+two different things with each inbound packet: a **vtable call on the current stage**, and
+a call to each of these three **singleton entries**.
+
+The consequence is worth stating plainly, because it decides whether a reply can work:
+**none of the three entries checks which stage the client is in.** `FUN_142cbaa80` is
+gated only on the world object existing, and that object is already live by the time the
+migrate command is handled. So opcode `0x0070` should reach `FUN_142d51930` whether or not
+the client still thinks it is in the login stage. That is an inference from the routing,
+not something a run has confirmed.
+
+## What the client sends back
+
+`research/msexe-gamestage-outbound.txt` - the 175 client -> server opcodes whose builders
+live in the same `0x142c..0x142e` subsystem, `0x007A..0x0428`, filtered out of
+`research/msexe-send-opcodes.txt` by builder address. Disjoint from the 33 the login
+subsystem builds. That is the set a channel should expect once a character is in a map.
+
 ## The case table
 
 `research/msexe-gamestage-cases.txt` - 181 `opcode -> handler` pairs in enum order.
