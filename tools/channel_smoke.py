@@ -49,9 +49,16 @@ def free_port():
 # should say so plainly rather than accepting it - that honest negative is the check.
 CHARACTER_ID = 204
 
-# The map the planted character stands on. Not 1, deliberately: a check that passes on the
-# default would not notice the builder ignoring the character and emitting a default one.
-MAP_ID = 104_040_000
+# The map the planted character stands on. Map 1 so that the NPC table has entries to send
+# and the whole field-entry path is exercised. Map 1 is also `Character::default().map_id`,
+# so "the SetField carries map 1" alone would not prove the builder used OUR character -
+# the character-id check below is what carries that, and the portal move to map 10 makes the
+# map field discriminating in the other direction.
+MAP_ID = 1
+
+# Where the portal test sends the character. An EXPLICIT target field, not a portal name, so
+# this exercises the request parser and the reply without depending on the portal table stub.
+PORTAL_TARGET = 10
 CLIENT_IV = 0x52307801        # J, the chain the client encrypts with
 SERVER_IV = 0x52307802        # K, the chain it decrypts with
 
@@ -152,6 +159,19 @@ try:
     hello = struct.pack("<II", 0, 0) + struct.pack("<I", CHARACTER_ID) + bytes(24)
     send(transport.packet(0x007D, hello))
 
+    if PROBE:
+        # 0x0238, the client's "I have finished entering the field". The NPC pool is
+        # destroyed and rebuilt empty just before the client sends this, which is what makes
+        # it the safe moment to populate it - see research/npc-spawn.md.
+        send(transport.packet(0x0238, b""))
+
+        # 0x00D1, a transfer-field request. The nameless form: 31 bytes, an explicit target
+        # field at offset 16, a zero-length portal name at 20, and NO coordinates - the
+        # client omits both when the name pointer is null.
+        req = bytearray(31)
+        req[16:20] = struct.pack("<I", PORTAL_TARGET)
+        send(transport.packet(0x00D1, bytes(req)))
+
     # Anything coming back is on the K chain. There is nothing to read yet; this decodes
     # whatever appears so that the first real reply is checked the moment it exists.
     # The channel is ASYMMETRIC: we send AES and receive the byte subtract from the
@@ -213,8 +233,16 @@ HEAD = 33
 if PROBE:
     print()
     print("set-field probe checks:")
-    check("the probe answered the migration hello", len(replies) == 1,
-          "%d replies" % len(replies))
+    NPC_ENTER_FIELD = 0x044F
+    set_fields = [r for r in replies if r["opcode"] == SET_FIELD]
+    npcs = [r for r in replies if r["opcode"] == NPC_ENTER_FIELD]
+
+    check("the probe answered all three requests", len(replies) == 4,
+          "%d replies: %s" % (len(replies), [hex(r["opcode"]) for r in replies]))
+    check("two of them are SetField - the migration and the portal", len(set_fields) == 2,
+          "%d" % len(set_fields))
+    check("two of them are NpcEnterField - map 1's Heena and Sera", len(npcs) == 2,
+          "%d" % len(npcs))
     if replies:
         pkt = replies[0]
         op = pkt["opcode"]
@@ -277,6 +305,43 @@ if PROBE:
 
             check("the body outlasts the traced read path (33+12+224+1)",
                   len(body) > rec + 224 + 1, "%d bytes" % len(body))
+    # ---- the NPCs the client cannot spawn for itself
+    for i, pkt in enumerate(npcs):
+        nb = pkt["body"][2:]
+        check("NPC %d has the fixed 64-byte body" % i, len(nb) == 64, "%d bytes" % len(nb))
+        if len(nb) == 64:
+            check("NPC %d carries a real template id, not 0" % i,
+                  struct.unpack_from("<I", nb, 4)[0] != 0,
+                  "template %d" % struct.unpack_from("<I", nb, 4)[0])
+            check("NPC %d has a non-zero foothold" % i,
+                  struct.unpack_from("<H", nb, 22)[0] != 0,
+                  "fh %d" % struct.unpack_from("<H", nb, 22)[0])
+    if len(npcs) == 2:
+        ids = [struct.unpack_from("<I", p["body"][2:], 0)[0] for p in npcs]
+        # The pool keys on object id: a repeat makes the client return after four bytes and
+        # silently drop the NPC, so two NPCs sharing one id would show as one on screen.
+        check("the two NPCs have distinct object ids", ids[0] != ids[1], "%s" % ids)
+        # Heena stands at negative x. If the builder ever clamps instead of sign-extending,
+        # they land on the wrong side of the map, so check the sign survived the wire.
+        xs = [struct.unpack_from("<h", p["body"][2:], 8)[0] for p in npcs]
+        check("Heena's negative x survived as a signed value", min(xs) < 0, "x = %s" % xs)
+
+    # ---- the portal
+    if len(set_fields) == 2:
+        moved = set_fields[1]["body"][2:]
+        stat = HEAD + 12 + 111
+        at84 = struct.unpack_from("<I", moved, stat + 84)[0]
+        check("the portal reply is a SetField carrying the TARGET map, not the old one",
+              at84 == PORTAL_TARGET, "map %d, wanted %d" % (at84, PORTAL_TARGET))
+        check("the portal reply still switches the stat block on",
+              moved[HEAD + 12] == 1, "presence[0]=%d" % moved[HEAD + 12])
+
+        # And the move has to survive a relog, which means it reached the database.
+        con = sqlite3.connect(db)
+        stored = con.execute("SELECT map_id FROM characters WHERE id=?", (CHARACTER_ID,)).fetchone()[0]
+        con.close()
+        check("the move was persisted, so a relog puts the character on the new map",
+              stored == PORTAL_TARGET, "stored map_id = %s" % stored)
 elif replies:
     check("the probe is off, so nothing should come back", False,
           "%d unexpected replies" % len(replies))

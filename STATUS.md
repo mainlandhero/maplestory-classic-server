@@ -95,6 +95,35 @@ all sent as-is and none of them mattered.
 Also unanswered and undecoded: **`0x00D9`** (every ~510 ms, 76-169 bytes, coordinate-shaped -
 almost certainly movement), **`0x013D`**, **`0x00B8`**.
 
+### Two of the three are now built and measured
+
+Verified **without a client launch** by `python tools/channel_smoke.py --set-field-probe`,
+which now drives the whole field-entry path over the independent Python transport - 38 checks.
+
+* **The portal works.** `0x00D1` is decoded field by field
+  (`research/transfer-field-request.md`); the parser is tested against the **real 34 captured
+  bytes**, the 31-byte nameless form, and truncation. The reply is a `SetField` for the target
+  map, and the move is persisted so a relog keeps it. The **long** `characterData = 1` form is
+  used deliberately: the short form is the shape designed for "same character, new map" and is
+  probably right now, but its precondition (`world+0x2358`) could not be proven populated, so
+  the next run **measures** it via `142cfb500:peek=2358` instead of guessing.
+* **NPCs are sent by the server**, settled rather than assumed - the client's field loader
+  walks the WZ `life` node only to preload art. `NpcEnterField` is **`0x044F`**, a fixed
+  64-byte body, routed through **`FUN_141820080`** (`0x1a4..0x5ab`) - a dispatcher this project
+  had not found, filling the gap `msexe-gamestage-dispatch.md` left. The trigger is `0x0238`,
+  because the pool is destroyed and rebuilt **empty** on every field entry and a spawn sent
+  before that is silently discarded. So NPCs must be re-sent after **every** `SetField`.
+* **The character is still naked**, and that one is real work: item decode is a vtable call at
+  `+0x330` and the item classes carry no RTTI. `research/equip-block.md`.
+
+**Both new tables are stubs and say so.** Portal targets and field `life` both live in the
+client's WZ, and belong in a generator beside `tools/dump_names.py` rather than typed into
+source. An unknown portal is **not** guessed - the server re-sends the current map and logs it.
+
+**One prediction for the next run:** the minimap reads NPC x/y straight from the WZ without
+the pool, so minimap dots on an empty field is the expected picture *today*. If the NPCs now
+appear in the world too, the spawn worked.
+
 **Nothing authenticates.** The game socket still carries no credentials; the character is
 identified by the migration row and nothing else.
 
