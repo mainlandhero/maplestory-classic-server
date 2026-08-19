@@ -363,6 +363,10 @@ if ($SetFieldProbe) {
     Write-Host "      743 bytes for a dressed character against 224 for a bare one."
     Write-Host "    - 0x0151 (the QUEST request, not an NPC click) is answered with a 0x055B"
     Write-Host "      script Say, spoken by the template the client itself named."
+    Write-Host "    - EQUIPPED ITEMS NOW CARRY THEIR Character.wz STATS. The shirt should"
+    Write-Host "      read Weapon Def. +6 and 7 enhancements, and no item should say"
+    Write-Host "      'Cannot be Traded when equipped'. Items are 129 bytes, record 759."
+    Write-Host "    - BOTH NPC-click packets are answered now, 0x00F2 as well as 0x0151."
     Write-Host "    - MOBS ARE OFF: the 137-byte body faulted the client on the last run."
     Write-Host "      0xC0000005 at 0x141c810b0 - mob+0x2b8 null - on the FIRST 0x03C6,"
     Write-Host "      after both NPCs had dispatched cleanly. --mobs sends them anyway."
@@ -429,11 +433,17 @@ if ($SetFieldProbe) {
     Write-Host '     Connecting... means the record desynchronised - read the ELog (0x008F,'
     Write-Host '     0x0090) and run tools/pdata_lookup.py on its RVAs to name the field.'
     Write-Host ''
-    Write-Host '  1. IS THE CHARACTER DRESSED? Open the Equipment window too.' -ForegroundColor Cyan
-    Write-Host '     dressed                      -> done.'
-    Write-Host '     naked, window empty, no fault-> layout right, a VALUE wrong. dateExpire.'
-    Write-Host '     naked, but window LISTS items-> items decoded, avatar not rebuilt. A'
-    Write-Host '                                     different and much smaller problem.'
+    Write-Host '  1. HOVER AN EQUIPPED ITEM. READ ITS TOOLTIP.' -ForegroundColor Cyan
+    Write-Host '     The character being dressed is already confirmed. What is new is what'
+    Write-Host '     each item SAYS. On the Grey T-Shirt expect:'
+    Write-Host '       - a "Weapon Def.: +6" line, where before there was no stat line at all'
+    Write-Host '       - "Remaining Enhancements: 7", not 0'
+    Write-Host '       - NO "Cannot be Traded when equipped"'
+    Write-Host '     On the sword expect a weapon attack of 17.'
+    Write-Host '     still no stat line -> the packet value is not what the tooltip reads.'
+    Write-Host '     wrong NUMBER      -> the bit order is off; say which stat shows which.'
+    Write-Host '     fault or freeze   -> the record desynchronised. Items are 129 bytes now'
+    Write-Host '                          and the record 759, so a width error is live again.'
     Write-Host ''
     Write-Host '  2. MOBS ARE OFF. Nothing to test here.' -ForegroundColor DarkGray
     Write-Host '     The mob body faulted the client on 2026-08-19: 0xC0000005 at'
@@ -442,11 +452,15 @@ if ($SetFieldProbe) {
     Write-Host '     !map <id> still works and the prefix is ! not / - the client swallows'
     Write-Host '     unknown slash lines and never puts them on the wire.'
     Write-Host ''
-    Write-Host '  3. CLICK AN NPC (Heena or Roger). DOES A DIALOG BOX APPEAR?' -ForegroundColor Cyan
-    Write-Host '     It will say the quest is not implemented. That is the point - there is'
-    Write-Host '     no quest-result packet, so NO STATE ADVANCES. Text on screen is the'
-    Write-Host '     whole result. Nothing, no fault -> check world.log shows 0x055B going'
-    Write-Host '     out, then suspect the type or the flags.'
+    Write-Host '  3. CLICK AN NPC. DOES A DIALOG BOX APPEAR?' -ForegroundColor Cyan
+    Write-Host '     Robin on map 40 is the one that was silent last time: they have no quests,'
+    Write-Host '     so their click sends 0x00F2 and not the 0x0151 we were answering. Both'
+    Write-Host '     are answered now, so try a quest NPC (Heena, map 1) AND a quest-less'
+    Write-Host '     one (Robin, map 40) - they take different paths through the client.'
+    Write-Host '     The text says the quest is not implemented. That is the point: there is'
+    Write-Host '     no quest-result packet, so NO STATE ADVANCES.'
+    Write-Host '     Nothing, no fault -> check world.log shows 0x055B going out, then'
+    Write-Host '     suspect the message type or the flags.'
     Write-Host ''
     Write-Host '  4. OPEN CHANGE CHANNEL. IS CH.2 CREAM RATHER THAN GREY?' -ForegroundColor Cyan
     Write-Host '     CH.1 draws BLUE - it is the selected row, not a grey one. The two greys'
