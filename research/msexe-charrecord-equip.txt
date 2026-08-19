@@ -1,0 +1,377 @@
+// 140305776 .. 140305d85   block=.text
+140305776  e8 25 52 ff ff                    CALL 0x1402fa9a0
+14030577b  8b ce                             MOV ECX,ESI
+14030577d  0f 1f 00                          NOP dword ptr [RAX]
+140305780  80 38 00                          CMP byte ptr [RAX],0x0
+140305783  75 0f                             JNZ 0x140305794
+140305785  ff c1                             INC ECX
+140305787  48 ff c0                          INC RAX
+14030578a  83 f9 64                          CMP ECX,0x64
+14030578d  72 f1                             JC 0x140305780
+14030578f  e9 e9 05 00 00                    JMP 0x140305d7d
+140305794  41 bf 01 00 00 00                 MOV R15D,0x1
+14030579a  4c 8b 64 24 40                    MOV R12,qword ptr [RSP + 0x40]
+14030579f  49 8d 9c 24 c0 01 00 00           LEA RBX,[R12 + 0x1c0]
+1403057a7  49 bd ba e8 a2 8b 2e ba e8 02     MOV R13,0x2e8ba2e8ba2e8ba
+1403057b1  48 8b 0b                          MOV RCX,qword ptr [RBX]
+1403057b4  48 85 c9                          TEST RCX,RCX
+1403057b7  0f 84 66 01 00 00                 JZ 0x140305923
+1403057bd  48 83 c1 20                       ADD RCX,0x20
+1403057c1  e8 0a 4e e9 ff                    CALL 0x14019a5d0
+1403057c6  05 a0 ab e6 ff                    ADD EAX,0xffe6aba0
+1403057cb  3d 10 27 00 00                    CMP EAX,0x2710
+1403057d0  0f 83 4d 01 00 00                 JNC 0x140305923
+1403057d6  48 8b 0b                          MOV RCX,qword ptr [RBX]
+1403057d9  48 85 c9                          TEST RCX,RCX
+1403057dc  75 0f                             JNZ 0x1403057ed
+1403057de  33 d2                             XOR EDX,EDX
+1403057e0  b9 31 04 00 00                    MOV ECX,0x431
+1403057e5  e8 e6 d6 b4 02                    CALL 0x142e52ed0
+1403057ea  48 8b 0b                          MOV RCX,qword ptr [RBX]
+1403057ed  48 8b 01                          MOV RAX,qword ptr [RCX]
+1403057f0  ff 90 30 03 00 00                 CALL qword ptr [RAX + 0x330]
+1403057f6  4c 8b f0                          MOV R14,RAX
+1403057f9  48 85 c0                          TEST RAX,RAX
+1403057fc  0f 84 21 01 00 00                 JZ 0x140305923
+140305802  48 8b 0b                          MOV RCX,qword ptr [RBX]
+140305805  48 85 c9                          TEST RCX,RCX
+140305808  75 0f                             JNZ 0x140305819
+14030580a  33 d2                             XOR EDX,EDX
+14030580c  b9 31 04 00 00                    MOV ECX,0x431
+140305811  e8 ba d6 b4 02                    CALL 0x142e52ed0
+140305816  48 8b 0b                          MOV RCX,qword ptr [RBX]
+140305819  48 8b 01                          MOV RAX,qword ptr [RCX]
+14030581c  48 8d 95 38 02 00 00              LEA RDX,[RBP + 0x238]
+140305823  ff 90 80 00 00 00                 CALL qword ptr [RAX + 0x80]
+140305829  48 8b f8                          MOV RDI,RAX
+14030582c  48 8b 75 80                       MOV RSI,qword ptr [RBP + -0x80]
+140305830  48 8b 46 08                       MOV RAX,qword ptr [RSI + 0x8]
+140305834  48 89 45 d0                       MOV qword ptr [RBP + -0x30],RAX
+140305838  45 33 c0                          XOR R8D,R8D
+14030583b  44 89 45 d8                       MOV dword ptr [RBP + -0x28],R8D
+14030583f  48 8b ce                          MOV RCX,RSI
+140305842  44 38 40 19                       CMP byte ptr [RAX + 0x19],R8B
+140305846  75 2f                             JNZ 0x140305877
+140305848  48 8b 17                          MOV RDX,qword ptr [RDI]
+14030584b  0f 1f 44 00 00                    NOP dword ptr [RAX + RAX*0x1]
+140305850  48 89 45 d0                       MOV qword ptr [RBP + -0x30],RAX
+140305854  48 39 50 20                       CMP qword ptr [RAX + 0x20],RDX
+140305858  7d 0a                             JGE 0x140305864
+14030585a  44 89 45 d8                       MOV dword ptr [RBP + -0x28],R8D
+14030585e  48 8b 40 10                       MOV RAX,qword ptr [RAX + 0x10]
+140305862  eb 0d                             JMP 0x140305871
+140305864  c7 45 d8 01 00 00 00              MOV dword ptr [RBP + -0x28],0x1
+14030586b  48 8b c8                          MOV RCX,RAX
+14030586e  48 8b 00                          MOV RAX,qword ptr [RAX]
+140305871  44 38 40 19                       CMP byte ptr [RAX + 0x19],R8B
+140305875  74 d9                             JZ 0x140305850
+140305877  44 38 41 19                       CMP byte ptr [RCX + 0x19],R8B
+14030587b  75 0d                             JNZ 0x14030588a
+14030587d  48 8b 41 20                       MOV RAX,qword ptr [RCX + 0x20]
+140305881  48 39 07                          CMP qword ptr [RDI],RAX
+140305884  0f 8d 97 00 00 00                 JGE 0x140305921
+14030588a  4c 39 6d 88                       CMP qword ptr [RBP + -0x78],R13
+14030588e  0f 84 04 3b 00 00                 JZ 0x140309398
+140305894  48 8d 45 80                       LEA RAX,[RBP + -0x80]
+140305898  48 89 85 b0 01 00 00              MOV qword ptr [RBP + 0x1b0],RAX
+14030589f  4c 89 85 b8 01 00 00              MOV qword ptr [RBP + 0x1b8],R8
+1403058a6  ba 58 00 00 00                    MOV EDX,0x58
+1403058ab  48 8d 0d ee 0f 7d 03              LEA RCX,[0x143ad68a0]
+1403058b2  e8 c9 5e e9 ff                    CALL 0x14019b780
+1403058b7  4c 8b c0                          MOV R8,RAX
+1403058ba  48 8b 07                          MOV RAX,qword ptr [RDI]
+1403058bd  49 89 40 20                       MOV qword ptr [R8 + 0x20],RAX
+1403058c1  41 0f 10 06                       MOVUPS XMM0,xmmword ptr [R14]
+1403058c5  41 0f 11 40 28                    MOVUPS xmmword ptr [R8 + 0x28],XMM0
+1403058ca  41 0f 10 4e 10                    MOVUPS XMM1,xmmword ptr [R14 + 0x10]
+1403058cf  41 0f 11 48 38                    MOVUPS xmmword ptr [R8 + 0x38],XMM1
+1403058d4  f2 41 0f 10 46 20                 MOVSD XMM0,qword ptr [R14 + 0x20]
+1403058da  f2 41 0f 11 40 48                 MOVSD qword ptr [R8 + 0x48],XMM0
+1403058e0  41 0f b6 46 28                    MOVZX EAX,byte ptr [R14 + 0x28]
+1403058e5  41 88 40 50                       MOV byte ptr [R8 + 0x50],AL
+1403058e9  49 89 30                          MOV qword ptr [R8],RSI
+1403058ec  49 89 70 08                       MOV qword ptr [R8 + 0x8],RSI
+1403058f0  49 89 70 10                       MOV qword ptr [R8 + 0x10],RSI
+1403058f4  66 41 c7 40 18 00 00              MOV word ptr [R8 + 0x18],0x0
+1403058fb  33 f6                             XOR ESI,ESI
+1403058fd  48 89 b5 b8 01 00 00              MOV qword ptr [RBP + 0x1b8],RSI
+140305904  0f 10 45 d0                       MOVUPS XMM0,xmmword ptr [RBP + -0x30]
+140305908  0f 29 85 00 02 00 00              MOVAPS xmmword ptr [RBP + 0x200],XMM0
+14030590f  48 8d 95 00 02 00 00              LEA RDX,[RBP + 0x200]
+140305916  48 8d 4d 80                       LEA RCX,[RBP + -0x80]
+14030591a  e8 71 8e 00 00                    CALL 0x14030e790
+14030591f  eb 02                             JMP 0x140305923
+140305921  33 f6                             XOR ESI,ESI
+140305923  49 ff c7                          INC R15
+140305926  48 83 c3 10                       ADD RBX,0x10
+14030592a  49 83 ff 1f                       CMP R15,0x1f
+14030592e  0f 8e 7d fe ff ff                 JLE 0x1403057b1
+140305934  48 8b 7c 24 58                    MOV RDI,qword ptr [RSP + 0x58]
+140305939  48 8b 07                          MOV RAX,qword ptr [RDI]
+14030593c  48 85 c0                          TEST RAX,RAX
+14030593f  0f 85 46 01 00 00                 JNZ 0x140305a8b
+140305945  c7 44 24 30 01 00 00 00           MOV dword ptr [RSP + 0x30],0x1
+14030594d  44 8b ee                          MOV R13D,ESI
+140305950  48 8b de                          MOV RBX,RSI
+140305953  48 89 5c 24 58                    MOV qword ptr [RSP + 0x58],RBX
+140305958  41 8b cd                          MOV ECX,R13D
+14030595b  e8 30 fe f4 ff                    CALL 0x140255790
+140305960  85 c0                             TEST EAX,EAX
+140305962  0f 85 fa 03 00 00                 JNZ 0x140305d62
+140305968  4e 8d 3c 23                       LEA R15,[RBX + R12*0x1]
+14030596c  8b fe                             MOV EDI,ESI
+14030596e  49 8d 8f a8 05 00 00              LEA RCX,[R15 + 0x5a8]
+140305975  e8 06 d1 f2 ff                    CALL 0x140232a80
+14030597a  85 c0                             TEST EAX,EAX
+14030597c  0f 84 e0 03 00 00                 JZ 0x140305d62
+140305982  4c 8b e6                          MOV R12,RSI
+140305985  66 66 66 0f 1f 84 00 00 00 00 00   NOP word ptr [RAX + RAX*0x1]
+140305990  49 8b 87 a8 05 00 00              MOV RAX,qword ptr [R15 + 0x5a8]
+140305997  48 85 c0                          TEST RAX,RAX
+14030599a  8b ce                             MOV ECX,ESI
+14030599c  74 03                             JZ 0x1403059a1
+14030599e  8b 48 f8                          MOV ECX,dword ptr [RAX + -0x8]
+1403059a1  85 ff                             TEST EDI,EDI
+1403059a3  78 04                             JS 0x1403059a9
+1403059a5  3b f9                             CMP EDI,ECX
+1403059a7  72 1f                             JC 0x1403059c8
+1403059a9  48 85 c0                          TEST RAX,RAX
+1403059ac  44 8b c6                          MOV R8D,ESI
+1403059af  74 04                             JZ 0x1403059b5
+1403059b1  44 8b 40 f8                       MOV R8D,dword ptr [RAX + -0x8]
+1403059b5  8b d7                             MOV EDX,EDI
+1403059b7  b9 c6 00 00 00                    MOV ECX,0xc6
+1403059bc  e8 cf e8 b4 02                    CALL 0x142e54290
+1403059c1  49 8b 87 a8 05 00 00              MOV RAX,qword ptr [R15 + 0x5a8]
+1403059c8  4a 8d 1c 20                       LEA RBX,[RAX + R12*0x1]
+1403059cc  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+1403059d0  48 85 c9                          TEST RCX,RCX
+1403059d3  0f 84 65 03 00 00                 JZ 0x140305d3e
+1403059d9  48 83 c1 20                       ADD RCX,0x20
+1403059dd  e8 ee 4b e9 ff                    CALL 0x14019a5d0
+1403059e2  05 a0 ab e6 ff                    ADD EAX,0xffe6aba0
+1403059e7  3d 10 27 00 00                    CMP EAX,0x2710
+1403059ec  0f 83 4c 03 00 00                 JNC 0x140305d3e
+1403059f2  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+1403059f6  48 85 c9                          TEST RCX,RCX
+1403059f9  75 10                             JNZ 0x140305a0b
+1403059fb  33 d2                             XOR EDX,EDX
+1403059fd  b9 31 04 00 00                    MOV ECX,0x431
+140305a02  e8 c9 d4 b4 02                    CALL 0x142e52ed0
+140305a07  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+140305a0b  48 8b 01                          MOV RAX,qword ptr [RCX]
+140305a0e  ff 90 30 03 00 00                 CALL qword ptr [RAX + 0x330]
+140305a14  4c 8b f0                          MOV R14,RAX
+140305a17  48 85 c0                          TEST RAX,RAX
+140305a1a  0f 84 1e 03 00 00                 JZ 0x140305d3e
+140305a20  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+140305a24  48 85 c9                          TEST RCX,RCX
+140305a27  75 10                             JNZ 0x140305a39
+140305a29  33 d2                             XOR EDX,EDX
+140305a2b  b9 31 04 00 00                    MOV ECX,0x431
+140305a30  e8 9b d4 b4 02                    CALL 0x142e52ed0
+140305a35  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+140305a39  48 8b 01                          MOV RAX,qword ptr [RCX]
+140305a3c  48 8d 95 30 02 00 00              LEA RDX,[RBP + 0x230]
+140305a43  ff 90 80 00 00 00                 CALL qword ptr [RAX + 0x80]
+140305a49  48 8b d8                          MOV RBX,RAX
+140305a4c  48 8b 75 80                       MOV RSI,qword ptr [RBP + -0x80]
+140305a50  48 8b 46 08                       MOV RAX,qword ptr [RSI + 0x8]
+140305a54  48 89 45 d0                       MOV qword ptr [RBP + -0x30],RAX
+140305a58  45 33 c0                          XOR R8D,R8D
+140305a5b  44 89 45 d8                       MOV dword ptr [RBP + -0x28],R8D
+140305a5f  48 8b ce                          MOV RCX,RSI
+140305a62  44 38 40 19                       CMP byte ptr [RAX + 0x19],R8B
+140305a66  0f 85 1c 02 00 00                 JNZ 0x140305c88
+140305a6c  48 8b 13                          MOV RDX,qword ptr [RBX]
+140305a6f  90                                NOP
+140305a70  48 89 45 d0                       MOV qword ptr [RBP + -0x30],RAX
+140305a74  48 39 50 20                       CMP qword ptr [RAX + 0x20],RDX
+140305a78  0f 8d f3 01 00 00                 JGE 0x140305c71
+140305a7e  44 89 45 d8                       MOV dword ptr [RBP + -0x28],R8D
+140305a82  48 8b 40 10                       MOV RAX,qword ptr [RAX + 0x10]
+140305a86  e9 f3 01 00 00                    JMP 0x140305c7e
+140305a8b  44 8b 70 f8                       MOV R14D,dword ptr [RAX + -0x8]
+140305a8f  41 ff ce                          DEC R14D
+140305a92  b9 01 00 00 00                    MOV ECX,0x1
+140305a97  89 4c 24 30                       MOV dword ptr [RSP + 0x30],ECX
+140305a9b  44 3b f1                          CMP R14D,ECX
+140305a9e  0f 8c a9 fe ff ff                 JL 0x14030594d
+140305aa4  8b d9                             MOV EBX,ECX
+140305aa6  48 8b 17                          MOV RDX,qword ptr [RDI]
+140305aa9  48 85 d2                          TEST RDX,RDX
+140305aac  8b c6                             MOV EAX,ESI
+140305aae  74 03                             JZ 0x140305ab3
+140305ab0  8b 42 f8                          MOV EAX,dword ptr [RDX + -0x8]
+140305ab3  85 db                             TEST EBX,EBX
+140305ab5  78 04                             JS 0x140305abb
+140305ab7  3b d8                             CMP EBX,EAX
+140305ab9  72 1f                             JC 0x140305ada
+140305abb  48 85 d2                          TEST RDX,RDX
+140305abe  44 8b c6                          MOV R8D,ESI
+140305ac1  74 04                             JZ 0x140305ac7
+140305ac3  44 8b 42 f8                       MOV R8D,dword ptr [RDX + -0x8]
+140305ac7  8b d3                             MOV EDX,EBX
+140305ac9  b9 bc 00 00 00                    MOV ECX,0xbc
+140305ace  e8 bd e7 b4 02                    CALL 0x142e54290
+140305ad3  48 8b 17                          MOV RDX,qword ptr [RDI]
+140305ad6  8b 4c 24 30                       MOV ECX,dword ptr [RSP + 0x30]
+140305ada  48 63 db                          MOVSXD RBX,EBX
+140305add  48 c1 e3 04                       SHL RBX,0x4
+140305ae1  48 03 da                          ADD RBX,RDX
+140305ae4  48 8b 43 08                       MOV RAX,qword ptr [RBX + 0x8]
+140305ae8  48 85 c0                          TEST RAX,RAX
+140305aeb  0f 84 65 01 00 00                 JZ 0x140305c56
+140305af1  48 8d 48 20                       LEA RCX,[RAX + 0x20]
+140305af5  e8 d6 4a e9 ff                    CALL 0x14019a5d0
+140305afa  05 a0 ab e6 ff                    ADD EAX,0xffe6aba0
+140305aff  3d 10 27 00 00                    CMP EAX,0x2710
+140305b04  0f 83 46 01 00 00                 JNC 0x140305c50
+140305b0a  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+140305b0e  48 85 c9                          TEST RCX,RCX
+140305b11  75 10                             JNZ 0x140305b23
+140305b13  33 d2                             XOR EDX,EDX
+140305b15  b9 31 04 00 00                    MOV ECX,0x431
+140305b1a  e8 b1 d3 b4 02                    CALL 0x142e52ed0
+140305b1f  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+140305b23  48 8b 01                          MOV RAX,qword ptr [RCX]
+140305b26  ff 90 30 03 00 00                 CALL qword ptr [RAX + 0x330]
+140305b2c  48 8b f0                          MOV RSI,RAX
+140305b2f  48 85 c0                          TEST RAX,RAX
+140305b32  0f 84 18 01 00 00                 JZ 0x140305c50
+140305b38  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+140305b3c  48 85 c9                          TEST RCX,RCX
+140305b3f  75 10                             JNZ 0x140305b51
+140305b41  33 d2                             XOR EDX,EDX
+140305b43  b9 31 04 00 00                    MOV ECX,0x431
+140305b48  e8 83 d3 b4 02                    CALL 0x142e52ed0
+140305b4d  48 8b 4b 08                       MOV RCX,qword ptr [RBX + 0x8]
+140305b51  48 8b 01                          MOV RAX,qword ptr [RCX]
+140305b54  48 8d 95 40 02 00 00              LEA RDX,[RBP + 0x240]
+140305b5b  ff 90 80 00 00 00                 CALL qword ptr [RAX + 0x80]
+140305b61  48 8b d8                          MOV RBX,RAX
+140305b64  48 8b 7d 80                       MOV RDI,qword ptr [RBP + -0x80]
+140305b68  48 8b 47 08                       MOV RAX,qword ptr [RDI + 0x8]
+140305b6c  48 89 45 d0                       MOV qword ptr [RBP + -0x30],RAX
+140305b70  45 33 c0                          XOR R8D,R8D
+140305b73  44 89 45 d8                       MOV dword ptr [RBP + -0x28],R8D
+140305b77  48 8b cf                          MOV RCX,RDI
+140305b7a  44 38 40 19                       CMP byte ptr [RAX + 0x19],R8B
+140305b7e  75 2a                             JNZ 0x140305baa
+140305b80  48 8b 13                          MOV RDX,qword ptr [RBX]
+140305b83  48 89 45 d0                       MOV qword ptr [RBP + -0x30],RAX
+140305b87  48 39 50 20                       CMP qword ptr [RAX + 0x20],RDX
+140305b8b  7d 0a                             JGE 0x140305b97
+140305b8d  44 89 45 d8                       MOV dword ptr [RBP + -0x28],R8D
+140305b91  48 8b 40 10                       MOV RAX,qword ptr [RAX + 0x10]
+140305b95  eb 0d                             JMP 0x140305ba4
+140305b97  c7 45 d8 01 00 00 00              MOV dword ptr [RBP + -0x28],0x1
+140305b9e  48 8b c8                          MOV RCX,RAX
+140305ba1  48 8b 00                          MOV RAX,qword ptr [RAX]
+140305ba4  44 38 40 19                       CMP byte ptr [RAX + 0x19],R8B
+140305ba8  74 d9                             JZ 0x140305b83
+140305baa  44 38 41 19                       CMP byte ptr [RCX + 0x19],R8B
+140305bae  75 0d                             JNZ 0x140305bbd
+140305bb0  48 8b 41 20                       MOV RAX,qword ptr [RCX + 0x20]
+140305bb4  48 39 03                          CMP qword ptr [RBX],RAX
+140305bb7  0f 8d 93 00 00 00                 JGE 0x140305c50
+140305bbd  4c 39 6d 88                       CMP qword ptr [RBP + -0x78],R13
+140305bc1  0f 84 d7 37 00 00                 JZ 0x14030939e
+140305bc7  48 8d 45 80                       LEA RAX,[RBP + -0x80]
+140305bcb  48 89 85 60 01 00 00              MOV qword ptr [RBP + 0x160],RAX
+140305bd2  4c 89 85 68 01 00 00              MOV qword ptr [RBP + 0x168],R8
+140305bd9  ba 58 00 00 00                    MOV EDX,0x58
+140305bde  48 8d 0d bb 0c 7d 03              LEA RCX,[0x143ad68a0]
+140305be5  e8 96 5b e9 ff                    CALL 0x14019b780
+140305bea  4c 8b c0                          MOV R8,RAX
+140305bed  48 8b 03                          MOV RAX,qword ptr [RBX]
+140305bf0  49 89 40 20                       MOV qword ptr [R8 + 0x20],RAX
+140305bf4  0f 10 06                          MOVUPS XMM0,xmmword ptr [RSI]
+140305bf7  41 0f 11 40 28                    MOVUPS xmmword ptr [R8 + 0x28],XMM0
+140305bfc  0f 10 4e 10                       MOVUPS XMM1,xmmword ptr [RSI + 0x10]
+140305c00  41 0f 11 48 38                    MOVUPS xmmword ptr [R8 + 0x38],XMM1
+140305c05  f2 0f 10 46 20                    MOVSD XMM0,qword ptr [RSI + 0x20]
+140305c0a  f2 41 0f 11 40 48                 MOVSD qword ptr [R8 + 0x48],XMM0
+140305c10  0f b6 46 28                       MOVZX EAX,byte ptr [RSI + 0x28]
+140305c14  41 88 40 50                       MOV byte ptr [R8 + 0x50],AL
+140305c18  49 89 38                          MOV qword ptr [R8],RDI
+140305c1b  49 89 78 08                       MOV qword ptr [R8 + 0x8],RDI
+140305c1f  49 89 78 10                       MOV qword ptr [R8 + 0x10],RDI
+140305c23  66 41 c7 40 18 00 00              MOV word ptr [R8 + 0x18],0x0
+140305c2a  33 f6                             XOR ESI,ESI
+140305c2c  48 89 b5 68 01 00 00              MOV qword ptr [RBP + 0x168],RSI
+140305c33  0f 10 45 d0                       MOVUPS XMM0,xmmword ptr [RBP + -0x30]
+140305c37  0f 29 85 10 02 00 00              MOVAPS xmmword ptr [RBP + 0x210],XMM0
+140305c3e  48 8d 95 10 02 00 00              LEA RDX,[RBP + 0x210]
+140305c45  48 8d 4d 80                       LEA RCX,[RBP + -0x80]
+140305c49  e8 42 8b 00 00                    CALL 0x14030e790
+140305c4e  eb 02                             JMP 0x140305c52
+140305c50  33 f6                             XOR ESI,ESI
+140305c52  8b 4c 24 30                       MOV ECX,dword ptr [RSP + 0x30]
+140305c56  ff c1                             INC ECX
+140305c58  89 4c 24 30                       MOV dword ptr [RSP + 0x30],ECX
+140305c5c  8b d9                             MOV EBX,ECX
+140305c5e  41 3b ce                          CMP ECX,R14D
+140305c61  0f 8f e6 fc ff ff                 JG 0x14030594d
+140305c67  48 8b 7c 24 58                    MOV RDI,qword ptr [RSP + 0x58]
+140305c6c  e9 35 fe ff ff                    JMP 0x140305aa6
+140305c71  c7 45 d8 01 00 00 00              MOV dword ptr [RBP + -0x28],0x1
+140305c78  48 8b c8                          MOV RCX,RAX
+140305c7b  48 8b 00                          MOV RAX,qword ptr [RAX]
+140305c7e  44 38 40 19                       CMP byte ptr [RAX + 0x19],R8B
+140305c82  0f 84 e8 fd ff ff                 JZ 0x140305a70
+140305c88  44 38 41 19                       CMP byte ptr [RCX + 0x19],R8B
+140305c8c  75 0d                             JNZ 0x140305c9b
+140305c8e  48 8b 41 20                       MOV RAX,qword ptr [RCX + 0x20]
+140305c92  48 39 03                          CMP qword ptr [RBX],RAX
+140305c95  0f 8d a1 00 00 00                 JGE 0x140305d3c
+140305c9b  48 b8 ba e8 a2 8b 2e ba e8 02     MOV RAX,0x2e8ba2e8ba2e8ba
+140305ca5  48 39 45 88                       CMP qword ptr [RBP + -0x78],RAX
+140305ca9  0f 84 e3 36 00 00                 JZ 0x140309392
+140305caf  48 8d 45 80                       LEA RAX,[RBP + -0x80]
+140305cb3  48 89 85 c0 01 00 00              MOV qword ptr [RBP + 0x1c0],RAX
+140305cba  4c 89 85 c8 01 00 00              MOV qword ptr [RBP + 0x1c8],R8
+140305cc1  ba 58 00 00 00                    MOV EDX,0x58
+140305cc6  48 8d 0d d3 0b 7d 03              LEA RCX,[0x143ad68a0]
+140305ccd  e8 ae 5a e9 ff                    CALL 0x14019b780
+140305cd2  4c 8b c0                          MOV R8,RAX
+140305cd5  48 8b 03                          MOV RAX,qword ptr [RBX]
+140305cd8  49 89 40 20                       MOV qword ptr [R8 + 0x20],RAX
+140305cdc  41 0f 10 06                       MOVUPS XMM0,xmmword ptr [R14]
+140305ce0  41 0f 11 40 28                    MOVUPS xmmword ptr [R8 + 0x28],XMM0
+140305ce5  41 0f 10 4e 10                    MOVUPS XMM1,xmmword ptr [R14 + 0x10]
+140305cea  41 0f 11 48 38                    MOVUPS xmmword ptr [R8 + 0x38],XMM1
+140305cef  f2 41 0f 10 46 20                 MOVSD XMM0,qword ptr [R14 + 0x20]
+140305cf5  f2 41 0f 11 40 48                 MOVSD qword ptr [R8 + 0x48],XMM0
+140305cfb  41 0f b6 46 28                    MOVZX EAX,byte ptr [R14 + 0x28]
+140305d00  41 88 40 50                       MOV byte ptr [R8 + 0x50],AL
+140305d04  49 89 30                          MOV qword ptr [R8],RSI
+140305d07  49 89 70 08                       MOV qword ptr [R8 + 0x8],RSI
+140305d0b  49 89 70 10                       MOV qword ptr [R8 + 0x10],RSI
+140305d0f  66 41 c7 40 18 00 00              MOV word ptr [R8 + 0x18],0x0
+140305d16  33 f6                             XOR ESI,ESI
+140305d18  48 89 b5 c8 01 00 00              MOV qword ptr [RBP + 0x1c8],RSI
+140305d1f  0f 10 45 d0                       MOVUPS XMM0,xmmword ptr [RBP + -0x30]
+140305d23  0f 29 85 20 02 00 00              MOVAPS xmmword ptr [RBP + 0x220],XMM0
+140305d2a  48 8d 95 20 02 00 00              LEA RDX,[RBP + 0x220]
+140305d31  48 8d 4d 80                       LEA RCX,[RBP + -0x80]
+140305d35  e8 56 8a 00 00                    CALL 0x14030e790
+140305d3a  eb 02                             JMP 0x140305d3e
+140305d3c  33 f6                             XOR ESI,ESI
+140305d3e  ff c7                             INC EDI
+140305d40  49 83 c4 10                       ADD R12,0x10
+140305d44  49 8d 8f a8 05 00 00              LEA RCX,[R15 + 0x5a8]
+140305d4b  e8 30 cd f2 ff                    CALL 0x140232a80
+140305d50  3b f8                             CMP EDI,EAX
+140305d52  0f 82 38 fc ff ff                 JC 0x140305990
+140305d58  48 8b 5c 24 58                    MOV RBX,qword ptr [RSP + 0x58]
+140305d5d  4c 8b 64 24 40                    MOV R12,qword ptr [RSP + 0x40]
+140305d62  41 ff c5                          INC R13D
+140305d65  48 83 c3 08                       ADD RBX,0x8
+140305d69  48 89 5c 24 58                    MOV qword ptr [RSP + 0x58],RBX
+140305d6e  41 83 fd 05                       CMP R13D,0x5
+140305d72  0f 8c e0 fb ff ff                 JL 0x140305958
+140305d78  48 8b 5c 24 48                    MOV RBX,qword ptr [RSP + 0x48]
+140305d7d  89 b5 50 02 00 00                 MOV dword ptr [RBP + 0x250],ESI
+140305d83  33 d2                             XOR EDX,EDX
+140305d85  41 b8 60 09 00 00                 MOV R8D,0x960
