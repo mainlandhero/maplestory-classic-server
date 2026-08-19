@@ -242,15 +242,22 @@ Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
     Write-Host ""
-    Write-Host "SET-FIELD PROBE RUN. What to look for, in client-patched\maplecw-hook.log:" -ForegroundColor Cyan
-    Write-Host "  no WATCH lines at all      the hook never armed. Re-run; do not conclude anything."
-    Write-Host "  no 142097f80              0x01A0 never reached the handler - the opcode or the"
-    Write-Host "                            routing is wrong. That is the finding worth having."
-    Write-Host "  142097f80 but no 142cfb500  it arrived and the world object was NULL."
-    Write-Host "  142cfb500 peek byte != 0  it arrived, and the latch swallowed it silently."
-    Write-Host "  142cfb500 peek byte == 0  it arrived and was processed. Then watch the screen."
+    Write-Host "SET-FIELD PROBE RUN. The client is answered with a MINIMAL SetField:" -ForegroundColor Cyan
+    Write-Host "  characterData=1, every presence flag clear, every count zero."
     Write-Host ""
-    Write-Host "  This cannot put a character in a map. Nothing visible is the expected outcome." -ForegroundColor Yellow
+    Write-Host "First, in client-patched\maplecw-hook.log:"
+    Write-Host "  no WATCH lines at all     the hook never armed. Re-run; conclude nothing."
+    Write-Host "  no 142097f80              the packet never reached SetField at all."
+    Write-Host "  142cfb500 peek byte == 0  it arrived and was processed - expected."
+    Write-Host ""
+    Write-Host "Then the question this run exists for: is there a CLIENT FAULT line?" -ForegroundColor Cyan
+    Write-Host "  fault at 1402fa55c   unchanged from last run - the record branch did not help."
+    Write-Host "  fault ELSEWHERE      progress. It got further, and the address says how far."
+    Write-Host "  NO fault at all      the record was accepted. The best outcome available."
+    Write-Host ""
+    Write-Host "  This does NOT put the character on map 1 - with characterData=1 the map" -ForegroundColor Yellow
+    Write-Host "  comes from the record, and the record is all zeros. Map 0 is not a map." -ForegroundColor Yellow
+    Write-Host "  Nothing visible on screen is still the expected outcome." -ForegroundColor Yellow
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
