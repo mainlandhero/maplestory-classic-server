@@ -308,6 +308,61 @@ different path, and the six tokens are the only thing that changed.
 
 **Do not pass `-SessionTokens` in ordinary runs.** The measurement is done.
 
+## The `create=on` flag: why there may be no packet to find
+
+The owner asked for the packet that sets the create-character flag, so the patch can go. Here is
+what is established, and it points away from a packet.
+
+The flag is not a byte - it is an **obfuscated, self-checksumming blob** at `DAT_143ac8170`,
+six bytes that get reallocated every 0x6f accesses and rescrambled with a rolling checksum
+(`FUN_140c9e8a0`). That is value-protection machinery, the kind used for entitlements rather
+than for protocol state.
+
+Three functions touch it, and an exact scan of `.text` for direct `call rel32` sites -
+**1,055,010 call instructions examined** - gives:
+
+| function | role | direct callers in `.text` |
+|---|---|---|
+| `FUN_140c9e230` | **setter** (writes "enabled") | **0** |
+| `FUN_140c9e3f0` | getter | 2 - `0x141177a8c`, `0x141b24d22` |
+| `FUN_140c9e8a0` | scrambler / init | 1 - **`0x1415d1419`** |
+
+Two things fall out.
+
+**The setter genuinely has no caller in readable code.** `STATUS.md` asserted this; it is now
+verified independently rather than taken on trust, by an instrument that demonstrably finds
+callers (it found three for the other two functions). Themida's VM interprets its own
+bytecode, so a virtualised caller is not an `E8` instruction anywhere and this scan could
+never see it - the negative is real but its scope is "nothing in `.text`".
+
+**The flag is initialised during the handshake.** `0x1415d1419` is inside `FUN_1415d10e0`,
+the connection-handshake function. So the blob is set up when the connection is made, and
+whatever later flips it does so from code we cannot read.
+
+### What this means for the ask
+
+**"Find the packet" may be the wrong question.** No readable code path leads from a packet
+handler to the setter, and the flag's shape - protected, initialised at connect, read by a
+UI gate - fits a client-side entitlement set by the Nexon platform layer rather than by the
+game protocol.
+
+Two routes remain, and they answer different questions:
+
+1. **The in-process opcode walk, with the setter as the oracle.** `crates/grap-stub` already
+   does this: snapshot a dispatched packet, rewrite its opcode, re-dispatch, watch. Arm a
+   watch on `FUN_140c9e230` and one launch covers the whole inbound opcode space instead of
+   two opcodes per launch. If *any* inbound packet sets the flag, this finds it; if none
+   does, that is a real negative and route 2 is the answer. **Blocked on one small change:**
+   `-Probe` currently takes either a walk range *or* watch targets, and this needs a walk
+   plus the two mandatory patches (`1415db360:ret`, `141b2a280:rdx=0`) or the client dies at
+   ~37s and the login dialog blocks the screen.
+2. **`nexon_api_x64.dll` / `nmcogame64.dll`, both unpacked and readable.** If the flag is an
+   entitlement rather than protocol, this is where it is set, and it needs no client runs to
+   start.
+
+Route 1 is cheap and settles whether a packet exists at all, which is what the owner actually
+asked. Do it first.
+
 ## Still standing on client patches
 
 The server is real; the run around it is not yet. `test-server.ps1` still applies:
