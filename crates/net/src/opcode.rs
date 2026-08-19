@@ -1095,6 +1095,38 @@ fn migrate_tail_word(plain: u32, key: u32, offset: u32) -> u32 {
     t.wrapping_sub(0x369F_144D).wrapping_sub(key >> 7) ^ key
 }
 
+/// **`SetField`** - the packet that puts a character into a map, and the one the client is
+/// waiting for after it migrates. Handler `FUN_142097f80`, 11726 bytes.
+///
+/// Identified statically 2026-08-19. Three lines agree, and the body layout is a separate
+/// question written up in `research/msexe-stage-setfield.md`:
+///
+/// * **Block arithmetic.** `0x0070` is `InventoryOperation`, decoded to assembly, and in
+///   the reference source that opcode is the *first* of the character-data block. mscw's
+///   game dispatcher `FUN_142cbaa80` starts there and stops at `0x019f` - spanning exactly
+///   304 values, the same size as the reference's block. So `0x01a0` begins the next block,
+///   which is the stage block, which begins with `SetField`.
+/// * **A different dispatcher takes over at exactly that boundary.** `0x01a0..0x01a3` goes
+///   to `FUN_142097ee0`, a stage object's *virtual* `OnPacket` rather than the world
+///   singleton's. Correct, because `SetField` is addressed to the stage.
+/// * **The handler announces a channel change.** It reads a channel id, compares it
+///   with the one the world already holds, and on a difference displays a literal
+///   that reads "Channel" with a CR, a TAB, a CR and an LF spliced through it -
+///   which is why searching the image for the word never found this handler.
+///
+/// **No stage transition is needed before sending it.** The login stage's own `OnPacket`
+/// (`FUN_141b25f30`) ends with
+///
+/// ```c
+/// if (opcode - 0x1a0 < 4)        FUN_142097ee0(this, opcode, packet);   // this packet
+/// else if (opcode - 0x51 < 0x1f) FUN_141b82b00(this, opcode, packet);
+/// ```
+///
+/// so it chains to the stage base class for exactly this range. The client will act on
+/// `SetField` while it still believes it is in the login stage, which is where it sits
+/// while showing "Connecting...".
+pub const SET_FIELD: u16 = 0x01A0;
+
 /// What the client computes from a tail word - the forward direction, so a test can prove
 /// [`migrate_tail_word`] inverts it rather than asserting a hand-computed constant.
 #[cfg(test)]

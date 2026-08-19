@@ -214,7 +214,9 @@ brackets them with `FUN_142cb9260(world)` read before and after, and when the tw
 builds and displays the string
 
 ```
-"Cha n	ne
+"Ch
+a n	n
+e
 l"        -> "Channel", with control characters spliced in
 ```
 
@@ -226,7 +228,29 @@ mistake was the derivation (COMDAT folding, above), not the family. `FUN_142097e
 real stage `OnPacket`, and two of the six override it - `FUN_141b82b00` (`0x51..0x6f`) and
 `FUN_141df5940` (`0x1001+`, `0x8002+`, `0xa002+`).
 
-Full layout: `research/msexe-stage-setfield.md`.
+## No stage transition is needed first, and the `0x60..0x6f` gap was never a gap
+
+The login stage's own `OnPacket` ends its `default` branch with a chain to its base class:
+
+```c
+switchD_141b25f9b_caseD_1:
+    if (iVar4 - 0x1a0U < 4)        FUN_142097ee0(param_1, param_2, param_3);
+    else if (iVar4 - 0x51U < 0x1f) FUN_141b82b00(param_1, param_2, param_3);
+```
+
+Two things fall out of four lines.
+
+**`SetField` is handled while the client still believes it is in the login stage.** That is
+the stage it is in while showing "Connecting...", and `0x1a0..0x1a3` is exactly the range it
+forwards. So a `SetField` can be sent the moment the migration hello arrives, with no
+transition to arrange first and nothing to get wrong about ordering.
+
+**`0x60..0x6f` was never unclaimed.** `FUN_141b82b00` covers `0x51..0x6f` as an inherited
+handler, not as a rival stage. Its apparent overlap with the login stage's own `0x00..0x5f`
+is not an overlap at all: the login switch matches its own cases *first*, and only what it
+does not match falls through to this chain. The effective ranges are disjoint.
+
+Full layout of the packet: `research/msexe-stage-setfield.md`.
 
 ## Not yet established
 
@@ -237,5 +261,5 @@ Full layout: `research/msexe-stage-setfield.md`.
   chain runs off into the virtualised region and static reading stops there.
 * Whether the login connection reaches `FUN_141b25f30` through this same entry or through
   the vtable it does sit in (slot 76 of `0x1433fd540`).
-* Opcodes `0x60..0x6f`, which neither dispatcher claims.
+* What `FUN_14177b7e0` handles - the third entry's dispatcher, still unread.
 
