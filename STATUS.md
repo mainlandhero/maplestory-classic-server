@@ -311,15 +311,21 @@ picked.
 > **0-indexed**. The client's "channel 1" is our channel `0` on 8485, and its "channel 2" is
 > our channel `1` on 8486.
 
-**What is not built is the swap itself.** The in-game Change Channel request arrives on the
-**channel** connection and its opcode is unknown - the login flow cannot carry it, because in
-mode 5 the client never sends a world/channel selection at all, going straight from `0x0080`
-to `0x0078`. Answering it will also mean minting a migration for the *target* channel, which
-`create_migration` already takes as a parameter.
+**What is not built is the swap itself, and this is now a live hazard.** The request is
+**`0x00D2`** on the **channel** connection (above), and **nothing answers it**. Until the
+enable byte landed, that did not matter, because the click never produced a packet. Now it
+may.
 
-> **Next step:** launch with two channels, open Change Channel, and see (a) whether two are
-> listed and (b) what the client sends when one is picked. Same method that named `0x00D1`
-> and `0x0151` - the client identifies its own request far more cheaply than a static search.
+> **An unanswered packet freezes the client's whole UI** - every button, including the quit
+> prompt's OK. So on the next run, **click Change Channel last**. If the client freezes
+> right after, that is the unanswered `0x00D2`, not a crash, and `world.log`'s last inbound
+> line names it - which is the measurement this run is for. Do the equipment and dialogue
+> checks first, because a freeze ends the session.
+>
+> The login flow cannot carry the swap: in mode 5 the client never sends a world/channel
+> selection at all, going straight from `0x0080` to `0x0078`. Answering it will mean minting
+> a migration for the **target** channel, which `create_migration` already takes as a
+> parameter, and handing back that channel's address the way `0x0011` does at login.
 
 ### 2b. Newly identified packets - the client keeps naming its own requests
 
