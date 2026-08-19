@@ -35,6 +35,11 @@ The old harness still exists and still works - `test-charselect.ps1 -SkipNetChec
 the right tool for capturing packets or trying a hand-written body. It answers from canned
 bodies and persists nothing.
 
+**Reverse engineering the client: read `docs/ghidra.md` first.** The working command line,
+the JDK 21 requirement, why the project locks (it matters the moment you spawn a subagent),
+which of the seven packet-read primitives exist, and the two instrument mistakes that have
+each produced a clean, confident, wrong answer here.
+
 Where the answers land:
 
 | file | what is in it |
@@ -1610,6 +1615,9 @@ null-coalescing.
   -Restore` puts the real DLL back.
 - Ghidra projects in `research/ghidra/` (~1.2 GB, gitignored). `msexe`, `grap64`,
   `mssecure`, `nexoncm` are all analysed — reuse them rather than re-importing.
+- **Ghidra: `docs/ghidra.md` is the full workflow** - read that, not this bullet. The two
+  things that bite first are the JDK, below, and that **the project locks**: never let a
+  subagent run it while you are.
 - **Ghidra needs JDK 21, not 25.** Under JDK 25 the bundled Felix 7.0.5 aborts with
   `Bundle org.apache.felix.framework [0] The data file must be inside the data dir`.
   Prefix headless runs with:
