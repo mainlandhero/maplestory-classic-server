@@ -155,6 +155,35 @@ def plant_character_and_migration(dbpath, character_id, world_id=0, channel_id=0
     con.close()
 
 
+def parse_equipped(body, at):
+    # u8 flagA, then (u16 slot, 125-byte item)* until a zero slot.
+    if at >= len(body) or body[at] != 0:
+        return None
+    i = at + 1
+    worn = []
+    while True:
+        if i + 2 > len(body):
+            return None
+        slot = struct.unpack_from("<H", body, i)[0]
+        i += 2
+        if slot == 0:
+            break
+        if not 1 <= slot <= 31:
+            return None
+        n = equipped_item_len(body, i)
+        if n is None or i + n > len(body):
+            return None
+        item = body[i:i + n]
+        worn.append((slot, struct.unpack_from("<I", item, 1)[0], item))
+        i += n
+    # Four more u16 terminators: presence[2] gates FUN_14030b6f0's one list and
+    # FUN_14030b9e0's three as well as the equipped list itself. Omitting them
+    # desynchronises everything after, silently.
+    if i + 8 > len(body) or any(body[i:i + 8]):
+        return None
+    return worn, i + 8
+
+
 logpath = os.path.join(tmp, "world.log")
 PROBE = "--set-field-probe" in sys.argv
 
@@ -482,6 +511,29 @@ if PROBE:
         check("the text is not empty - an empty Say puts nothing on screen",
               text_len > 0, "%d" % text_len)
 
+    # ---- EVERY SetField must be dressed, not just the first
+    #
+    # This is the regression the owner hit on 2026-08-19: the migration's record carried the
+    # items' stats and every later one - a portal walk, a !map - carried EquipStats::default,
+    # all zeros. On screen that is "my items had stats until I used a command", and it sent a
+    # whole investigation after a client-side ghost that was never there.
+    for i, sf in enumerate(set_fields):
+        body = sf["body"][2:]
+        rec = HEAD + 12
+        if len(body) < rec + 100:
+            continue
+        check("SetField %d switches the equipped list on" % i, body[rec + 2] == 1,
+              "presence[2] = %d" % body[rec + 2])
+        # The stat mask of the first equipped item must be non-zero. A record whose items
+        # are all bare parses perfectly and looks identical in every other check.
+        parsed = [(L, parse_equipped(body, rec + 111 + L + 4)) for L in (108, 109)]
+        good = [r for _, r in parsed if r is not None]
+        if good:
+            worn = good[0][0]
+            masks = [struct.unpack_from("<I", raw, 19)[0] for _, _, raw in worn]
+            check("SetField %d carries item stats, not zeros" % i, all(m != 0 for m in masks),
+                  "stat masks %s" % [hex(m) for m in masks])
+
     check("three are SetField - the migration, the /map command and the portal",
           len(set_fields) == 3, "%d" % len(set_fields))
     if len(set_fields) == 3:
@@ -561,35 +613,7 @@ if PROBE:
             # plain one. Rather than assume the job, parse at both and require exactly one
             # to be a well-formed block - that IS the discriminator, and a layout error
             # shows up here as "neither parses" rather than as a client fault.
-            def parse_equipped(at):
-                # u8 flagA, then (u16 slot, 125-byte item)* until a zero slot.
-                if at >= len(body) or body[at] != 0:
-                    return None
-                i = at + 1
-                worn = []
-                while True:
-                    if i + 2 > len(body):
-                        return None
-                    slot = struct.unpack_from("<H", body, i)[0]
-                    i += 2
-                    if slot == 0:
-                        break
-                    if not 1 <= slot <= 31:
-                        return None
-                    n = equipped_item_len(body, i)
-                    if n is None or i + n > len(body):
-                        return None
-                    item = body[i:i + n]
-                    worn.append((slot, struct.unpack_from("<I", item, 1)[0], item))
-                    i += n
-                # Four more u16 terminators: presence[2] gates FUN_14030b6f0's one list and
-                # FUN_14030b9e0's three as well as the equipped list itself. Omitting them
-                # desynchronises everything after, silently.
-                if i + 8 > len(body) or any(body[i:i + 8]):
-                    return None
-                return worn, i + 8
-
-            parsed = [(L, parse_equipped(stat + L + 4)) for L in (108, 109)]
+            parsed = [(L, parse_equipped(body, stat + L + 4)) for L in (108, 109)]
             good = [(L, r) for L, r in parsed if r is not None]
             check("the equipped block parses at exactly one stat-block length",
                   len(good) == 1,

@@ -542,9 +542,25 @@ impl Session {
             _ => "0",
         };
         let quest = self.config.quests.get(&req.quest_id);
+
+        // **The client runs the opening conversation itself, and re-sending it is a loop.**
+        // The owner, 2026-08-19: *"Clicking 'Accept' starts the 'You must be the new traveler'
+        // conversation again. That portion is incorrect, as the 'You must be the new
+        // traveler' exists and gets handled on client side."* So `0x0151` is not "tell me
+        // what this NPC says" - by the time it arrives the client has already shown the
+        // opening and the user has pressed a button. Action **1** is that press, and what it
+        // wants back is the **`yes` branch**: for quest 1000, "Thank you. #p2# is on the
+        // hill to the east...".
+        //
+        // The decline branch is in the WZ too (`Say.0.no`) and the client very likely shows
+        // it locally, the way it shows the opening - but no capture contains a decline, so
+        // that is **[I]** and this does not act on it.
+        let accepted = req.action == net::script::QUEST_ACTION_START;
+        let branch = format!("{state}.yes");
         // An unknown quest falls back to the NPC's own line - a one-line conversation
         // rather than silence.
         let path = match quest {
+            Some(q) if accepted && q.say.contains_key(&branch) => Some(branch),
             Some(q) if q.say.contains_key(state) => Some(state.to_string()),
             Some(q) if q.say.contains_key("0") => Some("0".to_string()),
             _ => None,
@@ -629,7 +645,11 @@ impl Session {
         };
 
         let last = index + 1 >= lines.len();
-        let branches = last && convo.quest_id.is_some() && self.has_branch(&convo, "yes");
+        // Only offer Accept/Decline while walking a state's own lines. On a branch the user
+        // has already answered, and asking again is the loop the owner hit.
+        let on_branch = convo.path.contains('.');
+        let branches =
+            last && !on_branch && convo.quest_id.is_some() && self.has_branch(&convo, "yes");
         let has_next = !last;
 
         let body = if branches {
@@ -782,13 +802,22 @@ impl Session {
             // it back where it was.
             Err(e) => format!(" - WARNING: not stored ({e}), so this will not survive a relog"),
         };
+        // **Dressed, exactly like the migration's SetField.** This sent the bare form until
+        // 2026-08-19, which is why the owner's items had their stats on entering the world and
+        // lost them the moment they used a portal or `!map`: every record after the first
+        // carried EquipStats::default(), all zeros. It also explains the whole "the tooltip
+        // reads a different object" investigation - they had reached map 40 with `!map`, so
+        // the record they were hovering really did contain zeros. There was never a second
+        // object.
+        let dressed = self.dressed(chr);
         vec![Reply {
             opcode: net::opcode::SET_FIELD,
-            body: net::opcode::set_field_with_character(
+            body: net::opcode::set_field_with_character_dressed(
                 chr,
                 self.config.world_id,
                 self.clock_base(),
                 self.config.channel_id,
+                &dressed,
             ),
             what: format!("SetField, {why}, for character {} ({}){warn}", chr.id, chr.name),
         }]
@@ -1201,22 +1230,21 @@ mod tests {
         }
     }
 
-    /// Quest 1000's whole opening conversation, walked the way the client walks it.
+    /// Accepting a quest answers with the **yes branch**, not the opening again.
     ///
-    /// Four lines, then a yes/no prompt, then the branch. The thing this pins hardest is
-    /// that the **last** box is a yes/no and not a Say: a type-0 Say with `next = 0` draws
-    /// `BtOK`, whose answer the client rewrites to the same `1` a Next produces - which is
-    /// exactly why the owner's "Accept" did nothing on 2026-08-19.
+    /// The owner, 2026-08-19: *"Clicking 'Accept' starts the 'You must be the new traveler'
+    /// conversation again. That portion is incorrect, as [it] exists and gets handled on
+    /// client side."* By the time `0x0151` arrives the client has already shown the opening
+    /// and the user has pressed a button; action 1 is that press.
     #[test]
-    fn a_quest_conversation_pages_then_branches() {
+    fn accepting_a_quest_answers_with_the_yes_branch() {
         let path = std::path::Path::new("../../gm-handbook/questlines.txt");
         if !path.exists() {
             return; // generated data, gitignored
         }
         let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
-        let opening = config.quests[&1000].say["0"].clone();
-        assert_eq!(opening.len(), 4);
-        assert!(config.quests[&1000].say.contains_key("0.yes"));
+        let want = config.quests[&1000].say["0.yes"][0].clone();
+        assert!(want.contains("hill to the east"), "{want}");
 
         let store = Arc::new(Store::open_in_memory().unwrap());
         let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
@@ -1226,43 +1254,56 @@ mod tests {
         let mut s = Session::new(store, Arc::new(config));
         s.claim_for_character(id);
 
-        // The real click the owner's client sent for Heena: action 1, quest 1000, template 1.
-        let click = hex("01e8030000010000000c046d0100000000");
-        let mut replies = s.on_quest_request(&click);
+        // The real 0x0151 the owner's client sent on pressing Accept: action 1, quest 1000.
+        let replies = s.on_quest_request(&hex("01e8030000010000000c046d0100000000"));
+        assert_eq!(replies.len(), 1);
+        let (message_type, text, _) = script_text(&replies[0].body);
+        assert_eq!(text, want, "Accept must answer with the yes branch");
 
-        // Walk the three Next presses. Each box must be a Say with `next` set, and each
-        // must carry the NEXT line - a conversation that repeats a line is the failure this
-        // catches.
-        for (i, want) in opening.iter().enumerate() {
-            assert_eq!(replies.len(), 1, "line {i}");
-            let b = replies[0].body.clone();
-            let (message_type, text, after) = script_text(&b);
-            assert_eq!(&text, want, "line {i} of the opening");
+        // And it must be a plain Say, NOT another Accept/Decline prompt - the user has
+        // already answered, and asking again is the loop the owner hit.
+        assert_eq!(message_type, net::script::SCRIPT_TYPE_SAY);
 
-            let last = i + 1 == opening.len();
-            assert_eq!(
-                message_type,
-                if last { net::script::SCRIPT_TYPE_QUEST_YES_NO } else { net::script::SCRIPT_TYPE_SAY },
-                "line {i}: the last box must be a yes/no prompt, the rest Says"
-            );
-            if !last {
-                // prev, next - a Say carries them; the yes/no box does not.
-                assert_eq!(b[after], 0, "prev");
-                assert_eq!(b[after + 1], 1, "next must be set on line {i}");
-            }
-            replies = s.on_script_reply(&reply_bytes(&text, message_type, 1));
-        }
-
-        // Yes lands on the yes branch, and its text is the WZ's.
-        assert_eq!(replies.len(), 1, "pressing Yes must produce the yes branch");
-        let b = replies[0].body.clone();
-        let (message_type, text, _) = script_text(&b);
-        assert!(text.contains("hill to the east"), "the yes branch's first line: {text}");
-
-        // And OK on that last box ends the conversation rather than looping.
+        // The branch is one line, so OK ends the conversation rather than repeating it.
         let done = s.on_script_reply(&reply_bytes(&text, message_type, 1));
-        assert!(done.is_empty(), "the conversation must end, not repeat");
+        assert!(done.is_empty(), "the conversation must end, not loop");
     }
+
+    /// A multi-line branch still pages, so the machine is not special-cased to one line.
+    #[test]
+    fn a_multi_line_path_still_pages_in_order() {
+        let mut quests = std::collections::HashMap::new();
+        quests.insert(
+            42u32,
+            crate::config::Quest {
+                name: "Test".into(),
+                say: [("0.yes".to_string(), vec!["one".to_string(), "two".to_string()])]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        );
+        let config = Config { quests, ..Config::default() };
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+
+        let mut body = vec![1u8]; // action 1, accept
+        body.extend_from_slice(&42u32.to_le_bytes());
+        body.extend_from_slice(&1u32.to_le_bytes());
+        let replies = s.on_quest_request(&body);
+        let (ty, text, after) = script_text(&replies[0].body);
+        assert_eq!(text, "one");
+        assert_eq!(replies[0].body[after + 1], 1, "next must be set - there is a line 2");
+
+        let next = s.on_script_reply(&reply_bytes(&text, ty, 1));
+        assert_eq!(script_text(&next[0].body).1, "two");
+    }
+
 
     /// A 0x00F3 whose action is -1 - the user closed the box - ends the conversation and
     /// sends nothing. An unanswered 0x00F3 costs only a dead conversation: it is not one of
