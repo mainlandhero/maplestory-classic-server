@@ -4,7 +4,7 @@
 NEXT GOALS: the dispatcher that receives packets on a **channel** connection.
 
     virtualised dispatch  ->  FUN_1415d59b0  ->  FUN_142cbaa80(this, opcode, packet)
-                              (64 bytes)         (12107 bytes, 181 cases, 0x70..0x39a)
+                              (64 bytes)         (12107 bytes, 273 cases, 0x70..0x39a)
 
 `FUN_1415d59b0` is a 64-byte forwarder whose only callee is `FUN_142cbaa80`. It has **no
 direct callers, no vtable entry, and nothing takes its address** - which is the signature
@@ -116,7 +116,7 @@ its own singleton:
 
 | entry | guard / owner global | dispatcher | inbound opcodes |
 |---|---|---|---|
-| `FUN_1415d59b0` | `DAT_143aa84a0` | `FUN_142cbaa80` | **`0x70..0x39a`**, 181 cases |
+| `FUN_1415d59b0` | `DAT_143aa84a0` | `FUN_142cbaa80` | **`0x70..0x39a`**, 273 cases |
 | `FUN_1415d5a00` | `DAT_143ac97e0` | `FUN_142279c50` | `0x5c5..0x5d2`, 12 cases |
 | `FUN_1415d5a50` | `DAT_143ace378` | `FUN_14177b7e0` | not yet read |
 
@@ -149,22 +149,46 @@ subsystem builds. That is the set a channel should expect once a character is in
 
 ## The case table
 
-`research/msexe-gamestage-cases.txt` - 181 `opcode -> handler` pairs in enum order.
+`research/msexe-gamestage-cases.txt` - **273 cases**, `0x0070..0x039a`, in enum order,
+produced by `tools/switch_cases.py`.
 
-The largest handlers, which is a decent proxy for how much a packet carries:
+**The first version of this table had 181 rows and was wrong.** It was built by matching
+cases of the form
+
+```c
+case 0x70:
+  FUN_142d51930(param_1,param_3);
+  break;
+```
+
+which is 179 of the 273. The other **94 have their handler inlined**, so a single-call
+regex dropped them without a word, and whole contiguous runs - `0x121..0x126`,
+`0x13a..0x140` - simply were not there. A gap in a table built that way says nothing about
+the client. `tools/switch_cases.py` also tracks brace depth, because taking every `case`
+label in the function merges in the nested switches inside case bodies and makes
+`FUN_142cbaa80` appear to handle `0x0..0x3`.
+
+The largest *forwarded* handlers, a rough proxy for how much a packet carries (the inlined
+cases have no size of their own, so they are absent here):
 
 | opcode | handler | size |
 |---|---|---|
 | `0x008c` | `FUN_142d634c0` | 188565 |
 | `0x00a9` | `FUN_142ddfd10` | 23440 |
 | `0x0116` | `FUN_142cf6d40` | 16260 |
-| **`0x0070`** | **`FUN_142d51930`** | **11712** |
+| `0x0070` | `FUN_142d51930` | 11712 |
 | `0x00a7` | `FUN_142defd40` | 9620 |
 | `0x0145` | `FUN_142da7550` | 8819 |
 
-`0x0070` is the **first** case in the switch and one of the largest handlers, which is why
-it is the first suspect for the packet that answers the client's migration hello. That is
-a suspicion, not a finding - `research/msexe-setfield.md` is where it gets settled.
+**`0x0070` is not SetField.** It was the obvious suspect - first case, one of the largest
+handlers - and it is wrong. `FUN_142d51930` is **InventoryOperation**: it never touches a
+map, portal, spawn point or channel id, and its 13 modes match the v214 reference's
+`InventoryOperation` enum one for one, in value order and with matching payloads. Decoded
+to the assembly in `research/msexe-setfield.md`, which is worth reading anyway - it is a
+complete, asm-verified layout of a packet we will need later, and it is now a **confirmed
+anchor** for aligning the rest of the enum.
+
+Being the first case in the switch means nothing about being the first packet on the wire.
 
 ## Not yet established
 
