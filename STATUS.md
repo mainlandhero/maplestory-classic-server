@@ -86,8 +86,10 @@ assumes state a freshly migrated client does not have. Measured, not guessed.
 
 What is already known, in `research/charrecord-decode.md`:
 
-* **No presence mask** - zero `BT`, zero `TEST` against an immediate in the whole function.
-  The sequence is fixed and **loop counts are the only lever**.
+* **Field 1 is a 100-byte presence array** - one byte per flag, gating whole blocks. 43
+  gates consult it. An earlier note here said there was *no* mask, because a scan for `BT`
+  and `TEST reg,imm` found nothing; the mask is a **byte array**, not a bitfield, and the
+  scan was looking for the wrong shape.
 * **Field 1 is a fixed 100-byte raw block.** The decompiler renders its size as computed and
   it is a constant.
 * **All 11 raw reads are constant-sized**: 100 once, 8 bytes ten times. 180 bytes, fixed.

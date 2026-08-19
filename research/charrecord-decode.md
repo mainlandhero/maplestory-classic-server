@@ -36,12 +36,46 @@ FUN_140304b20(void *user, void *scratch112, CInPacket *packet, int zero, int unk
 a **112-byte stack buffer** in the caller, not a mask from the wire - there is no way to ask
 the client for a smaller record from outside.
 
-## No presence mask
+## There IS a presence mask, and it is field 1
 
-Checked explicitly, because if the record began with a flags word selecting optional blocks
-the job would collapse. **It does not.** The function contains **zero** `BT` instructions and
-zero `TEST reg,imm` against a mask. The sequence is fixed; the only lever is loop counts,
-which is what `charrecord-loops.md` is for.
+> **CORRECTED.** This section previously said there was no mask, on the strength of the
+> function containing **zero** `BT` instructions and zero `TEST reg,imm`. Both counts are
+> accurate and the conclusion was wrong: **the mask is not a bitfield.** It is the 100-byte
+> array read as field 1, one **byte** per flag, tested with `CMP byte ptr [reg],0`. An
+> instrument that only looks for bit tests cannot see a byte array, and "zero hits" read as
+> "no mask" instead of "wrong shape". The claim was committed before it was checked against
+> anything that could have contradicted it.
+
+What is actually there:
+
+```asm
+140304e46  MOV   RCX,R14          ; the 100-byte array from field 1
+140304e49  CALL  0x1402fa9a0      ; -> RAX = &array[0]
+140304e4e  MOV   ECX,ESI
+140304e50  CMP   byte ptr [RAX],0
+140304e53  JNZ   140304e64        ; a set flag -> run the block
+140304e55  INC   ECX
+140304e57  INC   RAX
+140304e5a  CMP   ECX,0x64         ; 0x64 = 100, the array length
+140304e5d  JC    140304e50
+140304e5f  JMP   140304fa6        ; nothing set -> SKIP the block
+140304e64  ...
+140304e71  CALL  0x140302e30      ; the stat decoder, the block this gate guards
+```
+
+**43 gates** of this shape appear across the function, each bounded by `0x64`, matching the
+43 calls to the accessor `FUN_1402fa9a0`. So the record is **not** a fixed sequence: the
+100 bytes select what follows, and an all-zero array makes the client skip.
+
+**Two independent lines agree on this.** The reference server's `Char.encode` opens with
+**100 x `byte 1`** as its presence signal - found in a separate pass that had not seen this
+disassembly. A 100-byte opener on both sides is not a coincidence.
+
+**What is not yet settled**: the index-to-block mapping. Each gate starts its scan at
+`ECX = ESI`, and `ESI` is reassigned repeatedly through the function, so the gates are
+probably *not* all testing the same thing - but "each gate owns a distinct flag index" is
+an inference, not something read yet. Do not build a mask on it until the loop census
+settles which index guards which block.
 
 ## The head, read off the listing
 
@@ -77,8 +111,8 @@ are 8 bytes each and not variable is read from the listing.
 
 ## What this settles for the build
 
-* The minimum record is **not** collapsible below 180 bytes of raw fields plus the
-  straight-line spine plus the stat block.
+* The 100-byte array is the lever, and it is a much better one than loop counts: it gates
+  whole blocks rather than shortening them.
 * Nothing in the record is length-prefixed at the top level, so a wrong width anywhere
   desyncs everything after it. There is no resynchronisation point.
 * `FUN_140302e30`, the stat decoder we already build for the character list, is called at
