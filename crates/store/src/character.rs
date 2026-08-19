@@ -223,6 +223,18 @@ impl Store {
     /// The ownership clause is in the statement rather than in a prior read: a check and
     /// then a delete is two statements a concurrent request can slip between, and the
     /// whole point of an ownership test is that it cannot be raced.
+    /// Move a character to a map, so a portal walk survives a relog.
+    ///
+    /// Deliberately does **not** take an account id. The channel connection carries no
+    /// credentials at all - it is identified only by the migration row it claimed - so there
+    /// is no account here to check against, and pretending otherwise would be security
+    /// theatre. Nothing on this path authenticates anybody.
+    pub fn set_character_map(&self, character_id: u32, map_id: u32) -> Result<()> {
+        self.conn()
+            .execute("UPDATE characters SET map_id = ?2 WHERE id = ?1", (character_id, map_id))?;
+        Ok(())
+    }
+
     pub fn delete_character(&self, account_id: i64, character_id: u32) -> Result<bool> {
         let deleted = self.conn().execute(
             "DELETE FROM characters WHERE id = ?1 AND account_id = ?2",

@@ -131,6 +131,16 @@ $ErrorActionPreference = 'Stop'
 # and working and the gate genuinely did not open - a silent negative that means something,
 # which is the thing this project keeps having to prove the hard way.
 #
+# 140304b20 retired 2026-08-19: it fired, the gate opened, a character stands on map 1.
+# Its slot now carries 142cfb500:peek=2358 - a FREE measurement on the portal run.
+# 142cfb500 is called once per SetField from inside 142097f80, with RCX = the world object,
+# so peeking +0x2358 reads the CUserLocal slot. That slot is the precondition for the SHORT
+# characterData=0 SetField, the form actually designed for "same character, new map":
+# research/transfer-field-request.md proved the precondition's identity but could NOT prove
+# the slot is ever populated (222 readers, no store found). The peek settles it, and carries
+# its own control - the first SetField should read 0, and the second says whether the short
+# form is safe to use next time.
+#
 # :hits=200 on 140302e30 because it fires at character select as well - once per
 # character in the list - and the default cap is 32 per slot. The probe does announce
 # saturation ("watch hit limit reached"), so this would not have been silent, but the
@@ -138,7 +148,7 @@ $ErrorActionPreference = 'Stop'
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140304b20,140302e30:hits=200'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cfb500:peek=2358,140302e30:hits=200'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }

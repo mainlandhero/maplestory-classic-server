@@ -50,6 +50,68 @@ impl Reply {
 /// carries.
 pub const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 
+/// The client asking to walk through a portal.
+///
+/// **Decoded from the run that first put a character on map 1**, 2026-08-19 - the owner used the
+/// right-hand portal and nothing happened, because we answered nothing. Full working in
+/// `research/transfer-field-request.md`; every field below marked *proven* was read both off
+/// the builder `FUN_1418283f0` and off the capture.
+///
+/// ```text
+///  0  u32   100          a literal - MOV EDX,0x64 in the builder
+///  4  u16                a checksum-protected counter
+///  6  u64                a protected value, the 0x9a65 family
+/// 14  u8                 0 from the move-path caller
+/// 15  u8                 derived from the current stage
+/// 16  u32   -1           targetField: -1 means "use the portal"        PROVEN
+/// 20  u16 + bytes        portalName, e.g. "out00"                      PROVEN
+/// 27  u16                character x                                   PROVEN
+/// 29  u16                character y                                   PROVEN
+/// 31  u8    0            hard-coded
+/// 32  u8                 0 from the caller
+/// 33  u8                 0 from the caller
+/// ```
+///
+/// **The body is 31 bytes, not 34, when the portal name is empty** - the client skips both
+/// coordinate writes when the name pointer is null, so x and y are not at a fixed offset from
+/// the end. Parse the string first and let it tell you where they are.
+pub const CLIENT_TRANSFER_FIELD: u16 = 0x00D1;
+
+/// What the client asked for in a [`CLIENT_TRANSFER_FIELD`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferFieldRequest {
+    /// `-1` on the wire means "no explicit target - resolve `portal_name` instead".
+    pub target_field: Option<u32>,
+    pub portal_name: String,
+    /// Absent when the portal name is empty; the client omits both coordinates then.
+    pub position: Option<(u16, u16)>,
+}
+
+/// Parse a [`CLIENT_TRANSFER_FIELD`] body (opcode already stripped).
+///
+/// Returns `None` only if the body is too short to hold the fixed part. Everything before
+/// offset 16 is a client integrity block we neither check nor echo.
+pub fn parse_transfer_field(body: &[u8]) -> Option<TransferFieldRequest> {
+    const TARGET_AT: usize = 16;
+    const NAME_AT: usize = 20;
+    let raw = u32::from_le_bytes(body.get(TARGET_AT..TARGET_AT + 4)?.try_into().ok()?);
+    let len = u16::from_le_bytes(body.get(NAME_AT..NAME_AT + 2)?.try_into().ok()?) as usize;
+    let name_end = NAME_AT + 2 + len;
+    let portal_name = String::from_utf8_lossy(body.get(NAME_AT + 2..name_end)?).into_owned();
+    let position = if portal_name.is_empty() {
+        None
+    } else {
+        let x = u16::from_le_bytes(body.get(name_end..name_end + 2)?.try_into().ok()?);
+        let y = u16::from_le_bytes(body.get(name_end + 2..name_end + 4)?.try_into().ok()?);
+        Some((x, y))
+    };
+    Some(TransferFieldRequest {
+        target_field: if raw == u32::MAX { None } else { Some(raw) },
+        portal_name,
+        position,
+    })
+}
+
 /// One channel connection.
 pub struct Session {
     store: Arc<Store>,
@@ -84,8 +146,13 @@ impl Session {
             Some(b) => u16::from_le_bytes([b[0], b[1]]),
             None => return Vec::new(),
         };
-        if opcode != CLIENT_MIGRATION_HELLO || !self.config.set_field_probe {
+        if !self.config.set_field_probe {
             return Vec::new();
+        }
+        match opcode {
+            CLIENT_MIGRATION_HELLO => {}
+            CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
+            _ => return Vec::new(),
         }
         // Always answer. An unanswered packet freezes the client's whole UI - every
         // button, including the quit prompt - and reads on screen as a crash. So a
@@ -113,6 +180,76 @@ impl Session {
             ),
         };
         vec![Reply { opcode: net::opcode::SET_FIELD, body, what }]
+    }
+
+    /// Answer the client walking into a portal.
+    ///
+    /// The reply is another `SetField` with `characterData = 1` - the **long** form, the one
+    /// byte-identical to the packet that already worked, differing only in the map id at
+    /// stat-block offset 84. The short `characterData = 0` form is the shape actually
+    /// designed for "same character, new map", and it is probably correct here now that the
+    /// client has a live field; but `research/transfer-field-request.md` could not prove its
+    /// precondition (`world+0x2358`, the `CUserLocal` slot) is populated - an exhaustive scan
+    /// found 222 readers and **no** store. Sending an unproven form to save 200 bytes would
+    /// trade a working path for a guess. The long form is idempotent because the object it
+    /// re-fetches is a lazy singleton.
+    fn on_transfer_field(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let req = parse_transfer_field(payload);
+        let chr = self.claimed_character();
+
+        // Always answer. Even a request we cannot resolve gets a SetField for the map the
+        // character is already on, because silence freezes the client's entire UI.
+        let Some(mut chr) = chr else {
+            return vec![Reply {
+                opcode: net::opcode::SET_FIELD,
+                body: net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
+                what: "transfer-field request, but the character could not be loaded -                        answered with the minimal record rather than dropped, because an                        unanswered packet freezes the client's whole UI."
+                    .to_string(),
+            }];
+        };
+
+        let (target, note) = match &req {
+            Some(r) => match r.target_field.or_else(|| resolve_portal(chr.map_id, &r.portal_name)) {
+                Some(t) => (t, format!("portal {:?} -> map {t}", r.portal_name)),
+                None => (
+                    chr.map_id,
+                    format!(
+                        "portal {:?} on map {} is NOT in the portal table, so this re-sends                          the current map rather than guessing a destination",
+                        r.portal_name, chr.map_id
+                    ),
+                ),
+            },
+            None => (chr.map_id, "the body was too short to parse - re-sending the current map".to_string()),
+        };
+
+        chr.map_id = target;
+        if let Err(e) = self.store.set_character_map(chr.id, target) {
+            // Not fatal: the client is told where it is either way, and the next login
+            // simply puts it back where it was.
+            return vec![Reply {
+                opcode: net::opcode::SET_FIELD,
+                body: net::opcode::set_field_with_character(
+                    &chr,
+                    self.config.world_id,
+                    self.clock_base(),
+                    self.config.channel_id,
+                ),
+                what: format!("SetField, {note} - WARNING: the new map could not be stored ({e}),                                so this move will not survive a relog"),
+            }];
+        }
+        vec![Reply {
+            opcode: net::opcode::SET_FIELD,
+            body: net::opcode::set_field_with_character(
+                &chr,
+                self.config.world_id,
+                self.clock_base(),
+                self.config.channel_id,
+            ),
+            what: format!(
+                "SetField, characterData=1, {note}, for character {} ({}). Long form - the                  short characterData=0 form is probably right here but its precondition is                  unproven; see research/transfer-field-request.md.",
+                chr.id, chr.name
+            ),
+        }]
     }
 
     /// The character this connection claimed a migration for.
@@ -187,6 +324,28 @@ impl Session {
     }
 }
 
+/// Which map a named portal leads to.
+///
+/// **This is a stub, and it is the wrong shape long-term.** The real table lives in the
+/// client's own `Map.wz`: every field image has a `portal` node whose entries carry `pn`
+/// (the name), `tm` (the target map) and `tn` (the target portal). `research/map1-exists.md`
+/// read exactly that to establish map 1's portal 4 is `out00` with `tm = 10`. So the right
+/// fix is a `tools/dump_portals.py` alongside `tools/dump_names.py`, emitting a
+/// `(map, portal, target)` table into `gm-handbook/` the way map and item names already are -
+/// game data regenerated from the client, not typed into source.
+///
+/// Until that exists this covers the one route that has actually been walked, so the portal
+/// works end to end and the plumbing around it is exercised. An unknown portal is **not**
+/// guessed: the caller re-sends the current map and says so in the log.
+fn resolve_portal(from_map: u32, portal_name: &str) -> Option<u32> {
+    match (from_map, portal_name) {
+        // Map 1 "Mushroom Town - West Entrance" -> map 10 "Mushroom Town".
+        // Read from the WZ, research/map1-exists.md.
+        (1, "out00") => Some(10),
+        _ => None,
+    }
+}
+
 /// Where the character id sits in a `0x007D` body.
 ///
 /// **Measured from a real capture, 2026-08-19**, decrypted with AES once the channel's
@@ -257,6 +416,46 @@ mod tests {
     fn a_character_with_no_migration_says_so_instead_of_failing() {
         let (mut s, _, _, _) = session();
         assert!(s.claim_for_character(999).contains("no unconsumed migration"));
+    }
+
+    /// The real 34 bytes the client sent when the owner walked into map 1's right-hand portal,
+    /// copied out of `research/fixtures/character-on-map1-playable-world.log`. A parser
+    /// tested against invented bytes proves only that it agrees with itself.
+    #[test]
+    fn the_captured_portal_request_parses() {
+        let body = hex("64000000ad1500000000000000000000ffffffff05006f7574303053046d01000000");
+        assert_eq!(body.len(), 34, "the capture is 34 bytes");
+
+        let r = parse_transfer_field(&body).expect("the captured body parses");
+        assert_eq!(r.target_field, None, "0xFFFFFFFF means 'resolve the portal name'");
+        assert_eq!(r.portal_name, "out00", "map 1's portal 4, from the WZ");
+        assert_eq!(r.position, Some((1107, 365)), "y is exactly the portal's own y");
+
+        // And that name resolves to somewhere real.
+        assert_eq!(resolve_portal(1, "out00"), Some(10));
+        assert_eq!(resolve_portal(1, "nosuchportal"), None, "unknown portals are not guessed");
+        assert_eq!(resolve_portal(999, "out00"), None, "the table is keyed on the source map");
+    }
+
+    /// The client omits BOTH coordinates when the portal name is empty, so the body is 31
+    /// bytes and x/y are not at a fixed offset from the end.
+    #[test]
+    fn a_nameless_portal_request_has_no_coordinates() {
+        let mut body = vec![0u8; 31];
+        body[16..20].copy_from_slice(&10u32.to_le_bytes()); // an explicit target field
+        // length prefix at 20 stays 0 -> empty name
+        let r = parse_transfer_field(&body).expect("a 31-byte body parses");
+        assert_eq!(r.target_field, Some(10));
+        assert_eq!(r.portal_name, "");
+        assert_eq!(r.position, None, "no coordinates when the name is empty");
+    }
+
+    /// Too short to hold the fixed part is None, not a panic - the body comes off a socket.
+    #[test]
+    fn a_truncated_portal_request_is_rejected_not_panicked_on() {
+        for n in 0..20 {
+            assert_eq!(parse_transfer_field(&vec![0u8; n]), None, "{n} bytes should not parse");
+        }
     }
 
     /// The offset came from a real capture; this is that capture.
