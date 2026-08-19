@@ -226,6 +226,19 @@ path - **any** early exit from either function faults at the **same address**.
 
 A fault at a **different** address is still progress, exactly as before.
 
+### 1b-i. Pre-flight static analysis, 2026-08-19 - what was ruled out before the launch
+
+| question | answer | where |
+|---|---|---|
+| Does map 1's **field data** exist, or only its name? | **It exists.** `Map/Map/Map0/000000001.img`, 21,532 bytes, parses clean, byte-identical in both data trees. Portal **0** is a type-0 `sp` spawn at (-189, 437) with footholds 48px below. No scripts, mobs or reactors, so the server owes the field nothing extra. Surveyed all 426 field images, not a shortlist. | `research/map1-exists.md` |
+| Does the map-name lookup have a bad failure mode? | `FUN_1403999e0` looks the key up first and only builds `Map/Map/Map%d/%09d.img` on a miss. **Map 1 hits**, so the fallback - which contains a **non-returning `E_POINTER`** call - is not reached. A map with no name entry would be a different story. | same, addendum |
+| Is the fault a dead end or a red herring? | **A red herring for diagnosis.** It is a scope guard over an uninitialised stack local, so *every* failure in those two functions faults at the same address. | `research/setfield-fault-shape.md` |
+| Does the client **block** on `0x0238`/`0x024D`? | **No block is demonstrable.** Fire-and-forget send, two-thirds of the function runs afterwards, and the client's known blocking idiom (an entry guard on a latch) is absent. Both bodies are empty, confirmed three ways. No inbound handler resembles a reply. **Recommendation: send nothing and watch.** | `research/outbound-0238-024d.md` |
+| Is the `portal` byte an index or a spawn id? | **Unsettled**, and `xref.py --field` does not answer it. **Moot for map 1**, where portals 0-3 are all `sp`. | `research/charstat-layout.md` addendum |
+
+The falsifier for the "no block" call, worth knowing before the run: **the client alive but
+every button dead, with `0x0238` or `0x024D` as the last inbound line in `world.log`.**
+
 `research/msexe-setfield-aftermath.c` has the fault site and `FUN_142caa4e0`, the builder
 of the two packets the client sent on entering.
 
