@@ -339,6 +339,41 @@ never see it - the negative is real but its scope is "nothing in `.text`".
 the connection-handshake function. So the blob is set up when the connection is made, and
 whatever later flips it does so from code we cannot read.
 
+### Static analysis, 2026-08-18 - what it settled and what it did not
+
+**Verified negatives** (each instrument shown to find something first):
+
+| scan | result | control that proves it works |
+|---|---|---|
+| direct `call rel32` to the setter | **0** | the getter: 2 callers found |
+| the setter's address as a qword (vtable / fn table) | **0** | `FUN_141b25f30`, a known vtable entry: found in `.rdata` at `0x1433fd7a0` |
+
+So the setter is unreachable from readable code by either mechanism. Themida interprets its
+own bytecode, so a virtualised caller is not an instruction these scans can see.
+
+**Discounted - unverified instruments, whose zeros prove nothing:**
+
+* a RIP-relative *address-load* scan returned 0 for the subject **and for both controls**, so
+  it was never working;
+* a scan for references to the blob pointer `DAT_143ac8170` returned 0, which cannot be true
+  - the three known functions all dereference it. The prefix set omits REX.R (`0x4C`) forms,
+  so anything using `r8`-`r15` is invisible. **Fix that before quoting it.**
+
+**New, and where to pick up.** The access counter `DAT_143ac8168` *does* scan correctly - it
+finds the three known functions - and has **50 references in `.text`**, clustering in two
+functions nobody had looked at:
+
+| function | counter refs | direct callers |
+|---|---|---|
+| `FUN_14003fb80` (643 B) | 22 | **0** - another orphan, same shape as the setter |
+| `FUN_140c9ef80` (1375 B) | 1 | **1, from `0x140c950fa`** |
+
+`FUN_140c9ef80` is the only thing in this whole cluster with a live caller in readable code.
+That is the next thread to pull, and it costs no client run.
+
+Also checked and empty: `nexon_api_x64.dll` and `nmcogame64.dll`, both unpacked, hold no
+creation- or entitlement-shaped strings, which weakens the "platform entitlement" theory.
+
 ### What this means for the ask
 
 **"Find the packet" may be the wrong question.** No readable code path leads from a packet
