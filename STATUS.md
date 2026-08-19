@@ -123,8 +123,14 @@ cipher and every field offset are already checked over an independent Python tra
 a launch adds is the only thing those cannot: **what the client does with the bytes.**
 
 ```bash
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
 ```
+
+**`-SetFieldProbe` is not optional and the name is a lie.** `Session::handle` returns
+`Vec::new()` for every packet unless it is on, so without it the channel answers **nothing at
+all** - not even the migration hello - and the client sits on "Connecting..." with a frozen
+UI. It gates the whole working channel now: the `SetField`, the NPCs, the mobs, the portals,
+chat and the quest reply. It stopped being a probe some time ago.
 
 **Do them in this order. The last one can end the session.**
 

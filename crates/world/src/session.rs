@@ -155,10 +155,21 @@ impl Session {
 
     /// Handle one packet body, opcode included.
     ///
-    /// Answers nothing unless [`Config::set_field_probe`] is on, and then exactly one
-    /// packet: a `SetField` carrying the claimed character's record. A wrong reply moves
-    /// the client into a state nobody has read, which is worse than silence - so this
-    /// answers only the migration hello, and only the one opcode that is confirmed.
+    /// **Answers nothing at all unless [`Config::set_field_probe`] is on**, which is why
+    /// `tools/test-server.ps1` must be given `-SetFieldProbe`. Without it the migration
+    /// hello goes unanswered and the client freezes on "Connecting..." - the exact failure
+    /// the "always answer" rule exists to prevent, sitting in the default configuration.
+    ///
+    /// **The flag is a misnomer.** It dates from when the channel's only job was to answer
+    /// the migration hello with a hand-built `SetField` and see whether the client accepted
+    /// it. It now gates six handlers: the migration, the portal walk, field entry (NPCs and
+    /// mobs), chat (the `!map` GM command) and the quest request. Renaming it would break
+    /// the launch line in `STATUS.md` and in every fixture note, so it stays until something
+    /// else about the launcher changes.
+    ///
+    /// The original reasoning still holds for what is *not* answered: a wrong reply moves
+    /// the client into a state nobody has read, which is worse than silence. Every opcode
+    /// below is one whose handler has been read, and unknown ones fall through to nothing.
     pub fn handle(&mut self, body: &[u8]) -> Vec<Reply> {
         let opcode = match body.get(..2) {
             Some(b) => u16::from_le_bytes([b[0], b[1]]),

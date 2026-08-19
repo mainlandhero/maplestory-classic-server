@@ -214,7 +214,7 @@ $ErrorActionPreference = 'Stop'
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cfb500:peek=2358,140302e30:hits=200'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140302e30:hits=200,140304100:hits=200'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -355,23 +355,29 @@ Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
     Write-Host ""
-    Write-Host "NPC + PORTAL + AVATAR RUN." -ForegroundColor Cyan
-    Write-Host "  Three changes since the last launch, and the log tells them apart:"
-    Write-Host "    - NPCs now come from the client's own Map.wz (308 across 150 maps),"
-    Write-Host "      and are triggered on 0x00DC, not 0x0238. 0x0238 fires only once ever."
-    Write-Host "    - Portals come from Map.wz too: 1135 across all 426 field images."
-    Write-Host "    - The avatar look is still sent, unchanged."
+    Write-Host "EQUIPMENT + DIALOGUE + MOBS + CHANNEL ROW." -ForegroundColor Cyan
+    Write-Host "  Four builds, none of them yet seen on screen. They are disjoint - the"
+    Write-Host "  record, a reply to a click, a separate pool, the login world list - so a"
+    Write-Host "  failure in one does not explain a failure in another."
+    Write-Host "    - the character record now carries the EQUIPPED LIST: presence[2], and"
+    Write-Host "      743 bytes for a dressed character against 224 for a bare one."
+    Write-Host "    - 0x0151 (the QUEST request, not an NPC click) is answered with a 0x055B"
+    Write-Host "      script Say, spoken by the template the client itself named."
+    Write-Host "    - MOBS: 0x03C6, 137 bytes. Map 30 has six snails, map 40 has forty."
+    Write-Host "    - the channel entry's 4th trailing byte is 1, not 0. That byte is the"
+    Write-Host "      Change Channel row's enable flag."
+    Write-Host "  0x0138 UserAvatarModified is NO LONGER SENT - it is dead code at byte level."
     Write-Host ""
     Write-Host "In client-patched\maplecw-hook.log, two watches answer two questions:" -ForegroundColor Cyan
-    Write-Host "  141e75800   the NPC pool dispatcher."
-    Write-Host "              FIRES while dispatching 0x044F -> routing and timing are right,"
-    Write-Host "                                              so the 64-byte BODY is wrong."
-    Write-Host "              SILENT                       -> the packet is never dispatched;"
-    Write-Host "                                              the trigger or the stage is wrong."
-    Write-Host "  1420dd920   the ONLY call site inside the avatar apply's loop."
-    Write-Host "              FIRES  -> the look WAS applied and something ignores it."
-    Write-Host "              SILENT -> the loop body never ran; 0x0138 is a dead end and the"
-    Write-Host "                        equipped list is the only route left."
+    Write-Host "  140302e30   the character-stat decoder. THE POSITIVE CONTROL - it fires"
+    Write-Host "              three times at CHARACTER SELECT before anything else happens."
+    Write-Host "              NO WATCH LINES AT ALL means the hook never armed. Conclude"
+    Write-Host "              nothing from a silent log until you have seen these."
+    Write-Host "  140304100   the type-1 equip decode, vtable+0x358."
+    Write-Host "              FIRES  -> an item was DECODED, so the layout is right and any"
+    Write-Host "                        remaining nakedness is a VALUE (dateExpire first)."
+    Write-Host "              SILENT -> the gate never opened; presence[2] or the block's"
+    Write-Host "                        position in the record is wrong."
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
@@ -411,24 +417,46 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  1. log in and enter the world with ANY character - they all have NPCs now.'
-    Write-Host '     TestCharD is on map 10 (1 NPC); TestCharA and TestCharC are on map 1 (2).'
+    Write-Host '  IN THIS ORDER. Step 6 can end the session.' -ForegroundColor Yellow
     Write-Host ''
-    Write-Host '  2. ARE THERE NPCs ON THE MAP?' -ForegroundColor Cyan
-    Write-Host '     Map 1 should have two, map 10 one. Minimap dots do NOT count - the minimap'
-    Write-Host '     reads the WZ directly and has always shown them. Only a figure standing in'
-    Write-Host '     the world counts.'
+    Write-Host '  0. log in and enter the world with a character that HAS equipment.'
+    Write-Host '     This is the gate. The equipment change is inside the character record,'
+    Write-Host '     which has no length prefix and no resync point, so if it is wrong world'
+    Write-Host '     entry breaks and NOTHING BELOW can be observed. A fault or a freeze on'
+    Write-Host '     Connecting... means the record desynchronised - read the ELog (0x008F,'
+    Write-Host '     0x0090) and run tools/pdata_lookup.py on its RVAs to name the field.'
     Write-Host ''
-    Write-Host '  3. WALK THE PORTALS, BOTH WAYS.' -ForegroundColor Cyan
-    Write-Host '     Map 1 -> 10 worked last time. The new ones to try are 10 -> 1 (portal in00)'
-    Write-Host '     and 10 -> 20 (out00), which both bounced you back before.'
-    Write-Host '     Expect to arrive at the map SPAWN, not at the matching door - the arrival'
-    Write-Host '     portal is a known gap, not a new bug.'
+    Write-Host '  1. IS THE CHARACTER DRESSED? Open the Equipment window too.' -ForegroundColor Cyan
+    Write-Host '     dressed                      -> done.'
+    Write-Host '     naked, window empty, no fault-> layout right, a VALUE wrong. dateExpire.'
+    Write-Host '     naked, but window LISTS items-> items decoded, avatar not rebuilt. A'
+    Write-Host '                                     different and much smaller problem.'
     Write-Host ''
-    Write-Host '  4. Is the character still naked? Expected: yes. The watch says why.'
+    Write-Host '  2. TYPE  !map 30  IN ANY CHAT TAB. ARE THERE SNAILS?' -ForegroundColor Cyan
+    Write-Host '     The prefix is ! and not / - the client swallows unknown slash lines and'
+    Write-Host '     never puts them on the wire. Map 30 should have SIX of template 1.'
+    Write-Host '     none, no fault -> a value. fault or freeze on arrival -> the body'
+    Write-Host '     desynchronised, and the WZ-template blocks are the first suspect.'
+    Write-Host ''
+    Write-Host '  3. CLICK AN NPC (Heena or Roger). DOES A DIALOG BOX APPEAR?' -ForegroundColor Cyan
+    Write-Host '     It will say the quest is not implemented. That is the point - there is'
+    Write-Host '     no quest-result packet, so NO STATE ADVANCES. Text on screen is the'
+    Write-Host '     whole result. Nothing, no fault -> check world.log shows 0x055B going'
+    Write-Host '     out, then suspect the type or the flags.'
+    Write-Host ''
+    Write-Host '  4. OPEN CHANGE CHANNEL. IS CH.2 CREAM RATHER THAN GREY?' -ForegroundColor Cyan
+    Write-Host '     CH.1 draws BLUE - it is the selected row, not a grey one. The two greys'
+    Write-Host '     differ by about six RGB points, so judge CH.2 against CH.1, not by eye'
+    Write-Host '     alone. Clicking CH.2 turning it blue is only a highlight move, not a send.'
     Write-Host ''
     Write-Host '  5. Report any dialog wording exactly, and whether the UI ever freezes -'
     Write-Host '     a freeze is an unanswered packet, not a crash; world.log names it.'
+    Write-Host ''
+    Write-Host '  6. LAST: CLICK THE CHANGE BUTTON.' -ForegroundColor Yellow
+    Write-Host '     Nothing answers 0x00D2 yet, and an unanswered packet freezes the whole'
+    Write-Host '     UI including the quit prompt. A FREEZE HERE IS THE MEASUREMENT, not a'
+    Write-Host '     crash - world.log last inbound line names the packet. Do everything'
+    Write-Host '     else first.'
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'
