@@ -38,6 +38,7 @@ fn main() -> ExitCode {
     let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
+    let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -65,6 +66,12 @@ fn main() -> ExitCode {
             "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
+            "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
+            "--mob-limit" => value().and_then(|v| {
+                v.parse()
+                    .map(|n: usize| config.mob_limit = Some(n))
+                    .map_err(|e| format!("--mob-limit {v}: {e}"))
+            }),
             "--mobs" => {
                 config.send_mobs = true;
                 Ok(())
@@ -104,7 +111,14 @@ fn main() -> ExitCode {
         );
     }
 
-    config.mobs = world::config::Config::load_mobs(&mobs_path);
+    let mob_templates = world::config::load_mob_templates(&mob_templates_path);
+    if mob_templates.is_empty() {
+        eprintln!(
+            "maplecw-world: no mob templates from {} - every mob would spawn on a fallback              HP rather than its own. Regenerate with: python tools/dump_mobs.py",
+            mob_templates_path.display()
+        );
+    }
+    config.mobs = world::config::Config::load_mobs(&mobs_path, &mob_templates);
     if config.mobs.is_empty() {
         eprintln!(
             "maplecw-world: no mobs loaded from {} - maps will have no monsters.              Regenerate with: python tools/dump_portals.py",

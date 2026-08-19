@@ -74,6 +74,14 @@ pub struct Config {
     /// Server-sent for the same reason NPCs are: the client's field loader walks the WZ
     /// `life` node only to preload `Mob/%07d.img` art. 9928 spawns across 289 maps.
     pub mobs: HashMap<u32, Vec<net::mob::FieldMob>>,
+    /// How many mobs to send per field, whatever the capacity says. `None` is no limit.
+    ///
+    /// **A blast-radius control, not game behaviour.** The mob body killed the client on
+    /// 2026-08-19 and the fault could equally have come from the body being wrong or from
+    /// thirty objects arriving at once - the White Map crash the same day *was* an
+    /// allocation failure, so "too many" is not a silly hypothesis. `--mob-limit 1` makes
+    /// those two answers distinguishable in one run.
+    pub mob_limit: Option<usize>,
     /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
     ///
     /// The character record carries an item's stats and upgrade slots per *instance*, and a
@@ -276,7 +284,10 @@ impl Config {
     /// [`net::mob::FieldMob::new`] then steps any id that is zero or a multiple of 178 past
     /// itself: both are values the client's own decoder treats specially, and a multiple of
     /// 178 takes a branch through a vtable slot on what looks like an exception object.
-    pub fn load_mobs(path: &std::path::Path) -> HashMap<u32, Vec<net::mob::FieldMob>> {
+    pub fn load_mobs(
+        path: &std::path::Path,
+        templates: &HashMap<u32, MobTemplate>,
+    ) -> HashMap<u32, Vec<net::mob::FieldMob>> {
         let mut out: HashMap<u32, Vec<net::mob::FieldMob>> = HashMap::new();
         let Ok(text) = std::fs::read_to_string(path) else { return out };
         for line in text.lines() {
@@ -296,13 +307,20 @@ impl Config {
             };
             let list = out.entry(map as u32).or_default();
             let object_id = 2000 + list.len() as u32;
+            // A fresh mob is at its template's full HP. DEFAULT_MOB_HP is only reached
+            // when Mob.wz has nothing to say about the template, and it is not zero for the
+            // reason in its own docs.
+            let hp = templates
+                .get(&(template as u32))
+                .map(|t| u64::from(t.max_hp))
+                .unwrap_or(DEFAULT_MOB_HP);
             list.push(net::mob::FieldMob::new(
                 object_id,
                 template as u32,
                 x as i16,
                 cy as i16,
                 fh as i16,
-                DEFAULT_MOB_HP,
+                hp,
             ));
         }
         out
@@ -501,6 +519,58 @@ impl EquipTemplate {
     }
 }
 
+/// A mob template's stats, as `Mob.wz` has them. Field names are the WZ's own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MobTemplate {
+    /// What a freshly spawned mob's HP should be.
+    ///
+    /// The client draws the health bar as `hp * 100 / maxHP` through an `IDIV` at
+    /// `141c50502` with **no zero guard**. The server used to send a flat `100` to every
+    /// mob, which for a snail (`maxHP` 30) is 333% of its health.
+    pub max_hp: u32,
+    pub max_mp: u32,
+    pub level: u32,
+    pub exp: u32,
+}
+
+/// Every mob template's stats, from `tools/dump_mobs.py`'s `mobtemplates.txt`.
+pub fn load_mob_templates(path: &std::path::Path) -> HashMap<u32, MobTemplate> {
+    let mut out = HashMap::new();
+    let Ok(text) = std::fs::read_to_string(path) else { return out };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let f: Vec<&str> = line.split(',').map(str::trim).collect();
+        if f.len() < 5 {
+            continue;
+        }
+        let n = |i: usize| f[i].parse::<i64>().ok();
+        let (Some(id), Some(hp), Some(mp), Some(level), Some(exp)) =
+            (n(0), n(1), n(2), n(3), n(4))
+        else {
+            continue;
+        };
+        // A template with no HP would make the client divide by zero. All 193 in this
+        // client have one, so a row without is a generator fault and is dropped rather
+        // than sent.
+        if hp <= 0 {
+            continue;
+        }
+        out.insert(
+            id as u32,
+            MobTemplate {
+                max_hp: hp as u32,
+                max_mp: mp.max(0) as u32,
+                level: level.max(0) as u32,
+                exp: exp.max(0) as u32,
+            },
+        );
+    }
+    out
+}
+
 /// Maps that have a field image, have a name, and **still kill this client**.
 ///
 /// **Measured, one entry at a time, and this is the only honest way to build this list.**
@@ -549,6 +619,7 @@ impl Default for Config {
             portal_index: HashMap::new(),
             npcs: HashMap::new(),
             mobs: HashMap::new(),
+            mob_limit: None,
             equips: HashMap::new(),
             send_mobs: false,
             fields: std::collections::HashSet::new(),
@@ -704,6 +775,45 @@ mod spawn_tests {
         // "that should only apply to some items".
         let blocked = equips.values().filter(|e| e.trade_block).count();
         assert!(blocked > 0 && blocked < 20, "{blocked} equips carry tradeBlock");
+    }
+
+    /// A fresh mob is at its template's HP, not at a flat placeholder.
+    ///
+    /// The client draws the bar as `hp * 100 / maxHP` through an IDIV with no zero guard, so
+    /// a snail sent with 100 HP against its template's 30 is at 333%.
+    #[test]
+    fn a_spawned_mob_carries_its_own_templates_hp() {
+        let mobs = std::path::Path::new("../../gm-handbook/mobs.txt");
+        let templates = std::path::Path::new("../../gm-handbook/mobtemplates.txt");
+        if !mobs.exists() || !templates.exists() {
+            return; // generated data, gitignored
+        }
+        let t = load_mob_templates(templates);
+        assert!(t.len() > 100, "only {} templates", t.len());
+        assert_eq!(t[&1].max_hp, 30, "the snail");
+        assert_eq!(t[&2].max_hp, 45, "map 40's mob");
+
+        // No template may have zero HP: that divide has no guard, and the loader drops such
+        // a row rather than letting it reach the wire.
+        assert!(t.values().all(|m| m.max_hp > 0));
+
+        let fields = Config::load_mobs(mobs, &t);
+        for (map, want) in [(30u32, 30u64), (40, 45)] {
+            let list = &fields[&map];
+            assert!(!list.is_empty());
+            assert!(
+                list.iter().all(|m| m.hp == want),
+                "map {map} should spawn at {want} HP, got {:?}",
+                list.iter().map(|m| m.hp).take(3).collect::<Vec<_>>()
+            );
+        }
+
+        // And a template the table does not know still gets a non-zero fallback rather than
+        // a division by zero.
+        let empty = HashMap::new();
+        let bare = Config::load_mobs(mobs, &empty);
+        assert!(bare[&30].iter().all(|m| m.hp == DEFAULT_MOB_HP));
+        assert_ne!(DEFAULT_MOB_HP, 0);
     }
 
     /// A map that has a field image and a name can still kill the client, and one does.

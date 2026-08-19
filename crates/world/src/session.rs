@@ -281,6 +281,10 @@ impl Session {
         // is written and untaken. Adding occupancy is a change to this line.
         let players_here = 1;
         let alive = crate::config::spawn_capacity(mobs.len(), players_here);
+        let alive = match self.config.mob_limit {
+            Some(n) => alive.min(n),
+            None => alive,
+        };
         let chosen = crate::config::share_balanced(mobs, alive);
         out.extend(chosen.into_iter().map(|mob| {
             Reply {
