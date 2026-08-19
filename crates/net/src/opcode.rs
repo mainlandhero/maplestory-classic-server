@@ -1056,7 +1056,19 @@ impl SelectCharacterRequest {
 /// Identified statically 2026-08-19 with no client run. It is the only handler in that
 /// switch that builds a `sockaddr_in` (`htons` occurs exactly once across all fourteen
 /// decompiled case handlers, and it is here), and on success it transitions to the string
-/// `GameIn`. Full decode, including the obfuscated tail, in `docs/opcodes.md`.
+/// `GameIn`. Confirmed on the wire: it moved a real client to a real channel. Full decode,
+/// including the obfuscated tail, in `docs/opcodes.md`.
+///
+/// **The reference server calls this wire shape `selectCharacterResult`**, and matching it
+/// field for field says that is the better name - it carries a result byte, a message
+/// string and the obfuscated tail, none of which the reference's own `migrateCommand` has.
+/// Both descriptions are of the same packet: answering "I picked this character" *is* how
+/// the server hands over a channel. The name here is kept because it says what the packet
+/// does for us.
+///
+/// The reference also numbers *its* `MigrateCommand` `0x11`. **That is a coincidence and
+/// nothing rests on it** - see `research/msexe-gamestage-opcodes.md`, where the same
+/// alignment scored 1 of 8 on this range when run blind.
 pub const MIGRATE_COMMAND: u16 = 0x0011;
 
 /// Migration accepted. The result byte goes through `FUN_141b267c0`, the same gate as
