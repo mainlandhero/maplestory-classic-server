@@ -239,6 +239,28 @@ A fault at a **different** address is still progress, exactly as before.
 The falsifier for the "no block" call, worth knowing before the run: **the client alive but
 every button dead, with `0x0238` or `0x024D` as the last inbound line in `world.log`.**
 
+**The zero audit** (`research/setfield-zero-audit.md`) checked every field we send as zero
+around the record. Its framing is the right one: **every byte outside the record is identical
+to the packet the client already accepted**, so none of these zeros aborts the handler - what
+changed is that a field now really loads, which promotes the zeros the *field object*
+consumes. It ranked six; the top two were then read rather than inferred:
+
+* **`FUN_14187e880(field, 0, 0)`** (head offsets 22/26) is a **28-byte plain setter** - two
+  stores into `field+0xa8`, no division, no allocation, no indexing. The zero-divisor story it
+  was ranked #1 for is not at the call site. **Not a reason to invent a width/height pair.**
+* **`FUN_142d16ef0`** (head offset 17) is a `std::map` in-order walk gated on the head node's
+  `_Isnil` byte, so it is a **no-op on an empty tree**. Sending `0` instead of the reference's
+  `1` changes nothing on a first field entry.
+* The **three `u32`s before the record are randomiser seeds**, passed intact as a triple and
+  nowhere else - which also retires the `(fieldId, portal, ...)` candidate in
+  `charrecord-flag7.md` §6. All-zero is the absorbing state of the LFSR family, so it is worth
+  fixing - but the audit's own finding is that **zero cannot fault**, so it cannot stop a map
+  loading. **Deferred to after this run** rather than folded into it.
+
+**Decision: change nothing before the launch.** The variant under test is the record -
+`presence[0] = 1` and a real map id. Everything else is byte-identical to the packet the
+client accepted on 2026-08-19.
+
 `research/msexe-setfield-aftermath.c` has the fault site and `FUN_142caa4e0`, the builder
 of the two packets the client sent on entering.
 
