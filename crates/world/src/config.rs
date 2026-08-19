@@ -160,12 +160,12 @@ impl Config {
     /// game data and a missing file must not turn every warp into a refusal - that would fail
     /// closed on a tool problem rather than a real one. When it is loaded it is exact.
     ///
-    /// **Having a field image is necessary and not sufficient**, which was measured the
-    /// expensive way: see [`MAPS_THAT_KILL_THE_CLIENT`].
+    /// **A field image is what this checks and it is not a promise the map is safe.**
+    /// `!map 900000000` crashed the client on 2026-08-19 and was briefly denylisted here -
+    /// then the owner logged in with that map stored and it loaded fine, so the denylist was
+    /// blocking a working map. The crash is in the mid-session *transition*, not the
+    /// destination; see the retraction above `MobTemplate`.
     pub fn map_exists(&self, map: u32) -> bool {
-        if MAPS_THAT_KILL_THE_CLIENT.contains(&map) {
-            return false;
-        }
         self.fields.is_empty() || self.fields.contains(&map)
     }
 
@@ -710,32 +710,35 @@ pub fn load_mob_templates(path: &std::path::Path) -> HashMap<u32, MobTemplate> {
     out
 }
 
-/// Maps that have a field image, have a name, and **still kill this client**.
+/// **RETRACTED 2026-08-19: there is no such list, and the White Map is not broken.**
 ///
-/// **Measured, one entry at a time, and this is the only honest way to build this list.**
-/// The owner typed `!map 900000000` (the White Map) on 2026-08-19 and the client died 0.4 s
-/// later: `0xC0000005` at `0x14019b8cf`, which is inside the client's own small-block
-/// allocator - `FUN_14019b780` pops a free-list head with `MOV RCX,[RAX]` immediately after
-/// the chunk allocator at `0x14019d3c0` returned, so `RAX` was **null and unchecked**. That
-/// is an allocation failure, not a packet desync: the `SetField` differed from a working one
-/// by four bytes of map id.
+/// `!map 900000000` crashed the client on 2026-08-19 and this was a denylist with that one
+/// entry in it. **The owner then logged in with a character whose stored map was 900000000 and
+/// the map loaded fine** - "Hidden Street : White Map", character on screen, HP and MP
+/// live, chat working. Their words: *"the fact that I spawned in map 900000000 should
+/// disprove the fact the map was broken."* They are right, and the guard was blocking a map
+/// that works.
 ///
-/// **900000000 passes every check we have.** It is in `fields.txt` (it has a real field
-/// image), it is in the `String.wz` name table, and its image parses clean with one spawn
-/// portal and a foothold group. So "the field exists and is named" is *necessary and not
-/// sufficient*, and there is no property of it we can currently test that predicts the
-/// crash.
+/// **What that leaves, which is a better question than the one the denylist answered.** The
+/// same map is fine on **login** and killed the client on a **mid-session `!map`** - and
+/// `!map 1` and `!map 40` both worked mid-session in that very run. So the fault is in the
+/// *transition*, not the destination, and it is selective about which destination.
 ///
-/// **One hypothesis, deliberately NOT acted on.** 900000000 has **no `miniMap` node** while
-/// its `hideMinimap` is `0`. Surveying all 426 field images finds **44** maps in that state.
-/// Blocking all 44 on that theory would remove a tenth of the maps from a debugging command
-/// on the strength of a guess, and the fault address - a generic allocator - does not point
-/// at a minimap. **The cheap falsifier costs nothing on the next run:** `!map 61` is also in
-/// that set and is an ordinary low id. If it dies the same way, the guard should become the
-/// 44; if it loads fine, the theory is dead and this list stays a list.
-pub const MAPS_THAT_KILL_THE_CLIENT: &[u32] = &[
-    900000000, // the White Map. Measured 2026-08-19.
-];
+/// The fault itself is still what it was: `0xC0000005` at `0x14019b8cf`, inside the
+/// client's own small-block allocator, popping a free-list head with `MOV RCX,[RAX]`
+/// straight after the chunk allocator at `0x14019d3c0` returned null. An allocation failure.
+///
+/// One difference worth someone's time: the White Map's view rectangle is tiny
+/// (`VRLeft -389, VRRight 389, VRTop -265, VRBottom 285`) while map 40's is
+/// `-299..2909` by `-1165..585`. A field-to-field transition that resizes buffers from the
+/// second to the first is a shape that could plausibly ask an allocator for something it
+/// refuses. **[I], and nothing supports it yet beyond the two numbers.**
+///
+/// **The minimap theory is dead.** It was never acted on - see the note that used to be
+/// here - and the run killed it: 900000000 has no `miniMap` node and loads fine.
+///
+/// `!map` is unrestricted again beyond the field-image check. It is a debugging command and
+/// a wrong theory that removes working maps from it costs more than the crash does.
 
 /// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
 ///
@@ -1041,29 +1044,25 @@ mod spawn_tests {
         assert_ne!(DEFAULT_MOB_HP, 0);
     }
 
-    /// A map that has a field image and a name can still kill the client, and one does.
+    /// The White Map is reachable again, and the retraction is pinned so it is not
+    /// re-blocked on the theory the owner's own run killed.
     #[test]
-    fn the_white_map_is_refused_even_though_it_passes_every_other_check() {
+    fn the_white_map_is_reachable_because_the_run_showed_it_loads() {
         let path = std::path::Path::new("../../gm-handbook/fields.txt");
         if !path.exists() {
             return; // generated data, gitignored
         }
         let config = Config { fields: Config::load_fields(path), ..Config::default() };
-
-        // It really does pass the checks that exist - this is not a typo being refused.
         assert!(config.fields.contains(&900000000), "the White Map has a field image");
-        assert!(!config.map_exists(900000000), "and is refused anyway");
-
-        // Ordinary maps are untouched, including the one the owner warps to most.
-        for map in [1u32, 10, 20, 30, 40] {
-            assert!(config.map_exists(map), "map {map} must still be reachable");
-        }
-
-        // The list stays short on purpose: every entry costs a client run to establish.
         assert!(
-            MAPS_THAT_KILL_THE_CLIENT.len() < 5,
-            "this list should only ever grow by measurement"
+            config.map_exists(900000000),
+            "it was denylisted on a theory the run disproved - the owner logged in with this map              stored and it loaded"
         );
+        for map in [1u32, 10, 20, 30, 40] {
+            assert!(config.map_exists(map));
+        }
+        // And a map with no field image is still refused, which is the check that is real.
+        assert!(!config.map_exists(104040000));
     }
 
     /// The crowd threshold the owner adopted: 75% below six players on the field, 100% at six or
