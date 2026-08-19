@@ -1,0 +1,86 @@
+// 1403023d0 .. 1403024bb   block=.text
+1403023d0  40 53                             PUSH RBX
+1403023d2  48 83 ec 20                       SUB RSP,0x20
+1403023d6  ff ca                             DEC EDX
+1403023d8  48 8b d9                          MOV RBX,RCX
+1403023db  83 fa 05                          CMP EDX,0x5
+1403023de  0f 87 a6 00 00 00                 JA 0x14030248a
+1403023e4  48 63 c2                          MOVSXD RAX,EDX
+1403023e7  48 8d 0d 12 dc cf ff              LEA RCX,[0x140000000]
+1403023ee  8b 94 81 a4 24 30 00              MOV EDX,dword ptr [RCX + RAX*0x4 + 0x3024a4]
+1403023f5  48 03 d1                          ADD RDX,RCX
+1403023f8  ff e2                             JMP RDX
+1403023fa  48 8d 15 1f b7 7b 03              LEA RDX,[0x143abdb20]
+140302401  48 8b cb                          MOV RCX,RBX
+140302404  e8 57 04 00 00                    CALL 0x140302860
+140302409  48 8b c3                          MOV RAX,RBX
+14030240c  48 83 c4 20                       ADD RSP,0x20
+140302410  5b                                POP RBX
+140302411  c3                                RET
+140302412  48 8d 15 97 b6 7b 03              LEA RDX,[0x143abdab0]
+140302419  48 8b cb                          MOV RCX,RBX
+14030241c  e8 3f 04 00 00                    CALL 0x140302860
+140302421  48 8b c3                          MOV RAX,RBX
+140302424  48 83 c4 20                       ADD RSP,0x20
+140302428  5b                                POP RBX
+140302429  c3                                RET
+14030242a  48 8d 15 0f b6 7b 03              LEA RDX,[0x143abda40]
+140302431  48 8b cb                          MOV RCX,RBX
+140302434  e8 27 04 00 00                    CALL 0x140302860
+140302439  48 8b c3                          MOV RAX,RBX
+14030243c  48 83 c4 20                       ADD RSP,0x20
+140302440  5b                                POP RBX
+140302441  c3                                RET
+140302442  48 8d 15 87 b5 7b 03              LEA RDX,[0x143abd9d0]
+140302449  48 8b cb                          MOV RCX,RBX
+14030244c  e8 0f 04 00 00                    CALL 0x140302860
+140302451  48 8b c3                          MOV RAX,RBX
+140302454  48 83 c4 20                       ADD RSP,0x20
+140302458  5b                                POP RBX
+140302459  c3                                RET
+14030245a  48 8d 15 ff b4 7b 03              LEA RDX,[0x143abd960]
+140302461  48 8b cb                          MOV RCX,RBX
+140302464  e8 f7 03 00 00                    CALL 0x140302860
+140302469  48 8b c3                          MOV RAX,RBX
+14030246c  48 83 c4 20                       ADD RSP,0x20
+140302470  5b                                POP RBX
+140302471  c3                                RET
+140302472  48 8d 15 77 b4 7b 03              LEA RDX,[0x143abd8f0]
+140302479  48 8b cb                          MOV RCX,RBX
+14030247c  e8 df 03 00 00                    CALL 0x140302860
+140302481  48 8b c3                          MOV RAX,RBX
+140302484  48 83 c4 20                       ADD RSP,0x20
+140302488  5b                                POP RBX
+140302489  c3                                RET
+14030248a  48 8d 15 ef b3 7b 03              LEA RDX,[0x143abd880]
+140302491  48 8b cb                          MOV RCX,RBX
+140302494  e8 c7 03 00 00                    CALL 0x140302860
+140302499  48 8b c3                          MOV RAX,RBX
+14030249c  48 83 c4 20                       ADD RSP,0x20
+1403024a0  5b                                POP RBX
+1403024a1  c3                                RET
+1403024a2  66 90                             NOP
+1403024a4  fa 23 30 00 12 24 30 00 2a 24 30 00 42 24 30 00   <no instruction>
+1403024a5  23 30 00 12 24 30 00 2a 24 30 00 42 24 30 00 5a   <no instruction>
+1403024a6  30 00 12 24 30 00 2a 24 30 00 42 24 30 00 5a 24   <no instruction>
+1403024a7  00 12 24 30 00 2a 24 30 00 42 24 30 00 5a 24 30   <no instruction>
+1403024a8  12 24 30 00 2a 24 30 00 42 24 30 00 5a 24 30 00   <no instruction>
+1403024a9  24 30 00 2a 24 30 00 42 24 30 00 5a 24 30 00 72   <no instruction>
+1403024aa  30 00 2a 24 30 00 42 24 30 00 5a 24 30 00 72 24   <no instruction>
+1403024ab  00 2a 24 30 00 42 24 30 00 5a 24 30 00 72 24 30   <no instruction>
+1403024ac  2a 24 30 00 42 24 30 00 5a 24 30 00 72 24 30 00   <no instruction>
+1403024ad  24 30 00 42 24 30 00 5a 24 30 00 72 24 30 00      <no instruction>
+1403024ae  30 00 42 24 30 00 5a 24 30 00 72 24 30 00         <no instruction>
+1403024af  00 42 24 30 00 5a 24 30 00 72 24 30 00            <no instruction>
+1403024b0  42 24 30 00 5a 24 30 00 72 24 30 00               <no instruction>
+1403024b1  24 30 00 5a 24 30 00 72 24 30 00                  <no instruction>
+1403024b2  30 00 5a 24 30 00 72 24 30 00                     <no instruction>
+1403024b3  00 5a 24 30 00 72 24 30 00                        <no instruction>
+1403024b4  5a 24 30 00 72 24 30 00                           <no instruction>
+1403024b5  24 30 00 72 24 30 00                              <no instruction>
+1403024b6  30 00 72 24 30 00                                 <no instruction>
+1403024b7  00 72 24 30 00                                    <no instruction>
+1403024b8  72 24 30 00                                       <no instruction>
+1403024b9  24 30 00                                          <no instruction>
+1403024ba  30 00                                             <no instruction>
+1403024bb  00                                                <no instruction>

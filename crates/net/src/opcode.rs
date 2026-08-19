@@ -288,6 +288,26 @@ pub fn data_wz_up_to_date() -> Vec<u8> {
 /// Measured 2026-08-17: answering it with a world entry and terminator restored the UI.
 pub const CLIENT_LEAVE_WORLD_REQUEST: u16 = 0x0082;
 
+/// The client picking a world on the **WorldSelect** screen.
+///
+/// **Captured 2026-08-19** in `research/fixtures/world-select-0076-login.log`, the first run
+/// that ever reached that screen. 171 bytes, and unanswered it leaves the client on
+/// "Connecting to server..." forever - the "always answer" rule, on a screen this server had
+/// never shown before.
+///
+/// The body is a machine report. Plainly visible in the capture: `7f 00 00 01` (the local IP,
+/// 127.0.0.1), then a `u16`-length CPU string ("<the CPU model>..."), an
+/// OS string ("<the OS name>"), memory figures, then the timezone
+/// ("Eastern Standard Time"), country ("US") and locale ("en-US") as length-prefixed strings.
+///
+/// **The head is not parsed and the chosen world and channel are not read out of it.** The
+/// reference's `handleSelectWorld` decodes `type, worldId, channel` from the first three
+/// bytes and its tail (localIP, cpuName, osName, ram) lines up with ours - but its head is
+/// longer than what is on the wire here, so the offsets do not transfer. Reading the choice
+/// out of this packet is what the **channel swap** will need, and it should come from the
+/// client's own builder rather than from the reference.
+pub const CLIENT_SELECT_WORLD: u16 = 0x0076;
+
 /// The client's request to *enter* character creation - the second-password check.
 ///
 /// Sent by `FUN_141b282d0` when "Create a character" is clicked and its gate opens. The

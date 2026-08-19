@@ -503,6 +503,15 @@ def run(args):
     check("leave-world ends on the terminator, so the client stays on WorldSelect",
           again and again[-1] == WORLD_LIST, "last was 0x%04X" % (again[-1] if again else 0))
 
+    # Picking a world on the WorldSelect screen. Unanswered, the client sits on
+    # "Connecting to server..." forever - exactly what happened the first time that
+    # screen became reachable.
+    peer.send(0x0076, bytes.fromhex("00000000020000007f000001") + b"\x00\x00")
+    picked = [op for op, _ in peer.recv(4)]
+    check("selecting a world is answered with the character list",
+          picked == [ACCOUNT_INFO, WORLD_LIST, WORLD_LIST, LOGIN_RESULT],
+          "got " + ", ".join("0x%04X" % o for o in picked))
+
     peer.send(CLIENT_ENTER_CREATION_REQUEST, b"\x01\x00\x2e")
     opcode, body = peer.recv(1)[0]
     check("creation screen is permitted", opcode == ENTER_CREATION_RESULT and body == b"\x00\x00",

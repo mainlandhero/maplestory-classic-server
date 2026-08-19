@@ -25,6 +25,7 @@ use net::opcode::{
     CHECK_NAME_RESULT, CLIENT_CHECK_NAME_REQUEST, CLIENT_CREATE_CHARACTER_REQUEST,
     CLIENT_DATA_WZ_REQUEST, CLIENT_DELETE_CHARACTER_REQUEST, CLIENT_ENTER_CREATION_REQUEST,
     CLIENT_LEAVE_WORLD_REQUEST, CLIENT_LOGIN_REQUEST, CLIENT_SELECT_CHARACTER_REQUEST,
+    CLIENT_SELECT_WORLD,
     CREATE_CANNOT_PROCESS, CREATE_CHARACTER_RESULT, CREATE_INSUFFICIENT_SLOT, DATA_WZ_PATCH,
     DELETE_CHARACTER_RESULT, DELETE_FAILED, DELETE_OK, ENTER_CREATION_RESULT,
     LOGIN_RESULT, MIGRATE_COMMAND, NAME_ALREADY_USED, NAME_AVAILABLE, NAME_NOT_ALLOWED,
@@ -143,6 +144,20 @@ impl Session {
             // LOGIN RESULT that followed was yanking it straight to CharSelect. Leaving the
             // login result off is the whole change.
             CLIENT_LEAVE_WORLD_REQUEST => self.world_list_only("leave world"),
+
+            // Picking a world on the WorldSelect screen. Unanswered this leaves the client
+            // on "Connecting to server..." forever - it was the first thing to freeze once
+            // that screen became reachable.
+            //
+            // The answer is the character list for the chosen world, which is exactly what a
+            // login request already gets. The reference's handleSelectWorld ends its success
+            // path in `selectWorldResult`, the same wire shape as our LOGIN_RESULT.
+            //
+            // We do NOT read the chosen world or channel out of the body yet - see
+            // net::opcode::CLIENT_SELECT_WORLD. Every account here has one world, so the
+            // answer is the same whichever row was clicked; that stops being true the moment
+            // the channel swap needs the choice.
+            CLIENT_SELECT_WORLD => self.world_and_characters("select world"),
             CLIENT_ENTER_CREATION_REQUEST => vec![Reply::new(
                 ENTER_CREATION_RESULT,
                 enter_creation_permitted(),
@@ -570,6 +585,45 @@ mod tests {
         assert_eq!(opcodes(&first), vec![ACCOUNT_INFO, WORLD_LIST, WORLD_LIST]);
         assert_eq!(first.iter().map(|r| &r.body).collect::<Vec<_>>(),
                    second.iter().map(|r| &r.body).collect::<Vec<_>>());
+    }
+
+    /// Picking a world must be answered, or the client sits on "Connecting to server..."
+    /// forever. That is the UI-freeze rule on the screen it was first observed on.
+    #[test]
+    fn selecting_a_world_is_answered_with_the_character_list() {
+        let mut s = session();
+        let replies = s.handle(&request(CLIENT_SELECT_WORLD, &[]));
+        assert!(!replies.is_empty(), "silence here freezes the client's whole UI");
+        assert_eq!(
+            opcodes(&replies),
+            vec![ACCOUNT_INFO, WORLD_LIST, WORLD_LIST, LOGIN_RESULT],
+            "the answer is the character list for the chosen world"
+        );
+    }
+
+    /// The real 171-byte body, from the first run that ever reached WorldSelect. A handler
+    /// tested only against an empty body proves nothing about the one the client sends.
+    #[test]
+    fn the_captured_world_select_body_is_answered() {
+        let mut s = session();
+        let body = hex_body(
+            "00000000020000007f0000012f00414d442052797a656e2037203737303058             8382d436f72652050726f636573736f72"
+        );
+        let replies = s.handle(&request(CLIENT_SELECT_WORLD, &body));
+        assert!(!replies.is_empty(), "a real body must be answered too");
+        assert!(opcodes(&replies).contains(&LOGIN_RESULT));
+
+        // And a truncated one must not panic - it comes off a socket.
+        for n in 0..8 {
+            assert!(!s.handle(&request(CLIENT_SELECT_WORLD, &body[..n])).is_empty());
+        }
+    }
+
+    fn hex_body(h: &str) -> Vec<u8> {
+        let h: String = h.chars().filter(|c| !c.is_whitespace()).collect();
+        (0..h.len() / 2)
+            .map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).expect("hex"))
+            .collect()
     }
 
     /// Leaving the world must **not** send a login result, and that is the whole point.
