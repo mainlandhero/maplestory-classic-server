@@ -213,6 +213,19 @@ The probe's two free slots are aimed at `140304b20` and `140302e30`, which discr
 **Unlike every previous run, "nothing visible" is now a failure rather than the expected
 result.**
 
+**How to read the fault if it comes back.** `research/setfield-fault-shape.md`, written
+before this run. The fault at `0x140ce89d6` is a **scope-exit destructor on a stack local**,
+not the teardown of a long-lived object: both real callers of `FUN_140ce89c0` end
+`LEA RCX,[RSP+N]` / `CALL` / epilogue / `RET`, and the holder's `+8` was non-null garbage
+because the local was never written. That makes it a latent bug in the client's own error
+path - **any** early exit from either function faults at the **same address**.
+
+> So a repeat of `0x140ce89d6` would mean "that function bailed out again", **not** "the map
+> id is still wrong". The address cannot say which failure it was. The signals that
+> discriminate are the two watches and what appears on screen.
+
+A fault at a **different** address is still progress, exactly as before.
+
 `research/msexe-setfield-aftermath.c` has the fault site and `FUN_142caa4e0`, the builder
 of the two packets the client sent on entering.
 
