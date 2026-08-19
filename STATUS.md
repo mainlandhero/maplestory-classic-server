@@ -90,7 +90,7 @@ between the migration and `SetField` is settled:
 ### 1. The character record - the last wall
 
 `SetField` must carry `characterData = 1`, and that branch calls **`FUN_140304b20`**, an
-18525-byte decoder with **117 packet reads**. Sending `characterData = 0` instead **faults
+18525-byte decoder with **126 packet reads** (117 was the listing grep's undercount - it missed a `JMP` thunk and a `u64` primitive; see `research/charrecord-decode.md`). Sending `characterData = 0` instead **faults
 the client** at `FUN_1402fa540+0x1c`: that short form is "same character, new map" and
 assumes state a freshly migrated client does not have. Measured, not guessed.
 
@@ -169,12 +169,59 @@ is a permutation: entry 7 -> byte 0, entry 8 -> byte 62, entry 1 -> byte 44. Bot
 documents that recorded the guess now say so. Building on it would have put every flag in
 the wrong byte, and a client that skips every block looks exactly like one sent nothing.
 
+### 1a-ii. SETTLED 2026-08-19: the map id is at stat-block offset 84
+
+Working in **`research/charstat-layout.md`**; the flag-#7 region's own layout is in
+**`research/charrecord-flag7.md`**. Three independent lines:
+
+* The `u32` at `0x14030325e` is mangled into a 12-byte heap object hung off `record+0xfb`
+  with the rolling-checksum seed `0x9a65`. `FUN_1402fa540` is the byte-for-byte inverse.
+* `SetField` calls `FUN_1402fa540(user + 0xf3)` and hands the result to a lookup keyed by
+  `PTR_s_mapName_143a49020`, which dereferences in `.rdata` to the ASCII string `mapName`.
+  The neighbouring literal is `MAP` spliced with TAB, CR and LF.
+* It sits immediately before `portal`, which is where `CharacterStat` puts a map.
+
+**We had it in the wrong place.** `chr.map_id` went to record offset **120**, in the
+character-list trailer, which is not on the `SetField` path at all - and offset 84 was a
+literal zero. The test that was supposed to catch this scanned the record for any
+`u32 == START_MAP_ID` and passed on any of them, so it could not fail. It now asserts the
+offset, and that changing the map changes those four bytes and nothing else.
+
+`param_3 == 0` on both paths, measured from `[RBP+0x3118]` being arg4's home slot, so the
+`SetField` record and the character list share the identical 108-byte stat block. It is one
+shared function now.
+
+### 1b. READY TO RUN - and this is the run that can put a character on screen
+
+```bash
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
+```
+
+Verified first without spending a launch: `python tools/channel_smoke.py --set-field-probe`
+decodes the real server's real bytes with the independent Python transport and reads
+`presence[0] = 1`, the character id, and the map at stat-block offset 84. 27 checks pass.
+
+The probe's two free slots are aimed at `140304b20` and `140302e30`, which discriminate:
+
+| hook log | means |
+|---|---|
+| no WATCH lines at all | the hook never armed - conclude nothing, re-run |
+| `140302e30` at character select | the **positive control**: the watch is armed and works |
+| `140304b20` but not `140302e30` after the migration | the gate SKIPPED the stat block, so `presence[0]` is the wrong byte |
+| both, after the migration | the gate opened and the stats decoded |
+
+**Unlike every previous run, "nothing visible" is now a failure rather than the expected
+result.**
+
 `research/msexe-setfield-aftermath.c` has the fault site and `FUN_142caa4e0`, the builder
 of the two packets the client sent on entering.
 
-### 1b. The minimum record is 112 bytes
+### 1c. The all-flags-clear minimum record is 112 bytes
 
-Settled by the loop census, `research/charrecord-loops.md`. With every presence flag clear,
+**Historical now** - this is the packet that was accepted on 2026-08-19 and faded to black,
+not the one the server sends today. Kept because the skip-chain it documents is what makes
+the zeros in the current record safe. Settled by the loop census,
+`research/charrecord-loops.md`. With every presence flag clear,
 every count zero and the boolean at `0x140304cf2` zero, the client reads **7 fields, 112
 bytes**:
 
