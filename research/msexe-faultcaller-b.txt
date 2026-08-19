@@ -1,0 +1,136 @@
+// 1415d68e0 .. 1415d6a41   block=.text
+1415d68e0  e2 98                             LOOP 0x1415d687a
+1415d68e2  5a                                POP RDX
+1415d68e3  5c                                POP RSP
+1415d68e4  f4                                HLT
+1415d68e5  56                                PUSH RSI
+1415d68e6  b6 5e                             MOV DH,0x5e
+1415d68e8  23 2d 6f f6 22 f7                 AND EBP,dword ptr [0x138805f5d]
+1415d68ee  a2 55 16 6c 0c 74 0e af 4d        MOV [0x4daf0e740c6c1655],AL
+1415d68f7  3b e5                             CMP ESP,EBP
+1415d68f9  09 22                             OR dword ptr [RDX],ESP
+1415d68fb  a9 35 04 aa b8                    TEST EAX,0xb8aa0435
+1415d6900  38 b2 73 67 31 21                 CMP byte ptr [RDX + 0x21316773],DH
+1415d6906  32 c3                             XOR AL,BL
+1415d6908  6a 38                             PUSH 0x38
+1415d690a  3f 50 27 73 fd dd 63 8e 2d 52 16 5d 2f a4 24 b4   <no instruction>
+1415d690b  50                                PUSH RAX
+1415d690c  27 73 fd dd 63 8e 2d 52 16 5d 2f a4 24 b4 44 77   <no instruction>
+1415d690d  73 fd                             JNC 0x1415d690c
+1415d690f  dd 63 8e                          FRSTOR [RBX + -0x72]
+1415d6912  2d 52 16 5d 2f                    SUB EAX,0x2f5d1652
+1415d6917  a4                                MOVSB RDI,RSI
+1415d6918  24 b4                             AND AL,0xb4
+1415d691a  44 77 81                          JA 0x1415d689e
+1415d691d  42 d4 91 c7 e2 23 01 97 62 47 a3 4c bb de ca 42   <no instruction>
+1415d691e  d4 91 c7 e2 23 01 97 62 47 a3 4c bb de ca 42 69   <no instruction>
+1415d691f  91                                XCHG EAX,ECX
+1415d6920  c7 e2 23 01 97 62 47 a3 4c bb de ca 42 69 09 fa   <no instruction>
+1415d6921  e2 23                             LOOP 0x1415d6946
+1415d6923  01 97 62 47 a3 4c                 ADD dword ptr [RDI + 0x4ca34762],EDX
+1415d6929  bb de ca 42 69                    MOV EBX,0x6942cade
+1415d692e  09 fa                             OR EDX,EDI
+1415d6930  60 a0 c1 9f 68 89 9a 09 f8 4e 2b 4f 21 74 b9 87   <no instruction>
+1415d6931  a0 c1 9f 68 89 9a 09 f8 4e        MOV AL,[0x4ef8099a89689fc1]
+1415d693a  2b 4f 21                          SUB ECX,dword ptr [RDI + 0x21]
+1415d693d  74 b9                             JZ 0x1415d68f8
+1415d693f  87 9a c5 9b 1a 01                 XCHG dword ptr [RDX + 0x11a9bc5],EBX
+1415d6945  2e ce 19 ea 0d 3b 4f e9 dd 68 46 99 23 e8 8b 36   <no instruction>
+1415d6946  ce 19 ea 0d 3b 4f e9 dd 68 46 99 23 e8 8b 36 56   <no instruction>
+1415d6947  19 ea                             SBB EDX,EBP
+1415d6949  0d 3b 4f e9 dd                    OR EAX,0xdde94f3b
+1415d694e  68 46 99 23 e8                    PUSH -0x17dc66ba
+1415d6953  8b 36                             MOV ESI,dword ptr [RSI]
+1415d6955  56                                PUSH RSI
+1415d6956  9a 13 cc 81 37 0b b7 48 6c 34 e9 23 83 5e 23 e9   <no instruction>
+1415d6957  13 cc                             ADC ECX,ESP
+1415d6959  81 37 0b b7 48 6c                 XOR dword ptr [RDI],0x6c48b70b
+1415d695f  34 e9                             XOR AL,0xe9
+1415d6961  23 83 5e 23 e9 d2                 AND EAX,dword ptr [RBX + -0x2d16dca2]
+1415d6967  62 c9 8e 3f 8e 34 a8 09 23 24 d2 5c dc 13 cc d8   <no instruction>
+1415d6968  c9                                LEAVE
+1415d6969  8e 3f 8e 34 a8 09 23 24 d2 5c dc 13 cc d8 05 4d   <no instruction>
+1415d696a  3f 8e 34 a8 09 23 24 d2 5c dc 13 cc d8 05 4d e5   <no instruction>
+1415d696b  8e 34 a8 09 23 24 d2 5c dc 13 cc d8 05 4d e5 8d   <no instruction>
+1415d696c  34 a8                             XOR AL,0xa8
+1415d696e  09 23                             OR dword ptr [RBX],ESP
+1415d6970  24 d2                             AND AL,0xd2
+1415d6972  5c                                POP RSP
+1415d6973  dc 13                             FCOM double ptr [RBX]
+1415d6975  cc                                INT3
+1415d6976  d8 05 4d e5 8d f2                 FADD float ptr [0x133eb4ec9]
+1415d697c  4d 46 1b 0a fd 36 f7 62 7c 40 3d e4 b2 62 a3 9f   <no instruction>
+1415d697d  46 1b 0a                          SBB R9D,dword ptr [RDX]
+1415d6980  fd                                STD
+1415d6981  36 f7 62 7c                       MUL dword ptr SS:[RDX + 0x7c]
+1415d6985  40 3d e4 b2 62 a3                 CMP EAX,0xa362b2e4
+1415d698b  9f                                LAHF
+1415d698c  43 6d                             INSD RDI,DX
+1415d698e  cc                                INT3
+1415d698f  fa                                CLI
+1415d6990  cc                                INT3
+1415d6991  fd                                STD
+1415d6992  39 33                             CMP dword ptr [RBX],ESI
+1415d6994  54                                PUSH RSP
+1415d6995  49 5a                             POP R10
+1415d6997  4d 0d e8 71 31 78                 OR RAX,0x783171e8
+1415d699d  bd 4c ec e2 5c                    MOV EBP,0x5ce2ec4c
+1415d69a2  fe b4 90 f1 b2 76 6a              INC byte ptr [RAX + RDX*0x4 + 0x6a76b2f1]
+1415d69a9  69 2e 58 11 a5 81                 IMUL EBP,dword ptr [RSI],-0x7e5aeea8
+1415d69af  4f 9a e5 04 6e d2 b7 f5 1f 65 ee 59 a6 d2 c5 ec   <no instruction>
+1415d69b0  9a e5 04 6e d2 b7 f5 1f 65 ee 59 a6 d2 c5 ec 11   <no instruction>
+1415d69b1  e5 04                             IN EAX,0x4
+1415d69b3  6e                                OUTSB DX,RSI
+1415d69b4  d2 b7 f5 1f 65 ee                 SHL byte ptr [RDI + -0x119ae00b],CL
+1415d69ba  59                                POP RCX
+1415d69bb  a6                                CMPSB RDI,RSI
+1415d69bc  d2 c5                             ROL CH,CL
+1415d69be  ec                                IN AL,DX
+1415d69bf  11 77 84                          ADC dword ptr [RDI + -0x7c],ESI
+1415d69c2  1f 14 59 c5 fb 57 c2 7a 93 7a f4 57 e2 32 6a 02   <no instruction>
+1415d69c3  14 59                             ADC AL,0x59
+1415d69c5  c5 fb 57 c2 7a 93 7a f4 57 e2 32 6a 02 5a c0 a1   <no instruction>
+1415d69c6  fb                                STI
+1415d69c7  57                                PUSH RDI
+1415d69c8  c2 7a 93                          RET 0x937a
+1415d69cb  7a f4                             JP 0x1415d69c1
+1415d69cd  57                                PUSH RDI
+1415d69ce  e2 32                             LOOP 0x1415d6a02
+1415d69d0  6a 02                             PUSH 0x2
+1415d69d2  5a                                POP RDX
+1415d69d3  c0 a1 c9 5e 18 55 0c              SHL byte ptr [RCX + 0x55185ec9],0xc
+1415d69da  93                                XCHG EAX,EBX
+1415d69db  b8 7b f9 03 2c                    MOV EAX,0x2c03f97b
+1415d69e0  4d 02 8d ef 37 c5 d1              ADD R9B,byte ptr [R13 + -0x2e3ac811]
+1415d69e7  b7 2e                             MOV BH,0x2e
+1415d69e9  91                                XCHG EAX,ECX
+1415d69ea  d5 87 5b f8 54 67 5f 4e 4e 18 06 06 d9 73 d7 22   <no instruction>
+1415d69eb  87 5b f8                          XCHG dword ptr [RBX + -0x8],EBX
+1415d69ee  54                                PUSH RSP
+1415d69ef  67 5f                             POP RDI
+1415d69f1  4e 4e 18 06 06 d9 73 d7 22 71 a8 d5 55 6f d1 88   <no instruction>
+1415d69f2  4e 18 06                          SBB byte ptr [RSI],R8B
+1415d69f5  06 d9 73 d7 22 71 a8 d5 55 6f d1 88 1e 2f d8 04   <no instruction>
+1415d69f6  d9 73 d7                          FNSTENV [RBX + -0x29]
+1415d69f9  22 71 a8                          AND DH,byte ptr [RCX + -0x58]
+1415d69fc  d5 55 6f d1 88 1e 2f d8 04 af f2 63 83 b4 a1 2f   <no instruction>
+1415d69fd  55                                PUSH RBP
+1415d69fe  6f                                OUTSD DX,RSI
+1415d69ff  d1 88 1e 2f d8 04                 ROR dword ptr [RAX + 0x4d82f1e],0x1
+1415d6a05  af                                SCASD RDI
+1415d6a06  f2 63 83 b4 a1 2f a2              MOVSXD EAX,dword ptr [RBX + -0x5dd05e4c]
+1415d6a0d  64 d0 8a 57 b9 9f 7a              ROR byte ptr FS:[RDX + 0x7a9fb957],0x1
+1415d6a14  a1 1d 7b 48 0d 94 22 c9 07 b9 e3 cd 86 f3 1d 22   <no instruction>
+1415d6a15  1d 7b 48 0d 94                    SBB EAX,0x940d487b
+1415d6a1a  22 c9 07 b9 e3 cd 86 f3 1d 22 72 77 f3 cd e8 87   <no instruction>
+1415d6a1b  c9                                LEAVE
+1415d6a1c  07 b9 e3 cd 86 f3 1d 22 72 77 f3 cd e8 87 86 0b   <no instruction>
+1415d6a1d  b9 e3 cd 86 f3                    MOV ECX,0xf386cde3
+1415d6a22  1d 22 72 77 f3                    SBB EAX,0xf3777222
+1415d6a27  cd e8                             INT 0xe8
+1415d6a29  87 86 0b 03 90 90                 XCHG dword ptr [RSI + -0x6f6ffcf5],EAX
+1415d6a2f  48 8d 4c 24 38                    LEA RCX,[RSP + 0x38]
+1415d6a34  e8 87 1f 71 ff                    CALL 0x140ce89c0
+1415d6a39  48 81 c4 88 00 00 00              ADD RSP,0x88
+1415d6a40  c3                                RET
+1415d6a41  cc                                INT3
