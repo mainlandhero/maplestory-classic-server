@@ -77,18 +77,23 @@ pub const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 /// the end. Parse the string first and let it tell you where they are.
 pub const CLIENT_TRANSFER_FIELD: u16 = 0x00D1;
 
-/// The client announcing it has finished entering a field.
+/// The client announcing it has finished entering a field. **Once per field, every time.**
 ///
-/// Both are built back to back by `FUN_142caa4e0`, the world object's field-entry reset,
-/// with empty bodies. That same function **destroys and rebuilds the NPC pool empty** ~285
-/// lines earlier, which is what makes these two the safe moment to populate it: an
-/// `NpcEnterField` sent before the rebuild is silently discarded - no dialog, no fault.
+/// **Measured 2026-08-19**, from `research/fixtures/portal-works-npcs-and-avatar-do-not-world.log`:
+/// this arrives ~420 ms after every `SetField` - the first migration and every portal walk
+/// alike. That is what makes it the per-field marker.
 ///
-/// We answer the first and ignore the second; sending twice would be harmless (a repeated
-/// object id makes the client's handler return after 4 bytes) but pointless.
-pub const CLIENT_FIELD_ENTERED: u16 = 0x0238;
-/// The sibling of [`CLIENT_FIELD_ENTERED`], sent in the same millisecond. Not acted on.
-pub const CLIENT_FIELD_ENTERED_SIBLING: u16 = 0x024D;
+/// It replaced `0x0238`, and the reason is worth keeping. `0x0238` and `0x024D` are built
+/// back to back by `FUN_142caa4e0`, the world object's field-entry reset, which is why they
+/// looked like the field-entry signal. But the capture shows **`0x0238` arrives only on the
+/// FIRST field entry** and never again - the three portal transitions in that run produced
+/// no `0x0238` at all, only `0x00DC`. So NPCs triggered on `0x0238` could never appear after
+/// a portal walk even if everything else were right.
+pub const CLIENT_FIELD_ENTERED: u16 = 0x00DC;
+
+/// Sent once, with `0x024D`, on the first field entry only - **not** a per-field marker.
+/// Kept named so nobody re-derives it from the capture and reaches for it again.
+pub const CLIENT_ENTERED_WORLD_ONCE: u16 = 0x0238;
 
 /// What the client asked for in a [`CLIENT_TRANSFER_FIELD`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,7 +269,9 @@ impl Session {
         };
 
         let (target, note) = match &req {
-            Some(r) => match r.target_field.or_else(|| resolve_portal(chr.map_id, &r.portal_name)) {
+            Some(r) => match r.target_field.or_else(|| {
+                self.config.portals.get(&(chr.map_id, r.portal_name.clone())).copied()
+            }) {
                 Some(t) => (t, format!("portal {:?} -> map {t}", r.portal_name)),
                 None => (
                     chr.map_id,
@@ -402,28 +409,6 @@ fn npcs_for_map(map_id: u32) -> &'static [net::opcode::FieldNpc] {
     }
 }
 
-/// Which map a named portal leads to.
-///
-/// **This is a stub, and it is the wrong shape long-term.** The real table lives in the
-/// client's own `Map.wz`: every field image has a `portal` node whose entries carry `pn`
-/// (the name), `tm` (the target map) and `tn` (the target portal). `research/map1-exists.md`
-/// read exactly that to establish map 1's portal 4 is `out00` with `tm = 10`. So the right
-/// fix is a `tools/dump_portals.py` alongside `tools/dump_names.py`, emitting a
-/// `(map, portal, target)` table into `gm-handbook/` the way map and item names already are -
-/// game data regenerated from the client, not typed into source.
-///
-/// Until that exists this covers the one route that has actually been walked, so the portal
-/// works end to end and the plumbing around it is exercised. An unknown portal is **not**
-/// guessed: the caller re-sends the current map and says so in the log.
-fn resolve_portal(from_map: u32, portal_name: &str) -> Option<u32> {
-    match (from_map, portal_name) {
-        // Map 1 "Mushroom Town - West Entrance" -> map 10 "Mushroom Town".
-        // Read from the WZ, research/map1-exists.md.
-        (1, "out00") => Some(10),
-        _ => None,
-    }
-}
-
 /// Where the character id sits in a `0x007D` body.
 ///
 /// **Measured from a real capture, 2026-08-19**, decrypted with AES once the channel's
@@ -509,10 +494,40 @@ mod tests {
         assert_eq!(r.portal_name, "out00", "map 1's portal 4, from the WZ");
         assert_eq!(r.position, Some((1107, 365)), "y is exactly the portal's own y");
 
-        // And that name resolves to somewhere real.
-        assert_eq!(resolve_portal(1, "out00"), Some(10));
-        assert_eq!(resolve_portal(1, "nosuchportal"), None, "unknown portals are not guessed");
-        assert_eq!(resolve_portal(999, "out00"), None, "the table is keyed on the source map");
+    }
+
+    /// The portal table is generated from the client's `Map.wz`, so the loader has to cope
+    /// with what a generator emits: a comment header, blank lines, and a fourth column it
+    /// does not use. Rows are the real ones for maps 1 and 10 - the exact two-way route that
+    /// stranded a character on map 10 when the table was a hand-typed stub.
+    #[test]
+    fn the_portal_table_loads_and_is_keyed_on_the_source_map() {
+        let dir = std::env::temp_dir().join("maplecw-portal-test");
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let path = dir.join("portals.txt");
+        std::fs::write(
+            &path,
+            "# map, portal, target map, target portal
+
+1, out00, 10, in00
+             10, in00, 1, out00
+10, out00, 20, in00
+not, a, valid, row
+",
+        )
+        .expect("write");
+
+        let t = crate::config::Config::load_portals(&path);
+        assert_eq!(t.get(&(1, "out00".to_string())), Some(&10), "map 1 leads to map 10");
+        assert_eq!(t.get(&(10, "in00".to_string())), Some(&1), "and map 10 leads back");
+        assert_eq!(t.get(&(10, "out00".to_string())), Some(&20));
+        assert_eq!(t.get(&(1, "in00".to_string())), None, "keyed on the SOURCE map, not just the name");
+        assert_eq!(t.len(), 3, "the malformed row is skipped, not fatal");
+
+        assert!(
+            crate::config::Config::load_portals(std::path::Path::new("no-such-file")).is_empty(),
+            "a missing file is empty, not a panic - the server still answers"
+        );
     }
 
     /// The client omits BOTH coordinates when the portal name is empty, so the body is 31

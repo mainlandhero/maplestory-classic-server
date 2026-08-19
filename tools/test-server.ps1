@@ -141,7 +141,25 @@ $ErrorActionPreference = 'Stop'
 # its own control - the first SetField should read 0, and the second says whether the short
 # form is safe to use next time.
 #
-# 142797be0 is THE question this run answers, and it is a clean binary. It has exactly ONE
+# Retired 2026-08-19, both answered:
+#   142cfb500:peek=2358 -> [world+0x2358] read 0x00 on the FIRST SetField and NON-ZERO on
+#     every later one. So the CUserLocal slot IS populated once a field has loaded, and the
+#     short characterData=0 SetField's precondition holds for map CHANGES. Measured, not
+#     inferred - research/transfer-field-request.md could not settle it statically.
+#   142797be0 -> it FIRED. The local character is in the pool 0x0138 searches, and the
+#     handler reached its apply. Yet the character is still naked, so the failure is INSIDE
+#     the apply, which walks a list at user+0x1200 and only touches the look inside the loop.
+#
+# The two slots now answer the two things still broken:
+#   141e75800  the NPC pool's dispatcher. Two callers only - FUN_141820080 (CField::OnPacket)
+#              and the channel dispatcher. If it fires while dispatching 0x044F the routing
+#              and timing are right and the BODY is wrong; if it stays silent the packet is
+#              never dispatched at all and the trigger or the stage is wrong.
+#   1420dd920  exactly ONE call site in the image, inside FUN_142797be0's loop. It fires only
+#              if that loop body runs, so it separates "the look was applied and did not
+#              render" from "the loop was empty and the look was never applied".
+#
+# (was) 142797be0 is THE question this run answers, and it is a clean binary. It has exactly ONE
 # call site in the whole image (python tools/callers.py 0x142797be0): inside FUN_142d012e0,
 # the 0x0138 UserAvatarModified handler, and *past* its `if (pool_lookup != 0)` gate. So:
 #   it fires   -> the local character IS in that pool and the compact avatar look was applied
@@ -158,7 +176,7 @@ $ErrorActionPreference = 'Stop'
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cfb500:peek=2358,142797be0'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141e75800,1420dd920'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }

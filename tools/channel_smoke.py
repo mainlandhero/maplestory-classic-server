@@ -56,8 +56,10 @@ CHARACTER_ID = 204
 # map field discriminating in the other direction.
 MAP_ID = 1
 
-# Where the portal test sends the character. An EXPLICIT target field, not a portal name, so
-# this exercises the request parser and the reply without depending on the portal table stub.
+# Where map 1's "out00" leads, per the client's own Map.wz. The portal test sends the named
+# form the client really sends, so the generated portal table is exercised too - a hand-typed
+# stub here once let a character reach map 10 and get stranded, and the smoke test could not
+# have caught it because it was using an explicit target field instead of a name.
 PORTAL_TARGET = 10
 CLIENT_IV = 0x52307801        # J, the chain the client encrypts with
 SERVER_IV = 0x52307802        # K, the chain it decrypts with
@@ -167,17 +169,20 @@ try:
     send(transport.packet(0x007D, hello))
 
     if PROBE:
-        # 0x0238, the client's "I have finished entering the field". The NPC pool is
-        # destroyed and rebuilt empty just before the client sends this, which is what makes
-        # it the safe moment to populate it - see research/npc-spawn.md.
-        send(transport.packet(0x0238, b""))
+        # 0x00DC, the client's per-field-entry marker - measured as arriving once after
+        # every SetField, the first migration and every portal walk alike. NOT 0x0238, which
+        # the capture shows arrives only on the very first field entry.
+        send(transport.packet(0x00DC, b""))
 
-        # 0x00D1, a transfer-field request. The nameless form: 31 bytes, an explicit target
-        # field at offset 16, a zero-length portal name at 20, and NO coordinates - the
-        # client omits both when the name pointer is null.
-        req = bytearray(31)
-        req[16:20] = struct.pack("<I", PORTAL_TARGET)
-        send(transport.packet(0x00D1, bytes(req)))
+        # 0x00D1, a transfer-field request, in the form the client actually sends: no
+        # explicit target field (0xFFFFFFFF), a named portal, and coordinates after it. This
+        # exercises the generated portal table end to end - map 1's "out00" leads to map 10.
+        name = b"out00"
+        req = bytearray(27)
+        req[16:20] = struct.pack("<I", 0xFFFFFFFF)
+        req[20:22] = struct.pack("<H", len(name))
+        req = bytes(req[:22]) + name + struct.pack("<HH", 1107, 365) + bytes(3)
+        send(transport.packet(0x00D1, req))
 
     # Anything coming back is on the K chain. There is nothing to read yet; this decodes
     # whatever appears so that the first real reply is checked the moment it exists.

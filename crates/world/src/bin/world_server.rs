@@ -33,6 +33,7 @@ character select is claimed here. See crates/world/src/lib.rs.";
 
 fn main() -> ExitCode {
     let mut config = Config::default();
+    let mut portals_path = PathBuf::from("gm-handbook/portals.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -55,12 +56,24 @@ fn main() -> ExitCode {
                 config.set_field_probe = true;
                 Ok(())
             }
+            "--portals" => value().map(|v| portals_path = PathBuf::from(v)),
             other => Err(format!("unknown argument {other}")),
         };
         if let Err(e) = outcome {
             eprintln!("{e}\n\n{USAGE}");
             return ExitCode::FAILURE;
         }
+    }
+
+    // Portals come from the client's own Map.wz via tools/dump_portals.py. A missing file
+    // is not fatal: the server still answers a transfer request, it just cannot resolve a
+    // destination and says so per request rather than failing to start.
+    config.portals = world::config::Config::load_portals(&portals_path);
+    if config.portals.is_empty() {
+        eprintln!(
+            "maplecw-world: no portals loaded from {} - portal walks will re-send the              current map. Regenerate with: python tools/dump_portals.py",
+            portals_path.display()
+        );
     }
 
     if let Err(e) = world::serve(config) {

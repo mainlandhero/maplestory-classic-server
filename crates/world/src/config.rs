@@ -1,5 +1,6 @@
 //! What one channel server needs to know before it can listen.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -33,6 +34,43 @@ pub struct Config {
     ///
     /// See `research/msexe-stage-setfield.md`.
     pub set_field_probe: bool,
+
+    /// Where every portal leads, keyed by `(map, portal name)`.
+    ///
+    /// Generated from the client's own `Map.wz` by `tools/dump_portals.py` - the data is the
+    /// client's, not ours to invent. Empty if the file is missing, in which case the server
+    /// still answers a transfer request but re-sends the current map and says so, rather
+    /// than guessing a destination.
+    ///
+    /// This replaced a hand-typed two-row stub that let a character walk from map 1 to map
+    /// 10 and then stranded it: every portal out of map 10 was "not in the table".
+    pub portals: HashMap<(u32, String), u32>,
+}
+
+impl Config {
+    /// Load `map, portal, target map, target portal` rows, ignoring blanks and `#` comments.
+    ///
+    /// A missing file is **not** an error: the server runs without portals and logs each
+    /// unresolved request. A malformed line is skipped rather than aborting startup, because
+    /// this file is regenerated from game data and one bad row should not stop a test run.
+    pub fn load_portals(path: &std::path::Path) -> HashMap<(u32, String), u32> {
+        let mut out = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut f = line.split(',').map(str::trim);
+            let (Some(map), Some(name), Some(target)) = (f.next(), f.next(), f.next()) else {
+                continue;
+            };
+            if let (Ok(map), Ok(target)) = (map.parse::<u32>(), target.parse::<u32>()) {
+                out.insert((map, name.to_string()), target);
+            }
+        }
+        out
+    }
 }
 
 impl Default for Config {
@@ -43,6 +81,7 @@ impl Default for Config {
             world_id: 0,
             channel_id: 0,
             set_field_probe: false,
+            portals: HashMap::new(),
         }
     }
 }
