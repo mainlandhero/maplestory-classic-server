@@ -91,6 +91,8 @@ pub struct Config {
     pub equips: HashMap<u32, EquipTemplate>,
     /// Every NPC template's name, spoken dialogue and idle chatter, keyed by template id.
     pub npc_strings: HashMap<u32, NpcStrings>,
+    /// Every quest the client ships, keyed by quest id, from `gm-handbook/questlines.txt`.
+    pub quests: HashMap<u32, Quest>,
     /// Whether to actually send them. **Default `false`, and that is a measurement.**
     ///
     /// The run of 2026-08-19 faulted the client at `0x141c810b0` on the **first** `0x03C6`,
@@ -521,6 +523,92 @@ impl EquipTemplate {
     }
 }
 
+/// One quest, from `Quest.wz/QuestData`.
+///
+/// The client ships all 322 with their full dialogue, and the ids are **the same namespace
+/// the protocol uses**: NPC template 1 starts exactly one quest, 1000, and the `0x0151` a
+/// real client sent on 2026-08-19 carried quest 1000 with npc template 1.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Quest {
+    pub name: String,
+    /// `Check.0.npc` - who starts it.
+    pub start_npc: Option<u32>,
+    /// `Check.1.npc` - who finishes it. Often a different NPC on a different map.
+    pub end_npc: Option<u32>,
+    /// `Act.<state>.nextQuest` - the quest this one chains into.
+    pub next_quest: Option<u32>,
+    /// The conversation, keyed by the `Say` path with the line index removed.
+    ///
+    /// `"0"` is the opening conversation and `"1"` the completion one; `"0.yes"`,
+    /// `"0.no"`, `"1.stop.npc"` and so on are the branches. Each value is that node's
+    /// numbered lines **in index order**, which is not the same as string order once a
+    /// conversation reaches ten lines.
+    pub say: HashMap<String, Vec<String>>,
+}
+
+/// Every quest, from `tools/dump_quests.py`'s `questlines.txt`.
+///
+/// TSV of `questId, node, dotted.path, value` - one row per scalar leaf, which is lossless
+/// and needs no JSON parser for a query that is a flat lookup either way.
+pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
+    use std::collections::BTreeMap;
+    let mut lines: HashMap<u32, HashMap<String, BTreeMap<usize, String>>> = HashMap::new();
+    let mut out: HashMap<u32, Quest> = HashMap::new();
+
+    let Ok(text) = std::fs::read_to_string(path) else { return out };
+    for row in text.lines() {
+        if row.trim().is_empty() || row.starts_with('#') {
+            continue;
+        }
+        let mut f = row.splitn(4, '\t');
+        let (Some(id), Some(node), Some(dotted), Some(value)) =
+            (f.next(), f.next(), f.next(), f.next())
+        else {
+            continue;
+        };
+        let Ok(qid) = id.trim().parse::<u32>() else { continue };
+        let quest = out.entry(qid).or_default();
+        match node {
+            "QuestInfo" if dotted == "name" => quest.name = value.to_string(),
+            "Check" if dotted == "0.npc" => quest.start_npc = value.parse().ok(),
+            "Check" if dotted == "1.npc" => quest.end_npc = value.parse().ok(),
+            "Act" if dotted.ends_with(".nextQuest") => quest.next_quest = value.parse().ok(),
+            "Say" => {
+                // The last path segment is the line index; everything before it is the
+                // node. Splitting on the index rather than assuming a depth is what lets
+                // "0.2" and "1.stop.npc.0" both work.
+                let (key, index) = match dotted.rsplit_once('.') {
+                    Some((head, tail)) => match tail.parse::<usize>() {
+                        Ok(i) => (head.to_string(), i),
+                        Err(_) => (dotted.to_string(), 0),
+                    },
+                    None => match dotted.parse::<usize>() {
+                        Ok(i) => (String::new(), i),
+                        Err(_) => (dotted.to_string(), 0),
+                    },
+                };
+                lines
+                    .entry(qid)
+                    .or_default()
+                    .entry(key)
+                    .or_default()
+                    .insert(index, value.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    for (qid, nodes) in lines {
+        let quest = out.entry(qid).or_default();
+        for (key, indexed) in nodes {
+            // BTreeMap keyed on the parsed index, so line 10 follows line 9 rather than
+            // line 1 - which a string sort would get wrong and nothing would catch.
+            quest.say.insert(key, indexed.into_values().collect());
+        }
+    }
+    out
+}
+
 /// One NPC template's text, from `String.wz/Npc.img`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NpcStrings {
@@ -673,6 +761,7 @@ impl Default for Config {
             mob_limit: None,
             equips: HashMap::new(),
             npc_strings: HashMap::new(),
+            quests: HashMap::new(),
             send_mobs: false,
             fields: std::collections::HashSet::new(),
         }
@@ -827,6 +916,51 @@ mod spawn_tests {
         // "that should only apply to some items".
         let blocked = equips.values().filter(|e| e.trade_block).count();
         assert!(blocked > 0 && blocked < 20, "{blocked} equips carry tradeBlock");
+    }
+
+    /// Quest 1000's tree, read back out of the generated table.
+    ///
+    /// It is the one quest a real client has been observed asking for - the `0x0151` of
+    /// 2026-08-19 carried quest id 1000 and npc template 1 - so it is the only row here that
+    /// is cross-checked against the wire rather than only against the WZ.
+    #[test]
+    fn quest_1000_comes_back_with_its_branches_in_order() {
+        let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+        if !path.exists() {
+            return; // generated data, gitignored
+        }
+        let quests = load_quests(path);
+        assert_eq!(quests.len(), 322, "the client ships 322 quests");
+
+        let q = &quests[&1000];
+        assert_eq!(q.name, "Borrowing Sera's Mirror");
+        assert_eq!(q.start_npc, Some(1), "NPC template 1 starts it - matches the capture");
+        assert_eq!(q.end_npc, Some(2), "and template 2 finishes it");
+        assert_eq!(q.next_quest, Some(1001));
+
+        // The opening conversation is four lines, and the FIRST one is what the server
+        // sends. Getting the order wrong would open the conversation mid-way.
+        let opening = &q.say["0"];
+        assert_eq!(opening.len(), 4);
+        assert!(opening[0].starts_with("You must be the new traveler"), "{}", opening[0]);
+        assert!(opening[3].contains("Quest Helper"), "{}", opening[3]);
+
+        // The branches are separate nodes, not more lines of the opening.
+        assert!(q.say["0.yes"][0].contains("hill to the east"), "{:?}", q.say["0.yes"]);
+        assert!(q.say["0.no"][0].contains("come back when you change your mind"));
+        assert!(q.say.contains_key("1.stop.npc"), "{:?}", q.say.keys().collect::<Vec<_>>());
+
+        // The markup is carried raw - whether the client expands it is what the screen
+        // will answer.
+        assert!(q.say["0.yes"][0].contains("#i4031000#"), "the item icon token survives");
+
+        // Line order is by parsed index, not string order. Find a conversation with ten or
+        // more lines and check line 10 follows line 9 - a string sort puts "10" after "1".
+        if let Some((qid, lines)) = quests.iter().find_map(|(qid, q)| {
+            q.say.get("0").filter(|l| l.len() > 10).map(|l| (qid, l))
+        }) {
+            assert!(!lines[9].is_empty() && !lines[10].is_empty(), "quest {qid}");
+        }
     }
 
     /// Robin's lines, read back out of the generated table.

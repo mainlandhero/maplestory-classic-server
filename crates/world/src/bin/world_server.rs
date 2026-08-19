@@ -40,6 +40,7 @@ fn main() -> ExitCode {
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
+    let mut quests_path = PathBuf::from("gm-handbook/questlines.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -69,6 +70,7 @@ fn main() -> ExitCode {
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
+            "--quests" => value().map(|v| quests_path = PathBuf::from(v)),
             "--mob-limit" => value().and_then(|v| {
                 v.parse()
                     .map(|n: usize| config.mob_limit = Some(n))
@@ -146,6 +148,14 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no NPC text from {} - NPCs will fall back to placeholder              dialogue. Regenerate with: python tools/dump_npcstrings.py",
             npc_strings_path.display()
+        );
+    }
+
+    config.quests = world::config::load_quests(&quests_path);
+    if config.quests.is_empty() {
+        eprintln!(
+            "maplecw-world: no quest text from {} - NPCs will fall back to their generic              line. Regenerate with: python tools/dump_quests.py",
+            quests_path.display()
         );
     }
 

@@ -2,6 +2,13 @@
 
 **Written 2026-08-19, entirely statically. No client run was spent.**
 
+> **Read section 11 first if you are here because the tooltip still shows no stats.**
+> The run of 2026-08-19 sent the absolute values section 8 concluded, the items decoded, the
+> character is dressed - and there is still no stat line. Section 11 settles the encoding
+> question ([L], both directions, and the answer is "the server has nothing to encode"),
+> corrects nothing in section 2, and moves the search downstream to a single gate. It also
+> **retracts two past-tense claims in sections 5 and 7** that were predictions.
+
 `research/naked-character.md` established the 125-byte type-1 item body and said the three
 `u32` bitmasks gate "17 optional `u16`" and "21 optional mixed-width fields" without naming
 any of them. This document names them, bit by bit, from **this binary**, and answers the
@@ -17,7 +24,7 @@ different game version and is a candidate, never a fact.
 
 | question | answer | label |
 |---|---|---|
-| Do the stat fields carry the item's stats? | **Yes - they are the item's TOTAL stats, and a fresh Undershirt must be sent with `inc_pdd = 6`.** The tooltip prints the packet value alone and *subtracts* `ITEMINFO.incPDD` from it; a separate function compares the two directly in the same units. Zeros are suppressed by a print guard, which is why the screenshot has no stat section. Section 8 | [L] |
+| Do the stat fields carry the item's stats? | **Yes - they are the item's TOTAL stats, and a fresh Undershirt must be sent with `inc_pdd = 6`.** The tooltip prints the packet value alone and *subtracts* `ITEMINFO.incPDD` from it; a separate function compares the two directly in the same units. Zeros are suppressed by a print guard. Section 8. **But the guard is not what emptied the screenshot** - sending 6 produced no line either. Section 11 | [L] for the guard; the screenshot's cause is **not established** |
 | Why "Cannot be Traded when equipped"? | Because we send **`scissor_uses = 0`**. `FUN_1402fd610` (`vtable+0x200`) returns true for any item with `scissor_uses <= 20`, and that makes `FUN_14038cf10` report a trade restriction. The wording then comes from the WZ. **The fix is one packet byte:** option-mask **bit 18** set to a value **> 0x14**. | [L] |
 | Are the six `REQ` zeros wrong? | **No.** No requirement value exists anywhere in the 125-byte body; `reqLevel/STR/DEX/INT/LUK/POP/Job` live in `ITEMINFO`, loaded from the WZ, and `01040002.img/info` really does have all of them at 0. Nothing to fix. | [L] |
 
@@ -35,7 +42,9 @@ Three instruments, and they agree everywhere they overlap.
    `0x140303800..0x140303a6c`, bounded by `.pdata`) is `u32 mask` then, for bit *k*,
    `CALL 0x1406e8b80` (u16) and `CALL FUN_1402f7010(value, base + 8k)` with the result
    stored at `base + 8k + 4`. So **bit *k* of that mask writes an 8-byte obfuscated pair at
-   `base + 8k`**, value at `+0`..`+4`, integrity dword at `+4`. **[L]**
+   `base + 8k`**, value at `+0`..`+4`, integrity dword at `+4`. **[L]** The value on the
+   **wire** is a plain `u16`; the client invents the key and computes the checksum itself
+   inside `FUN_1402f7010`. Section 11.1. **[L]**
    `FUN_140303b40` (`research/msexe-itemslot-b40.txt`) calls `FUN_140303800(base)` first,
    then reads its own `u32` mask and 21 mixed-width fields starting at `base + 0x98`. **[L]**
 
@@ -262,9 +271,18 @@ CALL 0x140910eb0 / TEST EAX,EAX / SETNZ CL / MOV [R14+0x1b4],ECX` at `0x1403b6a9
 
 Substituting our packet - attribute 0, cash serial 0, scissor uses 0 - and the WZ's zeros,
 `FUN_14038cf10` returns **1** and the wording is **0x03C6**. That is exactly the line on
-The owner's screen, and the same `vtable+0x200` also explains why
-`Scissors Usages Available : 0` printed (`FUN_1403e8c40` ends in
-`JMP qword ptr [RAX+0x200]`). **Both wrong lines have one cause.** **[D]**
+The owner's screen, and the same `vtable+0x200` would also make
+`Scissors Usages Available : 0` print (`FUN_1403e8c40` ends in
+`JMP qword ptr [RAX+0x200]`). **[D]**
+
+> **Corrected 2026-08-19, section 11.4.1.** This paragraph used to end *"...also explains why
+> `Scissors Usages Available : 0` **printed**. Both wrong lines have one cause."* **The
+> scissors line was never reported as being on screen** - the only first-hand account of that
+> screenshot is the commit message of `7a59910`, which names the trade line and "no stats"
+> and nothing else. A prediction was written in the past tense. It matters: the two lines do
+> **not** have one cause, because the scissors line is inside `FUN_1426b20f0` and behind the
+> `ITEMINFO` gate at `0x1426b223e`, while the trade line is a sibling call in
+> `FUN_14264f750` and is not.
 
 ### 5.1 What to change
 
@@ -331,9 +349,15 @@ fallback.
 | `Remaining Enhancements: %d` (0x039E) | **0** | 0xfa | **No.** The line only prints when `ITEMINFO.tuc != 0` (`*(char *)(itemInfo+0xb8)`), and `01040002.img/info/tuc` is **7**, so a fresh Undershirt should read **7**. **[L]** for the field, the guard, **and now the range**: `FUN_14038d3c0` compares this field against `ITEMINFO.tuc` directly (`CMP AL,byte ptr [RDI+0xb8]` at `0x14038d41c`), so it is constrained to `0..=tuc` - `>= tuc` reads as "not fresh" on one path and `> tuc` on the other. **[I]** remains only on "`tuc` exactly is the fresh value" rather than some smaller number; nothing writes it |
 | `Scissors Usages Available : %d` (0x03A0) | **18** | 0x1a6 | **No** - and this is the trade bug. Section 5 |
 
-The `Remaining Enhancements` guard is worth writing down because it is why the line appeared
-at all: `if (itemInfo[0x328] == 0 && !trialMode && itemInfo[0xb8] != 0)`. `+0xb8` is WZ
+The `Remaining Enhancements` guard is
+`if (itemInfo[0x328] == 0 && !trialMode && itemInfo[0xb8] != 0)`. `+0xb8` is WZ
 `tuc`, `+0x328` is WZ `exceptUpgrade`. **[L]**, `research/msexe-tooltip.c` around line 840.
+
+> **Corrected 2026-08-19, section 11.4.1.** This used to open *"the guard is worth writing
+> down because it is why the line **appeared** at all"*. Nothing on record says a
+> `Remaining Enhancements` line was ever on screen. The guard is real; the appearance was an
+> inference. Both the guard **and** this whole line live behind the `ITEMINFO` gate at
+> `0x1426b223e` (section 11.4), so its absence is equally consistent with the gate closing.
 
 ---
 
@@ -579,3 +603,242 @@ items that do not have a Scissor count will have `cuttable` Scissor uses added t
 This does **not** move `NO_SCISSOR_RESTRICTION` from [D] to [L] - a 1-of-8 source cannot do
 that - but it is a second, independent source agreeing with a value derived from this
 binary, and it agrees on the width and the meaning as well as the number.
+
+---
+
+## 11. Where the `u16` goes, what the tooltip reads, and why the two agreeing is not enough
+
+**Written 2026-08-19, second pass, entirely statically. No client run was spent.** Reading
+order: 11.1 answers the question that was asked, 11.4 answers the question that matters.
+
+### 11.0 The three answers, first
+
+| question | answer | label |
+|---|---|---|
+| Does the `u16` we send reach `item + 0x62 + 8k`? | **Yes.** Section 2's `base + 8k` is correct and the base really is `item + 0x62`. | [L] |
+| Do the write path and the tooltip read path use the same encoding? | **Yes, and there was never a way for them not to.** `FUN_1402f7010` (write) and `FUN_1401ab420` (read) are an exact inverse pair, and **the wire carries a raw `u16`** - the client generates the key, encodes and checksums *inside the same function that reads the packet*. There is nothing for the server to encode. | [L] |
+| So why is there no stat line? | **Not settled, and it is not in the packet.** Everything downstream of the packet is behind **one** gate - `FUN_1426b20f0`'s `TEST R15,R15 / JZ` at `0x1426b223e`, where `R15` is the item's `ITEMINFO`. That gate also hides `Remaining Enhancements` and `Scissors Usages Available`, and it does **not** hide `Cannot be Traded when equipped`. Section 11.4, and the watch in 11.6 separates it from the two alternatives. | [L] for the gate, **not established** for which branch the client takes |
+
+### 11.1 The obfuscated-slot hypothesis, disproved
+
+The suspicion was that `base + 8k` with a dword beside it is a ZtlSecure slot, and that the
+server might have to send an *encoded* value plus a checksum. It does not, and the reason is
+structural rather than arithmetic.
+
+**The writer.** `research/msexe-itemslot-800.txt`, bounded `0x140303800 .. 0x140303a6c` by
+`.pdata`. Bit 0 is the shape all seventeen share:
+
+```text
+14030381d  CALL 0x1406e8c20        ; u32 mask -> EBP
+140303826  TEST AL,0x1
+140303828  JZ   0x140303834
+14030382a  CALL 0x1406e8b80        ; u16 from the PACKET
+140303834  MOV  EAX,EDI            ; bit clear -> 0
+140303836  MOV  RDX,RBX            ; RDX = base + 0    (bit k: LEA RDX,[RBX + 8k])
+140303839  MOVZX ECX,AX            ; RCX = the raw value
+14030383c  CALL 0x1402f7010
+140303841  MOV  dword ptr [RBX + 0x4],EAX     ; the checksum it returned
+```
+
+So the call is `FUN_1402f7010(raw_u16, dst)` and it returns the checksum. **[L]**
+
+**What that function does** (`research/msexe-tooltip.c`, `FUN_1402f7010 @ 1402f7010`,
+131 bytes) - two iterations, `i = 0, 1`:
+
+```text
+k_i = FUN_1407386b0(&DAT_143ac1ab0)       ; the client's own byte PRNG
+dst[i]     = k_i
+dst[2 + i] = k_i ^ value_byte_i
+chk        = ror32(chk ^ k_i, 5) + (k_i ^ value_byte_i)      ; chk starts 0xbaadf00d
+```
+
+**The reader** (`research/msexe-tooltip-stats.c`, `FUN_1401ab420 @ 1401ab420`):
+
+```text
+return  CONCAT11(p[3] ^ p[1], p[2] ^ p[0])                   ; lo = p[2]^p[0], hi = p[3]^p[1]
+chk  =  ror32((ror32(p[0] ^ 0xbaadf00d, 5) + p[2]) ^ p[1], 5) + p[3]
+        if chk != argument -> FUN_141804970 -> _CxxThrowException("throw ZException")
+```
+
+Substitute the writer's `p[0]=k0, p[1]=k1, p[2]=k0^v0, p[3]=k1^v1` and the reader's
+recurrence is the writer's, term for term. **Exact inverse pair.** **[D]** from two **[L]**.
+
+**And the key is random, generated at decode time.** `FUN_1407386b0(&DAT_143ac1ab0)` is
+called *inside* `FUN_1402f7010`, which is called *by the packet reader*, with the value it
+just read off the wire in `RCX`. There is exactly one writer of these slots on this path and
+it is the packet decoder. A server cannot send an encoded value even in principle - it does
+not know the key, and the client would overwrite it with its own. **The wire is a raw
+little-endian `u16` and nothing else.** **[L]**
+
+Three further things checked so the same suspicion is not raised again:
+
+* **`FUN_1402f70a0` is not a second encoding.** It is byte-identical to `FUN_1402f7010` -
+  same 131 bytes, same decompilation - an un-folded duplicate. `FUN_140304100` uses it for
+  the seven `u16` at `item+0x3bf..0x3ef` and `FUN_1402f7010` for the three at
+  `item+0x3f7..0x407`; both produce the layout `FUN_1401ab420` reads. **[L]**
+* **The `u8` variant is inlined, not a call, and it matches `FUN_1401b0050`.** In
+  `FUN_140303b40` at `0x140303b81`: `key -> [base+0x98]`, `key^value -> [base+0x99]`,
+  `ror32(key ^ 0xbaadf00d, 5) + (key^value) -> [base+0x9c]`. `FUN_1401b0050` returns
+  `p[1]^p[0]` and recomputes exactly that. **[L]** This also confirms section 3's
+  `item + 0xfa + 8k`: the mask-2 base is `base + 0x98` = `item + 0x62 + 0x98`.
+* **The `0x9a65` scheme is a different mechanism and does not touch these slots.** It is the
+  rolling re-key of the *secure* fields - `MOV EAX,0x9a65` at `0x14030364f`, inside
+  `FUN_1403035a0`, operating on the buffer at `item+0x28` with a counter at `item+0x20` that
+  re-keys every `0x6f` accesses. That is what holds the **itemId** (`FUN_1401b0340` /
+  `FUN_14019a5d0` read it), and what `charstat-layout.md` describes for the map id. The stat
+  slots use the `0xbaadf00d` scheme above. Two schemes, not one. **[L]**
+
+### 11.2 Section 2's spacing is right, and so is its base
+
+Chain, all off listings, each bounded by `.pdata`:
+
+| step | listing | evidence |
+|---|---|---|
+| `FUN_140304100` calls `FUN_140303b40(item + 0x62, packet)` | `msexe-itemslot-equip-decode.txt` | `0x14030411f LEA RCX,[RSI+0x62]` / `0x140304126 CALL 0x140303b40` |
+| `FUN_140303b40` passes its `RCX` straight through | `msexe-itemslot-b40.txt` | `0x140303b5b MOV RBX,RCX` / `0x140303b5e CALL 0x140303800` - `RCX` untouched |
+| bit *k* lands at `base + 8k`, checksum at `+4` | `msexe-itemslot-800.txt` | `MOV RDX,RBX`, `LEA RDX,[RBX+8]`, `[RBX+0x10]` ... `LEA RDX,[RBX+0x80]` for bit 16; stores at `[RBX+0x4]`, `[RBX+0xc]` ... `[RBX+0x84]` |
+| the tooltip reads those same addresses | `msexe-tooltip-stats.txt` | `LEA RCX,[RSI+0xe2] / MOV EDX,[RSI+0xe6]` for bit 16 = `0x62 + 8*16`; nine offsets, all landing |
+
+**And the two `RSI`s are the same object**, by a cross-check that does not go through any of
+the stat offsets: the decoder reads the itemId at `this + 0x20`
+(`0x14030432a LEA RCX,[RSI+0x20] / CALL 0x14019a5d0`) and the tooltip reads the itemId at
+`param_2 + 0x20` (`0x1426b2128 LEA RCX,[RDX+0x20] / CALL 0x1401b0340`). Same offset, same
+secure-slot accessor family. **[L]**
+
+Nothing in section 2 needs correcting.
+
+### 11.3 The bytes the owner's client actually received
+
+Decoded out of `world.log` (the `0x01A0` body of 2026-08-19 19:48:15, 1189 bytes) by
+replaying `FUN_140304100`'s read order field by field. The equipped block starts at body
+offset 268 with `flagA = 0`, and the four items are **129 bytes each**, back to back with
+their `u16` slots, followed by the five `u16` terminators. **[L]**
+
+| slot | itemId | mask 1 | stats | mask 2 | options |
+|---|---|---|---|---|---|
+| 5 | 1040003 | `0x00000400` | bit 10 = **6** | `0x00040001` | bit 0 = 7, bit 18 = 0xFF |
+| 6 | 1060002 | `0x00000400` | bit 10 = **4** | `0x00040001` | bit 0 = 7, bit 18 = 0xFF |
+| 7 | 1072003 | `0x00000400` | bit 10 = **2** | `0x00040001` | bit 0 = 5, bit 18 = 0xFF |
+| 11 | 1302000 | `0x00010000` | bit 16 = **17** | `0x00040001` | bit 0 = 7, bit 18 = 0xFF |
+
+The parse consumes each item to exactly 129 bytes and lands on the next slot `u16` four
+times running, which is the discriminator: a width error would not close.
+
+**So the wire is right, the encoding is the client's own, and the value is at
+`item + 0xb2` (or `+0xe2`) when the tooltip reads it.** Everything from here is about what
+happens *after* that.
+
+### 11.4 One gate hides everything the packet could have shown - and it is not the print guard
+
+New listing this pass: `research/msexe-equiptooltip.txt`, the whole of `FUN_1426b20f0`,
+`0x1426b20f0 .. 0x1426b3e1a`, bounded by `.pdata`. The decompiler and the listing agree
+instruction for instruction on the part that matters.
+
+```text
+1426b2128  LEA  RCX,[RDX + 0x20]        ; RDX = the item
+1426b212c  CALL 0x1401b0340             ; -> itemId
+1426b2136  CALL 0x140388c60             ; ItemInfoMgr::GetItemInfo(itemId)
+1426b213b  MOV  R15,RAX
+   ...     (an alternate lookup when param_3 != 0, which also lands in R15)
+1426b223b  TEST R15,R15
+1426b223e  JZ   0x1426b3d8e             ; ITEMINFO == 0  ->  the function's epilogue
+```
+
+**Everything the packet can influence is behind that `JZ`:**
+
+| what | where | inside the gate? |
+|---|---|---|
+| `FUN_140396250` - fills the baseline struct | `1426b22a8` | yes |
+| `FUN_1426aed50`, `FUN_1426af680`, `FUN_1426af8c0`, `FUN_1426afdc0` - all four stat helpers | `1426b22b6`, `22cb`, `22e0`, `22f5` | yes |
+| Speed (0x038A) and Jump (0x038B), called directly | `1426b2367`, `1426b23e9` | yes |
+| `Remaining Enhancements` - `MOV EDX,0x39e` | `1426b3a72` | yes |
+| `Scissors Usages Available` - `MOV EDX,0x3a0` | `1426b3cb3` | yes |
+| **`Cannot be Traded when equipped`** - `FUN_1426e10e0` | `0x14264f8ae`, in **`FUN_14264f750`**, 3741 bytes earlier | **no** |
+
+The last row is the one that matters. `FUN_14264f750` calls the restriction-line builder and
+the stat-line builder with the **same item** (`MOV RDX,R12` at both `0x14264f8a4` and
+`0x142650745`) but into **different sinks** (`LEA RCX,[RBP+0x870]` vs `MOV RCX,R15`), 3741
+bytes apart - `0x14265074b - 0x14264f8ae = 0xe9d`. So *"the trade line prints and nothing
+else does"* is a single-fault state, not a coincidence. **[L]**
+
+And `FUN_140388c60` really can return 0: after the hash-bucket miss it calls
+`FUN_1403e18a0(itemId)` and, if that yields a null or empty wide string, returns **0**
+without ever calling the `ITEMINFO` loader `FUN_1403b5130`.
+**[L]**, `research/msexe-iteminfo-lookup.c` / `.txt`.
+
+**There is exactly one stat-line path in this client**, so this is not a case of looking at
+the wrong renderer: `python tools/callers.py 0x142699710` gives **17 call sites in 4
+functions** - `FUN_1426af680` (4), `FUN_1426af8c0` (2), `FUN_1426afdc0` (9), `FUN_1426b20f0`
+(2) - and `FUN_1426b20f0` itself has exactly **one** caller. **[L]**
+
+#### 11.4.1 Retraction: section 5's "`Scissors Usages Available : 0` printed"
+
+Section 5 says *"the same `vtable+0x200` also explains why `Scissors Usages Available : 0`
+printed"*, and section 7 says the `Remaining Enhancements` guard is *"why the line appeared
+at all"*. **Neither is supported by anything on record.** The only first-hand report of that
+screenshot is the commit message of `7a59910`: *"the equipped items carry no stats and say
+'Cannot be Traded when equipped'"*. Two predictions were written in the past tense, which is
+the same failure section 8.0 retracted - an inference stated as an observation.
+
+It matters now, because the listing above makes those two lines and the whole stat section
+share one gate. If neither line was ever on screen, **one missing `ITEMINFO` explains the
+entire screenshot**, then and now, and section 8's print-guard reading - which is correct
+about the guard - was never the thing suppressing the section.
+
+**This is answerable for free, without a launch, if the owner still has the tooltip:** does it
+show a `Remaining Enhancements` line or a `Scissors Usages Available` line *at all*, and did
+`Cannot be Traded when equipped` disappear this run? We now send `remaining_enhancements = 7`
+and `scissor_uses = 0xFF`, so all three are live discriminators on the same item pointer.
+
+### 11.5 What the server must write: **nothing new**
+
+* **The value:** the raw little-endian `u16`, which is what `equipped_item` already sends.
+* **The checksum:** none. The server never writes one; `FUN_1402f7010` computes it from a
+  key the client invents at decode time.
+* **The encoding:** none. See 11.1.
+
+No byte of `crates/net::equipped_item` is indicated by this pass, and changing one without
+evidence is the mistake this document already made once. `EquipStats::default()` still
+produces the 125-byte body; `EquipStats::fresh` still produces 129 for the starter items.
+
+### 11.6 The three surviving explanations, and the watch that separates them
+
+`tools/test-server.ps1` has two free probe slots (`1415db360:ret` and `141b2a280:rdx=0` are
+not negotiable). The probe logs `rcx/rdx/r8/r9`, the return address, the first dword at any
+pointer register, and - with `:peek=<off>` - the byte and dword at **`rcx + off`**. It does
+**not** log stack arguments, which rules out watching `FUN_142699710`: its packet value is
+arg 5 and arrives on the stack, so a watch there would only say it was called.
+
+```text
+$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,1402fd610:peek=b2:hits=60'
+```
+
+| watch | why this one | registers at entry |
+|---|---|---|
+| `1426afdc0:hits=60` | it is the **first thing after the gate** that only equips reach - `FUN_1426b20f0` calls it unconditionally at `0x1426b22f5`, 183 bytes past the `JZ`. Its presence or absence *is* the gate | `rcx` tooltip, **`rdx` = the item the stat section reads**, **`r8` = `ITEMINFO`**, `r9` = the baseline struct |
+| `1402fd610:peek=b2:hits=60` | `FUN_1402fd610` is the item's `vtable+0x200`; `RCX` **is the item**, and it runs on the *trade-line* path (`FUN_1426e10e0` -> `FUN_14038cf10`), which is **before** the gate. So it reports even when the stat section does not | `rcx` = the item; `[rcx+0xb2]` = the four raw bytes of the Weapon Def. slot |
+
+**Decoding the peek.** `[rcx+0xb2]=u32:0xB3B2B1B0` little-endian gives bytes `b0 b1 b2 b3`;
+the stored value is `((b3 ^ b1) << 8) | (b2 ^ b0)`. For the Grey T-Shirt (1040003) that must
+come out **6**. Bit 10 is only set on the coat, the pants and the cape, so **hover one of
+those**, not the sword - the sword's 17 is at `+0xe2`.
+
+| outcome | what it means | next step |
+|---|---|---|
+| **No `1426afdc0` line at all** while `1402fd610` fires on a hover | The gate at `0x1426b223e` took the early exit: `ITEMINFO` is null for this item. The stat section, `Remaining Enhancements` and `Scissors Usages Available` have **never** run, and no packet value could ever have printed | Read `FUN_1403e18a0` (the itemId -> WZ-name step inside `FUN_140388c60`) and find why it returns empty for 1040003 |
+| **`1426afdc0` fires, `r8` non-zero, `rdx` == the `rcx` `1402fd610` reported, and the peek decodes to 6** | The section ran, on our object, with a real `ITEMINFO`, holding the right value - so `FUN_142699710`'s guard passed and a line was built. The failure is in the **append**, not the packet | Read `FUN_14269a1d0`: it discards the line outright when `*(int *)(tooltip + 0xa0) == 0x22`. That is the only silent drop found in it |
+| **`1426afdc0` fires but `rdx` differs from `1402fd610`'s `rcx`** | Two different item objects are in play; the tooltip's stat section is reading something we never filled | Find who makes the copy - start from `FUN_14264f750`'s arg 4 |
+| **The peek decodes to 0** | The value is not in the object the tooltip holds even though the wire carried it. That contradicts 11.1-11.3 and the instrument is the first suspect | Re-arm with `140304100:hits=200` to get the decoder's own `rcx` values and compare pointers |
+| **Neither watch fires on a hover** | `FUN_14264f750` is not the tooltip on screen, or it returns before `0x14264f8ae` | `tools/callers.py 0x14264f750` gives 4 call sites in 3 functions; walk them |
+
+`1402fd610` is also reached from `FUN_1403e8c40` and from equip/unequip checks, so read the
+`called-from=` field: `0x14038cf...` is the trade-line path, which is the one that proves the
+tooltip is being drawn.
+
+### 11.7 Files from this pass
+
+| file | what |
+|---|---|
+| `research/msexe-equiptooltip.txt` | the **listing** of `FUN_1426b20f0`, `0x1426b20f0..0x1426b3e1a`. The authority for 11.4 - the one gate, and what is behind it |
+| `research/msexe-tooltip-af680.txt`, `research/msexe-tooltip-af8c0.txt` | listings of the bits 0-3 and bits 4-5 helpers |
+| `research/msexe-iteminfo-lookup.c` / `.txt` | `FUN_140388c60` (the `ITEMINFO` lookup that can return 0), `FUN_140396250` (the baseline struct), `FUN_1402fd610` (`vtable+0x200`, `RCX` = the item) |

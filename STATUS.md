@@ -724,6 +724,58 @@ distrust.
 
 Drops follow spawns: a mob has to exist before it can drop.
 
+### NEW GOAL, set by the owner 2026-08-19: **quest state that actually advances**
+
+The owner split the quest work into three and asked for the first two now, with this recorded as
+its own goal:
+
+1. **Say the right line for the right NPC and quest** - **DONE**, see below.
+2. **Paging and yes/no** - blocked on `0x00F3`, which is being decoded.
+3. **Quest state that actually advances** - *this goal*.
+
+**Nothing about quests persists or changes.** Accepting a quest does nothing, the same line
+comes back every time, and the journal never fills. What that needs, in rough order:
+
+* **Where quest state lives on the wire.** The character record has a **presence-gated quest
+  block** - `research/charrecord-presence-map.md` has the 40-row table, and the block needs
+  the same treatment `presence[0]` (the stat block) and `presence[2]` (the equipped list)
+  each got. Those two are the worked examples; this is the third of the same shape, and both
+  earlier ones took a listing walk plus one client run.
+* **The quest-result packet.** No packet that *accepts* or *completes* a quest has been
+  found in either direction. Until one is, nothing the client does can change state, and
+  nothing the server sends can tell it that state changed.
+* **Storage.** `crates/store` would need a `quest_state` table keyed by character and quest,
+  with the same exhaustive-destructure discipline `character.rs` uses so a new field cannot
+  silently fail to persist.
+* **`Check` and `Act`.** The generated table already carries both: `Check.<state>` has `npc`,
+  `lvmin` and `job`, and `Act.<state>` has the rewards and `nextQuest`. Deciding whether a
+  character *may* start a quest is a pure function over data we already have - it is the
+  wire format that is missing, not the rules.
+
+**What is already in hand, so nobody re-derives it:** all 322 quests with their full `Say`
+trees, `Check` requirements and `Act` rewards, generated from the client's own
+`Quest.wz/QuestData` by `tools/dump_quests.py`; and the confirmation that the WZ's quest ids
+are the protocol's, because NPC template 1 starts exactly quest 1000 and a real client's
+`0x0151` carried quest 1000 with template 1.
+
+**Depends on goal 2's `0x00F3` work** for anything interactive: a quest cannot be *accepted*
+until the client can answer a yes/no box.
+
+### 4a. Quest dialogue - **the right line, DONE 2026-08-19**
+
+`0x0151` is answered with that quest's own opening line out of `Quest.wz`, chosen by the
+request's action byte: the `Say."0"` conversation for a start or opening-script action, and
+`Say."1"` for a completion one. It falls back to the NPC's `d0` line and then to a notice, so
+a quest the table does not have still produces something rather than silence.
+
+**Only the first line is sent, and that is a decision rather than an omission.** Paging means
+setting the `next` flag, which asks the client to send a `0x00F3` when the user presses it -
+and `0x00F3`'s body is not decoded, so the server could not answer. An unanswered request
+here does not merely do nothing: `research/npc-click.md` found `player->[0x2330]`, a
+**one-request-outstanding latch** set by 37 functions and cleared only by inbound handlers,
+so leaving one outstanding silently kills every later request in its class with no dialog and
+nothing in any log. One line that ends cleanly beats four that wedge the client.
+
 ### 4. NPC quests
 
 **Not started, and it depends on goal 2.** One thing already known: the quest record is a

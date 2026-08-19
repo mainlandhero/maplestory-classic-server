@@ -1720,8 +1720,33 @@ pub const EQUIP_OPTION_BITS: usize = 21;
 /// The 17 optional `u16` behind one `FUN_140303800` mask, in **mask-bit order**.
 ///
 /// Bit `k` is present iff bit `k` of the mask is set, and the client decodes it into an
-/// 8-byte obfuscated pair at `base + 8k` - value at `+0`, integrity dword at `+4`. **[L]**,
+/// 8-byte obfuscated slot at `base + 8k` - value at `+0`, integrity dword at `+4`. **[L]**,
 /// `research/msexe-itemslot-800.txt`, bounded `0x140303800 .. 0x140303a6c` by `.pdata`.
+///
+/// # The wire is a raw `u16`. The obfuscation is the client's, and it is not ours to write
+///
+/// The 8-byte stride with a dword beside it is a ZtlSecure-style slot - `{key, key^value,
+/// checksum}` - and the obvious worry is that the server has to send the *encoded* form, or
+/// a checksum, or that the writer and the tooltip's reader disagree. **They cannot.** **[L]**
+///
+/// `FUN_140303800` reads the plain `u16` off the packet with `0x1406e8b80` and then calls
+/// `FUN_1402f7010(value, base + 8k)`, storing the return at `base + 8k + 4`. That function
+/// calls the client's own byte PRNG `FUN_1407386b0(&DAT_143ac1ab0)` twice, writes
+/// `dst[i] = key_i` and `dst[2+i] = key_i ^ value_i`, and accumulates
+/// `chk = ror32(chk ^ key_i, 5) + (key_i ^ value_i)` from `0xbaadf00d`. The tooltip's getter
+/// `FUN_1401ab420(p, chk)` returns `((p[3]^p[1]) << 8) | (p[2]^p[0])` and recomputes the
+/// same recurrence - term for term, an exact inverse pair.
+///
+/// So the key is invented at decode time, inside the function that reads the packet. There
+/// is exactly one writer of these slots on this path and it is the packet decoder: a server
+/// could not send an encoded value even in principle, and anything it sent in a checksum
+/// field would be overwritten. **Send the raw little-endian `u16` and nothing else.**
+///
+/// Two near-misses worth not re-deriving: `FUN_1402f70a0` is **byte-identical** to
+/// `FUN_1402f7010` (an un-folded duplicate, not a second encoding), and the `0x9a65` /
+/// `FUN_1402fa540` scheme in `research/charstat-layout.md` is a **different** mechanism -
+/// it is the rolling re-key of the secure slot at `item+0x20` that holds the itemId, not
+/// these fields. Full working: `research/equip-stats.md` section 11.1.
 ///
 /// **Every label below was read from this binary, not from the game family**, by pairing
 /// the offset the tooltip's getter `FUN_1401ab420(item + off, [item + off + 4])` reads with
@@ -1752,7 +1777,7 @@ pub const EQUIP_OPTION_BITS: usize = 21;
 /// `01040002.img/info/incPDD`. Each field below names the WZ property it mirrors, and
 /// [`EQUIP_STAT_WZ_PROPERTIES`] gives the same mapping in bit order for a generator.
 ///
-/// # Why the screenshot showed no stat lines at all
+/// # The print guard is real, and it is **not** what suppressed the stat section
 ///
 /// `FUN_142699710` opens with a guard, at `0x142699749`:
 ///
@@ -1764,8 +1789,29 @@ pub const EQUIP_OPTION_BITS: usize = 21;
 /// JLE  return           ; both <= 0 -> no line at all
 /// ```
 ///
-/// The WZ value is **not** in the guard, so it can never make a line appear on its own.
-/// Sending zeros suppresses the whole stat section - which is exactly what the owner saw. **[L]**
+/// The WZ value is **not** in the guard, so it can never make a line appear on its own, and
+/// a zero here would suppress its own line. All **[L]**.
+///
+/// **What is retracted is that this explains the screenshot.** The run of 2026-08-19 sent
+/// `inc_pdd = 6` and `inc_wat = 17`, `FUN_140304100` fired 26 times, there was no fault, the
+/// character is dressed - and the tooltip still shows no stat line of any kind, not even a
+/// weapon-attack line on a sword carrying 17. A guard on the packet value predicts a line
+/// and there is none, so the guard is not the cause.
+///
+/// Everything the packet can influence in that tooltip is behind **one** gate:
+/// `FUN_1426b20f0` does `TEST R15,R15 / JZ 0x1426b3d8e` at `0x1426b223e`, where `R15` is
+/// `FUN_140388c60(ItemInfoMgr, itemId)` - and that lookup returns 0 when
+/// `FUN_1403e18a0(itemId)` yields an empty name. All four stat helpers, the Speed and Jump
+/// lines, `Remaining Enhancements` and `Scissors Usages Available` are past it;
+/// `Cannot be Traded when equipped` is **not** (it is built by `FUN_1426e10e0`, a sibling
+/// call in `FUN_14264f750` at `0x14264f8ae`, 3741 bytes before the `FUN_1426b20f0` call at
+/// `0x14265074b`, into a different sink). "The trade line prints and nothing else does" is
+/// therefore a single-fault state. **[L]**,
+/// `research/msexe-equiptooltip.txt`.
+///
+/// Which branch the client takes is **not established** and no packet change is indicated
+/// by it. `research/equip-stats.md` section 11.6 gives the two-watch probe that separates
+/// the gate from the two alternatives.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EquipStatSet {
     /// bit 0 - `STR: +%d` (0x0663). WZ template: `info/incSTR`, `ITEMINFO+0xba`
@@ -2138,8 +2184,14 @@ impl EquipStats {
     /// `template` is the item's own WZ `info/inc*` block - see
     /// [`EQUIP_STAT_WZ_PROPERTIES`] and [`EquipStatSet::from_wz_template`] - **not** zero:
     /// the client reads these fields as the item's total stats and compares them directly
-    /// against the template, so an item sent with zeros has no stats and, because of
-    /// `FUN_142699710`'s guard, shows no stat lines at all.
+    /// against the template, so an item sent with zeros is an item with no stats, and
+    /// `FUN_142699710`'s guard would suppress each zero field's own line.
+    ///
+    /// **Sending the real values did not produce a stat line**, on the run of 2026-08-19.
+    /// The bytes are right - `world.log`'s `0x01A0` body parses to four 129-byte items with
+    /// mask 1 = `0x400`/value 6 for 1040003 and `0x10000`/value 17 for 1302000 - and the
+    /// suppression is downstream of the packet. See the `EquipStatSet` docs and
+    /// `research/equip-stats.md` section 11. Nothing here is known to need changing.
     ///
     /// `tuc` is the item's WZ `info/tuc`. The client compares this field against
     /// `ITEMINFO.tuc`, so it must not exceed it; `tuc` itself is the unused-item value.

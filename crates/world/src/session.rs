@@ -337,17 +337,26 @@ impl Session {
         let Some(req) = net::script::parse_quest_request(body) else {
             return Vec::new();
         };
-        // The NPC says its own line; the quest itself still does not advance, because no
-        // quest-result packet has been found. Saying the real line rather than a notice
-        // about the server is what makes the screen match the game.
-        let text = self.npc_line(req.npc_template_id);
+        // The quest's own opening line, from Quest.wz. The quest itself still does not
+        // advance - no quest-result packet has been found and there is no quest state at
+        // all - so the same line comes back every time. What changed is that it is the
+        // game's line rather than a notice about the server.
+        let text = self.quest_line(req.quest_id, req.action, req.npc_template_id);
         vec![Reply {
             opcode: net::script::SCRIPT_MESSAGE,
             body: net::script::npc_say(req.npc_template_id, &text, false, false),
             what: format!(
-                "ScriptMessage Say from NPC template {} for quest {} (action {}) - text on \
-                 screen only. No quest-result packet is known, so no state advances.",
-                req.npc_template_id, req.quest_id, req.action
+                "ScriptMessage Say from NPC template {} for quest {} \"{}\" (action {}) - \
+                 line 1 only, because paging needs 0x00F3 and that is undecoded. No \
+                 quest-result packet is known, so no state advances.",
+                req.npc_template_id,
+                req.quest_id,
+                self.config
+                    .quests
+                    .get(&req.quest_id)
+                    .map(|q| q.name.as_str())
+                    .unwrap_or("unknown quest"),
+                req.action
             ),
         }]
     }
@@ -396,6 +405,39 @@ impl Session {
                 template, click.npc_object_id, chr.map_id
             ),
         }]
+    }
+
+    /// The line a quest conversation opens with.
+    ///
+    /// `Quest.wz` gives every quest a `Say` tree: `"0"` is the opening conversation and
+    /// `"1"` the completion one, each a list of numbered lines, with `yes` / `no` / `stop` /
+    /// `lost` / `ask` branches beside them. The `0x0151` request carries the quest id and an
+    /// action, and the action is what picks the state.
+    ///
+    /// **Only the first line is sent, and that is deliberate rather than unfinished.**
+    /// Paging needs the `next` flag on the Say body, and a box with `next` set asks the
+    /// client to send a `0x00F3` when the user presses it. `0x00F3`'s body is not decoded,
+    /// so the server could not answer - and an unanswered request does not merely do
+    /// nothing here. `research/npc-click.md` found `player->[0x2330]`, a
+    /// one-request-outstanding latch set by 37 functions and cleared only by inbound
+    /// handlers: leaving one outstanding silently kills every later request in its class,
+    /// with no dialog and nothing in any log. One line that ends cleanly is worth more than
+    /// four that wedge the client.
+    ///
+    /// Falls back to the NPC's own `d0` line, and then to a notice, so a quest the table
+    /// does not have still produces something rather than silence.
+    fn quest_line(&self, quest_id: u32, action: u8, npc_template: u32) -> String {
+        let state = match action {
+            net::script::QUEST_ACTION_COMPLETE | net::script::QUEST_ACTION_COMPLETE_SCRIPT => "1",
+            _ => "0",
+        };
+        self.config
+            .quests
+            .get(&quest_id)
+            .and_then(|q| q.say.get(state).or_else(|| q.say.get("0")))
+            .and_then(|lines| lines.first())
+            .cloned()
+            .unwrap_or_else(|| self.npc_line(npc_template))
     }
 
     /// What an NPC should actually say when talked to.
