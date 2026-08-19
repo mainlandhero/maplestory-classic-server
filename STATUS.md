@@ -117,6 +117,45 @@ held-out control).
 reads; the listing is complete and authoritative. `research/charrecord-decode.md` shows the
 working.
 
+### 1b. The minimum record is 112 bytes
+
+Settled by the loop census, `research/charrecord-loops.md`. With every presence flag clear,
+every count zero and the boolean at `0x140304cf2` zero, the client reads **7 fields, 112
+bytes**:
+
+```text
+raw[100]   the presence array - all zero
+u8
+u32
+u8
+u32
+u8
+u8
+```
+
+Verified by walking the gate skip-target chain end to end. Supporting facts:
+
+* **61 straight-line reads**, and **31 of the 37 read-bearing loops collapse cleanly** on a
+  zero count. Every counted loop is MSVC-rotated - guard before the head - so a zero count
+  never runs the body. That was checked specifically, because a bottom-tested loop would
+  read fields anyway and desync everything after it. **There are none.**
+* **Six loops are not count-skippable.** Four have fixed trip counts (two of them adjacent,
+  forcing 15 x u32 = 60 bytes); all four sit behind presence flags instead. Two are
+  **sentinel-terminated**, `u16 key; while (key != 0) {...}` - sending `0` skips them but
+  costs a trailing `u16`, and reading them as counts would desync.
+* **All 43 gates confirmed** to take the 100-byte field as their input. The static keys live
+  at `0x143abeb10`, stride `0x70`, and all 38 land on exact multiples - which is what makes
+  the index assignment trustworthy. Flag **#17** is the biggest lever: 21 reads and 7 loops.
+  One gate is an `OR` - the block at `0x140305104` needs flag #5 **or** #12.
+
+**Not proven, and it is the thing to settle before building**: the mapping from key index to
+*byte offset* inside the array. `FUN_1402fa9a0` was not in the listing the census used. A
+1:1 index-to-byte mapping is plausible and is inference.
+
+**And a caveat that bounds the whole estimate**: 26 non-primitive calls also receive the
+packet pointer and consume bytes that are not among the 126 reads. Zeros still collapse
+them, but any non-zero count costs more wire than the census implies.
+
 ### 2. Then send it and run
 
 `crates/world --set-field-probe` already builds and sends the head with `characterData = 0`.
