@@ -16,12 +16,12 @@ every node whose key is all digits and which carries a name - which is why the s
 handles `Mob.img` (flat), `Map.img` (one category level) and `Eqp.img` (two) without three
 different parsers, and will keep working if a category is added.
 
-    python tools/dump_names.py                     # writes maps.txt, items.txt, mobs.txt
+    python tools/dump_names.py                     # writes into gm-handbook/
     python tools/dump_names.py --out-dir somewhere
     python tools/dump_names.py --street            # prefix map names with their street
 
-These files are game data, not project source. They are gitignored deliberately - the repo
-carries the code to regenerate them, not the content.
+Output goes to `gm-handbook/`. These files are game data, not project source, so they are
+gitignored deliberately - the repo carries the code to regenerate them, not the content.
 """
 import argparse
 import json
@@ -78,7 +78,7 @@ def write(path, rows, what):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--archive", default=STRING_WZ)
-    ap.add_argument("--out-dir", default=".")
+    ap.add_argument("--out-dir", default="gm-handbook")
     ap.add_argument("--street", action="store_true",
                     help="prefix each map name with its street, which disambiguates the "
                          "many maps sharing a name")
