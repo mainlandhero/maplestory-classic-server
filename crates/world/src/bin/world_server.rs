@@ -39,6 +39,7 @@ fn main() -> ExitCode {
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
+    let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -67,6 +68,7 @@ fn main() -> ExitCode {
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
+            "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
             "--mob-limit" => value().and_then(|v| {
                 v.parse()
                     .map(|n: usize| config.mob_limit = Some(n))
@@ -136,6 +138,14 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no equip templates from {} - worn items will have no stats and              no upgrade slots. Regenerate with: python tools/dump_equips.py",
             equips_path.display()
+        );
+    }
+
+    config.npc_strings = world::config::load_npc_strings(&npc_strings_path);
+    if config.npc_strings.is_empty() {
+        eprintln!(
+            "maplecw-world: no NPC text from {} - NPCs will fall back to placeholder              dialogue. Regenerate with: python tools/dump_npcstrings.py",
+            npc_strings_path.display()
         );
     }
 

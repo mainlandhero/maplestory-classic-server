@@ -1,0 +1,143 @@
+// 1426af680 .. 1426af8b6   block=.text
+1426af680  48 85 d2                          TEST RDX,RDX
+1426af683  0f 84 2c 02 00 00                 JZ 0x1426af8b5
+1426af689  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+1426af68e  48 89 6c 24 18                    MOV qword ptr [RSP + 0x18],RBP
+1426af693  48 89 74 24 20                    MOV qword ptr [RSP + 0x20],RSI
+1426af698  57                                PUSH RDI
+1426af699  41 56                             PUSH R14
+1426af69b  41 57                             PUSH R15
+1426af69d  48 83 ec 50                       SUB RSP,0x50
+1426af6a1  4d 8b f1                          MOV R14,R9
+1426af6a4  49 8b e8                          MOV RBP,R8
+1426af6a7  48 8b f2                          MOV RSI,RDX
+1426af6aa  4c 8b f9                          MOV R15,RCX
+1426af6ad  4d 85 c0                          TEST R8,R8
+1426af6b0  0f 84 e6 01 00 00                 JZ 0x1426af89c
+1426af6b6  48 c7 44 24 78 00 00 00 00        MOV qword ptr [RSP + 0x78],0x0
+1426af6bf  48 8d 4a 20                       LEA RCX,[RDX + 0x20]
+1426af6c3  e8 78 0c b0 fd                    CALL 0x1401b0340
+1426af6c8  ba 63 06 00 00                    MOV EDX,0x663
+1426af6cd  48 8d 4c 24 40                    LEA RCX,[RSP + 0x40]
+1426af6d2  e8 69 a7 1f fe                    CALL 0x1408a9e40
+1426af6d7  48 8b f8                          MOV RDI,RAX
+1426af6da  48 8d 8e 13 03 00 00              LEA RCX,[RSI + 0x313]
+1426af6e1  8b 51 04                          MOV EDX,dword ptr [RCX + 0x4]
+1426af6e4  e8 37 bd af fd                    CALL 0x1401ab420
+1426af6e9  0f bf d8                          MOVSX EBX,AX
+1426af6ec  48 8d 4e 62                       LEA RCX,[RSI + 0x62]
+1426af6f0  8b 51 04                          MOV EDX,dword ptr [RCX + 0x4]
+1426af6f3  e8 28 bd af fd                    CALL 0x1401ab420
+1426af6f8  0f bf c8                          MOVSX ECX,AX
+1426af6fb  44 0f bf 85 ba 00 00 00           MOVSX R8D,word ptr [RBP + 0xba]
+1426af703  48 89 7c 24 30                    MOV qword ptr [RSP + 0x30],RDI
+1426af708  89 5c 24 28                       MOV dword ptr [RSP + 0x28],EBX
+1426af70c  89 4c 24 20                       MOV dword ptr [RSP + 0x20],ECX
+1426af710  45 8b 0e                          MOV R9D,dword ptr [R14]
+1426af713  48 8d 54 24 78                    LEA RDX,[RSP + 0x78]
+1426af718  49 8b cf                          MOV RCX,R15
+1426af71b  e8 f0 9f fe ff                    CALL 0x142699710
+1426af720  90                                NOP
+1426af721  48 8b 4c 24 40                    MOV RCX,qword ptr [RSP + 0x40]
+1426af726  48 85 c9                          TEST RCX,RCX
+1426af729  74 0a                             JZ 0x1426af735
+1426af72b  48 83 c1 f0                       ADD RCX,-0x10
+1426af72f  e8 8c fb ae fd                    CALL 0x14019f2c0
+1426af734  90                                NOP
+1426af735  ba 64 06 00 00                    MOV EDX,0x664
+1426af73a  48 8d 4c 24 40                    LEA RCX,[RSP + 0x40]
+1426af73f  e8 fc a6 1f fe                    CALL 0x1408a9e40
+1426af744  48 8b f8                          MOV RDI,RAX
+1426af747  48 8d 8e 1b 03 00 00              LEA RCX,[RSI + 0x31b]
+1426af74e  8b 96 1f 03 00 00                 MOV EDX,dword ptr [RSI + 0x31f]
+1426af754  e8 c7 bc af fd                    CALL 0x1401ab420
+1426af759  0f bf d8                          MOVSX EBX,AX
+1426af75c  48 8d 4e 6a                       LEA RCX,[RSI + 0x6a]
+1426af760  8b 56 6e                          MOV EDX,dword ptr [RSI + 0x6e]
+1426af763  e8 b8 bc af fd                    CALL 0x1401ab420
+1426af768  0f bf c8                          MOVSX ECX,AX
+1426af76b  44 0f bf 85 bc 00 00 00           MOVSX R8D,word ptr [RBP + 0xbc]
+1426af773  48 89 7c 24 30                    MOV qword ptr [RSP + 0x30],RDI
+1426af778  89 5c 24 28                       MOV dword ptr [RSP + 0x28],EBX
+1426af77c  89 4c 24 20                       MOV dword ptr [RSP + 0x20],ECX
+1426af780  45 8b 4e 04                       MOV R9D,dword ptr [R14 + 0x4]
+1426af784  48 8d 54 24 78                    LEA RDX,[RSP + 0x78]
+1426af789  49 8b cf                          MOV RCX,R15
+1426af78c  e8 7f 9f fe ff                    CALL 0x142699710
+1426af791  90                                NOP
+1426af792  48 8b 4c 24 40                    MOV RCX,qword ptr [RSP + 0x40]
+1426af797  48 85 c9                          TEST RCX,RCX
+1426af79a  74 0a                             JZ 0x1426af7a6
+1426af79c  48 83 c1 f0                       ADD RCX,-0x10
+1426af7a0  e8 1b fb ae fd                    CALL 0x14019f2c0
+1426af7a5  90                                NOP
+1426af7a6  ba 65 06 00 00                    MOV EDX,0x665
+1426af7ab  48 8d 4c 24 40                    LEA RCX,[RSP + 0x40]
+1426af7b0  e8 8b a6 1f fe                    CALL 0x1408a9e40
+1426af7b5  48 8b f8                          MOV RDI,RAX
+1426af7b8  48 8d 8e 23 03 00 00              LEA RCX,[RSI + 0x323]
+1426af7bf  8b 96 27 03 00 00                 MOV EDX,dword ptr [RSI + 0x327]
+1426af7c5  e8 56 bc af fd                    CALL 0x1401ab420
+1426af7ca  0f bf d8                          MOVSX EBX,AX
+1426af7cd  48 8d 4e 72                       LEA RCX,[RSI + 0x72]
+1426af7d1  8b 56 76                          MOV EDX,dword ptr [RSI + 0x76]
+1426af7d4  e8 47 bc af fd                    CALL 0x1401ab420
+1426af7d9  0f bf c8                          MOVSX ECX,AX
+1426af7dc  44 0f bf 85 be 00 00 00           MOVSX R8D,word ptr [RBP + 0xbe]
+1426af7e4  48 89 7c 24 30                    MOV qword ptr [RSP + 0x30],RDI
+1426af7e9  89 5c 24 28                       MOV dword ptr [RSP + 0x28],EBX
+1426af7ed  89 4c 24 20                       MOV dword ptr [RSP + 0x20],ECX
+1426af7f1  45 8b 4e 08                       MOV R9D,dword ptr [R14 + 0x8]
+1426af7f5  48 8d 54 24 78                    LEA RDX,[RSP + 0x78]
+1426af7fa  49 8b cf                          MOV RCX,R15
+1426af7fd  e8 0e 9f fe ff                    CALL 0x142699710
+1426af802  90                                NOP
+1426af803  48 8b 4c 24 40                    MOV RCX,qword ptr [RSP + 0x40]
+1426af808  48 85 c9                          TEST RCX,RCX
+1426af80b  74 0a                             JZ 0x1426af817
+1426af80d  48 83 c1 f0                       ADD RCX,-0x10
+1426af811  e8 aa fa ae fd                    CALL 0x14019f2c0
+1426af816  90                                NOP
+1426af817  ba 66 06 00 00                    MOV EDX,0x666
+1426af81c  48 8d 4c 24 40                    LEA RCX,[RSP + 0x40]
+1426af821  e8 1a a6 1f fe                    CALL 0x1408a9e40
+1426af826  48 8b f8                          MOV RDI,RAX
+1426af829  48 8d 8e 2b 03 00 00              LEA RCX,[RSI + 0x32b]
+1426af830  8b 96 2f 03 00 00                 MOV EDX,dword ptr [RSI + 0x32f]
+1426af836  e8 e5 bb af fd                    CALL 0x1401ab420
+1426af83b  0f bf d8                          MOVSX EBX,AX
+1426af83e  48 8d 4e 7a                       LEA RCX,[RSI + 0x7a]
+1426af842  8b 56 7e                          MOV EDX,dword ptr [RSI + 0x7e]
+1426af845  e8 d6 bb af fd                    CALL 0x1401ab420
+1426af84a  0f bf c8                          MOVSX ECX,AX
+1426af84d  44 0f bf 85 c0 00 00 00           MOVSX R8D,word ptr [RBP + 0xc0]
+1426af855  48 89 7c 24 30                    MOV qword ptr [RSP + 0x30],RDI
+1426af85a  89 5c 24 28                       MOV dword ptr [RSP + 0x28],EBX
+1426af85e  89 4c 24 20                       MOV dword ptr [RSP + 0x20],ECX
+1426af862  45 8b 4e 0c                       MOV R9D,dword ptr [R14 + 0xc]
+1426af866  48 8d 54 24 78                    LEA RDX,[RSP + 0x78]
+1426af86b  49 8b cf                          MOV RCX,R15
+1426af86e  e8 9d 9e fe ff                    CALL 0x142699710
+1426af873  90                                NOP
+1426af874  48 8b 4c 24 40                    MOV RCX,qword ptr [RSP + 0x40]
+1426af879  48 85 c9                          TEST RCX,RCX
+1426af87c  74 0a                             JZ 0x1426af888
+1426af87e  48 83 c1 f0                       ADD RCX,-0x10
+1426af882  e8 39 fa ae fd                    CALL 0x14019f2c0
+1426af887  90                                NOP
+1426af888  48 8b 4c 24 78                    MOV RCX,qword ptr [RSP + 0x78]
+1426af88d  48 85 c9                          TEST RCX,RCX
+1426af890  74 0a                             JZ 0x1426af89c
+1426af892  48 83 c1 f0                       ADD RCX,-0x10
+1426af896  e8 25 fa ae fd                    CALL 0x14019f2c0
+1426af89b  90                                NOP
+1426af89c  4c 8d 5c 24 50                    LEA R11,[RSP + 0x50]
+1426af8a1  49 8b 5b 20                       MOV RBX,qword ptr [R11 + 0x20]
+1426af8a5  49 8b 6b 30                       MOV RBP,qword ptr [R11 + 0x30]
+1426af8a9  49 8b 73 38                       MOV RSI,qword ptr [R11 + 0x38]
+1426af8ad  49 8b e3                          MOV RSP,R11
+1426af8b0  41 5f                             POP R15
+1426af8b2  41 5e                             POP R14
+1426af8b4  5f                                POP RDI
+1426af8b5  c3                                RET
+1426af8b6  cc                                INT3

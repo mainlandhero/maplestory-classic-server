@@ -89,6 +89,8 @@ pub struct Config {
     /// not fatal - items are still sent, just bare - so a missing file degrades to exactly
     /// the behaviour confirmed on screen on 2026-08-19.
     pub equips: HashMap<u32, EquipTemplate>,
+    /// Every NPC template's name, spoken dialogue and idle chatter, keyed by template id.
+    pub npc_strings: HashMap<u32, NpcStrings>,
     /// Whether to actually send them. **Default `false`, and that is a measurement.**
     ///
     /// The run of 2026-08-19 faulted the client at `0x141c810b0` on the **first** `0x03C6`,
@@ -519,6 +521,55 @@ impl EquipTemplate {
     }
 }
 
+/// One NPC template's text, from `String.wz/Npc.img`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NpcStrings {
+    pub name: String,
+    /// What the NPC says when talked to, in order - the WZ's `d0`, `d1`, ...
+    ///
+    /// **The text is sent raw, `#p8#` and all.** That token is a name substitution and
+    /// whether the client expands it is not established; sending it unexpanded makes the
+    /// screen answer the question, since "Hello! I'm Robin." and "Hello! I'm #p8#." are
+    /// different on sight and neither is a guess.
+    pub dialogue: Vec<String>,
+    /// The idle-chatter lines, in order - the WZ's `n*`, then `f*`, `w*`, `h*`.
+    ///
+    /// **Four of the twelve prefixes in that data are classified and eight are not**
+    /// (`c` appears 130 times and `s` 109); see `tools/dump_npcstrings.py`. Robin has only
+    /// the four, which is why their ten lines match an outside list exactly and cannot
+    /// discriminate the rest.
+    pub chatter: Vec<String>,
+}
+
+/// Every NPC's text, from `tools/dump_npcstrings.py`'s `npcstrings.txt`.
+///
+/// TSV, because the lines contain commas, apostrophes and quotes.
+pub fn load_npc_strings(path: &std::path::Path) -> HashMap<u32, NpcStrings> {
+    let mut out: HashMap<u32, NpcStrings> = HashMap::new();
+    let Ok(text) = std::fs::read_to_string(path) else { return out };
+    for line in text.lines() {
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut f = line.splitn(3, '\t');
+        let (Some(id), Some(key), Some(value)) = (f.next(), f.next(), f.next()) else {
+            continue;
+        };
+        let Ok(template) = id.trim().parse::<u32>() else { continue };
+        let entry = out.entry(template).or_default();
+        // The generator writes rows in key order within a template, so pushing keeps `d0`
+        // before `d1` and `idle0` before `idle1` without re-parsing the index. A row out of
+        // order would only reorder lines, never lose one.
+        match key {
+            "name" => entry.name = value.to_string(),
+            k if k.starts_with("idle") => entry.chatter.push(value.to_string()),
+            k if k.starts_with('d') => entry.dialogue.push(value.to_string()),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// A mob template's stats, as `Mob.wz` has them. Field names are the WZ's own.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MobTemplate {
@@ -621,6 +672,7 @@ impl Default for Config {
             mobs: HashMap::new(),
             mob_limit: None,
             equips: HashMap::new(),
+            npc_strings: HashMap::new(),
             send_mobs: false,
             fields: std::collections::HashSet::new(),
         }
@@ -775,6 +827,45 @@ mod spawn_tests {
         // "that should only apply to some items".
         let blocked = equips.values().filter(|e| e.trade_block).count();
         assert!(blocked > 0 && blocked < 20, "{blocked} equips carry tradeBlock");
+    }
+
+    /// Robin's lines, read back out of the generated table.
+    ///
+    /// The ten idle lines and their order are the strongest check available: an outside
+    /// listing of this NPC's idle chatter matches these ten, in this order, exactly.
+    #[test]
+    fn robin_has_his_own_dialogue_and_ten_idle_lines_in_order() {
+        let path = std::path::Path::new("../../gm-handbook/npcstrings.txt");
+        if !path.exists() {
+            return; // generated data, gitignored
+        }
+        let npcs = load_npc_strings(path);
+        assert!(npcs.len() > 200, "only {} NPCs", npcs.len());
+
+        let robin = &npcs[&8];
+        assert_eq!(robin.name, "Robin");
+
+        // d0 is what they say when talked to, and it carries the raw substitution token.
+        // Sending it unexpanded is deliberate - see NpcStrings::dialogue.
+        assert_eq!(robin.dialogue.len(), 2);
+        assert!(robin.dialogue[0].contains("#p8#"), "{}", robin.dialogue[0]);
+
+        // Ten idle lines, first and last pinned. The order is prefix-major n, f, w, h, so
+        // "Yoohoo!" (h0) is last and "Be careful!" (n0) first - a flat alphabetical or
+        // per-key sort would put them elsewhere, which is what this pins.
+        assert_eq!(robin.chatter.len(), 10);
+        assert!(robin.chatter[0].starts_with("Be careful!"), "{}", robin.chatter[0]);
+        assert_eq!(robin.chatter[9], "Yoohoo!");
+        assert!(robin.chatter[7].contains("Roger and Peter"), "{}", robin.chatter[7]);
+
+        // No line may be empty: an empty balloon is indistinguishable from a broken one.
+        assert!(robin.chatter.iter().all(|l| !l.trim().is_empty()));
+
+        // Tabs are the field separator, so no value may contain one.
+        assert!(npcs.values().all(|n| {
+            !n.name.contains('\t')
+                && n.dialogue.iter().chain(&n.chatter).all(|l| !l.contains('\t'))
+        }));
     }
 
     /// A fresh mob is at its template's HP, not at a flat placeholder.

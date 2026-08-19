@@ -337,11 +337,10 @@ impl Session {
         let Some(req) = net::script::parse_quest_request(body) else {
             return Vec::new();
         };
-        let text = format!(
-            "Quest {} is not implemented on this server yet. Nothing you do here will \
-             advance it - there is no quest state at all.",
-            req.quest_id
-        );
+        // The NPC says its own line; the quest itself still does not advance, because no
+        // quest-result packet has been found. Saying the real line rather than a notice
+        // about the server is what makes the screen match the game.
+        let text = self.npc_line(req.npc_template_id);
         vec![Reply {
             opcode: net::script::SCRIPT_MESSAGE,
             body: net::script::npc_say(req.npc_template_id, &text, false, false),
@@ -387,10 +386,7 @@ impl Session {
             return Vec::new();
         };
 
-        let text = format!(
-            "I have nothing to say yet. This server knows me as NPC template {template}, and \
-             it has no dialogue script for me."
-        );
+        let text = self.npc_line(template);
         vec![Reply {
             opcode: net::script::SCRIPT_MESSAGE,
             body: net::script::npc_say(template, &text, false, false),
@@ -400,6 +396,30 @@ impl Session {
                 template, click.npc_object_id, chr.map_id
             ),
         }]
+    }
+
+    /// What an NPC should actually say when talked to.
+    ///
+    /// `String.wz/Npc.img` has the real lines - `d0`, `d1`, ... - and the server was sending
+    /// placeholder text. Only `d0` is used: the second and later lines need the "next"
+    /// button and a `0x00F3` answer to page through, and neither is built.
+    ///
+    /// **`#p8#` is sent unexpanded, on purpose.** It is a name substitution and whether the
+    /// client resolves it is not established. Sending it raw makes the screen answer the
+    /// question - "Hello! I'm Robin." and "Hello! I'm #p8#." are different on sight, and
+    /// neither reading requires a guess. If the client does not expand it, the fix is here.
+    ///
+    /// An NPC with no entry keeps the placeholder, which is honest about the state of the
+    /// server rather than silently saying nothing.
+    fn npc_line(&self, template: u32) -> String {
+        self.config
+            .npc_strings
+            .get(&template)
+            .and_then(|s| s.dialogue.first())
+            .cloned()
+            .unwrap_or_else(|| {
+                format!("This server has no dialogue for NPC template {template} yet.")
+            })
     }
 
     /// Each worn item with the stats its `Character.wz` template gives it.
