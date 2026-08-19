@@ -196,11 +196,12 @@ impl Session {
         // character we cannot load falls back to the minimal record rather than silence.
         let (body, what) = match self.claimed_character() {
             Some(chr) => (
-                net::opcode::set_field_with_character(
+                net::opcode::set_field_with_character_dressed(
                     &chr,
                     self.config.world_id,
                     self.clock_base(),
                     self.config.channel_id,
+                    &self.dressed(&chr),
                 ),
                 format!(
                     "SetField, characterData=1, presence[0] set so the character-stat block                      decodes, carrying map {} for character {} ({}). presence[0] is gate                      entry 7, settled in research/charrecord-presence-map.md; the map id                      sits at stat-block offset {}, settled in research/charstat-layout.md.                      Nothing here authenticates anybody.",
@@ -395,6 +396,32 @@ impl Session {
                 template, click.npc_object_id, chr.map_id
             ),
         }]
+    }
+
+    /// Each worn item with the stats its `Character.wz` template gives it.
+    ///
+    /// **The stats belong to the item template, not to the character**, so they are resolved
+    /// here rather than persisted: `crates/store` keeps `(slot, itemId)` and nothing else,
+    /// and a stat column in the database would be a second source of truth for a value the
+    /// client already has its own copy of.
+    ///
+    /// An item with no template row goes out bare. That is the behaviour confirmed on screen
+    /// on 2026-08-19 - the character was dressed, the items simply had no stats - so a
+    /// missing or stale `gm-handbook/equips.txt` degrades to something known to work rather
+    /// than to something untested.
+    fn dressed(&self, chr: &net::opcode::Character) -> Vec<(u8, u32, net::opcode::EquipStats)> {
+        chr.equips
+            .iter()
+            .map(|&(slot, item_id)| {
+                let stats = self
+                    .config
+                    .equips
+                    .get(&item_id)
+                    .map(|t| t.fresh_stats())
+                    .unwrap_or_default();
+                (slot, item_id, stats)
+            })
+            .collect()
     }
 
     /// Move a character to a map and tell the client, persisting the move.

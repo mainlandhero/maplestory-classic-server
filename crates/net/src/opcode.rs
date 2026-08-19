@@ -1611,6 +1611,24 @@ pub fn set_field_minimal(clock: u64, channel: u32) -> Vec<u8> {
 /// so zero is the value that keeps it on the shortest path. The one field that must not be
 /// zero is the map id inside the stat block; see [`character_stat_block`].
 pub fn character_record_for_set_field(chr: &Character, world_id: u32) -> Vec<u8> {
+    let bare: Vec<(u8, u32, EquipStats)> =
+        chr.equips.iter().map(|&(s, i)| (s, i, EquipStats::default())).collect();
+    character_record_for_set_field_with(chr, world_id, &bare)
+}
+
+/// The same record, with each equip's stats supplied by the caller.
+///
+/// **The stats are not the character's to know.** They come from the item *template* in
+/// `Character.wz`, which `crates/world` loads and `crates/store` does not persist - a stat
+/// in the database would be a second source of truth for a value the client already has a
+/// copy of. So the caller resolves them and passes them in, and
+/// [`character_record_for_set_field`] keeps the all-zero behaviour that was confirmed on
+/// screen on 2026-08-19.
+pub fn character_record_for_set_field_with(
+    chr: &Character,
+    world_id: u32,
+    equips: &[(u8, u32, EquipStats)],
+) -> Vec<u8> {
     let mut out = vec![0u8; PRESENCE_ARRAY_LEN];
     out[PRESENCE_CHARACTER_STAT] = 1;
     out[PRESENCE_EQUIPPED] = 1;
@@ -1620,7 +1638,7 @@ pub fn character_record_for_set_field(chr: &Character, world_id: u32) -> Vec<u8>
     // 219..223: one u8, then the three optional-string flags. A zero flag skips its string.
     out.extend_from_slice(&[0u8; 4]);
     // Gate entry 6 fires here, because presence[2] is set.
-    out.extend_from_slice(&equipped_block(&chr.equips));
+    out.extend_from_slice(&equipped_block_with(equips));
     out.push(0); // the final ungated read, at 0x140308b3f
     out
 }
@@ -1653,10 +1671,13 @@ pub const STAT_BLOCK_AT: usize = 111;
 /// Full working: `research/naked-character.md`.
 pub const PRESENCE_EQUIPPED: usize = 2;
 
-/// One equipped item on the wire, for item type 1.
+/// One equipped item on the wire, for item type 1, **with every bitmask zero**.
 ///
 /// It is **125 bytes whichever way `hasCashSN` goes**: the 8 bytes that flag controls are
 /// read either by the base decode into `+0x38` or by the equip decode into `+0x4d`. **[D]**
+///
+/// This is the floor, not the size. Each set bit of the four masks adds its field's width -
+/// see [`EquipStats::extra_len`].
 pub const EQUIPPED_ITEM_LEN: usize = 125;
 
 /// The `u8` item type that selects the equip decode.
@@ -1685,6 +1706,464 @@ pub const EQUIP_SLOTS: std::ops::RangeInclusive<u8> = 1..=31;
 /// perfect and produced nothing on screen because two *values* were zero.
 pub const ITEM_NEVER_EXPIRES: u64 = 150_842_304_000_000_000;
 
+// ---------------------------------------------------------------------------------------
+// The equip item's four bitmasks. Full working, with the labels and their evidence, is in
+// `research/equip-stats.md`.
+// ---------------------------------------------------------------------------------------
+
+/// How many optional `u16` `FUN_140303800`'s `u32` mask gates. **[L]**
+pub const EQUIP_STAT_BITS: usize = 17;
+
+/// How many optional fields `FUN_140303b40`'s own `u32` mask gates. **[L]**
+pub const EQUIP_OPTION_BITS: usize = 21;
+
+/// The 17 optional `u16` behind one `FUN_140303800` mask, in **mask-bit order**.
+///
+/// Bit `k` is present iff bit `k` of the mask is set, and the client decodes it into an
+/// 8-byte obfuscated pair at `base + 8k` - value at `+0`, integrity dword at `+4`. **[L]**,
+/// `research/msexe-itemslot-800.txt`, bounded `0x140303800 .. 0x140303a6c` by `.pdata`.
+///
+/// **Every label below was read from this binary, not from the game family**, by pairing
+/// the offset the tooltip's getter `FUN_1401ab420(item + off, [item + off + 4])` reads with
+/// the string id `FUN_1408a9e40` resolves beside it, and cross-checking against the WZ
+/// property name the `ITEMINFO` loader stores at the base offset the same line uses. **[L]**
+///
+/// The family expectation (`.. PAD, MAD, PDD, MDD, ACC, EVA, Craft, Speed, Jump`) is
+/// **wrong for this client**: Speed and Jump are bits 6-7, there is no Craft field, and
+/// bits 14-16 are Critical Rate, Critical Damage and a separate Weapon Attack. Building
+/// this from the family expectation would have put `incPAD` at bit 6.
+///
+/// # These are the item's TOTAL stats, not increments over the WZ template
+///
+/// An earlier pass of this file claimed the opposite and labelled it [L]. It was wrong -
+/// the evidence was only that the WZ value and this value are passed to the same function,
+/// and the function was never read. Two independent [L] readings settle it:
+///
+/// * `FUN_142699710`, the stat-line assembler, prints **this value alone** as the headline
+///   number (`R8D` is loaded from arg 5 at `0x142699745` and is still the vararg at the
+///   `CALL 0x14019ba10` at `0x142699771`), then computes
+///   `leftover = this - ITEMINFO.inc - baseline - timed` to fill in a ` (%d +%d +%d`
+///   breakdown. It **subtracts** the template value; it never adds it.
+/// * `FUN_14038d3c0` compares the two **directly, in the same units**:
+///   `CMP AX, word ptr [RDI+0xba]` at `0x14038d434` is this field's `inc_str` against
+///   `ITEMINFO.incSTR`. That test is meaningless if one side is an increment.
+///
+/// So a fresh Undershirt must be sent with `inc_pdd = 6`, copied from
+/// `01040002.img/info/incPDD`. Each field below names the WZ property it mirrors, and
+/// [`EQUIP_STAT_WZ_PROPERTIES`] gives the same mapping in bit order for a generator.
+///
+/// # Why the screenshot showed no stat lines at all
+///
+/// `FUN_142699710` opens with a guard, at `0x142699749`:
+///
+/// ```text
+/// MOV  R8D,[RBP+0x6f]   ; arg 5 - THIS value
+/// TEST R8D,R8D
+/// JG   print
+/// TEST R9D,R9D          ; arg 4 - a baseline from a fourth struct
+/// JLE  return           ; both <= 0 -> no line at all
+/// ```
+///
+/// The WZ value is **not** in the guard, so it can never make a line appear on its own.
+/// Sending zeros suppresses the whole stat section - which is exactly what the owner saw. **[L]**
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EquipStatSet {
+    /// bit 0 - `STR: +%d` (0x0663). WZ template: `info/incSTR`, `ITEMINFO+0xba`
+    pub inc_str: u16,
+    /// bit 1 - `DEX: +%d` (0x0664). WZ template: `info/incDEX`, `ITEMINFO+0xbc`
+    pub inc_dex: u16,
+    /// bit 2 - `INT: +%d` (0x0665). WZ template: `info/incINT`, `ITEMINFO+0xbe`
+    pub inc_int: u16,
+    /// bit 3 - `LUK: +%d` (0x0666). WZ template: `info/incLUK`, `ITEMINFO+0xc0`
+    pub inc_luk: u16,
+    /// bit 4 - `MaxHP: +%d` (0x0668). WZ template: `info/incMHP`, `ITEMINFO+0xc2`
+    pub inc_mhp: u16,
+    /// bit 5 - `MaxMP: +%d` (0x0669). WZ template: `info/incMMP`, `ITEMINFO+0xc4`
+    pub inc_mmp: u16,
+    /// bit 6 - `Speed: +%d` (0x038A). WZ template: `info/incSpeed`, `ITEMINFO+0xdc`
+    pub inc_speed: u16,
+    /// bit 7 - `Jump: +%d` (0x038B). WZ template: `info/incJump`, `ITEMINFO+0xde`
+    pub inc_jump: u16,
+    /// bit 8 - `Attack Power: +%d` (0x0380). WZ template: `info/incPAD`, `ITEMINFO+0xcc`
+    pub inc_pad: u16,
+    /// bit 9 - `Magic Attack: +%d` (0x0381). WZ template: `info/incMAD`, `ITEMINFO+0xce`
+    pub inc_mad: u16,
+    /// bit 10 - `Weapon Def.: +%d` (0x0383). WZ template: `info/incPDD`, `ITEMINFO+0xd0`
+    pub inc_pdd: u16,
+    /// bit 11 - `Magic Def.: +%d` (0x0384). WZ template: `info/incMDD`, `ITEMINFO+0xd2`
+    pub inc_mdd: u16,
+    /// bit 12 - `Accuracy: +%d` (0x0385). WZ template: `info/incACC`, `ITEMINFO+0xd4`
+    pub inc_acc: u16,
+    /// bit 13 - `Evasion: +%d` (0x0386). WZ template: `info/incEVA`, `ITEMINFO+0xd6`
+    pub inc_eva: u16,
+    /// bit 14 - `Critical Rate: +%d` (0x0387). WZ template: `info/incCRT`, `ITEMINFO+0xd8`
+    pub inc_crt: u16,
+    /// bit 15 - `Critical Damage: +%d` (0x0388). WZ template: `info/incCRD`, `ITEMINFO+0xda`
+    pub inc_crd: u16,
+    /// bit 16 - `Weapon Attack: +%d` (0x037F). WZ template: `info/incWAT`, `ITEMINFO+0xca`
+    pub inc_wat: u16,
+}
+
+/// The `Character.wz` / `Item.wz` `info/` property that supplies each stat bit's value, in
+/// mask-bit order, for a generator that reads the template out of the WZ. **[L]**, from the
+/// `ITEMINFO` loader listing `research/msexe-iteminfo-load.txt`.
+pub const EQUIP_STAT_WZ_PROPERTIES: [&str; EQUIP_STAT_BITS] = [
+    "incSTR", "incDEX", "incINT", "incLUK", "incMHP", "incMMP", "incSpeed", "incJump", "incPAD",
+    "incMAD", "incPDD", "incMDD", "incACC", "incEVA", "incCRT", "incCRD", "incWAT",
+];
+
+impl EquipStatSet {
+    /// Build a set from the 17 WZ template values, in the order of
+    /// [`EQUIP_STAT_WZ_PROPERTIES`]. A missing property is 0.
+    pub fn from_wz_template(values: [u16; EQUIP_STAT_BITS]) -> Self {
+        Self {
+            inc_str: values[0],
+            inc_dex: values[1],
+            inc_int: values[2],
+            inc_luk: values[3],
+            inc_mhp: values[4],
+            inc_mmp: values[5],
+            inc_speed: values[6],
+            inc_jump: values[7],
+            inc_pad: values[8],
+            inc_mad: values[9],
+            inc_pdd: values[10],
+            inc_mdd: values[11],
+            inc_acc: values[12],
+            inc_eva: values[13],
+            inc_crt: values[14],
+            inc_crd: values[15],
+            inc_wat: values[16],
+        }
+    }
+
+    /// The fields in mask-bit order. **This array's order is the wire format** - the mask
+    /// and the payload are both derived from it, so they cannot disagree.
+    fn in_bit_order(&self) -> [u16; EQUIP_STAT_BITS] {
+        [
+            self.inc_str,
+            self.inc_dex,
+            self.inc_int,
+            self.inc_luk,
+            self.inc_mhp,
+            self.inc_mmp,
+            self.inc_speed,
+            self.inc_jump,
+            self.inc_pad,
+            self.inc_mad,
+            self.inc_pdd,
+            self.inc_mdd,
+            self.inc_acc,
+            self.inc_eva,
+            self.inc_crt,
+            self.inc_crd,
+            self.inc_wat,
+        ]
+    }
+
+    /// The `u32` mask: bit `k` is set exactly when field `k` is non-zero.
+    pub fn mask(&self) -> u32 {
+        let mut mask = 0u32;
+        for (bit, value) in self.in_bit_order().into_iter().enumerate() {
+            if value != 0 {
+                mask |= 1 << bit;
+            }
+        }
+        mask
+    }
+
+    /// Mask plus payload.
+    pub fn wire_len(&self) -> usize {
+        4 + 2 * self.mask().count_ones() as usize
+    }
+
+    /// Payload only - what this costs beyond the mask that is always sent.
+    pub fn optional_len(&self) -> usize {
+        self.wire_len() - 4
+    }
+
+    /// Where bit `bit` lands in the item object, for a set decoded at `base`.
+    /// The integrity dword the getter checks is at the returned offset `+ 4`. **[L]**
+    pub const fn object_offset(base: usize, bit: usize) -> usize {
+        base + 8 * bit
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.mask().to_le_bytes());
+        for value in self.in_bit_order() {
+            if value != 0 {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
+}
+
+/// The 21 mixed-width optional fields behind `FUN_140303b40`'s own `u32` mask.
+///
+/// Widths read off `research/msexe-itemslot-b40.txt`; the struct base is `item + 0xfa`
+/// (`FUN_140303b40`'s base `item + 0x62`, plus the `0x98` its own fields start at). Nine of
+/// the twenty-one offsets are confirmed independently by a tooltip getter reading exactly
+/// that address. **[L]**
+///
+/// Fields nothing was established about keep an `unknown_b<n>` name on purpose. They are
+/// **not** known to be unused - only unidentified - and sending a non-zero value for one
+/// would add its width to the wire for no known effect.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EquipOptions {
+    /// bit 0, `u8` at `item+0xfa` - `Remaining Enhancements: %d` (0x039E). The client
+    /// prints this straight from the packet with **no WZ fallback**, and only when
+    /// `ITEMINFO.tuc` is non-zero. `01040002.img/info/tuc` is 7, so a fresh Undershirt
+    /// showing 0 here is showing our zero. **[L]**
+    ///
+    /// **The client does compare this against `ITEMINFO.tuc`**, so it is not a free field:
+    /// `FUN_14038d3c0` opens with `LEA RCX,[RBX+0xfa] / CALL FUN_1401b0050 /
+    /// CMP AL, byte ptr [RDI+0xb8]` at `0x14038d41c`, `RDI` being the `ITEMINFO`. One path
+    /// takes `>=` as "not fresh", the other `>`. **[L]** Keep this in `0..=tuc`; `tuc`
+    /// itself is the unused-item boundary.
+    pub remaining_enhancements: u8,
+    /// bit 1, `u8` at `item+0x102`. Nothing in this binary names it; the v214
+    /// reference calls this bit `cuc` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b1: u8,
+    /// bit 2, `u16` at `item+0x10a` - the **attribute bitfield**; see [`ATTRIBUTE_BIT_3`].
+    /// Twelve one-line client accessors read one bit each out of this. **[L]**
+    pub attribute: u16,
+    /// bit 3, `u8` at `item+0x112`. Nothing in this binary names it; the v214
+    /// reference calls this bit `levelUpType` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b3: u8,
+    /// bit 4, `u8` at `item+0x11a`. Nothing in this binary names it; the v214
+    /// reference calls this bit `level` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b4: u8,
+    /// bit 5, `u64` at `item+0x122`. Nothing in this binary names it; the v214
+    /// reference calls this bit `exp` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b5: u64,
+    /// bit 6, `u32` at `item+0x13a`. Nothing in this binary names it; the v214
+    /// reference calls this bit `durability` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b6: u32,
+    /// bit 7, `u32` at `item+0x146` - a positive value plus a WZ check prints
+    /// `Golden Hammer reforging applied` (0x0DA7). **[L]**
+    pub golden_hammer: u32,
+    /// bit 8, `u8` at `item+0x152` - `Required Level: -%d` (0x0394). A **reduction**; the
+    /// requirement itself is `ITEMINFO.reqLevel`, from the WZ. **[L]**
+    pub level_requirement_reduction: u8,
+    /// bit 9, `u16` at `item+0x15a`. Nothing in this binary names it; the v214
+    /// reference calls this bit `specialAttribute` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b9: u16,
+    /// bit 10, `u32` at `item+0x162`. Nothing in this binary names it; the v214
+    /// reference calls this bit `durabilityMax` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b10: u32,
+    /// bit 11, `u8` at `item+0x16e`. Nothing in this binary names it; the v214
+    /// reference calls this bit `iIncReq` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b11: u8,
+    /// bit 12, `u8` at `item+0x176`. Nothing in this binary names it; the v214
+    /// reference calls this bit `growthEnchant` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b12: u8,
+    /// bit 13, `u8` at `item+0x17e`. Nothing in this binary names it; the v214
+    /// reference calls this bit `psEnchant` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b13: u8,
+    /// bit 14, `u8` at `item+0x186` - `Boss Damage +%d%%` (0x0D65). **[L]**
+    pub boss_damage_percent: u8,
+    /// bit 15, `u8` at `item+0x18e` - `Ignored Enemy DEF : +%d%%` (0x0672). **[L]**
+    pub ignore_enemy_def_percent: u8,
+    /// bit 16, `u8` at `item+0x196` - `Damage: +%d%%` (0x0389). **[L]**
+    pub damage_percent: u8,
+    /// bit 17, `u8` at `item+0x19e` - `All Stats: +%d%%` (0x0671). **[L]**
+    pub all_stats_percent: u8,
+    /// bit 18, `u8` at `item+0x1a6` - `Scissors Usages Available : %d` (0x03A0), and **the
+    /// cause of "Cannot be Traded when equipped"**. See [`NO_SCISSOR_RESTRICTION`].
+    pub scissor_uses: u8,
+    /// bit 19, `u64` at `item+0x1ae`. Nothing in this binary names it; the v214
+    /// reference calls this bit `exGradeOption` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b19: u64,
+    /// bit 20, `u32` at `item+0x1c6`. Nothing in this binary names it; the v214
+    /// reference calls this bit `hyperUpgrade` - **[I]**, a 1-of-8 source, and section 10.3
+    /// of `research/equip-stats.md` says why that is a candidate and not a name.
+    pub unknown_b20: u32,
+}
+
+impl EquipOptions {
+    /// `(value, width in bytes)` in mask-bit order. The widths are the listing's, and this
+    /// array is the single source for both the mask and the payload.
+    fn in_bit_order(&self) -> [(u64, usize); EQUIP_OPTION_BITS] {
+        [
+            (u64::from(self.remaining_enhancements), 1),
+            (u64::from(self.unknown_b1), 1),
+            (u64::from(self.attribute), 2),
+            (u64::from(self.unknown_b3), 1),
+            (u64::from(self.unknown_b4), 1),
+            (self.unknown_b5, 8),
+            (u64::from(self.unknown_b6), 4),
+            (u64::from(self.golden_hammer), 4),
+            (u64::from(self.level_requirement_reduction), 1),
+            (u64::from(self.unknown_b9), 2),
+            (u64::from(self.unknown_b10), 4),
+            (u64::from(self.unknown_b11), 1),
+            (u64::from(self.unknown_b12), 1),
+            (u64::from(self.unknown_b13), 1),
+            (u64::from(self.boss_damage_percent), 1),
+            (u64::from(self.ignore_enemy_def_percent), 1),
+            (u64::from(self.damage_percent), 1),
+            (u64::from(self.all_stats_percent), 1),
+            (u64::from(self.scissor_uses), 1),
+            (self.unknown_b19, 8),
+            (u64::from(self.unknown_b20), 4),
+        ]
+    }
+
+    /// The width, in wire bytes, of option bit `bit`. Panics outside `0..21`.
+    pub fn width_of(bit: usize) -> usize {
+        Self::default().in_bit_order()[bit].1
+    }
+
+    /// The `u32` mask: bit `k` is set exactly when field `k` is non-zero.
+    pub fn mask(&self) -> u32 {
+        let mut mask = 0u32;
+        for (bit, (value, _)) in self.in_bit_order().into_iter().enumerate() {
+            if value != 0 {
+                mask |= 1 << bit;
+            }
+        }
+        mask
+    }
+
+    /// Mask plus payload.
+    pub fn wire_len(&self) -> usize {
+        4 + self
+            .in_bit_order()
+            .into_iter()
+            .filter(|(value, _)| *value != 0)
+            .map(|(_, width)| width)
+            .sum::<usize>()
+    }
+
+    /// Payload only.
+    pub fn optional_len(&self) -> usize {
+        self.wire_len() - 4
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.mask().to_le_bytes());
+        for (value, width) in self.in_bit_order() {
+            if value != 0 {
+                out.extend_from_slice(&value.to_le_bytes()[..width]);
+            }
+        }
+    }
+}
+
+/// At or below this many scissor uses, the client treats the item as karma-restricted.
+///
+/// `FUN_1402fd610`, the item's `vtable+0x200`, is seven instructions: it returns false for a
+/// cash item (serial at `item+0x38` non-zero) and otherwise `scissor_uses <= 0x14`. **[L]**
+pub const SCISSOR_RESTRICTED_MAX: u8 = 0x14;
+
+/// What [`EquipOptions::scissor_uses`] has to carry so an item is not trade-blocked.
+///
+/// **This is the answer to "Cannot be Traded when equipped".** With `scissor_uses = 0`,
+/// `vtable+0x200` is true, and `FUN_14038cf10` then reports a trade restriction for any item
+/// whose WZ `tradeBlock` is 0 - which is every starter item. `FUN_1403e8e00` turns that into
+/// string 0x03C6, `Cannot be Traded when equipped`, and the same predicate is why
+/// `Scissors Usages Available : 0` printed as well. One byte causes both lines.
+///
+/// **[D]**, upgraded from [I] once the one function that singles out `0xFF` was read.
+/// `FUN_1403e8d40` returns 1 only when this field reads exactly `0xFF` **and** the item is
+/// otherwise unrestricted, and its single caller uses that to add string 0x0F66,
+/// `"However, this will restrict the Scissors count."`, to the Rebirth Flame confirmation.
+/// So `0xFF` means *"no karma restriction yet"* - the warning exists because applying the
+/// flame would impose one. That is the value we want, and it walks into nothing else: the
+/// only behaviour it changes is a warning line that is correct for an unrestricted item.
+///
+/// Still not [L]: nothing in the binary was found that *writes* `0xFF`. The threshold
+/// ([`SCISSOR_RESTRICTED_MAX`]) is literal; the sentinel is derived from two consumers.
+///
+/// The v214 reference agrees - `ItemData.java` gives a freshly created equip
+/// `setCuttable((short) -1)`, encodes the field as a byte, and puts it at the same mask bit.
+/// That is **[I]** and does not raise the label: the tree is a different game version and
+/// scored 1 of 8 against a held-out control. It agrees here; it disagrees with eleven of the
+/// seventeen [`EquipStatSet`] bits, which is why it is a corroboration and not a source.
+pub const NO_SCISSOR_RESTRICTION: u8 = 0xFF;
+
+/// Attribute bit 3 - the item's `vtable+0x28`, and the first thing `FUN_14038cf10` tests.
+///
+/// Set, it suppresses the trade line outright (`JNZ -> return 0` at `0x14038cf30`). **[L]**
+/// It is **not** the recommended fix: it costs two bytes rather than one, it does not touch
+/// the `Scissors Usages Available` line, and three other predicates read the same bit for
+/// reasons that were not established. Prefer [`NO_SCISSOR_RESTRICTION`].
+pub const ATTRIBUTE_BIT_3: u16 = 1 << 3;
+
+/// Everything the four bitmasks in one equipped item can carry.
+///
+/// [`Default`] is **all masks zero**, which is the 125-byte body confirmed on screen on
+/// 2026-08-19. Every field added here widens the item, and the record has no length prefix
+/// and no resync point - which is exactly why the mask is computed from the fields rather
+/// than stored beside them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EquipStats {
+    /// `FUN_140303800` called from `FUN_140303b40` - decoded at `item + 0x62`, and the set
+    /// the tooltip shows as the "+n" on each stat line.
+    pub stats: EquipStatSet,
+    /// `FUN_140303b40`'s own mask - decoded at `item + 0xfa`.
+    pub options: EquipOptions,
+    /// `FUN_140303800` at `0x1403043f6` - decoded at `item + 0x26b`. Always sent. Nothing in
+    /// the tooltip reads it and its meaning is **not established**; leave it zero.
+    pub second_stats: EquipStatSet,
+    /// `FUN_140303800` at `0x140304411` - decoded at `item + 0x313`, and read **only** when
+    /// the `u8` tailFlag before it is non-zero. The tooltip passes `item + 0x313 + 8k` as a
+    /// second value on every stat line. `Some` sets the tailFlag; `None` leaves it 0.
+    pub timed_stats: Option<EquipStatSet>,
+}
+
+impl EquipStats {
+    /// Bytes this adds to [`EQUIPPED_ITEM_LEN`]. The three masks and the tailFlag are
+    /// already counted there, so only the payloads and the whole fourth set are extra.
+    pub fn extra_len(&self) -> usize {
+        self.stats.optional_len()
+            + self.options.optional_len()
+            + self.second_stats.optional_len()
+            + self.timed_stats.map_or(0, |set| set.wire_len())
+    }
+
+    /// A fresh, unmodified item as a real server would send it.
+    ///
+    /// `template` is the item's own WZ `info/inc*` block - see
+    /// [`EQUIP_STAT_WZ_PROPERTIES`] and [`EquipStatSet::from_wz_template`] - **not** zero:
+    /// the client reads these fields as the item's total stats and compares them directly
+    /// against the template, so an item sent with zeros has no stats and, because of
+    /// `FUN_142699710`'s guard, shows no stat lines at all.
+    ///
+    /// `tuc` is the item's WZ `info/tuc`. The client compares this field against
+    /// `ITEMINFO.tuc`, so it must not exceed it; `tuc` itself is the unused-item value.
+    ///
+    /// Scissor uses are set to [`NO_SCISSOR_RESTRICTION`], which is what clears both
+    /// `Scissors Usages Available : 0` and `Cannot be Traded when equipped`.
+    ///
+    /// This is **not** what [`equipped_block`] sends. It lengthens the item by two bytes per
+    /// non-zero stat plus two, so it changes the character record's length - a one-variant
+    /// client test of its own, and `tools/channel_smoke.py` hard-codes
+    /// `EQUIPPED_ITEM_LEN = 125` and would have to be relaxed in the same change.
+    pub fn fresh(template: EquipStatSet, tuc: u8) -> Self {
+        Self {
+            stats: template,
+            options: EquipOptions {
+                remaining_enhancements: tuc,
+                scissor_uses: NO_SCISSOR_RESTRICTION,
+                ..EquipOptions::default()
+            },
+            ..Self::default()
+        }
+    }
+}
+
 /// One equipped item, as `FUN_140304100` - the type-1 `vtable+0x358` decode - reads it.
 ///
 /// Every row is **[L]**, read off `research/msexe-itemslot-equip-decode.txt` and its five
@@ -1707,9 +2186,9 @@ pub const ITEM_NEVER_EXPIRES: u64 = 150_842_304_000_000_000;
 /// `b8 01 00 00 00 c3`, literally `return 1`, matching the 1/2/3 the release function
 /// switches on. `+0x330`, which that document called the decode, is `FUN_1402fbb30` =
 /// `return this + 0x242`, an accessor.
-pub fn equipped_item(item_id: u32) -> Vec<u8> {
+pub fn equipped_item(item_id: u32, stats: &EquipStats) -> Vec<u8> {
     debug_assert_ne!(item_id / 10000, 166, "a 166xxxx item reads FUN_1402cb4f0 as well");
-    let mut b = Vec::with_capacity(EQUIPPED_ITEM_LEN);
+    let mut b = Vec::with_capacity(EQUIPPED_ITEM_LEN + stats.extra_len());
     b.push(EQUIPPED_ITEM_TYPE); // 1403095fb  u8   the factory's type byte
 
     // FUN_1403035a0, the base decode shared by all three item types.
@@ -1721,9 +2200,10 @@ pub fn equipped_item(item_id: u32) -> Vec<u8> {
     b.extend_from_slice(&0u32.to_le_bytes()); //              1403037c1  u32  -> +0x48
     b.push(0); //                                             1403037cc  u8   -> +0x4c (bool)
 
-    // FUN_140303b40(this+0x62): two bitmasks, 17 and 21 optional reads. Zero reads none.
-    b.extend_from_slice(&0u32.to_le_bytes()); //              14030381d  u32  statMask
-    b.extend_from_slice(&0u32.to_le_bytes()); //              140303b66  u32  optMask
+    // FUN_140303b40(this+0x62): two bitmasks, 17 and 21 optional reads. Both masks are
+    // computed from the fields, so a bit can never be set without its bytes following.
+    stats.stats.encode_into(&mut b); //                       14030381d  u32  statMask + 17
+    stats.options.encode_into(&mut b); //                     140303b66  u32  optMask  + 21
 
     // Back in FUN_140304100.
     b.extend_from_slice(&[0u8; 13]); //                       140304138  raw[13] char[13] name
@@ -1740,10 +2220,19 @@ pub fn equipped_item(item_id: u32) -> Vec<u8> {
     b.extend_from_slice(&[0u8; 6]);
     b.push(0); //                                             14030436d  u8   -> blob +0x303
     b.push(0); //                                             1403043b1  u8   -> blob +0x30b
-    b.extend_from_slice(&0u32.to_le_bytes()); //              1403043f6  u32  a third bitmask
-    b.push(0); //                                             1403043fe  u8   tailFlag
+    // 1403043f6  FUN_140303800(this+0x26b): the third mask and its 17 optional u16.
+    stats.second_stats.encode_into(&mut b);
+    // 1403043fe  tailFlag. Non-zero reads a fourth FUN_140303800 at 140304411, into
+    // this+0x313 - the set the tooltip shows beside each stat line.
+    match stats.timed_stats {
+        Some(timed) => {
+            b.push(1);
+            timed.encode_into(&mut b);
+        }
+        None => b.push(0),
+    }
 
-    debug_assert_eq!(b.len(), EQUIPPED_ITEM_LEN);
+    debug_assert_eq!(b.len(), EQUIPPED_ITEM_LEN + stats.extra_len());
     b
 }
 
@@ -1766,15 +2255,29 @@ pub fn equipped_item(item_id: u32) -> Vec<u8> {
 /// **flagA is deliberately 0.** A non-zero value at `0x1403062dd` skips `FUN_14030b6f0` and
 /// its terminator - one byte less and one more thing to get wrong. `FUN_14030b9e0` cannot be
 /// skipped at all.
+/// **This still sends [`EquipStats::default`] - the all-zero body confirmed on screen.**
+/// [`EquipStats::plain`] is the version that clears "Cannot be Traded when equipped", and
+/// switching to it is a deliberate one-variant change; [`equipped_block_with`] takes it.
 pub fn equipped_block(equips: &[(u8, u32)]) -> Vec<u8> {
+    let with_stats: Vec<(u8, u32, EquipStats)> =
+        equips.iter().map(|&(slot, item_id)| (slot, item_id, EquipStats::default())).collect();
+    equipped_block_with(&with_stats)
+}
+
+/// [`equipped_block`], with per-item stats.
+///
+/// Splitting this out keeps the byte-for-byte record that was confirmed on screen reachable
+/// while the stats become settable. The item body has no length prefix, so the only thing
+/// keeping the record in sync is that each item's mask is derived from its own fields.
+pub fn equipped_block_with(equips: &[(u8, u32, EquipStats)]) -> Vec<u8> {
     let mut b = Vec::new();
     b.push(0); // 1403061cc  flagA
-    for (slot, item_id) in equips {
+    for (slot, item_id, stats) in equips {
         if !EQUIP_SLOTS.contains(slot) {
             continue; // decoded and thrown away by the client - see EQUIP_SLOTS
         }
         b.extend_from_slice(&u16::from(*slot).to_le_bytes());
-        b.extend_from_slice(&equipped_item(*item_id));
+        b.extend_from_slice(&equipped_item(*item_id, stats));
     }
     b.extend_from_slice(&0u16.to_le_bytes()); // end of the equipped list
     b.extend_from_slice(&0u16.to_le_bytes()); // FUN_14030b6f0
@@ -1785,7 +2288,8 @@ pub fn equipped_block(equips: &[(u8, u32)]) -> Vec<u8> {
 /// The fixed cost of [`equipped_block`]: `flagA` plus five `u16` terminators.
 pub const EQUIPPED_BLOCK_OVERHEAD: usize = 1 + 2 + 2 + 6;
 
-/// One equipped item plus its `u16` slot - what each equip adds to the record.
+/// One **zero-stat** equipped item plus its `u16` slot - what each equip adds to the record.
+/// A non-default [`EquipStats`] adds [`EquipStats::extra_len`] on top.
 pub const EQUIPPED_ENTRY_LEN: usize = 2 + EQUIPPED_ITEM_LEN;
 
 /// A `SetField` carrying a real character on a real map.
@@ -1795,10 +2299,26 @@ pub const EQUIPPED_ENTRY_LEN: usize = 2 + EQUIPPED_ITEM_LEN;
 /// `presence[0]` is set, which switches on the stat block, and that block carries
 /// `chr.map_id` at its offset 84.
 pub fn set_field_with_character(chr: &Character, world_id: u32, clock: u64, channel: u32) -> Vec<u8> {
+    let bare: Vec<(u8, u32, EquipStats)> =
+        chr.equips.iter().map(|&(s, i)| (s, i, EquipStats::default())).collect();
+    set_field_with_character_dressed(chr, world_id, clock, channel, &bare)
+}
+
+/// The same `SetField`, with each equip's template stats supplied by the caller.
+///
+/// See [`character_record_for_set_field_with`] for why the stats arrive this way rather than
+/// hanging off [`Character`].
+pub fn set_field_with_character_dressed(
+    chr: &Character,
+    world_id: u32,
+    clock: u64,
+    channel: u32,
+    equips: &[(u8, u32, EquipStats)],
+) -> Vec<u8> {
     let mut b = set_field_head(clock, channel, 0);
     b[SET_FIELD_CHARACTER_DATA_AT] = SET_FIELD_WITH_CHARACTER_DATA;
     b.extend_from_slice(&[0u8; 12]); // three u32s the caller reads before the record decoder
-    b.extend_from_slice(&character_record_for_set_field(chr, world_id));
+    b.extend_from_slice(&character_record_for_set_field_with(chr, world_id, equips));
     // 142098435: a zero u8 here jumps past the next seven reads. The margin after it means
     // a read past the traced path takes a zero rather than running the body out - the
     // client's readers throw on underrun, and the frame carries its own length so surplus
@@ -2646,7 +3166,7 @@ mod tests {
     /// desynchronises everything after it - silently.
     #[test]
     fn an_equipped_item_is_125_bytes_with_the_fields_where_the_client_reads_them() {
-        let hat = equipped_item(1002357);
+        let hat = equipped_item(1002357, &EquipStats::default());
         assert_eq!(hat.len(), EQUIPPED_ITEM_LEN);
         assert_eq!(hat.len(), 125);
 
@@ -2688,7 +3208,7 @@ mod tests {
         );
 
         // The item id is the only thing that changes between two items.
-        let coat = equipped_item(1040010);
+        let coat = equipped_item(1040010, &EquipStats::default());
         let differing: Vec<usize> =
             (0..hat.len()).filter(|&i| hat[i] != coat[i]).collect();
         assert!(!differing.is_empty(), "two different items produced identical bytes");
@@ -2696,6 +3216,300 @@ mod tests {
             differing.iter().all(|&i| (1..5).contains(&i)),
             "two items differ outside the itemId field: {differing:?}"
         );
+    }
+
+    /// One stat set with exactly one bit set, written out by hand.
+    ///
+    /// This deliberately restates the bit order rather than reusing `in_bit_order`. If the
+    /// two ever disagree the tests below fail, which is the point: the order is the wire
+    /// format and `research/equip-stats.md` section 2 is its evidence.
+    fn stat_set_with(bit: usize, value: u16) -> EquipStatSet {
+        let mut s = EquipStatSet::default();
+        match bit {
+            0 => s.inc_str = value,
+            1 => s.inc_dex = value,
+            2 => s.inc_int = value,
+            3 => s.inc_luk = value,
+            4 => s.inc_mhp = value,
+            5 => s.inc_mmp = value,
+            6 => s.inc_speed = value,
+            7 => s.inc_jump = value,
+            8 => s.inc_pad = value,
+            9 => s.inc_mad = value,
+            10 => s.inc_pdd = value,
+            11 => s.inc_mdd = value,
+            12 => s.inc_acc = value,
+            13 => s.inc_eva = value,
+            14 => s.inc_crt = value,
+            15 => s.inc_crd = value,
+            16 => s.inc_wat = value,
+            _ => panic!("FUN_140303800 has 17 bits, not {}", bit + 1),
+        }
+        s
+    }
+
+    /// One option set with exactly one bit set. Same reasoning as [`stat_set_with`].
+    fn options_with(bit: usize, value: u64) -> EquipOptions {
+        let mut o = EquipOptions::default();
+        match bit {
+            0 => o.remaining_enhancements = value as u8,
+            1 => o.unknown_b1 = value as u8,
+            2 => o.attribute = value as u16,
+            3 => o.unknown_b3 = value as u8,
+            4 => o.unknown_b4 = value as u8,
+            5 => o.unknown_b5 = value,
+            6 => o.unknown_b6 = value as u32,
+            7 => o.golden_hammer = value as u32,
+            8 => o.level_requirement_reduction = value as u8,
+            9 => o.unknown_b9 = value as u16,
+            10 => o.unknown_b10 = value as u32,
+            11 => o.unknown_b11 = value as u8,
+            12 => o.unknown_b12 = value as u8,
+            13 => o.unknown_b13 = value as u8,
+            14 => o.boss_damage_percent = value as u8,
+            15 => o.ignore_enemy_def_percent = value as u8,
+            16 => o.damage_percent = value as u8,
+            17 => o.all_stats_percent = value as u8,
+            18 => o.scissor_uses = value as u8,
+            19 => o.unknown_b19 = value,
+            20 => o.unknown_b20 = value as u32,
+            _ => panic!("FUN_140303b40's mask has 21 bits, not {}", bit + 1),
+        }
+        o
+    }
+
+    /// The widths `FUN_140303b40` reads for its 21 optional fields, in bit order, read off
+    /// `research/msexe-itemslot-b40.txt`. The item body has no length prefix, so one wrong
+    /// width here would silently move every byte after it - including the four terminators
+    /// the record needs and the whole rest of the character.
+    const OPTION_WIDTHS: [usize; EQUIP_OPTION_BITS] =
+        [1, 1, 2, 1, 1, 8, 4, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 8, 4];
+
+    /// Setting stat bit `k` sets exactly bit `k` of the mask and adds exactly two bytes.
+    #[test]
+    fn every_stat_bit_costs_one_mask_bit_and_two_wire_bytes() {
+        for bit in 0..EQUIP_STAT_BITS {
+            let set = stat_set_with(bit, 0x1234);
+            assert_eq!(set.mask(), 1 << bit, "stat bit {bit} set the wrong mask bit");
+            assert_eq!(set.wire_len(), 4 + 2, "stat bit {bit} is not a u16");
+
+            let stats = EquipStats { stats: set, ..EquipStats::default() };
+            let item = equipped_item(1040002, &stats);
+            assert_eq!(item.len(), EQUIPPED_ITEM_LEN + 2, "stat bit {bit} moved the body");
+
+            // 14030381d: the mask, then the one value it turned on, immediately after it.
+            assert_eq!(u32::from_le_bytes(item[19..23].try_into().unwrap()), 1 << bit);
+            assert_eq!(u16::from_le_bytes(item[23..25].try_into().unwrap()), 0x1234);
+            // 140303b66: the option mask has moved by exactly the two bytes.
+            assert_eq!(u32::from_le_bytes(item[25..29].try_into().unwrap()), 0, "optMask");
+        }
+
+        // All seventeen at once: 17 * 2 bytes, and every mask bit set.
+        let mut all = EquipStatSet::default();
+        for bit in 0..EQUIP_STAT_BITS {
+            all = merge_stats(all, stat_set_with(bit, u16::try_from(bit + 1).unwrap()));
+        }
+        assert_eq!(all.mask(), (1 << EQUIP_STAT_BITS) - 1);
+        assert_eq!(all.wire_len(), 4 + 2 * EQUIP_STAT_BITS);
+        let item = equipped_item(1040002, &EquipStats { stats: all, ..EquipStats::default() });
+        assert_eq!(item.len(), EQUIPPED_ITEM_LEN + 2 * EQUIP_STAT_BITS);
+        // The values come out in bit order, which is what the client reads them in.
+        for bit in 0..EQUIP_STAT_BITS {
+            let at = 23 + 2 * bit;
+            assert_eq!(
+                u16::from_le_bytes(item[at..at + 2].try_into().unwrap()),
+                u16::try_from(bit + 1).unwrap(),
+                "stat bit {bit} is out of order on the wire"
+            );
+        }
+    }
+
+    /// Field-wise OR of two stat sets, so the test above can build "all bits set" without
+    /// restating the 17 field names a third time.
+    fn merge_stats(a: EquipStatSet, b: EquipStatSet) -> EquipStatSet {
+        EquipStatSet {
+            inc_str: a.inc_str | b.inc_str,
+            inc_dex: a.inc_dex | b.inc_dex,
+            inc_int: a.inc_int | b.inc_int,
+            inc_luk: a.inc_luk | b.inc_luk,
+            inc_mhp: a.inc_mhp | b.inc_mhp,
+            inc_mmp: a.inc_mmp | b.inc_mmp,
+            inc_speed: a.inc_speed | b.inc_speed,
+            inc_jump: a.inc_jump | b.inc_jump,
+            inc_pad: a.inc_pad | b.inc_pad,
+            inc_mad: a.inc_mad | b.inc_mad,
+            inc_pdd: a.inc_pdd | b.inc_pdd,
+            inc_mdd: a.inc_mdd | b.inc_mdd,
+            inc_acc: a.inc_acc | b.inc_acc,
+            inc_eva: a.inc_eva | b.inc_eva,
+            inc_crt: a.inc_crt | b.inc_crt,
+            inc_crd: a.inc_crd | b.inc_crd,
+            inc_wat: a.inc_wat | b.inc_wat,
+        }
+    }
+
+    /// Setting option bit `k` sets exactly bit `k` and adds exactly that field's width -
+    /// 1, 2, 4 or 8 bytes, per `FUN_140303b40`'s listing.
+    #[test]
+    fn every_option_bit_costs_one_mask_bit_and_its_own_width() {
+        for bit in 0..EQUIP_OPTION_BITS {
+            let width = OPTION_WIDTHS[bit];
+            assert_eq!(EquipOptions::width_of(bit), width, "width table disagrees at {bit}");
+
+            // A value that fills the field, so a too-narrow write would truncate visibly.
+            let value = match width {
+                1 => 0x7f,
+                2 => 0x7f11,
+                4 => 0x7f11_2233,
+                _ => 0x7f11_2233_4455_6677,
+            };
+            let opts = options_with(bit, value);
+            assert_eq!(opts.mask(), 1 << bit, "option bit {bit} set the wrong mask bit");
+            assert_eq!(opts.wire_len(), 4 + width, "option bit {bit} is not {width} bytes");
+
+            let stats = EquipStats { options: opts, ..EquipStats::default() };
+            let item = equipped_item(1040002, &stats);
+            assert_eq!(item.len(), EQUIPPED_ITEM_LEN + width, "option bit {bit} moved the body");
+
+            // With no stat bits the option mask is still at 23..27, and its one field after.
+            assert_eq!(u32::from_le_bytes(item[23..27].try_into().unwrap()), 1 << bit);
+            let mut got = [0u8; 8];
+            got[..width].copy_from_slice(&item[27..27 + width]);
+            assert_eq!(u64::from_le_bytes(got), value, "option bit {bit} lost bytes");
+        }
+    }
+
+    /// The third mask is always sent and the fourth only when the tailFlag says so.
+    #[test]
+    fn the_third_and_fourth_stat_sets_sit_at_the_end_of_the_body() {
+        // Zero stats: third mask at 120..124, tailFlag at 124, and that is the last byte.
+        let plain = equipped_item(1040002, &EquipStats::default());
+        assert_eq!(plain.len(), 125);
+        assert_eq!(u32::from_le_bytes(plain[120..124].try_into().unwrap()), 0);
+        assert_eq!(plain[124], 0);
+
+        // 1403043f6: the third set (item+0x26b) is gated by its own mask, nothing else.
+        let third = EquipStats { second_stats: stat_set_with(3, 9), ..EquipStats::default() };
+        let item = equipped_item(1040002, &third);
+        assert_eq!(item.len(), EQUIPPED_ITEM_LEN + 2);
+        assert_eq!(u32::from_le_bytes(item[120..124].try_into().unwrap()), 1 << 3);
+        assert_eq!(u16::from_le_bytes(item[124..126].try_into().unwrap()), 9);
+        assert_eq!(item[126], 0, "tailFlag still last");
+
+        // 1403043fe: Some(..) sets the tailFlag, which is what makes 140304411 read a
+        // fourth mask. None must leave it zero or the client reads four bytes we never sent.
+        let timed =
+            EquipStats { timed_stats: Some(stat_set_with(16, 0x0101)), ..EquipStats::default() };
+        let item = equipped_item(1040002, &timed);
+        assert_eq!(item.len(), EQUIPPED_ITEM_LEN + 4 + 2);
+        assert_eq!(item[124], 1, "tailFlag must be non-zero when a fourth set follows");
+        assert_eq!(u32::from_le_bytes(item[125..129].try_into().unwrap()), 1 << 16);
+        assert_eq!(u16::from_le_bytes(item[129..131].try_into().unwrap()), 0x0101);
+    }
+
+    /// The mask can never disagree with the payload, because there is only one source for
+    /// both. This is the property the whole struct exists for: the item body has no length
+    /// prefix and no resync point, so a mask bit without its bytes desynchronises the rest
+    /// of the character record and world entry with it.
+    #[test]
+    fn a_mask_bit_is_set_exactly_when_its_bytes_are_on_the_wire() {
+        let stats = EquipStats {
+            stats: EquipStatSet { inc_str: 5, inc_pdd: 6, inc_wat: 7, ..EquipStatSet::default() },
+            options: EquipOptions {
+                remaining_enhancements: 7,
+                attribute: ATTRIBUTE_BIT_3,
+                scissor_uses: NO_SCISSOR_RESTRICTION,
+                unknown_b5: 0x1122_3344_5566_7788,
+                ..EquipOptions::default()
+            },
+            ..EquipStats::default()
+        };
+
+        // Walk the body the way FUN_140303800 and FUN_140303b40 do and land exactly on the
+        // third mask - the same walk tools/channel_smoke.py does against the real wire.
+        let item = equipped_item(1040002, &stats);
+        let mut at = 19;
+        let stat_mask = u32::from_le_bytes(item[at..at + 4].try_into().unwrap());
+        at += 4;
+        assert_eq!(stat_mask, (1 << 0) | (1 << 10) | (1 << 16));
+        for bit in 0..EQUIP_STAT_BITS {
+            if stat_mask & (1 << bit) != 0 {
+                at += 2;
+            }
+        }
+        let opt_mask = u32::from_le_bytes(item[at..at + 4].try_into().unwrap());
+        at += 4;
+        assert_eq!(opt_mask, (1 << 0) | (1 << 2) | (1 << 5) | (1 << 18));
+        for bit in 0..EQUIP_OPTION_BITS {
+            if opt_mask & (1 << bit) != 0 {
+                at += OPTION_WIDTHS[bit];
+            }
+        }
+        // 40..120 of the zero-stat body: the name buffer through the two blob bytes.
+        at += 120 - 27;
+        assert_eq!(
+            u32::from_le_bytes(item[at..at + 4].try_into().unwrap()),
+            0,
+            "the walk did not land on the third mask - a width is wrong"
+        );
+        assert_eq!(at + 4 + 1, item.len(), "the tailFlag is not the last byte");
+        assert_eq!(item.len(), EQUIPPED_ITEM_LEN + stats.extra_len());
+    }
+
+    /// A fresh Undershirt (1040002) as `Character.wz` describes it, and the three wrong
+    /// lines it fixes.
+    ///
+    /// `01040002.img/info` has `incPDD 6` and `tuc 7` and nothing else, so a real server
+    /// sends `inc_pdd = 6`. The client reads that as the item's **total** Weapon Def. -
+    /// `FUN_142699710` prints it as the headline and *subtracts* `ITEMINFO.incPDD` to get
+    /// the scroll leftover, and `FUN_14038d3c0` compares the two in the same units at
+    /// `0x14038d434`. Sending 0 trips that function's opening guard
+    /// (`arg5 <= 0 && arg4 <= 0 -> return`) and suppresses the whole stat section, which is
+    /// why the owner's screenshot had no stat lines at all.
+    ///
+    /// `FUN_1402fd610` (the item's `vtable+0x200`) is `cashSerial == 0 && scissorUses <=
+    /// 0x14`. With zero uses that is true, which makes `FUN_14038cf10` report a trade
+    /// restriction for any item whose WZ `tradeBlock` is 0 - every starter item - and also
+    /// makes `FUN_1403e8c40` print `Scissors Usages Available : 0`.
+    #[test]
+    fn a_fresh_item_carries_its_template_stats_an_upgrade_count_and_no_karma_restriction() {
+        assert!(
+            NO_SCISSOR_RESTRICTION > SCISSOR_RESTRICTED_MAX,
+            "the whole point is to land above the 0x14 the client compares against"
+        );
+
+        // 01040002.img/info: incPDD 6, tuc 7. Everything else absent.
+        let mut template = [0u16; EQUIP_STAT_BITS];
+        template[10] = 6;
+        assert_eq!(EQUIP_STAT_WZ_PROPERTIES[10], "incPDD", "bit 10 is Weapon Def.");
+        let template = EquipStatSet::from_wz_template(template);
+        assert_eq!(template.inc_pdd, 6);
+
+        let stats = EquipStats::fresh(template, 7);
+        assert_eq!(stats.stats.inc_pdd, 6, "the total, not an increment over the WZ");
+        assert_eq!(stats.options.remaining_enhancements, 7, "01040002.img/info/tuc");
+        assert_eq!(stats.options.scissor_uses, NO_SCISSOR_RESTRICTION);
+        assert_eq!(stats.stats.mask(), 1 << 10);
+        assert_eq!(stats.options.mask(), (1 << 0) | (1 << 18));
+
+        // One u16 and two u8: four bytes, and that is the whole cost of all three fixes.
+        assert_eq!(stats.extra_len(), 4);
+        let item = equipped_item(1040002, &stats);
+        assert_eq!(item.len(), 129);
+        assert_eq!(u32::from_le_bytes(item[19..23].try_into().unwrap()), 1 << 10, "statMask");
+        assert_eq!(u16::from_le_bytes(item[23..25].try_into().unwrap()), 6, "incPDD");
+        assert_eq!(u32::from_le_bytes(item[25..29].try_into().unwrap()), (1 << 0) | (1 << 18));
+        assert_eq!(item[29], 7, "bit 0: remaining enhancements");
+        assert_eq!(item[30], NO_SCISSOR_RESTRICTION, "bit 18: scissor uses");
+
+        // remaining_enhancements is not free: FUN_14038d3c0 compares it against tuc.
+        assert!(
+            stats.options.remaining_enhancements <= 7,
+            "a count above ITEMINFO.tuc is outside the range the client models"
+        );
+
+        // And the fallback is still one call away, byte-for-byte what ran on screen.
+        assert_eq!(equipped_item(1040002, &EquipStats::default()).len(), EQUIPPED_ITEM_LEN);
     }
 
     /// The equipped block costs 11 bytes even when the character wears nothing, because
@@ -2723,7 +3537,10 @@ mod tests {
         let mut at = 1;
         for (slot, item_id) in &equips {
             assert_eq!(u16::from_le_bytes([block[at], block[at + 1]]), u16::from(*slot));
-            assert_eq!(&block[at + 2..at + 2 + EQUIPPED_ITEM_LEN], &equipped_item(*item_id)[..]);
+            assert_eq!(
+                &block[at + 2..at + 2 + EQUIPPED_ITEM_LEN],
+                &equipped_item(*item_id, &EquipStats::default())[..]
+            );
             at += EQUIPPED_ENTRY_LEN;
         }
 

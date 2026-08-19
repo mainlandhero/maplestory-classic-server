@@ -459,6 +459,42 @@ pub struct EquipTemplate {
     pub trade_block: bool,
 }
 
+impl EquipTemplate {
+    /// This template as the stat block a **fresh, unscrolled** instance of the item carries.
+    ///
+    /// **The packet field is the absolute value, not an increment**, and the first reading of
+    /// this was the other way round. `FUN_142699710` loads the packet value into `R8D`,
+    /// tests *it* for the print guard, and then **subtracts** the `ITEMINFO` template value
+    /// to work out the leftover for the ` (%d +%d +%d)` breakdown - so the number the user
+    /// reads is the packet's alone, and the short "no parenthetical" path is taken exactly
+    /// when packet == template, which only makes sense if the packet carries the total.
+    /// `FUN_14038d3c0` corroborates it from a different subsystem: it compares
+    /// `item+0x62` against `ITEMINFO.incSTR` directly, same width, no arithmetic on either
+    /// side. That is meaningless unless both are absolutes.
+    ///
+    /// So a fresh Grey T-Shirt goes out with `inc_pdd = 6`, and the owner's tooltip showing **no
+    /// stat section at all** is explained: the guard is on the packet field, and zero
+    /// suppresses the line however large the template value is.
+    ///
+    /// **Index 8 is always 0.** The mask's bit order has `incPAD` there, and this client's
+    /// `Character.wz` does not contain that property on any of its 1760 equips - weapon
+    /// attack lives in `incWAT`, which is bit 16. See `tools/dump_equips.py`.
+    pub fn fresh_stats(&self) -> net::opcode::EquipStats {
+        // In net::opcode::EQUIP_STAT_WZ_PROPERTIES order.
+        let values = [
+            self.inc_str, self.inc_dex, self.inc_int, self.inc_luk,
+            self.inc_mhp, self.inc_mmp, self.inc_speed, self.inc_jump,
+            0, // incPAD - not a property this client's data ever carries
+            self.inc_mad, self.inc_pdd, self.inc_mdd, self.inc_acc, self.inc_eva,
+            self.inc_crt, self.inc_crd, self.inc_wat,
+        ];
+        // remaining_enhancements must stay within 0..=tuc: FUN_14038d3c0 compares the two at
+        // 0x14038d41c and treats a larger value as outside the range it models.
+        let tuc = u8::try_from(self.tuc).unwrap_or(u8::MAX);
+        net::opcode::EquipStats::fresh(net::opcode::EquipStatSet::from_wz_template(values), tuc)
+    }
+}
+
 /// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
 ///
 /// **Not zero, deliberately.** Zero is structurally legal and draws a mob at 0% health,

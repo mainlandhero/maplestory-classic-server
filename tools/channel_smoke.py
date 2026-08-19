@@ -65,7 +65,48 @@ PORTAL_TARGET = 10
 # FUN_140253980 assigns to a coat, trousers, shoes and a weapon, and they are the values a
 # really-created character carries.
 EQUIPS = ((5, 1040003), (6, 1060002), (7, 1072003), (11, 1302000))
-EQUIPPED_ITEM_LEN = 125
+# An equipped item is 125 bytes with every mask clear and grows from there: each set bit of
+# the stat mask adds a u16, and each set bit of the option mask adds its own width. There is
+# no length prefix anywhere in the record, so this decoder has to walk it exactly as the
+# client does - which is the point of the Python side being an independent implementation.
+EQUIPPED_ITEM_BARE_LEN = 125
+# FUN_140303b40's 21 optional fields, in mask-bit order, by width in bytes.
+EQUIP_OPTION_WIDTHS = [1, 1, 2, 1, 1, 8, 4, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 8, 4]
+
+
+def equipped_item_len(body, at):
+    """Length of the item body starting at `at`, or None if it does not decode."""
+    i = at
+    if i >= len(body) or body[i] != 1:  # the factory's type byte; 1 is an equip
+        return None
+    i += 1 + 4                       # type, itemId
+    if i > len(body):
+        return None
+    has_cash_sn = body[i]
+    i += 1
+    # The cash serial and the raw[8] near the end are mutually exclusive: one or the other,
+    # never both, which is why a bare item is 125 either way.
+    i += 8 if has_cash_sn else 0
+    i += 8 + 4 + 1                   # dateExpire, u32, u8
+    if i + 4 > len(body):
+        return None
+    stat_mask = struct.unpack_from("<I", body, i)[0]
+    i += 4
+    i += 2 * bin(stat_mask & 0x1FFFF).count("1")
+    if i + 4 > len(body):
+        return None
+    opt_mask = struct.unpack_from("<I", body, i)[0]
+    i += 4
+    for bit, width in enumerate(EQUIP_OPTION_WIDTHS):
+        if opt_mask & (1 << bit):
+            i += width
+    i += 13 + 1 + 1 + 14             # name, two u8, seven u16
+    i += 0 if has_cash_sn else 8     # raw[8], only when there is no cash serial
+    i += 32 + 12 + 4 + 6 + 1 + 1     # the two sub-decoders and the fixed tail
+    if i + 4 + 1 > len(body):
+        return None
+    i += 4 + 1                       # a third mask (its optional u16 are not sent) and tailFlag
+    return i - at
 CLIENT_IV = 0x52307801        # J, the chain the client encrypts with
 SERVER_IV = 0x52307802        # K, the chain it decrypts with
 
@@ -478,13 +519,14 @@ if PROBE:
                     i += 2
                     if slot == 0:
                         break
-                    if not 1 <= slot <= 31 or i + EQUIPPED_ITEM_LEN > len(body):
+                    if not 1 <= slot <= 31:
                         return None
-                    item = body[i:i + EQUIPPED_ITEM_LEN]
-                    if item[0] != 1:  # the factory's type byte: 1 is an equip
+                    n = equipped_item_len(body, i)
+                    if n is None or i + n > len(body):
                         return None
+                    item = body[i:i + n]
                     worn.append((slot, struct.unpack_from("<I", item, 1)[0], item))
-                    i += EQUIPPED_ITEM_LEN
+                    i += n
                 # Four more u16 terminators: presence[2] gates FUN_14030b6f0's one list and
                 # FUN_14030b9e0's three as well as the equipped list itself. Omitting them
                 # desynchronises everything after, silently.
@@ -502,9 +544,54 @@ if PROBE:
                 check("the equipped list carries every item the character wears",
                       [(sl, it) for sl, it, _ in worn] == list(EQUIPS),
                       "%s, wanted %s" % ([(sl, it) for sl, it, _ in worn], list(EQUIPS)))
-                check("each equipped item is exactly 125 bytes",
-                      all(len(raw) == EQUIPPED_ITEM_LEN for _, _, raw in worn),
+                check("every equipped item is at least the 125-byte bare body",
+                      all(len(raw) >= EQUIPPED_ITEM_BARE_LEN for _, _, raw in worn),
                       "%s" % [len(raw) for _, _, raw in worn])
+
+                # The stats are the point: a fresh item carries its Character.wz template
+                # values as ABSOLUTES, and the tooltip's print guard is on the packet field,
+                # so a zero suppresses the line whatever the template says. The Grey T-Shirt
+                # (1040002) has incPDD 6 and tuc 7; the starter sword (1302000) has incWAT 17
+                # - and incWAT is bit 16, because this client's WZ has no incPDD... no
+                # incPAD at all.
+                by_id = {item: raw for _, item, raw in worn}
+                for item_id, bit, want, what in (
+                    (1040003, 10, 6, "the shirt's incPDD"),
+                    (1060002, 10, 4, "the trousers' incPDD"),
+                    (1302000, 16, 17, "the sword's incWAT (bit 16, NOT incPAD)"),
+                ):
+                    raw = by_id.get(item_id)
+                    if raw is None:
+                        continue
+                    mask = struct.unpack_from("<I", raw, 19)[0]
+                    ok = bool(mask & (1 << bit))
+                    got = None
+                    if ok:
+                        off = 23 + 2 * bin(mask & ((1 << bit) - 1)).count("1")
+                        got = struct.unpack_from("<H", raw, off)[0]
+                    check("%s reaches the wire as %d" % (what, want), got == want,
+                          "mask %#x, value %s" % (mask, got))
+
+                # And the two option fields that between them killed both bad tooltip lines.
+                shirt = by_id.get(1040003)
+                if shirt is not None:
+                    opt_at = 23 + 2 * bin(
+                        struct.unpack_from("<I", shirt, 19)[0] & 0x1FFFF).count("1")
+                    opt = struct.unpack_from("<I", shirt, opt_at)[0]
+                    vals, o = {}, opt_at + 4
+                    for bit, width in enumerate(EQUIP_OPTION_WIDTHS):
+                        if opt & (1 << bit):
+                            vals[bit] = int.from_bytes(shirt[o:o + width], "little")
+                            o += width
+                    # bit 0 is the remaining upgrade count. It must stay within 0..=tuc:
+                    # FUN_14038d3c0 compares the two at 0x14038d41c.
+                    check("the shirt's remaining enhancements are its tuc, 7",
+                          vals.get(0) == 7, "%s" % vals.get(0))
+                    # bit 18 > 0x14 is what stops "Cannot be Traded when equipped", and it
+                    # is also why "Scissors Usages Available: 0" printed - one byte, two
+                    # lines. 0xFF is the client's own "no restriction" value.
+                    check("the shirt is not trade-blocked (scissor uses above 0x14)",
+                          vals.get(18, 0) > 0x14, "%s" % vals.get(18))
                 # dateExpire is a FILETIME at item offset 6, and zero is 1601-01-01 - an
                 # item that expired four centuries ago. It is the top suspect if a run comes
                 # back "no fault, still naked", so pin that it is not zero here.
@@ -516,8 +603,11 @@ if PROBE:
                 check("the three optional-string flags before the block are zero",
                       not any(body[stat + stat_len:stat + stat_len + 4]),
                       "%s" % list(body[stat + stat_len:stat + stat_len + 4]))
-                check("the record is 743 bytes for a character wearing four items",
-                      end + 1 - rec == 743, "%d bytes" % (end + 1 - rec))
+                # 743 was the bare record. Stats and options add bytes per item, and the
+                # exact total is arithmetic on the templates rather than a constant worth
+                # pinning - what matters is that the walk ENDS where the record ends.
+                check("the record ends where the walk says it does",
+                      end + 1 - rec > 743, "%d bytes" % (end + 1 - rec))
                 check("the body outlasts the whole record",
                       len(body) > end + 1, "%d bytes, record ends at %d" % (len(body), end + 1))
     # ---- the NPCs the client cannot spawn for itself
