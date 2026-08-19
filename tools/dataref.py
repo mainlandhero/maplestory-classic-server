@@ -18,6 +18,13 @@ on `FUN_141b2a280`. This closes it for globals.
 Any byte offset is a candidate start, so this can hallucinate an instruction out of data.
 Every hit is attributed to its containing `.pdata` function and hits outside one are
 flagged; a lone unattributed hit is a candidate, not a finding.
+
+`OPS` is a list, so this tool can only report what is on the list - and on 2026-08-19 it
+was missing `0xC6` (`mov byte [rip+d], imm8`). Scanning the character-record flag table it
+reported **1 write** where there are **41**, because every flag initialiser stores its byte
+with `0xC6`. That is the third time here that a scan of a known set returned a clean,
+confident, wrong number. If a `--writes` run comes back empty or implausibly small, suspect
+this table before believing the answer.
 """
 import argparse
 import bisect
@@ -43,6 +50,7 @@ OPS = {
     0x33: (0, "xor"),
     0x83: (1, "grp1-imm8"),      # cmp/add/... qword [rip+d], imm8
     0x81: (4, "grp1-imm32"),
+    0xC6: (1, "mov-imm8"),     # store a byte immediate - see the note below
     0xC7: (4, "mov-imm32"),
     0xFF: (0, "grp5"),           # call/jmp/inc qword [rip+d]
 }
@@ -110,7 +118,10 @@ def main():
     hits = [(va, label, fn) for va, label, fn, rex in hits if rex or va - 1 not in rex_at]
 
     if args.writes:
-        hits = [h for h in hits if h[1] == "write"]
+        # Every form that STORES, not just the register one. `mov-imm8` was missing here
+        # as well as from OPS, so adding the opcode alone still reported nothing.
+        stores = {"write", "mov-imm8", "mov-imm32"}
+        hits = [h for h in hits if h[1] in stores]
     print(f"{target:#x}: {len(hits)} RIP-relative reference(s)")
     for va, label, fn in hits:
         home = f"{fn:#x}" if fn else "(outside any .pdata function)"

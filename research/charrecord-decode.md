@@ -93,11 +93,13 @@ What is actually there:
 **100 x `byte 1`** as its presence signal - found in a separate pass that had not seen this
 disassembly. A 100-byte opener on both sides is not a coincidence.
 
-**What is not yet settled**: the index-to-block mapping. Each gate starts its scan at
-`ECX = ESI`, and `ESI` is reassigned repeatedly through the function, so the gates are
-probably *not* all testing the same thing - but "each gate owns a distinct flag index" is
-an inference, not something read yet. Do not build a mask on it until the loop census
-settles which index guards which block.
+**SETTLED 2026-08-19** - `research/charrecord-presence-map.md` has the whole table.
+`FUN_1402fa9a0(arr, out, key)` is a **100-byte bytewise AND**, and each gate's key is built
+at startup as all-zero with **one byte set to 1**, so a gate fires iff its one presence byte
+is non-zero. "Each gate owns a distinct flag index" turned out to be right - 40 gates, 40
+distinct bytes - but the offsets are a **permutation**, not the identity, so the index
+cannot be used as the offset. **The gate guarding the block below (the stat decoder) is
+entry 7, and its byte is `presence[0]`.**
 
 ## The head, read off the listing
 

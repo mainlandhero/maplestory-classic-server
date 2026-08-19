@@ -279,11 +279,16 @@ uncollapsible fixed block.
 
 ### What I could NOT determine about the gates
 
-* **[I, unproven]** The exact mapping from a key index to a **byte offset inside the 100-byte
-  array**. `0x1402fa9a0` is not in this listing. What *is* proven **[L/D]**: the gate reads only
-  arg2 and a compile-time key, the result is scanned over `[0..0x63]` for any non-zero byte, and
-  non-zero means "block present". Whether key #k reads array byte k is **[I]** plausible given the
-  1:1 stride and the 0x64 bound matching the array length, **but I did not prove it.**
+* ~~**[I, unproven]** The exact mapping from a key index to a **byte offset inside the
+  100-byte array**.~~ **SETTLED 2026-08-19 - and the guess in this bullet was wrong.** See
+  `research/charrecord-presence-map.md` for the full table. `0x1402fa9a0` computes
+  `out[i] = arg2[i] & key[i]` over 100 bytes, and each key is built at startup as all-zero
+  with **exactly one byte set to 1**, so a gate fires iff that one presence byte is set.
+  The mapping is a **permutation, not the identity**: entry 7 -> byte **0**, entry 8 ->
+  byte **62**, entry 1 -> byte **44**. The reasoning recorded here - "plausible given the
+  1:1 stride and the 0x64 bound matching the array length" - was sound and produced the
+  wrong answer; the stride and the bound are real and say nothing about the offset. The
+  labels `#k` in the table above remain correct as **entry** numbers.
 * **[I]** The 5 dynamic-key gates select among indices 0-6 via the jump tables. Case *k* maps to
   index *6-k* and the `JA` default is index #0 **[L, from the case-body ordering]**, but the table
   contents themselves are outside the listing.
