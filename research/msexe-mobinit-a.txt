@@ -1,0 +1,34 @@
+// 141cc9410 .. 141cc949a   block=.text
+141cc9410  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+141cc9415  48 89 6c 24 10                    MOV qword ptr [RSP + 0x10],RBP
+141cc941a  48 89 74 24 18                    MOV qword ptr [RSP + 0x18],RSI
+141cc941f  57                                PUSH RDI
+141cc9420  48 83 ec 20                       SUB RSP,0x20
+141cc9424  48 8b d9                          MOV RBX,RCX
+141cc9427  48 8b ea                          MOV RBP,RDX
+141cc942a  48 81 c1 18 0a 00 00              ADD RCX,0xa18
+141cc9431  e8 da 97 05 00                    CALL 0x141d22c10
+141cc9436  33 c9                             XOR ECX,ECX
+141cc9438  e8 43 59 04 00                    CALL 0x141d0ed80
+141cc943d  48 8b f8                          MOV RDI,RAX
+141cc9440  48 8b 50 08                       MOV RDX,qword ptr [RAX + 0x8]
+141cc9444  48 85 d2                          TEST RDX,RDX
+141cc9447  74 0a                             JZ 0x141cc9453
+141cc9449  b9 fe 02 00 00                    MOV ECX,0x2fe
+141cc944e  e8 9d ad 18 01                    CALL 0x142e541f0
+141cc9453  48 8d 47 28                       LEA RAX,[RDI + 0x28]
+141cc9457  48 c7 47 08 01 00 00 00           MOV qword ptr [RDI + 0x8],0x1
+141cc945f  48 89 83 20 0a 00 00              MOV qword ptr [RBX + 0xa20],RAX
+141cc9466  48 85 c0                          TEST RAX,RAX
+141cc9469  75 0d                             JNZ 0x141cc9478
+141cc946b  48 8b d0                          MOV RDX,RAX
+141cc946e  b9 31 04 00 00                    MOV ECX,0x431
+141cc9473  e8 58 9a 18 01                    CALL 0x142e52ed0
+141cc9478  48 8b 8b 20 0a 00 00              MOV RCX,qword ptr [RBX + 0xa20]
+141cc947f  48 8b d5                          MOV RDX,RBP
+141cc9482  48 8b 5c 24 30                    MOV RBX,qword ptr [RSP + 0x30]
+141cc9487  48 8b 6c 24 38                    MOV RBP,qword ptr [RSP + 0x38]
+141cc948c  48 8b 74 24 40                    MOV RSI,qword ptr [RSP + 0x40]
+141cc9491  48 83 c4 20                       ADD RSP,0x20
+141cc9495  5f                                POP RDI
+141cc9496  e9 35 18 b9 fe                    JMP 0x14085acd0
