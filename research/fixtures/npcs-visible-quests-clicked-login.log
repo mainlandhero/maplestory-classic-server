@@ -1,0 +1,90 @@
+16:25:46.399 listening on 127.0.0.1:8484
+16:25:46.399 channel 0 advertised to the client at 127.0.0.1:8485
+16:25:46.399 database C:\MapleCW\maplecw.db
+16:25:46.400 world Scania id 0 with 1 channel(s)
+16:25:46.400 serving every connection as account "maplecw" (id 1), 3 character(s) stored
+16:25:46.400 NOT AUTHENTICATED: the game socket carries no credentials, so anyone who
+16:25:46.400   connects is served as that account. See docs/launcher.md.
+16:25:47.724 connection from #1 127.0.0.1:49727
+16:25:47.725 -> greeting, 48 bytes
+16:25:47.725 -> 0x0032 DATA_WZ_PATCH startup gate, unprompted
+16:25:47.725    body 00
+16:25:48.235 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 45 byte body 0264000000000000000000000002000000a1e01758ea50b6e702bdcb25d479492c376167570000000000000000
+16:25:48.235    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered by this server
+16:25:48.243 <- 0x0071 CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours), 49 byte body 0101000000640000000000000000011e00000028947d75402c352840462c2c32522899b5857d64704954524757544a5470
+16:25:48.244    0x0071 CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours) is not answered by this server
+16:25:48.244 <- 0x00A6 CLIENT_STATUS_CODE, 6 byte body 010000000000
+16:25:48.244    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.244 <- 0x00A6 CLIENT_STATUS_CODE, 8 byte body 0b00000000000000
+16:25:48.244    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.244 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 02000000
+16:25:48.244    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.245 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 05000000
+16:25:48.245    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.245 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 03000000
+16:25:48.245    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.245 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 04000000
+16:25:48.245    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.245 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0c000000
+16:25:48.245    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.270 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0d000000
+16:25:48.270    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.301 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0e000000
+16:25:48.301    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.301 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0f000000
+16:25:48.301    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:48.766 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 11000000
+16:25:48.766    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.281 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 12000000
+16:25:49.282    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.302 <- 0x00A1 CLIENT_DATA_WZ_REQUEST, 4 byte body 00000000
+16:25:49.302 -> 0x0032 DATA_WZ_PATCH startup gate
+16:25:49.302    body 00
+16:25:49.302 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 46 byte body 016400000082fd8ee482fd8ee4020000000070cf311d3b7f90a2d392ed6085686767e84f85920000000000000000
+16:25:49.302    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered by this server
+16:25:49.303 <- 0x00BF CLIENT_TITLE_SCREEN_READY, 0 byte body 
+16:25:49.303    0x00BF CLIENT_TITLE_SCREEN_READY is not answered by this server
+16:25:49.403 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 13000000
+16:25:49.404    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.404 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 1b000000
+16:25:49.404    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.465 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 16000000
+16:25:49.465    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.472 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 14000000
+16:25:49.472    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.472 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 15000000
+16:25:49.472    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.473 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 17000000
+16:25:49.473    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.490 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 18000000
+16:25:49.490    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.490 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 19000000
+16:25:49.490    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.490 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 1a000000
+16:25:49.490    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:49.535 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 1c000000
+16:25:49.535    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+16:25:51.795 <- 0x00C0 CLIENT_AUTH_FAILURE_REPORT (mode, then a Passport error code), 8 byte body 05000000204e0000
+16:25:51.795    0x00C0 CLIENT_AUTH_FAILURE_REPORT (mode, then a Passport error code) is not answered by this server
+16:25:51.854 <- 0x0073 CLIENT_SESSION_IDENTITY (never answered), 26 byte body 050000000000aabbccddeeffdeadbeef00000000764d00000000
+16:25:51.854    session identity: mode=5 identity="" (0 bytes) tail=aabbccddeeffdeadbeef00000000764d00000000 - NOT used to pick the account; see docs/login-server.md
+16:25:51.854    0x0073 CLIENT_SESSION_IDENTITY (never answered) is not answered by this server
+16:25:51.854 <- 0x0080 CLIENT_LOGIN_REQUEST, 0 byte body 
+16:25:51.854 -> 0x0000 ACCOUNT_INFO login request: account info
+16:25:51.854    body 000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a4067...(+8 bytes, known opcode so capped)
+16:25:51.854 -> 0x000B WORLD_LIST login request: world Scania
+16:25:51.854    body 0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000
+16:25:51.854 -> 0x000B WORLD_LIST login request: end of worlds
+16:25:51.855    body ff0000
+16:25:51.855 -> 0x0010 LOGIN_RESULT login request: login result, 3 character(s): TestCharA, TestCharC, TestCharD
+16:25:51.855    body 000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000c9000000cb000000cc00000003c9000000c90000000000000054657374436861724100000000000100000000214e0000497500...(+1209 bytes, known opcode so capped)
+16:25:52.126 <- 0x007A CLIENT_TASK_TIMING_REPORT (four task durations, then their sum), 22 byte body 0101420000000e0000000b0000002500000080000000
+16:25:52.126    0x007A CLIENT_TASK_TIMING_REPORT (four task durations, then their sum) is not answered by this server
+16:25:55.501 <- 0x00BC UNKNOWN, 12 byte body 090400000904000009040000
+16:25:55.501    0x00BC UNKNOWN is not answered by this server - and it is UNKNOWN, so the full body is above
+16:25:55.502 <- 0x0078 CLIENT_SELECT_CHARACTER_REQUEST, 73 byte body 0000000001002ecc00000000240044382d34332d41452d34432d35362d31372c2030302d30302d30302d30302d30302d303015004438343341453443353631375f4236414539434432
+16:25:55.503 -> 0x0011 MIGRATE_COMMAND migrate "TestCharD" (id 204) to world 0 channel 0 at 127.0.0.1:8485,                  seed 0x40e048f9 - single use, NOT authentication
+16:25:55.503    body 000000007f0000012521cc0000000000000000000000000000000000000000000000000000000000000000000000000000000004000000f5deabb3
+16:25:55.503 <- 0x0079 CLIENT_LOAD_TIMING_REPORT, 67 byte body cc0000000900546573744368617244420000000e0000000b0000002500000087080000ea070800030013000c0019003100d80141060100010001000000000000000d01
+16:25:55.503    0x0079 CLIENT_LOAD_TIMING_REPORT is not answered by this server
+16:25:55.510 #1 127.0.0.1:49727 closed

@@ -43,6 +43,19 @@ param(
     # the client this address and the client connects to it, so nothing enters the world
     # unless maplecw-world is listening here.
     [int]$ChannelPort = 8485,
+
+    # How many channels to run. The owner, 2026-08-19: "from now on can we make sure we always
+    # have 2 channels running so that users can swap between the two channels".
+    #
+    # One process per channel, not one process with two listeners - a channel IS a process
+    # here, and crates/login/src/config.rs is explicit that you cannot advertise more
+    # channels than you run: the client connects to the address for the channel it picked,
+    # so an advertised channel with nothing behind it is one nobody can enter.
+    #
+    # Channel N listens on $ChannelPort + N and logs to world.log (channel 0) or
+    # world-ch<N>.log (the rest). Channel 0 keeps the plain name because every doc and
+    # instruction in this repo points at world.log.
+    [int]$Channels = 2,
     # The account every connection is served as. The game socket carries no credentials,
     # so this is not a login - it decides whose characters appear. Create it first with
     #   .\target\release\maplecw-useradd.exe <name>
@@ -261,19 +274,25 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
         # One address per channel. The client connects to this when it enters the world,
         # so it must be reachable from the *client* machine - loopback here, a LAN address
         # once the server moves to the homelab.
-        '--channels', "127.0.0.1:$ChannelPort",
+        '--channels', (0..($Channels - 1) | ForEach-Object { "127.0.0.1:$($ChannelPort + $_)" }) -join ',',
         '--account', $Account, '--display-name', "`"$DisplayName`"", '--world', $World
     ) `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
 
-Remove-Item $worldLog -Force -ErrorAction SilentlyContinue
-$worldArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$ChannelPort", '--channel', '0')
-if ($SetFieldProbe) { $worldArgs += '--set-field-probe' }
-$worldSrv = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
-    -WindowStyle Hidden `
-    -ArgumentList $worldArgs `
-    -RedirectStandardOutput $worldLog -RedirectStandardError "$worldLog.err"
-Write-Host "channel 0 on 127.0.0.1:$ChannelPort (pid $($worldSrv.Id)), log $worldLog"
+$worldSrv = $null
+foreach ($ch in 0..($Channels - 1)) {
+    $chPort = $ChannelPort + $ch
+    $chLog = if ($ch -eq 0) { $worldLog } else { Join-Path $root "world-ch$ch.log" }
+    Remove-Item $chLog -Force -ErrorAction SilentlyContinue
+    $chArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$chPort", '--channel', "$ch")
+    if ($SetFieldProbe) { $chArgs += '--set-field-probe' }
+    $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
+        -WindowStyle Hidden `
+        -ArgumentList $chArgs `
+        -RedirectStandardOutput $chLog -RedirectStandardError "$chLog.err"
+    if ($ch -eq 0) { $worldSrv = $p }
+    Write-Host "channel $ch on 127.0.0.1:$chPort (pid $($p.Id)), log $chLog"
+}
 
 # Never launch the client against a dead server. A server that exited - a missing account
 # is the usual reason - leaves the client on "Connecting..." forever, which looks like a
