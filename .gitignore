@@ -36,3 +36,9 @@ login.log
 login.log.err
 world.log
 world.log.err
+
+# Name tables extracted from String.wz by tools/dump_names.py. Game data, not project
+# source - the repo carries the code to regenerate them, not the content.
+maps.txt
+items.txt
+mobs.txt
