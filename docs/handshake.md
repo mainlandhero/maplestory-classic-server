@@ -46,7 +46,34 @@ one that mattered". So the greeting is *not* satisfying it, despite sending `G =
 the leading `A..F` block and the version block are read only when `cfg+0x48 != 0`, and if
 that is zero the client reads `G` from where we put `A` - which is `00 00`.
 
-That is a hypothesis, not a measurement. What is measured is the site.
+### The cause, found 2026-08-19: `conn+0x48`
+
+**The gated blocks are skipped on a channel connection.** `conn+0x48` is the connection
+*type* - non-zero for login, zero for a game channel - and `FUN_1415d10e0` reads it three
+times: to decide whether to parse the leading `A..F` block, whether to parse
+`low`/`high`/`temp`, and **which cipher the body uses**. On a channel connection all three
+change together.
+
+So the client reads `G` from where we put `A`, which is `00 00`, fails `G == 1`, and raises
+`0x348`. The full write-up, including the channel greeting's shape and the byte-subtract
+cipher, is in `docs/transport.md`.
+
+### Why the login connection *also* logs it
+
+The IVs are written at lines 426-427; this check is at line 606. The client takes our IVs
+and throws afterwards, and the throw is caught by the message-loop handler - so the login
+connection works and records `INVALID_CLIENT_VERSION` at the same time. **Framing and AES
+working were never evidence that the version check passed.**
+
+That leaves the login connection's own failure genuinely open: with the gated blocks parsed,
+`G` and `H` should read as `1`. Two `ELog` records were uploaded, at sites **840** (`0x348`)
+and **1327** (`0x52F`) - and `0x52F` is not in the table above, so there is a raise site this
+document has never accounted for. That is the next thread.
+
+### Reading the ELog's site numbers
+
+The number before `HR` is the **site id in decimal**: `840` is `0x348`, the `G`/`H` gate.
+That makes `tools/decode_elog.py` a direct index into the table above, for free, on any run.
 
 **Cost of finding this: zero client runs.** The packets were arriving all along; the server
 truncated them at 96 bytes. `python tools/decode_elog.py login.log`.

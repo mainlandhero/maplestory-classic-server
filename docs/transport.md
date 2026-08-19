@@ -526,3 +526,83 @@ than probing opcodes from outside, identify the function behind the login-screen
 transition — handler *functions* are ordinary code, only the dispatch is virtualised — then
 scan process memory for its address. Its slot in the dispatch table gives the opcode
 directly, with no guessing and no per-run packet budget.
+
+## `conn+0x48` is the connection type, and it changes three things at once
+
+**Established 2026-08-19, statically.** This one field is why the migrated connection was
+rejected, and it had been sitting in this document as a cipher-selection note without anyone
+noticing what else it gates.
+
+```c
+if (*(int *)(conn + 0x48) == 0) ...   // a GAME / CHANNEL connection
+else                            ...   // a LOGIN connection
+```
+
+It is read in three separate places in `FUN_1415d10e0`, and each one changes the wire:
+
+| Read at | Effect when `+0x48 == 0` (channel) |
+|---|---|
+| the greeting parse | the leading `A..F` block is **not read** |
+| the version block | `low`, `high`, `temp` are **not read** |
+| `FUN_1406e9a65` | the body cipher is the **byte subtract**, not AES |
+
+### So a channel greeting is a different packet
+
+The login greeting we send is 48 bytes with two optional blocks in it. A channel connection
+skips both, which means the client reads `G` from where we put `A`. We send `A = 00 00`, so
+the client reads `G = 0`, fails `G == 1 && H == 1`, and raises site `0x348` /
+`0x22000007` - **"The client is outdated"**. That is exactly the dialog that ended the
+first run to enter the world, and it needs no other explanation.
+
+The channel greeting should therefore be, in order:
+
+```text
+G   u16    1, with bit 0x8000 clear
+H   u32    1
+I   str    empty, so atoi(I) == 0
+J   u32    client send IV  -> conn+0xe8
+K   u32    client recv IV  -> conn+0xec
+L   u8     1
+M   u8
+N   u8
+O   u8     locale
+```
+
+with **no** `A..F` and **no** `low`/`high`/`temp`. That is a hypothesis derived from the
+parse, not a measurement - but it is the only shape consistent with the three reads above.
+
+### And the channel body cipher is a byte subtract
+
+`FUN_1406ef9f0(dst, src, len, iv, flag)`, read directly:
+
+```c
+cVar40 = (flag == 0) ? 0 : *iv;      // the FIRST byte of the 4-byte IV
+out[i] = in[i] - cVar40;             // wrapping 8-bit subtract, whole body
+```
+
+Everything around it is unchanged from the AES path, which matters because it means most of
+`crates/net` is reusable:
+
+* the **4-byte header is not ciphered** either way - the caller does `buf + 4` before
+  calling the transform, so `decode_len` and the `len = a ^ b` header stay as they are;
+* the **IV evolution** is the same stock shuffle table, stepped once per packet;
+* the **chunking** is the same `0x5B0` then `0x5B4`.
+
+Only the body transform differs. A `ByteShiftCipher` implementing `Cipher` alongside
+`MapleCipher`, sharing the header and IV logic, is the whole change.
+
+**One thing is genuinely unresolved: the direction.** AES-OFB is symmetric, so `MapleCipher`
+uses one routine both ways; a subtract is not. `FUN_1406ef9f0` subtracts, but whether the
+client applies it when sending or when receiving decides whether the server must add or
+subtract. Do **not** guess this in silence. The header is unciphered, so framing works
+either way - which means the channel server can frame a packet correctly and log the body
+under *both* interpretations, and one run settles it by which one yields a sane opcode.
+
+### Why "the transport works" never proved the handshake was right
+
+The IVs are written to `conn+0xe8`/`+0xec` at `FUN_1415d10e0` lines 426-427. The
+`G == 1 && H == 1` check is at line 606, **180 lines later**. So the client can parse our
+greeting, take the IVs, and *then* throw - which is exactly what it does: the throw is
+caught by the message-loop handler, the client carries on, and the only trace is the `ELog`
+upload nobody was reading. Working framing and working AES were never evidence about the
+version check.
