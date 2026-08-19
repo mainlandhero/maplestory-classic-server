@@ -23,6 +23,11 @@ pub enum StoreError {
 
     #[error("account name {name:?} is invalid: {reason}")]
     InvalidAccountName { name: String, reason: &'static str },
+
+    /// Ten random 32-bit seeds in a row already existed. That is not bad luck at any
+    /// plausible table size, so it is reported rather than retried forever.
+    #[error("could not mint a unique migration seed after {tries} tries")]
+    MigrationSeedExhausted { tries: u32 },
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;

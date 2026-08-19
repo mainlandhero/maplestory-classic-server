@@ -121,6 +121,28 @@ impl Store {
                 PRIMARY KEY (character_id, slot)
             );
 
+            -- A character moving from the login/character-select server to a channel.
+            --
+            -- This table exists because the two are separate processes: the login server
+            -- mints the handoff and the channel server is the one that has to believe it,
+            -- and they share nothing but the database. A migration is **single use** -
+            -- consumed_at is set on the first successful claim - so a replayed handoff
+            -- cannot put a second connection into the world as the same character.
+            --
+            -- The seed is what actually travels in the migration packet, and it is only a
+            -- u32, so it is far too small to be a secret on its own. It identifies a
+            -- pending migration; it does not authenticate one. Say so when reporting.
+            CREATE TABLE IF NOT EXISTS migrations (
+                seed         INTEGER NOT NULL,
+                account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                world_id     INTEGER NOT NULL,
+                channel_id   INTEGER NOT NULL,
+                created_at   INTEGER NOT NULL,
+                consumed_at  INTEGER,
+                PRIMARY KEY (seed)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_characters_account
                 ON characters(account_id, world_id);
 
