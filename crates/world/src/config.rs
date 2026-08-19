@@ -74,6 +74,13 @@ pub struct Config {
     /// Server-sent for the same reason NPCs are: the client's field loader walks the WZ
     /// `life` node only to preload `Mob/%07d.img` art. 9928 spawns across 289 maps.
     pub mobs: HashMap<u32, Vec<net::mob::FieldMob>>,
+    /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
+    ///
+    /// The character record carries an item's stats and upgrade slots per *instance*, and a
+    /// real server fills them from the template when the item is created. An empty table is
+    /// not fatal - items are still sent, just bare - so a missing file degrades to exactly
+    /// the behaviour confirmed on screen on 2026-08-19.
+    pub equips: HashMap<u32, EquipTemplate>,
     /// Whether to actually send them. **Default `false`, and that is a measurement.**
     ///
     /// The run of 2026-08-19 faulted the client at `0x141c810b0` on the **first** `0x03C6`,
@@ -196,6 +203,57 @@ impl Config {
                 rx1: rx1 as i16,
                 f: fl as u8,
             });
+        }
+        out
+    }
+
+    /// Every equip's template values, from `tools/dump_equips.py`'s `equips.txt`.
+    ///
+    /// Column order is the file's header and is fixed by the generator; a row with the wrong
+    /// number of columns is skipped rather than partially read, because a silently
+    /// half-filled template would put a wrong number into a packet field with no length
+    /// prefix behind it.
+    pub fn load_equips(path: &std::path::Path) -> HashMap<u32, EquipTemplate> {
+        let mut out = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            if f.len() != 19 {
+                continue;
+            }
+            let n: Vec<Option<u32>> = f.iter().map(|x| x.parse::<u32>().ok()).collect();
+            if n.iter().any(Option::is_none) {
+                continue;
+            }
+            let v: Vec<u32> = n.into_iter().map(Option::unwrap).collect();
+            let u = |i: usize| u16::try_from(v[i]).unwrap_or(u16::MAX);
+            out.insert(
+                v[0],
+                EquipTemplate {
+                    tuc: u(1),
+                    inc_str: u(2),
+                    inc_dex: u(3),
+                    inc_int: u(4),
+                    inc_luk: u(5),
+                    inc_mhp: u(6),
+                    inc_mmp: u(7),
+                    inc_speed: u(8),
+                    inc_jump: u(9),
+                    inc_wat: u(10),
+                    inc_mad: u(11),
+                    inc_pdd: u(12),
+                    inc_mdd: u(13),
+                    inc_acc: u(14),
+                    inc_eva: u(15),
+                    inc_crt: u(16),
+                    inc_crd: u(17),
+                    trade_block: v[18] != 0,
+                },
+            );
         }
         out
     }
@@ -366,6 +424,41 @@ pub fn share_balanced(mobs: &[net::mob::FieldMob], cap: usize) -> Vec<&net::mob:
     keep.into_iter().map(|i| &mobs[i]).collect()
 }
 
+/// One equip's template values, as `Character.wz` has them.
+///
+/// **Field names are the WZ's own**, which is why there is no `inc_pad`: enumerating every
+/// scalar `info` property across all 1760 equip images found **`incWAT` on 202 items and
+/// `incPAD` on none**. A struct written from the game family's usual names would have had an
+/// always-zero attack field and no weapon would ever have had any. `tools/dump_equips.py`
+/// carries the full census.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EquipTemplate {
+    /// Upgrade slots. Printed by the tooltip as "Remaining Enhancements" straight from the
+    /// packet - the client does **not** fall back to this value, so a zero on the wire shows
+    /// as zero even though the template says 7.
+    pub tuc: u16,
+    pub inc_str: u16,
+    pub inc_dex: u16,
+    pub inc_int: u16,
+    pub inc_luk: u16,
+    pub inc_mhp: u16,
+    pub inc_mmp: u16,
+    pub inc_speed: u16,
+    pub inc_jump: u16,
+    /// Weapon attack. **`incWAT`, not `incPAD`** - see the struct docs.
+    pub inc_wat: u16,
+    pub inc_mad: u16,
+    pub inc_pdd: u16,
+    pub inc_mdd: u16,
+    pub inc_acc: u16,
+    pub inc_eva: u16,
+    pub inc_crt: u16,
+    pub inc_crd: u16,
+    /// **Only 7 of 1760 equips carry this**, which is the measured form of the owner's "that
+    /// should only apply to some items, and not the starter items".
+    pub trade_block: bool,
+}
+
 /// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
 ///
 /// **Not zero, deliberately.** Zero is structurally legal and draws a mob at 0% health,
@@ -387,6 +480,7 @@ impl Default for Config {
             portal_index: HashMap::new(),
             npcs: HashMap::new(),
             mobs: HashMap::new(),
+            equips: HashMap::new(),
             send_mobs: false,
             fields: std::collections::HashSet::new(),
         }
@@ -511,6 +605,38 @@ mod spawn_tests {
         assert_eq!(spawn_capacity(6, 1), 4, "floor(6 * 75 / 100); rounding up would be 5");
         assert_eq!(spawn_capacity(1, 1), 0, "and one spawn point rounds to none");
     }
+    /// The four items a created character wears, read back out of the generated table.
+    ///
+    /// These values are the reason the table exists: a shirt with `incPDD = 6` and `tuc = 7`
+    /// is what the client's own `Character.wz` says a Grey T-Shirt is, and the server was
+    /// sending zeros for both.
+    #[test]
+    fn the_starter_equips_come_back_with_the_stats_the_wz_gives_them() {
+        let path = std::path::Path::new("../../gm-handbook/equips.txt");
+        if !path.exists() {
+            return; // generated data, gitignored - tools/dump_equips.py makes it
+        }
+        let equips = Config::load_equips(path);
+        assert!(equips.len() > 1000, "only {} equips loaded", equips.len());
+
+        let shirt = equips[&1040002];
+        assert_eq!(shirt.tuc, 7, "Grey T-Shirt has 7 upgrade slots");
+        assert_eq!(shirt.inc_pdd, 6, "and 6 weapon defence");
+        assert!(!shirt.trade_block, "a starter shirt is not trade-blocked");
+
+        // The sword is the check that matters for the column set: its attack is in
+        // `incWAT`, and this client's WZ has no `incPAD` at all. A loader written from the
+        // family's usual names would report 0 here and every weapon would be harmless.
+        let sword = equips[&1302000];
+        assert_eq!(sword.inc_wat, 17, "the starter sword's attack is incWAT, not incPAD");
+        assert_eq!(sword.inc_pdd, 0);
+
+        // Only a handful of equips are trade-blocked, which is the measured version of
+        // "that should only apply to some items".
+        let blocked = equips.values().filter(|e| e.trade_block).count();
+        assert!(blocked > 0 && blocked < 20, "{blocked} equips carry tradeBlock");
+    }
+
     /// The crowd threshold the owner adopted: 75% below six players on the field, 100% at six or
     /// more, nothing in between. Written and untaken - this server has no field-occupancy
     /// tracking, so `players` is always 1 today.

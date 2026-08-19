@@ -37,6 +37,7 @@ fn main() -> ExitCode {
     let mut npcs_path = PathBuf::from("gm-handbook/npcs.txt");
     let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
+    let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -63,6 +64,7 @@ fn main() -> ExitCode {
             "--npcs" => value().map(|v| npcs_path = PathBuf::from(v)),
             "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
+            "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mobs" => {
                 config.send_mobs = true;
                 Ok(())
@@ -112,6 +114,14 @@ fn main() -> ExitCode {
     if !config.send_mobs {
         eprintln!(
             "maplecw-world: mobs are loaded but NOT SENT. The body faults this client -              0xC0000005 at 0x141c810b0, mob+0x2b8 null - measured 2026-08-19. Pass --mobs              to send them anyway, and only when the mob body is the variant under test."
+        );
+    }
+
+    config.equips = world::config::Config::load_equips(&equips_path);
+    if config.equips.is_empty() {
+        eprintln!(
+            "maplecw-world: no equip templates from {} - worn items will have no stats and              no upgrade slots. Regenerate with: python tools/dump_equips.py",
+            equips_path.display()
         );
     }
 
