@@ -392,3 +392,108 @@ u8    hasExtra        // non-zero: FUN_1408e4210 reads a further sub-record
 The entry is appended by `FUN_141b44520(stage + 0x100, -1)` — the same list
 `FUN_141b2c7c0` later searches by world id, which is what ties this packet to the login
 result.
+
+## 0x0011 — the migration packet ("GameIn")
+
+**Identified statically 2026-08-19, no client run.** `case 0x11` of the login-stage switch
+is `FUN_141b36f60` (4821 bytes), decompiled in `research/msexe-loginstage-cases.c`; the
+helpers are in `research/msexe-migrate.c` and `research/msexe-migrate-helpers.c`.
+
+### Why this is the migration packet
+
+Three independent things say so, and one of them is a proper discriminator:
+
+1. It builds a **`sockaddr_in`** — `sin_family = 2`, `sin_port = htons(...)`,
+   `sin_addr = <a packet field>`, `sin_zero = 0` — and hands it to `FUN_142caa360`.
+2. `htons` (`DAT_143262e48`) appears **exactly once** in every decompiled login-stage case
+   handler, and that once is here. The other thirteen handlers in the same file build no
+   address at all.
+3. On the success path it calls `FUN_1429f14c0(PTR_u_GameIn_143a47c08, 100)` — the string
+   **`GameIn`**.
+
+It is the only login-stage case that can move the client to another server, so it is the
+answer to `0x0078` (select character) by elimination as much as by shape.
+
+### The packet readers, pinned exactly
+
+Read off the primitives themselves rather than inferred from use:
+
+| Function | Reads |
+|---|---|
+| `FUN_1406e8ae0` | **u8** (`pos += 1`) |
+| `FUN_1406e8b80` | **u16** (`pos += 2`) |
+| `FUN_1406e8c20` | **u32** (`pos += 4`) |
+| `FUN_1406e9050` | **string**: `u16 len`, then `len` bytes (`pos += len + 2`) |
+| `FUN_1406e9170(p, dst, n)` | **n raw bytes** |
+| `FUN_1406e9b20` | **not a reader** — `mov eax,[rcx+0x24]; ret`, the current position |
+
+`FUN_1406e9b20` decompiles to an empty body because Ghidra has no function there; the four
+bytes are the answer.
+
+### Head — decoded and straight-line
+
+```text
+u8    result          0 proceeds. Gated by FUN_141b267c0(stage, result, 0, &message),
+                      the same gate as 0x0000 and 0x0010
+str   message         shown in the dialog the gate raises on a non-zero result
+u8                    read on every path, unused on the success path
+```
+
+Result codes `0x27`, `0x37`, `0x43`, `0x80`, `0x0c`, `0x22` and `0x8e` are intercepted
+*before* the gate and each raises its own dialog, then returns. The stage records success
+as `*(u32 *)(stage + 0xd8) = (result == 0)`.
+
+### Payload — straight-line, only reached when the gate passes
+
+```text
+u32    ip             copied straight into sockaddr_in.sin_addr, so the four octets go on
+                      the wire in order: 127.0.0.1 is 7f 00 00 01
+u16    port           the client calls htons() on it, so write it little-endian as usual
+u32    characterId    looked up with FUN_14108cae0 — a red-black-tree find over the map at
+                      DAT_143ac9890. On a miss it returns a sentinel and the caller's
+                      `*record == id` test fails, which skips the entire action block.
+                      So this must be a character the login result already sent.
+u32    a              -> FUN_1408414d0(a, b)  (DAT_143ac2040)
+u32    b              -^  **non-zero makes the client load `Etc/SpecialServerInfo.img`**
+u32    c              -> FUN_140842250(&c)    (_DAT_143ac2160)
+u8     flags          bit 0 -> FUN_142cb9590, bit 1 -> FUN_142cb95a0
+u32                   -> FUN_142cb95b0
+u8                    -> FUN_142cb95c0
+u8                    read, discarded
+u32                   read, discarded
+u8                    read, discarded
+u8                    read, discarded
+u8[8]
+u32    key
+u32    length         **must be <= the bytes remaining**, or FUN_1406e8460 throws
+<length bytes>        obfuscated; see below
+```
+
+### The obfuscated tail
+
+After `length`, the client copies the next `length` bytes out, transforms them, and copies
+them **back over the same offset** without advancing the position — so reading simply
+continues over the now-plain bytes. The transform is arithmetic on values that are
+themselves in the packet, so there is no unknown key material and it is invertible:
+
+```text
+for each aligned u32 at byte offset 4n, while 4n + 4 <= length:
+    w = (((key ^ w) + 0x369F144D + (key >> 7)) ^ 0xAAAABBBB) - (4n * key)
+
+for each remaining byte at offset i:
+    b = ((((key >> 1) ^ b) + 0x37 + (key >> 7)) ^ 0xAB) - (i * key)
+```
+
+with `key` the `u32` immediately before `length`. Both lines are truncating 32-bit and
+8-bit arithmetic respectively.
+
+**There is a second, nested pass** immediately after, structurally identical, with the roles
+rotated: the previous `length` becomes the key, a length derived from the position delta
+becomes the count, and the previous `key` (or the current position, when it is `0xFFFFFFFF`)
+becomes the start offset.
+
+### Still to decode
+
+The fields *inside* the two obfuscated regions, from `FUN_1406e9170(pkt, local_e8, 4)`
+onward — `local_e8` feeds an LCG seed at `DAT_143ac80b0`. That is the remaining work before
+a migration packet can be built; everything above it is settled.

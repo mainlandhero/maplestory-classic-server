@@ -60,9 +60,30 @@ screen; nothing here is speculative work.
 
 1. **Enter the game world.** `0x0078` is the select-character request and carries the
    character id - captured twice, with 203 and 204. It is unanswered, which is why the client
-   sits on "Connecting...". Its reply is the migration packet, the `0x0011` candidate, and it
-   is where an **advertise** address is first needed for the homelab move. This is Stage 4
-   and the biggest single step left.
+   sits on "Connecting...". This is Stage 4 and the biggest single step left.
+
+   **The reply is `0x0011`, and that is no longer a candidate - it is identified, statically,
+   with no client run** (2026-08-19). `case 0x11` is `FUN_141b36f60`, and it is the *only*
+   login-stage handler that builds a `sockaddr_in`: `htons` appears exactly once across all
+   fourteen decompiled case handlers, and it is in this one, which then calls
+   `FUN_1429f14c0(PTR_u_GameIn_143a47c08, 100)` - the string **`GameIn`**.
+
+   **Decoded so far** (full write-up in `docs/opcodes.md`): `u8 result` (0 proceeds, through
+   the same `FUN_141b267c0` gate as `0x0000`), `str message`, `u8`, then `u32 ip` (four
+   octets in order, straight into `sin_addr`), `u16 port` (the client `htons`es it),
+   `u32 characterId` (looked up in the map at `DAT_143ac9890`; a character the login result
+   did not send fails the lookup and skips the whole action block), three `u32` (the second
+   one non-zero makes the client load `Etc/SpecialServerInfo.img` - send zero), a flags byte,
+   `u32`, `u8`, four discarded fields, `u8[8]`, then `u32 key` and `u32 length`.
+
+   **Still to decode:** the fields inside the tail. The last `length` bytes are obfuscated,
+   transformed in place, and read back over - twice, nested. The transform is written out in
+   `docs/opcodes.md`; it is plain 32-bit arithmetic over values the packet itself carries, so
+   there is no unknown key material and it inverts. Finish that and the packet can be built.
+
+   This is also where an **advertise** address is first needed for the homelab move: `ip` and
+   `port` are what the client reconnects to, so they must be the address the *client* can
+   reach, not the address the server bound.
 2. **Real sessions for multiple accounts** (the owner, 2026-08-18; testing-grade is fine). The
    token-in-`0x0073` route is measured dead, so this is one login server per account per
    port, or the `grap-stub` identity patch. `Session` should take its account from a resolver
