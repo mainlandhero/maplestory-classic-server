@@ -1,0 +1,54 @@
+// 14085acd0 .. 14085ad8a   block=.text
+14085acd0  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+14085acd5  57                                PUSH RDI
+14085acd6  48 83 ec 20                       SUB RSP,0x20
+14085acda  48 8b f9                          MOV RDI,RCX
+14085acdd  48 8b da                          MOV RBX,RDX
+14085ace0  48 8b ca                          MOV RCX,RDX
+14085ace3  e8 28 e2 e8 ff                    CALL 0x1406e8f10
+14085ace8  48 8b cb                          MOV RCX,RBX
+14085aceb  48 89 47 08                       MOV qword ptr [RDI + 0x8],RAX
+14085acef  e8 2c df e8 ff                    CALL 0x1406e8c20
+14085acf4  48 8b cb                          MOV RCX,RBX
+14085acf7  89 47 10                          MOV dword ptr [RDI + 0x10],EAX
+14085acfa  e8 21 df e8 ff                    CALL 0x1406e8c20
+14085acff  48 8b cb                          MOV RCX,RBX
+14085ad02  89 47 14                          MOV dword ptr [RDI + 0x14],EAX
+14085ad05  e8 16 df e8 ff                    CALL 0x1406e8c20
+14085ad0a  48 8b cb                          MOV RCX,RBX
+14085ad0d  89 47 18                          MOV dword ptr [RDI + 0x18],EAX
+14085ad10  e8 0b df e8 ff                    CALL 0x1406e8c20
+14085ad15  48 8b cb                          MOV RCX,RBX
+14085ad18  89 47 1c                          MOV dword ptr [RDI + 0x1c],EAX
+14085ad1b  e8 00 df e8 ff                    CALL 0x1406e8c20
+14085ad20  48 8b cb                          MOV RCX,RBX
+14085ad23  89 47 20                          MOV dword ptr [RDI + 0x20],EAX
+14085ad26  e8 f5 de e8 ff                    CALL 0x1406e8c20
+14085ad2b  48 8b cb                          MOV RCX,RBX
+14085ad2e  89 47 24                          MOV dword ptr [RDI + 0x24],EAX
+14085ad31  e8 ea de e8 ff                    CALL 0x1406e8c20
+14085ad36  48 8b cb                          MOV RCX,RBX
+14085ad39  89 47 28                          MOV dword ptr [RDI + 0x28],EAX
+14085ad3c  e8 df de e8 ff                    CALL 0x1406e8c20
+14085ad41  48 8b cb                          MOV RCX,RBX
+14085ad44  89 47 2c                          MOV dword ptr [RDI + 0x2c],EAX
+14085ad47  e8 d4 de e8 ff                    CALL 0x1406e8c20
+14085ad4c  48 8b cb                          MOV RCX,RBX
+14085ad4f  89 47 34                          MOV dword ptr [RDI + 0x34],EAX
+14085ad52  e8 c9 de e8 ff                    CALL 0x1406e8c20
+14085ad57  48 8b cb                          MOV RCX,RBX
+14085ad5a  89 47 38                          MOV dword ptr [RDI + 0x38],EAX
+14085ad5d  e8 be de e8 ff                    CALL 0x1406e8c20
+14085ad62  48 8b cb                          MOV RCX,RBX
+14085ad65  89 47 30                          MOV dword ptr [RDI + 0x30],EAX
+14085ad68  e8 b3 de e8 ff                    CALL 0x1406e8c20
+14085ad6d  48 8b cb                          MOV RCX,RBX
+14085ad70  89 47 48                          MOV dword ptr [RDI + 0x48],EAX
+14085ad73  e8 68 dd e8 ff                    CALL 0x1406e8ae0
+14085ad78  48 8b 5c 24 30                    MOV RBX,qword ptr [RSP + 0x30]
+14085ad7d  84 c0                             TEST AL,AL
+14085ad7f  0f 95 c0                          SETNZ AL
+14085ad82  88 47 04                          MOV byte ptr [RDI + 0x4],AL
+14085ad85  48 83 c4 20                       ADD RSP,0x20
+14085ad89  5f                                POP RDI
+14085ad8a  c3                                RET

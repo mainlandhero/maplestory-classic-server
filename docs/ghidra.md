@@ -101,17 +101,35 @@ at what is actually there.
 grep -oE "CALL +0x1406e[89][0-9a-f]{3}" listing.asm | sort | uniq -c | sort -rn
 ```
 
-The seven packet-read primitives, as of 2026-08-19:
+The **eight** packet-read primitives, as of 2026-08-19:
 
 | address | reads |
 |---|---|
 | `0x1406e8ae0` | u8 |
 | `0x1406e8b80` | u16 |
 | `0x1406e8c20` | u32 |
-| `0x1406e8f00` | u32 — a bare `JMP 0x1406e8c20`, invisible to a search for the target |
+| `0x1406e8ef0` | **u16** - a bare `JMP 0x1406e8b80`. **Added 2026-08-19.** |
+| `0x1406e8f00` | u32 - a bare `JMP 0x1406e8c20`, invisible to a search for the target |
 | `0x1406e8f10` | u64 |
 | `0x1406e9050` | string: u16 length, then that many bytes |
 | `0x1406e9170` | n raw bytes, `n` in `R8D` at the call |
+
+**This table said seven until 2026-08-19, and the missing row was found by a disagreement,
+not by a search.** Two instruments gave 50 and 52 reads for `FUN_141c4ff80`, the mob's
+`encodeInit`. Sweeping *all* 116 direct call targets in that function - enumerating rather
+than filtering against the known list - turned up `0x1406e8ef0`, five bytes of
+`e9 8b fc ff ff`, a `JMP` to the u16 primitive. With it, both instruments say 52.
+
+**Two thunks now, so "grep for the primitive addresses" undercounts twice.** Any scan built
+on a hard-coded list of read primitives has to carry both, and the honest way to find a
+third is to enumerate every call target in the function and ask what each one is.
+
+**What the eighth primitive does NOT touch, checked rather than assumed.**
+`python tools/callers.py 0x1406e8ef0` gives **35 call sites in 13 functions**, and none of
+them is `FUN_140304b20` (the character record), `FUN_140304100` or its sub-decoders (the
+equipped item), or `FUN_141f6f350`/`FUN_141f6fb20` (the script message). So the layouts
+built on those walks stand. The positive control for that negative is in the same output:
+`FUN_141c4ff80`, the function that exposed the thunk, is in the list.
 
 ## "No function there" is the normal state
 

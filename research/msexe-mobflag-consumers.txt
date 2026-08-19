@@ -1,0 +1,150 @@
+// 141c55ab0 .. 141c55baf   block=.text
+141c55ab0  88 91 08 05 00 00                 MOV byte ptr [RCX + 0x508],DL
+141c55ab6  c3                                RET
+141c55ab7  cc                                INT3
+141c55ab8  cc                                INT3
+141c55ab9  cc                                INT3
+141c55aba  cc                                INT3
+141c55abb  cc                                INT3
+141c55abc  cc                                INT3
+141c55abd  cc                                INT3
+141c55abe  cc                                INT3
+141c55abf  cc                                INT3
+141c55ac0  8b 81 04 05 00 00                 MOV EAX,dword ptr [RCX + 0x504]
+141c55ac6  c3                                RET
+141c55ac7  cc                                INT3
+141c55ac8  cc                                INT3
+141c55ac9  cc                                INT3
+141c55aca  cc                                INT3
+141c55acb  cc                                INT3
+141c55acc  cc                                INT3
+141c55acd  cc                                INT3
+141c55ace  cc                                INT3
+141c55acf  cc                                INT3
+141c55ad0  89 91 04 05 00 00                 MOV dword ptr [RCX + 0x504],EDX
+141c55ad6  c3                                RET
+141c55ad7  cc                                INT3
+141c55ad8  cc                                INT3
+141c55ad9  cc                                INT3
+141c55ada  cc                                INT3
+141c55adb  cc                                INT3
+141c55adc  cc                                INT3
+141c55add  cc                                INT3
+141c55ade  cc                                INT3
+141c55adf  cc                                INT3
+141c55ae0  48 8b 81 a8 03 00 00              MOV RAX,qword ptr [RCX + 0x3a8]
+141c55ae7  0f b6 80 80 00 00 00              MOVZX EAX,byte ptr [RAX + 0x80]
+141c55aee  c3                                RET
+141c55aef  cc                                INT3
+141c55af0  cc                                INT3
+141c55af1  cc                                INT3
+141c55af2  cc                                INT3
+141c55af3  cc                                INT3
+141c55af4  cc                                INT3
+141c55af5  cc                                INT3
+141c55af6  cc                                INT3
+141c55af7  cc                                INT3
+141c55af8  cc                                INT3
+141c55af9  cc                                INT3
+141c55afa  cc                                INT3
+141c55afb  cc                                INT3
+141c55afc  cc                                INT3
+141c55afd  cc                                INT3
+141c55afe  cc                                INT3
+141c55aff  cc                                INT3
+141c55b00  48 8b 91 a8 03 00 00              MOV RDX,qword ptr [RCX + 0x3a8]
+141c55b07  33 c0                             XOR EAX,EAX
+141c55b09  39 82 30 01 00 00                 CMP dword ptr [RDX + 0x130],EAX
+141c55b0f  0f 9f c0                          SETG AL
+141c55b12  c3                                RET
+141c55b13  cc                                INT3
+141c55b14  cc                                INT3
+141c55b15  cc                                INT3
+141c55b16  cc                                INT3
+141c55b17  cc                                INT3
+141c55b18  cc                                INT3
+141c55b19  cc                                INT3
+141c55b1a  cc                                INT3
+141c55b1b  cc                                INT3
+141c55b1c  cc                                INT3
+141c55b1d  cc                                INT3
+141c55b1e  cc                                INT3
+141c55b1f  cc                                INT3
+141c55b20  48 8b 91 a8 03 00 00              MOV RDX,qword ptr [RCX + 0x3a8]
+141c55b27  33 c0                             XOR EAX,EAX
+141c55b29  83 ba 30 01 00 00 02              CMP dword ptr [RDX + 0x130],0x2
+141c55b30  0f 94 c0                          SETZ AL
+141c55b33  c3                                RET
+141c55b34  cc                                INT3
+141c55b35  cc                                INT3
+141c55b36  cc                                INT3
+141c55b37  cc                                INT3
+141c55b38  cc                                INT3
+141c55b39  cc                                INT3
+141c55b3a  cc                                INT3
+141c55b3b  cc                                INT3
+141c55b3c  cc                                INT3
+141c55b3d  cc                                INT3
+141c55b3e  cc                                INT3
+141c55b3f  cc                                INT3
+141c55b40  48 8b 81 a8 03 00 00              MOV RAX,qword ptr [RCX + 0x3a8]
+141c55b47  48 85 c0                          TEST RAX,RAX
+141c55b4a  74 07                             JZ 0x141c55b53
+141c55b4c  8b 80 34 01 00 00                 MOV EAX,dword ptr [RAX + 0x134]
+141c55b52  c3                                RET
+141c55b53  c3                                RET
+141c55b54  cc                                INT3
+141c55b55  cc                                INT3
+141c55b56  cc                                INT3
+141c55b57  cc                                INT3
+141c55b58  cc                                INT3
+141c55b59  cc                                INT3
+141c55b5a  cc                                INT3
+141c55b5b  cc                                INT3
+141c55b5c  cc                                INT3
+141c55b5d  cc                                INT3
+141c55b5e  cc                                INT3
+141c55b5f  cc                                INT3
+141c55b60  48 8b 81 a8 03 00 00              MOV RAX,qword ptr [RCX + 0x3a8]
+141c55b67  48 85 c0                          TEST RAX,RAX
+141c55b6a  74 07                             JZ 0x141c55b73
+141c55b6c  8b 80 38 03 00 00                 MOV EAX,dword ptr [RAX + 0x338]
+141c55b72  c3                                RET
+141c55b73  c3                                RET
+141c55b74  cc                                INT3
+141c55b75  cc                                INT3
+141c55b76  cc                                INT3
+141c55b77  cc                                INT3
+141c55b78  cc                                INT3
+141c55b79  cc                                INT3
+141c55b7a  cc                                INT3
+141c55b7b  cc                                INT3
+141c55b7c  cc                                INT3
+141c55b7d  cc                                INT3
+141c55b7e  cc                                INT3
+141c55b7f  cc                                INT3
+141c55b80  48 8b 81 a8 03 00 00              MOV RAX,qword ptr [RCX + 0x3a8]
+141c55b87  0f b6 80 38 01 00 00              MOVZX EAX,byte ptr [RAX + 0x138]
+141c55b8e  c3                                RET
+141c55b8f  cc                                INT3
+141c55b90  cc                                INT3
+141c55b91  cc                                INT3
+141c55b92  cc                                INT3
+141c55b93  cc                                INT3
+141c55b94  cc                                INT3
+141c55b95  cc                                INT3
+141c55b96  cc                                INT3
+141c55b97  cc                                INT3
+141c55b98  cc                                INT3
+141c55b99  cc                                INT3
+141c55b9a  cc                                INT3
+141c55b9b  cc                                INT3
+141c55b9c  cc                                INT3
+141c55b9d  cc                                INT3
+141c55b9e  cc                                INT3
+141c55b9f  cc                                INT3
+141c55ba0  48 8b 81 a8 03 00 00              MOV RAX,qword ptr [RCX + 0x3a8]
+141c55ba7  8b 80 3c 03 00 00                 MOV EAX,dword ptr [RAX + 0x33c]
+141c55bad  c3                                RET
+141c55bae  cc                                INT3
+141c55baf  cc                                INT3

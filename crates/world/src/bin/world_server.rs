@@ -36,6 +36,7 @@ fn main() -> ExitCode {
     let mut portals_path = PathBuf::from("gm-handbook/portals.txt");
     let mut npcs_path = PathBuf::from("gm-handbook/npcs.txt");
     let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
+    let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -61,6 +62,7 @@ fn main() -> ExitCode {
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),
             "--npcs" => value().map(|v| npcs_path = PathBuf::from(v)),
             "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
+            "--mobs" => value().map(|v| mobs_path = PathBuf::from(v)),
             other => Err(format!("unknown argument {other}")),
         };
         if let Err(e) = outcome {
@@ -93,6 +95,14 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no NPCs loaded from {} - maps will be empty. Regenerate with:              python tools/dump_portals.py",
             npcs_path.display()
+        );
+    }
+
+    config.mobs = world::config::Config::load_mobs(&mobs_path);
+    if config.mobs.is_empty() {
+        eprintln!(
+            "maplecw-world: no mobs loaded from {} - maps will have no monsters.              Regenerate with: python tools/dump_portals.py",
+            mobs_path.display()
         );
     }
 

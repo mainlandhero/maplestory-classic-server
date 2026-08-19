@@ -1,0 +1,190 @@
+// The eight concrete mob classes: constructor -> primary vtable (MOV [obj],RAX) -> slot 7.
+// Slot 7 is the vtable+0x38 called at 141d33929 with (mob, objectId, packet).
+// All eight resolve to FUN_141c4ff80.  Read 2026-08-19.
+//
+//   ctor          alloc   vtable        slot7 (+0x38)
+//   141c4cee0(b)  0x1238  0x1434077e8   0x141c4ff80
+//   141fdb720     0x1270  0x14341f548   0x141c4ff80
+//   141fcf850     0x1290  0x14341e510   0x141c4ff80
+//   141fd4010     0x1298  0x14341e758   0x141c4ff80
+//   140ff7fa0     0x1298  0x1433765c0   0x141c4ff80
+//   141fd4a00     0x12c0  0x14341ede0   0x141c4ff80
+//   140ff87c0     0x12d0  0x1433767f0   0x141c4ff80
+//   141fd6dc0     0x12d8  0x14341eff0   0x141c4ff80
+
+// ---- msexe-mobctor-base.txt ----
+// 141c4cee0 .. 141c4ed3e   block=.text
+141c4cee0  48 89 54 24 10                    MOV qword ptr [RSP + 0x10],RDX
+141c4cee5  48 89 4c 24 08                    MOV qword ptr [RSP + 0x8],RCX
+141c4ceea  55                                PUSH RBP
+141c4ceeb  53                                PUSH RBX
+141c4ceec  56                                PUSH RSI
+141c4ceed  57                                PUSH RDI
+141c4ceee  41 54                             PUSH R12
+141c4cef0  41 55                             PUSH R13
+141c4cef2  41 56                             PUSH R14
+141c4cef4  41 57                             PUSH R15
+141c4cef6  48 8d 6c 24 d8                    LEA RBP,[RSP + -0x28]
+141c4cefb  48 81 ec 28 01 00 00              SUB RSP,0x128
+141c4cf02  48 8b f1                          MOV RSI,RCX
+141c4cf05  e8 96 80 eb ff                    CALL 0x141b04fa0
+141c4cf0a  90                                NOP
+141c4cf0b  48 8d 05 d6 a8 7b 01              LEA RAX,[0x1434077e8]
+141c4cf12  48 89 06                          MOV qword ptr [RSI],RAX
+141c4cf15  48 8d 05 34 aa 7b 01              LEA RAX,[0x143407950]
+141c4cf1c  48 89 46 08                       MOV qword ptr [RSI + 0x8],RAX
+
+// ---- msexe-mobctor-g.txt ----
+// 141fdb720 .. 141fdba0d   block=.text
+141fdb720  48 89 5c 24 10                    MOV qword ptr [RSP + 0x10],RBX
+141fdb725  48 89 4c 24 08                    MOV qword ptr [RSP + 0x8],RCX
+141fdb72a  55                                PUSH RBP
+141fdb72b  56                                PUSH RSI
+141fdb72c  57                                PUSH RDI
+141fdb72d  41 56                             PUSH R14
+141fdb72f  41 57                             PUSH R15
+141fdb731  48 83 ec 40                       SUB RSP,0x40
+141fdb735  48 8b d9                          MOV RBX,RCX
+141fdb738  e8 a3 17 c7 ff                    CALL 0x141c4cee0
+141fdb73d  90                                NOP
+141fdb73e  48 8d 05 03 3e 44 01              LEA RAX,[0x14341f548]
+141fdb745  48 89 03                          MOV qword ptr [RBX],RAX
+141fdb748  48 8d 05 69 3f 44 01              LEA RAX,[0x14341f6b8]
+141fdb74f  48 89 43 08                       MOV qword ptr [RBX + 0x8],RAX
+141fdb753  48 8d 05 ce 3f 44 01              LEA RAX,[0x14341f728]
+141fdb75a  48 89 43 10                       MOV qword ptr [RBX + 0x10],RAX
+141fdb75e  48 8d 05 cb 3f 44 01              LEA RAX,[0x14341f730]
+141fdb765  48 89 83 38 12 00 00              MOV qword ptr [RBX + 0x1238],RAX
+
+// ---- msexe-mobctor-small.txt ----
+// 141fcf850 .. 141fcf8fd   block=.text
+141fcf850  48 89 5c 24 10                    MOV qword ptr [RSP + 0x10],RBX
+141fcf855  48 89 4c 24 08                    MOV qword ptr [RSP + 0x8],RCX
+141fcf85a  57                                PUSH RDI
+141fcf85b  48 83 ec 20                       SUB RSP,0x20
+141fcf85f  48 8b f9                          MOV RDI,RCX
+141fcf862  e8 b9 be 00 00                    CALL 0x141fdb720
+141fcf867  90                                NOP
+141fcf868  48 8d 05 a1 ec 44 01              LEA RAX,[0x14341e510]
+141fcf86f  48 89 07                          MOV qword ptr [RDI],RAX
+141fcf872  48 8d 05 0f ee 44 01              LEA RAX,[0x14341e688]
+141fcf879  48 89 47 08                       MOV qword ptr [RDI + 0x8],RAX
+141fcf87d  48 8d 05 74 ee 44 01              LEA RAX,[0x14341e6f8]
+141fcf884  48 89 47 10                       MOV qword ptr [RDI + 0x10],RAX
+141fcf888  48 8d 05 71 ee 44 01              LEA RAX,[0x14341e700]
+141fcf88f  48 89 87 38 12 00 00              MOV qword ptr [RDI + 0x1238],RAX
+141fcf896  48 8d 05 73 ee 44 01              LEA RAX,[0x14341e710]
+141fcf89d  48 89 87 40 12 00 00              MOV qword ptr [RDI + 0x1240],RAX
+141fcf8a4  48 8d 9f 70 12 00 00              LEA RBX,[RDI + 0x1270]
+141fcf8ab  48 89 5c 24 40                    MOV qword ptr [RSP + 0x40],RBX
+
+// ---- msexe-mobctor-b.txt ----
+// 141fd4010 .. 141fd406d   block=.text
+141fd4010  40 53                             PUSH RBX
+141fd4012  48 83 ec 20                       SUB RSP,0x20
+141fd4016  48 8b d9                          MOV RBX,RCX
+141fd4019  e8 32 b8 ff ff                    CALL 0x141fcf850
+141fd401e  48 8d 05 33 a7 44 01              LEA RAX,[0x14341e758]
+141fd4025  48 c7 83 90 12 00 00 00 00 00 00   MOV qword ptr [RBX + 0x1290],0x0
+141fd4030  48 89 03                          MOV qword ptr [RBX],RAX
+141fd4033  48 8d 05 96 a8 44 01              LEA RAX,[0x14341e8d0]
+141fd403a  48 89 43 08                       MOV qword ptr [RBX + 0x8],RAX
+141fd403e  48 8d 05 fb a8 44 01              LEA RAX,[0x14341e940]
+141fd4045  48 89 43 10                       MOV qword ptr [RBX + 0x10],RAX
+141fd4049  48 8d 05 f8 a8 44 01              LEA RAX,[0x14341e948]
+141fd4050  48 89 83 38 12 00 00              MOV qword ptr [RBX + 0x1238],RAX
+141fd4057  48 8d 05 fa a8 44 01              LEA RAX,[0x14341e958]
+141fd405e  48 89 83 40 12 00 00              MOV qword ptr [RBX + 0x1240],RAX
+141fd4065  48 8b c3                          MOV RAX,RBX
+141fd4068  48 83 c4 20                       ADD RSP,0x20
+141fd406c  5b                                POP RBX
+141fd406d  c3                                RET
+
+// ---- msexe-mobctor-c.txt ----
+// 140ff7fa0 .. 140ff7ff9   block=.text
+140ff7fa0  40 53                             PUSH RBX
+140ff7fa2  48 83 ec 20                       SUB RSP,0x20
+140ff7fa6  48 8b d9                          MOV RBX,RCX
+140ff7fa9  e8 a2 78 fd 00                    CALL 0x141fcf850
+140ff7fae  48 8d 05 0b e6 37 02              LEA RAX,[0x1433765c0]
+140ff7fb5  c6 83 90 12 00 00 00              MOV byte ptr [RBX + 0x1290],0x0
+140ff7fbc  48 89 03                          MOV qword ptr [RBX],RAX
+140ff7fbf  48 8d 05 72 e7 37 02              LEA RAX,[0x143376738]
+140ff7fc6  48 89 43 08                       MOV qword ptr [RBX + 0x8],RAX
+140ff7fca  48 8d 05 d7 e7 37 02              LEA RAX,[0x1433767a8]
+140ff7fd1  48 89 43 10                       MOV qword ptr [RBX + 0x10],RAX
+140ff7fd5  48 8d 05 d4 e7 37 02              LEA RAX,[0x1433767b0]
+140ff7fdc  48 89 83 38 12 00 00              MOV qword ptr [RBX + 0x1238],RAX
+140ff7fe3  48 8d 05 d6 e7 37 02              LEA RAX,[0x1433767c0]
+140ff7fea  48 89 83 40 12 00 00              MOV qword ptr [RBX + 0x1240],RAX
+140ff7ff1  48 8b c3                          MOV RAX,RBX
+140ff7ff4  48 83 c4 20                       ADD RSP,0x20
+140ff7ff8  5b                                POP RBX
+140ff7ff9  c3                                RET
+
+// ---- msexe-mobctor-e.txt ----
+// 141fd4a00 .. 141fd4a76   block=.text
+141fd4a00  40 53                             PUSH RBX
+141fd4a02  48 83 ec 20                       SUB RSP,0x20
+141fd4a06  48 8b d9                          MOV RBX,RCX
+141fd4a09  e8 42 ae ff ff                    CALL 0x141fcf850
+141fd4a0e  90                                NOP
+141fd4a0f  48 8d 05 ca a3 44 01              LEA RAX,[0x14341ede0]
+141fd4a16  48 89 03                          MOV qword ptr [RBX],RAX
+141fd4a19  48 8d 05 38 a5 44 01              LEA RAX,[0x14341ef58]
+141fd4a20  48 89 43 08                       MOV qword ptr [RBX + 0x8],RAX
+141fd4a24  48 8d 05 9d a5 44 01              LEA RAX,[0x14341efc8]
+141fd4a2b  48 89 43 10                       MOV qword ptr [RBX + 0x10],RAX
+141fd4a2f  48 8d 05 9a a5 44 01              LEA RAX,[0x14341efd0]
+141fd4a36  48 89 83 38 12 00 00              MOV qword ptr [RBX + 0x1238],RAX
+141fd4a3d  48 8d 05 9c a5 44 01              LEA RAX,[0x14341efe0]
+141fd4a44  48 89 83 40 12 00 00              MOV qword ptr [RBX + 0x1240],RAX
+141fd4a4b  33 c0                             XOR EAX,EAX
+141fd4a4d  48 89 83 98 12 00 00              MOV qword ptr [RBX + 0x1298],RAX
+141fd4a54  89 83 a0 12 00 00                 MOV dword ptr [RBX + 0x12a0],EAX
+141fd4a5a  48 89 83 a8 12 00 00              MOV qword ptr [RBX + 0x12a8],RAX
+
+// ---- msexe-mobctor-d.txt ----
+// 140ff87c0 .. 140ff8831   block=.text
+140ff87c0  40 53                             PUSH RBX
+140ff87c2  48 83 ec 20                       SUB RSP,0x20
+140ff87c6  48 8b d9                          MOV RBX,RCX
+140ff87c9  e8 82 70 fd 00                    CALL 0x141fcf850
+140ff87ce  90                                NOP
+140ff87cf  48 8d 05 1a e0 37 02              LEA RAX,[0x1433767f0]
+140ff87d6  48 89 03                          MOV qword ptr [RBX],RAX
+140ff87d9  48 8d 05 88 e1 37 02              LEA RAX,[0x143376968]
+140ff87e0  48 89 43 08                       MOV qword ptr [RBX + 0x8],RAX
+140ff87e4  48 8d 05 ed e1 37 02              LEA RAX,[0x1433769d8]
+140ff87eb  48 89 43 10                       MOV qword ptr [RBX + 0x10],RAX
+140ff87ef  48 8d 05 ea e1 37 02              LEA RAX,[0x1433769e0]
+140ff87f6  48 89 83 38 12 00 00              MOV qword ptr [RBX + 0x1238],RAX
+140ff87fd  48 8d 05 ec e1 37 02              LEA RAX,[0x1433769f0]
+140ff8804  48 89 83 40 12 00 00              MOV qword ptr [RBX + 0x1240],RAX
+140ff880b  33 c0                             XOR EAX,EAX
+140ff880d  48 89 83 98 12 00 00              MOV qword ptr [RBX + 0x1298],RAX
+140ff8814  48 89 83 a8 12 00 00              MOV qword ptr [RBX + 0x12a8],RAX
+140ff881b  48 89 83 b8 12 00 00              MOV qword ptr [RBX + 0x12b8],RAX
+
+// ---- msexe-mobctor-f.txt ----
+// 141fd6dc0 .. 141fd6e75   block=.text
+141fd6dc0  48 89 5c 24 10                    MOV qword ptr [RSP + 0x10],RBX
+141fd6dc5  48 89 4c 24 08                    MOV qword ptr [RSP + 0x8],RCX
+141fd6dca  57                                PUSH RDI
+141fd6dcb  48 83 ec 20                       SUB RSP,0x20
+141fd6dcf  48 8b f9                          MOV RDI,RCX
+141fd6dd2  e8 79 8a ff ff                    CALL 0x141fcf850
+141fd6dd7  90                                NOP
+141fd6dd8  48 8d 05 11 82 44 01              LEA RAX,[0x14341eff0]
+141fd6ddf  48 89 07                          MOV qword ptr [RDI],RAX
+141fd6de2  48 8d 05 7f 83 44 01              LEA RAX,[0x14341f168]
+141fd6de9  48 89 47 08                       MOV qword ptr [RDI + 0x8],RAX
+141fd6ded  48 8d 05 e4 83 44 01              LEA RAX,[0x14341f1d8]
+141fd6df4  48 89 47 10                       MOV qword ptr [RDI + 0x10],RAX
+141fd6df8  48 8d 05 e1 83 44 01              LEA RAX,[0x14341f1e0]
+141fd6dff  48 89 87 38 12 00 00              MOV qword ptr [RDI + 0x1238],RAX
+141fd6e06  48 8d 05 e3 83 44 01              LEA RAX,[0x14341f1f0]
+141fd6e0d  48 89 87 40 12 00 00              MOV qword ptr [RDI + 0x1240],RAX
+141fd6e14  33 c0                             XOR EAX,EAX
+141fd6e16  48 89 87 98 12 00 00              MOV qword ptr [RDI + 0x1298],RAX
+

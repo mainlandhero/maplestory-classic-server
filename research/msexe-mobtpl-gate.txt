@@ -1,0 +1,78 @@
+// 14045b1a0 .. 14045b21f   block=.text
+14045b1a0  81 e9 b0 f4 87 00                 SUB ECX,0x87f4b0
+14045b1a6  74 10                             JZ 0x14045b1b8
+14045b1a8  83 e9 64                          SUB ECX,0x64
+14045b1ab  74 0b                             JZ 0x14045b1b8
+14045b1ad  81 f9 7d 7a 10 00                 CMP ECX,0x107a7d
+14045b1b3  74 03                             JZ 0x14045b1b8
+14045b1b5  33 c0                             XOR EAX,EAX
+14045b1b7  c3                                RET
+14045b1b8  b8 01 00 00 00                    MOV EAX,0x1
+14045b1bd  c3                                RET
+14045b1be  cc                                INT3
+14045b1bf  cc                                INT3
+14045b1c0  cc                                INT3
+14045b1c1  cc                                INT3
+14045b1c2  cc                                INT3
+14045b1c3  cc                                INT3
+14045b1c4  cc                                INT3
+14045b1c5  cc                                INT3
+14045b1c6  cc                                INT3
+14045b1c7  cc                                INT3
+14045b1c8  cc                                INT3
+14045b1c9  cc                                INT3
+14045b1ca  cc                                INT3
+14045b1cb  cc                                INT3
+14045b1cc  cc                                INT3
+14045b1cd  cc                                INT3
+14045b1ce  cc                                INT3
+14045b1cf  cc                                INT3
+14045b1d0  81 e9 b1 f4 87 00                 SUB ECX,0x87f4b1
+14045b1d6  74 10                             JZ 0x14045b1e8
+14045b1d8  83 e9 64                          SUB ECX,0x64
+14045b1db  74 0b                             JZ 0x14045b1e8
+14045b1dd  81 f9 7d 7a 10 00                 CMP ECX,0x107a7d
+14045b1e3  74 03                             JZ 0x14045b1e8
+14045b1e5  33 c0                             XOR EAX,EAX
+14045b1e7  c3                                RET
+14045b1e8  b8 01 00 00 00                    MOV EAX,0x1
+14045b1ed  c3                                RET
+14045b1ee  cc                                INT3
+14045b1ef  cc                                INT3
+14045b1f0  cc                                INT3
+14045b1f1  cc                                INT3
+14045b1f2  cc                                INT3
+14045b1f3  cc                                INT3
+14045b1f4  cc                                INT3
+14045b1f5  cc                                INT3
+14045b1f6  cc                                INT3
+14045b1f7  cc                                INT3
+14045b1f8  cc                                INT3
+14045b1f9  cc                                INT3
+14045b1fa  cc                                INT3
+14045b1fb  cc                                INT3
+14045b1fc  cc                                INT3
+14045b1fd  cc                                INT3
+14045b1fe  cc                                INT3
+14045b1ff  cc                                INT3
+14045b200  33 c0                             XOR EAX,EAX
+14045b202  c3                                RET
+14045b203  cc                                INT3
+14045b204  cc                                INT3
+14045b205  cc                                INT3
+14045b206  cc                                INT3
+14045b207  cc                                INT3
+14045b208  cc                                INT3
+14045b209  cc                                INT3
+14045b20a  cc                                INT3
+14045b20b  cc                                INT3
+14045b20c  cc                                INT3
+14045b20d  cc                                INT3
+14045b20e  cc                                INT3
+14045b20f  cc                                INT3
+14045b210  81 e9 b0 f4 87 00                 SUB ECX,0x87f4b0
+14045b216  74 08                             JZ 0x14045b220
+14045b218  83 f9 64                          CMP ECX,0x64
+14045b21b  74 03                             JZ 0x14045b220
+14045b21d  33 c0                             XOR EAX,EAX
+14045b21f  c3                                RET

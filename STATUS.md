@@ -98,12 +98,22 @@ code against. Launches are for confirming, and two of these can share one.
 |---|---|---|---|
 | ~~1~~ | ~~**Build the equipped-item block**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See "6. Equipment" below for what to watch on the run. | `research/naked-character.md`, goal 6 |
 | ~~2~~ | ~~**Answer `0x0151` with a `0x055B` Say**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See goal 2 below for what to watch. | `research/npc-dialogue.md`, goal 2 |
-| 3 | **Finish the mob body** - read `FUN_14046fba0`'s movement-path framing | The owner made mobs a priority. Everything else about the spawn is read; only the path's element count and dispatch value are missing. | `research/mob-spawn.md`, goal 3 |
+| ~~3~~ | ~~**Finish the mob body**~~ - **BUILT 2026-08-19, unconfirmed on screen, and the least certain of the four** | See goal 3 below: two blocks inside the body are decided by the WZ **template**, not by us. | `research/mob-spawn.md`, goal 3 |
 | ~~4~~ | ~~**Read what greys a channel row**~~ - **FOUND and the one-byte fix is in. Unconfirmed on screen** | See goal 2a. | `research/channel-select.md` |
 
-**Then one launch** confirms 1, 2 and 3 together. They are independent - equipment is in the
-record, dialogue is a reply to a click, mobs are a separate pool - so a failure in one does
-not confound the others.
+**All four are built. One launch confirms them**, and they are independent - equipment is
+in the record, dialogue is a reply to a click, mobs are a separate pool, the channel byte is
+in the login world list - so a failure in one does not confound the others.
+
+**One asymmetry to know before reading the results:** the equipment change is inside the
+character record, which has no length prefix and no resync point. If *it* is wrong, world
+entry breaks and none of the other three can be observed at all. That is still a valid
+outcome - the `ELog` names the mis-sized field - but it is why "nothing worked" would mean
+"look at the record first" rather than "all four are wrong".
+
+**And do the Change Channel test LAST.** Now that a row is clickable, the Change button can
+put `0x00D2` on the wire for the first time, and nothing answers it. An unanswered packet
+freezes the client's whole UI, which would end the session.
 
 **Two rules that have each cost a run:**
 
@@ -377,9 +387,74 @@ The foundation is in:
 * Mobs are **server-sent** for the same reason NPCs are: the client's field loader walks
   `life` only to preload `Mob/%07d.img`. `research/npc-spawn.md` established this for both.
 
-> **Next step:** decompile `FUN_141d33630` and read its body off the **listing**, the way the
-> NPC one was. Do not trust a reference layout for the field *values* - the NPC body was
-> structurally perfect and still produced nothing, because `enabled` and `alpha` were zero.
+### BUILT 2026-08-19 - and the premise this section rested on was wrong
+
+`net::mob::mob_enter_field`, wired into `crates/world`. **137 bytes**: an 11-byte head, a
+20-byte mask, and a 106-byte tail. `gm-handbook/mobs.txt` feeds it, so map 30 gets its six
+snails and map 40 its forty.
+
+**`FUN_14046fba0` is not a movement-path decoder.** This file described it as one, and that
+framing is what made the body look unbuildable. It is `MobStat::DecodeTemporary`: a flat
+list of optional fields, each gated by **one bit of the 20-byte raw block** that
+`FUN_141c76190` reads immediately before calling it. `MOV R15,R8` at `14046fbbf` is the only
+write to `R15` in all 10528 bytes, and the first loop bounds the bit index at
+`CMP EDI,0xa0` = 160 bits = 20 bytes. **All 331 packet reads sit behind a mask-bit test, so
+an all-zero mask costs zero bytes.** **[L]**
+
+That scan was itself checked: a guard-interval pass covered 328 of the 331. The other three
+(`140471db3`/`dc1`/`dd4`) sit behind an **OR of two bits** - `BT/JC take; BT/JNC skip` -
+which the pass could not see because it only looked at the first conditional jump after each
+test. Read by hand at `140471da4`. 331 of 331.
+
+**Two readers the earlier pass had missed:**
+
+* `FUN_141cc9410` was recorded here as "reads NOTHING". It calls `FUN_14085acd0(..., packet)`,
+  which reads **57 bytes** unconditionally - gated by the `u8` at `141d33734`/`141d338fa`,
+  so we send 0.
+* The real body is behind a **virtual call**, `CALL [RAX+0x38]` at `141d33929` =
+  `FUN_141c4ff80`: 52 reads, **106 bytes minimum**, and where x, y, foothold and HP live.
+  All eight concrete mob classes share slot 7, and each vtable was reached through the
+  constructor that installs it rather than by aligning tables - so this is not the
+  `/OPT:ICF` trap.
+
+**That function also found an eighth packet-read primitive.** Two instruments disagreed, 50
+reads against 52. Sweeping *all* 116 direct call targets - enumerating rather than filtering
+against the known list - turned up **`0x1406e8ef0`, a bare `JMP 0x1406e8b80`**, a second u16
+thunk. With it both say 52. `docs/ghidra.md`'s table now says eight, and carries the checked
+negative that **it appears in none of** `FUN_140304b20` (the character record),
+`FUN_140304100` (the equipped item) or `FUN_141f6f350` (the script message) - so those
+layouts stand.
+
+> **The most likely first-attempt failure, and it is not a value.** Three optional blocks
+> are decided by the **WZ template**, not by us: `template[0x104]` adds 16 bytes,
+> `template[0x1a0]` adds 4, and three specific template ids add 1. The accessors are found;
+> **what writes them is not**, because `FUN_140495990` is a cache rather than the parser. If
+> a tutorial snail turns out to be a patrol mob, every byte after that point is misread.
+> `FieldMob` carries `patrol` and `target_from_server` as explicit `Option`s rather than
+> assuming them away. **Next instrument:** find the writer of `template+0x104` and read the
+> WZ property name beside it, or dump template 1 out of `Mob.wz` directly.
+
+**The NPC lesson's mob equivalent is HP.** Zero is structurally legal and draws a mob at 0%;
+the bar is `hp * 100 / maxHp` through an `IDIV` at `141c50502` with **no zero guard**. The
+server sends 100 until `Mob.wz` gives the real value, and the smoke test asserts no mob goes
+out with `hp = 0`.
+
+Two other fields are deliberately not zero: `calcDamageIndex = 1` (**[I]**, the reference's
+initialised value) and offset 74 = `-1` (**[L]** - `CMP R14D,-0x1 / JLE` means a negative
+value skips a call that zero would enter with an out-of-range index).
+
+**Object ids start at 2000**, so mobs and NPCs cannot collide even if the two pools share an
+id space, and `FieldMob::new` steps any id that is zero or a multiple of 178 past itself.
+
+**What the reference was worth here, measured:** it matched the head **5 for 5** and the
+three blocks after it in order, plus about ten structural details inside `encodeInit` - and
+got the three special template ids **wrong** (`8910000/8910100/9990033` against the real
+`8909488/8909588/9990545`). Shape yes, numbers no, which is exactly what
+`CLAUDE.md` says to expect from it.
+
+Still open: meanings for 17 of the 35 `encodeInit` fields, sent as zero on a "no readable
+consumer" argument - which is the argument `research/setfield-zero-audit.md` exists to
+distrust.
 
 Drops follow spawns: a mob has to exist before it can drop.
 

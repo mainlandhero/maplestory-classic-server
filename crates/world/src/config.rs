@@ -69,6 +69,11 @@ pub struct Config {
     /// field's `life` node. The client **cannot** spawn these itself - its field loader walks
     /// `life` only to preload art - so they are the server's to send, after every `SetField`.
     pub npcs: HashMap<u32, Vec<net::opcode::FieldNpc>>,
+    /// Every map's mobs, keyed by map id, from `gm-handbook/mobs.txt`.
+    ///
+    /// Server-sent for the same reason NPCs are: the client's field loader walks the WZ
+    /// `life` node only to preload `Mob/%07d.img` art. 9928 spawns across 289 maps.
+    pub mobs: HashMap<u32, Vec<net::mob::FieldMob>>,
 
     /// Every map id that has a field image in `Map.wz`.
     ///
@@ -185,7 +190,60 @@ impl Config {
         }
         out
     }
+
+    /// Every map's mobs, from `tools/dump_portals.py`'s `mobs.txt` - the same `life` walk
+    /// that produced the NPCs, filtered to `type == "m"`.
+    ///
+    /// **Object ids start at 2000, not 1000**, so that a map's mobs and its NPCs never
+    /// collide even if the two pools turn out to share an id space. They are separate pools
+    /// in the client - the mob singleton is `[0x143ABFE00]`, the NPC one is not - but that
+    /// is one assumption this does not need to make, and a collision would show as a
+    /// silently dropped mob with nothing in any log.
+    ///
+    /// [`net::mob::FieldMob::new`] then steps any id that is zero or a multiple of 178 past
+    /// itself: both are values the client's own decoder treats specially, and a multiple of
+    /// 178 takes a branch through a vtable slot on what looks like an exception object.
+    pub fn load_mobs(path: &std::path::Path) -> HashMap<u32, Vec<net::mob::FieldMob>> {
+        let mut out: HashMap<u32, Vec<net::mob::FieldMob>> = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let f: Vec<&str> = line.split(',').map(str::trim).collect();
+            if f.len() < 5 {
+                continue;
+            }
+            let n = |i: usize| f[i].parse::<i64>().ok();
+            let (Some(map), Some(template), Some(x), Some(cy), Some(fh)) =
+                (n(0), n(1), n(2), n(3), n(4))
+            else {
+                continue;
+            };
+            let list = out.entry(map as u32).or_default();
+            let object_id = 2000 + list.len() as u32;
+            list.push(net::mob::FieldMob::new(
+                object_id,
+                template as u32,
+                x as i16,
+                cy as i16,
+                fh as i16,
+                DEFAULT_MOB_HP,
+            ));
+        }
+        out
+    }
 }
+
+/// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
+///
+/// **Not zero, deliberately.** Zero is structurally legal and draws a mob at 0% health,
+/// which is exactly the shape of the NPC bug - `isEnabled` and `alpha` were zero and every
+/// NPC was created, pooled, disabled and fully transparent while the layout was perfect.
+/// The client computes the bar as `hp * 100 / maxHp`, and `141c50502` is an `IDIV` with **no
+/// zero guard**.
+pub const DEFAULT_MOB_HP: u64 = 100;
 
 impl Default for Config {
     fn default() -> Self {
@@ -198,6 +256,7 @@ impl Default for Config {
             portals: HashMap::new(),
             portal_index: HashMap::new(),
             npcs: HashMap::new(),
+            mobs: HashMap::new(),
             fields: std::collections::HashSet::new(),
         }
     }

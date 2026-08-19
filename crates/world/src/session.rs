@@ -228,6 +228,30 @@ impl Session {
             })
             .collect();
 
+        // Mobs, from the same WZ `life` walk that produced the NPCs and for the same
+        // reason: the client's field loader only preloads `Mob/%07d.img` art, and the pool
+        // is destroyed and rebuilt empty on every field entry, so they must be re-sent
+        // after every SetField rather than once.
+        //
+        // **Unconfirmed on screen, and the body is the least certain thing this server
+        // sends.** Two blocks inside it are decided by the WZ *template* rather than by us
+        // (`template+0x104` adds 16 bytes, `+0x1a0` adds 4), and what writes those flags was
+        // not found - so if the tutorial snail is a patrol mob, every byte after that point
+        // is misread. See net::mob::mob_enter_field's ranked uncertainty list.
+        let no_mobs: Vec<net::mob::FieldMob> = Vec::new();
+        let mut out = out;
+        out.extend(self.config.mobs.get(&chr.map_id).unwrap_or(&no_mobs).iter().map(|mob| {
+            Reply {
+                opcode: net::mob::MOB_ENTER_FIELD,
+                body: net::mob::mob_enter_field(mob),
+                what: format!(
+                    "MobEnterField: template {} at ({}, {}) on foothold {}, object id {},                      hp {} - {} bytes. The client cannot spawn this itself.",
+                    mob.template_id, mob.x, mob.y, mob.fh, mob.object_id, mob.hp,
+                    mob.body_len()
+                ),
+            }
+        }));
+
         // The character is dressed by the SetField record itself now, not from here. This
         // used to push a 0x0138 UserAvatarModified as a guess at the equipment problem;
         // that opcode is **dead code at byte level** - its apply is guarded by a call to

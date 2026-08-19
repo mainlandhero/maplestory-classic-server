@@ -189,6 +189,13 @@ try:
         chat = bytes(4) + struct.pack("<H", len(text)) + text + b""
         send(transport.packet(0x00E7, chat))
 
+        # And the field-entry marker again, because the real client sends one after
+        # EVERY SetField - the mob and NPC pools are destroyed and rebuilt empty on
+        # each field entry, so both have to be re-sent every time. Map 1 is the
+        # tutorial start and has no mobs at all; map 40 has 40, which is what
+        # exercises the mob path here.
+        send(transport.packet(0x00DC, b''))
+
         # A map that does not exist must move nobody. 104040000 has no field image in this
         # client at all, so the guard must refuse it - and refusing means NO extra reply,
         # which is what the reply count below is really asserting.
@@ -285,8 +292,45 @@ if PROBE:
     check("no UserAvatarModified is sent - 0x0138 is dead code in the client",
           not [r for r in replies if r["opcode"] == AVATAR])
 
-    check("the probe answered every request", len(replies) == 6,
-          "%d replies: %s" % (len(replies), [hex(r["opcode"]) for r in replies]))
+    MOB_ENTER_FIELD = 0x03C6
+    mobs = [r for r in replies if r["opcode"] == MOB_ENTER_FIELD]
+
+    # ---- the mobs
+    #
+    # Map 1 has none - it is the tutorial start - so the first field entry must produce
+    # zero, and the second, on map 40, must produce that map's 40. Getting a mob onto the
+    # WRONG map is the failure this asymmetry catches.
+    check("map 40's mobs are sent on entering it", len(mobs) == 40, "%d" % len(mobs))
+    if mobs:
+        mb = mobs[0]["body"][2:]
+        # 137 = 11-byte head + the 20-byte temp-stat mask + the 106-byte encodeInit. The
+        # mask gates all 331 optional reads in FUN_14046fba0, so all-zero costs no bytes.
+        check("a mob body is 137 bytes", len(mb) == 137, "%d bytes" % len(mb))
+        ids = [struct.unpack_from("<I", r["body"][2:], 1)[0] for r in mobs]
+        # A zero object id pulls in an extra u32 and desynchronises the rest; a multiple of
+        # 178 takes a branch through a vtable slot on what looks like an exception object.
+        check("no mob has object id 0", all(i != 0 for i in ids))
+        check("no mob's object id is a multiple of 178",
+              all(i % 178 != 0 for i in ids), "%s" % [i for i in ids if i % 178 == 0][:4])
+        check("every mob on the field has a distinct object id",
+              len(set(ids)) == len(ids), "%d ids, %d distinct" % (len(ids), len(set(ids))))
+        # Mob ids start at 2000 and NPC ids at 1000, so the two pools cannot collide even if
+        # they turn out to share an id space.
+        npc_ids = [struct.unpack_from("<I", r["body"][2:], 0)[0]
+                   for r in replies if r["opcode"] == 0x044F]
+        check("no mob object id collides with an NPC object id",
+              not (set(ids) & set(npc_ids)), "%s" % sorted(set(ids) & set(npc_ids))[:4])
+        # hp = 0 draws a mob at 0%, and the bar is hp*100/maxHp through an IDIV at
+        # 141c50502 with no zero guard. This is the mob's version of the NPC alpha bug.
+        # hp is a u64 at body offset 50 in the 137-byte minimum shape; an appear-option
+        # block would shift it by 4, so only read it when the body IS the minimum.
+        hps = [struct.unpack_from("<Q", r["body"][2:], 50)[0]
+               for r in mobs if len(r["body"]) - 2 == 137]
+        check("no mob is sent with hp = 0 - that is a mob at 0 percent",
+              hps and all(h != 0 for h in hps), "%s" % hps[:3])
+
+    check("the probe answered every request", len(replies) == 6 + 40 + 2,
+          "%d replies: %s" % (len(replies), sorted(set(hex(r["opcode"]) for r in replies))))
 
     # ---- the NPC the client clicked
     #
@@ -323,8 +367,8 @@ if PROBE:
         check("the GM /map command moved the character to the map it names",
               struct.unpack_from("<I", gm, at)[0] == 40,
               "map %d" % struct.unpack_from("<I", gm, at)[0])
-    check("two of them are NpcEnterField - map 1's Heena and Sera, from the generated table",
-          len(npcs) == 2, "%d" % len(npcs))
+    check("four are NpcEnterField - map 1's Heena and Sera, then map 40's two on the "
+          "second field entry", len(npcs) == 4, "%d" % len(npcs))
     if replies:
         pkt = replies[0]
         op = pkt["opcode"]
@@ -460,7 +504,8 @@ if PROBE:
             check("NPC %d has a non-zero foothold" % i,
                   struct.unpack_from("<H", nb, 22)[0] != 0,
                   "fh %d" % struct.unpack_from("<H", nb, 22)[0])
-    if len(npcs) == 2:
+    if len(npcs) >= 2:
+        npcs = npcs[:2]  # map 1's, from the first field entry
         ids = [struct.unpack_from("<I", p["body"][2:], 0)[0] for p in npcs]
         # The pool keys on object id: a repeat makes the client return after four bytes and
         # silently drop the NPC, so two NPCs sharing one id would show as one on screen.
