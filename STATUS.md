@@ -55,6 +55,64 @@ for this rule, and no path in it returns an error in place of a reply.
 
 ## NEXT GOALS - read this first when picking up
 
+**THE GOAL: a character standing on map 1, playable.** Everything below serves that.
+
+### Where the client actually is right now
+
+Confirmed on screen 2026-08-19, end to end: login -> character select -> pick TestCharD ->
+"Connecting..." -> **the enter-success sound plays** -> the client closes the login socket,
+connects to `127.0.0.1:8485`, accepts the channel greeting, and sends two packets:
+
+```text
+0x0070   an environment report, the same one it sends on the login connection
+0x007D   the migration hello: character id 204, then the MAC and machine id
+```
+
+Then it waits, and nothing answers, so the screen never fades in. **That silence is the
+whole of what is left between here and a playable character.**
+
+### 1. Find the channel stage's packet switch
+
+This is the next real decode, and the method is one this project has used successfully four
+times: the **login** stage's `OnPacket` (`FUN_141b25f30`) is an ordinary decompilable
+`switch`, and reading it gave the world list, the login result, the character list, the name
+check, create, delete and the migration. **The channel stage will have the same shape.**
+
+How to find it:
+
+* `research/msexe-stage-onpacket.c` already holds several `OnPacket` functions found by the
+  same search - start there, one of them may already be the channel's.
+* Stage objects register through `FUN_141b3...`-family code; `research/msexe-stagereg.c` is
+  the note on that.
+* The client is *in* the channel stage when it sends `0x007D`, so a `-Probe` walk during a
+  migrated run would name the dispatcher directly if static reading stalls. That costs a
+  client launch, so read first.
+
+What to look for once found: the case for **`0x007D`**, and what the client expects back.
+That reply is the one that ends the wait.
+
+### 2. Answer `0x007D`, then whatever it asks for next
+
+`crates/world` deliberately answers nothing today - a wrong reply moves the client into a
+state nobody has read, which is worse than silence. Once the switch is readable, add cases
+one at a time and re-run. `map_id` is already 1 on every character, and the login result
+already carries it, so the map itself needs no further work to *name*; loading it is the
+client's job.
+
+### 3. Then the ordinary game-stage work
+
+Whatever the client asks for after the map loads - it will be new territory, and the same
+loop applies: read the switch, build one reply, run, read the log.
+
+### Standing, and unchanged by any of this
+
+* **Nothing authenticates.** The channel claims a migration by character id and the row is
+  single-use; that is not a proof of identity. Say so when reporting.
+* **`0x00BC` is still undecoded** and deliberately unnamed, so it logs in full.
+* **`conn+0x48` did not mean what the code appeared to say** about the channel cipher. The
+  greeting half of that finding held; the cipher half did not. Why is unresolved.
+
+
 ### BUILT 2026-08-19: the channel greeting and the channel cipher
 
 Both derived from `conn+0x48`, both entirely from static analysis, neither confirmed on

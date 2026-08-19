@@ -370,40 +370,7 @@ impl Shift {
     }
 }
 
-/// **The one thing static analysis could not settle: which side subtracts.**
-///
-/// `FUN_1406ef9f0` computes `out[i] = in[i] - iv[0]`, and `FUN_1406e9a65` calls it for a
-/// channel connection. But that call site serves both directions - AES-OFB is symmetric so
-/// one routine sufficed for the login connection, and the byte shift inherited the same
-/// shape. Reading it does not say whether the client is encrypting or decrypting there.
-///
-/// Rather than guess in silence, the polarity is named, both alternatives are
-/// constructible, and the channel server logs the body under **both** on the first packet.
-/// The header is never ciphered, so framing is correct either way and one run settles it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShiftPolarity {
-    /// The client subtracts when it **receives**, so the server adds when it sends.
-    ClientSubtractsOnReceive,
-    /// The client subtracts when it **sends**, so the server adds when it receives.
-    ClientSubtractsOnSend,
-}
-
-impl ShiftPolarity {
-    /// What the server does to a body it is about to send.
-    pub const fn on_send(self) -> Shift {
-        match self {
-            ShiftPolarity::ClientSubtractsOnReceive => Shift::Add,
-            ShiftPolarity::ClientSubtractsOnSend => Shift::Sub,
-        }
-    }
-
-    /// What the server does to a body it has just received.
-    pub const fn on_receive(self) -> Shift {
-        self.on_send().inverse()
-    }
-}
-
-/// Apply the channel body shift in place, with `iv[0]` as the amount.
+/// Apply the byte shift in place, with `iv[0]` as the amount.
 ///
 /// Read straight off `FUN_1406ef9f0`: one wrapping 8-bit operation across the whole body,
 /// with the amount taken from the **first byte** of the 4-byte IV and held constant for the
@@ -532,14 +499,6 @@ mod tests {
         assert_ne!(a, b, "the bodies should differ even though the headers match");
     }
 
-    #[test]
-    fn polarity_names_opposite_operations_for_the_two_directions() {
-        for p in [ShiftPolarity::ClientSubtractsOnReceive, ShiftPolarity::ClientSubtractsOnSend] {
-            assert_eq!(p.on_send(), p.on_receive().inverse());
-        }
-        assert_eq!(ShiftPolarity::ClientSubtractsOnReceive.on_send(), Shift::Add);
-        assert_eq!(ShiftPolarity::ClientSubtractsOnSend.on_send(), Shift::Sub);
-    }
 
     #[test]
     fn shanda_round_trips() {

@@ -492,8 +492,13 @@ rotated: the previous `length` becomes the key, a length derived from the positi
 becomes the count, and the previous `key` (or the current position, when it is `0xFFFFFFFF`)
 becomes the start offset.
 
-### Still to decode
+### Settled on the wire, 2026-08-19
 
-The fields *inside* the two obfuscated regions, from `FUN_1406e9170(pkt, local_e8, 4)`
-onward — `local_e8` feeds an LCG seed at `DAT_143ac80b0`. That is the remaining work before
-a migration packet can be built; everything above it is settled.
+A migration packet built to this decode **moved a real client to a real channel**: the
+client closed the login socket, connected to the advertised address, accepted the channel
+greeting and began talking. The layout above is confirmed by behaviour.
+
+The `u32` in the tail is stashed at `DAT_143ac80b0` and `FUN_1415d10e0` does write it into
+outbound `0x007D` — but it is **not present in the `0x007D` the client actually sends**.
+Do not build a handoff on it. The client identifies itself there by **character id**; see
+`crates/world/src/session.rs`.

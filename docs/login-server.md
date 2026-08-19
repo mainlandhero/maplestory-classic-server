@@ -255,19 +255,21 @@ are not, and a server that advertised its bind address would send the client to 
 `maplecw-login --advertise ADDR`, and `tools/test-server.ps1` tracks `-Port`. It is typed
 `SocketAddrV4` so an IPv6 address fails at the type level rather than on the wire.
 
-### What the run will actually prove
+### CONFIRMED, and one prediction failed
 
-The migration packet hands the client a `u32` seed. `FUN_141b36f60` stashes it at
-`DAT_143ac80b0`, and the only thing that reads it is `FUN_1415d10e0` - **the builder for
-outbound `0x007D`**, which the client sends on the new connection. So the prediction is
-concrete: after the migration the client should connect a second time and send `0x007D`
-with our seed inside it. `describe()` names that packet in the log, and the server now
-numbers connections so the second one is unmistakable.
+Run of 2026-08-19. The client migrated, opened a second connection to the channel, and sent
+two packets. So `0x0011` is right end to end - decoded from the client, built without a
+capture, and it moved a real client to a real channel.
 
-The seed is `migration_seed(character_id)`, which is `0xC0DE0000 ^ id` - **a placeholder,
-not a session token**, chosen so the first run can be read straight off the log. A real
-token has to be random, single-use and stored, which needs a registry shared between
-connections and belongs with proper sessions.
+**The prediction that the seed comes back was wrong.** `FUN_1415d10e0` does write
+`DAT_143ac80b0` into outbound `0x007D`, but that value is **not in the packet the client
+actually sent** - absent plainly and absent under the obfuscated-block search. What it sends
+is the **character id**, at offset 8, followed by the same MAC and machine id as `0x0073`.
+
+So the migration is claimed by character id (`Store::claim_migration_for_character`), and
+single use is carried by `consumed_at` on the row. That was always where it lived: a `u32`
+on the wire was never a secret, and this only removes the pretence that it was. **Nothing
+here authenticates anybody.**
 
 ## Delete
 

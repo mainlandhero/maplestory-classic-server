@@ -3,8 +3,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use net::ShiftPolarity;
-
 /// One channel of one world.
 ///
 /// A channel is a process, not a thread: the login server hands the client an address and
@@ -23,17 +21,6 @@ pub struct Config {
     pub world_id: u32,
     pub channel_id: u32,
 
-    /// **Which side of the channel's byte-shift cipher subtracts.**
-    ///
-    /// Static analysis pinned the transform (`out[i] = in[i] - iv[0]`, `FUN_1406ef9f0`) but
-    /// not its direction: the call site in `FUN_1406e9a65` serves both, because AES-OFB is
-    /// symmetric and the byte shift inherited the same shape.
-    ///
-    /// The default is a **guess**, and the server does not rely on it being right - the
-    /// header is never ciphered, so a packet frames correctly either way and the log shows
-    /// the body under both readings. One run picks the winner; then set this and delete the
-    /// dual logging.
-    pub polarity: ShiftPolarity,
 }
 
 impl Default for Config {
@@ -43,7 +30,6 @@ impl Default for Config {
             db_path: PathBuf::from("maplecw.db"),
             world_id: 0,
             channel_id: 0,
-            polarity: ShiftPolarity::ClientSubtractsOnReceive,
         }
     }
 }

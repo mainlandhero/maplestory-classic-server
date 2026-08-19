@@ -116,8 +116,16 @@ strongest confirmation available that framing, constant and IV evolution are all
 
 ## Cipher mode is chosen by connection type
 
+> **CORRECTED 2026-08-19, off the wire.** The comment below reads `mode = 2` as "a game
+> channel uses the byte subtract". **It does not.** The first two packets a real client sent
+> on a real channel connection decode cleanly under **AES-256-OFB** and under nothing else -
+> see "The channel cipher is AES" at the end of this file. What `conn+0x48` actually selects
+> here, and why the channel did not take the branch this code appears to give it, is
+> **unresolved**. The rest of this section is still a correct reading of the *code*; it is
+> the inference from code to channel behaviour that was wrong.
+
 ```c
-if (*(int *)(param_1 + 0x48) == 0) mode = 2;   // game/channel connection
+if (*(int *)(param_1 + 0x48) == 0) mode = 2;   // NOT what a channel connection does
 else                               mode = 1;   // login connection
 ```
 
@@ -126,8 +134,9 @@ else                               mode = 1;   // login connection
 | 1 | `FUN_140c75880` | AES-256-OFB |
 | 2 | `FUN_1406ef9f0` | `out[i] = in[i] - (iv & 0xFF)` — a plain byte subtract |
 
-So the **login** connection is AES and the **game** connection uses the trivial subtract.
-The channel server is far cheaper to talk to.
+So this code path says the **login** connection is AES and something else uses the trivial
+subtract. **Whatever that something else is, it is not the channel a migrated client opens** -
+that one is AES, measured. Do not act on this table for channel work.
 
 `FUN_1406e9910` would crypt only the 2-byte opcode, but it has **no callers**.
 
@@ -544,7 +553,7 @@ It is read in three separate places in `FUN_1415d10e0`, and each one changes the
 |---|---|
 | the greeting parse | the leading `A..F` block is **not read** |
 | the version block | `low`, `high`, `temp` are **not read** |
-| `FUN_1406e9a65` | the body cipher is the **byte subtract**, not AES |
+| `FUN_1406e9a65` | *appears* to select the byte subtract - **but the channel is AES, measured; see below** |
 
 ### So a channel greeting is a different packet
 
@@ -571,7 +580,27 @@ O   u8     locale
 with **no** `A..F` and **no** `low`/`high`/`temp`. That is a hypothesis derived from the
 parse, not a measurement - but it is the only shape consistent with the three reads above.
 
-### And the channel body cipher is a byte subtract
+### RETRACTED: the channel body cipher is **AES**, not a byte subtract
+
+**Measured 2026-08-19.** The client's first two packets on a real channel connection decode
+under AES-256-OFB, the same cipher and the same key as the login connection:
+
+```text
+packet 1  ->  0x0070, subtype 2, version 100 - byte for byte the body it sends on login
+packet 2  ->  0x007D, character id 204, the machine MAC and machine id
+```
+
+Neither direction of the byte shift produced a plausible opcode, and both left the body
+high-entropy. So the channel needs **no new cipher at all** - `MapleCipher` serves both
+connections, and `crates/world` uses it.
+
+`ByteShiftCipher` remains in `crates/net`: it is a faithful reading of `FUN_1406ef9f0` and
+it is tested, but nothing uses it, and it is **not** the channel's cipher. Whatever code
+path does use it has not been identified.
+
+The reading of `FUN_1406ef9f0` below is still accurate as a description of that function.
+
+### The byte subtract, as a transform (not the channel's)
 
 `FUN_1406ef9f0(dst, src, len, iv, flag)`, read directly:
 
@@ -591,12 +620,9 @@ Everything around it is unchanged from the AES path, which matters because it me
 Only the body transform differs. A `ByteShiftCipher` implementing `Cipher` alongside
 `MapleCipher`, sharing the header and IV logic, is the whole change.
 
-**One thing is genuinely unresolved: the direction.** AES-OFB is symmetric, so `MapleCipher`
-uses one routine both ways; a subtract is not. `FUN_1406ef9f0` subtracts, but whether the
-client applies it when sending or when receiving decides whether the server must add or
-subtract. Do **not** guess this in silence. The header is unciphered, so framing works
-either way - which means the channel server can frame a packet correctly and log the body
-under *both* interpretations, and one run settles it by which one yields a sane opcode.
+The direction - which side subtracts - was never settled, and no longer needs to be:
+nothing sends or receives with this transform. Recorded because the transform itself is
+real code in the client.
 
 ### Why "the transport works" never proved the handshake was right
 
