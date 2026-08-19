@@ -97,7 +97,7 @@ code against. Launches are for confirming, and two of these can share one.
 | # | do this | why it is first | spec |
 |---|---|---|---|
 | ~~1~~ | ~~**Build the equipped-item block**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See "6. Equipment" below for what to watch on the run. | `research/naked-character.md`, goal 6 |
-| 2 | **Answer `0x0151` with a `0x055B` Say** - a 32-byte body | Also fully specified, and it makes NPCs talk, which is the visible half of goals 2-4. | `research/npc-dialogue.md`, goal 2 |
+| ~~2~~ | ~~**Answer `0x0151` with a `0x055B` Say**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See goal 2 below for what to watch. | `research/npc-dialogue.md`, goal 2 |
 | 3 | **Finish the mob body** - read `FUN_14046fba0`'s movement-path framing | The owner made mobs a priority. Everything else about the spawn is read; only the path's element count and dispatch value are missing. | `research/mob-spawn.md`, goal 3 |
 | 4 | **Read what greys a channel row** in `ChannelChange` | Cheapest of the four, but the least valuable - it unblocks one dialog. | goal 2a |
 
@@ -147,7 +147,39 @@ every time, ~420 ms after. It is now `0x00DC`.
 Also needed regardless: the NPC table is a **stub covering map 1 only**. The real data is
 every field's WZ `life` node, and it belongs in a generator beside `tools/dump_portals.py`.
 
-### 2. NPCs have dialogue when clicked - **the request is identified**
+### 2. NPCs have dialogue when clicked - **BUILT 2026-08-19. Unconfirmed on screen.**
+
+`crates/world` answers `0x0151` with a `0x055B` type-0 Say, spoken by **the NPC template the
+client itself named** - by construction a real `Npc.wz` id, and a bad one costs the portrait
+rather than faulting (the loader result is null-checked at `142a7b52a` and falls back to
+`[ui+0x6f0]`). The builder is `net::script::npc_say`; the request parser is
+`net::script::parse_quest_request`, and no parser for `0x0151` existed anywhere before.
+
+**Verified without a launch:** `python tools/channel_smoke.py --set-field-probe` now sends
+the real captured 17-byte click and checks the reply is one `0x055B`, speaks as template 1,
+has `hasOverride = 0`, has message type 0, and that the body length is exactly
+`20 + textLen + 6`.
+
+> **What to watch on the run:** click Heena on map 1. **A dialog box with our text** means
+> the whole chain works. **Nothing at all, and no fault** means the message was built and
+> torn down, or the type/flags shifted the body - check `world.log` for the `0x055B` going
+> out first. **A freeze** would be new: `0x0151` has never blocked before.
+
+**It is text on screen and nothing more.** No quest-result packet has been found, so no
+state advances - accepting the same quest twice shows the same message, and the message
+says so.
+
+**Two fields change the body length with nothing to resync on**, `hasOverride` and
+`flags & 0x04`, so the flag bit is derived from the value rather than set by hand.
+
+**One correction to `research/npc-dialogue.md`**, from re-deriving off the listing rather
+than trusting the file: the second style bit is **`0x80`**, not `0x40`. `141f6fbcb` is
+`movzx ebx, sil / shr ebx, 6 / and ebx, 2`, and `(0x40 >> 6) & 2 == 0`. The formula two
+sections later was already right; the prose gloss was not.
+
+*Original notes below - the identification is still the reference.*
+
+### 2-orig. How the request was identified
 
 The owner clicked Nina, Roger and Heena on 2026-08-19 and the client named its own request, the
 way it named the portal. **`0x0151` is the NPC interaction packet**, captured in
