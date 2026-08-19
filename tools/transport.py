@@ -274,17 +274,24 @@ def describe(body):
 
 
 class ClientDecoder:
-    """Reassembles and decrypts the client's stream, which is framed exactly like ours.
+    """Reassembles and decrypts a stream, either direction.
+
+    `const` picks the direction: 0x00DF reading the client (the default, which is what this
+    was written for) and 0xFFFE reading a server. Getting it wrong does not corrupt the
+    body - framing is `a ^ b` either way - it only makes `header_ok` false, so a decoder
+    pointed the wrong way looks like a desync that is not there.
+
 
     Handles TCP coalescing and splits: `feed` takes whatever `recv` returned and yields
     only whole packets. The IV rolls once per packet, so a desync is unrecoverable — hence
     `header_ok`, which reports whether the frame's `a` matched the IV we expected.
     """
 
-    def __init__(self, iv, key, shuffle):
+    def __init__(self, iv, key, shuffle, const=SEND_CONST):
         self.iv = struct.pack("<I", iv) if isinstance(iv, int) else bytes(iv)
         self.key = key
         self.shuffle = shuffle
+        self.const = const          # 0x00DF reading the client, 0xFFFE reading a server
         self.buf = bytearray()
         self.count = 0
 
@@ -306,7 +313,7 @@ class ClientDecoder:
             if len(self.buf) < head + length:
                 return out
 
-            expected = (((int.from_bytes(self.iv, "little") >> 16) & 0xFFFF) ^ SEND_CONST) & 0xFFFF
+            expected = (((int.from_bytes(self.iv, "little") >> 16) & 0xFFFF) ^ self.const) & 0xFFFF
             payload = bytes(self.buf[head : head + length])
             del self.buf[: head + length]
 

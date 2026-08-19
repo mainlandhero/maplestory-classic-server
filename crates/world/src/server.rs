@@ -165,8 +165,18 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     log(&format!("database {}", config.db_path.display()));
     log("NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending");
     log("  migration rather than proving who is on the far end. It is single-use.");
-    log("This stage is UNDECODED: packets are logged and not answered. See");
-    log("  crates/world/src/session.rs before adding a reply.");
+    if config.set_field_probe {
+        log("SET-FIELD PROBE IS ON. The migration hello is answered with the 33-byte fixed");
+        log("  head of a SetField, characterData=0, and a 256-byte zero pad whose length is");
+        log("  a GUESS. This CANNOT put a character in a map - that needs the character");
+        log("  record, an 18525-byte decoder nobody has read. It answers one question:");
+        log("  did 0x01A0 reach FUN_142097f80? Both of that handler's early returns are");
+        log("  silent, so WITHOUT a watch armed on 142097f80 this run measures nothing.");
+    } else {
+        log("This stage is UNDECODED: packets are logged and not answered. See");
+        log("  crates/world/src/session.rs before adding a reply, or pass");
+        log("  --set-field-probe to send the SetField delivery probe.");
+    }
 
     let mut nth = 0u64;
     for incoming in listener.incoming() {

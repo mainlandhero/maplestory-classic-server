@@ -10,6 +10,11 @@ AES like the login connection. It would have failed every check for the wrong re
 stale instrument reporting a real regression.
 
     python tools/channel_smoke.py
+    python tools/channel_smoke.py --set-field-probe
+
+The second form starts the server with the SetField delivery probe on and checks the
+packet it sends back - framing, AES, opcode and the field offsets - against the Python
+decoder. That is the check worth doing BEFORE spending one of the owner's client launches on it.
 """
 import os
 import socket
@@ -53,10 +58,13 @@ port = free_port()
 subprocess.run([os.path.join("target", "release", "maplecw-useradd.exe"), "--db", db, "maplecw"],
                input="correct horse battery staple\n", text=True, capture_output=True)
 logpath = os.path.join(tmp, "world.log")
+PROBE = "--set-field-probe" in sys.argv
 logf = open(logpath, "w")
-proc = subprocess.Popen([os.path.join("target", "release", "maplecw-world.exe"), "--db", db,
-                         "--bind", "127.0.0.1:%d" % port],
-                        stdout=logf, stderr=subprocess.STDOUT)
+cmd = [os.path.join("target", "release", "maplecw-world.exe"), "--db", db,
+       "--bind", "127.0.0.1:%d" % port]
+if PROBE:
+    cmd.append("--set-field-probe")
+proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
 replies = []
 try:
     sock = None
@@ -103,7 +111,7 @@ try:
 
     # Anything coming back is on the K chain. There is nothing to read yet; this decodes
     # whatever appears so that the first real reply is checked the moment it exists.
-    decoder = transport.ClientDecoder(SERVER_IV, key, shuffle)
+    decoder = transport.ClientDecoder(SERVER_IV, key, shuffle, transport.RECV_CONST)
     sock.settimeout(1.5)
     try:
         while True:
@@ -136,11 +144,42 @@ for line in log.splitlines():
     if any(w in line for w in ("greeting", "<-", "->", "migration", "connection from")):
         print("   " + line)
 
+SET_FIELD = 0x01A0
+HEAD = 33
+if PROBE:
+    print()
+    print("set-field probe checks:")
+    check("the probe answered the migration hello", len(replies) == 1,
+          "%d replies" % len(replies))
+    if replies:
+        pkt = replies[0]
+        op = pkt["opcode"]
+        body = pkt["body"][2:]
+        check("the frame header carries the constant the client requires (0xFFFE)",
+              pkt["header_ok"])
+        check("the reply is SetField", op == SET_FIELD, "%#06x" % op)
+        check("the body is at least the 33-byte fixed head", len(body) >= HEAD,
+              "%d bytes" % len(body))
+        if len(body) >= HEAD:
+            clock = struct.unpack_from("<Q", body, 0)[0]
+            # A Windows FILETIME for a date this century, sanity-checked as a range rather
+            # than a value, so the check does not go stale tomorrow.
+            check("offset 0 is a plausible FILETIME, not zero",
+                  116444736000000000 < clock < 160000000000000000, "%d" % clock)
+            check("offset 8 is the channel id", struct.unpack_from("<I", body, 8)[0] == 0)
+            check("offset 17, the tree-reset byte, is 0", body[17] == 0)
+            check("offset 30, characterData, is 0", body[30] == 0, "%d" % body[30])
+            check("offset 31, the string count, is 0",
+                  struct.unpack_from("<H", body, 31)[0] == 0)
+elif replies:
+    check("the probe is off, so nothing should come back", False,
+          "%d unexpected replies" % len(replies))
+
 print()
 if replies:
     print("the server sent %d packet(s) back, decrypted on the K chain:" % len(replies))
     for pkt in replies:
-        print("   opcode %#06x  %s" % (struct.unpack_from("<H", pkt, 0)[0], pkt[2:].hex(" ")))
+        print("   opcode %#06x  %s" % (pkt["opcode"], pkt["body"][2:].hex(" ")))
 else:
     print("the server sent nothing back - expected today: this stage is still UNDECODED,")
     print("and crates/world answers nothing on purpose. When a reply is added, it is")

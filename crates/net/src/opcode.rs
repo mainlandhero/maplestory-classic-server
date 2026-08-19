@@ -1139,6 +1139,93 @@ fn migrate_tail_word(plain: u32, key: u32, offset: u32) -> u32 {
 /// while showing "Connecting...".
 pub const SET_FIELD: u16 = 0x01A0;
 
+/// The 33-byte **fixed head** of a `SetField`, and nothing after it.
+///
+/// This is a **delivery probe, not a playable packet.** It exists to answer one question a
+/// run can settle cheaply and static reading cannot: does an `0x01A0` actually arrive at
+/// `FUN_142097f80`? The handler's two early returns are silent, so "the client did nothing"
+/// is otherwise indistinguishable from "the client never got it". Arm a watch on the
+/// handler's entry and the question becomes a yes or no.
+///
+/// It cannot put a character in a map. `characterData` is `0` here, and the branch that
+/// does put a character in a map is the other one - it calls `FUN_140304b20`, an 18525-byte
+/// character-record decoder that is not decoded yet. See `research/msexe-stage-setfield.md`.
+///
+/// Layout, every field read off the disassembly:
+///
+/// ```text
+/// u8[8]  server clock base   the client stamps a local tick beside it on receipt
+/// u32    channel id          a change from the current one shows the "Channel" toast
+/// u8     -> world+0x226c
+/// u32    -> world+0x2884
+/// u8     if 1, resets a tree on the world object - kept 0
+/// u32    read and discarded by the client
+/// u32    u32
+/// u8     characterData       0 = the short branch; 1 = the full character record
+/// u16    string count        0 skips the whole string block in one jump
+/// ```
+///
+/// The trailing zero pad is there because the short branch keeps reading, and a body that
+/// runs out mid-read makes the client throw rather than simply stop. The pad is a
+/// **guess at a length**, not a decode - the short branch is unread past its first byte.
+pub fn set_field_head(clock: u64, channel: u32, pad: usize) -> Vec<u8> {
+    let mut b = Vec::with_capacity(33 + pad);
+    b.extend_from_slice(&clock.to_le_bytes());
+    b.extend_from_slice(&channel.to_le_bytes());
+    b.push(0);
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.push(0);
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.push(SET_FIELD_NO_CHARACTER_DATA);
+    b.extend_from_slice(&0u16.to_le_bytes());
+    debug_assert_eq!(b.len(), SET_FIELD_HEAD_LEN);
+    b.resize(SET_FIELD_HEAD_LEN + pad, 0);
+    b
+}
+
+/// The head is 33 bytes: `8 + 4 + 1 + 4 + 1 + 4 + 4 + 4 + 1 + 2`.
+pub const SET_FIELD_HEAD_LEN: usize = 33;
+
+/// `characterData = 0` - the short branch, which carries no character record.
+pub const SET_FIELD_NO_CHARACTER_DATA: u8 = 0;
+
+#[cfg(test)]
+mod set_field_tests {
+    use super::*;
+
+    /// The head's length is load-bearing: every offset in
+    /// `research/msexe-stage-setfield.md` is measured from the client's disassembly, and a
+    /// field in the wrong place moves `characterData` and the string count with it.
+    #[test]
+    fn the_head_is_thirty_three_bytes_with_the_fields_where_the_client_reads_them() {
+        let b = set_field_head(0x1122_3344_5566_7788, 7, 0);
+        assert_eq!(b.len(), SET_FIELD_HEAD_LEN);
+        assert_eq!(&b[0..8], &0x1122_3344_5566_7788u64.to_le_bytes());
+        assert_eq!(&b[8..12], &7u32.to_le_bytes(), "channel id at offset 8");
+        assert_eq!(b[30], SET_FIELD_NO_CHARACTER_DATA, "characterData at offset 30");
+        assert_eq!(&b[31..33], &0u16.to_le_bytes(), "string count at offset 31");
+    }
+
+    /// The byte at 17 asks the client to reset a tree on its world object. Nothing wants
+    /// that here, and it is one of the two fields that does something on a non-zero value.
+    #[test]
+    fn the_tree_reset_byte_is_not_set() {
+        assert_eq!(set_field_head(0, 0, 0)[12 + 5], 0);
+    }
+
+    #[test]
+    fn the_pad_extends_the_body_without_moving_a_field() {
+        let plain = set_field_head(9, 3, 0);
+        let padded = set_field_head(9, 3, 64);
+        assert_eq!(padded.len(), SET_FIELD_HEAD_LEN + 64);
+        assert_eq!(&padded[..SET_FIELD_HEAD_LEN], &plain[..]);
+        assert!(padded[SET_FIELD_HEAD_LEN..].iter().all(|&x| x == 0));
+    }
+}
+
+
 /// What the client computes from a tail word - the forward direction, so a test can prove
 /// [`migrate_tail_word`] inverts it rather than asserting a hand-computed constant.
 #[cfg(test)]

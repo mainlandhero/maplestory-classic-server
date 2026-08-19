@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! maplecw-world [--bind ADDR] [--db PATH] [--world-id N] [--channel N]
+//!               [--set-field-probe]
 //! ```
 //!
 //! One process per channel. The login server hands the client an address and the client
@@ -19,6 +20,12 @@ maplecw-world - one channel of the MapleCW game world
   --db PATH        the SQLite file                (default maplecw.db)
   --world-id N     which world                    (default 0)
   --channel N      which channel                  (default 0)
+  --set-field-probe   answer the migration hello with the fixed head of a SetField
+                      and nothing after it. OFF by default. It cannot put a character
+                      in a map; it exists so a run can tell an ignored packet apart
+                      from one that never arrived, which the handler's two silent
+                      early returns otherwise make identical. Arm a watch on
+                      142097f80 or the run measures nothing.
   -h, --help       this
 
 The database is shared with the login server: that is how a migration minted at
@@ -44,6 +51,10 @@ fn main() -> ExitCode {
             "--channel" => value().and_then(|v| {
                 v.parse().map(|n| config.channel_id = n).map_err(|e| format!("--channel {v}: {e}"))
             }),
+            "--set-field-probe" => {
+                config.set_field_probe = true;
+                Ok(())
+            }
             other => Err(format!("unknown argument {other}")),
         };
         if let Err(e) = outcome {

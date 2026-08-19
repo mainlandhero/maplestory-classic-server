@@ -50,6 +50,11 @@ impl Reply {
 /// carries.
 pub const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 
+/// Zero bytes appended after the `SetField` head, because the `characterData == 0` branch
+/// keeps reading and a body that runs out mid-read makes the client throw rather than
+/// stop. **This length is a guess** - that branch is unread past its first byte.
+const SET_FIELD_PROBE_PAD: usize = 256;
+
 /// One channel connection.
 pub struct Session {
     store: Arc<Store>,
@@ -74,8 +79,42 @@ impl Session {
     }
 
     /// Handle one packet body, opcode included.
-    pub fn handle(&mut self, _body: &[u8]) -> Vec<Reply> {
-        Vec::new()
+    ///
+    /// Answers nothing unless [`Config::set_field_probe`] is on, and then only the fixed
+    /// head of a `SetField`. A wrong reply moves the client into a state nobody has read,
+    /// which is worse than silence.
+    pub fn handle(&mut self, body: &[u8]) -> Vec<Reply> {
+        let opcode = match body.get(..2) {
+            Some(b) => u16::from_le_bytes([b[0], b[1]]),
+            None => return Vec::new(),
+        };
+        if opcode != CLIENT_MIGRATION_HELLO || !self.config.set_field_probe {
+            return Vec::new();
+        }
+        vec![Reply {
+            opcode: net::opcode::SET_FIELD,
+            body: net::opcode::set_field_head(
+                self.clock_base(),
+                self.config.channel_id,
+                SET_FIELD_PROBE_PAD,
+            ),
+            what: format!(
+                "SetField HEAD ONLY, characterData=0 - a delivery probe, not a playable                  field. It answers \"did 0x01A0 reach FUN_142097f80\" and nothing else;                  arm a watch there or the run says nothing. See                  research/msexe-stage-setfield.md"
+            ),
+        }]
+    }
+
+    /// The 8 bytes the client stores as a server clock base, stamping its own tick beside
+    /// them. A Windows `FILETIME` is the shape the reference server sends; nothing has been
+    /// measured about what this client does with the value, so a plausible one is sent
+    /// rather than zero.
+    fn clock_base(&self) -> u64 {
+        const FILETIME_1970: u64 = 116_444_736_000_000_000;
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        FILETIME_1970 + secs * 10_000_000
     }
 
     /// Claim the pending migration for a character, and say what happened.

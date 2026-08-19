@@ -21,6 +21,18 @@ pub struct Config {
     pub world_id: u32,
     pub channel_id: u32,
 
+    /// Answer the migration hello with the fixed head of a `SetField`, and nothing after.
+    ///
+    /// **Off by default, and it should stay off except during a run that is measuring
+    /// something.** It cannot put a character in a map - `characterData` is `0` and the
+    /// branch that does carry a character calls an 18525-byte record decoder nobody has
+    /// read yet. What it is for is one question static analysis cannot answer: `SetField`'s
+    /// handler has two silent early returns, so "the client did nothing" and "the client
+    /// never received it" look identical from here. Send this with a watch armed on
+    /// `142097f80` and the two become distinguishable.
+    ///
+    /// See `research/msexe-stage-setfield.md`.
+    pub set_field_probe: bool,
 }
 
 impl Default for Config {
@@ -30,6 +42,7 @@ impl Default for Config {
             db_path: PathBuf::from("maplecw.db"),
             world_id: 0,
             channel_id: 0,
+            set_field_probe: false,
         }
     }
 }
