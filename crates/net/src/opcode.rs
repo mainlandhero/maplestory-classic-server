@@ -848,6 +848,79 @@ fn put_fixed(out: &mut Vec<u8>, s: &str, len: usize) {
 ///
 /// The failure mode is also early and unambiguous: character select is exercised before the
 /// world test on every run, so a regression here shows up before the interesting part.
+/// The compact avatar look - what `FUN_1402ee8d0` reads.
+///
+/// Gender, skin, face, job, hair, then `(slot u8, itemId u32)` pairs terminated by `0xFF`.
+/// **These exact bytes have been through this exact client reader on the wire** - they are
+/// what dresses the characters on the character-select screen.
+///
+/// Shared, because the same reader is reached from more than one packet: the character list
+/// (`FUN_1403094b0`), and the three inbound channel opcodes `0x0107`, `0x0114` and
+/// **`0x0138`** - see [`USER_AVATAR_MODIFIED`].
+pub fn avatar_look(chr: &Character) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.push(chr.gender);
+    out.push(chr.skin);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&chr.face.to_le_bytes());
+    out.extend_from_slice(&u32::from(chr.job).to_le_bytes());
+    out.push(0); // read and discarded
+    out.extend_from_slice(&chr.hair.to_le_bytes()); // equipment array index 0
+    for (slot, item) in &chr.equips {
+        out.push(*slot);
+        out.extend_from_slice(&item.to_le_bytes());
+    }
+    out.push(0xFF); // end of the equipment map
+    out.push(0xFF); // end of the second map
+    for _ in 0..4 {
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+    out.extend_from_slice(&0u32.to_le_bytes()); // taken modulo 360
+    out.push(0);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(&[0u8; 128]);
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&[0u8; CHARACTER_NAME_LEN]);
+    out
+}
+
+/// Dress a character already standing on a field.
+///
+/// **This is the way around the equipment blocker, and it may not work - see below.**
+///
+/// The `SetField` character record does *not* carry an avatar look; the client is supposed
+/// to derive the appearance from the equip inventory, whose item decode is a vtable call
+/// with no RTTI on the item classes (`research/equip-block.md`). But three inbound channel
+/// opcodes read the *compact* look instead, and `0x0138` is the smallest of them - it reads
+/// exactly two things **[L]**:
+///
+/// ```c
+/// uVar2 = FUN_1406e8c20(packet);                  // a character id
+/// lVar3 = FUN_1429b6c90(DAT_143ac1b90, uVar2);    // look that user up in a pool
+/// if (lVar3 != 0) {                               // ONLY if found
+///     FUN_1402ee8d0(&look, packet, ..., 0);       // read the compact avatar look
+///     FUN_142797be0(lVar3, &look);                // and apply it to that user
+/// }
+/// ```
+///
+/// **The risk is `DAT_143ac1b90`.** It is a user pool looked up by id, and it is *not*
+/// established that the **local** character is in it - in this game family the local user is
+/// usually held separately (the `CUserLocal` slot at `world+0x2358`) while the pool holds
+/// remote players. If the local user is absent the handler returns having done nothing: no
+/// dialog, no fault, no desync, because the frame carries its own length.
+///
+/// So this is safe to try and cheap to falsify: the character is either dressed or exactly
+/// as naked as before. Nothing in between.
+pub const USER_AVATAR_MODIFIED: u16 = 0x0138;
+
+/// Body of a [`USER_AVATAR_MODIFIED`]: the character id, then the compact look.
+pub fn user_avatar_modified(chr: &Character) -> Vec<u8> {
+    let mut b = chr.id.to_le_bytes().to_vec();
+    b.extend_from_slice(&avatar_look(chr));
+    b
+}
+
 pub fn character_stat_block(chr: &Character, world_id: u32) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&chr.id.to_le_bytes());
@@ -934,29 +1007,7 @@ pub fn character_record(chr: &Character, world_id: u32) -> Vec<u8> {
     // and the last goes to `+0x39`, which is index 0 of the equipment array the pair loop
     // fills at `+0x39 + slot*4`. That loop rejects anything outside slots 1..31, so index 0
     // can *only* be written by this standalone field - and it is the hair.
-    out.push(chr.gender);
-    out.push(chr.skin);
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&chr.face.to_le_bytes());
-    out.extend_from_slice(&u32::from(chr.job).to_le_bytes());
-    out.push(0); // read and discarded
-    out.extend_from_slice(&chr.hair.to_le_bytes()); // equipment array index 0
-    for (slot, item) in &chr.equips {
-        out.push(*slot);
-        out.extend_from_slice(&item.to_le_bytes());
-    }
-    out.push(0xFF); // end of the equipment map
-    out.push(0xFF); // end of the second map
-    for _ in 0..4 {
-        out.extend_from_slice(&0u32.to_le_bytes());
-    }
-    out.extend_from_slice(&0u32.to_le_bytes()); // taken modulo 360
-    out.push(0);
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&[0u8; 4]);
-    out.extend_from_slice(&[0u8; 128]);
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&[0u8; CHARACTER_NAME_LEN]);
+    out.extend_from_slice(&avatar_look(chr));
     out
 }
 

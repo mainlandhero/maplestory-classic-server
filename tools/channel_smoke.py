@@ -96,6 +96,13 @@ def plant_character_and_migration(dbpath, character_id, world_id=0, channel_id=0
         (0x1234_5678, account_id, character_id, world_id, channel_id,
          int(time.time())),
     )
+    # Equipment, so the avatar-look check below is not vacuous. Slots and item ids are the
+    # ones a real created character carries.
+    for slot, item in ((5, 1040003), (6, 1060002), (7, 1072003), (11, 1302000)):
+        con.execute(
+            "INSERT INTO equipment (character_id, slot, item_id) VALUES (?,?,?)",
+            (character_id, slot, item),
+        )
     con.commit()
     con.close()
 
@@ -237,8 +244,32 @@ if PROBE:
     set_fields = [r for r in replies if r["opcode"] == SET_FIELD]
     npcs = [r for r in replies if r["opcode"] == NPC_ENTER_FIELD]
 
-    check("the probe answered all three requests", len(replies) == 4,
+    AVATAR = 0x0138
+    looks = [r for r in replies if r["opcode"] == AVATAR]
+
+    check("the probe answered all three requests", len(replies) == 5,
           "%d replies: %s" % (len(replies), [hex(r["opcode"]) for r in replies]))
+    check("one of them is UserAvatarModified - the attempt to dress the character",
+          len(looks) == 1, "%d" % len(looks))
+    if looks:
+        lb = looks[0]["body"][2:]
+        check("the avatar packet names the claimed character",
+              struct.unpack_from("<I", lb, 0)[0] == CHARACTER_ID,
+              "id %d" % struct.unpack_from("<I", lb, 0)[0])
+        # The equipment is what this whole packet exists for: a look with no (slot, item)
+        # pairs dresses the character in nothing, which is the bug being fixed. The pairs
+        # start after gender(1) skin(1) u32(4) face(4) job(4) discarded(1) hair(4) = 19.
+        PAIRS_AT = 4 + 19
+        check("the avatar packet carries the character's equipment, not an empty look",
+              lb[PAIRS_AT] != 0xFF,
+              "first pair byte = %#04x (0xFF means no equips at all)" % lb[PAIRS_AT])
+        slots = []
+        i = PAIRS_AT
+        while i < len(lb) and lb[i] != 0xFF:
+            slots.append(lb[i])
+            i += 5
+        check("the equipped slots are the ones the character actually wears",
+              slots == [5, 6, 7, 11], "%s" % slots)
     check("two of them are SetField - the migration and the portal", len(set_fields) == 2,
           "%d" % len(set_fields))
     check("two of them are NpcEnterField - map 1's Heena and Sera", len(npcs) == 2,

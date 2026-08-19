@@ -206,7 +206,7 @@ impl Session {
     /// `research/npc-spawn.md` has the working, including how the routing was found.
     fn on_field_entered(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        npcs_for_map(chr.map_id)
+        let mut out: Vec<Reply> = npcs_for_map(chr.map_id)
             .iter()
             .map(|npc| Reply {
                 opcode: net::opcode::NPC_ENTER_FIELD,
@@ -216,7 +216,25 @@ impl Session {
                     npc.template_id, npc.x, npc.cy, npc.fh, npc.object_id
                 ),
             })
-            .collect()
+            .collect();
+
+        // Try to dress the character. The SetField record carries no avatar look and the
+        // equip inventory's item decode is a vtable call we cannot read yet, but 0x0138
+        // takes the *compact* look - the same bytes that dress the character-select screen.
+        // It only applies if the local character is in the pool this handler searches, which
+        // is NOT established; if it is not, the handler does nothing at all. See
+        // net::opcode::USER_AVATAR_MODIFIED.
+        out.push(Reply {
+            opcode: net::opcode::USER_AVATAR_MODIFIED,
+            body: net::opcode::user_avatar_modified(&chr),
+            what: format!(
+                "UserAvatarModified for character {} ({}), {} equipped item(s) - an ATTEMPT                  to dress a character the SetField record cannot dress. If the local user is                  not in the pool this handler searches, it is silently ignored.",
+                chr.id,
+                chr.name,
+                chr.equips.len()
+            ),
+        });
+        out
     }
 
     /// Answer the client walking into a portal.

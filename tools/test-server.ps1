@@ -141,14 +141,24 @@ $ErrorActionPreference = 'Stop'
 # its own control - the first SetField should read 0, and the second says whether the short
 # form is safe to use next time.
 #
-# :hits=200 on 140302e30 because it fires at character select as well - once per
+# 142797be0 is THE question this run answers, and it is a clean binary. It has exactly ONE
+# call site in the whole image (python tools/callers.py 0x142797be0): inside FUN_142d012e0,
+# the 0x0138 UserAvatarModified handler, and *past* its `if (pool_lookup != 0)` gate. So:
+#   it fires   -> the local character IS in that pool and the compact avatar look was applied
+#   it is silent -> the local user is not in that pool, and 0x0138 is a dead end for dressing
+#                   the local character; the fallback is the ELog route (see STATUS.md)
+# Either way the client is unharmed: on a miss the handler returns having done nothing.
+#
+# 140302e30 retired - the record path is proven on screen.
+#
+# (was) :hits=200 on 140302e30 because it fires at character select as well - once per
 # character in the list - and the default cap is 32 per slot. The probe does announce
 # saturation ("watch hit limit reached"), so this would not have been silent, but the
 # decisive line is the one AFTER the migration and losing it costs a whole launch.
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cfb500:peek=2358,140302e30:hits=200'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142cfb500:peek=2358,142797be0'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
