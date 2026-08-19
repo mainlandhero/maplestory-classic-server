@@ -147,7 +147,13 @@ impl Config {
     /// **An empty table answers `true` for everything**, deliberately. The table is generated
     /// game data and a missing file must not turn every warp into a refusal - that would fail
     /// closed on a tool problem rather than a real one. When it is loaded it is exact.
+    ///
+    /// **Having a field image is necessary and not sufficient**, which was measured the
+    /// expensive way: see [`MAPS_THAT_KILL_THE_CLIENT`].
     pub fn map_exists(&self, map: u32) -> bool {
+        if MAPS_THAT_KILL_THE_CLIENT.contains(&map) {
+            return false;
+        }
         self.fields.is_empty() || self.fields.contains(&map)
     }
 
@@ -495,6 +501,33 @@ impl EquipTemplate {
     }
 }
 
+/// Maps that have a field image, have a name, and **still kill this client**.
+///
+/// **Measured, one entry at a time, and this is the only honest way to build this list.**
+/// The owner typed `!map 900000000` (the White Map) on 2026-08-19 and the client died 0.4 s
+/// later: `0xC0000005` at `0x14019b8cf`, which is inside the client's own small-block
+/// allocator - `FUN_14019b780` pops a free-list head with `MOV RCX,[RAX]` immediately after
+/// the chunk allocator at `0x14019d3c0` returned, so `RAX` was **null and unchecked**. That
+/// is an allocation failure, not a packet desync: the `SetField` differed from a working one
+/// by four bytes of map id.
+///
+/// **900000000 passes every check we have.** It is in `fields.txt` (it has a real field
+/// image), it is in the `String.wz` name table, and its image parses clean with one spawn
+/// portal and a foothold group. So "the field exists and is named" is *necessary and not
+/// sufficient*, and there is no property of it we can currently test that predicts the
+/// crash.
+///
+/// **One hypothesis, deliberately NOT acted on.** 900000000 has **no `miniMap` node** while
+/// its `hideMinimap` is `0`. Surveying all 426 field images finds **44** maps in that state.
+/// Blocking all 44 on that theory would remove a tenth of the maps from a debugging command
+/// on the strength of a guess, and the fault address - a generic allocator - does not point
+/// at a minimap. **The cheap falsifier costs nothing on the next run:** `!map 61` is also in
+/// that set and is an ordinary low id. If it dies the same way, the guard should become the
+/// 44; if it loads fine, the theory is dead and this list stays a list.
+pub const MAPS_THAT_KILL_THE_CLIENT: &[u32] = &[
+    900000000, // the White Map. Measured 2026-08-19.
+];
+
 /// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
 ///
 /// **Not zero, deliberately.** Zero is structurally legal and draws a mob at 0% health,
@@ -671,6 +704,31 @@ mod spawn_tests {
         // "that should only apply to some items".
         let blocked = equips.values().filter(|e| e.trade_block).count();
         assert!(blocked > 0 && blocked < 20, "{blocked} equips carry tradeBlock");
+    }
+
+    /// A map that has a field image and a name can still kill the client, and one does.
+    #[test]
+    fn the_white_map_is_refused_even_though_it_passes_every_other_check() {
+        let path = std::path::Path::new("../../gm-handbook/fields.txt");
+        if !path.exists() {
+            return; // generated data, gitignored
+        }
+        let config = Config { fields: Config::load_fields(path), ..Config::default() };
+
+        // It really does pass the checks that exist - this is not a typo being refused.
+        assert!(config.fields.contains(&900000000), "the White Map has a field image");
+        assert!(!config.map_exists(900000000), "and is refused anyway");
+
+        // Ordinary maps are untouched, including the one the owner warps to most.
+        for map in [1u32, 10, 20, 30, 40] {
+            assert!(config.map_exists(map), "map {map} must still be reachable");
+        }
+
+        // The list stays short on purpose: every entry costs a client run to establish.
+        assert!(
+            MAPS_THAT_KILL_THE_CLIENT.len() < 5,
+            "this list should only ever grow by measurement"
+        );
     }
 
     /// The crowd threshold the owner adopted: 75% below six players on the field, 100% at six or

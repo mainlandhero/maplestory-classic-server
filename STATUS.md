@@ -451,6 +451,52 @@ world/channel/adult is **[I]** from the packet family's usual shape.
 whose whole inbound set contains no new opcode). So the client is refusing the selection
 **client-side, before it would send anything** - this is not an unanswered-packet freeze.
 
+### THE CHANNEL LIST IS NOT ABOUT THE PACKET AT ALL - 2026-08-19, from two captures
+
+**Both of my explanations for this dialog were wrong, and the world list was never the
+variable.** Comparing the captured `0x000B` bodies settles it: the world-list body from the
+run where **CH.1 and CH.2 were listed** and the body from the run where the dialog was
+**empty** are **byte-identical**.
+
+```text
+run WITH channels listed  0006005363616e6961000000000208005363616e69612d30...0001000000000000000000
+run with an EMPTY dialog  0006005363616e6961000000000208005363616e69612d30...0001000000000000000000
+```
+
+Both are `research/fixtures/world-select-0076-login.log` and today's `login.log`. Same world
+id, same name, same channel count, same four trailing bytes per entry. So no value in that
+packet decides whether the dialog has rows.
+
+**What differs between the two runs is the route through the login screens.**
+
+| capture | `0x0076` world-select requests | Change Channel |
+|---|---|---|
+| `world-select-0076-login.log` | **2** | **CH.1 and CH.2 listed** |
+| today | **0** | **empty** |
+
+The owner reached character select by auto-login today and never opened world select. In the run
+that worked they had clicked "Choose another world" and picked Classic.
+
+**That fits the static reading exactly, and rescues most of it.** `research/channel-select.md`
+established that the rows are drawn from an `int` array at `singleton+0x2cc8`, filled by
+`FUN_142cb8e10`'s sixth argument. Nothing in that chain is contradicted - what was never
+checked is **who calls `FUN_142cb8e10`, and when**. If the world-select screen is what runs
+it, then a client that skips that screen never populates the array, and the dialog is empty
+no matter what the world list said.
+
+> **The test costs nothing and needs no code change.** On the next run, click **"Choose
+> another world"**, pick **Classic**, then enter the world and open Change Channel. If the
+> rows are back, the answer is "world select populates the array" and the server owes the
+> dialog nothing. If they are still missing, the route is not the variable either and the
+> next instrument is a watch on `FUN_142cb8e10`.
+
+**What this cost, and the lesson.** Two client runs were spent on a byte that never mattered:
+first `[world_id, index, 0, 0]`, which was credited with fixing the list, and then the enable
+byte, which was blamed for emptying it. The first "fix" was almost certainly a coincidence -
+it landed in the same run as the world-select work - and the second was a coincidence in the
+opposite direction. **A change and an observation in the same run are not a measurement**,
+and neither of those runs changed one variable.
+
 ### SOLVED 2026-08-19: the predicate is the 4th trailing `u8`, and we were sending 0
 
 Full working, every link read off the listing: **`research/channel-select.md`**.
