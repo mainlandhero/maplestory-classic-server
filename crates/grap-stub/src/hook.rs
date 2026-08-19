@@ -105,9 +105,28 @@ pub(crate) fn base() -> usize {
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
 const MEM_COMMIT_RESERVE: u32 = 0x1000 | 0x2000;
 
+/// `MEMORY_BASIC_INFORMATION`, only as much of it as the readability check needs.
+#[repr(C)]
+struct MemoryBasicInformation {
+    base_address: *mut c_void,
+    allocation_base: *mut c_void,
+    allocation_protect: u32,
+    _alignment: u32,
+    region_size: usize,
+    state: u32,
+    protect: u32,
+    kind: u32,
+    _alignment2: u32,
+}
+
+const MEM_COMMIT: u32 = 0x1000;
+const PAGE_NOACCESS: u32 = 0x01;
+const PAGE_GUARD: u32 = 0x100;
+
 extern "system" {
     fn GetModuleHandleA(name: *const u8) -> *mut c_void;
     fn VirtualProtect(addr: *mut c_void, size: usize, new: u32, old: *mut u32) -> i32;
+    fn VirtualQuery(addr: *const c_void, buf: *mut MemoryBasicInformation, len: usize) -> usize;
     fn VirtualAlloc(addr: *mut c_void, size: usize, typ: u32, protect: u32) -> *mut c_void;
     fn QueryPerformanceCounter(v: *mut i64) -> i32;
     fn QueryPerformanceFrequency(v: *mut i64) -> i32;
@@ -362,12 +381,42 @@ fn wait_for_text_then_install() {
     // be real. Packed pages read as zeros or as filler and keep changing while Themida
     // works; two identical non-zero reads mean it has stopped.
     let probe = (base + DISPATCH_RVA) as *const u8;
-    let read_window = || -> [u8; 16] {
+
+    // **Ask before reading.** This used to dereference `probe` the instant the DLL loaded.
+    // Themida maps and decrypts sections lazily, so early in startup that page can be
+    // uncommitted or PAGE_NOACCESS, and the read then raises an access violation on a
+    // thread that has no handler yet - the client dies in under a second with 0xC0000005
+    // and no log, because the first line this function writes comes after the poll. It is
+    // a race, so it survived several runs before losing one on 2026-08-19.
+    let readable = || -> bool {
+        let mut info = std::mem::MaybeUninit::<MemoryBasicInformation>::zeroed();
+        let n = unsafe {
+            VirtualQuery(
+                probe as *const c_void,
+                info.as_mut_ptr(),
+                std::mem::size_of::<MemoryBasicInformation>(),
+            )
+        };
+        if n == 0 {
+            return false;
+        }
+        let info = unsafe { info.assume_init() };
+        info.state == MEM_COMMIT
+            && info.protect & PAGE_NOACCESS == 0
+            && info.protect & PAGE_GUARD == 0
+            && (probe as usize).saturating_add(16)
+                <= (info.base_address as usize).saturating_add(info.region_size)
+    };
+
+    let read_window = || -> Option<[u8; 16]> {
+        if !readable() {
+            return None;
+        }
         let mut w = [0u8; 16];
         for (i, slot) in w.iter_mut().enumerate() {
             *slot = unsafe { std::ptr::read_volatile(probe.add(i)) };
         }
-        w
+        Some(w)
     };
 
     let mut previous = read_window();
@@ -375,7 +424,7 @@ fn wait_for_text_then_install() {
     while started.elapsed() < INSTALL_DEADLINE {
         std::thread::sleep(INSTALL_POLL);
         let current = read_window();
-        if current == previous && current != [0u8; 16] {
+        if current.is_some() && current == previous && current != Some([0u8; 16]) {
             stable_for += INSTALL_POLL;
             // Two consecutive quiet polls, so a single lucky read cannot pass for settled.
             if stable_for >= INSTALL_POLL * 2 {
@@ -388,9 +437,10 @@ fn wait_for_text_then_install() {
     }
 
     log(&format!(
-        "install: .text settled after {} ms (deadline {} ms) - the client's login dialog \
+        "install: .text {} after {} ms (deadline {} ms) - the client's login dialog \
          fires around 4.5 s after connect, so this margin is what decides whether the \
          suppression lands",
+        if previous.is_some() { "settled" } else { "NEVER BECAME READABLE" },
         started.elapsed().as_millis(),
         INSTALL_DEADLINE.as_millis()
     ));
