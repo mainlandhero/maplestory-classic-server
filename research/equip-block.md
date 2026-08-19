@@ -16,8 +16,25 @@ block. **It does not.** **[L]**
 * `python tools/callers.py 0x1402ee8d0` gives 17 call sites in 16 functions. `FUN_1403094b0`
   - the character-list path - is one. `FUN_140304b20` is **not**.
 
-So the field appearance is derived from the **equip inventory**, and that block has to be
+So the field appearance is derived from the **equipped list**, and that block has to be
 built properly.
+
+## What is actually missing: the EQUIPPED list, not "the inventory"
+
+**Corrected by the owner, 2026-08-19.** An earlier version of this note, and a report to them,
+treated the empty inventory UI and the naked character as one problem. They are not:
+
+* **Worn** items are equipped. They do **not** occupy an inventory slot.
+* The **inventory** is the bag - what the character is *carrying*. Ours is genuinely empty,
+  and showing it empty is **correct behaviour, not a bug.**
+
+So there is nothing to fix about the inventory tabs, and dressing the character would not
+put anything in them. The thing to build is the **equipped** list specifically.
+
+That also explains the shape found below, and makes it a much better fit: the entry-6 gated
+region reads a `u8` and then **two** `u16`-terminated loops. Two lists, read back to back,
+before any bag - which is exactly `equipped` and `equipped cash`. The bag, if it is carried
+at all in this record, is a later list and very likely a different presence flag.
 
 ## The block is gated by presence byte 2
 

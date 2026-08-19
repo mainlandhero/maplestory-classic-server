@@ -115,6 +115,10 @@ which now drives the whole field-entry path over the independent Python transpor
   before that is silently discarded. So NPCs must be re-sent after **every** `SetField`.
 * **The character is still naked**, and that one is real work: item decode is a vtable call at
   `+0x330` and the item classes carry no RTTI. `research/equip-block.md`.
+  **The empty inventory UI is NOT part of this** - the owner, 2026-08-19: worn items are
+  equipped and do not occupy a bag slot, so an empty bag is correct for a character
+  carrying nothing. What is missing is the **equipped list**, which fits the shape found:
+  a `u8` then **two** `u16`-terminated loops, i.e. equipped and equipped-cash.
 
 **Both new tables are stubs and say so.** Portal targets and field `life` both live in the
 client's WZ, and belong in a generator beside `tools/dump_names.py` rather than typed into
