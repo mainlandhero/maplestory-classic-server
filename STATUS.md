@@ -368,6 +368,66 @@ just before a `SetField`.**
 > resync point. **Text on screen is not a quest**, though - no quest-result packet has been
 > found, so state will not advance.
 
+### 2d. The unequip request never reached the wire - and the gate that ate it is a hazard
+
+The owner tried to unequip the Undershirt on 2026-08-19 and was not sure whether anything was
+sent. **Nothing was.** The move request is outbound **`0x0107`** - `FUN_142cc5b00(player,
+invType, src, dst, count)`, body `u32 tick, u8 invType, i16 srcSlot, i16 dstSlot, i16 count`,
+11 bytes, with **negative slots meaning equipped** (read, not assumed: `test r14d,r14d; js`,
+`cmp r14d,-0xb`, `cmp edi,-0xb`). Their action would have been `invType=1, src=-5`. It is not
+in the capture and nothing else in that session has the shape - every other captured opcode
+is accounted for against `research/msexe-packet-fields.txt`. The client dropped it inside
+`FUN_142cc5b00`, before building anything, at one of six pre-send gates.
+
+> **And one of those gates is an "always answer" landmine that has nothing to do with this
+> bug.** `player->[0x2330]` is a **one-request-outstanding latch**: set immediately after the
+> send at `142cc5f01` by **37** functions across the image, and cleared by only **7**, *all
+> of which are inbound packet handlers* - `FUN_142cc52a0` is literally
+> `read(packet); [this+0x2330] = 0`. So if the server ever fails to answer one of those 37
+> requests, **every later request in that class is silently dropped** - no dialog, no freeze,
+> nothing in any log. This is not what happened here (none of the 37 setters appears in the
+> capture), but it is the mechanism by which a single unanswered packet turns into "the
+> inventory stopped working" three minutes later.
+
+**Next instrument, and it needs no new code:** `WATCH` on `0x142cc5b00` plus its two exits
+`0x142cc5c16` (bail) and `0x142cc5ea3` (`mov edx,0x107`). One drag of an item distinguishes
+"the UI never asked" from "a gate blocked it" from "it sent and the capture is wrong".
+
+### 2c-ii. Two NPC-click packets, and the server answered the wrong one - **FIXED, unconfirmed**
+
+The owner clicked Robin on map 40 and nothing happened. The capture has **no `0x0151` at all**;
+the client sent **`0x00F2`** and nothing answered it.
+
+**Which one goes out is decided inside the client, from `Quest.wz`.** `FUN_1428de280` forks
+on `FUN_141e39b50(npc)` - whether the NPC has a non-empty script name, a string the *client*
+fills at construction from its own quest singleton - and only a menu line carrying a quest id
+in `npc->[0x200]/[0x208]/[0x210]` reaches the `0x0151` builder. **Every other outcome sends
+`0x00F2`.** Robin (template 8) has no quests. The server does not select the path and cannot.
+
+`0x00F2` is `u32 npcObjectId, i16 charX, i16 charY, u32 tail`, 12 bytes. Answered now with
+the same `0x055B` Say. Full working: `research/npc-click.md`.
+
+**The trap in answering it**, which would have produced an unexplainable failure: `0x0151`
+hands over the NPC's **template** id and `0x00F2` hands over the **object** id we chose,
+while `0x055B`'s speaker field wants a template. The handler maps back through the table
+that assigned it, **scoped to the character's current map**, because `config::load_npcs`
+restarts the numbering on every field. Sending the object id straight through would not
+fault - the loader result is null-checked at `142a7b52a` - it would just draw a box with no
+portrait.
+
+**Two corrections to the first reading of that capture**, both from the client's own builder
+rather than from the numbers lining up:
+
+* **Field 1 really is our object id** - `[npc+0x190]`, written from `NpcEnterField`'s
+  objectId by the `CNpc` constructor at `141e35f59` and by the body decoder at `141e36b73`.
+  The code reads back the field the spawn packet wrote. That distinction matters, because
+  the *previous* "read off our own data" claim here was retracted for exactly the reason it
+  invites: every map's first NPC is given object id 1000, so a `1000` proves nothing alone.
+* **Fields 2 and 3 are the CHARACTER's position, not the NPC's.** The first reading called
+  `275` Robin's `cy`; it is the player's `y`, and Robin's `cy` is 275 only because the player
+  was standing on the same ground line. All four build sites read the local-user singleton,
+  and the same pair appears verbatim in both `0x00D9` packets of the same capture.
+
 ### 2a. Channel swapping - two channels now run
 
 The owner, 2026-08-19: *"In the classic world startup, the user is defaulted to channel 1 of the
