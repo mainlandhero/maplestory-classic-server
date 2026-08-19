@@ -89,6 +89,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00D1 => "CLIENT_TRANSFER_FIELD (portal; 0xFFFFFFFF target means resolve the name)",
         0x00DC => "CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body)",
         0x00E7 => "CLIENT_CHAT (u32 tick, u16-length text, u8 tab)",
+        0x00F2 => "CLIENT_NPC_CLICK (u32 npcObjectId, i16 charX, i16 charY, u32; the NO-QUEST click path)",
         0x0151 => "CLIENT_QUEST_REQUEST (u8 action, u32 questId, u32 npcTemplateId, shape-dependent tail)",
         0x0182 => "CLIENT_PARTY_CREATE",
         0x0238 => "CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField)",

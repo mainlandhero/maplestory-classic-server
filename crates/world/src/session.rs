@@ -186,6 +186,9 @@ impl Session {
             net::script::CLIENT_QUEST_REQUEST => {
                 return self.on_quest_request(body.get(2..).unwrap_or(&[]))
             }
+            net::script::CLIENT_NPC_CLICK => {
+                return self.on_npc_click(body.get(2..).unwrap_or(&[]))
+            }
             _ => return Vec::new(),
         }
         // Always answer. An unanswered packet freezes the client's whole UI - every
@@ -341,6 +344,55 @@ impl Session {
                 "ScriptMessage Say from NPC template {} for quest {} (action {}) - text on \
                  screen only. No quest-result packet is known, so no state advances.",
                 req.npc_template_id, req.quest_id, req.action
+            ),
+        }]
+    }
+
+    /// Make an NPC with **no quest** speak. This is the other half of goal 2.
+    ///
+    /// **There are two NPC-click packets and the server was answering only one.** Which one
+    /// goes out is decided entirely inside the client, from `Quest.wz`: `FUN_1428de280`
+    /// forks on whether the NPC has a non-empty script name, and only a menu line carrying a
+    /// quest id reaches the `0x0151` builder. Every other outcome sends `0x00F2`. Robin on
+    /// map 40 has no quests, so clicking them produced `0x00F2` and total silence on
+    /// 2026-08-19. See `research/npc-click.md`.
+    ///
+    /// **The one thing that differs from the quest path**: `0x0151` hands us the NPC's
+    /// *template* id, and `0x00F2` hands us the **object** id we chose - while `0x055B`'s
+    /// speaker field wants a template. So this maps back through the same table that
+    /// assigned the object id. Sending the object id straight through would not fault (the
+    /// loader result is null-checked at `142a7b52a`) but would draw a portrait-less box.
+    fn on_npc_click(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(click) = net::script::parse_npc_click(body) else { return Vec::new() };
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+
+        // The object id is only unique within a field, which is why the lookup is scoped to
+        // the character's current map - config::load_npcs numbers from 1000 per map.
+        let template = self
+            .config
+            .npcs
+            .get(&chr.map_id)
+            .and_then(|list| list.iter().find(|n| n.object_id == click.npc_object_id))
+            .map(|n| n.template_id);
+
+        let Some(template) = template else {
+            // Nothing to speak as. Answering with a script whose speaker is not a real
+            // Npc.wz id buys nothing, and this is not a request the client blocks on - the
+            // 2026-08-19 capture shows the UI stayed live with 0x00F2 unanswered.
+            return Vec::new();
+        };
+
+        let text = format!(
+            "I have nothing to say yet. This server knows me as NPC template {template}, and \
+             it has no dialogue script for me."
+        );
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(template, &text, false, false),
+            what: format!(
+                "ScriptMessage Say from NPC template {} (object id {}, the id we assigned on \
+                 map {}) - the NO-QUEST click path, 0x00F2. Text on screen only.",
+                template, click.npc_object_id, chr.map_id
             ),
         }]
     }
@@ -669,6 +721,69 @@ mod tests {
         // A short body must not panic - these come off a socket.
         for n in 0..body.len() {
             let _ = s.on_quest_request(&body[..n]);
+        }
+    }
+
+    /// The real 12 bytes the owner's client sent when they clicked Robin on map 40, from
+    /// `research/fixtures/dressed-in-world-npc-click-00f2-world.log`. Answering only
+    /// `0x0151` left every quest-less NPC silent, which is what that run measured.
+    #[test]
+    fn clicking_a_questless_npc_is_answered_as_its_template_not_its_object_id() {
+        let body = hex("e803000001001301ffffffff");
+        let click = net::script::parse_npc_click(&body).expect("the captured body parses");
+        assert_eq!(click.npc_object_id, 1000, "the object id WE assigned, [npc+0x190]");
+        assert_eq!((click.char_x, click.char_y), (1, 275), "the CHARACTER's position");
+
+        // Map 40's NPCs, exactly as gm-handbook/npcs.txt has them: object ids 1000 and 1001
+        // for templates 8 and 9. The lookup has to invert the numbering config::load_npcs
+        // does, and it is per-map because that numbering restarts on every field.
+        let npcs = vec![
+            net::opcode::FieldNpc {
+                object_id: 1000, template_id: 8, x: 69, cy: 275, fh: 30,
+                rx0: 19, rx1: 119, f: 0,
+            },
+            net::opcode::FieldNpc {
+                object_id: 1001, template_id: 9, x: 1602, cy: 215, fh: 59,
+                rx0: 1552, rx1: 1652, f: 0,
+            },
+        ];
+        let config = Config {
+            npcs: [(40u32, npcs)].into_iter().collect(),
+            ..Config::default()
+        };
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "TestCharD".to_string(), map_id: 40, ..Default::default()
+        };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+
+        let replies = s.on_npc_click(&body);
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].opcode, net::script::SCRIPT_MESSAGE);
+
+        // The speaker must be the TEMPLATE (8), never the object id (1000). An object id in
+        // that field does not fault - the loader result is null-checked - it just draws a
+        // box with no portrait, which is the kind of failure a run cannot explain.
+        let said = &replies[0].body;
+        assert_eq!(u32::from_le_bytes(said[5..9].try_into().unwrap()), 8);
+        assert_ne!(u32::from_le_bytes(said[5..9].try_into().unwrap()), 1000);
+        assert_eq!(said[10], net::script::SCRIPT_TYPE_SAY);
+
+        // An object id that is not on this map has no template to speak as. Answering with
+        // a made-up one buys nothing, and this request does not block: the capture shows
+        // the UI stayed live with 0x00F2 unanswered.
+        let mut unknown = body.clone();
+        unknown[0] = 0xFF;
+        assert!(s.on_npc_click(&unknown).is_empty());
+
+        // Short bodies come off a socket and must not panic.
+        for n in 0..body.len() {
+            let _ = s.on_npc_click(&body[..n]);
         }
     }
 

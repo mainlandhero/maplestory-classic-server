@@ -1,0 +1,43 @@
+// 14038cf10 .. 14038cf93   block=.text
+14038cf10  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+14038cf15  48 89 74 24 10                    MOV qword ptr [RSP + 0x10],RSI
+14038cf1a  57                                PUSH RDI
+14038cf1b  48 83 ec 20                       SUB RSP,0x20
+14038cf1f  48 8b 02                          MOV RAX,qword ptr [RDX]
+14038cf22  48 8b f9                          MOV RDI,RCX
+14038cf25  48 8b ca                          MOV RCX,RDX
+14038cf28  48 8b da                          MOV RBX,RDX
+14038cf2b  ff 50 28                          CALL qword ptr [RAX + 0x28]
+14038cf2e  85 c0                             TEST EAX,EAX
+14038cf30  75 50                             JNZ 0x14038cf82
+14038cf32  48 8d 4b 20                       LEA RCX,[RBX + 0x20]
+14038cf36  e8 05 34 e2 ff                    CALL 0x1401b0340
+14038cf3b  8b d0                             MOV EDX,EAX
+14038cf3d  48 8b cf                          MOV RCX,RDI
+14038cf40  e8 4b ff ff ff                    CALL 0x14038ce90
+14038cf45  85 c0                             TEST EAX,EAX
+14038cf47  75 27                             JNZ 0x14038cf70
+14038cf49  48 8b 03                          MOV RAX,qword ptr [RBX]
+14038cf4c  48 8b cb                          MOV RCX,RBX
+14038cf4f  ff 90 00 02 00 00                 CALL qword ptr [RAX + 0x200]
+14038cf55  84 c0                             TEST AL,AL
+14038cf57  74 29                             JZ 0x14038cf82
+14038cf59  48 8d 4b 20                       LEA RCX,[RBX + 0x20]
+14038cf5d  e8 de 33 e2 ff                    CALL 0x1401b0340
+14038cf62  8b d0                             MOV EDX,EAX
+14038cf64  48 8b cf                          MOV RCX,RDI
+14038cf67  e8 74 db ff ff                    CALL 0x14038aae0
+14038cf6c  85 c0                             TEST EAX,EAX
+14038cf6e  75 12                             JNZ 0x14038cf82
+14038cf70  b0 01                             MOV AL,0x1
+14038cf72  48 8b 5c 24 30                    MOV RBX,qword ptr [RSP + 0x30]
+14038cf77  48 8b 74 24 38                    MOV RSI,qword ptr [RSP + 0x38]
+14038cf7c  48 83 c4 20                       ADD RSP,0x20
+14038cf80  5f                                POP RDI
+14038cf81  c3                                RET
+14038cf82  48 8b 5c 24 30                    MOV RBX,qword ptr [RSP + 0x30]
+14038cf87  32 c0                             XOR AL,AL
+14038cf89  48 8b 74 24 38                    MOV RSI,qword ptr [RSP + 0x38]
+14038cf8e  48 83 c4 20                       ADD RSP,0x20
+14038cf92  5f                                POP RDI
+14038cf93  c3                                RET

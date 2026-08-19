@@ -223,6 +223,13 @@ try:
         # our own logs disproved it.
         send(transport.packet(0x0151, bytes.fromhex("01e8030000010000000c046d0100000000")))
 
+        # 0x00F2, the OTHER NPC click - the one an NPC with no quests produces. These are
+        # the exact 12 bytes the owner's client sent for Robin on map 40, from
+        # research/fixtures/dressed-in-world-npc-click-00f2-world.log. Which of the two goes
+        # out is decided inside the client from Quest.wz, so a server that answers only
+        # 0x0151 is silent for every quest-less NPC. Map 1's Heena is object id 1000 here.
+        send(transport.packet(0x00F2, bytes.fromhex("e803000001001301ffffffff")))
+
     # Anything coming back is on the K chain. There is nothing to read yet; this decodes
     # whatever appears so that the first real reply is checked the moment it exists.
     # The channel is ASYMMETRIC: we send AES and receive the byte subtract from the
@@ -338,7 +345,7 @@ if PROBE:
         check("no mob is sent with hp = 0 - that is a mob at 0 percent",
               hps and all(h != 0 for h in hps), "%s" % hps[:3])
 
-    check("the probe answered every request", len(replies) == 6 + 30 + 2,
+    check("the probe answered every request", len(replies) == 7 + 30 + 2,
           "%d replies: %s" % (len(replies), sorted(set(hex(r["opcode"]) for r in replies))))
 
     # ---- the NPC the client clicked
@@ -347,7 +354,7 @@ if PROBE:
     # screen only - no quest-result packet is known, so no state advances.
     SCRIPT_MESSAGE = 0x055B
     says = [r for r in replies if r["opcode"] == SCRIPT_MESSAGE]
-    check("the quest request is answered with a script message", len(says) == 1,
+    check("both NPC-click packets are answered with a script message", len(says) == 2,
           "%d" % len(says))
     if says:
         sb = says[0]["body"][2:]
@@ -357,6 +364,17 @@ if PROBE:
         speaker = struct.unpack_from("<I", sb, 5)[0]
         check("the script speaks as the NPC template the client named", speaker == 1,
               "template %d" % speaker)
+        # 0x00F2 hands over the OBJECT id we chose (1000), not a template, while the script
+        # message's speaker field wants a template. Sending 1000 through would not fault -
+        # the loader result is null-checked - it would just draw a portrait-less box, which
+        # is the kind of failure a client run cannot explain.
+        clicked = struct.unpack_from("<I", says[1]["body"][2:], 5)[0]
+        # And 8 rather than 1 is the stronger check: the character walked to map 40 with
+        # !map earlier in this run, and object id 1000 is template 1 on map 1 but template 8
+        # on map 40. So this also proves the lookup is scoped to the map the character is
+        # actually on, which is what makes a per-map numbering safe.
+        check("the no-quest click is answered as the TEMPLATE, not the object id",
+              clicked == 8, "speaker %d (1000 would be the object id)" % clicked)
         check("hasOverride is 0, so no u32 follows it and the body does not shift",
               sb[9] == 0, "%d" % sb[9])
         # messageType indexes a 71-entry jump table; 0 is Say. Anything else reads a

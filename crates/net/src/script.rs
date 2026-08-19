@@ -431,6 +431,71 @@ pub fn script_force_close(result: u8) -> Vec<u8> {
 /// (`FUN_142da9d00`). Directions are separate namespaces; do not conflate them.
 pub const CLIENT_QUEST_REQUEST: u16 = 0x0151;
 
+/// The plain "I clicked this NPC" request. **Not** [`CLIENT_QUEST_REQUEST`].
+///
+/// ```text
+/// u32  npcObjectId    the object id the server gave the NPC in NpcEnterField
+/// i16  charX          the CHARACTER's position, not the NPC's
+/// i16  charY
+/// u32  tail           -1 at three of the four build sites
+/// ```
+///
+/// **Which of the two requests goes out is decided entirely inside the client, by
+/// `Quest.wz`.** `FUN_1428de280` is the click handler and forks on `FUN_141e39b50(npc)` -
+/// "does this NPC have a non-empty script name" - a string the client fills at construction
+/// from its own quest singleton. If a menu line the user picks carries a quest id in
+/// `npc->[0x200]/[0x208]/[0x210]`, the client sends `0x0151`; **every other outcome sends
+/// this.** So an NPC with no quests can only ever be talked to through `0x00F2`, and a
+/// server that answers only `0x0151` is silent for exactly those NPCs. Robin on map 40
+/// (template 8) is one, which is why clicking them did nothing on 2026-08-19. **[L]**
+///
+/// **Field 1 really is our object id, and this time not by correlation.** It is
+/// `[npc+0x190]`, written from `NpcEnterField`'s objectId by the `CNpc` constructor at
+/// `141e35f59` and by the body decoder `FUN_141e36b20` at `141e36b73`. That matters because
+/// the *previous* "read off our own data" claim on this project was wrong: every map's first
+/// NPC is given object id 1000, so a `1000` in a packet proves nothing on its own. Here the
+/// code reads back the field the spawn packet wrote, which is a different kind of evidence.
+///
+/// **Fields 2 and 3 are the CHARACTER's position, not the NPC's**, and the first reading of
+/// this packet had that wrong. The capture's `01 00 13 01` is `x=1, y=275`; Robin's `cy` is
+/// also 275 only because the player was standing on the same ground line. All four build
+/// sites read the local user singleton - three through the identical
+/// `[0x143aa8518]+8 -> vtbl[0x30]` sequence that also feeds `0x00D9`, one through `rsi` -
+/// and that same pair appears verbatim in both `0x00D9` packets of the same capture. **[L]**
+///
+/// Full working: `research/npc-click.md`.
+pub const CLIENT_NPC_CLICK: u16 = 0x00F2;
+
+/// A decoded [`CLIENT_NPC_CLICK`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NpcClick {
+    /// `[npc+0x190]` - the object id **the server chose**, not a template id. The reply's
+    /// speaker field wants a *template*, so this has to be mapped back through whatever
+    /// assigned it.
+    pub npc_object_id: u32,
+    /// The character's own position, from the local-user singleton.
+    pub char_x: i16,
+    pub char_y: i16,
+    /// `-1` at three of the four build sites; the fourth writes `[npc+0x288]`, an animation
+    /// index that is also reachable as `-1`. The four could not be told apart from the wire.
+    pub tail: u32,
+}
+
+/// Decode a [`CLIENT_NPC_CLICK`] body (no opcode - the payload after it).
+///
+/// The body is a fixed 12 bytes. A short one returns `None`, which a caller must not turn
+/// into silence: see [`NpcClick`] and the "always answer" rule.
+pub fn parse_npc_click(body: &[u8]) -> Option<NpcClick> {
+    let mut r = PacketReader::new(body);
+    Some(NpcClick {
+        npc_object_id: r.u32().ok()?,
+        char_x: r.i16().ok()?,
+        char_y: r.i16().ok()?,
+        tail: r.u32().ok()?,
+    })
+}
+
+
 /// Tag 1: quest state is not in-progress and the quest has no start script. Carries `sel`.
 /// Candidate name `AcceptQuest` **[I]**; what is *measured* is the gate. **[L]** the gate.
 pub const QUEST_ACTION_START: u8 = 1;

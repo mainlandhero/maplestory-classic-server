@@ -449,3 +449,30 @@ the raw listing by hand is slow:
 * **`FUN_142d43ee0`** — `case 0x0089`, 3128 bytes, `u8` then a 36-entry jump table, also
   reaching the quest builder. One of these two is very likely where "quest accepted"
   arrives.
+
+---
+
+## 7. Addendum, 2026-08-19 — `research/npc-click.md`
+
+A later session decoded the **other** packet an NPC click can produce, outbound **`0x00F2`**
+(`u32 npcObjectId, i16 charX, i16 charY, u32 tail`), and found the branch that chooses
+between it and `0x0151`. **Nothing above is retracted.** Three things are corroborated from a
+different direction, and one gap is closed:
+
+* **§0's headline holds, and now has its call site.** `FUN_142d9ac30` is reached from the NPC
+  click at **`141e3dcfe`**, and only after the user picks a line out of a **client-side menu**
+  whose entries come from the client's own quest tables. The server does not choose between
+  `0x0151` and `0x00F2`; `Quest.wz` does.
+* **§1.2's `obj+0x20 = questId`, `obj+0x24 = npcTemplateId`** is now read off the *caller*,
+  not derived from captures: `141e3dcf2 mov r8d,[rax]` (template id) and
+  `141e3dcf5 mov edx,ebx` (the quest id taken from the menu array).
+* **§2.3's "head field 3 is the speaker template id"** gets an independent check: the click
+  handler's *local* dialog calls the same `FUN_142a61900(ui, msgType, npcTemplateId, &text)`
+  at `141e3db1b`.
+* **§1.3's x/y global `[0x143aa8518]`** is the player singleton, confirmed by a second route:
+  `FUN_1428de280` reads `[rsi+8]`'s vtable slot `0x30` for the same pair and `rsi` is that
+  same global (`1428de5a6` vs `141e3ddb2`).
+
+The caveat that matters for anyone answering an NPC click: **`0x0151` carries the NPC
+*template* id, `0x00F2` carries the *object* id**, and `0x055B`'s speaker field wants the
+template. See `npc-click.md` §3.2.
