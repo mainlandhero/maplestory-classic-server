@@ -214,10 +214,10 @@ pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
         // "the click produces nothing on the wire", and that is what the owner measured when they
         // clicked CH.2 and the capture contained no new opcode at all.
         //
-        // **The third byte stays 0 on purpose.** It feeds a *different* array, +0x2cc0 via
-        // `FUN_142cb9490`, which is checked with the opposite polarity at `142a317f1` -
-        // non-zero there **blocks** the row. Setting both would mask the result of this one,
-        // and one client run only settles one variant.
+        // **The third byte stays 0.** It feeds a *different* array, +0x2cc0 via
+        // `FUN_142cb9490`, read as the opposite polarity at `142a317f1` - non-zero there
+        // blocking the row. That reading is untested, and the fourth byte's matching
+        // reading has now been falsified by a run, so treat this one as equally unproven.
         //
         // Not the user count: enumerating every memory operand in `FUN_141b2c7c0` and
         // dropping the rsp-based ones leaves `[rax]` x4, `[rax+0x14]` and `[rax+0x18]` and
@@ -231,13 +231,30 @@ pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
     out
 }
 
-/// The fourth trailing `u8` of a channel entry: whether the Change Channel dialog will let
-/// the row be clicked.
+/// The fourth trailing `u8` of a channel entry. **Back to `0`, and that is a measurement.**
 ///
-/// Any non-zero value works - all six callers of `FUN_142cb9510` test it with a bare
-/// `test eax, eax`. `1` is sent because it is the smallest thing that is not the value that
-/// was measured to fail. **[D]**, working in `research/channel-select.md`.
-pub const CHANNEL_ENABLED: u8 = 1;
+/// A static read of `FUN_142cb9510` concluded this byte was the Change Channel row's enable
+/// flag and that any non-zero value would light it up. It was set to `1` and **the run of
+/// 2026-08-19 came back with the dialog completely empty** - no rows at all, where `0` had
+/// listed CH.1 and CH.2. The login server had advertised both channels and the world list
+/// went out, so the count reached the wire; the byte itself emptied the list.
+///
+/// **So the derivation is falsified as stated.** The chain it read - `chan+0x18` ->
+/// `vecB[i]` -> `singleton+0x2cc8` -> `FUN_142cb9510`, six callers all testing with a bare
+/// `test eax, eax` - may every link be right and still not mean what it was taken to mean,
+/// because something upstream drops the entry before it ever reaches that array. A byte that
+/// *hides* a channel would produce exactly this; so would a length or a type field.
+///
+/// What is still measured, and is the only firm ground here:
+///
+/// | 4th byte | what the owner saw |
+/// |---|---|
+/// | `0` | CH.1 and CH.2 both listed. CH.2 grey, and clicking it sends **nothing** |
+/// | `1` | **no channels listed at all** |
+///
+/// Do not set this non-zero again without reading what consumes it *before* the array. See
+/// `research/channel-select.md`, which now carries the retraction.
+pub const CHANNEL_ENABLED: u8 = 0;
 
 /// The packet that closes a [`WORLD_LIST`] run, with no notice.
 pub fn world_list_end() -> Vec<u8> {
@@ -2076,7 +2093,7 @@ mod tests {
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
         assert_eq!(
             hex(&world_list_entry(0, "Scania", 1)),
-            "0006005363616e6961000000000108005363616e69612d30000000000000000100000000000000"
+            "0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
         );
         assert_eq!(hex(&world_list_end()), "ff0000");
 
@@ -2089,8 +2106,11 @@ mod tests {
         for i in 0..2u8 {
             at += 2 + "Scania-0".len() + 4; // the channel name and its user count
             assert_eq!(&two[at..at + 4], &[0, i, 0, CHANNEL_ENABLED], "channel {i}");
-            assert_ne!(CHANNEL_ENABLED, 0, "a zero here is what made CH.2 unclickable");
-            assert_eq!(two[at + 2], 0, "the blocking flag must stay clear");
+            // Both trailing bytes are 0, and both readings of them are unproven. `0` is the
+            // only value measured to LIST the channels at all: `1` in the fourth emptied
+            // the dialog on 2026-08-19. See CHANNEL_ENABLED.
+            assert_eq!(CHANNEL_ENABLED, 0, "1 emptied the Change Channel dialog - measured");
+            assert_eq!(two[at + 2], 0);
             at += 4;
         }
     }

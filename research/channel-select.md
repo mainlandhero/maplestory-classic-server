@@ -10,7 +10,45 @@ Labels: **[L]** read from the listing / a capture / the WZ. **[D]** derived from
 
 ---
 
-## 1. The answer in one line
+## 0. RETRACTED 2026-08-19 by a client run
+
+**The conclusion below is wrong as stated, and the experiment it recommended made things
+worse.** Section 1 said the 4th trailing `u8` is the row's enable flag and that any non-zero
+value would light the row up. It was set to `1` and the Change Channel dialog came back
+**completely empty** - no rows at all, where `0` had listed CH.1 and CH.2.
+
+The count reached the client either way: `login.log` for that run shows
+`channel 0 advertised`, `channel 1 advertised`, `world Scania id 0 with 2 channel(s)` and the
+`0x000B` world list going out. So the byte emptied a list that had populated without it.
+
+| 4th trailing `u8` | what the owner saw |
+|---|---|
+| `0` | CH.1 and CH.2 both listed. CH.2 grey, and clicking it sends **nothing at all** |
+| `1` | **no channels listed** |
+
+`crates/net` is back to `0`.
+
+**What is probably still right, and what is not.** Every individual link below was read off
+the listing and none of them is contradicted: `FUN_142cb9510` really is a 15-byte leaf
+returning `arr[i]` from `singleton+0x2cc8`, its six callers really do test the result with a
+bare `test eax, eax`, and the mouse gate really does `je` on zero. What the run falsifies is
+the **end-to-end claim** that the 4th wire byte reaches that array as an enable flag. Some
+consumer *between* the decoder and the array drops the entry when the byte is non-zero - a
+byte that hides a channel does exactly this, and so would a length or a type field.
+
+> **The next instrument is upstream, not downstream.** Read what `FUN_141b2c7c0` does with
+> `chan+0x18` **before** it reaches `FUN_142cb8e10`'s argument 6, and specifically look for
+> any test that skips the entry. The failure mode is "the list is built shorter", not "the
+> row is drawn grey", and nothing in this document looked for that.
+
+**The lesson is the one `CLAUDE.md` already states, in a new dress.** Every link in a chain
+can be read correctly and the chain still not mean what it was taken to mean. Section 2's
+six-callers-all-`test eax,eax` finding is genuinely strong evidence about *that array*, and
+it was carried across a gap - the array's provenance - that was never checked as hard.
+
+---
+
+## 1. The answer in one line - **RETRACTED, see section 0**
 
 **The 4th (last) trailing `u8` of each channel entry in the world list is the row's
 enable flag. It must be non-zero. We send `0`.** **[D]**

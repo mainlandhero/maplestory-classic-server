@@ -1,0 +1,102 @@
+18:43:32.986 world 0 channel 0 listening on 127.0.0.1:8485
+18:43:32.987 database C:\MapleCW\maplecw.db
+18:43:32.987 NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending
+18:43:32.987   migration rather than proving who is on the far end. It is single-use.
+18:43:32.987 SET-FIELD PROBE IS ON - which by now means 'the channel answers at all'. The
+18:43:32.988   flag is a misnomer kept for the launch line: without it Session::handle
+18:43:32.988   returns nothing for every packet, so the migration hello goes unanswered and
+18:43:32.988   the client freezes on 'Connecting...'.
+18:43:32.988   With it on, this channel answers: the migration hello with a SetField
+18:43:32.989   carrying the character's real record (presence[0] the stat block, presence[2]
+18:43:32.989   the equipped list), 0x00DC with that field's NPCs and mobs, 0x00D1 with the
+18:43:32.989   portal's destination, 0x00E7 with the !map GM command, and 0x0151 with a
+18:43:32.989   script Say. Equipment, mobs and the Say are BUILT BUT UNCONFIRMED on screen.
+18:44:00.289 connection from ch0 #1 127.0.0.1:59455
+18:44:00.289 -> channel greeting, 22 bytes (no A..F, no version block)
+18:44:00.289 cipher: ASYMMETRIC - the client SENDS AES-256-OFB and RECEIVES a byte subtract,
+18:44:00.289   so we decrypt with AES and encrypt by adding iv[0]. Measured 2026-08-19.
+18:44:00.291 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 45 byte body 0264000000000000000000000002000000cb6d041c80dda5a36830d861fe065a6861ee77930000000000000000
+18:44:00.291    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session.rs
+18:44:00.292 <- 0x007D CLIENT_MIGRATION_HELLO (character id at offset 8, then MAC and machine id), 99 byte body 0000000000000000cc000000aabbccddeeffdeadbeef00000000764d000023000000020000008c61ba3f8861ba3f230c88b81e00000028947d75402c352840462c2c32522899b5857d64704954524757544a547000640000009d550000000000...(+3 bytes, known opcode so capped)
+18:44:00.292    MIGRATION HELLO: character id 204
+18:44:00.292    claimed the migration for character 204 of account 1 (world 0 channel 0)
+18:44:00.293 -> 0x01A0 SET_FIELD SetField, characterData=1, presence[0] set so the character-stat block                      decodes, carrying map 40 for character 204 (TestCharD). presence[0] is gate                      entry 7, settled in research/charrecord-presence-map.md; the map id                      sits at stat-block offset 84, settled in research/charstat-layout.md.                      Nothing here authenticates anybody.
+18:44:00.293    body 00d8e2b20a30dd0100000000000000000000000000000000000000000000010000000000000000000000000000010001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000cc000000cc0000000000000054657374436861724400000000000300000000204e00004b7500000100000000000c0005000400040032000000320000000500000005000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000005000183de0f0000008005bb46e61702000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060001a22c100000008005bb46e61702000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000070001835b100000008005bb46e617020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b0001f0dd130000008005bb46e61702000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+18:44:00.718 <- 0x0238 CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField), 0 byte body 
+18:44:00.718    0x0238 CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField) is not answered yet - see crates/world/src/session.rs
+18:44:00.718 <- 0x024D CLIENT_FIRST_FIELD_ENTRY_2 (empty; built by FUN_142caa4e0 alongside 0x0238), 0 byte body 
+18:44:00.718    0x024D CLIENT_FIRST_FIELD_ENTRY_2 (empty; built by FUN_142caa4e0 alongside 0x0238) is not answered yet - see crates/world/src/session.rs
+18:44:00.791 <- 0x00DC CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body), 0 byte body 
+18:44:00.792 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 8 at (69, 275) on foothold 30, object id 1000 -                      the client cannot spawn this itself, it only preloads the art.
+18:44:00.792    body e80300000800000045001301ffffffffffffffff00011e00130077001301130101000000000000000000ffffffff000000000000000000000000ff0000000000
+18:44:00.792 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 9 at (1602, 215) on foothold 59, object id 1001 -                      the client cannot spawn this itself, it only preloads the art.
+18:44:00.792    body e9030000090000004206d700ffffffffffffffff00013b0010067406d700d70001000000000000000000ffffffff000000000000000000000000ff0000000000
+18:44:00.793 <- 0x02DE UNKNOWN, 1 byte body 01
+18:44:00.793    0x02DE UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.793 <- 0x00ED UNKNOWN, 8 byte body 0000000000000000
+18:44:00.793    0x00ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.794 <- 0x02B2 UNKNOWN, 8 byte body 0000000000000000
+18:44:00.794    0x02B2 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.810 <- 0x02EB UNKNOWN, 173 byte body 010000001500000000010000000100000001000000020000000100000003000000010000000400000001000000050000000100000006000000010000000700000001000000080000000100000009000000010000000a000000010000000b000000010000000c000000010000000d000000010000000e000000000000000f00000000000000100000000a000000110000000a000000120000000100000013000000000000001400000000000000
+18:44:00.810    0x02EB UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.966 <- 0x02EB UNKNOWN, 109 byte body 000000000d00000000070000000100000000000000020000000f00000003000000000000000400000001000000050000000f0000000600000000000000070000000f000000080000000000000009000000130000000a000000000000000b0000000f0000000c00000000000000
+18:44:00.966    0x02EB UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.967 <- 0x01ED UNKNOWN, 20 byte body 0100000001000000e8030000010000000bccceb9
+18:44:00.967    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.967 <- 0x01ED UNKNOWN, 16 byte body 0200000001000000e80300006987f2eb
+18:44:00.967    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.967 <- 0x013D UNKNOWN, 9 byte body 010000000000000000
+18:44:00.967    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.969 <- 0x0408 UNKNOWN, 18 byte body 58560000000000000000000000ec00000000
+18:44:00.969    0x0408 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.969 <- 0x00B8 UNKNOWN, 1 byte body 01
+18:44:00.969    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:00.969 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 46 byte body 016400000082fd8ee482fd8ee40200000000aa91c01fe12161a009cc1c62df0a966542f2b3900000000000000000
+18:44:00.969    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session.rs
+18:44:01.289 <- 0x00D9 UNKNOWN, 97 byte body 0081809f5ab3b7ce0500000000000100ad00000000000300000100070100005802000000000000ffff062c0100000100130100000000000000000000ffff061200000001001301000000001e0000000000ffff04c0000011000000000000000000
+18:44:01.290    0x00D9 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:03.940 <- 0x0184 UNKNOWN, 12 byte body 080000000400040004000000
+18:44:03.940    0x0184 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:03.940 <- 0x0194 UNKNOWN, 1 byte body 01
+18:44:03.940    0x0194 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:09.121 <- 0x00B8 UNKNOWN, 1 byte body 00
+18:44:09.122    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:10.981 <- 0x01A5 UNKNOWN, 28 byte body 01000000e80300006987f2eb01000000e8030000010000000bccceb9
+18:44:10.981    0x01A5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:22.364 <- 0x00B8 UNKNOWN, 1 byte body 01
+18:44:22.364    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:25.244 <- 0x00D9 UNKNOWN, 106 byte body 0081809f5a5515cf050000000000010013010000000004000001001201000000001e0000000000ffff042c0100000100120100000000000000000000ffff06000000010000d5fd06000000000100ca00000079ff000000000000ffff06d2000011000000000000000000
+18:44:25.244    0x00D9 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:25.753 <- 0x00D9 UNKNOWN, 118 byte body 0081809f5a5317cf0500000000000100ca00000079ff0400000100c6000000f1ff000000000000ffff063c00000001000a0100000d02000000000000ffff060e0100000100130100000000000000000000ffff060f00000001001301000000001e0000000000ffff04a5000011000000000000000000
+18:44:25.754    0x00D9 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:30.535 <- 0x00B8 UNKNOWN, 1 byte body 00
+18:44:30.535    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:44:30.864 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+18:44:30.865    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:45:00.901 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+18:45:00.901    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:45:29.677 <- 0x00B8 UNKNOWN, 1 byte body 01
+18:45:29.677    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:45:30.906 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+18:45:30.906    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:45:36.817 <- 0x00B8 UNKNOWN, 1 byte body 00
+18:45:36.818    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:45:53.151 <- 0x00B8 UNKNOWN, 1 byte body 01
+18:45:53.151    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:45:53.560 <- 0x00F2 UNKNOWN, 12 byte body e803000001001301ffffffff
+18:45:53.561    0x00F2 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:45:59.272 <- 0x00B8 UNKNOWN, 1 byte body 00
+18:45:59.272    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:46:00.862 <- 0x01ED UNKNOWN, 20 byte body 0100000001000000e8030000010000000bccceb9
+18:46:00.862    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:46:00.862 <- 0x01ED UNKNOWN, 16 byte body 0200000001000000e80300006987f2eb
+18:46:00.862    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:46:00.951 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+18:46:00.951    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:46:09.497 <- 0x00B8 UNKNOWN, 1 byte body 01
+18:46:09.497    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:46:15.615 <- 0x00B8 UNKNOWN, 1 byte body 00
+18:46:15.616    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:46:30.976 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+18:46:30.977    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session.rs
+18:46:35.528 ch0 #1 127.0.0.1:59455 closed

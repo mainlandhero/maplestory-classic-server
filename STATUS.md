@@ -415,14 +415,29 @@ The mouse gate at `142a31810` takes `je` on zero, which is exactly "the click pr
 nothing on the wire" - what the owner measured when they clicked CH.2 and the whole capture
 contained no new opcode.
 
-**The fix is one byte**, and it is in: the channel entry now ends `[world_id, i, 0, 1]`
-instead of `[world_id, i, 0, 0]`. **The third byte stays 0 on purpose** - it feeds a
-*different* array, `+0x2cc0` via `FUN_142cb9490`, checked with the **opposite** polarity at
-`142a317f1`, where non-zero **blocks** the row. Setting both would mask the result.
+**RETRACTED 2026-08-19 by the run.** The one-byte fix - the channel entry ending
+`[world_id, i, 0, 1]` instead of `[world_id, i, 0, 0]` - **emptied the dialog**. The owner: *"On
+change channel UI, I'm back to no channels being shown again, it's completely blank."*
 
-> **What to watch:** CH.2 turning **cream** rather than grey; a single click turning it
-> **blue** (that is only `[+0x298] = i`, a highlight move, not a send); and a packet
-> appearing only on **double-click or the Change button**.
+The count reached the client either way: that run's `login.log` has `channel 0 advertised`,
+`channel 1 advertised`, `world Scania id 0 with 2 channel(s)` and the `0x000B` world list
+going out. So the byte emptied a list that populated without it.
+
+| 4th trailing `u8` | what the owner saw |
+|---|---|
+| `0` | CH.1 and CH.2 both listed. CH.2 grey, and clicking it sends **nothing at all** |
+| `1` | **no channels listed** |
+
+`crates/net` is back to `0`. Every individual link in the derivation still reads correctly -
+`FUN_142cb9510` is a leaf returning `arr[i]`, its six callers all test with a bare
+`test eax, eax`, the mouse gate `je`s on zero. What is falsified is the **end-to-end** claim
+that the 4th wire byte arrives in that array as an enable flag: something between the
+decoder and the array drops the entry when it is non-zero.
+
+> **The next instrument is upstream, not downstream.** Read what `FUN_141b2c7c0` does with
+> `chan+0x18` **before** it becomes `FUN_142cb8e10`'s argument 6, looking for a test that
+> **skips the entry**. The failure mode to search for is "the list is built shorter", not
+> "the row is drawn grey" - and nothing in `research/channel-select.md` looked for that.
 
 **Which row is grey, confirmed rather than assumed.** The dialog loads four sibling canvases
 `channel0..channel3`, all 68x20 - exactly the hit rectangle (`lea eax,[r9+0x44]` /
