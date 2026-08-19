@@ -113,29 +113,25 @@ loop applies: read the switch, build one reply, run, read the log.
   greeting half of that finding held; the cipher half did not. Why is unresolved.
 
 
-### BUILT 2026-08-19: the channel greeting and the channel cipher
-
-Both derived from `conn+0x48`, both entirely from static analysis, neither confirmed on
-screen yet.
+### BUILT 2026-08-19: the channel greeting, and a cipher that turned out to be wrong
 
 * **`net::handshake::channel_greeting`** - the login greeting minus its two gated blocks,
   **26 bytes shorter**: `A..F` is 14 (it is easy to forget `B`'s 2-byte length prefix, and a
   test pins it) and the version block is 12. It starts at `G`, which is the field whose
-  zero-read raised "The client is outdated".
-* **`net::ByteShiftCipher`** - `out[i] = in[i] - iv[0]`. It shares `roll_iv` and
-  `header_from_iv` with `MapleCipher` rather than copying them, and a test asserts the two
-  produce identical headers for eight packets in a row, so a channel and a login connection
-  cannot silently drift apart.
+  zero-read raised "The client is outdated". **Confirmed on screen**: the client accepted it
+  and went on to send packets.
 
-**The polarity is still a guess, and the code says so.** `Config::polarity` names it,
-`ShiftPolarity` makes both alternatives constructible, and the channel server logs the first
-body under **both** readings. `tools/channel_smoke.py` shows the discriminator working: the
-right reading yields opcode `0x007D`, the wrong one `0x027F`.
+* **`net::ByteShiftCipher`** - `out[i] = in[i] - iv[0]`, an accurate reading of
+  `FUN_1406ef9f0` and **not the channel's cipher**. The channel is AES-256-OFB, the same as
+  login, measured off the wire from the first two packets a real client sent. Nothing uses
+  the shift; it is kept because the transform is real and whatever path does use it has not
+  been found. `Config::polarity` and `ShiftPolarity` existed only to make its two directions
+  constructible while the question was open, and both are **deleted**.
 
-**What the smoke test does and does not prove.** It builds its packet by applying the shift
-itself, so it proves the plumbing - greeting shape, framing, cipher round-trip, the
-dual-polarity report - and it does **not** prove the polarity. Only the real client can.
-
+  The methodological point outlasts the code: the polarity was going to be settled by
+  logging a body under both readings and seeing which named a plausible opcode. That
+  discriminator was sound. It was aimed at the wrong question, because the premise it rested
+  on - that `conn+0x48` selects the cipher - was never checked against the wire.
 
 ### RETRACTED 2026-08-19: the login handshake was never failing
 

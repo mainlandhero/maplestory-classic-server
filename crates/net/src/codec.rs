@@ -227,7 +227,7 @@ const SHUFFLE: [u8; 256] = [
 ///
 /// Shared by every cipher on this transport. `FUN_1406e9a65` picks the *body* transform
 /// from the connection type (`conn+0x48`) but the header and the IV chain are the same code
-/// either way, so a channel's byte-shift cipher and the login connection's AES roll the IV
+/// either way, so a byte-shift cipher and an AES one roll the IV
 /// identically. Keeping one implementation is what makes that true rather than hopeful.
 pub fn roll_iv(iv: [u8; 4]) -> [u8; 4] {
     let mut out: [u8; 4] = [0xF2, 0x53, 0x50, 0xC6];
@@ -386,13 +386,17 @@ pub fn shift_body(body: &mut [u8], iv: [u8; 4], shift: Shift) {
     }
 }
 
-/// The **game channel's** body cipher: a wrapping byte shift, not AES.
+/// A wrapping byte shift over the body: `FUN_1406ef9f0`, read faithfully.
 ///
-/// `conn+0x48` is the connection type and it selects the body transform: non-zero (login)
-/// runs `FUN_140c75880`, AES-256-OFB; zero (a game channel) runs `FUN_1406ef9f0`,
-/// `out[i] = in[i] - iv[0]`. Everything around the body is shared - the 4-byte header is
-/// unciphered in both, and the IV rolls through the same shuffle table - so this differs
-/// from [`MapleCipher`] in exactly one method.
+/// **Nothing uses this, and it is NOT the game channel's cipher.** It was built for the
+/// channel on the strength of `conn+0x48` appearing to select the body transform - non-zero
+/// (login) runs `FUN_140c75880`, AES-256-OFB, zero appears to run this. The first real
+/// channel connection disproved it: the client's packets decode under **AES**, the same as
+/// login, and under nothing else. `crates/world` uses [`MapleCipher`].
+///
+/// Kept because the transform is real code and this is an accurate, tested reading of it.
+/// Whatever path does use it has not been found. Do not wire it to a connection without
+/// measuring first - that is the mistake this comment exists to record.
 ///
 /// See `docs/transport.md`.
 pub struct ByteShiftCipher {

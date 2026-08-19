@@ -80,7 +80,7 @@ pub fn greeting(client_tx_iv: u32, client_rx_iv: u32) -> Vec<u8> {
 /// |---|---|
 /// | greeting parse | the leading `A..F` block is **not read** |
 /// | version block | `low`, `high`, `temp` are **not read** |
-/// | `FUN_1406e9a65` | the body cipher is a byte shift, not AES |
+/// | `FUN_1406e9a65` | *appears* to select a byte shift - **wrong, the channel is AES**; measured |
 ///
 /// So this greeting is [`greeting`] with both optional blocks removed. Sending the login
 /// greeting to a channel makes the client read `G` from where `A` sits - our `A` is

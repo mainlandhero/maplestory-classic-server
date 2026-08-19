@@ -250,6 +250,41 @@ handler, not as a rival stage. Its apparent overlap with the login stage's own `
 is not an overlap at all: the login switch matches its own cases *first*, and only what it
 does not match falls through to this chain. The effective ranges are disjoint.
 
+## A fourth line, arrived independently - and a warning about the third
+
+A second pass over the enum, working only from block structure against the reference source
+and **not knowing that `FUN_142097f80` had been found**, derived the same answer: `SetField`
+at `0x01A0`, one slot past the game dispatcher's last case, in a stage `OnPacket` it noted
+the project had not located. It had. That is `FUN_142097ee0` -> `FUN_142097f80`.
+
+It also predicted from the reference that `SetField` **opens with an 8-byte FILETIME** -
+and the first thing `FUN_142097f80` does, before any null check, is
+`FUN_1406e9170(pkt, &buf, 8)` followed by `FUN_1408f67d0(buf)`.
+
+**But score the reference before leaning on it.** Run blind against the already-decoded
+login range as a held-out control, the same alignment method scored **1 of 8**, and the one
+it got was the block's first entry, which any alignment gets for free. Adding the game-range
+control makes it **1 of 9**. The method reproduces a block's *interior* well once given an
+anchor inside it, and determines the block's *offset* not at all. So:
+
+* every candidate name from the reference is a candidate, never a finding;
+* `0x01A0` is not believed because the arithmetic said so - it is believed because
+  `FUN_142097f80` announces a channel change and opens with the predicted 8 raw bytes.
+
+Two structural details from that pass, both of which this repo's own table agrees with, so
+the two instruments corroborate rather than merely coexist:
+
+* **`0x0071..0x007a` really is a hole** - ten opcodes with no case at all.
+* **`0x0121..0x0126` are not cases of the outer switch.** They are dispatched from its tail
+  under `if (DAT_143ad1850 != 0)`, six consecutive opcodes to one UI object.
+
+And a caution that limits all of this: case `0x018b` carries the literal
+`"BossFirstClearRecord Is Empty ( bossID[%d] worldID[%d]"`, and **neither reference version
+has a matching name**. mscw's enum is not a clean subsequence of the reference, so any
+argument resting on block sizes lining up exactly is weaker than it looks - including the
+304-against-304 match above, which the same pass suggests is a cancellation of an insertion
+and a deletion rather than a preserved block.
+
 Full layout of the packet: `research/msexe-stage-setfield.md`.
 
 ## Not yet established
