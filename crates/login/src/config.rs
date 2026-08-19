@@ -1,6 +1,6 @@
 //! What the server needs to know before it can listen.
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 
 /// The world this login server presents.
@@ -34,6 +34,19 @@ pub struct Config {
     /// to be reshaped before an off-box server can be reached at all.
     pub bind: SocketAddr,
 
+    /// **The address the client is told to reconnect to when it enters the world.**
+    ///
+    /// Not the same thing as [`Config::bind`], and the difference is the whole reason this
+    /// field exists. `bind` is where *this process* listens; `advertise` is what goes into
+    /// the migration packet, so it has to be an address the **client machine** can reach.
+    /// On loopback they are the same; the moment the server moves to the homelab they are
+    /// not, and a server that advertises its own bind address sends the client to itself.
+    ///
+    /// It is `SocketAddrV4` rather than `SocketAddr` on purpose: the migration packet
+    /// carries four octets straight into the client's `sockaddr_in`, so an IPv6 address is
+    /// not representable and should fail at the type level rather than at runtime.
+    pub advertise: SocketAddrV4,
+
     /// The SQLite file. Characters live here, and this is the whole point of the crate.
     pub db_path: PathBuf,
 
@@ -58,6 +71,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             bind: "127.0.0.1:8484".parse().expect("a literal address"),
+            advertise: "127.0.0.1:8484".parse().expect("a literal address"),
             db_path: PathBuf::from("maplecw.db"),
             account: "maplecw".to_string(),
             display_name: "maplecw".to_string(),

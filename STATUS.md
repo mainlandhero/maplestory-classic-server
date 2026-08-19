@@ -76,14 +76,26 @@ screen; nothing here is speculative work.
    one non-zero makes the client load `Etc/SpecialServerInfo.img` - send zero), a flags byte,
    `u32`, `u8`, four discarded fields, `u8[8]`, then `u32 key` and `u32 length`.
 
-   **Still to decode:** the fields inside the tail. The last `length` bytes are obfuscated,
-   transformed in place, and read back over - twice, nested. The transform is written out in
-   `docs/opcodes.md`; it is plain 32-bit arithmetic over values the packet itself carries, so
-   there is no unknown key material and it inverts. Finish that and the packet can be built.
+   **The tail is decoded too, and the packet is built.** The last `length` bytes are
+   transformed in place and read back over; a second nested pass follows but its key is
+   `FUN_140738db0(0x80000000, 0x7fffffff)` - a **random number** - and it happens after every
+   read, so it is a scramble-back of already-consumed bytes, not a decode. Only the first
+   pass matters, its key and length are both fields of the packet, and it inverts. Sending
+   `length = 4` covers the client's one 4-byte read with a single aligned word and no partial
+   tail.
 
-   This is also where an **advertise** address is first needed for the homelab move: `ip` and
-   `port` are what the client reconnects to, so they must be the address the *client* can
-   reach, not the address the server bound.
+   **`crates/login` now answers `0x0078`.** `Config::advertise` is new and is deliberately
+   not `bind`: the octets go straight into the client's `sockaddr_in`, so the address must be
+   reachable from the *client* machine - the first place the homelab move actually bites.
+   Refusals use `0x0A`; see `docs/login-server.md` for the three separate ways a
+   wrongly-chosen refusal code migrates the client anyway, opens a browser, or returns in
+   silence.
+
+   **What is left is one client run, and it has a falsifiable prediction.** The migration
+   hands the client a `u32` seed. The only thing that reads it back is `FUN_1415d10e0`, the
+   builder for outbound **`0x007D`** - so the client should reconnect and send `0x007D` with
+   our seed inside. The server numbers connections and `describe()` names that packet, so the
+   log alone answers it. The seed is `0xC0DE0000 ^ id`, **a placeholder, not a token**.
 2. **Real sessions for multiple accounts** (the owner, 2026-08-18; testing-grade is fine). The
    token-in-`0x0073` route is measured dead, so this is one login server per account per
    port, or the `grap-stub` identity patch. `Session` should take its account from a resolver

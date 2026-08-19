@@ -17,6 +17,9 @@ const USAGE: &str = "\
 maplecw-login - the MapleCW login server
 
   --bind ADDR           what to listen on           (default 127.0.0.1:8484)
+  --advertise ADDR      what the client is told to reconnect to when it enters the
+                        world (default 127.0.0.1:8484). Must be reachable from the
+                        *client* machine, not from the server - see docs/deployment.md
   --db PATH             the SQLite file             (default maplecw.db)
   --account NAME        which account every connection is served as (default maplecw)
   --display-name NAME   what the login screen shows (default: the account name)
@@ -46,6 +49,11 @@ fn main() -> ExitCode {
             }
             "--bind" => value().and_then(|v| {
                 v.parse().map(|b| config.bind = b).map_err(|e| format!("--bind {v}: {e}"))
+            }),
+            "--advertise" => value().and_then(|v| {
+                v.parse()
+                    .map(|a| config.advertise = a)
+                    .map_err(|e| format!("--advertise {v}: {e} (IPv4 only - the migration                                           packet carries four octets)"))
             }),
             "--list" => {
                 list_only = true;

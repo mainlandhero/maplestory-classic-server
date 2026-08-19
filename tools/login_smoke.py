@@ -57,12 +57,16 @@ CLIENT_LEAVE_WORLD_REQUEST = 0x0082
 CLIENT_CREATE_REQUEST = 0x008A
 CLIENT_ENTER_CREATION_REQUEST = 0x00A8
 CLIENT_DELETE_REQUEST = 0x008B
+CLIENT_SELECT_CHARACTER_REQUEST = 0x0078
 
+MIGRATE_COMMAND = 0x0011
 DELETE_RESULT = 0x0016
 DELETE_OK = 0x00
 DELETE_FAILED = 0x06
 CREATE_INSUFFICIENT_SLOT = 0x09
 
+MIGRATE_OK = 0x00
+MIGRATE_REFUSED = 0x0A
 NAME_AVAILABLE = 0x00
 NAME_ALREADY_USED = 0x7A
 
@@ -284,6 +288,56 @@ def first_character_id(body):
     return struct.unpack("<I", body[at + 4:at + 8])[0]
 
 
+def select_payload(character_id, pic="."):
+    """The select-character body: a leading u32, the PIC as a string, then the id."""
+    pic = pic.encode()
+    return (struct.pack("<I", 0)
+            + struct.pack("<H", len(pic)) + pic
+            + struct.pack("<I", character_id)
+            + bytes([0]))
+
+
+def migrate_tail_word_forward(raw, key, offset):
+    """The client's in-place transform for one aligned word of the migration tail.
+
+    Transcribed from FUN_141b36f60, independently of crates/net - so agreement between
+    this and the Rust builder is two implementations agreeing, not one checking itself.
+    """
+    m = 0xFFFFFFFF
+    t = (((key ^ raw) + 0x369F144D + (key >> 7)) & m) ^ 0xAAAABBBB
+    return (t - ((offset * key) & m)) & m
+
+
+def check_migration(body, expect_ip, expect_port, expect_id):
+    """Read the migration packet back the way FUN_141b36f60 does."""
+    check("the migration is accepted", body[0] == MIGRATE_OK,
+          "result 0x%02X" % body[0])
+    message_len = struct.unpack("<H", body[1:3])[0]
+    check("the migration message is empty", message_len == 0, "len %d" % message_len)
+    at = 1 + 2 + message_len + 1
+    ip = ".".join(str(b) for b in body[at:at + 4])
+    port = struct.unpack("<H", body[at + 4:at + 6])[0]
+    cid = struct.unpack("<I", body[at + 6:at + 10])[0]
+    check("the migration carries the advertise address", (ip, port) == (expect_ip, expect_port),
+          "%s:%d" % (ip, port))
+    check("the migration names the character we chose", cid == expect_id, "id %d" % cid)
+
+    special = struct.unpack("<I", body[at + 14:at + 18])[0]
+    check("the migration does not ask for SpecialServerInfo.img", special == 0,
+          "field is %#x" % special)
+
+    # The tail: key, length, then `length` obfuscated bytes.
+    tail = at + 22 + 21
+    key, blob_len = struct.unpack("<II", body[tail:tail + 8])
+    raw = struct.unpack("<I", body[tail + 8:tail + 8 + 4])[0]
+    check("the migration tail is one aligned word", blob_len == 4, "length %d" % blob_len)
+    check("the migration body is exactly what the client reads", len(body) == tail + 12,
+          "%d bytes, expected %d" % (len(body), tail + 12))
+    seed = migrate_tail_word_forward(raw, key, 0)
+    check("the seed survives the tail transform", seed == (0xC0DE0000 ^ expect_id),
+          "decoded %#010x, expected %#010x" % (seed, 0xC0DE0000 ^ expect_id))
+
+
 def login(peer):
     """Send the login request and return the four replies."""
     peer.send(CLIENT_LOGIN_REQUEST)
@@ -329,7 +383,9 @@ class Throwaway:
 
         self.log = open(os.path.join(self.dir, "login.log"), "w")
         self.proc = subprocess.Popen(
-            [login_exe, "--db", self.db, "--bind", "127.0.0.1:%d" % self.port],
+            [login_exe, "--db", self.db,
+             "--bind", "127.0.0.1:%d" % self.port,
+             "--advertise", "127.0.0.1:%d" % self.port],
             stdout=self.log, stderr=subprocess.STDOUT)
         for _ in range(50):
             if self.proc.poll() is not None:
@@ -469,6 +525,26 @@ def run(args):
     now = names_in(replies[3][1])
     check("the new character is in the login result", args.name in now,
           "names seen: " + (", ".join(now) or "(none)"))
+
+    # Entering the world, while the character still exists. The client looks the id up in
+    # its own map and skips everything in silence on a miss, so a refusal that says so is
+    # the only way that case is ever visible.
+    peer.send(CLIENT_SELECT_CHARACTER_REQUEST, select_payload(0xDEADBEEF))
+    opcode, body = peer.recv(1)[0]
+    check("selecting a character we do not own is refused, not ignored",
+          opcode == MIGRATE_COMMAND and body[0] == MIGRATE_REFUSED,
+          "0x%04X code 0x%02X" % (opcode, body[0] if body else 0xFF))
+
+    mine = first_character_id(replies[3][1])
+    if mine is None:
+        check("a character id to migrate", False, "the login result listed none")
+    else:
+        peer.send(CLIENT_SELECT_CHARACTER_REQUEST, select_payload(mine))
+        opcode, body = peer.recv(1)[0]
+        check("selecting our own character is answered with a migration",
+              opcode == MIGRATE_COMMAND, "0x%04X" % opcode)
+        if opcode == MIGRATE_COMMAND:
+            check_migration(body, args.host, args.port, mine)
 
     # Delete is one u32 and nothing else - the confirmation is a client-side dialog, so the
     # server cannot tell a confirmed delete from a forged one and ownership is all there is.

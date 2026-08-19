@@ -126,6 +126,15 @@ pub fn serve(config: Config) -> std::io::Result<()> {
 
     let listener = TcpListener::bind(config.bind)?;
     log(&format!("listening on {}", config.bind));
+    log(&format!(
+        "advertising {} to the client on migration{}",
+        config.advertise,
+        if config.advertise.ip().is_loopback() && !config.bind.ip().is_loopback() {
+            " - WARNING: bind is not loopback but advertise is, so an off-box client              will be sent to itself"
+        } else {
+            ""
+        }
+    ));
     log(&format!("database {}", config.db_path.display()));
     log(&format!(
         "world {} id {} with {} channel(s)",
@@ -139,9 +148,14 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     log("NOT AUTHENTICATED: the game socket carries no credentials, so anyone who");
     log("  connects is served as that account. See docs/launcher.md.");
 
+    // The migration makes the client come back on a second connection, so the log has to
+    // say which one a line belongs to - the peer address alone differs only in an ephemeral
+    // port, which is easy to misread when two connections interleave.
+    let mut nth = 0u64;
     for incoming in listener.incoming() {
         match incoming {
             Ok(stream) => {
+                nth += 1;
                 let store = store.clone();
                 let config = config.clone();
                 let account = account.clone();
@@ -150,6 +164,7 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_else(|_| "unknown".to_string());
+                    let peer = format!("#{nth} {peer}");
                     log(&format!("connection from {peer}"));
                     match connection(stream, store, config, account) {
                         Ok(()) => log(&format!("{peer} closed")),

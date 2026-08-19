@@ -20,13 +20,15 @@ use std::sync::Arc;
 use net::opcode::{
     account_info, check_name_result, create_character_failed, create_character_result,
     data_wz_up_to_date, delete_character_result, enter_creation_permitted, login_result,
-    world_list_end, world_list_entry, Character, CreateCharacterRequest, ACCOUNT_INFO, CHARACTER_SLOTS,
+    migrate, migrate_refused, world_list_end, world_list_entry, Character,
+    CreateCharacterRequest, SelectCharacterRequest, ACCOUNT_INFO, CHARACTER_SLOTS,
     CHECK_NAME_RESULT, CLIENT_CHECK_NAME_REQUEST, CLIENT_CREATE_CHARACTER_REQUEST,
     CLIENT_DATA_WZ_REQUEST, CLIENT_DELETE_CHARACTER_REQUEST, CLIENT_ENTER_CREATION_REQUEST,
-    CLIENT_LEAVE_WORLD_REQUEST, CLIENT_LOGIN_REQUEST, CREATE_CANNOT_PROCESS,
-    CREATE_CHARACTER_RESULT, CREATE_INSUFFICIENT_SLOT, DATA_WZ_PATCH,
+    CLIENT_LEAVE_WORLD_REQUEST, CLIENT_LOGIN_REQUEST, CLIENT_SELECT_CHARACTER_REQUEST,
+    CREATE_CANNOT_PROCESS, CREATE_CHARACTER_RESULT, CREATE_INSUFFICIENT_SLOT, DATA_WZ_PATCH,
     DELETE_CHARACTER_RESULT, DELETE_FAILED, DELETE_OK, ENTER_CREATION_RESULT,
-    LOGIN_RESULT, NAME_ALREADY_USED, NAME_AVAILABLE, NAME_NOT_ALLOWED, WORLD_LIST,
+    LOGIN_RESULT, MIGRATE_COMMAND, NAME_ALREADY_USED, NAME_AVAILABLE, NAME_NOT_ALLOWED,
+    WORLD_LIST,
 };
 use store::{Account, NameCheck, Store};
 
@@ -137,6 +139,7 @@ impl Session {
             CLIENT_CHECK_NAME_REQUEST => self.check_name(payload),
             CLIENT_CREATE_CHARACTER_REQUEST => self.create_character(payload),
             CLIENT_DELETE_CHARACTER_REQUEST => self.delete_character(payload),
+            CLIENT_SELECT_CHARACTER_REQUEST => self.select_character(payload),
             _ => Vec::new(),
         }
     }
@@ -315,6 +318,67 @@ impl Session {
             )],
         }
     }
+
+    /// Answer the select-character request: send the client to the game server.
+    ///
+    /// `0x0011` is the migration packet - identified statically, never captured, so this is
+    /// the first thing here built entirely from a decode. See `docs/opcodes.md`.
+    ///
+    /// # Two client-side preconditions this has to respect
+    ///
+    /// The client looks the character id up in its own map (`FUN_14108cae0`) and **skips
+    /// the entire action block on a miss** - no dialog, no reconnect, no clue. So an id
+    /// that was not in the login result produces a silent nothing, which would read as "the
+    /// migration packet is wrong". Refusing here instead makes that case say so out loud.
+    ///
+    /// And the address is the *advertise* address, not the bind address: it goes straight
+    /// into the client's `sockaddr_in`, so it has to be reachable from the client machine.
+    fn select_character(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let refuse = |why: String| {
+            vec![Reply::new(
+                MIGRATE_COMMAND,
+                migrate_refused("Could not enter the world."),
+                why,
+            )]
+        };
+
+        let Some(request) = SelectCharacterRequest::parse(payload) else {
+            return refuse("REFUSED - select-character body has no character id".to_string());
+        };
+        let id = request.character_id;
+
+        let characters = match self.store.characters_for(self.account.id, self.config.world.id) {
+            Ok(cs) => cs,
+            Err(e) => return refuse(format!("REFUSED - could not read the character list: {e}")),
+        };
+        let Some(chosen) = characters.into_iter().find(|c| c.id == id) else {
+            return refuse(format!("REFUSED - id {id} is not on this account"));
+        };
+
+        let addr = self.config.advertise;
+        let seed = migration_seed(id);
+        vec![Reply::new(
+            MIGRATE_COMMAND,
+            migrate(addr, id, seed),
+            format!(
+                "migrate {:?} (id {id}) to {addr}, seed {seed:#010x} -                  NOT a session token, see migration_seed",
+                chosen.name
+            ),
+        )]
+    }
+}
+
+/// The `u32` handed to the client in the migration packet, which it stashes at
+/// `DAT_143ac80b0` and sends back in outbound `0x007D` on the new connection.
+///
+/// **This is a placeholder, not a session token.** It is derived from the character id so
+/// that the first migration run can be read straight off the log: whatever comes back in
+/// `0x007D` either matches this or it does not, and that one comparison verifies the whole
+/// tail decode. A real token has to be random, single-use, and stored - which needs a
+/// registry shared between connections, and that belongs with proper sessions rather than
+/// here. Say "placeholder" when reporting what this proves.
+fn migration_seed(character_id: u32) -> u32 {
+    0xC0DE_0000 ^ character_id
 }
 
 /// Read a `u16`-length-prefixed string from the front of a payload.
@@ -328,6 +392,20 @@ fn read_str(payload: &[u8]) -> Option<String> {
 /// request. Nothing here answers it - it is decoded only so the log can show what the
 /// client thinks its identity is, which is the open question for multi-account support.
 const CLIENT_SESSION_IDENTITY: u16 = 0x0073;
+
+/// **The hand-off the migration packet is supposed to produce**, built by `FUN_1415d10e0`.
+///
+/// The `u32` seed in a [`MIGRATE_COMMAND`] is stashed at `DAT_143ac80b0` (XORed with a
+/// replicated random byte, unmasked with `DAT_143ac80b8`) and written into this packet by
+/// `FUN_1415deae0` when the client opens the new connection. So `0x007D` is where a
+/// server-supplied token would come back - and it is the check on the whole `0x0011`
+/// decode: the seed comes home or it does not.
+///
+/// The layout is **not** decoded. `FUN_1415d10e0` writes 16 bytes, two `u8`, a `u32`, and
+/// the launch mode from `session+0x68` before it reaches the key/length/payload block, and
+/// that prefix has not been read carefully enough to index. The body hex in the log is the
+/// instrument until a real one is captured.
+const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 
 /// A human-readable note about a packet we do not answer, or `None` if there is nothing
 /// worth saying. Pure, so the interesting decode is testable without a socket.
@@ -346,6 +424,12 @@ const CLIENT_SESSION_IDENTITY: u16 = 0x0073;
 /// address and a machine id - recorded, never authorised on, since the client machine is
 /// not fixed.
 pub fn describe(opcode: u16, payload: &[u8]) -> Option<String> {
+    if opcode == CLIENT_MIGRATION_HELLO {
+        return Some(format!(
+            "MIGRATION HELLO: the client reconnected after 0x0011 and sent {} bytes.              The migration seed is in here, obfuscated with the u32 before its length -              layout not yet decoded, read the body hex. See docs/opcodes.md.",
+            payload.len()
+        ));
+    }
     if opcode != CLIENT_SESSION_IDENTITY {
         return None;
     }
@@ -456,6 +540,7 @@ mod tests {
             (CLIENT_LEAVE_WORLD_REQUEST, vec![]),
             (CLIENT_ENTER_CREATION_REQUEST, vec![0x01, 0x00, 0x2e]),
             (CLIENT_CHECK_NAME_REQUEST, name_request("Hello")[2..].to_vec()),
+            (CLIENT_SELECT_CHARACTER_REQUEST, select_payload(999)),
         ] {
             let replies = s.handle(&request(opcode, &payload));
             assert!(!replies.is_empty(), "opcode 0x{opcode:04X} went unanswered");
@@ -750,6 +835,95 @@ mod tests {
         assert!(describe(CLIENT_LOGIN_REQUEST, &[]).is_none());
         // And a truncated identity must not panic.
         assert!(describe(CLIENT_SESSION_IDENTITY, &[1, 2]).is_none());
+    }
+
+    /// The select-character body, as the client sends it: a leading `u32`, the PIC as a
+    /// length-prefixed string, then the id.
+    fn select_payload(character_id: u32) -> Vec<u8> {
+        let mut body = 0u32.to_le_bytes().to_vec();
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.push(b'.');
+        body.extend_from_slice(&character_id.to_le_bytes());
+        body.extend_from_slice(&[0]);
+        body
+    }
+
+    #[test]
+    fn selecting_a_character_migrates_it_to_the_advertise_address() {
+        let mut s = session();
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].opcode, MIGRATE_COMMAND);
+        assert_eq!(replies[0].body, migrate(s.config.advertise, id, migration_seed(id)));
+    }
+
+    /// The address in the packet is the one the *client* must reach, so it tracks
+    /// `advertise` and not `bind`. Getting this backwards sends the client to itself.
+    #[test]
+    fn the_migration_carries_advertise_rather_than_bind() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let config = Config {
+            bind: "0.0.0.0:8484".parse().unwrap(),
+            advertise: "192.168.1.50:8484".parse().unwrap(),
+            ..Config::default()
+        };
+        let mut s = Session::new(store, Arc::new(config), account);
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let body = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)))
+            .remove(0)
+            .body;
+        assert_eq!(&body[4..8], &[192, 168, 1, 50]);
+    }
+
+    /// An id the login result never sent makes the client skip its whole action block in
+    /// silence, so the server has to be the one that says something.
+    #[test]
+    fn selecting_a_character_that_is_not_on_the_account_is_refused_out_loud() {
+        let mut s = session();
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+
+        let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(9999)));
+        assert_eq!(replies.len(), 1, "a refusal is still an answer");
+        assert_eq!(replies[0].opcode, MIGRATE_COMMAND);
+        assert_eq!(replies[0].body[0], net::opcode::MIGRATE_REFUSED);
+        assert!(replies[0].what.contains("not on this account"), "{}", replies[0].what);
+    }
+
+    #[test]
+    fn one_account_cannot_migrate_into_another_accounts_character() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("otter", "correct horse battery").unwrap();
+        store.create_account("owl", "correct horse battery").unwrap();
+        let otter = store.get_account("otter").unwrap().unwrap();
+        let owl = store.get_account("owl").unwrap().unwrap();
+
+        let config = Arc::new(Config::default());
+        let mut a = Session::new(store.clone(), config.clone(), otter);
+        a.handle(&create_request("AlicesChar", 30030, &STYLE));
+        let id = a.store.characters_for(a.account.id, 0).unwrap()[0].id;
+
+        let mut b = Session::new(store, config, owl);
+        let replies = b.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        assert_eq!(replies[0].body[0], net::opcode::MIGRATE_REFUSED);
+    }
+
+    /// The refusal must carry the byte the handler reads before it looks at the code, or
+    /// the client faults instead of showing the dialog.
+    #[test]
+    fn a_migration_refusal_is_long_enough_for_the_reads_before_the_gate() {
+        let mut s = session();
+        let body = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(1)))
+            .remove(0)
+            .body;
+        let message_len = u16::from_le_bytes([body[1], body[2]]) as usize;
+        assert_eq!(body.len(), 1 + 2 + message_len + 1);
     }
 
     #[test]

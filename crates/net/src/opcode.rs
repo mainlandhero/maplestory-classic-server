@@ -998,6 +998,161 @@ pub fn create_character_failed(code: u8) -> Vec<u8> {
     vec![code]
 }
 
+/// The client asking to enter the world with one character. Captured twice, with ids 203
+/// and 204, 73 bytes each:
+///
+/// ```text
+/// u32  0
+/// str  "."          a placeholder PIC
+/// u32  characterId
+/// u8
+/// str  MAC list
+/// str  machine id
+/// ```
+///
+/// Unanswered, this is what leaves the client sitting on "Connecting..." forever.
+pub const CLIENT_SELECT_CHARACTER_REQUEST: u16 = 0x0078;
+
+/// Where the character id sits in a [`CLIENT_SELECT_CHARACTER_REQUEST`], given the leading
+/// `u32` and a one-character PIC string. Parsed rather than assumed - see
+/// [`SelectCharacterRequest::parse`].
+const SELECT_PIC_AT: usize = 4;
+
+/// The client's select-character request, parsed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectCharacterRequest {
+    pub character_id: u32,
+}
+
+impl SelectCharacterRequest {
+    /// Walk the leading `u32` and the PIC string rather than indexing a fixed offset: the
+    /// PIC is a placeholder `"."` today but it is a real string field, so a fixed offset
+    /// would break the moment a PIC is set.
+    pub fn parse(payload: &[u8]) -> Option<Self> {
+        let pic_len = payload
+            .get(SELECT_PIC_AT..SELECT_PIC_AT + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)?;
+        let at = SELECT_PIC_AT + 2 + pic_len;
+        let id = payload.get(at..at + 4)?;
+        Some(SelectCharacterRequest {
+            character_id: u32::from_le_bytes([id[0], id[1], id[2], id[3]]),
+        })
+    }
+}
+
+/// **The migration packet** - `case 0x11` of the login stage, `FUN_141b36f60`.
+///
+/// Identified statically 2026-08-19 with no client run. It is the only handler in that
+/// switch that builds a `sockaddr_in` (`htons` occurs exactly once across all fourteen
+/// decompiled case handlers, and it is here), and on success it transitions to the string
+/// `GameIn`. Full decode, including the obfuscated tail, in `docs/opcodes.md`.
+pub const MIGRATE_COMMAND: u16 = 0x0011;
+
+/// Migration accepted. The result byte goes through `FUN_141b267c0`, the same gate as
+/// [`ACCOUNT_INFO`] and [`LOGIN_RESULT`], which returns "proceed" for its `default` case -
+/// and `0` lands in the default.
+pub const MIGRATE_OK: u8 = 0;
+
+/// Refuse a migration. **Not any non-zero value**, for three separate reasons the gate and
+/// its caller give:
+///
+/// * `-1`, `6`, `8` and `9` raise `loginTroubleAskSupport` and then **fall through to the
+///   default**, so the client shows an error *and migrates anyway*.
+/// * `0x0F` (`notRegisteredAccount`) opens a browser at a Nexon URL.
+/// * `0x0C`, `0x22`, `0x27`, `0x37`, `0x43`, `0x80` and `0x8E` are intercepted by
+///   `FUN_141b36f60` *before* the gate and return without a message.
+///
+/// `0x0A` raises `loginTimeout` and `break`s, so the gate returns 0 and the handler stops.
+pub const MIGRATE_REFUSED: u8 = 0x0A;
+
+/// The key for the migration packet's obfuscated tail. Zero is a legal key and makes the
+/// transform a fixed one; nothing in the client requires it to vary.
+const MIGRATE_TAIL_KEY: u32 = 0;
+
+/// Undo one word of the client's in-place tail transform.
+///
+/// `FUN_141b36f60` walks the tail in aligned `u32` steps and computes
+///
+/// ```text
+/// plain = (((key ^ raw) + 0x369F144D + (key >> 7)) ^ 0xAAAABBBB) - (4n * key)
+/// ```
+///
+/// for the word at byte offset `4n`. This is that, inverted. Everything in it comes from
+/// the packet itself, so there is no key material to discover.
+fn migrate_tail_word(plain: u32, key: u32, offset: u32) -> u32 {
+    let t = (plain.wrapping_add(offset.wrapping_mul(key))) ^ 0xAAAA_BBBB;
+    t.wrapping_sub(0x369F_144D).wrapping_sub(key >> 7) ^ key
+}
+
+/// What the client computes from a tail word - the forward direction, so a test can prove
+/// [`migrate_tail_word`] inverts it rather than asserting a hand-computed constant.
+#[cfg(test)]
+fn migrate_tail_word_forward(raw: u32, key: u32, offset: u32) -> u32 {
+    let t = (key ^ raw)
+        .wrapping_add(0x369F_144D)
+        .wrapping_add(key >> 7);
+    (t ^ 0xAAAA_BBBB).wrapping_sub(offset.wrapping_mul(key))
+}
+
+/// Body of a [`MIGRATE_COMMAND`] that sends the client to `addr` as `character_id`.
+///
+/// `seed` is the `u32` the client stashes at `DAT_143ac80b0` (XORed with a replicated
+/// random byte) and **sends back in outbound `0x007D` on the new connection** - so it is
+/// the server's own hand-off token, not something the client invents. That prediction is
+/// the cheapest possible check on this whole decode.
+///
+/// The layout is in `docs/opcodes.md`. Two fields are deliberately zero rather than
+/// configurable: the second of the three `u32` after the character id makes the client load
+/// `Etc/SpecialServerInfo.img` when non-zero, and the flags byte has two bits the client
+/// reads separately.
+pub fn migrate(addr: std::net::SocketAddrV4, character_id: u32, seed: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(59);
+    out.push(MIGRATE_OK);
+    out.extend_from_slice(&0u16.to_le_bytes()); // message, empty
+    out.push(0);
+
+    // Straight into sockaddr_in.sin_addr, which is network order - so the octets go on the
+    // wire in order. The port is read as a plain u16 and htons()'d by the client.
+    out.extend_from_slice(&addr.ip().octets());
+    out.extend_from_slice(&addr.port().to_le_bytes());
+
+    out.extend_from_slice(&character_id.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // -> DAT_143ac2040
+    out.extend_from_slice(&0u32.to_le_bytes()); // -> DAT_143ac2044: SpecialServerInfo.img
+    out.extend_from_slice(&0u32.to_le_bytes()); // -> _DAT_143ac2160
+    out.push(0); // flags: bit 0 and bit 1 are read separately
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.push(0);
+    out.push(0); // read and discarded
+    out.extend_from_slice(&0u32.to_le_bytes()); // read and discarded
+    out.push(0); // read and discarded
+    out.push(0); // read and discarded
+    out.extend_from_slice(&[0u8; 8]);
+
+    // The tail: key, length, then `length` obfuscated bytes. Four is the smallest length
+    // that covers the client's one 4-byte read, and it leaves no trailing partial word -
+    // so only the aligned-word branch of the transform runs.
+    out.extend_from_slice(&MIGRATE_TAIL_KEY.to_le_bytes());
+    out.extend_from_slice(&4u32.to_le_bytes());
+    out.extend_from_slice(&migrate_tail_word(seed, MIGRATE_TAIL_KEY, 0).to_le_bytes());
+    out
+}
+
+/// A refused [`MIGRATE_COMMAND`]: the result byte, a message for the dialog, and the third
+/// byte.
+///
+/// The third `u8` is **not optional on the refusal path**. `FUN_141b36f60` reads it before
+/// it looks at the result code at all, and the client's readers throw on underrun - so a
+/// two-field refusal would fault instead of showing the dialog.
+pub fn migrate_refused(message: &str) -> Vec<u8> {
+    let mut out = vec![MIGRATE_REFUSED];
+    let bytes = message.as_bytes();
+    out.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+    out.extend_from_slice(bytes);
+    out.push(0);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1519,5 +1674,97 @@ mod tests {
         assert_eq!(hex(&body)[..head.len()], head);
         // The name sits 12 bytes into the record, which starts at byte 50.
         assert_eq!(&body[50 + 12..50 + 17], b"Maple");
+    }
+
+    /// The tail transform has to invert for every key, not just the zero we send. If this
+    /// ever fails, the client reads a different seed than the one we meant.
+    #[test]
+    fn migrate_tail_word_inverts_the_clients_transform() {
+        for key in [0u32, 1, 0x369F_144D, 0xAAAA_BBBB, 0xFFFF_FFFF, 0x1234_5678] {
+            for offset in [0u32, 4, 8, 0x100] {
+                for plain in [0u32, 1, 0xDEAD_BEEF, 0xFFFF_FFFF] {
+                    let raw = migrate_tail_word(plain, key, offset);
+                    assert_eq!(
+                        migrate_tail_word_forward(raw, key, offset),
+                        plain,
+                        "key={key:#x} offset={offset} plain={plain:#x}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every field the client reads must be present, or `FUN_1406e9170` underruns and
+    /// throws. 59 bytes is the whole read sequence added up.
+    #[test]
+    fn migrate_body_is_the_length_the_client_reads() {
+        let body = migrate("127.0.0.1:8484".parse().unwrap(), 203, 0);
+        assert_eq!(body.len(), 59);
+    }
+
+    /// The address goes into `sin_addr` unconverted, so the octets are in order on the
+    /// wire; the port is a plain little-endian `u16` the client htons()es itself.
+    #[test]
+    fn migrate_carries_the_address_the_client_will_connect_to() {
+        let body = migrate("10.0.0.7:9001".parse().unwrap(), 0x0000_00CB, 0);
+        assert_eq!(&body[4..8], &[10, 0, 0, 7], "octets in order");
+        assert_eq!(&body[8..10], &9001u16.to_le_bytes(), "port little-endian");
+        assert_eq!(&body[10..14], &0x0000_00CBu32.to_le_bytes(), "character id");
+    }
+
+    /// The second of the three `u32` after the character id makes the client go and load
+    /// `Etc/SpecialServerInfo.img`. It must stay zero.
+    #[test]
+    fn migrate_does_not_ask_for_special_server_info() {
+        let body = migrate("127.0.0.1:8484".parse().unwrap(), 203, 0xAAAA_AAAA);
+        assert_eq!(&body[14..26], &[0u8; 12], "the three u32 after the id are all zero");
+    }
+
+    /// The seed is what the client stashes and sends back in `0x007D`. It has to survive
+    /// the tail transform, so read it back the way the client will.
+    #[test]
+    fn migrate_seed_survives_the_tail_transform() {
+        let seed = 0x1BAD_C0DE;
+        let body = migrate("127.0.0.1:8484".parse().unwrap(), 203, seed);
+        let key = u32::from_le_bytes(body[47..51].try_into().unwrap());
+        let len = u32::from_le_bytes(body[51..55].try_into().unwrap());
+        let raw = u32::from_le_bytes(body[55..59].try_into().unwrap());
+        assert_eq!(key, 0, "we send a zero key");
+        assert_eq!(len, 4, "one aligned word, no partial tail");
+        assert_eq!(migrate_tail_word_forward(raw, key, 0), seed);
+    }
+
+    /// A refusal still has to carry the third byte: the handler reads it before it looks
+    /// at the result code.
+    #[test]
+    fn migrate_refusal_carries_the_byte_read_before_the_gate() {
+        let body = migrate_refused("not your character");
+        assert_eq!(body[0], MIGRATE_REFUSED);
+        assert_eq!(body.len(), 1 + 2 + "not your character".len() + 1);
+        assert_eq!(*body.last().unwrap(), 0);
+    }
+
+    /// The PIC is a real string field even though it is a placeholder ".", so the id is
+    /// found by walking it, not by a fixed offset.
+    #[test]
+    fn select_character_request_walks_the_pic() {
+        let mut body = 0u32.to_le_bytes().to_vec();
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.push(b'.');
+        body.extend_from_slice(&204u32.to_le_bytes());
+        assert_eq!(SelectCharacterRequest::parse(&body).unwrap().character_id, 204);
+
+        // A longer PIC moves the id and must still be found.
+        let mut body = 0u32.to_le_bytes().to_vec();
+        body.extend_from_slice(&6u16.to_le_bytes());
+        body.extend_from_slice(b"123456");
+        body.extend_from_slice(&205u32.to_le_bytes());
+        assert_eq!(SelectCharacterRequest::parse(&body).unwrap().character_id, 205);
+    }
+
+    #[test]
+    fn select_character_request_rejects_a_short_body() {
+        assert_eq!(SelectCharacterRequest::parse(&[0, 0, 0, 0, 1, 0, b'.']), None);
+        assert_eq!(SelectCharacterRequest::parse(&[]), None);
     }
 }

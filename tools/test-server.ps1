@@ -150,6 +150,9 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
     -WindowStyle Hidden `
     -ArgumentList @(
         '--db', "`"$Database`"", '--bind', "127.0.0.1:$Port",
+        # The client reconnects to whatever the migration packet names, so the advertise
+        # address has to track -Port. Loopback here; a homelab server needs its LAN address.
+        '--advertise', "127.0.0.1:$Port",
         '--account', $Account, '--display-name', "`"$DisplayName`"", '--world', $World
     ) `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"

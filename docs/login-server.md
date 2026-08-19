@@ -214,11 +214,60 @@ Entering the world sends three packets nothing answers yet. First read, from one
 ```
 
 Confirmed twice, with different characters: id 203 on one run and **204** (`cc000000`,
-`TestCharD`) on the next. `0x0078` carrying the character id makes it the
-select-character request, and its reply the
-migration packet - the `0x0011` candidate, which is Stage 4 and where an *advertise* address
-would first be needed (`docs/deployment.md`). The client sat on "Connecting..." because
-nothing answered, which is expected with no channel server.
+`TestCharD`) on the next. The client sat on "Connecting..." because nothing answered.
+
+## Answered: `0x0078` now gets a migration
+
+**Built 2026-08-19 from a decode, not from a capture** - the first packet here to be
+written that way. `0x0011` is the migration packet; the identification and the full field
+list are in `docs/opcodes.md`, and the short version is that `case 0x11` is the only
+handler in the login stage's switch that builds a `sockaddr_in`, and it then transitions to
+the string `GameIn`.
+
+`Session::select_character` parses the request by **walking** the PIC string rather than
+indexing past it - the PIC is a placeholder `"."` today but it is a real length-prefixed
+field, so a fixed offset would break the first time one is set. It then checks the id is on
+the account and answers `0x0011`.
+
+### Two client-side preconditions the server has to respect
+
+**An id the login result never sent is not an error the client shows.** `FUN_14108cae0` is a
+red-black-tree find over the client's own character map, and on a miss the caller's
+`*record == id` test fails and the **entire action block is skipped** - no dialog, no
+reconnect, nothing. That failure would look exactly like "the migration packet is wrong",
+so the server refuses ids it does not own and says so in the log.
+
+**A refusal cannot use just any non-zero code.** The result byte goes through
+`FUN_141b267c0`, the same gate as `0x0000` and `0x0010`, and the gate's `default` case is
+*proceed*. Codes `-1`, `6`, `8` and `9` raise `loginTroubleAskSupport` and then **fall
+through to the default**, so they show an error and migrate anyway; `0x0F` opens a browser
+at a Nexon URL; and `0x0C`, `0x22`, `0x27`, `0x37`, `0x43`, `0x80` and `0x8E` are caught by
+`FUN_141b36f60` before the gate and return silently. `MIGRATE_REFUSED` is `0x0A`
+(`loginTimeout`), which `break`s. A refusal also has to carry the third `u8`, because the
+handler reads it before it looks at the code at all.
+
+### The advertise address
+
+`Config::advertise` is new and is deliberately **not** `bind`. The four octets go straight
+into the client's `sockaddr_in`, so the address has to be reachable from the *client*
+machine. On loopback the two are the same; the moment the server moves to the homelab they
+are not, and a server that advertised its bind address would send the client to itself.
+`maplecw-login --advertise ADDR`, and `tools/test-server.ps1` tracks `-Port`. It is typed
+`SocketAddrV4` so an IPv6 address fails at the type level rather than on the wire.
+
+### What the run will actually prove
+
+The migration packet hands the client a `u32` seed. `FUN_141b36f60` stashes it at
+`DAT_143ac80b0`, and the only thing that reads it is `FUN_1415d10e0` - **the builder for
+outbound `0x007D`**, which the client sends on the new connection. So the prediction is
+concrete: after the migration the client should connect a second time and send `0x007D`
+with our seed inside it. `describe()` names that packet in the log, and the server now
+numbers connections so the second one is unmistakable.
+
+The seed is `migration_seed(character_id)`, which is `0xC0DE0000 ^ id` - **a placeholder,
+not a session token**, chosen so the first run can be read straight off the log. A real
+token has to be random, single-use and stored, which needs a registry shared between
+connections and belongs with proper sessions.
 
 ## Delete
 
