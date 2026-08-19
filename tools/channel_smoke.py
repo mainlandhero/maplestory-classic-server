@@ -205,6 +205,13 @@ try:
         req = bytes(req[:22]) + name + struct.pack("<HH", 1107, 365) + bytes(3)
         send(transport.packet(0x00D1, req))
 
+        # 0x0151, the quest request - the packet the client sends when an NPC is clicked.
+        # These are the exact 17 bytes the owner's client sent for Heena on map 1, out of
+        # research/fixtures/npcs-visible-quests-clicked-world.log. Field 1 is a QUEST id and
+        # field 2 the NPC template; the first was once recorded as our own object id, and
+        # our own logs disproved it.
+        send(transport.packet(0x0151, bytes.fromhex("01e8030000010000000c046d0100000000")))
+
     # Anything coming back is on the K chain. There is nothing to read yet; this decodes
     # whatever appears so that the first real reply is checked the moment it exists.
     # The channel is ASYMMETRIC: we send AES and receive the byte subtract from the
@@ -278,8 +285,36 @@ if PROBE:
     check("no UserAvatarModified is sent - 0x0138 is dead code in the client",
           not [r for r in replies if r["opcode"] == AVATAR])
 
-    check("the probe answered all four requests", len(replies) == 5,
+    check("the probe answered every request", len(replies) == 6,
           "%d replies: %s" % (len(replies), [hex(r["opcode"]) for r in replies]))
+
+    # ---- the NPC the client clicked
+    #
+    # Always answer: an unanswered request freezes the client's whole UI. This is text on
+    # screen only - no quest-result packet is known, so no state advances.
+    SCRIPT_MESSAGE = 0x055B
+    says = [r for r in replies if r["opcode"] == SCRIPT_MESSAGE]
+    check("the quest request is answered with a script message", len(says) == 1,
+          "%d" % len(says))
+    if says:
+        sb = says[0]["body"][2:]
+        # The speaker is at head offset 5 and must be the template the CLIENT named - by
+        # construction a real Npc.wz id. Zero is not one, and a template the client did not
+        # send would be a guess.
+        speaker = struct.unpack_from("<I", sb, 5)[0]
+        check("the script speaks as the NPC template the client named", speaker == 1,
+              "template %d" % speaker)
+        check("hasOverride is 0, so no u32 follows it and the body does not shift",
+              sb[9] == 0, "%d" % sb[9])
+        # messageType indexes a 71-entry jump table; 0 is Say. Anything else reads a
+        # different body, and there is no resync point after it.
+        check("the message type is 0, Say", sb[10] == 0, "type %d" % sb[10])
+        text_len = struct.unpack_from("<H", sb, 18)[0]
+        check("the text is a u16 BYTE count, and the body is exactly long enough",
+              len(sb) == 20 + text_len + 6, "%d bytes, text %d" % (len(sb), text_len))
+        check("the text is not empty - an empty Say puts nothing on screen",
+              text_len > 0, "%d" % text_len)
+
     check("three are SetField - the migration, the /map command and the portal",
           len(set_fields) == 3, "%d" % len(set_fields))
     if len(set_fields) == 3:

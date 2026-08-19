@@ -79,6 +79,26 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00A6 => "CLIENT_STATUS_CODE",
         0x00BF => "CLIENT_TITLE_SCREEN_READY",
 
+        // The channel connection. Each of these was named by the CLIENT identifying its own
+        // request - the owner used a feature and the capture showed what went out - which has now
+        // cost no static analysis at all and has never been wrong. The exception is 0x0151:
+        // it was first recorded as "NPC click" with its first u32 read as our object id, and
+        // our own logs disproved that (every map's first NPC is object id 1000, yet the
+        // client answered 1000/1002/1003/1005). It is the quest request and that field is a
+        // quest id. See research/npc-dialogue.md.
+        0x00D1 => "CLIENT_TRANSFER_FIELD (portal; 0xFFFFFFFF target means resolve the name)",
+        0x00DC => "CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body)",
+        0x00E7 => "CLIENT_CHAT (u32 tick, u16-length text, u8 tab)",
+        0x0151 => "CLIENT_QUEST_REQUEST (u8 action, u32 questId, u32 npcTemplateId, shape-dependent tail)",
+        0x0182 => "CLIENT_PARTY_CREATE",
+        0x0238 => "CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField)",
+        0x024D => "CLIENT_FIRST_FIELD_ENTRY_2 (empty; built by FUN_142caa4e0 alongside 0x0238)",
+
+        // Outbound, so that a run's log does not read as if the server were guessing.
+        0x01A0 => "SET_FIELD",
+        0x044F => "NPC_ENTER_FIELD",
+        0x055B => "SCRIPT_MESSAGE",
+
         // 0x00BC is deliberately NOT named. Three u32 of 1033 look like an en-US LCID
         // triple, but that is a guess about a value rather than a reading of code, and the
         // builder could not be found. The negative is trustworthy for a reason worth
@@ -98,7 +118,12 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
 /// this exemption would have quietly re-broken the instrument that found
 /// `INVALID_CLIENT_VERSION` - the truncation is what hid it for weeks in the first place.
 fn never_truncate(opcode: u16) -> bool {
-    matches!(opcode, 0x008F | 0x0090 | 0x0091)
+    // 0x0151's trailer is shape-dependent - tag plus remaining length is all there is to go
+    // on, because the client sends no marker for it - so its bytes are still evidence even
+    // though its head is settled. 0x01A0 is the character record, which has no length prefix
+    // and no resync point; if a run ever desynchronises, the whole packet is the only thing
+    // that will say where.
+    matches!(opcode, 0x008F | 0x0090 | 0x0091 | 0x0151 | 0x01A0)
 }
 
 /// One packet as a log line body: hex, truncated only when we both know the opcode and do

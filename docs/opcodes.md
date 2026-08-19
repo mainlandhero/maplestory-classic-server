@@ -542,9 +542,10 @@ instrument this project has.
 
 | opcode | name | body | status |
 |---|---|---|---|
-| `0x01A0` | `SetField` | 33-byte head, three `u32`s, then a 224-byte character record | **works** - puts a character on a map. `research/msexe-stage-setfield.md`, `research/charrecord-flag7.md` |
+| `0x01A0` | `SetField` | 33-byte head, three `u32`s, then the character record - **235 bytes undressed, 743 wearing four items** | **works** - puts a character on a map. Since 2026-08-19 it also carries the equipped list, which is built but **not yet confirmed on screen**. `research/msexe-stage-setfield.md`, `research/charrecord-flag7.md`, `research/naked-character.md` |
 | `0x044F` | `NpcEnterField` | fixed **64 bytes** | **works** - NPCs on screen. Two of its fields being zero (`enabled`, `alpha`) made every NPC invisible while the layout was perfect. `research/npc-spawn.md` |
-| `0x0138` | `UserAvatarModified` | `u32` character id, then the compact avatar look | **dead end for the local character** - the handler reaches its apply but the apply's loop never runs. Measured. |
+| `0x055B` | `ScriptMessage` | 14-byte head, then per message type; type 0 `Say` is 26 bytes plus the text | **built 2026-08-19, unconfirmed on screen** - answers `0x0151`. Never send one with or just before a `SetField`: field entry runs `FUN_142caa4e0`, which resets the script manager and tears the dialog down silently. `research/npc-dialogue.md` |
+| `0x0138` | `UserAvatarModified` | `u32` character id, then the compact avatar look | **dead code in the client, and no longer sent.** The apply is guarded by a call to `0x1407f5ce0`, which is three bytes - `33 c0 c3`, `xor eax,eax; ret` - then `TEST/JZ`, so the branch is always taken. **Corrected 2026-08-19:** this row used to say "the handler reaches its apply but the apply's loop never runs. Measured." The measurement (a watch that never fired) was right; the *explanation* was wrong, and the real one needs no run. `research/naked-character.md` §5.1 |
 | `0x03C6` | mob enter field | `u8, u32 objectId, u8, u32 templateId, u8`, a 20-byte block, then a **variable-length** movement path | **not built** - `research/mob-spawn.md` |
 
 ### Outbound - what the client sends
@@ -555,7 +556,7 @@ instrument this project has.
 | `0x00D1` | transfer field (portal) | fully decoded, `research/transfer-field-request.md` | yes |
 | `0x00DC` | **field entered** | empty. **Once per `SetField`, every time** - this is the per-field marker | yes, with NPCs |
 | `0x0238` / `0x024D` | entered the world | empty. **First field entry only**, never again - not a per-field marker | no |
-| `0x0151` | **quest request** | `u8 action, u32 questId, u32 npcTemplateId, [i16 x, i16 y], [u32 selection]`. Builder `FUN_141f0e4c0`. **Not an "NPC click", and the first `u32` is a quest id, not an object id** - see the retraction below | **no** - this is why quests do nothing |
+| `0x0151` | **quest request** | `u8 action, u32 questId, u32 npcTemplateId, [i16 x, i16 y], [u32 selection]`. Builder `FUN_141f0e4c0`. **Not an "NPC click", and the first `u32` is a quest id, not an object id** - see the retraction below | **yes, since 2026-08-19** - answered with a `0x055B` Say, so the NPC speaks. That is text on screen and nothing more: no quest-result packet has been found, so **no quest state advances** |
 | `0x00E7` | **chat** | `u32`, `u16`-length string, `u8` | no |
 | `0x0082` | **leave world** - BOTH "Choose another world" and "Back" on the character screen send this, empty body | | **yes**, already |
 | `0x0182` | **party create** | 68 bytes carrying a length-prefixed party name | no |

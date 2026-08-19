@@ -172,6 +172,9 @@ impl Session {
             CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
             CLIENT_FIELD_ENTERED => return self.on_field_entered(),
             net::opcode::CLIENT_CHAT => return self.on_chat(body.get(2..).unwrap_or(&[])),
+            net::script::CLIENT_QUEST_REQUEST => {
+                return self.on_quest_request(body.get(2..).unwrap_or(&[]))
+            }
             _ => return Vec::new(),
         }
         // Always answer. An unanswered packet freezes the client's whole UI - every
@@ -232,6 +235,52 @@ impl Session {
         // trigger and no timing would ever have made it work, so sending it was noise in
         // the log. See net::opcode::USER_AVATAR_MODIFIED and research/naked-character.md.
         out
+    }
+
+    /// Make the NPC the client just asked about say something.
+    ///
+    /// **`0x0151` is the quest request, not an NPC click.** Its first `u32` is a *quest id*
+    /// and its second is the NPC **template** id - the same template the server sent in
+    /// `NpcEnterField`. An earlier note in `STATUS.md` read the first field as our own
+    /// object id; our own logs disprove it, because every map's first NPC is given object
+    /// id 1000 and the client answered 1000/1002/1003/1005 for four different NPCs, the
+    /// same values in both sessions despite opposite visit orders. Full working:
+    /// `research/npc-dialogue.md`.
+    ///
+    /// **The speaker is the template the client named**, which is what makes this safe: it
+    /// is by construction a real `Npc.wz` id, and a bad one costs the portrait rather than
+    /// faulting.
+    ///
+    /// **This is text on screen, not a quest.** No quest-result packet has been found, so
+    /// nothing here advances any state - accepting the same quest twice will show the same
+    /// message. Say so in the message rather than letting the screen imply otherwise.
+    ///
+    /// **Ordering.** A script must never be sent with or just before a `SetField`: field
+    /// entry runs `FUN_142caa4e0`, which resets the script manager and tears the dialog
+    /// down silently. This path is a reply to a click, which is long after field entry, so
+    /// it is clear - but the constraint is why this does not simply fire on arrival.
+    fn on_quest_request(&mut self, body: &[u8]) -> Vec<Reply> {
+        // Always answer. An unanswered request freezes the client's whole UI, so a body
+        // that does not parse still gets a reply - parse_quest_request only returns None
+        // when the fixed 9-byte head does not fit, and then there is no template to speak
+        // as, which is the one case where silence is all there is.
+        let Some(req) = net::script::parse_quest_request(body) else {
+            return Vec::new();
+        };
+        let text = format!(
+            "Quest {} is not implemented on this server yet. Nothing you do here will \
+             advance it - there is no quest state at all.",
+            req.quest_id
+        );
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(req.npc_template_id, &text, false, false),
+            what: format!(
+                "ScriptMessage Say from NPC template {} for quest {} (action {}) - text on \
+                 screen only. No quest-result packet is known, so no state advances.",
+                req.npc_template_id, req.quest_id, req.action
+            ),
+        }]
     }
 
     /// Move a character to a map and tell the client, persisting the move.
@@ -515,6 +564,50 @@ mod tests {
         assert_eq!(r.portal_name, "out00", "map 1's portal 4, from the WZ");
         assert_eq!(r.position, Some((1107, 365)), "y is exactly the portal's own y");
 
+    }
+
+    /// The real `0x0151` the owner's client sent when they clicked Heena on map 1, from
+    /// `research/fixtures/npcs-visible-quests-clicked-world.log`. A parser tested against
+    /// invented bytes proves only that it agrees with itself.
+    ///
+    /// This is also the test that pins the retraction: field 1 is a **quest id**, not the
+    /// object id we assigned. Every map's first NPC gets object id 1000 and the client
+    /// answered 1000/1002/1003/1005 for four NPCs in the same order across two sessions
+    /// with opposite visit orders, so it cannot be reading our numbering back.
+    #[test]
+    fn a_clicked_npc_is_answered_with_something_to_say() {
+        let body = hex("01e8030000010000000c046d0100000000");
+        assert_eq!(body.len(), 17, "the capture is 17 bytes");
+        let req = net::script::parse_quest_request(&body).expect("the captured body parses");
+        assert_eq!(req.action, 1);
+        assert_eq!(req.quest_id, 1000, "field 1 is a quest id, not our object id");
+        assert_eq!(req.npc_template_id, 1, "field 2 is the template we sent in 0x044F");
+
+        let (mut s, store, account_id, id) = session();
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        s.claim_for_character(id);
+
+        let replies = s.on_quest_request(&body);
+        assert_eq!(replies.len(), 1, "an unanswered request freezes the client's whole UI");
+        assert_eq!(replies[0].opcode, net::script::SCRIPT_MESSAGE);
+
+        // The speaker must be the template the client named. It is by construction a real
+        // Npc.wz id, which is what keeps this safe - 0 is not one.
+        let said = &replies[0].body;
+        assert_eq!(
+            u32::from_le_bytes(said[5..9].try_into().unwrap()),
+            req.npc_template_id
+        );
+        assert_ne!(req.npc_template_id, 0);
+
+        // Type 0 is Say. Anything else indexes a different entry of the 71-entry table and
+        // reads a different body, and there is no resync point.
+        assert_eq!(said[10], net::script::SCRIPT_TYPE_SAY);
+
+        // A short body must not panic - these come off a socket.
+        for n in 0..body.len() {
+            let _ = s.on_quest_request(&body[..n]);
+        }
     }
 
     /// `!map <id>` typed into the chat box, from the real captured chat body.

@@ -265,8 +265,27 @@ pair the client sends ~420 ms after every `SetField` — dereferences it unguard
 | 4 | `u8` | `141f6f3a2` | — | presence flag for field 5 |
 | 5 | `u32` | `141f6f3b1` | `r14d` | **only if #4 != 0.** If it is `> 0` *and* a global gate holds (`FUN_142cc1e30`), it **replaces** field 3 (`cmovg esi, r14d`) |
 | 6 | `u8` | `141f6f3e6` | `r12d` | **message type**, `0..0x46`, 71-entry jump table at `0x141f6f9f4` |
-| 7 | `u16` | `141f6f3f2` | `r14d` | **flags**: `0x04` = an extra speaker `u32` in the body; `0x20`/`0x40` pick the dialog style; `0x06` sets `[ui+0x6b8]` |
+| 7 | `u16` | `141f6f3f2` | `r14d` | **flags**: `0x04` = an extra speaker `u32` in the body; `0x20`/`0x80` pick the dialog style (**corrected**, see below); `0x06` sets `[ui+0x6b8]` |
 | 8 | `u8` | `141f6f3fe` | `edx` | stored at `[ui+0x2a4]` by the ctor |
+
+> **Correction, 2026-08-19, from the listing.** Row 7 originally read `0x20`/`0x40` as the
+> style bits. The second one is **`0x80`**. §2.4 already carried the right formula —
+> `ebx = (flags & 0x20) ? 1 : ((flags >> 6) & 2)` — and `(0x40 >> 6) & 2 == 0`, so `0x40`
+> selects nothing; only bit 7 survives the `and ebx, 2`. The listing is
+> `141f6fbbe test sil, 0x20 / je 141f6fbcb / mov ebx, 1 / jmp … / movzx ebx, sil /
+> shr ebx, 6 / and ebx, 2`. This was a prose gloss on a correct formula, not a bad read of
+> the code, but the gloss is what a reader would have copied.
+>
+> The rest of §2.3, §2.4 and §3 were re-read instruction by instruction on the same day with
+> an independent capstone pass bounded by `.pdata` (`141f6f350..141f6fb10`,
+> `141f6fb20..141f6fe38`) and **matched exactly** — the eight head reads at the addresses
+> and widths above, the six Say reads, both conditional gates, the latch at `141f6f490` /
+> `141f6f9c2`, the routing at `141821f84`, the `FUN_141f6f320` stub, and the field-entry
+> reset at `142caac7a`. Two further checks were mechanical rather than by eye: the jump
+> table at `0x141f6f9f4` is exactly 71 entries because `0x141f6f9f4 + 71*4 = 0x141f6fb10`,
+> the `.pdata` end of the function; and its dead slots (the ones pointing at the common exit
+> `0x01f6f9c2`) number **25**, at exactly the indices §2.4 lists. `FUN_141f0e4c0`'s six
+> `0x0151` sites and their tag bytes `6, 2, 4, 5, 2, 1` were re-verified the same way.
 
 **Field 3 is the speaker template id — read, not inferred.** `FUN_141f6fb20` hands it to
 `FUN_142a61900(ui, msgType, speakerId, &text)`, which does
@@ -364,6 +383,12 @@ flat: `00000000 00 01000000 00 00 0000 00 00000000 0600 48656c6c6f2e 00 00 00000
 * **`speakerTemplate` (offset 5) must be a template that exists.** It goes straight into
   `FUN_141e77b70`, the NPC template loader. `0` is not a template. Use the same number
   `gm-handbook/npcs.txt` gave the NPC the player clicked — the *template*, not our objectId.
+
+  **Refinement, 2026-08-19 [L]:** the load result is null-checked at `142a7b52a`. On null the
+  client retries with `[ui+0x6f0]` (`142a7b535`), and if that is null too it jumps past the
+  whole speaker-image block (`je 0x142a7b6ca`). So a template that does not exist most likely
+  yields a dialog with **no portrait** rather than a fault — a softer claim than the original
+  wording, and the one the code actually supports. Still no reason to send zero.
 * `messageType` must be `0`. Anything in the 26 dead slots produces a silent no-op.
 * `hasOverride` must be `0` unless you actually append the extra `u32`, and `flags & 0x04`
   must be `0` for the same reason — **both change the body length**, and there is no
