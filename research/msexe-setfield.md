@@ -361,3 +361,11 @@ Not established. Two things worth recording, both cheap by-products of this work
   client's SetField never sends the record (only the short "same-character, new map" form:
   `type / fieldID / portal / hp / …`), or its handler is one of the 92 inline cases and
   reaches the record by a path Ghidra did not resolve.
+
+  > **ANSWERED 2026-08-19, and it was neither branch of that dichotomy.** There *is* a
+  > third caller: `FUN_142097f80`, the handler for `0x01A0`. It is not in `FUN_142cbaa80`
+  > at all - `SetField` goes to a **stage** object's virtual `OnPacket`, a different
+  > function reached by a different mechanism, and the search above covered only the world
+  > dispatcher. The inference was sound; it was aimed one dispatcher short. This client's
+  > `SetField` does carry the full character record. See
+  > `research/msexe-stage-setfield.md`.
