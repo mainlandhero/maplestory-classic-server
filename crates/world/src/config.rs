@@ -109,14 +109,19 @@ pub struct Config {
     /// Turn NPC idle chatter off. It is the server's only unsolicited path, so a flag to
     /// silence it makes "is this packet the problem" answerable in one run.
     pub chatter_off: bool,
-    /// Whether to actually send them. **Default `false`, and that is a measurement.**
+    /// Whether to actually send them. **Default `true` since 2026-08-19.**
     ///
-    /// The run of 2026-08-19 faulted the client at `0x141c810b0` on the **first** `0x03C6`,
-    /// after two `0x044F` NPCs had dispatched cleanly. The mob body is wrong, and it is the
-    /// only one of the four builds that is - so the flag exists to get the other three back
-    /// in front of a client without waiting for the mob layout to be fixed.
+    /// It was `false` for one day, because the mob body faulted the client at
+    /// `0x141c810b0` on the first `0x03C6`. That fault has a cause and a fix - `move_action`
+    /// was `0`, the one value that takes a callback into an interface `encodeInit` has not
+    /// built yet, and it is `2` now (`research/mob-spawn.md` §11).
     ///
-    /// Turn it on with `--mobs`, and only when the mob body is the variant under test.
+    /// **The opt-in was retired because it cost a run.** The owner spent a launch standing on
+    /// map 40 seeing no snails: the server had the six of them loaded and sent none, and
+    /// said so only in `world.log.err`, which nobody reads during a run. A default that
+    /// silently does nothing is worse than a crash - a crash at least reports itself.
+    ///
+    /// Turn it off with `--no-mobs` when mobs are the variable being eliminated.
     pub send_mobs: bool,
 
     /// Every map id that has a field image in `Map.wz`.
@@ -792,7 +797,7 @@ impl Default for Config {
             equips: HashMap::new(),
             npc_strings: HashMap::new(),
             quests: HashMap::new(),
-            send_mobs: false,
+            send_mobs: true,
             fields: std::collections::HashSet::new(),
         }
     }

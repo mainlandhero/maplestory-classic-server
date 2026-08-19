@@ -100,7 +100,9 @@ the state after the owner's five runs of 2026-08-19.
 | | |
 |---|---|
 | the world | a character on a map, **wearing its items with their real stats** |
-| the bag | six inventories, sized by the server - **built, not yet seen on screen** |
+| the bag | six inventories, sized by the server at 30 - **built, not yet seen on screen** |
+| chat | the player's own line comes back as a balloon plus a log line - **built, not yet seen** |
+| mobs | **on by default** since 2026-08-19 - built, and the crash fix not yet confirmed |
 | NPCs | visible, clickable, speaking the game's own `Quest.wz` and `String.wz` lines on **both** click paths, and showing **idle chatter** on the client's own 3-9 second cadence |
 | quests | clicking an NPC opens the real dialogue; **Accept answers with the quest's `yes` branch** |
 | movement | portals both ways onto the connecting door, and `!map <id>` |
@@ -114,11 +116,45 @@ one thing that still kills the client.
 
 | # | do this | why it is here | spec |
 |---|---|---|---|
-| 1 | **Re-run mobs** - the crash is understood and fixed, one byte | `move_action` (body offset 35) was `0`. That byte is `action*2 + facing`, and **action 0 alone** takes a callback at `141c50da5` into an interface `encodeInit` does not build until `0x148` bytes later - so the read lands on a null pointer. Now `2`. **Pass = no `141c81040` line at all, and `141c532ab` firing with cursor `0x71`** | `research/mob-spawn.md` §11 |
-| 2 | **Confirm the bag** - BUILT 2026-08-19, unconfirmed on screen | `presence[7]` now sends **six `u16` slot counts**, twelve bytes between the string flags and the equipped list, read off the client's own six-turn loop at `0x140305de8`. Default 24, per character, persisted. **The guess in this row was wrong twice over**: it is not offsets 219-222 and there are not five of them. **Run it with `-InventorySlots 32`** - 24 is a number the client could have defaulted to on its own, so a run at 24 proves nothing. Pass = the tab shows 32, and six `140305e48` lines whose cursors step by 2 | `research/inventory-slots.md` |
+| 1 | **Re-run mobs** - now the DEFAULT, not an opt-in | `move_action` (body offset 35) was `0`. That byte is `action*2 + facing`, and **action 0 alone** takes a callback at `141c50da5` into an interface `encodeInit` does not build until `0x148` bytes later - so the read lands on a null pointer. Now `2`. **Pass = no `141c81040` line at all, and `141c532ab` firing with cursor `0x71`** | `research/mob-spawn.md` §11 |
+| 2 | **Confirm the bag** - BUILT 2026-08-19, unconfirmed on screen, **run it at 10** | `presence[7]` now sends **six `u16` slot counts**, twelve bytes between the string flags and the equipped list, read off the client's own six-turn loop at `0x140305de8`. Default 24, per character, persisted. **The guess in this row was wrong twice over**: it is not offsets 219-222 and there are not five of them. **Run it with `-InventorySlots 32`** - 24 is a number the client could have defaulted to on its own, so a run at 24 proves nothing. Pass = the tab shows 32, and six `140305e48` lines whose cursors step by 2 | `research/inventory-slots.md` |
 | 3 | **Decode `0x0420`-`0x0426`** | The client volunteers its **own world state** once per session: `0x0421` is 1115 bytes carrying the character id, the name and **our four item ids in equipped-slot order**; `0x0420` carries the NPC object ids we assigned. It is a free read-back instrument - it says what the client *thinks* it has, in its own words - and nothing else here can do that | §2e |
 | 4 | **Read what populates the Change Channel list** | **All three explanations are now retracted** (the four trailing bytes, the enable byte, the route through world select). Two client runs went on the first two. Nothing yet proposed populates that list, so the next step is to find what calls `FUN_142cb8e10` and when - upstream, not downstream | `research/channel-select.md` §0 |
 | 5 | **Quest state** | Goal A below. Everything else about quests works; nothing persists | §"NEW GOAL ... quest state" |
+
+#### The evening run of 2026-08-19, and what it cost
+
+Three reports from the owner, and **two of the three had a cause sitting in a log nobody read.**
+
+**1. "I still do not see mobs on maps."** They were standing on map 40, which has six snails.
+The server had all six loaded and sent **zero** `0x03C6`, because `--mobs` was not on the
+command line - and it said so, in `world.log.err`:
+
+> `maplecw-world: mobs are loaded but NOT SENT ... Pass --mobs to send them anyway`
+
+`world.log.err` is not a file anyone opens while a client is running. **A default that
+silently does nothing is worse than a crash**, because a crash reports itself. Mobs are now
+**on by default**, `--no-mobs` / `-NoMobs` turns them off, and the warning prints to stdout.
+
+**2. "I tried to send 3 chat messages and saw nothing."** Measured, not guessed: the capture
+has three `0x00E7` bodies carrying `Hello`, `Hello2`, `Hello3`, and the server answered none
+of them. The client renders **nothing** for its own chat. Now answered with `0x0231` -
+found by intersecting the 17 chat-window printers with the 18 balloon creators, then reading
+the jump table at `0x1429bb5d0`. `research/user-chat.md`.
+
+**3. `!map 20001075` killed the client**, and this one is genuinely open.
+
+> Exit code **`0xC0000374` - STATUS_HEAP_CORRUPTION**, not the `0xC0000005` the mob fault
+> gave. Sequence: `SetField` at `.988`, four `140304100` equip decodes at `.990-.991` (so
+> the record decoded fine), a **C++ throw in KERNELBASE at `.418`**, the client's `0x00DC`
+> at `.420`, our one NPC - template 1117 - at `.421`, and the socket closed at `.503`.
+>
+> **The throw precedes both our NPC and the client's own field-entered packet by ~2 ms**, so
+> the first suspect is the map load itself rather than anything we sent after it. Map
+> 20001075 is a story/cutscene map. Nothing has been read yet; the throw's stack is in
+> `client-patched/maplecw-hook.log` and the `<-TEXT` frames are the place to start - **and
+> per `research/mob-spawn.md` §11 only `called-from=` is exact, the `stack:` line is a
+> heuristic scan.**
 
 #### Things that are NOT open, so nobody re-opens them
 
@@ -599,9 +635,14 @@ Ten minutes on the listing gave the right answer, and the listing had been sitti
 > skips that inventory's whole slot walk - but **whether these arrays start null has not
 > been read**, and it lives in a constructor nobody has opened. **[I]** with a mechanism.
 >
-> **The one-variant test: `-InventorySlots 32`.** Not 24: 24 is a number this client could
-> plausibly have arrived at on its own, so a run at 24 cannot tell a working field from no
-> field at all. Then count the slots, and drag an equip off and watch for `0x0107`.
+> **The one-variant test: `-InventorySlots 10`.** Go UNDER the default, not over. The owner's
+> inventory window is **six rows of five** with a scrollbar, so at any number of 30 or more a
+> fixed viewport and a real slot count look identical on screen. At 10 they do not.
+>
+> **And the screenshot already weakens the hypothesis**: those thirty cells were drawn in a
+> session where the server sent no sizes at all. Either the arrays were never null - in which
+> case this explanation is wrong and should be dropped - or the grid is a viewport and the
+> screenshot says nothing either way. The run at 10 is what separates them.
 
 #### And a client state dump nobody had seen: `0x0420`-`0x0426`
 

@@ -1739,31 +1739,51 @@ pub const INVENTORY_COUNT: usize = 6;
 /// Byte 2 is measured elsewhere: it is the byte that switches on the equipped-item list
 /// (`research/naked-character.md`), so index 0 is the equip inventory. **[D]**
 ///
-/// The four names after it are **[I]**. They come from the reference server's `DBChar`
-/// ordinals, where `Character` is 0 and `ItemSlotEquip` is 2 - the same two indices this
-/// client measures - and the next four ordinals are Consume, Install, Etc and Cash. Two
-/// matched points is corroboration, not proof, and `CLAUDE.md` scores that tree 1 of 8.
-/// The sixth, presence byte 44, is **not identified at all**.
+/// **The names come off the screen.** The owner's inventory window, 2026-08-19, has exactly six
+/// tabs: `Equip`, `Use`, `Set Up`, `Etc`, `Cash`, `Deco`. Six tabs against a loop whose trip
+/// count is the literal `6`, in an order whose first five match the reference server's
+/// `DBChar` ordinals 2..6 - so the tabs and the turns are the same six things. **[D]**
+///
+/// `Deco` is the one that mattered: this table said "not identified at all" until the
+/// screenshot, and no amount of further reading would have named it, because the name is
+/// not in the decoder - it is in the UI.
 ///
 /// **Nothing on the wire depends on these names**, because the server sends every inventory
-/// the same size. A wrong name here costs a comment, not a byte.
+/// the same size. A wrong name here costs a comment, not a byte - which is why the table
+/// was safe to ship with a hole in it.
 pub const INVENTORY_SLOT_ORDER: [&str; INVENTORY_COUNT] =
-    ["equip", "use", "setup", "etc", "cash", "unidentified (presence byte 44)"];
+    ["equip", "use", "setup", "etc", "cash", "deco"];
 
-/// The bag a new character gets: **24 slots** in each inventory.
+/// The bag a new character gets: **30 slots** in each inventory.
 ///
-/// 24 is this game family's own starting size. It is a **default, not a limit** - the field
-/// is a `u16` and the client resizes to whatever arrives, which is what makes buying slots
-/// expressible - and [`MAX_INVENTORY_SLOTS`] is the ceiling the server will send.
-pub const DEFAULT_INVENTORY_SLOTS: u16 = 24;
+/// **30 because that is what this client's own window holds**: the owner, 2026-08-19, sending a
+/// screenshot of the inventory - six rows of five, filled, with nothing below the fold.
+///
+/// It was 24 for one commit. 24 is the classic MapleStory starting bag and it is what the
+/// reference server uses, and it was wrong here for the same reason the reference is wrong
+/// about most numbers: this is a different game version, and its window is five wide rather
+/// than four. Nothing measured ever said 24; it was carried over from a family resemblance.
+///
+/// **What the screenshot does NOT settle** is whether those thirty cells are the array's
+/// size or the window's. A viewport drawn 5x6 with a scrollbar would look identical at any
+/// slot count above 30. That is the question the next client run answers, and it is why
+/// `--inventory-slots` exists - see `research/inventory-slots.md`.
+///
+/// It is a **default, not a limit**: the field is a `u16` and the client resizes to whatever
+/// arrives, which is what makes buying slots expressible.
+pub const DEFAULT_INVENTORY_SLOTS: u16 = 30;
 
 /// The largest slot count the server will put in a record.
 ///
-/// **This is our limit, not a measured client one.** Nothing in the decoder bounds `V`; it
-/// is a `u16` and the resize takes it. The cap exists because the value drives an
-/// allocation and a per-slot walk on the client, six times over, and a typo should not be
-/// able to ask for 65535 slots. 96 is the ceiling this game family uses.
-pub const MAX_INVENTORY_SLOTS: u16 = 96;
+/// **This is our limit and it is arbitrary.** Nothing in the decoder bounds `V`: it is a
+/// `u16` and the resize takes whatever arrives. The cap exists only so that a typo cannot
+/// ask the client to allocate 65535 slots and then walk them, six times over.
+///
+/// 100 is a round multiple of the window's five-wide row, comfortably above the
+/// [`DEFAULT_INVENTORY_SLOTS`] of 30. It is **not** a measured client maximum, and it is not
+/// the 96 this game family's other versions use - that number goes with a 24-slot bag and a
+/// four-wide row, neither of which is this client.
+pub const MAX_INVENTORY_SLOTS: u16 = 100;
 
 /// The six inventory sizes, in the order the client reads them.
 ///

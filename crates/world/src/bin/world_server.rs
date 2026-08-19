@@ -21,7 +21,11 @@ maplecw-world - one channel of the MapleCW game world
   --world-id N     which world                    (default 0)
   --channel N      which channel                  (default 0)
   --inventory-slots N  give every inventory N slots instead of the character's own,
-                   so a client run can read the number off the screen (1..=96)
+                   so a client run can read the number off the screen (1..=100).
+                   Go UNDER the 30 default: the window is 5x6 with a scrollbar,
+                   so a bigger number looks the same as a fixed viewport
+  --no-mobs        do NOT send monsters. On by default since 2026-08-19; this is for
+                   eliminating mobs as a variable, not for ordinary use
   --set-field-probe   answer the migration hello with the fixed head of a SetField
                       and nothing after it. OFF by default. It cannot put a character
                       in a map; it exists so a run can tell an ignored packet apart
@@ -93,8 +97,15 @@ fn main() -> ExitCode {
                     .map(|n: usize| config.mob_limit = Some(n))
                     .map_err(|e| format!("--mob-limit {v}: {e}"))
             }),
+            // Kept, and a no-op, because it is in the owner's shell history and in three
+            // documents. An argument that used to mean something and now errors is a
+            // failed launch for a reason nobody would guess.
             "--mobs" => {
                 config.send_mobs = true;
+                Ok(())
+            }
+            "--no-mobs" => {
+                config.send_mobs = false;
                 Ok(())
             }
             other => Err(format!("unknown argument {other}")),
@@ -146,9 +157,14 @@ fn main() -> ExitCode {
             mobs_path.display()
         );
     }
+    // On stdout, not stderr. The old warning went to eprintln and therefore to
+    // world.log.err, which is not the file anyone opens while a client is running - so a
+    // server that had six snails loaded and sent none looked exactly like a server that
+    // had none, for a whole launch.
     if !config.send_mobs {
-        eprintln!(
-            "maplecw-world: mobs are loaded but NOT SENT. The body faults this client -              0xC0000005 at 0x141c810b0, mob+0x2b8 null - measured 2026-08-19. Pass --mobs              to send them anyway, and only when the mob body is the variant under test."
+        println!(
+            "maplecw-world: MOBS ARE OFF (--no-mobs). {} maps have mobs loaded and none of              them will be sent. Maps will look empty; that is this flag, not a bug.",
+            config.mobs.len()
         );
     }
 

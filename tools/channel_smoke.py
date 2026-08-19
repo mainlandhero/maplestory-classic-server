@@ -77,7 +77,10 @@ EQUIPPED_ITEM_BARE_LEN = 125
 # place would leave the equipped list unparseable and the character undressed.
 INVENTORY_COUNT = 6
 INVENTORY_SIZE_BLOCK_LEN = INVENTORY_COUNT * 2
-DEFAULT_INVENTORY_SLOTS = 24
+# 30, not 24: the owner's inventory window is six rows of five, filled, with nothing below the
+# fold. 24 is the classic-MapleStory bag and it was carried over from a different game
+# version for exactly one commit.
+DEFAULT_INVENTORY_SLOTS = 30
 # FUN_140303b40's 21 optional fields, in mask-bit order, by width in bytes.
 EQUIP_OPTION_WIDTHS = [1, 1, 2, 1, 1, 8, 4, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 8, 4]
 
@@ -301,6 +304,12 @@ try:
         bogus = b"!map 104040000"
         send(transport.packet(0x00E7, bytes(4) + struct.pack("<H", len(bogus)) + bogus + b""))
 
+        # Ordinary chat - not a command. The client renders nothing for its own line,
+        # so this has to come back as 0x0231 or the player is typing into a void.
+        said = b"Hello"
+        send(transport.packet(0x00E7, bytes(4) + struct.pack("<H", len(said)) + said
+                              + bytes([3])))
+
         # 0x00D1, a transfer-field request, in the form the client actually sends: no
         # explicit target field (0xFFFFFFFF), a named portal, and coordinates after it. This
         # exercises the generated portal table end to end - map 1's "out00" leads to map 10.
@@ -459,6 +468,28 @@ if PROBE:
                for r in mobs if len(r["body"]) - 2 == 137]
         check("no mob is sent with hp = 0 - that is a mob at 0 percent",
               hps and all(h != 0 for h in hps), "%s" % hps[:3])
+
+    # ---- ordinary chat comes back as a balloon
+    #
+    # 0x0231, found by intersecting the 17 chat-window printers with the 18 balloon
+    # creators: FUN_142784970 is in both, and the jump table at 0x1429bb5d0 puts it at
+    # index 11 of the 0x226..0x276 range. research/user-chat.md.
+    USER_CHAT = 0x0231
+    spoken = [r for r in replies if r["opcode"] == USER_CHAT]
+    check("ordinary chat is said back to the speaker", len(spoken) == 1,
+          "%d UserChat" % len(spoken))
+    if spoken:
+        sb = spoken[0]["body"][2:]
+        check("the balloon is attached to the character who spoke",
+              struct.unpack_from("<I", sb, 0)[0] == CHARACTER_ID,
+              "id %d" % struct.unpack_from("<I", sb, 0)[0])
+        n = struct.unpack_from("<H", sb, 5)[0]
+        check("the text survives the round trip", sb[7:7 + n] == b"Hello",
+              "%r" % sb[7:7 + n])
+        # FUN_142784970 reads u8, str, u8, u8 - both trailing bytes, unconditionally. A
+        # body that stops after the text makes the client read past the end and throw.
+        check("both bytes after the text are present", len(sb) == 4 + 1 + 2 + n + 2,
+              "%d bytes, wanted %d" % (len(sb), 4 + 1 + 2 + n + 2))
 
     # ---- the refused !map now says why on screen
     #

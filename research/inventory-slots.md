@@ -68,7 +68,7 @@ the unused hole that makes MapleStory's slots 1-based. **[L]**
 
 The walk itself reads nothing from the packet: it loads `[slot + 8]`, skips on null, and
 otherwise runs a virtual. So a larger `V` costs `V` null checks and an allocation, and
-nothing else. That is why `MAX_INVENTORY_SLOTS = 96` is **our** cap and not the client's -
+nothing else. That is why `MAX_INVENTORY_SLOTS` (100) is **our** cap and not the client's -
 nothing in the decoder bounds `V` at all.
 
 ## The order of the six
@@ -84,22 +84,27 @@ offset through the PE section table:
 | 2 | `0x140305ea2` | `0x143abecd0` | 4 | **4** | set-up **[I]** |
 | 3 | `0x140305eab` | `0x143abec60` | 3 | **5** | etc **[I]** |
 | 4 | `0x140305eb4` | `0x143abebf0` | 2 | **6** | cash **[I]** |
-| 5 | `0x140305ebd` | `0x143abeb80` | 1 | **44** | **not identified** |
+| 5 | `0x140305ebd` | `0x143abeb80` | 1 | **44** | **Deco** **[D]** |
 
 The key VAs check out against the table base independently: entries are `0x143abeb10 +
 0x70 * k`, and `research/charrecord-presence-map.md` lists entry 6 at `0x143abedb0`, entry 5
 at `0x143abed40` and entry 1 at `0x143abeb80` from a different measurement. **[L]**
 
 **Byte 2 is measured**: it is the byte that switches on the equipped-item list
-(`research/naked-character.md`), which is what makes turn 0 the equip inventory. The four
-names after it are **[I]**, from the reference server's `DBChar` ordinals - `Character` is 0
-and `ItemSlotEquip` is 2, the same two indices this client measures, and the next four
-ordinals are Consume, Install, Etc and Cash. Two matched points is corroboration; the
-reference is a different game version and `CLAUDE.md` scores it 1 of 8.
+(`research/naked-character.md`), which is what makes turn 0 the equip inventory.
+
+**The rest of the names came off the screen, not the binary.** The owner's inventory window has
+exactly six tabs - `Equip`, `Use`, `Set Up`, `Etc`, `Cash`, `Deco` - against a loop whose
+trip count is the literal `6`, with the first five in the order the reference server's
+`DBChar` ordinals 2..6 predict. **[D]**
+
+That is worth noticing as a method point. This table said "not identified at all" for turn
+5, and **no amount of further reading would have fixed it**: the name is not in the decoder,
+it is in the UI. One screenshot settled what a day of listing work could not.
 
 **Nothing on the wire depends on those names.** The server sends every inventory the same
-size, so a wrong name costs a comment and not a byte. That is deliberate: the sixth
-inventory has no name at all and still gets a correct-looking value.
+size, so a wrong name costs a comment and not a byte - which is why the table was safe to
+ship with a hole in it rather than a guess in it.
 
 ## Why this might be the unequip bug - and why that is a candidate, not a finding
 
@@ -126,16 +131,18 @@ the constructor of the character-data object, which has not been read. So:
 > unequipped item - which is what the owner saw on 2026-08-19, where dragging the Undershirt off
 > produced nothing on the wire at all. That is a **[I]** with a mechanism, not a measurement.
 
-The cheap way to settle it is the run, not more reading: send 32 and count the slots.
+The cheap way to settle it is the run, not more reading - and the screenshot below
+makes the right probe a number BELOW the default rather than above it.
 
 ## What the server does
 
-* `Character::inventory_slots: [u16; 6]`, defaulting to 24 - this game family's own
-  starting size.
+* `Character::inventory_slots: [u16; 6]`, defaulting to **30**.
 * Persisted per character, one column each (`characters.slots_equip` and friends), added
   by a guarded `ALTER TABLE` because `CREATE TABLE IF NOT EXISTS` does nothing to a table
-  that already exists. A character created before the columns existed reads back 24 through
-  the column default, and there is a test that inserts such a row and proves it.
+  that already exists. A character created before the columns existed reads back the
+  default through the column default, and there is a test that inserts such a row and
+  proves it. Rows written during the one commit that defaulted to 24 are repaired to 30
+  on open - see the note beside that UPDATE for why it is safe now and has to go later.
 * Per-column rather than one number, because buying slots is per-tab in this game and a
   single column could not express a character who has bought Use slots and not Etc ones.
   Nothing yet *sells* slots; the storage is what makes that a later feature rather than a
@@ -143,18 +150,42 @@ The cheap way to settle it is the run, not more reading: send 32 and count the s
 * `--inventory-slots N` overrides all six for one run. A test lever, and the reason it
   exists is in the next section.
 
-## How to test it, and why 24 is the wrong number to test with
+## 30, and the ambiguity the screenshot did not resolve
 
-**24 is also the number this client could plausibly have defaulted to on its own.** A run at
-24 cannot distinguish "the server sized the bag" from "the server changed nothing". So the
-run should use `-InventorySlots 32`, and then the count on screen is decisive.
+The default was 24 for one commit. **24 is the classic MapleStory bag**, and it came from
+the reference server rather than from anything measured here - the same failure this
+document already records twice. The owner's window is **five wide and six tall**, thirty cells
+filled with nothing below the fold, so 30 is the number.
+
+> **What the screenshot does NOT settle: whether those thirty cells are the array or the
+> window.** The panel has a scrollbar. A viewport drawn 5x6 with a scrollbar behind it would
+> look identical at any slot count of 30 or more, so "thirty cells" is consistent both with
+> "the bag holds 30" and with "the bag holds something else and 30 is what fits". **[I]**
+>
+> It matters for one reason: if the arrays already held 30 before we ever sent
+> `presence[7]`, then the null-array reasoning above is **not** why unequip fails, and that
+> hypothesis needs dropping rather than defending.
+
+## How to test it, and why a number ABOVE 30 is the wrong probe
+
+A run at 32 barely moves anything visible: the grid still draws 5x6 and only the scrollbar's
+range changes, which is exactly the observation a viewport would fake. **Go under instead.**
+
+**`-InventorySlots 10`.** Then the two readings come apart:
+
+| what you see | what it means |
+|---|---|
+| ~10 usable cells and the rest dead or gone | the field is read, and the grid is a viewport |
+| still thirty usable cells | the field is **not** reaching the array - `presence[7]` is wrong |
+| the character is undressed, or no world entry | the twelve bytes are in the wrong place |
+
+Then a second run at the default 30 puts the bag back. The other things worth reading in the
+same run:
 
 | what to look at | what it means |
 |---|---|
-| the EQUIP tab's slot count | 32 could not have come from anywhere but us |
-| the other four tabs | all six are sent equal; if **one** differs, the order above is wrong |
+| the other five tabs | all six are sent equal; if **one** differs, the order above is wrong |
 | dragging an equip off | a `0x0107` in `world.log` means the slot count was the whole problem |
-| the character still dressed | the twelve bytes are in the right place |
 
 That last row is the important one and it is why a failure here is loud rather than subtle:
 the record has **no length prefix and no resync point**, so twelve bytes in the wrong place

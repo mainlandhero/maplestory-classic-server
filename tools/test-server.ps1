@@ -119,12 +119,17 @@ param(
     # silent, so without the watches the run cannot tell an ignored packet from one that
     # never arrived, which is the whole reason for spending the launch.
     [switch]$SetFieldProbe,
-    # -Mobs sends monsters. OFF by default because the body killed the client on
-    # 2026-08-19 (0xC0000005 at 0x141c810b0, mob+0x2b8 null) on the FIRST 0x03C6.
-    # -MobLimit caps how many go out per field: the fault could be the body being wrong or
-    # thirty objects arriving at once, and -MobLimit 1 tells those apart in one run.
-    # EXPECT THIS TO END THE SESSION until the body is fixed - test it LAST.
+    # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
+    #
+    # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
+    # six snails, and saw none - the server had them loaded and sent none, because the
+    # switch was not passed. It said so only in world.log.err. Kept as a no-op so an old
+    # command line still runs.
+    #
+    # -MobLimit caps how many go out per field. Still useful when a mob run does fault:
+    # -MobLimit 1 tells "the body is wrong" apart from "thirty objects at once".
     [switch]$Mobs,
+    [switch]$NoMobs,
     [int]$MobLimit = 0,
     # Give every inventory this many slots instead of the character's own count.
     #
@@ -231,7 +236,7 @@ $ErrorActionPreference = 'Stop'
 # which run this is also decides the instrument. Getting the wrong pair costs a whole launch,
 # and the two questions cannot be answered in one run anyway: mobs are off unless -Mobs.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($Mobs) {
+    if (-not $NoMobs) {
         # 141c81040:peek=2b8 - rcx is the mob at entry, so peek prints the field that was
         #   null. 0 confirms the diagnosis AND the stack trace finally names the caller of a
         #   virtual with zero direct callers. Non-zero means 141c810b0 faults for some other
@@ -380,7 +385,7 @@ foreach ($ch in 0..($Channels - 1)) {
     Remove-Item $chLog -Force -ErrorAction SilentlyContinue
     $chArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$chPort", '--channel', "$ch")
     if ($SetFieldProbe) { $chArgs += '--set-field-probe' }
-    if ($Mobs) { $chArgs += '--mobs' }
+    if ($NoMobs) { $chArgs += '--no-mobs' }
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
     if ($InventorySlots -gt 0) { $chArgs += @('--inventory-slots', "$InventorySlots") }
     $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
@@ -426,10 +431,12 @@ if ($SetFieldProbe) {
     Write-Host "  reached the wire on 2026-08-19. It is a candidate, not a finding."
     Write-Host ""
     Write-Host "  WHAT TO DO, in this order:" -ForegroundColor Yellow
-    Write-Host "    1. Open the inventory. Count the slots in the EQUIP tab."
-    Write-Host "       -InventorySlots 32 makes that count decisive: 32 could not have come"
-    Write-Host "       from anywhere but us. At the default 24 a correct result and no"
-    Write-Host "       result look the same."
+    Write-Host "    1. Open the inventory. Count the usable slots in the EQUIP tab."
+    Write-Host "       USE -InventorySlots 10, and go UNDER the default rather than over."
+    Write-Host "       The window is 5x6 = 30 cells with a scrollbar, so at any number"
+    Write-Host "       ABOVE 30 a fixed viewport and a real slot count look identical."
+    Write-Host "       At 10 they do not: either ~20 cells go dead, or nothing changes"
+    Write-Host "       and presence[7] is not reaching the array."
     Write-Host "    2. Check the other tabs - Use, Set-up, Etc, Cash. All six sizes are sent"
     Write-Host "       and all six should agree. If ONE tab differs, the field order is"
     Write-Host "       wrong and the name in INVENTORY_SLOT_ORDER for that index is wrong."
@@ -452,19 +459,24 @@ if ($SetFieldProbe) {
     Write-Host "  ways, chat feedback, Log Out."
     if ($InventorySlots -le 0) {
         Write-Host ""
-        Write-Host "  NO -InventorySlots SET. The bag will be 24, which is the value this" -ForegroundColor Yellow
-        Write-Host "  run cannot distinguish from the client's own default. Consider" -ForegroundColor Yellow
-        Write-Host "  -InventorySlots 32." -ForegroundColor Yellow
+        Write-Host "  NO -InventorySlots SET. The bag will be 30 - which is exactly what" -ForegroundColor Yellow
+        Write-Host "  the window already shows, so this run cannot tell a working field" -ForegroundColor Yellow
+        Write-Host "  from no field at all. Use -InventorySlots 10." -ForegroundColor Yellow
     }
-    if ($Mobs) {
+    if ($NoMobs) {
         Write-Host ""
-        Write-Host "  MOBS ARE ALSO ON, and that is two variants in one run." -ForegroundColor Red
-        Write-Host "  The mob crash is understood - move_action 0 took a callback into an"
-        Write-Host "  interface encodeInit had not built yet, and we now send 2 - but it is"
-        Write-Host "  UNCONFIRMED. If the client dies you will not know which change did it."
-        Write-Host "  Test the bag first, mobs on their own run. CLAUDE.md: one variant."
+        Write-Host "  MOBS ARE OFF for this run (-NoMobs). Map 40 will look empty and that" -ForegroundColor Yellow
+        Write-Host "  is the flag, not a bug." -ForegroundColor Yellow
+    } else {
+        Write-Host ""
+        Write-Host "  MOBS ARE ON - the default since 2026-08-19, and UNCONFIRMED." -ForegroundColor Yellow
+        Write-Host "  Map 40 should have six snails. The crash that made them opt-in is"
+        Write-Host "  understood: move_action was 0, the one value that takes a callback"
+        Write-Host "  into an interface encodeInit has not built yet. It is 2 now."
+        Write-Host "  PASS = snails on screen, and NO 141c81040 line in the hook log."
+        Write-Host "  If the client dies on world entry, -NoMobs gets you back in."
         if ($MobLimit -le 0) {
-            Write-Host "  If you do run mobs, -MobLimit 1 keeps the log short."
+            Write-Host "  -MobLimit 1 keeps the log short if it does fault."
         }
     }
     Write-Host ""

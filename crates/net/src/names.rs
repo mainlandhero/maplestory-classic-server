@@ -89,6 +89,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00D1 => "CLIENT_TRANSFER_FIELD (portal; 0xFFFFFFFF target means resolve the name)",
         0x00DC => "CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body)",
         0x00E7 => "CLIENT_CHAT (u32 tick, u16-length text, u8 tab)",
+        0x0231 => "USER_CHAT (balloon over the head, and the chat log line)",
         0x00F2 => "CLIENT_NPC_CLICK (u32 npcObjectId, i16 charX, i16 charY, u32; the NO-QUEST click path)",
         0x00F3 => "CLIENT_SCRIPT_REPLY (u32 handle, u8 msgType, u32 echo, str the box's own text, i8 action)",
         0x01BE => "CLIENT_LOG_OUT (empty body; POISONS SetField until 0x0106 answers it)",

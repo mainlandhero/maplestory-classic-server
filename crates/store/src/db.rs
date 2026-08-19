@@ -27,8 +27,19 @@ pub const INVENTORY_SLOT_COLUMNS: [&str; net::opcode::INVENTORY_COUNT] = [
     "slots_setup",
     "slots_etc",
     "slots_cash",
-    "slots_sixth",
+    "slots_deco",
 ];
+
+/// The name `slots_deco` had for one commit, before the sixth inventory had a name.
+///
+/// Kept so [`Store::add_inventory_slot_columns`] can rename it instead of adding a seventh
+/// column beside it and silently losing whatever was in the old one.
+const INVENTORY_SLOT_COLUMN_RENAMED_FROM: (&str, &str) = ("slots_sixth", "slots_deco");
+
+/// What the slot columns were created with before the count was measured on screen.
+///
+/// See the repair in [`Store::add_inventory_slot_columns`].
+const SUPERSEDED_INVENTORY_SLOTS: u16 = 24;
 
 /// The id the first character gets. See the note beside the `sqlite_sequence` seed.
 pub const FIRST_CHARACTER_ID: u32 = 200;
@@ -221,6 +232,20 @@ impl Store {
                 existing.insert(name?);
             }
         }
+
+        // The sixth inventory got a name once the owner sent a screenshot of the tabs, so its
+        // column is renamed rather than replaced - adding `slots_deco` beside a populated
+        // `slots_sixth` would read back a default and drop whatever was stored.
+        let (from, to) = INVENTORY_SLOT_COLUMN_RENAMED_FROM;
+        if existing.contains(from) && !existing.contains(to) {
+            conn.execute(
+                &format!("ALTER TABLE characters RENAME COLUMN {from} TO {to}"),
+                [],
+            )?;
+            existing.remove(from);
+            existing.insert(to.to_string());
+        }
+
         for column in INVENTORY_SLOT_COLUMNS {
             if existing.contains(column) {
                 continue;
@@ -232,6 +257,29 @@ impl Store {
                 ),
                 [],
             )?;
+        }
+
+        // A one-off repair, in the same spirit as the `map_id = 0` one above and with the
+        // same justification: **24 was never a value anybody chose.**
+        //
+        // The columns were created for one commit with a default of 24 - the classic
+        // MapleStory bag, carried over from a different game version - before the owner's
+        // screenshot showed this client's window holds thirty. No client ever saw a 24, and
+        // nothing in the server can set a slot count deliberately yet, so a stored 24 can
+        // only have come from that default.
+        //
+        // **This has to go the moment anything can buy a slot**, because from then on a 24
+        // could be somebody's actual bag. Idempotent until then.
+        if net::opcode::DEFAULT_INVENTORY_SLOTS != SUPERSEDED_INVENTORY_SLOTS {
+            for column in INVENTORY_SLOT_COLUMNS {
+                conn.execute(
+                    &format!(
+                        "UPDATE characters SET {column} = {} WHERE {column} = {}",
+                        net::opcode::DEFAULT_INVENTORY_SLOTS, SUPERSEDED_INVENTORY_SLOTS
+                    ),
+                    [],
+                )?;
+            }
         }
         Ok(())
     }

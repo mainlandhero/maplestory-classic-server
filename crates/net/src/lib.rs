@@ -31,6 +31,7 @@ pub mod opcode;
 pub mod packet;
 pub mod script;
 pub mod session;
+pub mod userchat;
 
 pub use codec::{
     shift_body, ByteShiftCipher, Cipher, Direction, MapleCipher, PlainCipher, Shift,

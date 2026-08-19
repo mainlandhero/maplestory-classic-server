@@ -844,7 +844,18 @@ impl Session {
     fn on_chat(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(text) = net::opcode::parse_chat(payload) else { return Vec::new() };
         let text = text.trim();
-        let Some(rest) = text.strip_prefix("!map ") else { return Vec::new() };
+
+        // **Anything that is not a command is said out loud.** The client draws nothing for
+        // its own chat: typing sends `0x00E7` and stops. The owner, 2026-08-19, typed "Hello",
+        // "Hello2" and "Hello3" and saw nothing at all, because this function matched them
+        // against `!map`, found nothing, and returned an empty reply. The balloon and the
+        // chat-log line both come from `0x0231` coming back - see net::userchat.
+        if !text.starts_with('!') {
+            return self.say_out_loud(text);
+        }
+        let Some(rest) = text.strip_prefix("!map ") else {
+            return self.notice(format!("{text}: not a command. Try !map <id>."));
+        };
         let rest = rest.trim();
         let Ok(map) = rest.parse::<u32>() else {
             return self.notice(format!("!map: \"{rest}\" is not a map id."));
@@ -862,6 +873,28 @@ impl Session {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         // Portal 0 is the map's spawn point, which is where a GM warp should land.
         self.go_to_map(&mut chr, map, 0, format!("GM !map {map}"))
+    }
+
+    /// Say something as the player: a balloon over the head and a line in the chat log.
+    ///
+    /// **An empty message is dropped rather than sent.** The client's own box will not
+    /// submit one, so an empty `0x00E7` means something else is going on, and a balloon
+    /// with no text is a worse answer than none.
+    ///
+    /// This is a **local echo, not a broadcast**: it goes back to the one connection that
+    /// spoke. There is nobody else on the field to send it to yet - the server has no
+    /// concept of a second player in a field - and saying so here is cheaper than
+    /// rediscovering it when there is.
+    fn say_out_loud(&mut self, text: &str) -> Vec<Reply> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        vec![Reply {
+            opcode: net::userchat::USER_CHAT,
+            body: net::userchat::user_chat(chr.id, text),
+            what: format!("UserChat: {} ({}) says {:?}", chr.id, chr.name, text),
+        }]
     }
 
     /// One line in the client's chat window.
@@ -1408,6 +1441,31 @@ mod tests {
 
         // A real map still warps and does NOT produce a notice.
         assert_eq!(s.handle(&chat("!map 40"))[0].opcode, net::opcode::SET_FIELD);
+
+        // **Anything that is not a command is said out loud.** The client draws nothing for
+        // its own chat, so a server that answers nothing is a player typing into a void -
+        // which is exactly what the owner got on 2026-08-19 from "Hello", "Hello2", "Hello3".
+        let said = s.handle(&chat("Hello"));
+        assert_eq!(said.len(), 1, "chat was swallowed");
+        assert_eq!(said[0].opcode, net::userchat::USER_CHAT);
+        let body = &said[0].body;
+        assert_eq!(
+            u32::from_le_bytes([body[0], body[1], body[2], body[3]]),
+            id,
+            "the balloon has to be attached to the speaker"
+        );
+        let len = u16::from_le_bytes([body[5], body[6]]) as usize;
+        assert_eq!(&body[7..7 + len], b"Hello");
+        assert_eq!(body.len(), net::userchat::USER_CHAT_OVERHEAD + len,
+                   "both trailing bytes must be there - the client reads past the text");
+
+        // An unknown command says so rather than vanishing, and is NOT spoken aloud.
+        let unknown = s.handle(&chat("!nope"));
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0].opcode, net::notice::CHAT_NOTICE);
+
+        // And an empty line is dropped: a balloon with no text is worse than none.
+        assert!(s.handle(&chat("")).is_empty());
 
         // Log out is answered, with a non-empty message - an empty one is a client no-op.
         let mut body = net::notice::CLIENT_LOG_OUT.to_le_bytes().to_vec();
