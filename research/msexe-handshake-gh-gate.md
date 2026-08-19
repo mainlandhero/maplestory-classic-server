@@ -88,9 +88,12 @@ order as the four call sites. And the bodies match the builders field for field:
     1e000000 <30 bytes>                the trailer FUN_1415dc6f0 appends
 ```
 
-which is `FUN_1415d5c20` exactly. (`FUN_141b21ea0` also builds `0x71`, but it is reached
-only through a vtable slot at `0x1433fd670` and builds a different body; the other `0x70`
-builders write `u8 4` / `u8 5`, not the observed `02`.)
+which is `FUN_1415d5c20` exactly. The one other `0x71` builder, `FUN_141b21ea0` (reached only
+through a vtable slot at `0x1433fd670`), is ruled out by its body: at `0x141b23f2a` it opens
+the packet and immediately writes a **blob** (`FUN_1406ede20`), then a string, then a 16-byte
+GUID — it never writes the leading `u8` the observed packet starts with. The other two `0x70`
+builders are ruled out the same way: `FUN_1415d8b20` writes `u8 4` and `FUN_140c8fdc0`
+writes `u8 5`, against the observed `02`.
 
 So the client executed `0x1415d28dc` — 0x15D bytes *past* the raise, straight-line, in the
 same frame — with `conn+0x48 != 0`.
@@ -276,9 +279,12 @@ deeper.
 Twice at most, and **the parse runs at most once**. See step 4 above. In detail:
 
 * `FD_CONNECT` → `FUN_1415d10e0(conn, 1, 0)` — this is the one that reads and parses the
-  greeting. `param_3 == 0`, so the login connection takes the **"Second Connect"** path
-  (`low <= 100 <= high`), never "First Connect". Worth noting, because `docs/handshake.md`
-  lists gates for both.
+  greeting.
+* **All three call sites pass `param_3 = 0`** (`XOR R8D,R8D` at `0x142c8d6c6`, and the two
+  literal `(param_1, 0, 0)` calls). So the connection always takes the **"Second Connect"**
+  branch, `low <= 100 <= high`, and the "First Connect" branch at line 558 onward — including
+  the `high == 100` check `docs/handshake.md` lists as a gate — is **dead code on every path
+  reachable from `.text`**. Only `high >= 100` and `low <= 100` are ever enforced.
 * The self-recursion at line 320 and `FUN_1415d33c0`'s call both pass `param_2 == 0`, which
   enters the *connect* branch and returns at line 257 — no read, no parse, no gate, no
   `0x70`.

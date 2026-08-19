@@ -4,7 +4,45 @@ Status: **ACCEPTED, BUT NOT CORRECT.** The greeting below gets the client to the
 screen and through to character select, with no dialog. It does **not** pass the client's
 own version check.
 
-## CORRECTION 2026-08-19: the client has been reporting INVALID_CLIENT_VERSION all along
+## RETRACTED, same day: the login connection was never failing
+
+**The section below was wrong, and the error is worth keeping because of how it happened.**
+The `ELog` upload is a **file replay**: `FUN_1415ddd10` opens a log file with
+`OPEN_EXISTING`, reads it, closes it and deletes it, so a record uploaded at startup was
+written by an **earlier** failure. `Time1`/`Time2` are stamped by the writer, so their 16 ms
+spread was not evidence that the event had just happened - and reading it that way is the
+whole of the mistake.
+
+**On the run that produced that log, the `G`/`H` gate passed**: `conn+0x48` was non-zero, the
+`A..F` block *was* parsed, and `G`/`H` read `1`/`1`. The record it uploaded came from the
+**previous** run - the one whose migrated connection got "The client is outdated". Which is
+exactly what `conn+0x48 == 0` on a channel connection predicts, so the two findings agree
+rather than conflict.
+
+Three things established while resolving it, each measured:
+
+* **`FUN_140cc2350` never returns.** It calls `FUN_141804870`, which is straight-line to
+  `_CxxThrowException` at `0x141804964` followed by `INT3`. And `FUN_1415d10e0` has **zero
+  catch funclets** - 0 chained `.pdata` entries against a control that returns 3 - so it
+  cannot catch its own throw. A `840` record therefore means the handshake **died**, not
+  that it logged and carried on.
+* **The parse runs at most once per connection.** The window procedure calls
+  `FUN_1415d10e0(conn, 1, 0)` only on `FD_CONNECT` (`0x142c8d6c6`); `FD_READ` goes to
+  `FUN_1415d31b0`. The other two callers pass `param_2 = 0`. That also explains the ~514 ms
+  gap before the client replies: `FD_CONNECT` fires before our bytes arrive, `recv` returns
+  `WSAEWOULDBLOCK`, and the loop sleeps 500 ms.
+* **"First Connect" is dead code.** All three call sites pass `param_3 = 0`, so only the
+  second-connect branch ever runs - which retires the `high == 100` gate listed in the table
+  below.
+
+Where `conn+0x48` is *set* is still unknown. `FUN_1415d35f0` does not write it (it writes
+`+0x0c` and `+0x10`), and neither does `FUN_1415d10e0`; the field is constant for the whole
+invocation and non-zero on the login connection, which is measured from the wire rather than
+from the code.
+
+Full working in `research/msexe-handshake-gh-gate.md`.
+
+## SUPERSEDED 2026-08-19: the client has been reporting INVALID_CLIENT_VERSION all along
 
 The client uploads its own error log as plain text in `0x008F`/`0x0090`, and it says:
 

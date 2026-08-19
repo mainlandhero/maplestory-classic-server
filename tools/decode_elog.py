@@ -9,8 +9,23 @@ This was invisible for weeks because the server truncated packet bodies at 96 by
 these are hundreds to thousands of bytes long. `net::names` now logs anything it cannot
 name in full, which is the whole reason this tool can exist.
 
-**It is the cheapest instrument in the project.** It costs no client run, no watch slot
-and no decompilation, and it reports the client's own verdict in words.
+**HEALTH WARNING, and it inverted a conclusion once already: these records describe an
+EARLIER failure, not the run that uploaded them.** `FUN_1415ddd10` opens a log file with
+`OPEN_EXISTING`, reads it, closes it and deletes it - the upload is a **file replay**. The
+`Time1`/`Time2` fields were stamped by the *writer*, so their few-millisecond spread says
+nothing about when the upload happened, and reading it as "16 ms ago" is exactly the trap
+that produced a wrong diagnosis on 2026-08-19.
+
+So the reliable protocol is **drain, experiment, re-read**:
+
+1. run once and read the ELog - that is the *previous* failure, and it clears the file;
+2. run the experiment;
+3. read the ELog again - *now* it is about the run you just did.
+
+A record appearing on the first run after a change tells you about the run before it.
+
+Otherwise it is the cheapest instrument in the project: no client run, no watch slot and no
+decompilation, and it reports the client's own verdict in words.
 
     python tools/decode_elog.py login.log
     python tools/decode_elog.py login.log --stack     # include the call stack
