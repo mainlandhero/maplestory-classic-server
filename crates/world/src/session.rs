@@ -75,9 +75,10 @@ impl Session {
 
     /// Handle one packet body, opcode included.
     ///
-    /// Answers nothing unless [`Config::set_field_probe`] is on, and then only the fixed
-    /// head of a `SetField`. A wrong reply moves the client into a state nobody has read,
-    /// which is worse than silence.
+    /// Answers nothing unless [`Config::set_field_probe`] is on, and then exactly one
+    /// packet: a `SetField` carrying the claimed character's record. A wrong reply moves
+    /// the client into a state nobody has read, which is worse than silence - so this
+    /// answers only the migration hello, and only the one opcode that is confirmed.
     pub fn handle(&mut self, body: &[u8]) -> Vec<Reply> {
         let opcode = match body.get(..2) {
             Some(b) => u16::from_le_bytes([b[0], b[1]]),
@@ -86,12 +87,47 @@ impl Session {
         if opcode != CLIENT_MIGRATION_HELLO || !self.config.set_field_probe {
             return Vec::new();
         }
-        vec![Reply {
-            opcode: net::opcode::SET_FIELD,
-            body: net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
-            what: "SetField, characterData=1, minimal record - every presence flag clear                    and every count zero, which research/charrecord-loops.md measures as                    the smallest body this client reads without faulting. It does NOT put                    the character on map 1: the map comes from the record and the record is                    zeros. It tests acceptance, and what the client does next says where                    the map id goes."
-                .to_string(),
-        }]
+        // Always answer. An unanswered packet freezes the client's whole UI - every
+        // button, including the quit prompt - and reads on screen as a crash. So a
+        // character we cannot load falls back to the minimal record rather than silence.
+        let (body, what) = match self.claimed_character() {
+            Some(chr) => (
+                net::opcode::set_field_with_character(
+                    &chr,
+                    self.config.world_id,
+                    self.clock_base(),
+                    self.config.channel_id,
+                ),
+                format!(
+                    "SetField, characterData=1, presence[0] set so the character-stat block                      decodes, carrying map {} for character {} ({}). presence[0] is gate                      entry 7, settled in research/charrecord-presence-map.md; the map id                      sits at stat-block offset {}, settled in research/charstat-layout.md.                      Nothing here authenticates anybody.",
+                    chr.map_id,
+                    chr.id,
+                    chr.name,
+                    net::opcode::stat_block_map_id_at(chr.job),
+                ),
+            ),
+            None => (
+                net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
+                "SetField, characterData=1, MINIMAL record - the character could not be                  loaded, so this falls back to the all-flags-clear form. It is answered                  rather than dropped because an unanswered packet freezes the client's                  whole UI. It will NOT put the character on a map: with every presence                  flag clear the stat block never decodes, so there is no map id at all."
+                    .to_string(),
+            ),
+        };
+        vec![Reply { opcode: net::opcode::SET_FIELD, body, what }]
+    }
+
+    /// The character this connection claimed a migration for.
+    ///
+    /// `describe_hello` in `server.rs` claims the migration before `handle` runs, so by
+    /// this point `claimed` is populated for a well-formed hello. The store has no
+    /// lookup by character id alone, but a claim carries the account and world, and a
+    /// character id is unique within those.
+    fn claimed_character(&self) -> Option<net::opcode::Character> {
+        let claimed = self.claimed.as_ref()?;
+        self.store
+            .characters_for(claimed.account_id, claimed.world_id)
+            .ok()?
+            .into_iter()
+            .find(|c| c.id == claimed.character_id)
     }
 
     /// The 8 bytes the client stores as a server clock base, stamping its own tick beside

@@ -800,10 +800,36 @@ fn put_fixed(out: &mut Vec<u8>, s: &str, len: usize) {
 ///
 /// **The client's readers throw on underrun**, so a record that is short by one byte is not
 /// a rendering glitch - it is an exception inside the packet handler.
-pub fn character_record(chr: &Character, world_id: u32) -> Vec<u8> {
+/// The 108-byte character-stat block - `FUN_140302e30` with `param_3 == 0`.
+///
+/// Shared, because it is literally the same client function on both paths: the character
+/// list reaches it through `FUN_1403094b0`, and the `SetField` character record reaches it
+/// through `FUN_140304b20` at `0x140304e71`. Those are the *only* two callers in the image
+/// (`python tools/callers.py 0x140302e30`). Both pass `param_3 = 0`, read out of the
+/// caller's `R9` home slot at `[RBP+0x3118]`, so both get this identical layout.
+///
+/// ## Offset 84 is the map id, and that is measured
+///
+/// It had been a literal zero here since this block was written, while `map_id` went into
+/// the *trailer* at record offset 120 - a placement that rested on nothing, and whose test
+/// could not fail (it passed on any `u32 == 1` anywhere in the record). Three independent
+/// lines put the map at **offset 84**:
+///
+/// 1. The `u32` read at `0x14030325e` is mangled into a 12-byte heap object hung off
+///    `record + 0xfb`, with the rolling-checksum seed `0x9a65`. `FUN_1402fa540` is the
+///    byte-for-byte inverse of that encoder - same `0x2a` chain, same seed, same rotate.
+/// 2. `SetField` then calls `FUN_1402fa540(user + 0xf3)` and hands the result to a lookup
+///    keyed by `PTR_s_mapName_143a49020`, which dereferences to the ASCII string `mapName`.
+///    The neighbouring literal is `MAP` spliced with TAB, CR and LF - the client's usual
+///    trick for defeating a string search.
+/// 3. It sits immediately before `portal`, which is exactly where `CharacterStat` puts the
+///    map. Structural only, and it agrees.
+///
+/// The all-zero record made the client fade to black and then fault releasing an object
+/// that was never constructed - map `0` never loaded. `0` is not a map; see
+/// [`START_MAP_ID`].
+pub fn character_stat_block(chr: &Character, world_id: u32) -> Vec<u8> {
     let mut out = Vec::new();
-
-    // --- the stat block, FUN_140302e30 with param_3 == 0
     out.extend_from_slice(&chr.id.to_le_bytes());
     out.extend_from_slice(&chr.id.to_le_bytes()); // characterIdForLog
     out.extend_from_slice(&world_id.to_le_bytes()); // worldIdForLog
@@ -831,13 +857,45 @@ pub fn character_record(chr: &Character, world_id: u32) -> Vec<u8> {
     }
     out.extend_from_slice(&0u64.to_le_bytes()); // exp
     out.extend_from_slice(&0u32.to_le_bytes()); // fame
-    out.extend_from_slice(&0u32.to_le_bytes());
+    debug_assert_eq!(out.len(), stat_block_map_id_at(chr.job), "the map id moved");
+    out.extend_from_slice(&chr.map_id.to_le_bytes()); // <- the field id
     out.push(0); // portal
     out.extend_from_slice(&0u16.to_le_bytes()); // subJob
     out.push(0);
     out.extend_from_slice(&0u64.to_le_bytes()); // FILETIME
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
+    out
+}
+
+/// Where the map id sits inside [`character_stat_block`], for a job on the **extended-SP**
+/// branch. Use [`stat_block_map_id_at`] rather than this constant unless the job is known.
+pub const STAT_BLOCK_MAP_ID_AT: usize = 84;
+
+/// Length of [`character_stat_block`] for an **extended-SP** job. See [`stat_block_len`].
+pub const STAT_BLOCK_LEN: usize = 108;
+
+/// Where the map id sits, for a given job.
+///
+/// The `sp` field is one byte on the extended-SP branch and a `u16` otherwise, so a
+/// plain-SP job shifts the map id and everything after it by one. A `debug_assert` in
+/// [`character_stat_block`] caught this the first time the map was placed by constant -
+/// getting it wrong puts the map id one byte out and desyncs the rest of the block, and
+/// the record has no length prefix anywhere to resynchronise on.
+pub fn stat_block_map_id_at(job: u16) -> usize {
+    if uses_extended_sp(job) { STAT_BLOCK_MAP_ID_AT } else { STAT_BLOCK_MAP_ID_AT + 1 }
+}
+
+/// Length of [`character_stat_block`] for a given job: 108, or 109 on the plain-SP branch.
+pub fn stat_block_len(job: u16) -> usize {
+    if uses_extended_sp(job) { STAT_BLOCK_LEN } else { STAT_BLOCK_LEN + 1 }
+}
+
+pub fn character_record(chr: &Character, world_id: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+
+    // --- the stat block, FUN_140302e30 with param_3 == 0
+    out.extend_from_slice(&character_stat_block(chr, world_id));
 
     // --- the trailer, FUN_1403094b0
     out.extend_from_slice(&0u32.to_le_bytes());
@@ -1229,6 +1287,80 @@ pub fn set_field_minimal(clock: u64, channel: u32) -> Vec<u8> {
     let mut b = set_field_head(clock, channel, 0);
     b[SET_FIELD_CHARACTER_DATA_AT] = SET_FIELD_WITH_CHARACTER_DATA;
     b.resize(SET_FIELD_HEAD_LEN + SET_FIELD_MINIMAL_TAIL, 0);
+    b
+}
+
+/// The character record `FUN_140304b20` reads, with the character-stat block switched on.
+///
+/// **224 bytes** for an extended-SP job, 225 for a plain-`u16 sp` one. Layout from
+/// `research/charrecord-flag7.md`, which re-assembled the region out of the binary and
+/// diffed all 322 bytes against `client-patched/MapleStory.exe` with zero mismatches:
+///
+/// ```text
+/// off  len  what                                        value
+///   0  100  presence array (field 1)                    byte 0 = 1, rest 0
+/// 100    1  u8   -> dword [param_1+0x1001]              0
+/// 101    4  u32  a duration added to a tick             0
+/// 105    1  u8   loop #1 count                          0  (its body reads a u32)
+/// 106    4  u32  loop #2 count                          0  (its body reads u32 + raw 8)
+/// 110    1  u8   bool; non-zero pulls in two more loops 0
+/// ---------- gate #7 fires here, at 0x140304e49 ----------
+/// 111  108  the stat block, param_3 == 0                character_stat_block
+/// 219    1  u8   -> dword [param_1+0x118b]              0
+/// 220    1  u8   optional-string flag A                 0 skips the string
+/// 221    1  u8   optional-string flag B                 0
+/// 222    1  u8   optional-string flag C                 0
+/// ---------- gate #7 region ends; gates #8..#40 all skip ----------
+/// 223    1  u8   ungated, after every gate              0
+/// ```
+///
+/// **Why `presence[0]`.** `FUN_1402fa9a0` is a 100-byte bytewise AND: a gate computes
+/// `out[i] = presence[i] & key[i]` and runs its block if any byte of `out` is set. Each
+/// gate's key is built at startup by a CRT dynamic initialiser that zeroes 100 bytes and
+/// then sets exactly **one** to `1`, so a gate fires iff its one presence byte is set. The
+/// gate guarding the stat decoder is entry 7 and its byte is index **0**. Full working and
+/// the whole 40-row table: `research/charrecord-presence-map.md`.
+///
+/// The zeros are not laziness - every count and flag here is one the client uses to *skip*,
+/// so zero is the value that keeps it on the shortest path. The one field that must not be
+/// zero is the map id inside the stat block; see [`character_stat_block`].
+pub fn character_record_for_set_field(chr: &Character, world_id: u32) -> Vec<u8> {
+    let mut out = vec![0u8; PRESENCE_ARRAY_LEN];
+    out[PRESENCE_CHARACTER_STAT] = 1;
+    out.extend_from_slice(&[0u8; 11]); // the six head fields at 100..111, all zero
+    debug_assert_eq!(out.len(), STAT_BLOCK_AT);
+    out.extend_from_slice(&character_stat_block(chr, world_id));
+    out.extend_from_slice(&[0u8; 5]); // 219..224: one u8, three string flags, one ungated u8
+    out
+}
+
+/// Field 1 of the character record: the presence array that gates 43 blocks.
+pub const PRESENCE_ARRAY_LEN: usize = 100;
+
+/// The presence byte that switches on the character-stat block - gate entry 7, whose key
+/// mask is all-zero except this index. The key byte's value is exactly `1`, so any value
+/// with bit 0 set works here; `1` is also what the reference server sends.
+pub const PRESENCE_CHARACTER_STAT: usize = 0;
+
+/// Where [`character_stat_block`] starts inside the character record.
+pub const STAT_BLOCK_AT: usize = 111;
+
+/// A `SetField` carrying a real character on a real map.
+///
+/// This is the packet that should put a character in the world. It differs from
+/// [`set_field_minimal`] in exactly two ways, and both were unknown until 2026-08-19:
+/// `presence[0]` is set, which switches on the stat block, and that block carries
+/// `chr.map_id` at its offset 84.
+pub fn set_field_with_character(chr: &Character, world_id: u32, clock: u64, channel: u32) -> Vec<u8> {
+    let mut b = set_field_head(clock, channel, 0);
+    b[SET_FIELD_CHARACTER_DATA_AT] = SET_FIELD_WITH_CHARACTER_DATA;
+    b.extend_from_slice(&[0u8; 12]); // three u32s the caller reads before the record decoder
+    b.extend_from_slice(&character_record_for_set_field(chr, world_id));
+    // 142098435: a zero u8 here jumps past the next seven reads. The margin after it means
+    // a read past the traced path takes a zero rather than running the body out - the
+    // client's readers throw on underrun, and the frame carries its own length so surplus
+    // bytes are simply never looked at.
+    b.extend_from_slice(&[0u8; 1 + 384]);
     b
 }
 
@@ -1908,16 +2040,100 @@ mod tests {
         assert_ne!(Character::default().map_id, 0, "0 is not a map");
     }
 
-    /// And it has to survive into the record the client actually reads, not just sit in
-    /// the struct.
+    /// The map id has to land on **the offset the client reads it from**.
+    ///
+    /// This test used to scan the whole record for any `u32 == START_MAP_ID` and pass if it
+    /// found one. That could not fail: `START_MAP_ID` is 1, and a 1 appears in a record for
+    /// a dozen unrelated reasons. It passed for months while the map id sat at offset 120,
+    /// which is in the character-list trailer and is not on the `SetField` path at all.
+    /// Now it checks the one offset that matters, and a wrong placement fails it.
     #[test]
-    fn the_start_map_reaches_the_character_record() {
+    fn the_start_map_lands_on_the_offset_the_client_reads() {
         let chr = Character { name: "Wanderer".to_string(), ..Character::default() };
-        let record = character_record(&chr, 0);
-        let found = record
-            .windows(4)
-            .any(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == START_MAP_ID);
-        assert!(found, "the start map is not in the encoded record");
+        let stat = character_stat_block(&chr, 0);
+        assert_eq!(stat.len(), stat_block_len(chr.job), "the stat block changed length");
+        let at = stat_block_map_id_at(chr.job);
+        assert_eq!(
+            u32::from_le_bytes([stat[at], stat[at + 1], stat[at + 2], stat[at + 3]]),
+            START_MAP_ID,
+            "the map id is not at stat-block offset {at}"
+        );
+
+        // And it must be discriminating: a different map has to move this exact u32, and
+        // nothing else in the block.
+        let moved = Character { map_id: 104_040_000, ..chr.clone() };
+        let other = character_stat_block(&moved, 0);
+        let differing: Vec<usize> =
+            (0..stat.len()).filter(|&i| stat[i] != other[i]).collect();
+        assert!(
+            differing.iter().all(|&i| (at..at + 4).contains(&i)),
+            "changing the map id changed bytes outside {at}..{}: {differing:?}",
+            at + 4
+        );
+        assert!(!differing.is_empty(), "changing the map id changed nothing");
+    }
+
+    /// The record the `SetField` path sends: the stat block has to be switched on, and it
+    /// has to sit where the client's gate leaves the stream pointer.
+    #[test]
+    fn the_set_field_record_switches_the_stat_block_on() {
+        let chr = Character { name: "Wanderer".to_string(), ..Character::default() };
+        let record = character_record_for_set_field(&chr, 0);
+        assert_eq!(record.len(), PRESENCE_ARRAY_LEN + 11 + stat_block_len(chr.job) + 5);
+        assert!(uses_extended_sp(chr.job), "the default job is on the extended-SP branch");
+        assert_eq!(record.len(), 224, "the record is 224 bytes for an extended-SP job");
+
+        // And a plain-SP job is 225, not 224 - the one-byte shift is real and encoded.
+        let plain = Character { job: 900, ..chr.clone() };
+        assert!(!uses_extended_sp(plain.job));
+        assert_eq!(character_record_for_set_field(&plain, 0).len(), 225);
+
+        // presence[0] switches on gate entry 7. Every other flag must stay clear - each one
+        // that is set pulls in a whole block we do not build.
+        assert_eq!(record[PRESENCE_CHARACTER_STAT], 1, "the stat block is not switched on");
+        assert!(
+            record[..PRESENCE_ARRAY_LEN]
+                .iter()
+                .enumerate()
+                .all(|(i, &b)| i == PRESENCE_CHARACTER_STAT || b == 0),
+            "a presence flag other than the stat block is set"
+        );
+
+        // The six head fields between the array and the gate are counts and flags the
+        // client uses to skip. A non-zero byte in there pulls in loops that read.
+        assert!(
+            record[PRESENCE_ARRAY_LEN..STAT_BLOCK_AT].iter().all(|&b| b == 0),
+            "a head count or flag is non-zero, which would pull in extra reads"
+        );
+
+        // The stat block starts where the gate leaves off, and carries the map.
+        assert_eq!(
+            &record[STAT_BLOCK_AT..STAT_BLOCK_AT + stat_block_len(chr.job)],
+            &character_stat_block(&chr, 0)[..]
+        );
+        let at = STAT_BLOCK_AT + stat_block_map_id_at(chr.job);
+        assert_eq!(
+            u32::from_le_bytes([record[at], record[at + 1], record[at + 2], record[at + 3]]),
+            START_MAP_ID
+        );
+    }
+
+    /// The whole packet, and the one difference from the minimal form that was accepted.
+    #[test]
+    fn set_field_with_character_differs_from_minimal_only_where_intended() {
+        let chr = Character { name: "Wanderer".to_string(), ..Character::default() };
+        let full = set_field_with_character(&chr, 0, 7, 3);
+        let minimal = set_field_minimal(7, 3);
+
+        // The 33-byte head is unchanged - that head reached the right handler on a live
+        // client, so nothing in it should move.
+        assert_eq!(&full[..SET_FIELD_HEAD_LEN], &minimal[..SET_FIELD_HEAD_LEN]);
+        assert_eq!(full[SET_FIELD_CHARACTER_DATA_AT], SET_FIELD_WITH_CHARACTER_DATA);
+
+        // The record begins after the head and the three u32s.
+        let record_at = SET_FIELD_HEAD_LEN + 12;
+        assert_eq!(full[record_at + PRESENCE_CHARACTER_STAT], 1);
+        assert_eq!(minimal[record_at + PRESENCE_CHARACTER_STAT], 0, "the old form set no flag");
     }
 
     /// The tail transform has to invert for every key, not just the zero we send. If this

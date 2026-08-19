@@ -109,15 +109,31 @@ $ErrorActionPreference = 'Stop'
 # 142ef3e44, __report_gsfailure, whose failure mode is still visible in client-exit.log as
 # an exit at ~37s, just less precisely.
 #
-# Both replacements are needed, and they answer different halves:
-#   142097f80            fires BEFORE either early return -> the packet arrived at all
-#   142cfb500:peek=33f4  called from exactly one place, 142097ff3 inside 142097f80, and
-#                        only AFTER the world-null check -> so it firing means the null
-#                        check passed, and the peeked byte is the latch that decides the
-#                        second early return.
+# The two free slots moved on 2026-08-19. 142097f80 and 142cfb500 have both already done
+# their job - the run of that day caught SetField entering its handler while dispatching
+# 0x01A0, with the latch measured at 0x00 - so re-arming them would re-answer a settled
+# question. The open question is now one step further in:
+#
+#   140304b20  the character-record decoder. Fires if SetField reached the record branch.
+#   140302e30  the character-STAT decoder, the block presence[0] is supposed to switch on.
+#
+# Those two discriminate cleanly, which is the point:
+#   neither fires        -> SetField never reached the record path
+#   only 140304b20       -> the record decoded but the gate SKIPPED the stat block, i.e.
+#                           presence[0] is the wrong byte
+#   both                 -> the gate fired and the stats decoded; anything still wrong is
+#                           downstream of the map id, not the presence array
+#
+# 140302e30 also has a built-in positive control. It has exactly two callers in the whole
+# image (python tools/callers.py 0x140302e30): this record path, and the character-LIST
+# path. So it should fire once at character select, on the login connection, well before
+# the migration. If it fires there and NOT after SetField, the probe is demonstrably armed
+# and working and the gate genuinely did not open - a silent negative that means something,
+# which is the thing this project keeps having to prove the hard way.
+#
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142097f80,142cfb500:peek=33f4'
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140304b20,140302e30'
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -242,22 +258,29 @@ Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
     Write-Host ""
-    Write-Host "SET-FIELD PROBE RUN. The client is answered with a MINIMAL SetField:" -ForegroundColor Cyan
-    Write-Host "  characterData=1, every presence flag clear, every count zero."
+    Write-Host "SET-FIELD RUN. The client is answered with a FULL character record:" -ForegroundColor Cyan
+    Write-Host "  characterData=1, presence[0] set so the character-stat block decodes,"
+    Write-Host "  and that block carries the character's real map id."
     Write-Host ""
-    Write-Host "First, in client-patched\maplecw-hook.log:"
-    Write-Host "  no WATCH lines at all     the hook never armed. Re-run; conclude nothing."
-    Write-Host "  no 142097f80              the packet never reached SetField at all."
-    Write-Host "  142cfb500 peek byte == 0  it arrived and was processed - expected."
+    Write-Host "  ONE thing changed since the run that faded to black: the record now" -ForegroundColor Cyan
+    Write-Host "  switches the stat block on and carries a map. Nothing else moved."
     Write-Host ""
-    Write-Host "Then the question this run exists for: is there a CLIENT FAULT line?" -ForegroundColor Cyan
-    Write-Host "  fault at 1402fa55c   unchanged from last run - the record branch did not help."
-    Write-Host "  fault ELSEWHERE      progress. It got further, and the address says how far."
-    Write-Host "  NO fault at all      the record was accepted. The best outcome available."
+    Write-Host "In client-patched\maplecw-hook.log, two WATCH lines decide this:"
+    Write-Host "  no WATCH lines at all        the hook never armed. Re-run; conclude nothing."
+    Write-Host "  140302e30 at CHARACTER SELECT is the positive control - it means the probe"
+    Write-Host "                               is armed and working, whatever happens later."
+    Write-Host "  140304b20 but NOT 140302e30  the record decoded and the gate SKIPPED the"
+    Write-Host "                               stat block: presence[0] is the wrong byte."
+    Write-Host "  BOTH, after the migration    the gate opened and the stats decoded."
     Write-Host ""
-    Write-Host "  This does NOT put the character on map 1 - with characterData=1 the map" -ForegroundColor Yellow
-    Write-Host "  comes from the record, and the record is all zeros. Map 0 is not a map." -ForegroundColor Yellow
-    Write-Host "  Nothing visible on screen is still the expected outcome." -ForegroundColor Yellow
+    Write-Host "Then: is there a CLIENT FAULT line?" -ForegroundColor Cyan
+    Write-Host "  fault at 140ce89d6   unchanged from last run - the map still did not load."
+    Write-Host "  fault ELSEWHERE      it got further; the address says how far."
+    Write-Host "  NO fault at all      the record was accepted end to end."
+    Write-Host ""
+    Write-Host "  This run CAN put a character on screen. That is the thing to watch for." -ForegroundColor Yellow
+    Write-Host "  Unlike every previous run, 'nothing visible' is now a FAILURE, not the" -ForegroundColor Yellow
+    Write-Host "  expected result." -ForegroundColor Yellow
 }
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
@@ -299,18 +322,22 @@ Write-Host 'On screen:'
 if ($SetFieldProbe) {
     Write-Host '  1. wait out the splash, then click Login.'
     Write-Host '  2. pick an existing character and enter the world.'
-    Write-Host '  3. you should hear the enter-success sound and see "Connecting...".'
-    Write-Host '  4. WAIT about 30 seconds without touching anything. The client closed the'
-    Write-Host '     channel socket ~20s in on the last run, so the window is short.'
+    Write-Host '  3. you should hear the enter-success sound, then the screen fades to black.'
+    Write-Host '     Both of those already happened last run - they are not the news.'
+    Write-Host '  4. WAIT about 40 seconds without touching anything. Last run the client'
+    Write-Host '     faulted about 3.4s after the fade, so the interesting window is short,'
+    Write-Host '     but let it sit in case it survives.'
     Write-Host ''
-    Write-Host '  Watch for, and report, any of these:' -ForegroundColor Cyan
-    Write-Host '    - a "Channel" message or toast. That is SetField announcing a channel'
-    Write-Host '      change, and it would mean the packet got past BOTH early returns.'
-    Write-Host '    - any dialog at all: report the exact wording, it names the failure.'
-    Write-Host '    - the screen fading, loading, or changing in any way.'
-    Write-Host '    - whether the client stays alive past ~30s or exits by itself.'
+    Write-Host '  The question this run answers: does the map LOAD?' -ForegroundColor Cyan
+    Write-Host '    - a character standing on a map, however broken it looks - that is the'
+    Write-Host '      goal, and anything at all drawn after the fade counts. Say what you see:'
+    Write-Host '      terrain, a character sprite, a UI bar, a loading bar, anything.'
+    Write-Host '    - black screen then exit, same as last time - the map still did not load.'
+    Write-Host '    - any dialog: report the exact wording, it names the failure.'
+    Write-Host '    - a freeze with the UI unresponsive means an unanswered packet, NOT a'
+    Write-Host '      crash - read world.log for the last inbound line with nothing after it.'
     Write-Host ''
-    Write-Host '  Nothing visible is the EXPECTED result. The answer is in the hook log.' -ForegroundColor Yellow
+    Write-Host '  Something visible after the fade is now the target, not a surprise.' -ForegroundColor Yellow
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'

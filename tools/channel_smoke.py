@@ -18,6 +18,7 @@ decoder. That is the check worth doing BEFORE spending one of the owner's client
 """
 import os
 import socket
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -47,6 +48,10 @@ def free_port():
 # crates/world/src/session.rs. Nothing has minted a migration for it here, so the server
 # should say so plainly rather than accepting it - that honest negative is the check.
 CHARACTER_ID = 204
+
+# The map the planted character stands on. Not 1, deliberately: a check that passes on the
+# default would not notice the builder ignoring the character and emitting a default one.
+MAP_ID = 104_040_000
 CLIENT_IV = 0x52307801        # J, the chain the client encrypts with
 SERVER_IV = 0x52307802        # K, the chain it decrypts with
 
@@ -57,8 +62,46 @@ db = os.path.join(tmp, "ch.db")
 port = free_port()
 subprocess.run([os.path.join("target", "release", "maplecw-useradd.exe"), "--db", db, "maplecw"],
                input="correct horse battery staple\n", text=True, capture_output=True)
+
+
+def plant_character_and_migration(dbpath, character_id, world_id=0, channel_id=0):
+    """Put a character and an unconsumed migration in the store, the way the login server
+    would at character select.
+
+    Without this the probe has nothing to claim and correctly falls back to the minimal
+    record - which is worth checking too, but it is not the packet a real client gets.
+    Writing the rows here rather than driving the whole login flow keeps this script to
+    one server; the cost is that a schema change breaks it loudly, which is the right way
+    round.
+    """
+    con = sqlite3.connect(dbpath)
+    account_id = con.execute("SELECT id FROM accounts LIMIT 1").fetchone()[0]
+    con.execute(
+        "INSERT INTO characters (id, account_id, world_id, name, gender, skin, face, hair,"
+        " level, job, strength, dexterity, intelligence, luck, hp, max_hp, mp, max_mp, ap,"
+        " map_id, created_at)"
+        " VALUES (?,?,?,?,0,0,20000,30000,1,0,12,5,4,4,50,50,5,5,0,?,0)",
+        (character_id, account_id, world_id, "SmokeChar", MAP_ID),
+    )
+    con.execute(
+        "INSERT INTO migrations (seed, account_id, character_id, world_id, channel_id,"
+        " created_at, consumed_at) VALUES (?,?,?,?,?,?,NULL)",
+        (0x1234_5678, account_id, character_id, world_id, channel_id,
+         int(time.time())),
+    )
+    con.commit()
+    con.close()
+
+
 logpath = os.path.join(tmp, "world.log")
 PROBE = "--set-field-probe" in sys.argv
+
+# With the probe on, the point is the packet, so give the server a character to answer
+# about. With it off, the point is that an unclaimed hello is refused in plain words, so
+# leave the store empty. Each mode plants exactly what it is testing.
+if PROBE:
+    plant_character_and_migration(db, CHARACTER_ID)
+
 logf = open(logpath, "w")
 cmd = [os.path.join("target", "release", "maplecw-world.exe"), "--db", db,
        "--bind", "127.0.0.1:%d" % port]
@@ -152,8 +195,12 @@ check("it decrypted and named the environment report", "0x0070" in log)
 check("it decrypted the migration hello", "0x007D" in log)
 check("it read the character id out of the hello body", str(CHARACTER_ID) in log,
       "expected %d in the log" % CHARACTER_ID)
-check("it refuses a character with no minted migration, and says why",
-      "no unconsumed migration" in log)
+if PROBE:
+    check("it claimed the minted migration for the character",
+          "claimed the migration for character %d" % CHARACTER_ID in log)
+else:
+    check("it refuses a character with no minted migration, and says why",
+          "no unconsumed migration" in log)
 
 print()
 print("the server said:")
@@ -189,14 +236,47 @@ if PROBE:
                   "faults this client", body[30] == 1, "%d" % body[30])
             check("offset 31, the string count, is 0",
                   struct.unpack_from("<H", body, 31)[0] == 0)
-            # A stray non-zero byte after the head sets a presence flag and pulls in a
-            # block nobody has built. This is the check that would catch that.
-            tail = body[HEAD:]
-            nz = [i for i, b in enumerate(tail) if b]
-            check("everything after the 33-byte head is zero", not nz,
-                  "non-zero at head+%s" % nz[:6])
-            check("the body outlasts the traced read path (33+12+112+1)",
-                  len(body) > HEAD + 12 + 112 + 1, "%d bytes" % len(body))
+            # The character record. Offsets are from the first byte the record decoder
+            # FUN_140304b20 reads, which is the head plus the three u32s the SetField
+            # handler consumes first.
+            rec = HEAD + 12
+            presence = body[rec:rec + 100]
+            check("the presence array is 100 bytes of record", len(presence) == 100)
+
+            # presence[0] is gate entry 7, the character-stat block. Every OTHER flag must
+            # stay clear: each one that is set pulls in a block nobody has built, and the
+            # record has no length prefix to resynchronise on, so one stray flag desyncs
+            # everything after it. research/charrecord-presence-map.md has all 40.
+            check("presence[0] is set, so the stat block decodes", presence[0] == 1,
+                  "presence[0]=%d" % presence[0])
+            stray = [i for i, b in enumerate(presence) if b and i != 0]
+            check("no other presence flag is set", not stray, "also set: %s" % stray[:6])
+
+            # The six head fields between the array and the gate are counts and flags the
+            # client uses to SKIP. A non-zero byte here pulls in loops that read.
+            head_fields = body[rec + 100:rec + 111]
+            check("the record's counts and flags between the array and the gate are zero",
+                  not any(head_fields),
+                  "non-zero at record+%s" % [100 + i for i, b in enumerate(head_fields) if b])
+
+            # The stat block, and the field this whole exercise is about. The map id sits
+            # at stat-block offset 84 on the extended-SP branch (85 on the plain one), so
+            # accept either rather than assuming the job - research/charstat-layout.md.
+            stat = rec + 111
+            at84 = struct.unpack_from("<I", body, stat + 84)[0]
+            at85 = struct.unpack_from("<I", body, stat + 85)[0]
+            check("the map id is a real map at stat-block offset 84 or 85, not 0",
+                  at84 > 0 or at85 > 0,
+                  "offset 84 = %d, offset 85 = %d - 0 is not a map" % (at84, at85))
+
+            # The record's own id fields, which say we sent THIS character and not a
+            # default one. Stat-block offsets 0 and 4 are both the character id.
+            id0 = struct.unpack_from("<I", body, stat)[0]
+            check("the stat block carries the claimed character id", id0 == CHARACTER_ID,
+                  "%d, wanted %d" % (id0, CHARACTER_ID))
+
+            check("the body outlasts the traced read path (33+12+224+1)",
+                  len(body) > rec + 224 + 1, "%d bytes" % len(body))
 elif replies:
     check("the probe is off, so nothing should come back", False,
           "%d unexpected replies" % len(replies))
