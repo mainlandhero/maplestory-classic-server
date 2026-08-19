@@ -88,10 +88,38 @@ param(
     # silent 37s death is the failure mode this project spends the most runs on.
     [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8',
     [string]$SessionTokens = '',
+    # Answer the migration hello with the fixed head of a SetField, and swap the probe for
+    # the two watches that make the answer readable. See research/msexe-stage-setfield.md.
+    #
+    # This CANNOT put a character in a map - characterData is 0 and the branch that carries
+    # a character needs an 18525-byte record decoder nobody has read. It answers exactly one
+    # question: does 0x01A0 reach FUN_142097f80? Both of that handler's early returns are
+    # silent, so without the watches the run cannot tell an ignored packet from one that
+    # never arrived, which is the whole reason for spending the launch.
+    [switch]$SetFieldProbe,
     [string]$ClientDir
 )
 
 $ErrorActionPreference = 'Stop'
+
+# -SetFieldProbe swaps two of the four watch slots. The other two are not negotiable:
+# 1415db360:ret and 141b2a280:rdx=0 keep the client alive and unblocked, and dropping
+# either kills it at ~37s. What goes is 141b36f60, the migration handler - the channel's
+# own log already proves the migration, because the client connects and sends 0x007D - and
+# 142ef3e44, __report_gsfailure, whose failure mode is still visible in client-exit.log as
+# an exit at ~37s, just less precisely.
+#
+# Both replacements are needed, and they answer different halves:
+#   142097f80            fires BEFORE either early return -> the packet arrived at all
+#   142cfb500:peek=33f4  called from exactly one place, 142097ff3 inside 142097f80, and
+#                        only AFTER the world-null check -> so it firing means the null
+#                        check passed, and the peeked byte is the latch that decides the
+#                        second early return.
+# An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
+if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
+    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142097f80,142cfb500:peek=33f4'
+}
+
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $root = Split-Path -Parent $here
 if (-not $ClientDir) { $ClientDir = Join-Path $root 'client-patched' }
@@ -180,11 +208,11 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
 
 Remove-Item $worldLog -Force -ErrorAction SilentlyContinue
+$worldArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$ChannelPort", '--channel', '0')
+if ($SetFieldProbe) { $worldArgs += '--set-field-probe' }
 $worldSrv = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
     -WindowStyle Hidden `
-    -ArgumentList @(
-        '--db', "`"$Database`"", '--bind', "127.0.0.1:$ChannelPort", '--channel', '0'
-    ) `
+    -ArgumentList $worldArgs `
     -RedirectStandardOutput $worldLog -RedirectStandardError "$worldLog.err"
 Write-Host "channel 0 on 127.0.0.1:$ChannelPort (pid $($worldSrv.Id)), log $worldLog"
 
@@ -212,6 +240,18 @@ Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Enc
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
+if ($SetFieldProbe) {
+    Write-Host ""
+    Write-Host "SET-FIELD PROBE RUN. What to look for, in client-patched\maplecw-hook.log:" -ForegroundColor Cyan
+    Write-Host "  no WATCH lines at all      the hook never armed. Re-run; do not conclude anything."
+    Write-Host "  no 142097f80              0x01A0 never reached the handler - the opcode or the"
+    Write-Host "                            routing is wrong. That is the finding worth having."
+    Write-Host "  142097f80 but no 142cfb500  it arrived and the world object was NULL."
+    Write-Host "  142cfb500 peek byte != 0  it arrived, and the latch swallowed it silently."
+    Write-Host "  142cfb500 peek byte == 0  it arrived and was processed. Then watch the screen."
+    Write-Host ""
+    Write-Host "  This cannot put a character in a map. Nothing visible is the expected outcome." -ForegroundColor Yellow
+}
 
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
 # with "requires elevation".
