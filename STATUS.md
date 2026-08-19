@@ -91,32 +91,64 @@ is already established, so nobody re-derives it, and the **one concrete next ste
 
 ### START HERE - what to do next, in order
 
-**The four items that were here on the morning of 2026-08-19 are all resolved** - the
-equipped block, the NPC Say, the mob body and the channel row. Two worked, one was retracted
-and one is still failing for a reason now narrowed. What follows is the state after the owner's
-three runs that day.
+**Everything on the previous list is resolved.** Five of the six were built and confirmed on
+screen the same day; the sixth had all three of its explanations retracted. What follows is
+the state after the owner's five runs of 2026-08-19.
 
-**WORKING and confirmed on screen:** a character on a map, dressed; NPCs visible, clickable,
-and speaking the game's own lines on **both** click paths; portals both ways landing on the
-connecting door; world select; `!map <id>`; and quest NPCs opening with the real
-`Quest.wz` line.
+#### WORKING, and confirmed on screen
+
+| | |
+|---|---|
+| the world | a character on a map, **wearing its items with their real stats** |
+| NPCs | visible, clickable, speaking the game's own `Quest.wz` and `String.wz` lines on **both** click paths, and showing **idle chatter** on the client's own 3-9 second cadence |
+| quests | clicking an NPC opens the real dialogue; **Accept answers with the quest's `yes` branch** |
+| movement | portals both ways onto the connecting door, and `!map <id>` |
+| chat | `!map` says **why** it refused, in the chat window |
+| session | world select, and **Log Out returns to the login screen** |
+
+Two channels run by default and both are advertised. **Mobs are off by default** and are the
+one thing that still kills the client.
+
+#### What to do next
 
 | # | do this | why it is here | spec |
 |---|---|---|---|
-| 1 | **Answer `0x00F3`** so a conversation can continue past its first box | The owner's clearest ask: pressing **Accept** on a quest sends this and nothing comes back, so every quest dialogue dies at line 1. It also unblocks paging, yes/no, and the whole of goal 2. **Three real bodies are captured** against known inputs | `research/script-reply.md`, `research/npc-dialogue.md` |
-| 2 | **Find out why item tooltips read zero** - it is now a **two-way fork settled by pointer identity** | The character is dressed but every tooltip shows both bitmask blocks as zero while the avatar is right. Four candidate homes are eliminated; what is left is (a) the window renders a **second object** built somewhere else, or (b) **our** object is holding zeros and the bug is in the decode. The armed watch answers it in one hover | `research/equip-stats.md` §11.4.6 |
-| 3 | **Measure the mob fault - do NOT change the body** | `mob+0x2b8` is filled by the **client**, via a `QueryInterface` inside `encodeInit`, from a block that **dominates** the rest of the body - so our packet cannot make it null, and the 35 unconditional reads match what we send exactly. Both remaining explanations are about *ordering*, not layout. `-Mobs -MobLimit 1` reproduces it and the launcher arms the right watch automatically | `research/mob-spawn.md` §8-§11 |
-| 4 | **Answer `0x01BE`, log out** | The owner clicked Log Out and could not get back to the login screen. Zero-byte body, unanswered | `research/talking-back.md` |
-| 5 | **Find the chat-display packet** | `!map` refuses a bad id in silence because there is no outbound "tell the player something". The owner asked for it directly | `research/talking-back.md` |
-| 6 | **Read what populates the Change Channel list** | Not the world list: those bytes were **byte-identical** between a run that listed CH.1/CH.2 and one that listed nothing. The route through world select is the live hypothesis and testing it costs nothing | `research/channel-select.md` §0 |
+| 1 | **Find what mob B is** - the mob crash | The watch fired and the stack says `encodeInit` is initialising **one** mob while `FUN_141c81040` runs on **another** that is still zero-initialised. The vtable is none of the eight predicted. An agent is on it; the leading shape is a **value** in our body steering control flow, since the layout is verified | `research/mob-spawn.md`, `STATUS.md` §2f |
+| 2 | **Give the bag some slots** | The unequip request never reaches the wire. The record's four zero bytes at offsets 219-222, labelled "a `u8` and three optional-string flags", are where this game family puts the **five inventory slot counts** - and a zero-slot bag would make the client refuse every unequip, silently, client-side. **One-variant test: send 24 and see whether a drag produces `0x0107`** | §2d, §2e |
+| 3 | **Decode `0x0420`-`0x0426`** | The client volunteers its **own world state** once per session: `0x0421` is 1115 bytes carrying the character id, the name and **our four item ids in equipped-slot order**; `0x0420` carries the NPC object ids we assigned. It is a free read-back instrument - it says what the client *thinks* it has, in its own words - and nothing else here can do that | §2e |
+| 4 | **Read what populates the Change Channel list** | **All three explanations are now retracted** (the four trailing bytes, the enable byte, the route through world select). Two client runs went on the first two. Nothing yet proposed populates that list, so the next step is to find what calls `FUN_142cb8e10` and when - upstream, not downstream | `research/channel-select.md` §0 |
+| 5 | **Quest state** | Goal A below. Everything else about quests works; nothing persists | §"NEW GOAL ... quest state" |
 
-**Two things that are NOT open any more, so nobody re-opens them:**
+#### Things that are NOT open, so nobody re-opens them
 
-* **The White Map is not broken.** `!map 900000000` crashed the client, and then the owner logged
-  in with that map stored and it loaded fine. The crash is in the mid-session *transition*,
-  not the destination - and `!map 1` and `!map 40` worked mid-session in the same run.
-* **The channel entry's trailing bytes are not the channel list's problem.** Two runs were
-  spent on that byte and both attributions are retracted.
+* **The White Map is not broken.** The owner logged in with `900000000` stored and it loaded fine.
+  The crash is in a mid-session **transition**, and `!map 1` and `!map 40` worked mid-session
+  in the same run.
+* **The item tooltips were never a client mystery.** They read zero because `go_to_map` sent
+  the *bare* record, so every `SetField` after the migration carried all-zero stats and every
+  observation was made on a map reached with `!map`. There was no second object. An agent
+  eliminated four candidate homes chasing a ghost one line of mine had put there.
+* **World select cannot change channels.** This client redirects to the login screen on
+  picking a world; the owner tried it.
+* **The channel entry's trailing bytes are not the channel list's problem**, and neither is
+  the world-list packet at all: the bytes were **byte-identical** between a run that listed
+  CH.1/CH.2 and one that listed nothing.
+
+#### What today cost, and the pattern worth carrying
+
+Five client runs. Three of them were spent on things that turned out to be **my own bugs or
+my own wrong attributions**, not client behaviour:
+
+* two runs on a channel byte that was never the variable;
+* an entire agent investigation into "which object does the tooltip render" that was
+  `go_to_map` sending the wrong record.
+
+**The tell, both times, was a claim about the client made without an artefact beside it.**
+`research/equip-stats.md` §12 has the version of this that an agent wrote about itself, and
+it generalises: *a prediction recorded in the past tense, with no capture, screenshot or
+listing cited beside it.* The cheap defence is the one that worked here - transcribe the
+screen rather than paraphrase it, and grep your own code before theorising about someone
+else's.
 
 ### THE NEW GOALS - set by the owner, 2026-08-19, later in the day
 
@@ -339,7 +371,14 @@ every time, ~420 ms after. It is now `0x00DC`.
 Also needed regardless: the NPC table is a **stub covering map 1 only**. The real data is
 every field's WZ `life` node, and it belongs in a generator beside `tools/dump_portals.py`.
 
-### 2. NPCs have dialogue when clicked - **BUILT 2026-08-19. Unconfirmed on screen.**
+### 2. NPCs have dialogue when clicked - **DONE 2026-08-19, confirmed on screen**
+
+NPCs speak the game's own lines on **both** click paths, quest NPCs open the real quest
+dialogue, and pressing **Accept** answers with the quest's `yes` branch. What is *not* done
+is quest **state**: nothing persists, so the same conversation is available every time. That
+is goal A.
+
+*Original notes below - the identification is still the reference.*
 
 `crates/world` answers `0x0151` with a `0x055B` type-0 Say, spoken by **the NPC template the
 client itself named** - by construction a real `Npc.wz` id, and a bad one costs the portrait
@@ -402,7 +441,7 @@ just before a `SetField`.**
 > **Next step:** build the 32-byte minimum-viable Say and send it in answer to `0x0151`. The
 > values that matter are in the research file: the speaker template must be a real `Npc.wz`
 > id (`0` is not one), and `hasOverride` and `flags & 4` each change the body length with no
-> resync point. **Text on screen is not a quest**, though - no quest-result packet has been
+> resync point. **Text on screen is still not a quest** - no quest-result packet has been
 > found, so state will not advance.
 
 ### 2f. THE MOB WATCH FIRED, and it says there are two objects
@@ -769,9 +808,13 @@ look like ordinary chat.
 
 **Map ids are validated** against `gm-handbook/fields.txt`, the 426 maps with a real field
 image in `Map.wz` - not against the name table, which disagrees with it in both directions
-(12 named-but-absent, 6 present-but-unnamed). A bad id is refused silently, because chat is
-fire-and-forget and there is no outbound notice packet yet; the server log is the only
-feedback.
+(12 named-but-absent, 6 present-but-unnamed).
+
+**A refusal now says why, in the chat window.** It used to be silent, because there was no
+outbound "tell the player something" packet - that is `0x00BB` (`u8 force, str text`) and it
+is found and sent. `force` must be **1**: with `0` the client shows only the first line after
+each field entry and drops the rest, which reads exactly like the feature being broken.
+Confirmed on screen for both a bad id and a good one.
 
 **No permission check, and there should not be one yet** - nothing on this server
 authenticates and every connection is already the same account.
@@ -960,7 +1003,17 @@ Two things left, both known:
   precondition, measured `0x00` on the first `SetField` and **non-zero on every later one**.
   We still send the long form, which works; switching is an optimisation, not a fix.
 
-### 6. Equipment and consumables - **BUILT 2026-08-19. Unconfirmed on screen.**
+### 6. Equipment and consumables - **the equipment half is DONE, confirmed on screen**
+
+The character is dressed and **every item carries its `Character.wz` stats**, on every
+`SetField` rather than only the first - see §2e for the bug that made it look otherwise for
+most of a day.
+
+**Consumables are not started**, and the nearest concrete step is the bag: the unequip
+request never reaches the wire, and the leading explanation is that the bag has **no slots**
+(§2e, START HERE item 2).
+
+*Original notes below.*
 
 The owner keeps reporting the character as naked and the Equipment window as empty, and this is
 the goal that fixes it. Full working: `research/naked-character.md`.
