@@ -186,11 +186,24 @@ capacity field of any name.** `mobRate` is `1.0` and is a respawn *rate*, not a 
 `life` node has 42 entries: 40 mobs plus Robin and Sam, which also confirms the generated
 table.
 
-So the cap is **server policy**. `world::config::solo_spawn_capacity` applies **75%**, which
-The owner flagged as coming from an unofficial fan site rather than from the game - **[I]**, and
-nothing in this client corroborates it. The one datapoint is 40 -> 30, and floor and ceiling
-of `3n/4` both give 30 from 40, so **the rounding is unsettled**; the code uses floor, and a
-small map is where the two would differ (6 -> 4 or 5).
+So the cap is **server policy**, and the owner adopted the fan site's rule blanket on
+2026-08-19: **75% of the spawn points below six players on the field, 100% at six or more**,
+with nothing in between. `world::config::spawn_capacity(points, players)`.
+
+**[I], and adopted knowingly** - the owner flagged the source as an unofficial fan site themself.
+Nothing in this client corroborates it. Two things are still unsettled and are written down
+rather than smoothed over:
+
+* **The rounding.** The one datapoint is 40 -> 30, which both flooring and rounding up
+  reproduce. The code floors. A small map is where they differ: 6 spawn points give 4 by
+  flooring and 5 by rounding up.
+* **The threshold's edge.** The site's columns are labelled "Solo" and "6+ players", so
+  `CROWD_THRESHOLD` is **six or more**. The owner's wording was "more than 6". If strictly more
+  was meant, that constant is the single number to change.
+
+**The crowded branch is written and untaken.** `players` is the count on the *field*, and it
+is always `1` today because this server has no field-occupancy tracking at all. It is a
+parameter rather than a constant so that adding occupancy is a change at the call site.
 
 The full spawn-point list stays intact in `Config::mobs`; the cap is applied where they are
 *sent*, because respawn will need the points that are not currently filled.

@@ -268,11 +268,15 @@ impl Session {
         // about 30 of them filled for a solo player, so sending one per point
         // over-populates the field. The cap is NOT in the WZ - map 40's info node has a
         // mobRate but no capacity of any name - so it is our policy; see
-        // config::solo_spawn_capacity for what is measured and what is inferred.
+        // config::spawn_capacity for what is measured and what is inferred.
         //
         // And which points are filled matters as much as how many: a mixed map keeps each
         // type's SHARE of the total, so this cannot just take the first N in WZ order.
-        let alive = crate::config::solo_spawn_capacity(mobs.len());
+        // Players ON THE FIELD, not on the channel. Always 1 today: there is no
+        // field-occupancy tracking here at all, so the 6+ branch of config::spawn_capacity
+        // is written and untaken. Adding occupancy is a change to this line.
+        let players_here = 1;
+        let alive = crate::config::spawn_capacity(mobs.len(), players_here);
         let chosen = crate::config::share_balanced(mobs, alive);
         out.extend(chosen.into_iter().map(|mob| {
             Reply {

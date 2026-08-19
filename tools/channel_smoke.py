@@ -307,7 +307,7 @@ if PROBE:
     # 40 spawn POINTS, but a spawn point is not a mob: the server caps how many are alive
     # at 75% for a solo player, so 30. That figure is [I] from a fan site, not from the WZ -
     # map 40's info node has a mobRate and no capacity of any name. See
-    # world::config::solo_spawn_capacity.
+    # world::config::spawn_capacity.
     check("map 40 sends 30 mobs, not one per spawn point", len(mobs) == 30,
           "%d" % len(mobs))
     if mobs:

@@ -245,12 +245,27 @@ impl Config {
     }
 }
 
+/// How many players it takes for a field to run at full spawn capacity.
+///
+/// **Adopted as policy by the owner on 2026-08-19**, from the same unofficial fan site as the
+/// percentages: *"the mob cap is 75% of the map capacity unless there are more than 6
+/// players on the map."* The site labels the two columns "Solo" and "6+ players", so the
+/// threshold here is **six or more**. If strictly-more-than-six was meant, this is the one
+/// number to change.
+pub const CROWD_THRESHOLD: usize = 6;
+
+/// Percent of a field's spawn points that hold a live mob below [`CROWD_THRESHOLD`].
+pub const SPAWN_PERCENT_SOLO: usize = 75;
+
+/// And at or above it. Every spawn point is filled.
+pub const SPAWN_PERCENT_CROWDED: usize = 100;
+
 /// How many of a map's spawn points may hold a live mob at once.
 ///
 /// **A spawn point is not a mob.** Map 40, "Snail Hunting Ground I", has **40 mob spawn
-/// points** in its WZ `life` node - checked, it is `42` life entries, 40 of type `m` plus
-/// Robin and Sam - and a real server keeps roughly **30** alive on it for a solo player.
-/// Sending one mob per spawn point over-populates every map.
+/// points** in its WZ `life` node - checked, it is 42 life entries, 40 of type `m` plus
+/// Robin and Sam - and a real server keeps **30** alive on it for a solo player. Sending one
+/// mob per spawn point over-populates every map.
 ///
 /// **The cap is not in the WZ, and that is measured rather than assumed.** Map 40's whole
 /// `info` node is `AmbientBGM(v)`, `MR*`/`VR*` bounds, `bgm`, `cloud`, `fieldLimit`,
@@ -261,16 +276,24 @@ impl Config {
 /// of any name. `mobRate` is there (`1.0` for map 40) but that is a respawn *rate*, not a
 /// cap. So the cap is **server policy**, and it has to come from us.
 ///
-/// **The 75% figure is [I], from an unofficial fan site**, which the owner flagged as such when
-/// they raised it: capacity = spawn points x a player scalar, 75% solo rising to 100% at six
-/// or more players. Nothing in this client corroborates it. The single datapoint we have is
-/// **40 spawn points -> 30**, and floor and ceiling of `3n/4` both produce 30 from 40, so
-/// the rounding is **unsettled**; this uses floor. A map with a handful of spawns is where
-/// the two would differ (6 -> 4 by floor, 5 by ceiling), and nothing here decides it.
+/// **The rule is [I] and adopted deliberately.** The owner took it from an unofficial fan site,
+/// flagged it as such, and then chose to accept it blanket: 75% below six players, 100% at
+/// six or more, with nothing in between. Nothing in this client corroborates it. The single
+/// datapoint is **40 spawn points -> 30**, which both floor and ceiling of `3n/4` reproduce,
+/// so the **rounding is unsettled**; this floors. A small map is where the two would differ
+/// (6 -> 4 flooring, 5 rounding up).
 ///
-/// This server has one player, so the solo scalar is the only one that applies today.
-pub fn solo_spawn_capacity(spawn_points: usize) -> usize {
-    (spawn_points * 3) / 4
+/// `players` is the number on the *field*, not on the channel. Today it is always 1: this
+/// server has no field-occupancy tracking at all, so the crowded branch is written and
+/// untaken. It is a parameter rather than a constant so that adding occupancy is a change
+/// at the call site and not here.
+pub fn spawn_capacity(spawn_points: usize, players: usize) -> usize {
+    let percent = if players >= CROWD_THRESHOLD {
+        SPAWN_PERCENT_CROWDED
+    } else {
+        SPAWN_PERCENT_SOLO
+    };
+    spawn_points * percent / 100
 }
 
 /// Choose which spawn points hold a live mob, keeping each type's **share** of the map.
@@ -398,9 +421,9 @@ mod spawn_tests {
     /// player. The single datapoint the capacity rule has.
     #[test]
     fn map_40_keeps_thirty_of_its_forty_spawn_points() {
-        assert_eq!(solo_spawn_capacity(40), 30);
+        assert_eq!(spawn_capacity(40, 1), 30);
         let mobs = field(&[(2, 40)]);
-        let chosen = share_balanced(&mobs, solo_spawn_capacity(mobs.len()));
+        let chosen = share_balanced(&mobs, spawn_capacity(mobs.len(), 1));
         assert_eq!(chosen.len(), 30);
         assert_eq!(counts(&chosen), [(2, 30)].into_iter().collect());
     }
@@ -412,7 +435,7 @@ mod spawn_tests {
     fn a_mixed_map_keeps_each_types_share_rather_than_the_first_n() {
         let mobs = field(&[(1, 10), (2, 16), (3, 7), (4, 6), (5, 6)]);
         assert_eq!(mobs.len(), 45);
-        let cap = solo_spawn_capacity(45);
+        let cap = spawn_capacity(45, 1);
         assert_eq!(cap, 33);
 
         let chosen = share_balanced(&mobs, cap);
@@ -485,7 +508,22 @@ mod spawn_tests {
     /// datapoint we have (40 -> 30) cannot tell them apart. Pinned so a change is deliberate.
     #[test]
     fn a_small_map_shows_the_rounding_that_is_still_unsettled() {
-        assert_eq!(solo_spawn_capacity(6), 4, "floor(6 * 3 / 4); ceiling would be 5");
-        assert_eq!(solo_spawn_capacity(1), 0, "and one spawn point rounds to none");
+        assert_eq!(spawn_capacity(6, 1), 4, "floor(6 * 75 / 100); rounding up would be 5");
+        assert_eq!(spawn_capacity(1, 1), 0, "and one spawn point rounds to none");
+    }
+    /// The crowd threshold the owner adopted: 75% below six players on the field, 100% at six or
+    /// more, nothing in between. Written and untaken - this server has no field-occupancy
+    /// tracking, so `players` is always 1 today.
+    #[test]
+    fn a_crowded_field_fills_every_spawn_point() {
+        for players in 0..CROWD_THRESHOLD {
+            assert_eq!(spawn_capacity(40, players), 30, "{players} player(s)");
+        }
+        for players in [CROWD_THRESHOLD, CROWD_THRESHOLD + 1, 50] {
+            assert_eq!(spawn_capacity(40, players), 40, "{players} player(s)");
+        }
+        // The step is a step, not a ramp: nothing between the two percentages.
+        assert_eq!(spawn_capacity(45, 5), 33);
+        assert_eq!(spawn_capacity(45, 6), 45);
     }
 }
