@@ -3,25 +3,31 @@
 //! Everything here is read out of `client-patched\MapleStory.exe`; the working is in
 //! `research/mob-spawn.md`, and every field below carries the address the client reads it at.
 //!
-//! # This body has been sent to a client, and the client died - but not because of the body
+//! # This body killed a client once. The layout was never the problem; one byte's value was
 //!
 //! 2026-08-19: 40 of these went out on map 40 and the client took `0xC0000005` at
 //! `0x141c810b0` on the **first** one. The hook writes its `opcode=… elapsed_us=` line after
 //! the dispatch returns and no such line exists for `0x03C6`, so the fault is *inside* the
-//! first mob's dispatch - it is not a volume problem and `-MobLimit 1` reproduces it.
+//! first mob's dispatch - not a volume problem, and `-MobLimit 1` reproduces it.
 //!
-//! The faulting instruction dereferences `mob+0x2b8`, and **no byte of this body can reach
-//! that field**. It is zeroed by the mob constructor (`141c4d1dd`) and written in exactly one
-//! other place in all of the client's mob code: `141c50c9c`, inside `encodeInit` itself,
-//! with a COM interface the client obtains from *itself* - `FUN_142af7be0()` then
-//! `QueryInterface({F28BD1ED-…})`, whose implementation provably accepts that IID and returns
-//! a non-null pointer. The block that does it **dominates** the body's tail reads, so any body
-//! that parses past offset 107 has filled the field.
+//! A watch on the faulting function then measured the cause: **[`FieldMob::move_action`], body
+//! offset 35, sent as `0`.** Zero means `action == 0`, and `action == 0` is the single case in
+//! which the animation object `encodeInit` builds at `141c50da5` calls back into the mob's
+//! *second* interface - `mob+0x2c0` - which `encodeInit` does not create until `141c50e77`,
+//! `0x148` bytes later. The constant [`MOVE_ACTION_MIN_SAFE`] carries the whole chain.
+//! `FieldMob::new` now defaults that byte to `2`.
 //!
-//! Three instruments now agree that the layout below is right, so **do not change it to chase
-//! that crash**: the 52 reads in `encodeInit`, a CFG dominator test that picks out exactly the
-//! 35 unconditional ones and finds them identical to the 35 emitted here, and the WZ dump that
-//! settles both template-driven blocks as absent. `research/mob-spawn.md` section 11.
+//! The **layout** is right and three instruments say so, so do not change it: the 52 reads in
+//! `encodeInit`, a CFG dominator test that picks out exactly the 35 unconditional ones and
+//! finds them identical to the 35 emitted here, and a WZ dump that settles both
+//! template-driven blocks as absent for all 193 mobs. `research/mob-spawn.md` section 11.
+//!
+//! > **A retraction.** The first pass at this blamed `mob+0x2b8` and said no packet byte could
+//! > reach it. The field is real and that sentence about it is true, but it is **the wrong
+//! > field**: the faulting method's `this` is `mob+8`, the second base subobject the
+//! > constructor gives its own vtable at `141c4cf1c`, so its `[this+0x2b8]` is **`mob+0x2c0`**.
+//! > The error was reading a `this`-relative offset as if `this` were the primary pointer.
+//! > `research/mob-spawn.md` section 11.7 records how it was caught.
 //!
 //! # The body is four decoders, not one
 //!
@@ -103,6 +109,31 @@ pub const OBJECT_ID_MULTIPLE_TO_AVOID: u32 = 178;
 /// and never settles values. **[I]** for the correspondence, **[L]** for these three.
 pub const SPECIAL_TEMPLATE_IDS: [u32; 3] = [8_909_488, 8_909_588, 9_990_545];
 
+/// The smallest [`FieldMob::move_action`] that does **not** crash the client: **2**.
+///
+/// Body offset 35 is `action * 2 + facing` - the client splits it that way itself at
+/// `141c50dba` (`AND EDI,1` for facing, `SAR EAX,1` for action, then a 16-entry jump table on
+/// `action - 1`). We sent **0** on 2026-08-19 and the client took `0xC0000005`. This is why:
+///
+/// ```text
+/// 141c503f2  the byte is read and stashed XOR-obfuscated in mob+0x3dc / mob+0x3e0
+/// 141c50cfd  EDI = ROL([mob+0x3e0],5) XOR [mob+0x3dc]      the plaintext, back again
+/// 141c50da5  CALL R14 = iface->vtable[0x118] = FUN_142ac10d0, with EDI as argument 7
+/// 142ac1123  a pure forwarding shim: args 5-8 copied verbatim to FUN_1409c50a0
+/// 1409c6852  EBX = [RBP+0x140] = argument 7 = our byte
+/// 1409c6858  TEST EBX,0xfffffffe
+/// 1409c685e  JNE  1409c687f                    <-- >= 2 SKIPS the call below
+/// 1409c687a  CALL [mob8_vtable + 8] = FUN_141c81040
+/// 141c81094  reads mob+0x2c0 ... which encodeInit does not create until 141c50e77
+/// 141c810b0  dereferences 0x848 and dies
+/// ```
+///
+/// So **`move_action & !1 == 0` walks into a client bug**: the callback happens `0x148` bytes
+/// before the field it needs exists. Anything `>= 2` takes the `JNE` and never enters it.
+/// Measured, not guessed - the watch on `141c81040` logged `rdx=0 r8=0 r9=0`, which matches
+/// `XOR EDX,EDX / XOR R8D,R8D / MOV R9D,EBX&1` only when `EBX == 0`. **[L]**
+pub const MOVE_ACTION_MIN_SAFE: u8 = 2;
+
 /// Is this object id safe to use as a mob's pool key?
 ///
 /// Zero pulls in a second `u32` read at `141d336a1` and desynchronises the body; multiples of
@@ -160,8 +191,18 @@ pub struct FieldMob {
     /// packet that produces a mob at 0% HP. Send the template's `maxHP` from `Mob/%07d.img`
     /// for a full bar.
     pub hp: u64,
-    /// `141c503f2`, stored XOR-obfuscated at `mob+0x3e0`. The reference calls it
-    /// `moveAction`; 0 is the resting stance. **[L]** for the read, **[I]** for the name.
+    /// `141c503f2`, stored XOR-obfuscated at `mob+0x3dc`/`mob+0x3e0`. It is
+    /// **`action * 2 + facing`** - `141c50dba` splits it exactly that way. **[L]**
+    ///
+    /// # This byte killed the client, and it is the only one that did
+    ///
+    /// **Never send a value below [`MOVE_ACTION_MIN_SAFE`].** `0` and `1` are `action == 0`,
+    /// and `1409c6858 TEST EBX,0xfffffffe / JNE` makes `action == 0` the one case that calls
+    /// back into the mob's second interface **before `encodeInit` has created it** - see
+    /// [`MOVE_ACTION_MIN_SAFE`] for the whole chain and `research/mob-spawn.md` section 11.
+    ///
+    /// [`FieldMob::new`] therefore defaults to `2` (action 1, facing 0), not `0`. The
+    /// previous default of `0` is what `0xC0000005 at 0x141c810b0` was.
     pub move_action: u8,
     /// `141c50485`, read as a **signed** byte into `mob+0x1168`.
     ///
@@ -200,7 +241,12 @@ pub struct FieldMob {
 
 impl FieldMob {
     /// An ordinary field mob: full HP, no scaling, no optional template blocks, `appear_type`
-    /// `-2`. `object_id` is nudged to the next usable value rather than trusted.
+    /// `-2`, and `move_action` [`MOVE_ACTION_MIN_SAFE`]. `object_id` is nudged to the next
+    /// usable value rather than trusted.
+    ///
+    /// `move_action` is **2, not 0**. Zero is the value that crashed the client on
+    /// 2026-08-19; the constant's docs carry the eight-step chain from that byte to
+    /// `0xC0000005 at 0x141c810b0`.
     pub fn new(object_id: u32, template_id: u32, x: i16, y: i16, fh: i16, hp: u64) -> Self {
         Self {
             object_id: next_usable_object_id(object_id),
@@ -210,7 +256,7 @@ impl FieldMob {
             fh,
             home_fh: fh,
             hp,
-            move_action: 0,
+            move_action: MOVE_ACTION_MIN_SAFE,
             appear_type: -2,
             appear_option: 0,
             hp_scale_percent: 100,
@@ -301,7 +347,12 @@ pub fn mob_enter_field(mob: &FieldMob) -> Vec<u8> {
     // -- encodeInit: the virtual FUN_141c4ff80, 106 bytes -----------------------------
     b.extend_from_slice(&mob.x.to_le_bytes()); //          31  i16 141c4ffc5 x
     b.extend_from_slice(&mob.y.to_le_bytes()); //          33  i16 141c501b0 y
-    b.push(mob.move_action); //                            35  u8  141c503f2 moveAction
+    debug_assert!(
+        mob.move_action >= MOVE_ACTION_MIN_SAFE,
+        "move_action 0 or 1 makes the client dereference an uninitialised mob+0x2c0 \
+         (0xC0000005 at 0x141c810b0) - see MOVE_ACTION_MIN_SAFE"
+    );
+    b.push(mob.move_action); //                            35  u8  141c503f2 action*2+facing
     if mob.has_special_template_byte() {
         b.push(0); //                                          u8  141c5043d 3 template ids
     }
@@ -385,7 +436,7 @@ mod tests {
         // encodeInit - FUN_141c4ff80
         assert_eq!(&b[31..33], &250i16.to_le_bytes(), "141c4ffc5 x");
         assert_eq!(&b[33..35], &(-80i16).to_le_bytes(), "141c501b0 y");
-        assert_eq!(b[35], 0, "141c503f2 moveAction");
+        assert_eq!(b[35], 2, "141c503f2 action*2+facing - NEVER 0, see MOVE_ACTION_MIN_SAFE");
         assert_eq!(&b[36..38], &12i16.to_le_bytes(), "141c50456 fh");
         assert_eq!(&b[38..40], &12i16.to_le_bytes(), "141c50465 homeFh");
         assert_eq!(b[40], 0, "141c50474");
@@ -486,6 +537,35 @@ mod tests {
         }
     }
 
+    /// The byte that killed the client on 2026-08-19, pinned so it cannot come back.
+    ///
+    /// `1409c6858 TEST EBX,0xfffffffe / JNE` skips the callback into the mob's second
+    /// interface for every `move_action >= 2`, and takes it for `0` and `1` - and that
+    /// callback reads `mob+0x2c0`, which `encodeInit` does not create until `0x148` bytes
+    /// later. `FieldMob::new` must never hand out a mob in that window.
+    #[test]
+    fn move_action_is_never_the_value_that_dereferences_an_uninitialised_mob() {
+        assert_eq!(MOVE_ACTION_MIN_SAFE, 2);
+        // the constructor, whatever it is handed
+        for id in [1u32, 3000, 65_360] {
+            let m = FieldMob::new(id, 1, 0, 0, 0, 1);
+            assert!(m.move_action >= MOVE_ACTION_MIN_SAFE, "FieldMob::new gave {}", m.move_action);
+            assert_eq!(mob_enter_field(&m)[35], MOVE_ACTION_MIN_SAFE);
+        }
+        // and the guard the client applies: only `& 0xfffffffe == 0` is fatal
+        for v in 0u8..=7 {
+            let fatal = v & 0xFE == 0;
+            assert_eq!(fatal, v < MOVE_ACTION_MIN_SAFE, "move_action {v}");
+        }
+        // the byte reaches the wire verbatim, and the offset does not move
+        let mut m = tutorial_mob();
+        m.move_action = 5;
+        let b = mob_enter_field(&m);
+        assert_eq!(b[35], 5, "141c503f2");
+        assert_eq!(&b[36..38], &12i16.to_le_bytes(), "fh still at 36");
+        assert_eq!(b.len(), MOB_ENTER_FIELD_LEN);
+    }
+
     /// Three template ids add one byte after `move_action` (`FUN_14045b1a0`).
     #[test]
     fn the_three_special_template_ids_add_one_byte_after_move_action() {
@@ -495,7 +575,7 @@ mod tests {
             assert!(m.has_special_template_byte());
             let b = mob_enter_field(&m);
             assert_eq!(b.len(), MOB_ENTER_FIELD_LEN + 1);
-            assert_eq!(b[35], 0, "141c503f2 moveAction");
+            assert_eq!(b[35], 2, "141c503f2 action*2+facing - NEVER 0, see MOVE_ACTION_MIN_SAFE");
             assert_eq!(b[36], 0, "141c5043d the extra byte");
             assert_eq!(&b[37..39], &12i16.to_le_bytes(), "fh, shifted by one");
         }

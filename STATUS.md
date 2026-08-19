@@ -113,7 +113,7 @@ one thing that still kills the client.
 
 | # | do this | why it is here | spec |
 |---|---|---|---|
-| 1 | **Find what mob B is** - the mob crash | The watch fired and the stack says `encodeInit` is initialising **one** mob while `FUN_141c81040` runs on **another** that is still zero-initialised. The vtable is none of the eight predicted. An agent is on it; the leading shape is a **value** in our body steering control flow, since the layout is verified | `research/mob-spawn.md`, `STATUS.md` §2f |
+| 1 | **Re-run mobs** - the crash is understood and fixed, one byte | `move_action` (body offset 35) was `0`. That byte is `action*2 + facing`, and **action 0 alone** takes a callback at `141c50da5` into an interface `encodeInit` does not build until `0x148` bytes later - so the read lands on a null pointer. Now `2`. **Pass = no `141c81040` line at all, and `141c532ab` firing with cursor `0x71`** | `research/mob-spawn.md` §11 |
 | 2 | **Give the bag some slots** | The unequip request never reaches the wire. The record's four zero bytes at offsets 219-222, labelled "a `u8` and three optional-string flags", are where this game family puts the **five inventory slot counts** - and a zero-slot bag would make the client refuse every unequip, silently, client-side. **One-variant test: send 24 and see whether a drag produces `0x0107`** | §2d, §2e |
 | 3 | **Decode `0x0420`-`0x0426`** | The client volunteers its **own world state** once per session: `0x0421` is 1115 bytes carrying the character id, the name and **our four item ids in equipped-slot order**; `0x0420` carries the NPC object ids we assigned. It is a free read-back instrument - it says what the client *thinks* it has, in its own words - and nothing else here can do that | §2e |
 | 4 | **Read what populates the Change Channel list** | **All three explanations are now retracted** (the four trailing bytes, the enable byte, the route through world select). Two client runs went on the first two. Nothing yet proposed populates that list, so the next step is to find what calls `FUN_142cb8e10` and when - upstream, not downstream | `research/channel-select.md` §0 |
@@ -461,7 +461,11 @@ CLIENT FAULT #1: 0xC0000005 at 0x141c810b0
 **`mob+0x2b8` is confirmed null** - the diagnosis holds, and the watch did in one hover what
 a direct-call graph could not do at all.
 
-**But the stack says there are two objects, which nobody predicted.** `0x141c50da8` is inside
+**SOLVED. There is no second object, and the field named here is the wrong one.** See the
+correction immediately below; the reading in this section is kept because the *measurement*
+is what solved it.
+
+**What this looked like at the time:** `0x141c50da8` is inside
 `encodeInit` and **past** the `+0x2b8` assignment at `0x141c50c9c`. So `encodeInit` is running
 and has already executed that assignment - for *some* mob - while the mob in `rcx` still holds
 the constructor's zero. The reading that fits is **`encodeInit` initialising mob A reaches
@@ -493,6 +497,53 @@ same virtual on a different class.
 **Mobs remain off by default.** Nothing about the body has been changed, deliberately: it is
 the one part verified three ways, and changing it now would confound the only measurement
 that has ever discriminated here.
+
+### 2g. THE MOB CRASH, SOLVED - and it is one byte we send
+
+**`0x143407950` is not a ninth vtable. It is the mob's own second base**, written by the
+constructor at `mob+8` alongside `0x1434077e8` at `mob+0` and `0x1434079c0` at `mob+0x10`.
+`FUN_141c81040` is slot 1 of that table, so `rcx = mob + 8` - and **`[rcx+0x2b8]` is
+`mob+0x2c0`**, not the `mob+0x2b8` the whole first pass analysed. Two independent locks agree
+on `this = mob+8`: `FUN_141c76190` and `FUN_141c81040` assert the *same* id `0x431` on
+`mob+0x3c8` and `this+0x3c0`, and `encodeInit` reads the template at `[rsi+0x3a8]` where
+`FUN_141c81040` reads it at `[rsi+0x3a0]`.
+
+`mob+0x2c0` has exactly two writers: the constructor's zero, and **`141c50eed` in
+`encodeInit`** - a *second* interface object, created at `141c50e77`. So `+0x2b8` and
+`+0x2c0` are a **pair**, built `0x1c8` bytes apart, and the callback lands **between** them.
+
+**The lever is `move_action`, body offset 35, and we were sending 0.** That byte is
+`action*2 + facing` - `encodeInit` splits it twelve instructions later, `AND EDI,1` for
+facing and `SAR EAX,1` for the action, into a 16-entry jump table. The chain:
+
+```text
+offset 35 = 0  ->  obfuscated into mob+0x3dc/0x3e0
+141c50cfd  EDI = ROL([mob+0x3e0],5) XOR [mob+0x3dc]      the plaintext back
+141c50da5  CALL iface->vtable[0x118], EDI as arg 7        <-- DOMINATES the tail reads
+1409c6858  TEST EBX,0xfffffffe                            <-- only action == 0 falls through
+1409c687a  CALL [mob8_vtable+8] = FUN_141c81040 -> mob+0x2c0 is still null -> 0x848 -> dead
+```
+
+`TEST EBX,0xfffffffe` is the whole answer: **any action >= 1 skips it.** The call at
+`141c50da5` dominates the tail, so the callback itself is unavoidable - only the value is a
+lever. `net::mob::MOVE_ACTION_MIN_SAFE` is `2`, `FieldMob::new` defaults to it, and both a
+unit test and the smoke test pin it.
+
+> **The pass condition on the next run:** **no `141c81040` line at all**, and `141c532ab`
+> firing with cursor **`0x71`**. If the stance looks wrong on screen, `3` is the same action
+> facing the other way and `5` is action 2 - all of them skip the fault, so that is a *look*
+> question, not a crash question.
+
+**An instrument correction that matters beyond this.** The probe's `stack:` line is a
+**heuristic scan of the stack for code-shaped values, not an unwind.** In the capture,
+`0x142ac10d0` is a function *start*, which no return address can be, and `0x140c79143` is the
+return of an indirect call in an unrelated function - both stale. **Only `called-from=` is
+exact.** The "two objects" reading in §2f was built partly on those frames.
+
+**And the first pass's own retraction, which is the useful part:** it blamed `mob+0x2b8`,
+proved from a dominator test that no packet byte could make it null, and was right about that
+field and wrong about which field was being read. The tell was a "slot 46/47/48" wobble it
+noticed and explained away instead of chasing - offsets into *secondary* vtables.
 
 ### 2e. RUN OF 2026-08-19 (evening): what it settled, and the best lead yet on unequip
 

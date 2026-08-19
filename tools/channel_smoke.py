@@ -409,6 +409,13 @@ if PROBE:
         # A zero object id pulls in an extra u32 and desynchronises the rest; a multiple of
         # 178 takes a branch through a vtable slot on what looks like an exception object.
         check("no mob has object id 0", all(i != 0 for i in ids))
+        # Byte 35 is action*2 + facing, and action 0 is what killed the client on
+        # 2026-08-19: it takes a callback at 141c50da5 into an interface encodeInit does not
+        # build until 0x148 bytes later, so the read lands on a null pointer. Anything with
+        # action >= 1 skips it. See net::mob::MOVE_ACTION_MIN_SAFE.
+        actions = [r["body"][2:][35] for r in mobs]
+        check("no mob is sent with move action 0 - that is the crash",
+              all(a >= 2 for a in actions), "byte 35 values %s" % sorted(set(actions)))
         check("no mob's object id is a multiple of 178",
               all(i % 178 != 0 for i in ids), "%s" % [i for i in ids if i % 178 == 0][:4])
         check("every mob on the field has a distinct object id",

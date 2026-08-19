@@ -21,11 +21,10 @@ Markers: **[L]** read out of the listing or the image, **[D]** derived from two 
 | what the last pass missed | **two more decoders**, both of which read the packet: `FUN_141cc9410` -> `FUN_14085acd0` (57 bytes, gated by a byte we control) and the **virtual** `vtable+0x38` = `FUN_141c4ff80` (52 reads, 106 bytes minimum) - which is where position, foothold and HP actually live [L] |
 | implemented in | `crates/net/src/mob.rs` |
 
-**It has now been sent to a client, and it killed it** - `0xC0000005 at 0x141c810b0` on the
-**first** `0x03C6`. Section 11 is that run and what the crash actually proves. The short
-version: **the 137-byte body is not the bug.** The field the client dereferenced,
-`mob+0x2b8`, is a COM interface pointer the client obtains from *itself*; no byte of the
-packet can set it or clear it. Sections 1-7 below were written before that run and stand.
+**Sent to a client twice. It killed it once; the cause is now measured and fixed.** The
+crash was `0xC0000005 at 0x141c810b0` on the **first** `0x03C6`, and the cause is **one byte's
+value, not the layout**: `move_action` at body offset 35, which we sent as `0`. Section 11 is
+the whole chain. Sections 1-7 were written before either run and stand.
 
 ---
 
@@ -394,9 +393,9 @@ three special template ids are `8910000, 8910100, 9990033` in the reference; in 
    change-controller opcode (`FUN_141d30e80` case `0x3d2`, `u8 flag; u32 objectId;` then either
    a removal or `FUN_141d34a70(pool, flag, id, u8, packet)`). Not decoded, not needed to
    create the object. [L]
-5. ~~**Nothing has been sent to a client.**~~ It has - see section 11. What is still open is
-   **why the client called `FUN_141c81040` on a mob whose `+0x2b8` had not been filled yet**,
-   which section 11.5 turns into two watches.
+5. ~~**Nothing has been sent to a client.**~~ Two runs; see section 11. The crash is
+   **settled and fixed** - `move_action` 0 -> 2. What is still open is whether a mob now
+   *renders*, which needs one more launch.
 
 ---
 
@@ -447,7 +446,12 @@ other analyses done that way. Nothing in section 11 needs the decompiler to be r
 
 ---
 
-## 11. The first client run - 2026-08-19 - and what the crash proves
+## 11. The two client runs - 2026-08-19 - and the byte that caused the crash
+
+**Answer, for anyone reading only this line:** `move_action` (body offset 35) must be **>= 2**.
+We sent `0`; `0` and `1` are the one case in which the client dereferences a field it has not
+created yet. The 137-byte layout was never wrong. Sections 11.7-11.8 are the measurement;
+11.4-11.5 are the first pass, kept with their error flagged.
 
 Capture: `research/fixtures/mob-body-faults-client-{world,hook,exit}.log`. Map 40,
 character 204, 40 mobs of template 2 sent in one burst after two `0x044F` NPCs.
@@ -526,6 +530,11 @@ Independently of the earlier hand trace and shortest-path solve:
 
 ### 11.4 `mob+0x2b8` is a COM interface the client gives itself. No byte of ours reaches it [L]
 
+> **Read 11.7 first.** Everything in 11.4 is true of `mob+0x2b8`, and `mob+0x2b8` is **not the
+> field that faulted**. The faulting method's `this` is `mob+8`, so its `[this+0x2b8]` is
+> `mob+0x2c0`. The section is kept because the *pattern* it describes is exactly the pattern
+> `mob+0x2c0` follows, one object later - and because the mistake is worth keeping visible.
+
 The faulting sequence, out of a capstone disassembly bounded by `.pdata` to
 `0x141c81040..0x141c81248` (the last 8 bytes are the function's jump table, and two bytes of
 it do not decode - hence the resync):
@@ -601,6 +610,11 @@ skips the assignment. (`0x141c50c9c` itself does not dominate it, only because o
 
 ### 11.5 Which of (a) and (b) - and the two watches that separate them
 
+> **The watches worked; the class identification in this section did not.** The line
+> "the eight aligned `.rdata` qwords ... are the eight mob vtables, so the receiver is a mob"
+> is half right - the receiver *is* a mob, but through its `mob+8` subobject, so the field
+> named below is wrong. 11.7 has the correction. The rest of the section stands.
+
 `FUN_141c81040` appears as a qword in **exactly eight** aligned `.rdata` slots and they are
 the eight mob vtables, so whatever calls it, **the receiver is a mob** and `[rcx+0x2b8]` is
 this field. (It sits at slot 46 in `0x1434077e8` and slot 48 in six others, while slot 7 and
@@ -658,7 +672,117 @@ of the real path goes through a vtable. Stop inferring here.
 Run them together, with `-Mobs -MobLimit 1`, and change **nothing else** - the body is the one
 thing already verified three ways, and altering it would confound the reading.
 
-### 11.6 Two smaller corrections to this file
+### 11.7 The second run: the watch fired, and it corrected me [L]
+
+`141c81040:peek=2b8:hits=20` and `-MobLimit 1`, one mob, template 2, object id 2000, map 40:
+
+```
+WATCH #1: 0x141c81040 ENTERED while dispatching opcode 0x03C6
+  rcx=0x382a9760 [0x43407950]  [rcx+0x2b8]=u8:0x00/u32:0x00000000
+  rdx=0x0  r8=0x0  r9=0x0  called-from=0x1409c687d
+CLIENT FAULT #1: code=0xc0000005 at 0x141c810b0
+```
+
+**The field is null, and it is not the field I named.** `0x143407950` is not one of the eight
+vtables 11.5 predicted. It is the vtable the mob constructor writes at **`mob+8`**:
+
+```asm
+141c4cf0b  LEA RAX,[rip -> 0x1434077e8] ; MOV [RSI],RAX        primary vtable, mob+0x00
+141c4cf1c  LEA RAX,[rip -> 0x143407950] ; MOV [RSI+8],RAX      second base,    mob+0x08
+141c4cf27  LEA RAX,[rip -> 0x1434079c0] ; MOV [RSI+0x10],RAX   third base,     mob+0x10
+```
+
+So `FUN_141c81040` is **slot 1 of the `mob+8` vtable** (`0x143407958 = 0x143407950 + 8`), its
+`this` is `mob+8`, and **`[this+0x2b8]` is `mob+0x2c0`**. Two independent checks agree:
+
+* `FUN_141c76190` asserts id `0x431` on a null `mob+0x3c8`; `FUN_141c81040` asserts the **same
+  id `0x431`** on a null `this+0x3c0`. Same field ⟹ `this = mob+8`.
+* `encodeInit` reads the template at `[rsi+0x3a8]`; `FUN_141c81040` reads it at `[rsi+0x3a0]`.
+  `0x3a0 + 8 = 0x3a8`.
+
+That also explains the "slot 46 / 47 / 48" wobble in 11.5, which should have been the tell:
+those were offsets into *secondary* vtables, not slot indices of the primary. **The error was
+reading a `this`-relative displacement without first establishing which subobject `this` is.**
+`0x141c81040` occupying exactly eight aligned `.rdata` qwords was right; "they are the eight
+*primary* mob vtables" was not.
+
+**What writes `mob+0x2c0`.** The same sweep, at the right offset. 284 object-field stores
+image-wide; inside a mob class, exactly two - and the positive control is the ctor store
+`141c4d1e4` I had already read by hand:
+
+| where | what |
+|---|---|
+| `141c4d1e4` in the mob base ctor | `MOV [RSI+0x2c0],R14`, `R14 = 0` |
+| **`141c50eed`** in `encodeInit` | a **second** `FUN_142af7be0()` + `QueryInterface`, same IID, created at `141c50e77` |
+
+So `mob+0x2b8` and `mob+0x2c0` are a **pair** of identical interface objects, and `encodeInit`
+builds them `0x1c8` bytes apart.
+
+### 11.8 The fault is a client initialisation-order bug, and `move_action` opens the door
+
+Between the two, at `141c50da5`, `encodeInit` tells the **first** object to build itself - and
+that object calls back into the mob's second base, which reaches `mob+0x2c0` before it exists:
+
+```asm
+141c50cd6  CALL 0x142ac0310          ; iface->Init(mob+8, template+0x74, ...) - sets iface+0x100 = mob+8
+141c50cde  MOV  R14,[RAX + 0x118]    ; = FUN_142ac10d0, slot 35 of the iface vtable 0x14348c7c8
+141c50cf1  MOV  ECX,[RSI + 0x3dc]
+141c50cf7  MOV  EAX,[RSI + 0x3e0]
+141c50cfd  MOV  EDI,EAX / ROL EDI,5 / XOR EDI,ECX     ; <-- move_action, de-obfuscated
+141c50d88  MOV  [RSP + 0x30],EDI                      ; argument 7
+141c50da5  CALL R14
+```
+
+`FUN_142ac10d0` is a **pure forwarding shim**: `LEA RBP,[RAX-0x47]` with `RAX = entry RSP`, so
+`[rbp+0x6f/0x77/0x7f/0x87]` are arguments 5-8, and `142ac1102`-`142ac111f` copies all four
+verbatim into `FUN_1409c50a0`'s outgoing slots. `tools/callers.py` gives `FUN_1409c50a0` six
+call sites, and `0x142ac1123` is one of them - **`0x142ac1128` is on the watch's stack**, which
+makes that edge measured rather than assumed. Then:
+
+```asm
+1409c50bf  LEA  RBP,[RSP - 0xc8]     ; after 8 pushes => [rbp+0x140] = [entry RSP + 0x38] = arg 7
+1409c6852  MOV  EBX,[RBP + 0x140]    ; our move_action, read once, never written
+1409c6858  TEST EBX,0xfffffffe
+1409c685e  JNE  1409c687f            ; *** >= 2 skips everything below ***
+1409c6860  MOV  RCX,[RDI + 0x100]    ; = mob+8
+1409c6872  MOV  R9D,EBX ; AND EBX,1  ; the facing bit
+1409c687a  CALL [RAX + 8]            ; = FUN_141c81040   -> reads mob+0x2c0 -> 0x848 -> dead
+```
+
+The watch logged `rdx=0 r8=0 r9=0`, which matches `XOR EDX,EDX / XOR R8D,R8D / MOV R9D,EBX&1`
+**only if `EBX == 0`**. So argument 7 was `0`, and argument 7 is our byte. The chain is closed
+by measurement at both ends, not by the heuristic stack trace. [L]
+
+`encodeInit` splits the same encoding itself twelve instructions later - `141c50dbc AND EDI,1`
+(facing), `141c50dbf SAR EAX,1` (action), then a 16-entry jump table on `action - 1` - so body
+offset 35 is **`action * 2 + facing`**, and `TEST EBX,0xfffffffe` means *"only when
+`action == 0`"*. We sent `0`. **[D]**
+
+`141c50da5` **dominates** `0x141c532ab`, so the callback is unavoidable; `141c50eed` does not,
+so the field genuinely is not there yet. The only lever is the value.
+
+> ### The change
+>
+> **`crates/net/src/mob.rs`, body offset 35: `move_action` `0` -> `2`** (`MOVE_ACTION_MIN_SAFE`).
+> One byte. `FieldMob::new` now defaults to it, `mob_enter_field` `debug_assert!`s it, and
+> `move_action_is_never_the_value_that_dereferences_an_uninitialised_mob` pins it.
+> `2` is `action 1, facing 0` - the smallest value that clears `TEST EBX,0xfffffffe`.
+> If the mobs render in a wrong stance, `3` is the same action facing the other way and
+> `5` is `action 2, facing 1`; all three skip the fault, so this is a look question, not a
+> crash question.
+
+### 11.9 What the watches should say next time
+
+Same two slots, unchanged. With `move_action = 2`:
+
+| observation | meaning |
+|---|---|
+| **no `WATCH #… 0x141c81040` line at all**, and `141c532ab` fires with cursor `0x71` | the fix worked - the callback was skipped and the body parsed to offset 107 |
+| `0x141c81040` still fires with `r9=0`/`r9=1` and `[rcx+0x2b8]=0` | `TEST EBX,0xfffffffe` was cleared by something else and argument 7 is not `move_action` after all - retract 11.8 |
+| `0x141c81040` fires but `[rcx+0x2b8]` is **non-zero** | it is now being called after `141c50eed`, which is harmless |
+| `141c532ab` fires with a cursor that is not `0x71` | the layout is off by `cursor - 113`, despite 11.3 |
+
+### 11.10 Three smaller corrections to this file
 
 * Section 6.1 says the `objectId` at `141d3368e` "goes to `mob+0x3a0`". It does not: it goes
   to the stack local `[rbp-0x71]` and thence to `FUN_141d4f320(pool+0x68, &objectId, &mob)`,
@@ -666,4 +790,12 @@ thing already verified three ways, and altering it would confound the reading.
   `141c50aad` passes `[rsi+0x3a8]` to the `template+0x1a0` accessor, and `141c8108d` uses
   `[rsi+0x3a0]` as a fallback template. [L]
 * Section 5 lists `0x1434077e8` as the base vtable. That is right - slot 7 is `0x141c4ff80`
-  and slot 28 is `0x141cc15c0` in all eight tables, which is the alignment check.
+  and slot 28 is `0x141cc15c0` in all eight tables, which is the alignment check. What section
+  5 does not say, and should, is that a mob carries **three** vtables - `mob+0x00`, `mob+0x08`
+  and `mob+0x10` - and that a `this`-relative offset means nothing until you know which. [L]
+* The probe's `stack: …` line is a **heuristic scan of the stack for code-looking values**, not
+  an unwind. In the 11.7 capture `0x140c79143` is the return of an *indirect* call in an
+  unrelated function and `0x142ac10d0` is a function **start**, which no return address can be:
+  both are stale. Only `called-from=` is exact (it is `[rsp]` at a function-entry int3). Treat
+  the rest as candidates and confirm each edge with `tools/callers.py` - which is how the
+  `0x142ac1123 -> FUN_1409c50a0` edge in 11.8 became a measurement instead of a guess.
