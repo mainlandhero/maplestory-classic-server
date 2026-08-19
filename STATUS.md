@@ -55,6 +55,44 @@ for this rule, and no path in it returns an error in place of a reply.
 
 ## NEXT GOALS - read this first when picking up
 
+### 2026-08-19: the migration works, and then the client says it is outdated
+
+**Confirmed on screen.** The client selected a character, `FUN_141b36f60` was entered while
+dispatching `0x0011` and ran its **whole** body (2755 us, against 355 us for the login
+result - so not an early bail), closed the login socket, and **opened a second connection**.
+The `0x0011` decode is right.
+
+It then showed **"The client is outdated"** and exited cleanly (code 0, 38.7s).
+
+**That dialog is the handshake's, not the migration's.** `0x22000007` is raised from four
+sites, all inside the greeting check - this is the same dialog the whole of
+`docs/handshake.md` was written about. Our server sent connection #2 the *identical* 48
+bytes that connection #1 accepted, so the failure is state-dependent, not layout-dependent.
+`FUN_1415d10e0`'s `param_3` selects "First Connect" from "Second Connect", and connection #2
+is the second - a path this project has never exercised.
+
+**Two things were wrong by construction and are now fixed:**
+
+1. The client reconnected to the **login server**, because that is what the migration packet
+   advertised. A login server answering a game connection is wrong whatever the dialog says.
+   `crates/world` is now a separate per-channel process (the owner's instruction), and
+   `World::channels` is one address per channel rather than a count.
+2. The login server answers a new connection with an unprompted **`0x0032` startup gate**.
+   That releases the *login* connection's startup loop; a channel has no startup loop.
+   `crates/world` greets and then waits.
+
+**The next run names the failing gate.** `FUN_140cc2350`, `FUN_1415e0e30` and
+`FUN_1415e0fb0` - every raiser - funnel into **`FUN_141804870`**, so one watch identifies
+the site. `rdx` is the site id (`0x348` G/H, `0x2df` L, `0x33b` second connect, `0x327` first
+connect) and `r8` is the error code. `tools/test-server.ps1` arms it by default.
+
+**`-Session mode=2` is off by default now.** It was meant to stop mode 5's auto-login but is
+applied on `0x0000` dispatch - our *reply* to the login request - so it always landed after
+the auto-login it was meant to prevent. It never did its job, and it writes `session+0x68`,
+which `FUN_1415d10e0` reads on every connection including the channel one. That also closes
+goal 4 below by deleting it rather than fixing it.
+
+
 In the order that unblocks the most. Everything above the line is done and confirmed on
 screen; nothing here is speculative work.
 

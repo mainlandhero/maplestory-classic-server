@@ -51,7 +51,13 @@ param(
     [string]$DisplayName = 'wisp****@example.com',
     [string]$Database,
     [string]$World = 'Scania',
-    [string]$Session = 'mode=2,create=on',
+    # mode=2 is GONE by default, on purpose. It was there to stop mode 5's auto-login,
+    # but it is applied when opcode 0x0000 is dispatched - our *reply* to the login
+    # request - so it always landed after the auto-login it was meant to prevent. It never
+    # did its job, and it changes session+0x68, which FUN_1415d10e0 reads on **every**
+    # connection including the one the client makes to a channel. Fewer client patches on
+    # the migration path is worth more than a button flow we do not need.
+    [string]$Session = 'create=on',
     # Four watch slots, all used.
     #
     #   1415db360:ret     skip the reachability check - without it the client __fastfails
@@ -67,20 +73,19 @@ param(
     # 142e9ebd0 (the virtualised routine), which should never be entered now that the
     # reachability check is skipped, and was not entered on the last run.
     # 1415db360:ret and 141b2a280:rdx=0 are mandatory - without them the client dies at
-    # ~37s and the "trouble connecting" dialog blocks the screen. The third slot watches
-    # FUN_141b36f60, the migration handler: it is the difference between "the client
-    # ignored our 0x0011" and "it never got there", and that handler bails silently on
-    # several paths. Swap it back to 141b36a10:peek=1c0 when the create reply is the
-    # subject again.
-    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8',
-    # Extra launch arguments, space separated. -NXLDEBUG routes arguments 3 onward into the
-    # client config's six-slot session array at +0x90. Whether outbound 0x0073 transmits
-    # them is unmeasured and it is what decides whether a launcher token can identify an
-    # account - so passing six distinguishable tokens answers it as a side effect of a run
-    # that was happening anyway. login.log records packet bodies, so read 0x0073 there.
+    # ~37s and the "trouble connecting" dialog blocks the screen.
     #
-    # One delimited string, not an array: `powershell -File` flattens an array into
-    # separate words and the rest bind positionally, which has already cost a run.
+    # 141804870 is the one that matters for the migration work: FUN_140cc2350,
+    # FUN_1415e0e30 and FUN_1415e0fb0 - every "The client is outdated" raiser in the
+    # handshake - all funnel into it, so one watch names which gate failed. rdx is the
+    # site id and r8 is the error code:
+    #
+    #   rdx=0x348  G/H gate            rdx=0x2df  L gate
+    #   rdx=0x33b  second connect      rdx=0x327  first connect
+    #   r8=0x22000007 "client is outdated"   r8=0x22000001 "cannot access the game"
+    #
+    # 141b36f60 is the migration handler, so the log still shows the migration happening.
+    [string]$Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141804870,141b36f60',
     [string]$SessionTokens = '',
     [string]$ClientDir
 )
