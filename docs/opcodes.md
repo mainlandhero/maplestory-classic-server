@@ -507,6 +507,27 @@ Do not build a handoff on it. The client identifies itself there by **character 
 
 ---
 
+## The ELog covers the channel, but travels on the login socket
+
+Worth knowing before hunting a channel-side fault. Captured 2026-08-19 in
+`research/fixtures/leave-world-and-elog-login.log`:
+
+```text
+ELog|10|VERSION|100|DATETIME|2026/08/19 16:48:05|FID|30|LastUseName||State|3
+|Time1|90478870|Time2|90477067|WID|0|Channel|0|NAME|TestCharD|JOB|0
+|Socket|127.0.0.1:8485|0|184|AccountId|0|
+```
+
+`FID|30` is the map the character was standing on and `127.0.0.1:8485` is the channel - yet
+this arrived as `0x008F` on the **login** connection. So the ELog does report channel-side
+problems; it just does not travel on the channel. **Keep `login.log` in view when chasing a
+fault in the world**, and note the client keeps the login connection open for the whole
+session, so it is there to receive it.
+
+The trailing `|0|184|AccountId|0|` follows the same shape as the `ELog|2` capture's
+`|0|121|throw CTerminateException|...`, so `AccountId` reads as the thing being reported and
+`0` as its value. **[I]** - not chased.
+
 ## The channel connection, 2026-08-19
 
 Everything above is the **login** connection. These are the channel's, and they are on a
@@ -536,6 +557,7 @@ instrument this project has.
 | `0x0238` / `0x024D` | entered the world | empty. **First field entry only**, never again - not a per-field marker | no |
 | `0x0151` | **NPC click** | `u8 type, u32 objectId, u32 templateId, i16 x, i16 y, u32`; 17 bytes for type 1, 13 for type 4 | **no** - this is why NPCs do not talk |
 | `0x00E7` | **chat** | `u32`, `u16`-length string, `u8` | no |
+| `0x0082` | **leave world** - BOTH "Choose another world" and "Back" on the character screen send this, empty body | | **yes**, already |
 | `0x0182` | **party create** | 68 bytes carrying a length-prefixed party name | no |
 | `0x00D9` | movement | every ~510 ms, coordinate-shaped | no |
 | `0x013D`, `0x00B8`, `0x02EB`, `0x01ED`, `0x0408`, `0x0184`, `0x0194`, `0x01A5`, `0x02DE`, `0x00ED`, `0x02B2` | undecoded | | no |

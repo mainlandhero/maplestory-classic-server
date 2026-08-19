@@ -1,0 +1,27 @@
+// 142797e00 .. 142797e5f   block=.text
+142797e00  8b cb e8 19 54 94 ff 48 8b f5 48 85 ed 0f 85 0d   <no instruction>
+142797e01  cb e8 19 54 94 ff 48 8b f5 48 85 ed 0f 85 0d fe   <no instruction>
+142797e02  e8 19 54 94 ff                    CALL 0x1420dd220
+142797e07  48 8b f5                          MOV RSI,RBP
+142797e0a  48 85 ed                          TEST RBP,RBP
+142797e0d  0f 85 0d fe ff ff                 JNZ 0x142797c20
+142797e13  48 85 db                          TEST RBX,RBX
+142797e16  0f 84 0c 01 00 00                 JZ 0x142797f28
+142797e1c  48 8b 7b 38                       MOV RDI,qword ptr [RBX + 0x38]
+142797e20  48 85 ff                          TEST RDI,RDI
+142797e23  74 1c                             JZ 0x142797e41
+142797e25  48 8b 57 08                       MOV RDX,qword ptr [RDI + 0x8]
+142797e29  48 81 fa ff ff 0f 00              CMP RDX,0xfffff
+142797e30  76 0a                             JBE 0x142797e3c
+142797e32  b9 0f 03 00 00                    MOV ECX,0x30f
+142797e37  e8 b4 c3 6b 00                    CALL 0x142e541f0
+142797e3c  f0 48 ff 47 08                    INC.LOCK qword ptr [RDI + 0x8]
+142797e41  48 8d 5f 20                       LEA RBX,[RDI + 0x20]
+142797e45  65 48 8b 0c 25 30 00 00 00        MOV RCX,qword ptr GS:[0x30]
+142797e4e  33 c0                             XOR EAX,EAX
+142797e50  f0 48 0f b1 0b                    CMPXCHG.LOCK qword ptr [RBX],RCX
+142797e55  74 3a                             JZ 0x142797e91
+142797e57  48 39 0b                          CMP qword ptr [RBX],RCX
+142797e5a  75 14                             JNZ 0x142797e70
+142797e5c  ff 43 08                          INC dword ptr [RBX + 0x8]
+142797e5f  eb 37                             JMP 0x142797e98
