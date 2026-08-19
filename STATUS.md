@@ -405,6 +405,56 @@ just before a `SetField`.**
 > resync point. **Text on screen is not a quest**, though - no quest-result packet has been
 > found, so state will not advance.
 
+### 2f. THE MOB WATCH FIRED, and it says there are two objects
+
+Run of 2026-08-19 with `-Mobs -MobLimit 1`, one mob on map 40 (`template 2, object id 2000,
+hp 45, 137 bytes`). Client died on entering the world. Preserved as
+`research/fixtures/mob-watch-2b8-null-second-object-{hook,world}.log`.
+
+```text
+WATCH #1: 0x141c81040 ENTERED while dispatching opcode 0x03C6
+  rcx=0x382a9760 [0x43407950]  [rcx+0x2b8]=u32:0x00000000  called-from=0x1409c687d
+  stack: 0x1409c687d 0x142f0492d 0x140c79143 0x142ac10d0
+         0x142ac1128 0x142f0492d 0x141c81297 0x142ac10d0 0x141c50da8
+CLIENT FAULT #1: 0xC0000005 at 0x141c810b0
+```
+
+**`mob+0x2b8` is confirmed null** - the diagnosis holds, and the watch did in one hover what
+a direct-call graph could not do at all.
+
+**But the stack says there are two objects, which nobody predicted.** `0x141c50da8` is inside
+`encodeInit` and **past** the `+0x2b8` assignment at `0x141c50c9c`. So `encodeInit` is running
+and has already executed that assignment - for *some* mob - while the mob in `rcx` still holds
+the constructor's zero. The reading that fits is **`encodeInit` initialising mob A reaches
+`FUN_141c81040` on mob B**, which has not been initialised yet.
+
+**Two more discriminations from the same line:**
+
+* **The vtable low dword is `0x43407950`, and it is not one of the eight** the static pass
+  predicted (`0x434077e8`, `0x4341f548`, `0x4341e510`, `0x4341e758`, `0x433765c0`,
+  `0x4341ede0`, `0x433767f0`, `0x4341eff0`). Either that set is incomplete or `rcx` is not a
+  mob at all. The claim it rested on - that the eight aligned `.rdata` qwords holding
+  `FUN_141c81040` *are* the eight mob vtables - now needs re-checking.
+* **The second watch never fired.** `141c532ab:peek=24` produced no line, so the body read at
+  offset 107 never happened. That does not contradict the above; the fault simply came first.
+
+`called-from=0x1409c687d` is `FUN_1409c50a0 + 0x17dd` (7184 bytes). `0x142f0492d` appears
+**twice** in the chain, which has the shape of a trampoline or dispatcher, and `0x141c81297`
+is past `FUN_141c81040`'s own `.pdata` end - so it is a different function, plausibly the
+same virtual on a different class.
+
+> **The shape worth looking at first**, because it is the only category that both fits "our
+> packet cannot make `+0x2b8` null" *and* explains a second object appearing: a **value** in
+> our body steering control flow. The 35 unconditional reads are verified identical to ours,
+> so the layout is right - but `summonType` is `1` in both reachable templates' WZ while we
+> send `appear_type = -2`, and the head carries two `u8`s whose meaning is unread. If one of
+> them makes the client treat this as a summon **with a parent**, mob B is the parent it goes
+> looking for and does not have.
+
+**Mobs remain off by default.** Nothing about the body has been changed, deliberately: it is
+the one part verified three ways, and changing it now would confound the only measurement
+that has ever discriminated here.
+
 ### 2e. RUN OF 2026-08-19 (evening): what it settled, and the best lead yet on unequip
 
 Preserved as `research/fixtures/stats-work-then-map-loses-them-world.log`.

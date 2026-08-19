@@ -1,0 +1,45 @@
+17:51:15.653 install_once: our code IS running. env=true marker=true -> installing
+17:51:15.705 install: .text settled after 52 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+17:51:15.706 install: base=0x140000000 target=0x1415d60e0
+17:51:15.706 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+17:51:15.706 17:51:15.706probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32) 
+session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+17:51:15.706 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+17:51:15.706 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+17:51:15.707 probe: watch on 0x141c81040 will log up to 20 hits
+17:51:15.707 probe: will log [rcx+0x2b8] on every entry to 0x141c81040
+17:51:15.707 probe: watching 0x141c81040 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 20)
+17:51:15.707 probe: watch on 0x141c532ab will log up to 20 hits
+17:51:15.707 probe: will log [rcx+0x24] on every entry to 0x141c532ab
+17:51:15.707 probe: watching 0x141c532ab (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 20)
+17:51:15.707 install: hook active
+17:51:15.907 session: object at 0x62b6208 is now readable
+17:51:15.908 ***** SESSION obj=0x62b6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+17:51:17.025     0 opcode=0x0032 elapsed_us=63.2 ret=112362320 flag=0->1 state=0->2
+17:51:17.025 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+17:51:17.110 ***** SOCKET conn=0x5c04998 +0x20=0x690 - the client holds a socket *****
+17:51:17.259     1 opcode=0x0032 elapsed_us=55.4 ret=1 flag=1->1 state=2->2
+17:51:17.712 ***** SOCKET 0x690 is now VALID (client still holds it) *****
+17:51:18.715 ***** SESSION obj=0x62b6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+17:51:21.274     2 opcode=0x0032 elapsed_us=54.0 ret=1 flag=1->1 state=2->2
+17:51:21.722 ***** SESSION obj=0x62b6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+17:51:22.248 ***** WATCH #1: 0x141b2a280 ENTERED on tid 419304 while dispatching opcode 0x0032 rcx=0x6e216c8 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+17:51:22.248       forced rdx -> 0x0
+17:51:22.324     3 opcode=0x0000 elapsed_us=431.2 ret=1 flag=1->1 state=2->2
+17:51:22.325 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+17:51:22.325     4 opcode=0x000B elapsed_us=250.5 ret=1 flag=1->1 state=2->2
+17:51:22.325     5 opcode=0x000B elapsed_us=107.9 ret=1 flag=1->1 state=2->2
+17:51:22.326 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+17:51:22.326     6 opcode=0x0010 elapsed_us=327.3 ret=1 flag=1->1 state=2->2
+17:51:24.728 ***** SESSION obj=0x62b6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+17:51:27.735 ***** SESSION obj=0x62b6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+17:51:29.446     7 opcode=0x0011 elapsed_us=1433.7 ret=1 flag=1->1 state=2->2
+17:51:29.974 ***** WATCH #1: 0x1415db360 ENTERED on tid 419304 while dispatching opcode 0x01A0 rcx=0x62b8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+17:51:29.980     8 opcode=0x044F elapsed_us=497.2 ret=1 flag=1->1 state=2->2
+17:51:29.980     9 opcode=0x044F elapsed_us=341.3 ret=1 flag=1->1 state=2->2
+17:51:29.981 ***** WATCH #1: 0x141c81040 ENTERED on tid 419304 while dispatching opcode 0x03C6 rcx=0x382a9760 [0x43407950] [rcx+0x2b8]=u8:0x00/u32:0x00000000 rdx=0x0 (as i32 0) r8=0x0 r9=0x0 called-from=0x1409c687d
+      stack: 0x1409c687d<-TEXT 0x142f0492d<-TEXT 0x140c79143<-TEXT 0x142ac10d0<-TEXT 0x142ac1128<-TEXT 0x142f0492d<-TEXT 0x141c81297<-TEXT 0x142ac10d0<-TEXT 0x141c50da8<-TEXT *****
+17:51:29.981 ***** CLIENT FAULT #1: code=0xc0000005 at 0x141c810b0 in MapleStory.exe - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. *****
+17:51:30.739 ***** SESSION obj=0x62b6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
