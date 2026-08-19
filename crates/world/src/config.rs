@@ -273,6 +273,76 @@ pub fn solo_spawn_capacity(spawn_points: usize) -> usize {
     (spawn_points * 3) / 4
 }
 
+/// Choose which spawn points hold a live mob, keeping each type's **share** of the map.
+///
+/// The owner, 2026-08-19: *"on maps with multiple mobs, there's a concept of shares, the map will
+/// try to maintain the balance ratio between the mobs under the cap."*
+///
+/// **Taking the first N spawn points is wrong**, and that is what this replaces. The
+/// generated table is in WZ `life` index order, so on a mixed map the first N can be almost
+/// all one type. The Field South of Ellinia has 45 spawns across five types - Snail 10,
+/// Blue Snail 16, Shroom 7, Red Snail 6, Orange Mushroom 6 - and a cap of 33 has to keep
+/// roughly 22 / 36 / 16 / 13 / 13 percent, not whatever the first 33 rows happen to be.
+///
+/// The apportionment is **largest-remainder** (Hamilton): each type gets
+/// `floor(count * cap / total)` slots, then the leftover slots go to the types with the
+/// largest remainders, ties broken by template id so the result is deterministic. That is
+/// the standard way to hand out whole seats in proportion and it cannot overshoot the cap.
+///
+/// **[I], and only the shape of it.** That the engine balances by share is the owner's, from the
+/// same unofficial fan site as the capacity scalar; nothing in this client corroborates it,
+/// and the *exact* rounding the real engine uses is unknown. What this does guarantee is
+/// that the result is capped, proportional and stable between runs.
+///
+/// Returns the chosen mobs in spawn order, so the wire order does not depend on the
+/// grouping.
+pub fn share_balanced(mobs: &[net::mob::FieldMob], cap: usize) -> Vec<&net::mob::FieldMob> {
+    let total = mobs.len();
+    if cap == 0 || total == 0 {
+        return Vec::new();
+    }
+    if cap >= total {
+        return mobs.iter().collect();
+    }
+
+    // Group spawn points by template, keeping WZ order inside each group.
+    let mut groups: Vec<(u32, Vec<usize>)> = Vec::new();
+    for (i, mob) in mobs.iter().enumerate() {
+        match groups.iter_mut().find(|(t, _)| *t == mob.template_id) {
+            Some((_, idx)) => idx.push(i),
+            None => groups.push((mob.template_id, vec![i])),
+        }
+    }
+
+    // floor(count * cap / total) each, then hand out what is left by largest remainder.
+    let mut quota: Vec<(u32, usize, usize)> = groups
+        .iter()
+        .map(|(t, idx)| {
+            let numerator = idx.len() * cap;
+            (*t, numerator / total, numerator % total)
+        })
+        .collect();
+    let mut leftover = cap - quota.iter().map(|(_, base, _)| base).sum::<usize>();
+    let mut order: Vec<usize> = (0..quota.len()).collect();
+    order.sort_by(|&a, &b| {
+        quota[b].2.cmp(&quota[a].2).then(quota[a].0.cmp(&quota[b].0))
+    });
+    for &g in &order {
+        if leftover == 0 {
+            break;
+        }
+        quota[g].1 += 1;
+        leftover -= 1;
+    }
+
+    let mut keep: Vec<usize> = Vec::with_capacity(cap);
+    for (g, (_, idx)) in groups.iter().enumerate() {
+        keep.extend(idx.iter().take(quota[g].1).copied());
+    }
+    keep.sort_unstable();
+    keep.into_iter().map(|i| &mobs[i]).collect()
+}
+
 /// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
 ///
 /// **Not zero, deliberately.** Zero is structurally legal and draws a mob at 0% health,
@@ -297,5 +367,125 @@ impl Default for Config {
             send_mobs: false,
             fields: std::collections::HashSet::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod spawn_tests {
+    use super::*;
+
+    fn field(templates: &[(u32, usize)]) -> Vec<net::mob::FieldMob> {
+        let mut out = Vec::new();
+        let mut id = 2000;
+        for (template, count) in templates {
+            for _ in 0..*count {
+                out.push(net::mob::FieldMob::new(id, *template, 0, 0, 1, DEFAULT_MOB_HP));
+                id += 1;
+            }
+        }
+        out
+    }
+
+    fn counts(chosen: &[&net::mob::FieldMob]) -> std::collections::BTreeMap<u32, usize> {
+        let mut m = std::collections::BTreeMap::new();
+        for mob in chosen {
+            *m.entry(mob.template_id).or_insert(0) += 1;
+        }
+        m
+    }
+
+    /// Map 40, "Snail Hunting Ground I": 40 spawn points, one type, 30 alive for a solo
+    /// player. The single datapoint the capacity rule has.
+    #[test]
+    fn map_40_keeps_thirty_of_its_forty_spawn_points() {
+        assert_eq!(solo_spawn_capacity(40), 30);
+        let mobs = field(&[(2, 40)]);
+        let chosen = share_balanced(&mobs, solo_spawn_capacity(mobs.len()));
+        assert_eq!(chosen.len(), 30);
+        assert_eq!(counts(&chosen), [(2, 30)].into_iter().collect());
+    }
+
+    /// The Field South of Ellinia: 45 spawns across five types. Taking the first N in WZ
+    /// order would return almost all of one type, which is the bug this replaces - the
+    /// generated table is grouped, so the first 33 rows here are Snail and Blue Snail only.
+    #[test]
+    fn a_mixed_map_keeps_each_types_share_rather_than_the_first_n() {
+        let mobs = field(&[(1, 10), (2, 16), (3, 7), (4, 6), (5, 6)]);
+        assert_eq!(mobs.len(), 45);
+        let cap = solo_spawn_capacity(45);
+        assert_eq!(cap, 33);
+
+        let chosen = share_balanced(&mobs, cap);
+        assert_eq!(chosen.len(), cap, "the cap must be filled exactly");
+
+        // Largest remainder from 10/16/7/6/6 at cap 33: bases 7/11/5/4/4 = 31, and the two
+        // leftover slots go to the largest remainders (Blue Snail 33, then Red Snail and
+        // Orange Mushroom tie at 18 - broken by template id).
+        assert_eq!(
+            counts(&chosen),
+            [(1, 7), (2, 12), (3, 5), (4, 5), (5, 4)].into_iter().collect()
+        );
+
+        // Every type survives, and none is over-represented: each share is within one slot
+        // of its exact proportion. That is the property, the exact split is the arithmetic.
+        for (template, count) in [(1usize, 10usize), (2, 16), (3, 7), (4, 6), (5, 6)] {
+            let exact = count as f64 * cap as f64 / 45.0;
+            let got = counts(&chosen)[&(template as u32)] as f64;
+            assert!(
+                (got - exact).abs() < 1.0,
+                "template {template}: {got} against an exact {exact}"
+            );
+        }
+
+        // What the naive version did, kept as the thing being ruled out.
+        let naive: Vec<u32> = mobs.iter().take(cap).map(|m| m.template_id).collect();
+        assert!(
+            !naive.contains(&5),
+            "the first 33 in WZ order miss a whole type - that is the bug"
+        );
+    }
+
+    /// Spawn order is preserved, so the wire order does not depend on how the grouping ran.
+    #[test]
+    fn the_chosen_mobs_come_back_in_spawn_order() {
+        let mobs = field(&[(1, 4), (2, 4)]);
+        let chosen = share_balanced(&mobs, 6);
+        let ids: Vec<u32> = chosen.iter().map(|m| m.object_id).collect();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(ids, sorted);
+    }
+
+    /// The edges, because these come off generated data and a panic here takes the server
+    /// down on a field entry.
+    #[test]
+    fn the_edges_do_not_panic_or_overshoot() {
+        assert!(share_balanced(&[], 10).is_empty());
+        assert!(share_balanced(&field(&[(1, 5)]), 0).is_empty());
+
+        // A cap at or above the total keeps everything, and never more.
+        let mobs = field(&[(1, 3), (2, 2)]);
+        assert_eq!(share_balanced(&mobs, 5).len(), 5);
+        assert_eq!(share_balanced(&mobs, 99).len(), 5);
+
+        // And a cap of one still returns exactly one, from the largest type.
+        let one = share_balanced(&mobs, 1);
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].template_id, 1, "the largest share takes the only slot");
+
+        // Every cap from 0 to total is filled exactly, on a ragged mix.
+        let ragged = field(&[(7, 1), (3, 13), (9, 4), (1, 2)]);
+        for cap in 0..=ragged.len() {
+            assert_eq!(share_balanced(&ragged, cap).len(), cap, "cap {cap}");
+        }
+    }
+
+    /// Map 30's six snails are unaffected in kind but not in number, and the rounding is
+    /// the part that is NOT settled: floor gives 4 where ceiling would give 5, and the one
+    /// datapoint we have (40 -> 30) cannot tell them apart. Pinned so a change is deliberate.
+    #[test]
+    fn a_small_map_shows_the_rounding_that_is_still_unsettled() {
+        assert_eq!(solo_spawn_capacity(6), 4, "floor(6 * 3 / 4); ceiling would be 5");
+        assert_eq!(solo_spawn_capacity(1), 0, "and one spawn point rounds to none");
     }
 }

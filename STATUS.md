@@ -195,6 +195,25 @@ small map is where the two would differ (6 -> 4 or 5).
 The full spawn-point list stays intact in `Config::mobs`; the cap is applied where they are
 *sent*, because respawn will need the points that are not currently filled.
 
+**And which points are filled matters as much as how many.** The owner, 2026-08-19: *"on maps
+with multiple mobs, there's a concept of shares, the map will try to maintain the balance
+ratio between the mobs under the cap."* Taking the first N in WZ order is wrong and was the
+first thing written here - the generated table is grouped by spawn index, so on The Field
+South of Ellinia (45 spawns: Snail 10, Blue Snail 16, Shroom 7, Red Snail 6, Orange Mushroom
+6) the first 33 rows **miss a whole type**. `config::share_balanced` apportions the cap by
+**largest remainder**: `floor(count * cap / total)` each, leftovers to the largest
+remainders, ties broken by template id. For that map at cap 33 it gives 7 / 12 / 5 / 5 / 4,
+every type within one slot of its exact share. A test pins both the split and the fact that
+the naive version drops a type.
+
+**[I] again, and only the shape.** That the engine balances by share is the owner's, from the
+same fan site as the capacity scalar, and the exact rounding the real engine uses is
+unknown. What the code guarantees is that the result is capped, proportional and stable
+between runs.
+
+**Not yet built: respawn.** A share-balanced *refill* when a mob dies is the same rule
+applied over time, and nothing here kills mobs yet.
+
 ### THE RUN - what to do, in this order, and what each outcome means
 
 All four builds are pre-flighted: `cargo test` (210), `channel_smoke.py`,

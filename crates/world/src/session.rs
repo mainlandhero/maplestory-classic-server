@@ -269,8 +269,12 @@ impl Session {
         // over-populates the field. The cap is NOT in the WZ - map 40's info node has a
         // mobRate but no capacity of any name - so it is our policy; see
         // config::solo_spawn_capacity for what is measured and what is inferred.
+        //
+        // And which points are filled matters as much as how many: a mixed map keeps each
+        // type's SHARE of the total, so this cannot just take the first N in WZ order.
         let alive = crate::config::solo_spawn_capacity(mobs.len());
-        out.extend(mobs.iter().take(alive).map(|mob| {
+        let chosen = crate::config::share_balanced(mobs, alive);
+        out.extend(chosen.into_iter().map(|mob| {
             Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(mob),
