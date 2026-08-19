@@ -1318,31 +1318,56 @@ pub const NPC_ENTER_FIELD: u16 = 0x044F;
 /// deleting any one read makes the rest unreachable, and that same walk proves address order
 /// is execution order. The `raw[8]` length is read from the two dominating `mov edi,8`.
 ///
-/// The zeros are not filler that happens to work: read 20 explicitly treats `0` as "use the
-/// template's default", and read 21 is only consumed when non-zero. The remainder have no
-/// readable consumer on this path - which is the weaker class of argument, and is called out
-/// as such in `research/npc-spawn.md`.
+/// ## Two of these fields being zero is why NPCs were invisible
+///
+/// The first version sent zero for everything the client's own decompilation did not name,
+/// on a "no readable consumer" argument. The packet was **dispatched** - a watch on
+/// `FUN_141e75800` fired on `0x044F` - and no NPC appeared, with no fault and nothing in any
+/// log. The layout was not the problem: it was re-derived from the listing read for read and
+/// matches, 8 + 38 + 8 + 8 + 2 = the 64 bytes we send.
+///
+/// The reference server's `Npc::encode` lines up **20-for-20** with the client's read
+/// sequence, and names two of those zeros:
+///
+/// * **read 12 is `isEnabled`.** Zero means the NPC is disabled. It also gates roughly 7000
+///   bytes of the decoder - reads 13-20 sit past a gap that size, which is what a flag
+///   guarding the rest of the setup looks like.
+/// * **read 19 is `alpha`.** Zero means fully transparent.
+///
+/// A disabled, transparent NPC is created, inserted into the pool, and invisible - exactly
+/// what was on screen.
+///
+/// **Provenance, stated plainly.** The *layout* is `[L]`, read off this client's listing.
+/// The *meanings* are `[I]` from a different game version whose opcode guesses scored 1 of 8
+/// against a held-out control. What makes this worth acting on is not the reference's
+/// authority but the 20-for-20 structural agreement with a read sequence derived
+/// independently from this binary, plus the fact that "disabled" and "alpha 0" are precisely
+/// the two values that produce an invisible NPC rather than a crash. If NPCs still do not
+/// appear, `enabled` and `alpha` are the first things to doubt, not the last.
 pub fn npc_enter_field(npc: &FieldNpc) -> Vec<u8> {
     let mut b = Vec::with_capacity(NPC_ENTER_FIELD_LEN);
-    b.extend_from_slice(&npc.object_id.to_le_bytes());
-    b.extend_from_slice(&npc.template_id.to_le_bytes());
-    b.extend_from_slice(&npc.x.to_le_bytes());
-    b.extend_from_slice(&npc.cy.to_le_bytes());
-    b.extend_from_slice(&[0u8; 8]); // reads 5 and 6
-    b.push(npc.f);
-    b.push(0); // action
-    b.extend_from_slice(&npc.fh.to_le_bytes());
-    b.extend_from_slice(&npc.rx0.to_le_bytes());
-    b.extend_from_slice(&npc.rx1.to_le_bytes());
-    b.extend_from_slice(&[0u8; 4]); // reads 12 and 13
-    b.push(0); // read 14
-    b.extend_from_slice(&[0u8; 8]); // reads 15 and 16
-    b.push(0); // read 17
-    b.extend_from_slice(&[0u8; 4]); // read 18
-    b.extend_from_slice(&[0u8; 8]); // raw[8]
-    b.extend_from_slice(&[0u8; 4]); // read 20 - zero means "template default"
-    b.extend_from_slice(&[0u8; 4]); // read 21 - only consumed when non-zero
-    b.extend_from_slice(&0u16.to_le_bytes()); // a zero-length string
+    b.extend_from_slice(&npc.object_id.to_le_bytes()); //      pool key
+    b.extend_from_slice(&npc.template_id.to_le_bytes()); //    Npc/%07d.img
+    b.extend_from_slice(&npc.x.to_le_bytes()); //          1   u16 -> +0x3f0
+    b.extend_from_slice(&npc.cy.to_le_bytes()); //         2   u16 -> +0x3f4
+    b.extend_from_slice(&(-1i32).to_le_bytes()); //        3   u32 -> +0x5a8
+    b.extend_from_slice(&(-1i32).to_le_bytes()); //        4   u32 -> +0x5ac
+    b.push(0); //                                          5   u8  move
+    b.push(u8::from(npc.f == 0)); //                       6   u8  !flip
+    b.extend_from_slice(&npc.fh.to_le_bytes()); //         7   u16 foothold
+    b.extend_from_slice(&npc.rx0.to_le_bytes()); //        8   u16 walk range low
+    b.extend_from_slice(&npc.rx1.to_le_bytes()); //        9   u16 walk range high
+    b.extend_from_slice(&npc.cy.to_le_bytes()); //        10   u16 y again
+    b.extend_from_slice(&npc.cy.to_le_bytes()); //        11   u16 y again
+    b.push(1); //                                         12   u8  ENABLED
+    b.extend_from_slice(&0u32.to_le_bytes()); //          13   u32
+    b.extend_from_slice(&0u32.to_le_bytes()); //          14   u32 present item id
+    b.push(0); //                                         15   u8  present item state
+    b.extend_from_slice(&(-1i32).to_le_bytes()); //       16   u32 present item time
+    b.extend_from_slice(&[0u8; 8]); //                    17   raw[8]
+    b.extend_from_slice(&0u32.to_le_bytes()); //          18   u32 notice board type
+    b.extend_from_slice(&255u32.to_le_bytes()); //        19   u32 ALPHA
+    b.extend_from_slice(&0u16.to_le_bytes()); //          20   str, empty
     debug_assert_eq!(b.len(), NPC_ENTER_FIELD_LEN);
     b
 }
@@ -1541,11 +1566,29 @@ mod set_field_tests {
         // Negative coordinates are sign-extended, not clamped: -46 goes out as D2 FF.
         assert_eq!(&b[8..10], &[0xD2, 0xFF], "x = -46");
         assert_eq!(&b[10..12], &305i16.to_le_bytes(), "cy");
-        assert_eq!(b[20], 1, "f, the facing");
+        assert_eq!(&b[12..16], &(-1i32).to_le_bytes(), "read 3");
+        assert_eq!(&b[16..20], &(-1i32).to_le_bytes(), "read 4");
+        assert_eq!(b[20], 0, "read 5, move");
+        assert_eq!(b[21], 0, "read 6 is !flip, and this NPC has f = 1");
         assert_eq!(&b[22..24], &66u16.to_le_bytes(), "fh, the foothold");
         assert_eq!(&b[24..26], &[0xC0, 0xFF], "rx0 = -64");
         assert_eq!(&b[26..28], &[0xE6, 0xFF], "rx1 = -26");
+        assert_eq!(&b[28..30], &305i16.to_le_bytes(), "read 10 repeats y");
+        assert_eq!(&b[30..32], &305i16.to_le_bytes(), "read 11 repeats y");
         assert_eq!(&b[62..64], &0u16.to_le_bytes(), "a zero-length trailing string");
+
+        // The two that made every NPC invisible. Both were zero in the first version: the
+        // packet was dispatched, nothing appeared, and nothing was logged anywhere.
+        assert_eq!(b[32], 1, "read 12 is ENABLED - zero means the NPC is disabled");
+        assert_eq!(
+            &b[58..62],
+            &255u32.to_le_bytes(),
+            "read 19 is ALPHA - zero means the NPC is fully transparent"
+        );
+
+        // And an unflipped NPC gets the opposite byte, so the field is really wired up.
+        let sera = FieldNpc { f: 0, ..heena };
+        assert_eq!(npc_enter_field(&sera)[21], 1, "read 6 is !flip");
     }
 
     /// Two NPCs on one field must not share an object id: the pool keys on it, and a repeat

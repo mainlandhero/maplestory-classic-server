@@ -1,0 +1,172 @@
+12:09:16.792 install_once: our code IS running. env=true marker=true -> installing
+12:09:16.843 install: .text settled after 50 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+12:09:16.843 install: base=0x140000000 target=0x1415d60e0
+12:09:16.844 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+12:09:16.844 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)12:09:16.844
+ session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+12:09:16.844 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+12:09:16.844 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+12:09:16.844 probe: watching 0x141e75800 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+12:09:16.844 probe: watching 0x1420dd920 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+12:09:16.845 install: hook active
+12:09:17.045 session: object at 0x63f6208 is now readable
+12:09:17.045 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:18.548     0 opcode=0x0032 elapsed_us=62.6 ret=114221872 flag=0->1 state=0->2
+12:09:18.549 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+12:09:18.650 ***** SOCKET conn=0x5b23f48 +0x20=0x6b0 - the client holds a socket *****
+12:09:18.851 ***** SOCKET 0x6b0 is now VALID (client still holds it) *****
+12:09:19.027     1 opcode=0x0032 elapsed_us=53.7 ret=1 flag=1->1 state=2->2
+12:09:19.854 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:21.591 ***** WATCH #1: 0x141b2a280 ENTERED on tid 225912 while dispatching opcode 0x0032 rcx=0x369bc218 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+12:09:21.591       forced rdx -> 0x0
+12:09:21.652     2 opcode=0x0000 elapsed_us=362.0 ret=1 flag=1->1 state=2->2
+12:09:21.652 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+12:09:21.653     3 opcode=0x000B elapsed_us=187.5 ret=1 flag=1->1 state=2->2
+12:09:21.653     4 opcode=0x000B elapsed_us=111.2 ret=1 flag=1->1 state=2->2
+12:09:21.653 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+12:09:21.653     5 opcode=0x0010 elapsed_us=337.0 ret=1 flag=1->1 state=2->2
+12:09:22.861 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:24.179     6 opcode=0x0011 elapsed_us=1580.8 ret=1 flag=1->1 state=2->2
+12:09:24.680 ***** WATCH #1: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+12:09:24.684 ***** WATCH #1: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14d5d0 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:09:24.685     7 opcode=0x044F elapsed_us=446.8 ret=1 flag=1->1 state=2->2
+12:09:24.685     8 opcode=0x0138 elapsed_us=50.0 ret=1 flag=1->1 state=2->2
+12:09:25.865 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:26.779     9 opcode=0x01A0 elapsed_us=2591781.5 ret=916177432 flag=1->1 state=2->2
+12:09:28.870 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:29.538 ***** WATCH #2: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+12:09:29.540    10 opcode=0x01A0 elapsed_us=431361.9 ret=949149608 flag=1->1 state=2->2
+12:09:29.540 ***** WATCH #2: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:09:29.540    11 opcode=0x044F elapsed_us=341.0 ret=1 flag=1->1 state=2->2
+12:09:29.541 ***** WATCH #3: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:09:29.541    12 opcode=0x044F elapsed_us=253.5 ret=1 flag=1->1 state=2->2
+12:09:29.541    13 opcode=0x0138 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+12:09:31.874 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:34.880 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:37.883 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:40.471 ***** WATCH #3: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+12:09:40.472    14 opcode=0x01A0 elapsed_us=401751.6 ret=949155496 flag=1->1 state=2->2
+12:09:40.473 ***** WATCH #4: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:09:40.473    15 opcode=0x044F elapsed_us=343.8 ret=1 flag=1->1 state=2->2
+12:09:40.473    16 opcode=0x0138 elapsed_us=48.5 ret=1 flag=1->1 state=2->2
+12:09:40.888 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:43.802 ***** WATCH #4: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+12:09:43.803    17 opcode=0x01A0 elapsed_us=412222.3 ret=949160104 flag=1->1 state=2->2
+12:09:43.803 ***** WATCH #5: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:09:43.804    18 opcode=0x044F elapsed_us=349.2 ret=1 flag=1->1 state=2->2
+12:09:43.804 ***** WATCH #6: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:09:43.804    19 opcode=0x044F elapsed_us=262.2 ret=1 flag=1->1 state=2->2
+12:09:43.804    20 opcode=0x0138 elapsed_us=37.3 ret=1 flag=1->1 state=2->2
+12:09:43.895 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:46.899 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:49.904 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:50.833 ***** WATCH #5: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x0138 rcx=0x5418c12 [0x00000000] rdx=0x7530 (as i32 30000) r8=0x753e r9=0x2d3142ea called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+12:09:52.911 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:55.916 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:09:58.919 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:01.926 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:04.933 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:07.939 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:10.942 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:13.949 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:16.951 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:19.955 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:20.829 ***** WATCH #6: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x0138 rcx=0x542013b [0x00000000] rdx=0xea60 (as i32 60000) r8=0xea67 r9=0x7fd9 called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+12:10:20.848 ***** WATCH #7: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x0138 rcx=0x542014f [0x00000000] rdx=0x7530 (as i32 30000) r8=0x753d r9=0x6b22d0dc called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+12:10:22.961 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:25.966 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:28.972 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:31.977 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:34.984 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:37.989 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:40.998 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:44.007 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:47.012 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:50.021 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:50.883 ***** WATCH #8: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x0138 rcx=0x54276af [0x00000000] rdx=0x7530 (as i32 30000) r8=0x7560 r9=0xb6cc440e called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+12:10:53.031 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:56.038 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:10:59.041 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:02.049 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:05.054 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:08.064 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:11.070 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:14.076 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:17.083 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:20.091 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:20.829 ***** WATCH #9: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x0138 rcx=0x542eba4 [0x00000000] rdx=0xea60 (as i32 60000) r8=0xea69 r9=0x7fd8 called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+12:11:20.910 ***** WATCH #10: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x0138 rcx=0x542ebf4 [0x00000000] rdx=0x7530 (as i32 30000) r8=0x7545 r9=0x8aff1e4a called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+12:11:23.095 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:26.103 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:29.107 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:32.114 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:35.120 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:38.127 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:41.131 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:44.136 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:47.142 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:50.179 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:51.074 ***** WATCH #11: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x0138 rcx=0x54361cc [0x00000000] rdx=0x7530 (as i32 30000) r8=0x75d8 r9=0xa3c5e1ae called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+12:11:53.185 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:56.193 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:59.201 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:11:59.662 ***** WATCH #12: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+12:11:59.663    21 opcode=0x01A0 elapsed_us=407113.9 ret=949146280 flag=1->1 state=2->2
+12:11:59.663 ***** WATCH #7: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:11:59.664    22 opcode=0x044F elapsed_us=355.0 ret=1 flag=1->1 state=2->2
+12:11:59.664    23 opcode=0x0138 elapsed_us=34.9 ret=1 flag=1->1 state=2->2
+12:12:02.210 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:12:05.216 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:12:06.010 ***** C++ THROW #7 at 0x7ffca5eb5369 in KERNELBASE.dll on tid 225912 at +169172ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+12:12:06.012 ***** WATCH #13: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+12:12:06.013    24 opcode=0x01A0 elapsed_us=416052.2 ret=949155496 flag=1->1 state=2->2
+12:12:06.013 ***** WATCH #8: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:12:06.014    25 opcode=0x044F elapsed_us=315.1 ret=1 flag=1->1 state=2->2
+12:12:06.014    26 opcode=0x0138 elapsed_us=35.6 ret=1 flag=1->1 state=2->2
+12:12:08.223 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:12:11.226 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:12:12.272 ***** C++ THROW #8 at 0x7ffca5eb5369 in KERNELBASE.dll on tid 225912 at +175437ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+12:12:12.275 ***** WATCH #14: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+12:12:12.277    27 opcode=0x01A0 elapsed_us=408804.9 ret=949152680 flag=1->1 state=2->2
+12:12:12.277 ***** WATCH #9: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:12:12.277    28 opcode=0x044F elapsed_us=342.6 ret=1 flag=1->1 state=2->2
+12:12:12.278    29 opcode=0x0138 elapsed_us=37.3 ret=1 flag=1->1 state=2->2
+12:12:14.234 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:12:14.702 ***** WATCH #15: 0x1415db360 ENTERED on tid 225912 while dispatching opcode 0x01A0 rcx=0x63f8d60 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+12:12:14.703    30 opcode=0x01A0 elapsed_us=404741.0 ret=949146280 flag=1->1 state=2->2
+12:12:14.703 ***** WATCH #10: 0x141e75800 ENTERED on tid 225912 while dispatching opcode 0x044F rcx=0x330f5440 [0x43414770] rdx=0x44f (as i32 1103) r8=0x14e920 r9=0x44f called-from=0x141821ea3
+      stack: 0x141821ea3<-TEXT *****
+12:12:14.704    31 opcode=0x044F elapsed_us=327.8 ret=1 flag=1->1 state=2->2
+12:12:14.704    32 opcode=0x0138 elapsed_us=36.0 ret=1 flag=1->1 state=2->2
+12:12:17.241 ***** SESSION obj=0x63f6208 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+12:12:17.442 ***** SOCKET conn=0x5b23f48 +0x20=0xffffffffffffffff - closed and cleared by the client (FUN_1415e3b60 ran) *****
+12:12:18.051 ***** SOCKET conn=0x5b23f48 +0x20=0x0 - the client holds a socket *****
+12:12:18.052 session: object at 0x0 is now UNREADABLE - values below are stale
+12:12:18.252 ***** SOCKET 0x0 is now AN INVALID HANDLE (client still holds it) *****
