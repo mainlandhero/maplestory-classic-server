@@ -1,34 +1,63 @@
-"""Talk to maplecw-world the way the client would, to prove the channel path works.
+"""Talk to maplecw-world the way the client does, to prove the channel path works.
 
-Uses tools/transport.py - the INDEPENDENT Python implementation - for the header and IV
-chain, and implements the byte shift here, so agreement is two implementations agreeing
-rather than the Rust checking itself.
+Uses `tools/transport.py` - the INDEPENDENT Python implementation of the framing, the IV
+chain and AES - so a pass is two implementations agreeing rather than the Rust checking
+itself. No client launch is spent.
+
+**Rewritten 2026-08-19.** The previous version asserted a byte-shift cipher and a
+"POLARITY CHECK" log block, both of which were removed when the channel was measured to be
+AES like the login connection. It would have failed every check for the wrong reason - a
+stale instrument reporting a real regression.
+
+    python tools/channel_smoke.py
 """
-import os, socket, struct, subprocess, sys, tempfile, time
+import os
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
 
-os.chdir(r"C:\MapleCW")
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, "tools")
-import transport
+import transport  # noqa: E402
 
 fails = []
+
+
 def check(label, ok, detail=""):
     print(("  PASS  " if ok else "  FAIL  ") + label + (" - " + detail if detail else ""))
     if not ok:
         fails.append(label)
+
 
 def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-db = os.path.join(tempfile.mkdtemp(prefix="maplecw-ch-"), "ch.db")
+
+# The character id a real client sent in 0x007D, from the capture in
+# crates/world/src/session.rs. Nothing has minted a migration for it here, so the server
+# should say so plainly rather than accepting it - that honest negative is the check.
+CHARACTER_ID = 204
+CLIENT_IV = 0x52307801        # J, the chain the client encrypts with
+SERVER_IV = 0x52307802        # K, the chain it decrypts with
+
+key, shuffle = transport.load_tables()
+
+tmp = tempfile.mkdtemp(prefix="maplecw-ch-")
+db = os.path.join(tmp, "ch.db")
 port = free_port()
-subprocess.run([os.path.join("target","release","maplecw-useradd.exe"), "--db", db, "maplecw"],
+subprocess.run([os.path.join("target", "release", "maplecw-useradd.exe"), "--db", db, "maplecw"],
                input="correct horse battery staple\n", text=True, capture_output=True)
-logf = open(os.path.join(os.path.dirname(db), "world.log"), "w")
-proc = subprocess.Popen([os.path.join("target","release","maplecw-world.exe"), "--db", db,
+logpath = os.path.join(tmp, "world.log")
+logf = open(logpath, "w")
+proc = subprocess.Popen([os.path.join("target", "release", "maplecw-world.exe"), "--db", db,
                          "--bind", "127.0.0.1:%d" % port],
                         stdout=logf, stderr=subprocess.STDOUT)
+replies = []
 try:
     sock = None
     for _ in range(50):
@@ -47,50 +76,76 @@ try:
     while len(body) < n:
         body += sock.recv(n - len(body))
 
-    check("the channel greeting is 20 bytes of body, not the login server's 46",
-          n == 20, "%d" % n)
+    check("the channel greeting body is 20 bytes, not the login server's 46", n == 20, "%d" % n)
     g = struct.unpack_from("<H", body, 0)[0]
     h = struct.unpack_from("<I", body, 2)[0]
-    check("G is 1 - this is the gate that raised 'client is outdated'", g == 1, "G=%d" % g)
+    check("G is 1 - the gate that raised 'the client is outdated'", g == 1, "G=%d" % g)
     check("H is 1", h == 1, "H=%d" % h)
     ilen = struct.unpack_from("<H", body, 6)[0]
     check("I is the empty string, so atoi(I) == 0", ilen == 0, "len=%d" % ilen)
-    j = struct.unpack_from("<I", body, 8)[0]
-    k = struct.unpack_from("<I", body, 12)[0]
-    check("J and K are the IV seeds", (j, k) == (0x52307801, 0x52307802),
+    j, k = struct.unpack_from("<I", body, 8)[0], struct.unpack_from("<I", body, 12)[0]
+    check("J and K are the IV seeds", (j, k) == (CLIENT_IV, SERVER_IV),
           "J=%#x K=%#x" % (j, k))
     check("L is 1", body[16] == 1, "L=%d" % body[16])
-    check("the greeting ends after M, N, O", len(body) == 20, "%d" % len(body))
 
-    # Now send a packet as the client would, byte-shifted, and see it in the log.
-    # The client encrypts with the J chain; the server decrypts with the same.
-    iv = struct.pack("<I", 0x52307801)
-    payload = struct.pack("<H", 0x007D) + bytes(range(32))
-    shifted = bytes((b + iv[0]) & 0xFF for b in payload)   # ClientSubtractsOnReceive => client ADDs on send? see below
-    a = (struct.unpack("<H", iv[2:4])[0]) ^ 0x00DF
-    header = struct.pack("<HH", a, a ^ len(payload))
-    sock.sendall(header + shifted)
-    time.sleep(0.6)
+    # Send as the client does: AES-256-OFB on the J chain, header constant 0x00DF.
+    iv = struct.pack("<I", CLIENT_IV)
+
+    def send(payload):
+        global iv
+        frame = transport.header(iv, len(payload), transport.SEND_CONST)
+        sock.sendall(frame + transport.ofb(payload, iv, key))
+        iv = transport.next_iv(iv, shuffle)
+
+    send(transport.packet(0x0070, bytes([2]) + struct.pack("<I", 100)))
+    hello = struct.pack("<II", 0, 0) + struct.pack("<I", CHARACTER_ID) + bytes(24)
+    send(transport.packet(0x007D, hello))
+
+    # Anything coming back is on the K chain. There is nothing to read yet; this decodes
+    # whatever appears so that the first real reply is checked the moment it exists.
+    decoder = transport.ClientDecoder(SERVER_IV, key, shuffle)
+    sock.settimeout(1.5)
+    try:
+        while True:
+            data = sock.recv(4096)
+            if not data:
+                break
+            for pkt in decoder.feed(data):
+                replies.append(pkt)
+    except socket.timeout:
+        pass
     sock.close()
 finally:
     proc.terminate()
     proc.wait(timeout=5)
     logf.close()
 
-log = open(os.path.join(os.path.dirname(db), "world.log"), encoding="utf-8",
-           errors="replace").read()
-check("the server framed the client's packet rather than erroring",
-      "framing:" not in log, "framing error in the log")
-check("the polarity check ran and printed both readings",
-      "POLARITY CHECK" in log and "the other way" in log)
-check("the log names the cipher and admits the polarity is a guess",
-      "byte shift" in log and "GUESS" in log)
+log = open(logpath, encoding="utf-8", errors="replace").read()
+
+check("the server framed both packets rather than erroring", "framing" not in log.lower())
+check("it decrypted and named the environment report", "0x0070" in log)
+check("it decrypted the migration hello", "0x007D" in log)
+check("it read the character id out of the hello body", str(CHARACTER_ID) in log,
+      "expected %d in the log" % CHARACTER_ID)
+check("it refuses a character with no minted migration, and says why",
+      "no unconsumed migration" in log)
+
 print()
-print("world.log:")
+print("the server said:")
 for line in log.splitlines():
-    if any(w in line for w in ("greeting", "cipher", "POLARITY", "as decoded", "other way",
-                               "<-", "Whichever")):
+    if any(w in line for w in ("greeting", "<-", "->", "migration", "connection from")):
         print("   " + line)
+
+print()
+if replies:
+    print("the server sent %d packet(s) back, decrypted on the K chain:" % len(replies))
+    for pkt in replies:
+        print("   opcode %#06x  %s" % (struct.unpack_from("<H", pkt, 0)[0], pkt[2:].hex(" ")))
+else:
+    print("the server sent nothing back - expected today: this stage is still UNDECODED,")
+    print("and crates/world answers nothing on purpose. When a reply is added, it is")
+    print("decoded above and this is where it gets checked.")
+
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all checks passed")
 sys.exit(1 if fails else 0)

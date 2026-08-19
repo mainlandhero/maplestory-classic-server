@@ -43,11 +43,11 @@ impl Reply {
 
 /// The client's hello on a channel connection, built by `FUN_1415d10e0`.
 ///
-/// It carries the migration seed, obfuscated with the `u32` immediately before its length,
-/// using the same scheme the migration packet's tail uses in the other direction. The
-/// prefix in front of that block is **not decoded**: `FUN_1415d10e0` writes 16 bytes, two
-/// `u8`, a `u32` and the launch mode from `session+0x68` before it gets there, and that has
-/// not been read carefully enough to index.
+/// **It carries the character id, not the migration seed.** The seed was the design's
+/// assumption and the capture disproved it - see [`migration_hello_character`] for the
+/// measured layout. The bytes in front of the id are still undecoded: `FUN_1415d10e0`
+/// writes two `u32` before it, and the tail is the same MAC and machine id `0x0073`
+/// carries.
 pub const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 
 /// One channel connection.
