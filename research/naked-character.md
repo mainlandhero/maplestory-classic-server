@@ -233,7 +233,11 @@ nothing because `isEnabled` and `alpha` were zero. The equivalents here, ranked:
 
 1. **`dateExpire`, the `u64` at `+0x40`.** Zero is `1601-01-01` as a FILETIME - an item that
    expired 400 years ago. Every MapleStory server sends a "permanent" sentinel instead;
-   the usual value is `0x00_00_C9_2A_69_C0_00_00` (150842304000000000, i.e. 2079-01-01).
+   the usual value is **150842304000000000** = `0x0217E646BB058000`, i.e. 2079-01-01.
+   **Corrected 2026-08-19:** this line first gave the hex as `0x00_00_C9_2A_69_C0_00_00`,
+   which is 221184000000000 and decodes to **1601-09-14** - an item that expired, which is
+   the exact failure this row exists to avoid. The decimal was right and the hex was not;
+   `crates/net` sends the decimal, and a test asserts it is non-zero.
    **[I]** - the constant is from convention, not from this binary, and I did **not** find a
    client-side expiry check. It costs nothing to send, so send it.
 2. **The two date-shaped `raw[8]` fields inside `FUN_1402cce00`** and the one inside
@@ -249,7 +253,17 @@ decode `FUN_140304450` reads an extra `raw[8]` only when
 families that carry a serial. Real game semantics fell out of the listing without being
 looked for.
 
-### 3.5 Build order
+### 3.5 Build order - **DONE 2026-08-19, steps 1 to 4. Step 5 is the outstanding launch.**
+
+Built as `net::opcode::equipped_item` and `net::opcode::equipped_block`, wired into
+`character_record_for_set_field`. `python tools/channel_smoke.py --set-field-probe` parses
+the block back off the real wire the way the client does and all its checks pass: four items,
+125 bytes each, `dateExpire` non-zero, five terminators, a 743-byte record.
+
+The smoke test parses at **both** candidate stat-block lengths (108 extended-SP, 109 plain)
+and requires exactly one to succeed, so a width error reports as "neither parses" rather than
+waiting to become a client fault.
+
 
 1. Set `presence[2] = 1` alongside `presence[0] = 1`.
 2. Replace the record's trailing `[0u8; 5]` with `[0u8; 4]`, the equipped block, and

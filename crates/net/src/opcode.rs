@@ -947,15 +947,27 @@ pub fn avatar_look(chr: &Character) -> Vec<u8> {
     out
 }
 
-/// Dress a character already standing on a field.
+/// Dress a character already standing on a field. **Dead code in the client. Not sent.**
 ///
-/// **This is the way around the equipment blocker, and it may not work - see below.**
+/// This was the attempted way around the equipment blocker, and it could never have worked.
+/// The blocker itself is gone - the item decode is at `vtable+0x358`, not the `+0x330`
+/// accessor `research/equip-block.md` named, and RTTI was never needed to find it - so the
+/// character is dressed by the `SetField` record now; see [`equipped_block`].
 ///
-/// The `SetField` character record does *not* carry an avatar look; the client is supposed
-/// to derive the appearance from the equip inventory, whose item decode is a vtable call
-/// with no RTTI on the item classes (`research/equip-block.md`). But three inbound channel
-/// opcodes read the *compact* look instead, and `0x0138` is the smallest of them - it reads
-/// exactly two things **[L]**:
+/// **Why `0x0138` is dead, at byte level.** Its apply is guarded by a call to `0x1407f5ce0`,
+/// which is three bytes - `33 c0 c3`, `xor eax,eax; ret` - followed by `TEST EAX,EAX / JZ`,
+/// so the branch is always taken and `FUN_1420dd920` is unreachable. **[L]**, by decoding
+/// the `rel32` rather than trusting the decompiler. No trigger and no timing would have
+/// changed that. An earlier note here blamed an empty pool at `user+0x1200`; that
+/// explanation was **wrong**, and the real one is stronger because it needs no run to check.
+///
+/// The builder is kept because it is one line over [`avatar_look`] and because `0x0107` and
+/// `0x0114` read the same compact look - `0x0107` formats it into the client's own log
+/// (`"[BP:%02d] %d"` for 32 body parts) and applies nothing, which makes it a potential
+/// free read-back instrument if that log is ever found to be readable.
+///
+/// The original reading of the handler, kept because it is still what the bytes say once
+/// the guard is passed **[L]**:
 ///
 /// ```c
 /// uVar2 = FUN_1406e8c20(packet);                  // a character id
@@ -966,14 +978,9 @@ pub fn avatar_look(chr: &Character) -> Vec<u8> {
 /// }
 /// ```
 ///
-/// **The risk is `DAT_143ac1b90`.** It is a user pool looked up by id, and it is *not*
-/// established that the **local** character is in it - in this game family the local user is
-/// usually held separately (the `CUserLocal` slot at `world+0x2358`) while the pool holds
-/// remote players. If the local user is absent the handler returns having done nothing: no
-/// dialog, no fault, no desync, because the frame carries its own length.
-///
-/// So this is safe to try and cheap to falsify: the character is either dressed or exactly
-/// as naked as before. Nothing in between.
+/// `DAT_143ac1b90` is a user pool looked up by id, and whether the **local** character is
+/// in it was never established. It no longer matters: nothing downstream of the lookup can
+/// run.
 pub const USER_AVATAR_MODIFIED: u16 = 0x0138;
 
 /// Body of a [`USER_AVATAR_MODIFIED`]: the character id, then the compact look.
@@ -1560,10 +1567,15 @@ pub fn set_field_minimal(clock: u64, channel: u32) -> Vec<u8> {
 pub fn character_record_for_set_field(chr: &Character, world_id: u32) -> Vec<u8> {
     let mut out = vec![0u8; PRESENCE_ARRAY_LEN];
     out[PRESENCE_CHARACTER_STAT] = 1;
+    out[PRESENCE_EQUIPPED] = 1;
     out.extend_from_slice(&[0u8; 11]); // the six head fields at 100..111, all zero
     debug_assert_eq!(out.len(), STAT_BLOCK_AT);
     out.extend_from_slice(&character_stat_block(chr, world_id));
-    out.extend_from_slice(&[0u8; 5]); // 219..224: one u8, three string flags, one ungated u8
+    // 219..223: one u8, then the three optional-string flags. A zero flag skips its string.
+    out.extend_from_slice(&[0u8; 4]);
+    // Gate entry 6 fires here, because presence[2] is set.
+    out.extend_from_slice(&equipped_block(&chr.equips));
+    out.push(0); // the final ungated read, at 0x140308b3f
     out
 }
 
@@ -1577,6 +1589,158 @@ pub const PRESENCE_CHARACTER_STAT: usize = 0;
 
 /// Where [`character_stat_block`] starts inside the character record.
 pub const STAT_BLOCK_AT: usize = 111;
+
+/// The presence byte that switches on the **equipped-item list** - gate entry 6.
+///
+/// Read the same way [`PRESENCE_CHARACTER_STAT`] was: the gate at `0x1403061a0` carries key
+/// `0x143abedb0`, whose CRT initialiser at `0x140023442` is `MOV byte ptr [0x143abedb2],1`,
+/// so that key mask is all-zero except byte **2**. **[L]**
+///
+/// **Setting this byte opens three list readers, not one.** The gated region calls
+/// `FUN_14030b6f0` and `FUN_14030b9e0` right after the equipped loop and **both re-gate
+/// through this same presence byte** - `FUN_1403023d0(out, 1)` resolves to key
+/// `0x143abdb20`, whose initialiser also sets byte 2. `FUN_14030b9e0` then runs its reader
+/// three times, for outer index 2, 3 and 4. So this byte costs **four extra `u16`
+/// terminators** beyond the equipped list's own, and the record has no length prefix and no
+/// resync point - omit them and everything after desynchronises silently.
+///
+/// Full working: `research/naked-character.md`.
+pub const PRESENCE_EQUIPPED: usize = 2;
+
+/// One equipped item on the wire, for item type 1.
+///
+/// It is **125 bytes whichever way `hasCashSN` goes**: the 8 bytes that flag controls are
+/// read either by the base decode into `+0x38` or by the equip decode into `+0x4d`. **[D]**
+pub const EQUIPPED_ITEM_LEN: usize = 125;
+
+/// The `u8` item type that selects the equip decode.
+///
+/// `FUN_1403095e0` reads this byte and dispatches: 1 to `FUN_14030ddb0` (equip),
+/// 2 to `FUN_14030db00` (bundle), 3 to `FUN_14030e340` (pet). Anything else leaves the item
+/// null and reads nothing further. **[L]**
+pub const EQUIPPED_ITEM_TYPE: u8 = 1;
+
+/// The equip slots the client keeps. A slot outside this range is decoded and **discarded**.
+///
+/// `LEA EAX,[RCX-1] / CMP EAX,0x1e / JA` at `0x140306229` stores the item at
+/// `record + 0x1a8 + slot*0x10` only for `1 <= slot <= 31`. **[L]** So a cash-equip slot
+/// costs 127 bytes of wire and achieves nothing; [`equipped_block`] drops them.
+pub const EQUIP_SLOTS: std::ops::RangeInclusive<u8> = 1..=31;
+
+/// "This item never expires", as a Windows FILETIME.
+///
+/// **[I], and it is the first field to change if a run comes back "no fault, still naked".**
+/// Zero is a valid FILETIME - it is 1601-01-01, an item that expired four centuries ago -
+/// and no client-side expiry check was found in this binary. This constant is the value
+/// every MapleStory server sends (2079-01-01) and comes from convention, not from
+/// `MapleStory.exe`. It costs nothing to send, so it is sent.
+///
+/// The lesson it is hedging against is [`npc_enter_field`]: that body was structurally
+/// perfect and produced nothing on screen because two *values* were zero.
+pub const ITEM_NEVER_EXPIRES: u64 = 150_842_304_000_000_000;
+
+/// One equipped item, as `FUN_140304100` - the type-1 `vtable+0x358` decode - reads it.
+///
+/// Every row is **[L]**, read off `research/msexe-itemslot-equip-decode.txt` and its five
+/// sub-decoder listings; the address in each comment is where that read happens.
+/// `research/naked-character.md` section 3.3 is the table this mirrors row for row.
+///
+/// **Why this is only 125 bytes.** Three of the fields are `u32` bitmasks and every bit of
+/// each gates one optional read - 17 `u16` in `FUN_140303800`, 21 mixed-width fields in
+/// `FUN_140303b40`. All-zero masks read nothing past the mask itself, which is what
+/// collapses a modern equip record from several hundred unknown bytes to this.
+///
+/// **The one item family this does not describe** is `itemId / 10000 == 166`, which pulls in
+/// `FUN_1402cb4f0` at `0x14030435e` as well. The debug assertion is there because such an
+/// item would silently make the body a different length, and the record has no resync point.
+///
+/// **How the vtable was found, since `equip-block.md` once called this unreadable.** The
+/// item classes carry no RTTI, but they do not need to: the type-1 constructor
+/// `FUN_1402f7da0` stores its vtable with `LEA RAX,[0x14327E1D8]` at `0x1402f7dbd`, and the
+/// positive control that this really is the item vtable is `vtable+0x88` - it reads
+/// `b8 01 00 00 00 c3`, literally `return 1`, matching the 1/2/3 the release function
+/// switches on. `+0x330`, which that document called the decode, is `FUN_1402fbb30` =
+/// `return this + 0x242`, an accessor.
+pub fn equipped_item(item_id: u32) -> Vec<u8> {
+    debug_assert_ne!(item_id / 10000, 166, "a 166xxxx item reads FUN_1402cb4f0 as well");
+    let mut b = Vec::with_capacity(EQUIPPED_ITEM_LEN);
+    b.push(EQUIPPED_ITEM_TYPE); // 1403095fb  u8   the factory's type byte
+
+    // FUN_1403035a0, the base decode shared by all three item types.
+    b.extend_from_slice(&item_id.to_le_bytes()); //           1403035c5  u32  itemId
+    b.push(0); //                                             140303787  u8   hasCashSN
+    // A non-zero hasCashSN pulls in a u64 cash serial at 14030379d and drops the raw[8] at
+    // 14030429e - same total, different layout. Zero, so neither moves.
+    b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); //1403037b9  u64  dateExpire
+    b.extend_from_slice(&0u32.to_le_bytes()); //              1403037c1  u32  -> +0x48
+    b.push(0); //                                             1403037cc  u8   -> +0x4c (bool)
+
+    // FUN_140303b40(this+0x62): two bitmasks, 17 and 21 optional reads. Zero reads none.
+    b.extend_from_slice(&0u32.to_le_bytes()); //              14030381d  u32  statMask
+    b.extend_from_slice(&0u32.to_le_bytes()); //              140303b66  u32  optMask
+
+    // Back in FUN_140304100.
+    b.extend_from_slice(&[0u8; 13]); //                       140304138  raw[13] char[13] name
+    b.push(0); //                                             140304144  u8   -> blob +0x3af
+    b.push(0); //                                             140304183  u8   -> blob +0x3b7
+    // 1403041c2 / 1df / 1fc / 219 / 236 / 253 / 270: seven u16, into +0x3bf .. +0x3ef.
+    b.extend_from_slice(&[0u8; 14]);
+    b.extend_from_slice(&[0u8; 8]); //                        14030429e  raw[8], hasCashSN == 0
+    // 1403042b7  FUN_1402cce00: raw[8], raw[8], u32, u32, u32, u32.
+    b.extend_from_slice(&[0u8; 32]);
+    b.extend_from_slice(&[0u8; 12]); //                       1403042c6  FUN_1402cd090: raw[8], u32
+    b.extend_from_slice(&0u32.to_le_bytes()); //              1403042ce  u32  -> +0x23e
+    // 1403042dc / 2f9 / 316: three u16, into +0x3f7, +0x3ff, +0x407.
+    b.extend_from_slice(&[0u8; 6]);
+    b.push(0); //                                             14030436d  u8   -> blob +0x303
+    b.push(0); //                                             1403043b1  u8   -> blob +0x30b
+    b.extend_from_slice(&0u32.to_le_bytes()); //              1403043f6  u32  a third bitmask
+    b.push(0); //                                             1403043fe  u8   tailFlag
+
+    debug_assert_eq!(b.len(), EQUIPPED_ITEM_LEN);
+    b
+}
+
+/// The whole gate-entry-6 region: the equipped list, and the four lists it drags in with it.
+///
+/// ```text
+/// u8   flagA                    0 - a non-zero value would skip FUN_14030b6f0 below
+/// repeat:
+///     u16  slot                 1403061fc (first) / 1403062c9 (subsequent)
+///     item body                 FUN_1403095e0 at 14030621e, 125 bytes
+/// u16  0                        terminator of the equipped list
+/// u16  0                        FUN_14030b6f0's one list, read because flagA == 0
+/// u16  0, u16 0, u16 0          FUN_14030b9e0's three lists
+/// ```
+///
+/// So the region is `11 + 127 * equips` bytes, and a character with the four starter equips
+/// takes the whole record from 224 bytes to **743**. **[L]** for the layout; the total is
+/// arithmetic on it.
+///
+/// **flagA is deliberately 0.** A non-zero value at `0x1403062dd` skips `FUN_14030b6f0` and
+/// its terminator - one byte less and one more thing to get wrong. `FUN_14030b9e0` cannot be
+/// skipped at all.
+pub fn equipped_block(equips: &[(u8, u32)]) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.push(0); // 1403061cc  flagA
+    for (slot, item_id) in equips {
+        if !EQUIP_SLOTS.contains(slot) {
+            continue; // decoded and thrown away by the client - see EQUIP_SLOTS
+        }
+        b.extend_from_slice(&u16::from(*slot).to_le_bytes());
+        b.extend_from_slice(&equipped_item(*item_id));
+    }
+    b.extend_from_slice(&0u16.to_le_bytes()); // end of the equipped list
+    b.extend_from_slice(&0u16.to_le_bytes()); // FUN_14030b6f0
+    b.extend_from_slice(&[0u8; 6]); //           FUN_14030b9e0, three lists
+    b
+}
+
+/// The fixed cost of [`equipped_block`]: `flagA` plus five `u16` terminators.
+pub const EQUIPPED_BLOCK_OVERHEAD: usize = 1 + 2 + 2 + 6;
+
+/// One equipped item plus its `u16` slot - what each equip adds to the record.
+pub const EQUIPPED_ENTRY_LEN: usize = 2 + EQUIPPED_ITEM_LEN;
 
 /// A `SetField` carrying a real character on a real map.
 ///
@@ -2366,25 +2530,33 @@ mod tests {
     #[test]
     fn the_set_field_record_switches_the_stat_block_on() {
         let chr = Character { name: "Wanderer".to_string(), ..Character::default() };
+        assert!(chr.equips.is_empty(), "the default character wears nothing");
         let record = character_record_for_set_field(&chr, 0);
-        assert_eq!(record.len(), PRESENCE_ARRAY_LEN + 11 + stat_block_len(chr.job) + 5);
+        let fixed = PRESENCE_ARRAY_LEN + 11 + stat_block_len(chr.job) + 4 + 1;
+        assert_eq!(record.len(), fixed + EQUIPPED_BLOCK_OVERHEAD);
         assert!(uses_extended_sp(chr.job), "the default job is on the extended-SP branch");
-        assert_eq!(record.len(), 224, "the record is 224 bytes for an extended-SP job");
+        assert_eq!(
+            record.len(),
+            235,
+            "224 bytes of record plus the 11 the equipped gate costs even when empty"
+        );
 
-        // And a plain-SP job is 225, not 224 - the one-byte shift is real and encoded.
+        // And a plain-SP job is one byte longer - the stat block's SP fork is real and
+        // encoded, and it shifts everything after it including the equipped block.
         let plain = Character { job: 900, ..chr.clone() };
         assert!(!uses_extended_sp(plain.job));
-        assert_eq!(character_record_for_set_field(&plain, 0).len(), 225);
+        assert_eq!(character_record_for_set_field(&plain, 0).len(), 236);
 
-        // presence[0] switches on gate entry 7. Every other flag must stay clear - each one
-        // that is set pulls in a whole block we do not build.
+        // presence[0] switches on gate entry 7 (the stat block) and presence[2] on entry 6
+        // (the equipped list). Every other flag must stay clear - each one that is set pulls
+        // in a whole block we do not build, and the record has no resync point.
         assert_eq!(record[PRESENCE_CHARACTER_STAT], 1, "the stat block is not switched on");
+        assert_eq!(record[PRESENCE_EQUIPPED], 1, "the equipped list is not switched on");
         assert!(
-            record[..PRESENCE_ARRAY_LEN]
-                .iter()
-                .enumerate()
-                .all(|(i, &b)| i == PRESENCE_CHARACTER_STAT || b == 0),
-            "a presence flag other than the stat block is set"
+            record[..PRESENCE_ARRAY_LEN].iter().enumerate().all(|(i, &b)| {
+                i == PRESENCE_CHARACTER_STAT || i == PRESENCE_EQUIPPED || b == 0
+            }),
+            "a presence flag other than the stat block and the equipped list is set"
         );
 
         // The six head fields between the array and the gate are counts and flags the
@@ -2404,6 +2576,154 @@ mod tests {
             u32::from_le_bytes([record[at], record[at + 1], record[at + 2], record[at + 3]]),
             START_MAP_ID
         );
+    }
+
+    /// One equipped item is 125 bytes, and every field is at the offset the client reads it
+    /// at. There is no length prefix anywhere in the record, so a single wrong width
+    /// desynchronises everything after it - silently.
+    #[test]
+    fn an_equipped_item_is_125_bytes_with_the_fields_where_the_client_reads_them() {
+        let hat = equipped_item(1002357);
+        assert_eq!(hat.len(), EQUIPPED_ITEM_LEN);
+        assert_eq!(hat.len(), 125);
+
+        // 1403095fb: the factory reads a type byte and dispatches on it. Anything other
+        // than 1, 2 or 3 leaves the item null and reads nothing further, which would
+        // desynchronise the rest of the record.
+        assert_eq!(hat[0], 1);
+
+        // 1403035c5: the item id, immediately after the type byte.
+        assert_eq!(u32::from_le_bytes([hat[1], hat[2], hat[3], hat[4]]), 1002357);
+
+        // 140303787: hasCashSN. Non-zero moves an 8-byte field from +0x4d to +0x38.
+        assert_eq!(hat[5], 0);
+
+        // 1403037b9: dateExpire, and it must NOT be zero - see ITEM_NEVER_EXPIRES.
+        let expires = u64::from_le_bytes(hat[6..14].try_into().unwrap());
+        assert_eq!(expires, ITEM_NEVER_EXPIRES);
+        assert_ne!(expires, 0, "zero is 1601-01-01, an item that expired long ago");
+
+        // 14030381d and 140303b66: the two bitmasks. Every bit of each gates one optional
+        // read - 17 u16 and 21 mixed-width fields - so a stray bit here adds bytes the
+        // client expects and we do not send.
+        assert_eq!(u32::from_le_bytes(hat[19..23].try_into().unwrap()), 0, "statMask");
+        assert_eq!(u32::from_le_bytes(hat[23..27].try_into().unwrap()), 0, "optMask");
+
+        // 1403043f6 and 1403043fe: the third mask and the tail flag, the last two fields.
+        assert_eq!(u32::from_le_bytes(hat[120..124].try_into().unwrap()), 0, "third mask");
+        assert_eq!(hat[124], 0, "tailFlag - non-zero reads a fourth mask");
+
+        // Everything else is zero. That is a claim about the layout, not laziness: the
+        // masks read nothing, and the 13-byte name is a buffer whose terminator the client
+        // writes itself.
+        let carries_a_value = |i: usize| i == 0 || (1..5).contains(&i) || (6..14).contains(&i);
+        let stray: Vec<usize> =
+            (0..hat.len()).filter(|&i| hat[i] != 0 && !carries_a_value(i)).collect();
+        assert!(
+            stray.is_empty(),
+            "only the type byte, the item id and dateExpire carry a value: {stray:?}"
+        );
+
+        // The item id is the only thing that changes between two items.
+        let coat = equipped_item(1040010);
+        let differing: Vec<usize> =
+            (0..hat.len()).filter(|&i| hat[i] != coat[i]).collect();
+        assert!(!differing.is_empty(), "two different items produced identical bytes");
+        assert!(
+            differing.iter().all(|&i| (1..5).contains(&i)),
+            "two items differ outside the itemId field: {differing:?}"
+        );
+    }
+
+    /// The equipped block costs 11 bytes even when the character wears nothing, because
+    /// presence[2] gates three list readers and not one. Forgetting the four extra
+    /// terminators is the single most likely way to break the record.
+    #[test]
+    fn the_equipped_block_carries_five_terminators_not_one() {
+        let empty = equipped_block(&[]);
+        assert_eq!(empty.len(), EQUIPPED_BLOCK_OVERHEAD);
+        assert_eq!(empty.len(), 11);
+        assert!(empty.iter().all(|&b| b == 0), "flagA and all five terminators are zero");
+
+        // flagA at 1403061cc. Zero is what makes FUN_14030b6f0 run, which is why its
+        // terminator is one of the five.
+        assert_eq!(empty[0], 0);
+
+        // Four starter equips: the four slots TestCharD actually has in the database, which
+        // are the values the client's own slot validator FUN_140253980 assigns.
+        let equips = vec![(5u8, 1040002u32), (6, 1060002), (7, 1072001), (11, 1302000)];
+        let block = equipped_block(&equips);
+        assert_eq!(block.len(), EQUIPPED_BLOCK_OVERHEAD + 4 * EQUIPPED_ENTRY_LEN);
+        assert_eq!(block.len(), 11 + 4 * 127);
+
+        // Each entry is a u16 slot then the 125-byte item, in the order given.
+        let mut at = 1;
+        for (slot, item_id) in &equips {
+            assert_eq!(u16::from_le_bytes([block[at], block[at + 1]]), u16::from(*slot));
+            assert_eq!(&block[at + 2..at + 2 + EQUIPPED_ITEM_LEN], &equipped_item(*item_id)[..]);
+            at += EQUIPPED_ENTRY_LEN;
+        }
+
+        // Then five u16 zeros and nothing else.
+        assert!(block[at..].iter().all(|&b| b == 0));
+        assert_eq!(block.len() - at, 10);
+
+        // A slot outside 1..=31 is decoded by the client and thrown away, so it costs 127
+        // bytes of wire and achieves nothing. Drop it rather than send it.
+        let with_cash = vec![(5u8, 1040002u32), (105, 1040002), (0, 1040002)];
+        assert_eq!(
+            equipped_block(&with_cash).len(),
+            EQUIPPED_BLOCK_OVERHEAD + EQUIPPED_ENTRY_LEN,
+            "slots 105 and 0 are outside 1..=31 and should not be sent"
+        );
+    }
+
+    /// A dressed character's record is 743 bytes, and the equipped block sits between the
+    /// three optional-string flags and the final ungated read. That position is the whole
+    /// point: it came from walking all 18660 bytes of FUN_140304b20, and the walk's control
+    /// is that with presence = {0} it reproduces the 224-byte record already on the wire.
+    #[test]
+    fn a_dressed_character_puts_the_equipped_block_after_the_string_flags() {
+        let chr = Character {
+            name: "TestCharD".to_string(),
+            equips: vec![(5, 1040002), (6, 1060002), (7, 1072001), (11, 1302000)],
+            ..Character::default()
+        };
+        let record = character_record_for_set_field(&chr, 0);
+        assert_eq!(record.len(), 743, "four equips take the record from 224 bytes to 743");
+
+        // The stat block is still where the gate leaves the stream pointer, and still
+        // carries the map. Equipment must not have moved it.
+        let block_at = STAT_BLOCK_AT + stat_block_len(chr.job);
+        assert_eq!(
+            &record[STAT_BLOCK_AT..block_at],
+            &character_stat_block(&chr, 0)[..]
+        );
+        let map_at = STAT_BLOCK_AT + stat_block_map_id_at(chr.job);
+        assert_eq!(
+            u32::from_le_bytes(record[map_at..map_at + 4].try_into().unwrap()),
+            START_MAP_ID
+        );
+
+        // 219..223: the u8 and the three optional-string flags, all zero so no string is
+        // read. Then the gate fires.
+        assert_eq!(&record[block_at..block_at + 4], &[0, 0, 0, 0]);
+        let equipped_at = block_at + 4;
+        assert_eq!(
+            &record[equipped_at..record.len() - 1],
+            &equipped_block(&chr.equips)[..]
+        );
+
+        // And one ungated u8 after the whole region, at 0x140308b3f.
+        assert_eq!(*record.last().unwrap(), 0);
+
+        // Undressing the character shortens the record by exactly four entries and changes
+        // nothing before the block - the strongest single check that the block is placed
+        // where the walk says.
+        let naked = Character { equips: Vec::new(), ..chr.clone() };
+        let bare = character_record_for_set_field(&naked, 0);
+        assert_eq!(record.len() - bare.len(), 4 * EQUIPPED_ENTRY_LEN);
+        assert_eq!(&record[..equipped_at], &bare[..equipped_at]);
     }
 
     /// The whole packet, and the one difference from the minimal form that was accepted.

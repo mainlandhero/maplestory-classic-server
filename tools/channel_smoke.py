@@ -61,6 +61,11 @@ MAP_ID = 1
 # stub here once let a character reach map 10 and get stranded, and the smoke test could not
 # have caught it because it was using an explicit target field instead of a name.
 PORTAL_TARGET = 10
+# What the planted character wears. Slots 5/6/7/11 are what the client's own validator
+# FUN_140253980 assigns to a coat, trousers, shoes and a weapon, and they are the values a
+# really-created character carries.
+EQUIPS = ((5, 1040003), (6, 1060002), (7, 1072003), (11, 1302000))
+EQUIPPED_ITEM_LEN = 125
 CLIENT_IV = 0x52307801        # J, the chain the client encrypts with
 SERVER_IV = 0x52307802        # K, the chain it decrypts with
 
@@ -100,7 +105,7 @@ def plant_character_and_migration(dbpath, character_id, world_id=0, channel_id=0
     )
     # Equipment, so the avatar-look check below is not vacuous. Slots and item ids are the
     # ones a real created character carries.
-    for slot, item in ((5, 1040003), (6, 1060002), (7, 1072003), (11, 1302000)):
+    for slot, item in EQUIPS:
         con.execute(
             "INSERT INTO equipment (character_id, slot, item_id) VALUES (?,?,?)",
             (character_id, slot, item),
@@ -265,32 +270,16 @@ if PROBE:
     set_fields = [r for r in replies if r["opcode"] == SET_FIELD]
     npcs = [r for r in replies if r["opcode"] == NPC_ENTER_FIELD]
 
+    # 0x0138 UserAvatarModified used to be sent here as a guess at the naked character.
+    # It is **dead code in the client**: its apply is guarded by a call to 0x1407f5ce0,
+    # three bytes of `xor eax,eax; ret`, then TEST/JZ. The character is dressed by the
+    # SetField record instead, and the checks for that are below.
     AVATAR = 0x0138
-    looks = [r for r in replies if r["opcode"] == AVATAR]
+    check("no UserAvatarModified is sent - 0x0138 is dead code in the client",
+          not [r for r in replies if r["opcode"] == AVATAR])
 
-    check("the probe answered all four requests", len(replies) == 6,
+    check("the probe answered all four requests", len(replies) == 5,
           "%d replies: %s" % (len(replies), [hex(r["opcode"]) for r in replies]))
-    check("one of them is UserAvatarModified - the attempt to dress the character",
-          len(looks) == 1, "%d" % len(looks))
-    if looks:
-        lb = looks[0]["body"][2:]
-        check("the avatar packet names the claimed character",
-              struct.unpack_from("<I", lb, 0)[0] == CHARACTER_ID,
-              "id %d" % struct.unpack_from("<I", lb, 0)[0])
-        # The equipment is what this whole packet exists for: a look with no (slot, item)
-        # pairs dresses the character in nothing, which is the bug being fixed. The pairs
-        # start after gender(1) skin(1) u32(4) face(4) job(4) discarded(1) hair(4) = 19.
-        PAIRS_AT = 4 + 19
-        check("the avatar packet carries the character's equipment, not an empty look",
-              lb[PAIRS_AT] != 0xFF,
-              "first pair byte = %#04x (0xFF means no equips at all)" % lb[PAIRS_AT])
-        slots = []
-        i = PAIRS_AT
-        while i < len(lb) and lb[i] != 0xFF:
-            slots.append(lb[i])
-            i += 5
-        check("the equipped slots are the ones the character actually wears",
-              slots == [5, 6, 7, 11], "%s" % slots)
     check("three are SetField - the migration, the /map command and the portal",
           len(set_fields) == 3, "%d" % len(set_fields))
     if len(set_fields) == 3:
@@ -335,7 +324,9 @@ if PROBE:
             # everything after it. research/charrecord-presence-map.md has all 40.
             check("presence[0] is set, so the stat block decodes", presence[0] == 1,
                   "presence[0]=%d" % presence[0])
-            stray = [i for i, b in enumerate(presence) if b and i != 0]
+            check("presence[2] is set, so the equipped list decodes", presence[2] == 1,
+                  "presence[2]=%d" % presence[2])
+            stray = [i for i, b in enumerate(presence) if b and i not in (0, 2)]
             check("no other presence flag is set", not stray, "also set: %s" % stray[:6])
 
             # The six head fields between the array and the gate are counts and flags the
@@ -361,8 +352,68 @@ if PROBE:
             check("the stat block carries the claimed character id", id0 == CHARACTER_ID,
                   "%d, wanted %d" % (id0, CHARACTER_ID))
 
-            check("the body outlasts the traced read path (33+12+224+1)",
-                  len(body) > rec + 224 + 1, "%d bytes" % len(body))
+            # ---- the equipped list, which is what dresses the character
+            #
+            # It sits between the three optional-string flags and the final ungated u8, and
+            # the stat block before it is 108 bytes on the extended-SP branch and 109 on the
+            # plain one. Rather than assume the job, parse at both and require exactly one
+            # to be a well-formed block - that IS the discriminator, and a layout error
+            # shows up here as "neither parses" rather than as a client fault.
+            def parse_equipped(at):
+                # u8 flagA, then (u16 slot, 125-byte item)* until a zero slot.
+                if at >= len(body) or body[at] != 0:
+                    return None
+                i = at + 1
+                worn = []
+                while True:
+                    if i + 2 > len(body):
+                        return None
+                    slot = struct.unpack_from("<H", body, i)[0]
+                    i += 2
+                    if slot == 0:
+                        break
+                    if not 1 <= slot <= 31 or i + EQUIPPED_ITEM_LEN > len(body):
+                        return None
+                    item = body[i:i + EQUIPPED_ITEM_LEN]
+                    if item[0] != 1:  # the factory's type byte: 1 is an equip
+                        return None
+                    worn.append((slot, struct.unpack_from("<I", item, 1)[0], item))
+                    i += EQUIPPED_ITEM_LEN
+                # Four more u16 terminators: presence[2] gates FUN_14030b6f0's one list and
+                # FUN_14030b9e0's three as well as the equipped list itself. Omitting them
+                # desynchronises everything after, silently.
+                if i + 8 > len(body) or any(body[i:i + 8]):
+                    return None
+                return worn, i + 8
+
+            parsed = [(L, parse_equipped(stat + L + 4)) for L in (108, 109)]
+            good = [(L, r) for L, r in parsed if r is not None]
+            check("the equipped block parses at exactly one stat-block length",
+                  len(good) == 1,
+                  "parsed at %s" % [L for L, _ in good])
+            if len(good) == 1:
+                stat_len, (worn, end) = good[0]
+                check("the equipped list carries every item the character wears",
+                      [(sl, it) for sl, it, _ in worn] == list(EQUIPS),
+                      "%s, wanted %s" % ([(sl, it) for sl, it, _ in worn], list(EQUIPS)))
+                check("each equipped item is exactly 125 bytes",
+                      all(len(raw) == EQUIPPED_ITEM_LEN for _, _, raw in worn),
+                      "%s" % [len(raw) for _, _, raw in worn])
+                # dateExpire is a FILETIME at item offset 6, and zero is 1601-01-01 - an
+                # item that expired four centuries ago. It is the top suspect if a run comes
+                # back "no fault, still naked", so pin that it is not zero here.
+                expiries = [struct.unpack_from("<Q", raw, 6)[0] for _, _, raw in worn]
+                check("no equipped item carries dateExpire = 0 (which is 1601-01-01)",
+                      all(e != 0 for e in expiries), "%s" % expiries[:2])
+                # The three optional-string flags immediately before the block, and the one
+                # ungated u8 after it. Both are zero, and the record ends there.
+                check("the three optional-string flags before the block are zero",
+                      not any(body[stat + stat_len:stat + stat_len + 4]),
+                      "%s" % list(body[stat + stat_len:stat + stat_len + 4]))
+                check("the record is 743 bytes for a character wearing four items",
+                      end + 1 - rec == 743, "%d bytes" % (end + 1 - rec))
+                check("the body outlasts the whole record",
+                      len(body) > end + 1, "%d bytes, record ends at %d" % (len(body), end + 1))
     # ---- the NPCs the client cannot spawn for itself
     for i, pkt in enumerate(npcs):
         nb = pkt["body"][2:]

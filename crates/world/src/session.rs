@@ -213,7 +213,7 @@ impl Session {
     fn on_field_entered(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
-        let mut out: Vec<Reply> = self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
+        let out: Vec<Reply> = self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()
             .map(|npc| Reply {
                 opcode: net::opcode::NPC_ENTER_FIELD,
@@ -225,22 +225,12 @@ impl Session {
             })
             .collect();
 
-        // Try to dress the character. The SetField record carries no avatar look and the
-        // equip inventory's item decode is a vtable call we cannot read yet, but 0x0138
-        // takes the *compact* look - the same bytes that dress the character-select screen.
-        // It only applies if the local character is in the pool this handler searches, which
-        // is NOT established; if it is not, the handler does nothing at all. See
-        // net::opcode::USER_AVATAR_MODIFIED.
-        out.push(Reply {
-            opcode: net::opcode::USER_AVATAR_MODIFIED,
-            body: net::opcode::user_avatar_modified(&chr),
-            what: format!(
-                "UserAvatarModified for character {} ({}), {} equipped item(s) - an ATTEMPT                  to dress a character the SetField record cannot dress. If the local user is                  not in the pool this handler searches, it is silently ignored.",
-                chr.id,
-                chr.name,
-                chr.equips.len()
-            ),
-        });
+        // The character is dressed by the SetField record itself now, not from here. This
+        // used to push a 0x0138 UserAvatarModified as a guess at the equipment problem;
+        // that opcode is **dead code at byte level** - its apply is guarded by a call to
+        // 0x1407f5ce0, which is three bytes of `xor eax,eax; ret`, followed by TEST/JZ. No
+        // trigger and no timing would ever have made it work, so sending it was noise in
+        // the log. See net::opcode::USER_AVATAR_MODIFIED and research/naked-character.md.
         out
     }
 

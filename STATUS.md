@@ -96,7 +96,7 @@ code against. Launches are for confirming, and two of these can share one.
 
 | # | do this | why it is first | spec |
 |---|---|---|---|
-| 1 | **Build the equipped-item block** - `presence[2]`, four extra `u16` terminators, a 125-byte item at record offset 223 | The blocker broke. It is the loudest remaining symptom (naked character, empty Equipment window) and it is now fully specified. | `research/naked-character.md`, goal 6 |
+| ~~1~~ | ~~**Build the equipped-item block**~~ - **BUILT 2026-08-19, unconfirmed on screen** | See "6. Equipment" below for what to watch on the run. | `research/naked-character.md`, goal 6 |
 | 2 | **Answer `0x0151` with a `0x055B` Say** - a 32-byte body | Also fully specified, and it makes NPCs talk, which is the visible half of goals 2-4. | `research/npc-dialogue.md`, goal 2 |
 | 3 | **Finish the mob body** - read `FUN_14046fba0`'s movement-path framing | The owner made mobs a priority. Everything else about the spawn is read; only the path's element count and dispatch value are missing. | `research/mob-spawn.md`, goal 3 |
 | 4 | **Read what greys a channel row** in `ChannelChange` | Cheapest of the four, but the least valuable - it unblocks one dialog. | goal 2a |
@@ -328,11 +328,50 @@ Two things left, both known:
   precondition, measured `0x00` on the first `SetField` and **non-zero on every later one**.
   We still send the long form, which works; switching is an optimisation, not a fix.
 
-### 6. Equipment and consumables - **the blocker is broken; this is now buildable**
+### 6. Equipment and consumables - **BUILT 2026-08-19. Unconfirmed on screen.**
 
 The owner keeps reporting the character as naked and the Equipment window as empty, and this is
-the goal that fixes it. **It is no longer blocked.** Full working:
-`research/naked-character.md`.
+the goal that fixes it. Full working: `research/naked-character.md`.
+
+**What the server now sends.** `presence[2]` is set alongside `presence[0]`, and the record
+carries a real equipped list: `net::opcode::equipped_block` and `net::opcode::equipped_item`.
+A character wearing the four starter items sends a **743-byte record** instead of 224.
+
+**Verified without spending a launch**, which is the whole reason route 1 was chosen over
+the standalone item packets: `python tools/channel_smoke.py --set-field-probe` decodes the
+real server's real bytes over the independent Python transport and now parses the equipped
+block the way the client does - `u8 flagA`, then `(u16 slot, 125-byte item)` until a zero
+slot, then **five** `u16` terminators. It checks all four items come back, that each is
+exactly 125 bytes, that `dateExpire` is not zero, and that the record is 743 bytes.
+
+The parse is deliberately run at **both** possible stat-block lengths (108 for the
+extended-SP branch, 109 for the plain one) and required to succeed at exactly one. That is
+a discriminator rather than an assumption: a width error shows up as "neither parses"
+instead of as a client fault.
+
+> **What to watch on the run, and what each outcome means:**
+>
+> * **Character dressed, Equipment window populated** - done.
+> * **No fault, still naked, Equipment window still empty** - the *layout* is right and a
+>   *value* is wrong. First suspect is `dateExpire`; see `ITEM_NEVER_EXPIRES`. This is the
+>   NPC lesson exactly: that body was structurally perfect and produced nothing because
+>   `isEnabled` and `alpha` were zero.
+> * **No fault, still naked, but the Equipment window lists items** - the items decoded and
+>   the *avatar* is not being rebuilt. A different and much smaller problem.
+> * **Client faults, or freezes at "Connecting..."** - the record desynchronised. The
+>   client's readers throw on underrun and the throw is reported in `ELog` (`0x008F`/
+>   `0x0090`) with section-relative RVAs; `tools/pdata_lookup.py` turns those into
+>   functions, which names the field that was mis-sized.
+
+**`0x0138` is no longer sent.** The server used to push a `UserAvatarModified` on every
+field entry as a guess at this problem. It is dead code at byte level (below), so it was
+noise in the log and nothing else; the smoke test now asserts it is absent.
+
+**A correction that would have shipped an expired item.** `research/naked-character.md`
+gave the "permanent" `dateExpire` sentinel as `0x00_00_C9_2A_69_C0_00_00`, which is
+221184000000000 and decodes to **1601-09-14**. The decimal beside it, 150842304000000000,
+is right and is 2079-01-01; the hex was not. `crates/net` sends the decimal and a test
+asserts it is non-zero.
 
 **What was wrong with the old reading, and both halves were wrong.** This section used to say
 the decode was a vtable call at `+0x330` on classes with no RTTI.
@@ -350,11 +389,12 @@ the decode was a vtable call at `+0x330` on classes with no RTTI.
 each gate one optional read (17 `u16` in `FUN_140303800`, 21 mixed-width in `FUN_140303b40`).
 All-zero masks read nothing past the mask.
 
-> **The trap that would wreck the record.** `presence[2]` gates the equipped list **and both
-> helper lists called right after it** - `FUN_14030b6f0` and `FUN_14030b9e0` re-gate through
-> the same byte, and the second reads **three** lists. Setting `presence[2]` therefore costs
-> **four extra `u16` terminators**. Omit them and the record desynchronises, and it has no
-> resync point.
+> **The trap that would wreck the record, and the one the build honours.** `presence[2]`
+> gates the equipped list **and both helper lists called right after it** - `FUN_14030b6f0`
+> and `FUN_14030b9e0` re-gate through the same byte, and the second reads **three** lists.
+> Setting `presence[2]` therefore costs **four extra `u16` terminators**, five in all. Omit
+> them and the record desynchronises, and it has no resync point. `equipped_block` sends all
+> five and a test counts them.
 
 **Where it goes:** record offset **223**, between the three string flags (220-222) and the
 final ungated `u8`. Verified by walking all 18660 bytes of `FUN_140304b20`: with
