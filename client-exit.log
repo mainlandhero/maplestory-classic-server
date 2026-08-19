@@ -1,26 +1,35 @@
-22:41:27.513 watching MapleStory pid 84272, started 22:41:27.321, 7 threads, 195 handles
-22:41:27.517 this shell is elevated
-22:41:27.522 threads at start: 84276:Running 84280:Wait/EventPairLow 84284:Wait/EventPairLow 84288:Wait/EventPairLow 84360:Wait/UserRequest 84364:Wait/EventPairLow 84368:Wait/UserRequest
-22:41:27.600 in a job object: False (common, and true for both controls - only a lead if the lifetime is also constant)
-22:41:27.715 protection/nexon processes at start: cncmd#17504@11:40:43 maplecw-login#84108@22:41:26 maplecw-world#84168@22:41:26 MapleStory#84272@22:41:27
-22:41:27.998 threads 7 -> 28 started=84500,84504,84508,84512,84528,84532,84536,84540,84596,84600,84724,84772,84780,84784,84788,84792,84796,84800,84804,84808,84824
-22:41:28.070 handles on the client: lsass#1108 svchost#4236 [examined 1363 process handles, 361 unreachable]
-22:41:28.337 threads 28 -> 29 started=84844
-22:41:28.606 threads 29 -> 30 started=84848
-22:41:28.876 threads 30 -> 57 started=84128,84132,84120,84192,84188,84184,84180,84232,84228,74644,74652,83016,83012,83020,84244,81176,84312,84308,84316,84304,82644,83808,84444,71840,80440,70128,74684
-22:41:29.403 threads 57 -> 60 started=84908,84876,84872
-22:41:29.672 threads 60 -> 75 started=84932,84856,84936,84940,84944,84948,84952,84956,84964,84960,84984,83972,81128,83940,83668
-22:41:32.149 handles on the client: lsass#1108 svchost#1240 svchost#4236 svchost#5264 RadeonSoftware#17988 audiodg#36912 [examined 1389 process handles, 366 unreachable]
-22:41:32.945 +5.6s threads=75 handles=1438 cpu=3.92s ws=257MB
-22:41:33.473 threads 75 -> 74 ended=84844
-22:41:33.739 threads 74 -> 73 ended=84932
-22:41:36.382 EXIT code 0xC0000005 (-1073741819) after 8.9s of life, 4.13s of CPU
-22:41:36.383 last sample was 0.08s before the exit: threads=73 (peak 75) handles=1435
-22:41:36.384 threads in that sample (data, not a verdict - see the header): 84276:Wait/UserRequest 84280:Wait/EventPairLow 84284:Wait/EventPairLow 84288:Wait/EventPairLow 84364:Wait/EventPairLow 84368:Wait/UserRequest 84500:Wait/EventPairLow 84504:Wait/UserRequest 84508:Wait/Unknown 84512:Wait/EventPairLow 84528:Wait/UserRequest 84532:Wait/EventPairLow 84536:Wait/UserRequest 84540:Wait/EventPairLow 84596:Wait/Unknown 84600:Wait/Unknown 84724:Wait/EventPairLow 84772:Wait/EventPairLow 84780:Wait/UserRequest 84784:Wait/UserRequest 84788:Wait/EventPairLow 84792:Wait/EventPairLow 84796:Wait/EventPairLow 84800:Wait/UserRequest 84804:Wait/UserRequest 84808:Wait/UserRequest 84824:Wait/EventPairLow 84848:Wait/UserRequest 84128:Wait/EventPairLow 84132:Wait/Unknown 84120:Wait/Unknown 84192:Wait/UserRequest 84188:Wait/UserRequest 84184:Wait/UserRequest 84180:Wait/UserRequest 84232:Wait/UserRequest 84228:Wait/UserRequest 74644:Wait/UserRequest 74652:Wait/UserRequest 83016:Wait/UserRequest 83012:Wait/UserRequest 83020:Wait/UserRequest 84244:Wait/UserRequest 81176:Wait/UserRequest 84312:Wait/UserRequest 84308:Wait/UserRequest 84316:Wait/UserRequest 84304:Wait/UserRequest 82644:Wait/UserRequest 83808:Wait/UserRequest 84444:Wait/UserRequest 71840:Wait/Unknown 80440:Wait/Unknown 70128:Wait/ExecutionDelay 74684:Wait/Unknown 84908:Wait/Executive 84876:Wait/UserRequest 84872:Wait/UserRequest 84856:Wait/UserRequest 84936:Wait/UserRequest 84940:Wait/UserRequest 84944:Wait/UserRequest 84948:Wait/UserRequest 84952:Wait/UserRequest 84956:Wait/UserRequest 84964:Wait/UserRequest 84960:Wait/UserRequest 84984:Wait/UserRequest 83972:Wait/UserRequest 81128:Wait/UserRequest 83940:Wait/UserRequest 83668:Wait/UserRequest 83184:Wait/UserRequest
-22:41:36.384 handles on the client, last scan: lsass#1108 svchost#1240 svchost#4236 svchost#5264 RadeonSoftware#17988 audiodg#36912 [examined 1389 process handles, 366 unreachable]
-22:41:36.388 READ: an access violation reached the top. A vectored handler should have seen this - if none did, it happened on a thread with no handler, or after ours was removed.
-22:41:36.388 READ: the decisive line is in client-patched\maplecw-hook.log, not here - a WATCH on ntdll!RtlExitUserThread or ntdll!NtTerminateThread means the client ended itself; silence on both means it did not.
-22:41:36.396 protection/nexon processes at exit: cncmd#17504@11:40:43 maplecw-login#84108@22:41:26 maplecw-world#84168@22:41:26
-22:41:36.398 vanished during the run: MapleStory#84272@22:41:27
-22:41:36.406 processes that started after the client did: DwarfAxe#80404 DwarfAxe#84516 DwarfAxe#84812 svchost#83864
-22:41:36.581 event: 22:41:28 System/Microsoft-Windows-DistributedCOM Error - The server Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter did not register with DCOM within the required timeout.
+23:45:50.151 watching MapleStory pid 97072, started 23:45:49.940, 7 threads, 195 handles
+23:45:50.154 this shell is elevated
+23:45:50.160 threads at start: 101084:Running 97592:Wait/EventPairLow 93716:Wait/EventPairLow 103892:Wait/EventPairLow 104208:Wait/UserRequest 102720:Wait/EventPairLow 103684:Wait/UserRequest
+23:45:50.237 in a job object: False (common, and true for both controls - only a lead if the lifetime is also constant)
+23:45:50.360 protection/nexon processes at start: cncmd#17504@11:40:43 maplecw-login#99260@23:45:49 maplecw-world#102408@23:45:49 MapleStory#97072@23:45:49
+23:45:50.636 threads 7 -> 28 started=104344,102716,104300,104264,102568,103456,104028,103728,104236,72612,104484,104536,104556,104552,104560,104564,104572,104576,104580,104584,104596
+23:45:50.726 handles on the client: lsass#1108 svchost#4236 [examined 1426 process handles, 368 unreachable]
+23:45:50.990 threads 28 -> 30 started=104616,104624
+23:45:51.514 threads 30 -> 57 started=104940,104948,104952,104956,104960,104980,104984,104988,104992,104996,105000,105004,105008,105012,105016,105020,105024,105028,105032,105036,105040,105044,105048,105052,105056,105080,105084
+23:45:52.043 threads 57 -> 60 started=105424,105436,105440
+23:45:52.310 threads 60 -> 76 started=104532,104608,104604,104224,104632,104628,104636,104664,104668,104672,104676,104712,104684,104688,104692,104652
+23:45:53.369 threads 76 -> 75 ended=104608
+23:45:54.982 threads 75 -> 76 started=104776
+23:45:55.083 handles on the client: lsass#1108 svchost#1240 svchost#4236 svchost#5264 RadeonSoftware#17988 audiodg#36912 [examined 1455 process handles, 375 unreachable]
+23:45:55.345 threads 76 -> 75 ended=104208
+23:45:55.610 +5.7s threads=75 handles=1449 cpu=4.58s ws=381MB
+23:45:56.136 threads 75 -> 74 ended=104616
+23:45:59.306 threads 74 -> 73 ended=104532
+23:46:00.717 +10.8s threads=73 handles=1448 cpu=4.91s ws=342MB
+23:46:02.825 threads 73 -> 66 ended=105052,105056,105084,105436,105440,104692,104652
+23:46:03.087 threads 66 -> 33 ended=104940,104948,104952,104956,104960,104980,104984,104988,104992,104996,105000,105004,105008,105012,105016,105020,105024,105028,105032,105036,105040,105044,105048,104632,104628,104636,104664,104668,104672,104676,104712,104684,104688
+23:46:03.352 threads 33 -> 29 ended=104344,104300,104572,105080
+23:46:03.616 threads 29 -> 22 ended=102716,104236,72612,104556,104552,104560,104564
+23:46:03.705 handles on the client: lsass#1108 svchost#1240 svchost#4236 svchost#5264 RadeonSoftware#17988 [examined 1452 process handles, 375 unreachable]
+23:46:05.829 +15.9s threads=22 handles=703 cpu=4.98s ws=218MB
+23:46:08.818 EXIT code 0x00000000 (0) after 18.7s of life, 4.98s of CPU
+23:46:08.819 last sample was 0.05s before the exit: threads=22 (peak 76) handles=703
+23:46:08.820 threads in that sample (data, not a verdict - see the header): 101084:Wait/UserRequest 97592:Wait/EventPairLow 93716:Wait/EventPairLow 103892:Wait/EventPairLow 102720:Wait/EventPairLow 103684:Wait/UserRequest 104264:Wait/EventPairLow 102568:Wait/UserRequest 103456:Wait/EventPairLow 104028:Wait/UserRequest 103728:Wait/EventPairLow 104484:Wait/EventPairLow 104536:Wait/EventPairLow 104576:Wait/UserRequest 104580:Wait/UserRequest 104584:Wait/UserRequest 104596:Wait/EventPairLow 104624:Wait/UserRequest 105424:Wait/Executive 104604:Wait/UserRequest 104224:Wait/UserRequest 104776:Wait/UserRequest
+23:46:08.820 handles on the client, last scan: lsass#1108 svchost#1240 svchost#4236 svchost#5264 RadeonSoftware#17988 [examined 1452 process handles, 375 unreachable]
+23:46:08.824 READ: exit code 0. Nothing failed. With RtlExitUserProcess ruled out, a clean 0 fits the last-thread path - check whether ntdll!RtlExitUserThread fired in maplecw-hook.log.
+23:46:08.824 READ: the decisive line is in client-patched\maplecw-hook.log, not here - a WATCH on ntdll!RtlExitUserThread or ntdll!NtTerminateThread means the client ended itself; silence on both means it did not.
+23:46:08.831 protection/nexon processes at exit: cncmd#17504@11:40:43 maplecw-login#99260@23:45:49 maplecw-world#102408@23:45:49
+23:46:08.841 vanished during the run: MapleStory#97072@23:45:49
+23:46:08.855 processes that started after the client did: svchost#104648 svchost#105172
+23:46:09.035 event: 23:45:51 System/Microsoft-Windows-DistributedCOM Error - The server Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter did not register with DCOM within the required timeout.

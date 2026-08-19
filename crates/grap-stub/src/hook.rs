@@ -322,10 +322,79 @@ pub fn install_once() {
         return;
     }
     std::thread::spawn(|| {
-        // Let the client finish unpacking .text before patching it.
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        unsafe { install() };
+        wait_for_text_then_install();
     });
+}
+
+/// How long to keep waiting for `.text` to settle before installing anyway.
+///
+/// This used to be a flat `sleep(5)`, and on 2026-08-19 that lost a race it had been
+/// winning by luck: the client raised its "having trouble logging in" dialog **21 ms
+/// before** the watch that suppresses it was armed, so the suppression never happened and
+/// the run was wasted. Across three runs the margin was +1.36 s, +0.74 s, then -0.02 s -
+/// it had been shrinking, and nothing in the design kept it positive.
+const INSTALL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How often to check whether the client has finished unpacking.
+const INSTALL_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Wait for the client's `.text` to stop changing, then install.
+///
+/// The fixed sleep was answering the right question - "has Themida finished unpacking the
+/// code we are about to patch?" - with a guess. Watching the bytes answers it directly, and
+/// installs as soon as it is safe instead of at a hard-coded time.
+///
+/// The deadline means this can never wait *longer* than the old sleep, so the worst case is
+/// today's behaviour and the normal case is much earlier. The elapsed time is logged
+/// because the margin against the client's startup is the thing that actually matters and
+/// it was invisible before.
+fn wait_for_text_then_install() {
+    let started = std::time::Instant::now();
+    let base = unsafe { GetModuleHandleA(std::ptr::null()) } as usize;
+    if base == 0 {
+        log("install: no module handle while waiting; falling back to a fixed delay");
+        std::thread::sleep(INSTALL_DEADLINE);
+        unsafe { install() };
+        return;
+    }
+
+    // A window at the dispatcher: the first thing we patch, so the first thing that has to
+    // be real. Packed pages read as zeros or as filler and keep changing while Themida
+    // works; two identical non-zero reads mean it has stopped.
+    let probe = (base + DISPATCH_RVA) as *const u8;
+    let read_window = || -> [u8; 16] {
+        let mut w = [0u8; 16];
+        for (i, slot) in w.iter_mut().enumerate() {
+            *slot = unsafe { std::ptr::read_volatile(probe.add(i)) };
+        }
+        w
+    };
+
+    let mut previous = read_window();
+    let mut stable_for = std::time::Duration::ZERO;
+    while started.elapsed() < INSTALL_DEADLINE {
+        std::thread::sleep(INSTALL_POLL);
+        let current = read_window();
+        if current == previous && current != [0u8; 16] {
+            stable_for += INSTALL_POLL;
+            // Two consecutive quiet polls, so a single lucky read cannot pass for settled.
+            if stable_for >= INSTALL_POLL * 2 {
+                break;
+            }
+        } else {
+            stable_for = std::time::Duration::ZERO;
+        }
+        previous = current;
+    }
+
+    log(&format!(
+        "install: .text settled after {} ms (deadline {} ms) - the client's login dialog \
+         fires around 4.5 s after connect, so this margin is what decides whether the \
+         suppression lands",
+        started.elapsed().as_millis(),
+        INSTALL_DEADLINE.as_millis()
+    ));
+    unsafe { install() };
 }
 
 /// Install the hook. Safe to call twice; the second call is a no-op.
