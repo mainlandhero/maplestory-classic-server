@@ -2,7 +2,26 @@
 //!
 //! Everything here is read out of `client-patched\MapleStory.exe`; the working is in
 //! `research/mob-spawn.md`, and every field below carries the address the client reads it at.
-//! **Nothing in this module has been sent to a client.** No run, no capture, no confirmation.
+//!
+//! # This body has been sent to a client, and the client died - but not because of the body
+//!
+//! 2026-08-19: 40 of these went out on map 40 and the client took `0xC0000005` at
+//! `0x141c810b0` on the **first** one. The hook writes its `opcode=… elapsed_us=` line after
+//! the dispatch returns and no such line exists for `0x03C6`, so the fault is *inside* the
+//! first mob's dispatch - it is not a volume problem and `-MobLimit 1` reproduces it.
+//!
+//! The faulting instruction dereferences `mob+0x2b8`, and **no byte of this body can reach
+//! that field**. It is zeroed by the mob constructor (`141c4d1dd`) and written in exactly one
+//! other place in all of the client's mob code: `141c50c9c`, inside `encodeInit` itself,
+//! with a COM interface the client obtains from *itself* - `FUN_142af7be0()` then
+//! `QueryInterface({F28BD1ED-…})`, whose implementation provably accepts that IID and returns
+//! a non-null pointer. The block that does it **dominates** the body's tail reads, so any body
+//! that parses past offset 107 has filled the field.
+//!
+//! Three instruments now agree that the layout below is right, so **do not change it to chase
+//! that crash**: the 52 reads in `encodeInit`, a CFG dominator test that picks out exactly the
+//! 35 unconditional ones and finds them identical to the 35 emitted here, and the WZ dump that
+//! settles both template-driven blocks as absent. `research/mob-spawn.md` section 11.
 //!
 //! # The body is four decoders, not one
 //!
@@ -47,10 +66,14 @@ pub const MOB_ENTER_FIELD: u16 = 0x03C6;
 /// |---|---|---|
 /// | `appear_type` is `-3`, `-6` or `>= 0` | +4 | us |
 /// | `template_id` in [`SPECIAL_TEMPLATE_IDS`] | +1 | the template id |
-/// | `template[0x104] != 0` ("patrol mob") | +16 | the WZ template |
-/// | `template[0x1a0] != 0` | +4 | the WZ template |
+/// | `template[0x104] != 0`, the WZ node **`patrol`** | +16 | the WZ template |
+/// | `template[0x1a0] != 0`, the WZ property **`targetFromSvr`** | +4 | the WZ template |
 ///
-/// Use [`FieldMob::body_len`] rather than this constant when any of them may apply.
+/// Use [`FieldMob::body_len`] rather than this constant when any of them may apply - but for
+/// *this* client both template rows are dead: **none of the 193 mob images in
+/// `client-patched/Data/Mob/Mob_000.wz` carries `patrol` or `targetFromSvr`**, so 137 is exact
+/// for every mob in the game. The machinery stays because the client's parse still depends on
+/// the flags, and a later WZ would not have to agree. **[L]**
 pub const MOB_ENTER_FIELD_LEN: usize = 137;
 
 /// The temporary-stat presence mask: **20 raw bytes, 160 bits**, read at `141c76276`.
@@ -161,14 +184,17 @@ pub struct FieldMob {
     /// at `+0x104` is non-zero** (`CMP byte ptr [RCX + 0x104],R15B` at `141c50520`). **[L]**
     ///
     /// The server has to know this about the template, because the client's parse depends on
-    /// it. Which WZ property fills `template+0x104` **is not settled** - the reference calls
-    /// the equivalent `isPatrolMob()` and encodes exactly four ints there, which is the only
-    /// reason `None` is the default. **[I]. This is the most likely reason a first attempt
-    /// desyncs.**
+    /// it. **Settled 2026-08-19:** `template+0x104` is written from the WZ node **`patrol`** -
+    /// `FUN_14047d990` does `GetItem(node, u"patrol")` at `140483bea` and then
+    /// `MOV byte [RAX+0x104],1` at `140483c64` or `,0` at `140483d23`. **No mob image in this
+    /// client has a `patrol` node**, so `None` is right for all 193 of them. **[L]**
     pub patrol: Option<[i32; 4]>,
     /// One `u32` at `141c50ac0`, emitted **only when the template's byte at `+0x1a0` is
-    /// non-zero** (`FUN_140479e70` is `MOVZX EAX,byte ptr [RCX+0x1a0]; RET`). Same caveat as
-    /// [`FieldMob::patrol`]. **[L]** for the gate, **[I]** for `None` being right.
+    /// non-zero** (`FUN_140479e70` is `MOVZX EAX,byte ptr [RCX+0x1a0]; RET`).
+    ///
+    /// **Settled 2026-08-19:** that byte is `GetInt(node, u"targetFromSvr", 0) != 0`, written
+    /// at `140480979` right after the `lea` of the name at `14048094f`. **No mob image in this
+    /// client sets `targetFromSvr`**, so `None` is right for all 193. **[L]**
     pub target_from_server: Option<u32>,
 }
 
@@ -240,10 +266,9 @@ impl FieldMob {
 ///
 /// # Fields I am least sure of, most dangerous first
 ///
-/// 1. **[`FieldMob::patrol`] and [`FieldMob::target_from_server`]** - the two blocks whose
-///    presence the *WZ template* decides. If the template's flag is set and we send `None`,
-///    every byte after it is misread. I could not find what writes `template+0x104` or
-///    `+0x1a0`; `FUN_140495990` is a cache, not the parser.
+/// 1. ~~**[`FieldMob::patrol`] and [`FieldMob::target_from_server`]**~~ - **settled**, and they
+///    are absent for every mob this client has. The parser is `FUN_14047d990`, not
+///    `FUN_140495990`, which is only the cache.
 /// 2. **[`FieldMob::hp`]** - structurally free to be zero, and zero means a mob at 0% HP.
 ///    Exactly the shape of the NPC `isEnabled`/`alpha` bug.
 /// 3. **[`FieldMob::appear_type`]** - `-2` from the reference's own annotation. `-1` is the

@@ -416,6 +416,11 @@ three special template ids are `8910000, 8910100, 9990033` in the reference; in 
 | `msexe-obfpoint.c` / `.txt` | `FUN_1409d3c60` and `FUN_14019a5d0` - how x and y were pinned |
 | `msexe-mobspawn2.c` | `FUN_14085acd0`, `FUN_141d3a540`, `FUN_141d2efc0` and the pool helpers |
 
+**Section 11 used no Ghidra at all** - another agent held the project lock. It is capstone
+against `client-patched\MapleStory.exe` plus `.pdata` for bounds, `tools/xref.py --string`,
+and `target/release/wz-dump`. `research/npc-click.md` and `research/channel-select.md` are the
+other analyses done that way. Nothing in section 11 needs the decompiler to be re-checked.
+
 ---
 
 ## 10. Instrument notes worth keeping
@@ -457,8 +462,9 @@ character 204, 40 mobs of template 2 sent in one burst after two `0x044F` NPCs.
 trampoline returns. The fixture's last such line is `9 opcode=0x044F`; there is **no line for
 any `0x03C6`**. So the first mob dispatch never returned - the fault is inside
 `FUN_141d33630`'s call tree, synchronously. (An earlier reading of this fixture called it a
-per-tick or per-render virtual arriving ~0.5 s later. That was wrong: `world.log` is local
-time and `maplecw-hook.log` is UTC, and the sub-second fields agree - 52.929 to 52.952.)
+per-tick or per-render virtual arriving ~0.5 s later. That was wrong: the two logs are stamped
+in different zones - `world.log` says `18:27` where `maplecw-hook.log` says `14:27`, a whole
+four hours - and the sub-second fields agree, 52.929 sent to 52.952 faulted, **23 ms**.)
 
 It is also the **first** mob, not the 40th: ten dispatches completed (`0x0032` x3, `0x0000`,
 `0x000B` x2, `0x0010`, `0x0011`, `0x044F` x2) and the next packet in the stream is mob #1.
@@ -469,13 +475,18 @@ It is also the **first** mob, not the 40th: ten dispatches completed (`0x0032` x
 The parser is `FUN_14047d990` (44 762 bytes; found by `tools/xref.py --string bodyAttack`).
 
 ```asm
-140483bea  LEA  RDX,[rip -> u"patrol"]        ; GetItem(node, "patrol")
+140483bea  LEA  RDX,[rip -> u"patrol"]        ; 0x14328b748, utf-16
+140483bf8  CALL 0x1401a5890                   ; wrap it as a name string
+140483c0a  CALL 0x1401e4330                   ; node->GetItem(name)  -> [rbp+0xc8]
+140483c56  CMP  qword ptr [RBP + 0xc8],0
 140483c5e  JE   140483d23                     ; absent
 140483c64  MOV  byte ptr [RAX + 0x104],1      ; present
-140483d23  MOV  byte ptr [RAX + 0x104],0
+140483d23  MOV  byte ptr [RAX + 0x104],0      ; absent
 
-14048094f  LEA  RDX,[rip -> u"targetFromSvr"] ; GetInt(node, "targetFromSvr", 0)
-140480962  TEST EAX,EAX / SETNE SIL
+14048094f  LEA  RDX,[rip -> u"targetFromSvr"] ; 0x14328ae58, utf-16
+14048095d  CALL 0x140910ca0                   ; GetInt(node, name, default 0)
+140480962  TEST EAX,EAX
+140480964  SETNE SIL
 140480979  MOV  byte ptr [R13 + 0x1a0],SIL
 ```
 
@@ -515,8 +526,9 @@ Independently of the earlier hand trace and shortest-path solve:
 
 ### 11.4 `mob+0x2b8` is a COM interface the client gives itself. No byte of ours reaches it [L]
 
-The faulting sequence, read with an eight-byte guard against the two undecodable bytes at the
-end of the function:
+The faulting sequence, out of a capstone disassembly bounded by `.pdata` to
+`0x141c81040..0x141c81248` (the last 8 bytes are the function's jump table, and two bytes of
+it do not decode - hence the resync):
 
 ```asm
 141c81094  MOV   RAX,[RSI + 0x2b8]
@@ -531,11 +543,18 @@ end of the function:
 `obj+0x20`. That is a self-consistent read of the constant and it is the whole bug: **null is
 unguarded here.**
 
-**What writes `mob+0x2b8`.** A whole-image sweep with resync (18 524 276 instructions,
-666 939 resync points) for every `[reg + 0x2b8]` memory operand found 3 906 hits, 1 956 of
-them writes. Positive controls: the sweep found `141c50505 MOV [RSI+0xb60],EAX` and
-`141c81094 MOV RAX,[RSI+0x2b8]`, both of which had been read by hand first. Filtered to the
-**174 distinct methods in the eight mob vtables**, exactly **two** write the field:
+**What writes `mob+0x2b8`.** `tools/dataref.py` finds RIP-relative *globals*; nothing in
+`tools/` matches a *struct field*. So: a whole-image sweep of `.text` and `.boot` with capstone
+(18 524 276 instructions, **666 939 resync points** - 20 034 of them in `.text`) for every
+instruction with a `[reg + 0x2b8]` memory operand. **3 906 hits**; 1 394 of those are
+`CALL qword ptr [reg+0x2b8]` on unrelated objects, leaving **562 stores**, of which 258 are
+`[rbp/rsp + 0x2b8]` stack frames - so **304 candidate object-field stores** in the whole image.
+
+Positive controls before believing any of it: the sweep found `141c50505
+MOV [RSI+0xb60],EAX` and `141c81094 MOV RAX,[RSI+0x2b8]`, both read by hand first.
+
+Filtered to the **174 distinct methods in the eight mob vtables**, exactly **two** stores
+touch the field:
 
 | where | what |
 |---|---|
@@ -597,7 +616,10 @@ For **(b)**: an over-read raises rather than returning zeros. `FUN_1406e8c20` is
 1406e8c7c  JB   1406e8c91            ; short -> build an exception object and throw
 ```
 
-so `CInPacket` is `+0x10` data, `+0x18` length, **`+0x24` cursor**. The fixture logs no C++
+so `CInPacket` is `+0x10` data, `+0x18` length, **`+0x24` cursor** - which is independently
+`VIEW_DATA` / `VIEW_LEN` / `VIEW_CURSOR` in `crates/grap-stub/src/probe.rs:108`, and that file
+also records that the buffer opens with a **4-byte frame header** and the opcode moves the
+cursor **4 -> 6**. So body offset *N* is cursor *6 + N*. The fixture logs no C++
 throw - but that is **not evidence**: `probe.rs`'s `THROW_LOG_AFTER_MS` is **25 000 ms** and
 the fault landed **11.7 s** after the hook armed, so a throw at that moment could not have
 been logged. [L]

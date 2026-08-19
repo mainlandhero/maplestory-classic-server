@@ -105,7 +105,7 @@ connecting door; world select; `!map <id>`; and quest NPCs opening with the real
 |---|---|---|---|
 | 1 | **Answer `0x00F3`** so a conversation can continue past its first box | The owner's clearest ask: pressing **Accept** on a quest sends this and nothing comes back, so every quest dialogue dies at line 1. It also unblocks paging, yes/no, and the whole of goal 2. **Three real bodies are captured** against known inputs | `research/script-reply.md`, `research/npc-dialogue.md` |
 | 2 | **Find out why item tooltips read zero** - it is now a **two-way fork settled by pointer identity** | The character is dressed but every tooltip shows both bitmask blocks as zero while the avatar is right. Four candidate homes are eliminated; what is left is (a) the window renders a **second object** built somewhere else, or (b) **our** object is holding zeros and the bug is in the decode. The armed watch answers it in one hover | `research/equip-stats.md` §11.4.6 |
-| 3 | **Fix the mob body** | `mob+0x2b8` null, dereferenced unguarded, on the first `0x03C6`. Mobs are **off by default**; `--mobs --mob-limit 1` splits "the body is wrong" from "thirty objects at once" | `research/mob-spawn.md` |
+| 3 | **Measure the mob fault - do NOT change the body** | `mob+0x2b8` is filled by the **client**, via a `QueryInterface` inside `encodeInit`, from a block that **dominates** the rest of the body - so our packet cannot make it null, and the 35 unconditional reads match what we send exactly. Both remaining explanations are about *ordering*, not layout. `-Mobs -MobLimit 1` reproduces it and the launcher arms the right watch automatically | `research/mob-spawn.md` §8-§11 |
 | 4 | **Answer `0x01BE`, log out** | The owner clicked Log Out and could not get back to the login screen. Zero-byte body, unanswered | `research/talking-back.md` |
 | 5 | **Find the chat-display packet** | `!map` refuses a bad id in silence because there is no outbound "tell the player something". The owner asked for it directly | `research/talking-back.md` |
 | 6 | **Read what populates the Change Channel list** | Not the world list: those bytes were **byte-identical** between a run that listed CH.1/CH.2 and one that listed nothing. The route through world select is the live hypothesis and testing it costs nothing | `research/channel-select.md` §0 |
@@ -728,14 +728,34 @@ negative that **it appears in none of** `FUN_140304b20` (the character record),
 `FUN_140304100` (the equipped item) or `FUN_141f6f350` (the script message) - so those
 layouts stand.
 
-> **The most likely first-attempt failure, and it is not a value.** Three optional blocks
-> are decided by the **WZ template**, not by us: `template[0x104]` adds 16 bytes,
-> `template[0x1a0]` adds 4, and three specific template ids add 1. The accessors are found;
-> **what writes them is not**, because `FUN_140495990` is a cache rather than the parser. If
-> a tutorial snail turns out to be a patrol mob, every byte after that point is misread.
-> `FieldMob` carries `patrol` and `target_from_server` as explicit `Option`s rather than
-> assuming them away. **Next instrument:** find the writer of `template+0x104` and read the
-> WZ property name beside it, or dump template 1 out of `Mob.wz` directly.
+> **RESOLVED, and it was the wrong suspect.** This paragraph ranked the WZ-template-driven
+> blocks as the most likely first-attempt failure. They are **`patrol`** (`template[0x104]`)
+> and **`targetFromSvr`** (`template[0x1a0]`), parsed by `FUN_14047d990` - and **none of the
+> 193 mob images in this client carries either**. `Mob.ini` says `LastWzIndex|0`, so 193 is
+> all of them, and the same search finds keys present in 1, 13, 37 and 193 images, so a zero
+> is a real zero rather than a broken search. Templates 1 and 2 are both clean.
+>
+> **The body is not implicated at all.** Its 52 reads are `.pdata`-bounded, a dominator test
+> picks out exactly **35 unconditional** ones, and those 35 are identical to what `mob.rs`
+> emits. And `mob+0x2b8` is **client-side**: `encodeInit` fills it from a `QueryInterface`
+> on a freshly allocated object, in a block that **dominates** body offset 107 - so any body
+> that parses that far has filled the field. A 137-byte body cannot make it null.
+>
+> **Two corrections to what this file said about the run.** The fault landed **~23 ms after
+> the send, inside the dispatch** - there is no `elapsed_us` line for any `0x03C6`, and that
+> line is written after the trampoline returns - not half a second later; the two logs are
+> stamped four hours apart in different zones. And it was the **first** mob, not the
+> fortieth: `-MobLimit 1` reproduces it, so **volume is not the variable** and the
+> blast-radius reasoning that flag was added for was based on a misread timestamp.
+>
+> So `+0x2b8` was null because either the virtual ran **before** `encodeInit` reached the
+> assignment, or `encodeInit` **threw** first. That could not be settled statically: every
+> step of the real path goes through a vtable, which a direct-call graph cannot see. Note
+> also that **the absence of a C++ THROW line is not evidence** - the hook's threshold is
+> 25 s and the fault landed at 11.7 s.
+>
+> **Next step is a measurement, not a change.** Changing a value or a width would confound
+> the one thing verified three ways.
 
 **The NPC lesson's mob equivalent is HP.** Zero is structurally legal and draws a mob at 0%;
 the bar is `hp * 100 / maxHp` through an `IDIV` at `141c50502` with **no zero guard**. The

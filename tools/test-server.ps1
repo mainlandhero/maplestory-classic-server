@@ -220,8 +220,22 @@ $ErrorActionPreference = 'Stop'
 # decisive line is the one AFTER the migration and losing it costs a whole launch.
 #
 # An explicit -Probe still wins, so a run can be aimed somewhere else without editing this.
+# Two free slots, and two different questions competing for them - so the flag that decides
+# which run this is also decides the instrument. Getting the wrong pair costs a whole launch,
+# and the two questions cannot be answered in one run anyway: mobs are off unless -Mobs.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,140304100:hits=200'
+    if ($Mobs) {
+        # 141c81040:peek=2b8 - rcx is the mob at entry, so peek prints the field that was
+        #   null. 0 confirms the diagnosis AND the stack trace finally names the caller of a
+        #   virtual with zero direct callers. Non-zero means 141c810b0 faults for some other
+        #   reason.
+        # 141c532ab:peek=24 - rcx is the CInPacket and +0x24 is its read cursor. EXPECT 0x71
+        #   (113 = 6 + 107): that proves encodeInit reached the assignment and the first 107
+        #   body bytes are byte-exact. Anything else says the layout is off by cursor-113.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c81040:peek=2b8:hits=20,141c532ab:peek=24:hits=20'
+    } else {
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1426afdc0:hits=60,140304100:hits=200'
+    }
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -378,11 +392,15 @@ if ($SetFieldProbe) {
     Write-Host "    - BOTH NPC-click packets are answered now, 0x00F2 as well as 0x0151."
     if ($Mobs) {
         Write-Host "    - MOBS ARE ON, and they killed the client last time. Do this LAST."
-        if ($MobLimit -gt 0) {
-            Write-Host "      Capped at $MobLimit per field: a crash with 1 means the BODY is"
-            Write-Host "      wrong, and no crash with 1 means it was the COUNT."
-        } else {
-            Write-Host "      NO CAP. Consider -MobLimit 1 - it splits body from count."
+        Write-Host "      THE BODY IS NOT THE SUSPECT ANY MORE. Its 35 unconditional reads"
+        Write-Host "      match what we send exactly, and mob+0x2b8 - the null pointer - is"
+        Write-Host "      filled by the CLIENT via QueryInterface inside encodeInit, from a"
+        Write-Host "      block that dominates the rest of the body. Our packet cannot make"
+        Write-Host "      it null. The watches ask WHY it was null anyway."
+        Write-Host "      Use -MobLimit 1: it reproduces the fault (the crash was on the"
+        Write-Host "      FIRST mob, not the fortieth) and keeps the log short."
+        if ($MobLimit -le 0) {
+            Write-Host "      NO CAP SET - consider -MobLimit 1."
         }
     }
     Write-Host "    - MOBS ARE OFF: the 137-byte body faulted the client on the last run."
