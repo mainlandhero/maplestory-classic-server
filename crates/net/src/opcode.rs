@@ -825,9 +825,29 @@ fn put_fixed(out: &mut Vec<u8>, s: &str, len: usize) {
 /// 3. It sits immediately before `portal`, which is exactly where `CharacterStat` puts the
 ///    map. Structural only, and it agrees.
 ///
-/// The all-zero record made the client fade to black and then fault releasing an object
-/// that was never constructed - map `0` never loaded. `0` is not a map; see
-/// [`START_MAP_ID`].
+/// The all-zero record made the client fade to black and then fault on a scope guard over
+/// an uninitialised stack local - map `0` never loaded. `0` is not a map; see
+/// [`START_MAP_ID`] and `research/setfield-fault-shape.md`.
+///
+/// ## This changes the character-list path too, and that is the safer direction
+///
+/// Both callers share this block, so the list record now carries the map at 84 where it
+/// used to carry a literal zero. That is a second change on a screen that already works,
+/// which normally argues for leaving it alone - but here it argues the other way:
+///
+/// * No new code runs. `FUN_140302e30` always wrote this field into the obfuscated slot at
+///   `record+0xf3`; only the value being encoded changes.
+/// * If anything ever *reads* it, `1` resolves and `0` does not. The reader is
+///   `FUN_1403999e0`, which looks a map property up and, **on a miss**, takes a branch
+///   containing a non-returning `E_POINTER` call. Map 1 has a `String.wz` entry
+///   ("Mushroom Town - West Entrance") so it hits; map 0 has none. See
+///   `research/map1-exists.md`.
+/// * Keeping the two paths byte-identical is what lets the character list stand as evidence
+///   for these bytes at all. Sending different bytes in the record than in the list, which
+///   a live client has accepted, would throw that away.
+///
+/// The failure mode is also early and unambiguous: character select is exercised before the
+/// world test on every run, so a regression here shows up before the interesting part.
 pub fn character_stat_block(chr: &Character, world_id: u32) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&chr.id.to_le_bytes());
