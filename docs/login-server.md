@@ -260,7 +260,42 @@ from being an ownership oracle.
 
 `maplecw-login --delete NAME` does the same thing from a command line, for repeating a test.
 
-## Still standing on client patches## Still standing on client patches
+## MEASURED 2026-08-18: a launch-argument token does NOT reach the server
+
+**The `+0x90` session array is not what `0x0073` transmits.** This was the open question
+blocking multi-account sessions, and it is now answered - negatively.
+
+Launched with six distinguishable tokens
+(`test-server.ps1 -SessionTokens "tokA tokB tokC tokD tokE tokF"`), `0x0073` came back
+**byte-identical to the run without them**:
+
+```text
+26 byte body  05000000 0000 aabbccddeeff deadbeef 00000000 764d0000 0000
+              mode=5   ""   MAC          machine id
+```
+
+No token text appears anywhere in the log. `-NXLDEBUG` does route arguments 3 onward into
+the client config, but **nothing carries them onto the wire**.
+
+**This kills the design where the launcher's single-use token rides in `0x0073`.** What
+remains for multi-account:
+
+* one login server per account, each on its own port, the launcher choosing the port. Crude,
+  needs no protocol, works today - the testing-grade answer;
+* or write the identity string at `DAT_143ac1898+0x1b8` from `grap-stub`, which is already
+  in-process. It is sent as `0x0073`'s second field and is empty because nothing computes it.
+  That is a client patch standing in for a real session, honest only if labelled as one.
+
+### And the tokens broke the run
+
+With them the client showed a "trouble connecting" dialog **immediately after the splash**,
+and `FUN_141b2a280` - the function we suppress - was **never entered** (its watch was armed
+and logs every call; the hook log has no `WATCH` lines at all). So that dialog comes from a
+different path, and the six tokens are the only thing that changed.
+
+**Do not pass `-SessionTokens` in ordinary runs.** The measurement is done.
+
+## Still standing on client patches
 
 The server is real; the run around it is not yet. `test-server.ps1` still applies:
 
