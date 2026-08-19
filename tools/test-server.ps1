@@ -47,6 +47,15 @@ param(
     # How many channels to run. The owner, 2026-08-19: "from now on can we make sure we always
     # have 2 channels running so that users can swap between the two channels".
     #
+    # This does NOT change where a login lands. The owner, same day: "In the classic world
+    # startup, the user is defaulted to channel 1 of the server. We're not trying to change
+    # that behavior, we're trying to allow the client to swap channels from 1 to 2 and vice
+    # versa." So `world.channel_id` stays 0 and the login result still puts the player
+    # there; the second channel exists to be swapped TO.
+    #
+    # **The UI is 1-indexed and everything here is 0-indexed.** The client's "channel 1" is
+    # our channel 0 on $ChannelPort, and its "channel 2" is our channel 1 on $ChannelPort+1.
+    #
     # One process per channel, not one process with two listeners - a channel IS a process
     # here, and crates/login/src/config.rs is explicit that you cannot advertise more
     # channels than you run: the client connects to the address for the channel it picked,

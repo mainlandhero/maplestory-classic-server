@@ -143,6 +143,33 @@ the WZ, so the first three fields are **read off our own data**, not guessed.
 > **Next step:** decode `0x0151` properly - the leading `u8` and the tail are unexplained -
 > then find the reply. The reply is a script/say packet, and nothing about it is known yet.
 
+### 2a. Channel swapping - two channels now run
+
+The owner, 2026-08-19: *"In the classic world startup, the user is defaulted to channel 1 of the
+server. We're not trying to change that behavior, we're trying to allow the client to swap
+channels from 1 to 2 and vice versa."*
+
+**The startup channel is unchanged.** `world.channel_id` is still `0`, so a login lands
+where it always did. What changed is that `tools/test-server.ps1` now runs **two** channel
+processes by default (`-Channels`, one process per channel, `$ChannelPort + N`) and the login
+server advertises both - `crates/login/src/config.rs` is explicit that you cannot advertise
+more channels than you run, because the client connects to the address for the channel it
+picked.
+
+> **Watch the indexing.** The client's UI is **1-indexed**; everything in this repo is
+> **0-indexed**. The client's "channel 1" is our channel `0` on 8485, and its "channel 2" is
+> our channel `1` on 8486.
+
+**What is not built is the swap itself.** The in-game Change Channel request arrives on the
+**channel** connection and its opcode is unknown - the login flow cannot carry it, because in
+mode 5 the client never sends a world/channel selection at all, going straight from `0x0080`
+to `0x0078`. Answering it will also mean minting a migration for the *target* channel, which
+`create_migration` already takes as a parameter.
+
+> **Next step:** launch with two channels, open Change Channel, and see (a) whether two are
+> listed and (b) what the client sends when one is picked. Same method that named `0x00D1`
+> and `0x0151` - the client identifies its own request far more cheaply than a static search.
+
 ### 3. NPC quests
 
 **Not started, and it depends on goal 2.** One thing already known: the quest record is a
