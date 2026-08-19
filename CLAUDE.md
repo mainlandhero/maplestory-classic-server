@@ -69,10 +69,13 @@ Scored against a held-out control it got **1 of 8**. Label every claim from it a
 | | |
 |---|---|
 | `login.log` | every packet both ways on the login connection |
-| `world.log` | the same for the channel — read this for anything past character select |
+| `world.log` | the same for **channel 0** — read this for anything past character select |
+| `world-ch1.log` | channel 1. Two channels run by default; channel N logs to `world-ch<N>.log` |
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults |
 | `client-exit.log` | how the client died |
 | `research/` | decompilation as `msexe-<topic>.c`, findings as `.md` beside it |
+| `research/fixtures/` | runs worth keeping, named for what they prove |
+| `gm-handbook/` | game data **generated** from the client's WZ — maps, items, mobs, NPCs, portals. Gitignored; regenerate with `tools/dump_names.py` and `tools/dump_portals.py`. Never hand-edit, never commit |
 
 ## Reporting
 

@@ -1461,12 +1461,16 @@ pub const SET_FIELD_WITH_CHARACTER_DATA: u8 = 1;
 /// *out* of body mid-read makes it throw. Every gate on the traced path skips on zero, so
 /// zeros are also the value that keeps it on the shortest path.
 ///
-/// **What this cannot do is land the character on map 1.** With `characterData = 1` the
-/// field comes from the record, and the record is all zeros, so the map id is zero - and
-/// `0` is not a map. Which flag in the presence array carries the map is the open question
-/// (`research/charrecord-loops.md` could not prove the index-to-byte mapping). So this
-/// packet tests one thing: whether a well-formed minimal `SetField` is *accepted* instead
-/// of faulting. What the client does next is what says where the map id goes.
+/// **This is now a fallback, not the packet the server sends.** It is used only when a
+/// character cannot be loaded, because an unanswered migration hello freezes the client's
+/// whole UI - see [`set_field_with_character`] for the real one.
+///
+/// **What it cannot do is land the character on a map.** Every presence flag is clear, so
+/// the character-stat block never decodes and there is no map id at all. The two questions
+/// this doc used to call open are both settled: `presence[0]` switches the stat block on
+/// (`research/charrecord-presence-map.md`) and the map id sits at stat-block offset 84
+/// (`research/charstat-layout.md`). Both are confirmed on screen - a character stands on
+/// map 1.
 pub fn set_field_minimal(clock: u64, channel: u32) -> Vec<u8> {
     let mut b = set_field_head(clock, channel, 0);
     b[SET_FIELD_CHARACTER_DATA_AT] = SET_FIELD_WITH_CHARACTER_DATA;

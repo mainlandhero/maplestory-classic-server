@@ -22,17 +22,25 @@ pub struct Config {
     pub world_id: u32,
     pub channel_id: u32,
 
-    /// Answer the migration hello with the fixed head of a `SetField`, and nothing after.
+    /// Play the game: answer the migration hello, portal walks, and field entry.
     ///
-    /// **Off by default, and it should stay off except during a run that is measuring
-    /// something.** It cannot put a character in a map - `characterData` is `0` and the
-    /// branch that does carry a character calls an 18525-byte record decoder nobody has
-    /// read yet. What it is for is one question static analysis cannot answer: `SetField`'s
-    /// handler has two silent early returns, so "the client did nothing" and "the client
-    /// never received it" look identical from here. Send this with a watch armed on
-    /// `142097f80` and the two become distinguishable.
+    /// **The name is a fossil and the doc that went with it was badly stale.** It was written
+    /// when this flag sent the fixed head of a `SetField` and nothing after, and said "it
+    /// cannot put a character in a map - `characterData` is `0` and the branch that does
+    /// carry a character calls an 18525-byte record decoder nobody has read yet". All of that
+    /// has been untrue since 2026-08-19: the record decoder is read, a character stands on
+    /// map 1, and this flag now drives everything the channel does.
     ///
-    /// See `research/msexe-stage-setfield.md`.
+    /// With it on the server answers:
+    ///
+    /// | in | out |
+    /// |---|---|
+    /// | `0x007D` migration hello | `SetField` with a full character record on the map |
+    /// | `0x00D1` transfer field | `SetField` for the portal's target map and arrival portal |
+    /// | `0x00DC` field entered | every NPC on the map, then a `UserAvatarModified` attempt |
+    ///
+    /// **Still off by default**, because it is the whole game path and nothing on it
+    /// authenticates anybody. See `STATUS.md` NEXT GOALS.
     pub set_field_probe: bool,
 
     /// Where every portal leads, keyed by `(map, portal name)`.

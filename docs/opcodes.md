@@ -504,3 +504,48 @@ The `u32` in the tail is stashed at `DAT_143ac80b0` and `FUN_1415d10e0` does wri
 outbound `0x007D` — but it is **not present in the `0x007D` the client actually sends**.
 Do not build a handoff on it. The client identifies itself there by **character id**; see
 `crates/world/src/session.rs`.
+
+---
+
+## The channel connection, 2026-08-19
+
+Everything above is the **login** connection. These are the channel's, and they are on a
+different enum - numeric proximity between the two means nothing.
+
+**Almost all of them named themselves.** The owner used a feature, the capture showed what went
+out, and the id and template values in the body matched data the *server* had assigned. That
+has now identified five requests and cost no static analysis at all. It is the cheapest
+instrument this project has.
+
+### Inbound - what the server sends
+
+| opcode | name | body | status |
+|---|---|---|---|
+| `0x01A0` | `SetField` | 33-byte head, three `u32`s, then a 224-byte character record | **works** - puts a character on a map. `research/msexe-stage-setfield.md`, `research/charrecord-flag7.md` |
+| `0x044F` | `NpcEnterField` | fixed **64 bytes** | **works** - NPCs on screen. Two of its fields being zero (`enabled`, `alpha`) made every NPC invisible while the layout was perfect. `research/npc-spawn.md` |
+| `0x0138` | `UserAvatarModified` | `u32` character id, then the compact avatar look | **dead end for the local character** - the handler reaches its apply but the apply's loop never runs. Measured. |
+| `0x03C6` | mob enter field | `u8, u32 objectId, u8, u32 templateId, u8`, a 20-byte block, then a **variable-length** movement path | **not built** - `research/mob-spawn.md` |
+
+### Outbound - what the client sends
+
+| opcode | what | body | answered? |
+|---|---|---|---|
+| `0x007D` | migration hello | character id at offset 8 | yes |
+| `0x00D1` | transfer field (portal) | fully decoded, `research/transfer-field-request.md` | yes |
+| `0x00DC` | **field entered** | empty. **Once per `SetField`, every time** - this is the per-field marker | yes, with NPCs |
+| `0x0238` / `0x024D` | entered the world | empty. **First field entry only**, never again - not a per-field marker | no |
+| `0x0151` | **NPC click** | `u8 type, u32 objectId, u32 templateId, i16 x, i16 y, u32`; 17 bytes for type 1, 13 for type 4 | **no** - this is why NPCs do not talk |
+| `0x00E7` | **chat** | `u32`, `u16`-length string, `u8` | no |
+| `0x0182` | **party create** | 68 bytes carrying a length-prefixed party name | no |
+| `0x00D9` | movement | every ~510 ms, coordinate-shaped | no |
+| `0x013D`, `0x00B8`, `0x02EB`, `0x01ED`, `0x0408`, `0x0184`, `0x0194`, `0x01A5`, `0x02DE`, `0x00ED`, `0x02B2` | undecoded | | no |
+
+**None of the unanswered ones has ever caused a freeze**, so none is a blocking request -
+which is why the "always answer" rule has not bitten on the channel the way it did on login.
+
+### Routing
+
+`research/msexe-gamestage-dispatch.md` has the full table. The one worth knowing here is
+**`FUN_141820080`**, `CField::OnPacket`, covering `0x1a4..0x5ab` and range-chaining to about
+15 pool sub-dispatchers - the NPC pool at `0x44F..0x468` and the mob pool at `0x3C6..0x44E`
+among them.

@@ -69,6 +69,19 @@ they disagree, something is wrong with your instrument and not with the binary:
   `JMP` thunk the listing grep could not see, plus a primitive nobody had counted. Once
   both were included, both instruments said **126**.
 
+## Bound every dump by `.pdata`
+
+`DumpAsm` takes a length, not a function, and happily runs past the end into whatever is
+next. On 2026-08-19 a scan of the mob-spawn decoder `FUN_141d33630` (1582 bytes) was dumped
+with a length of `0x1200` and reported **34 packet reads**. There are **7** - the other 27
+belonged to neighbouring functions. The number looked entirely plausible for a mob spawn.
+
+```bash
+python tools/pdata_lookup.py 0x141d33630     # -> 0x141d33630 .. 0x141d33c5e (1582 bytes)
+```
+
+Get the bounds first, dump that length, and filter the results to the range as well.
+
 ## Enumerate before you filter
 
 The two worst mistakes on this project have the same shape: an instrument that searches for
@@ -121,7 +134,8 @@ Reach for these first; a headless run costs minutes and these cost seconds.
 | `tools/dataref.py` | what **reads, writes or tests** this global — the half `xref.py` cannot see. `--writes` alone usually finds a singleton's constructor and destructor |
 | `tools/callers.py` | every `call rel32` to a function - the question **neither** of the two above can answer |
 | `tools/dispatchers.py` | which functions are inbound packet dispatchers, by call-graph shape |
-| `tools/switch_cases.py` | every case of a decompiled switch, **including inlined bodies**, brace-depth aware so nested switches are not merged in |
+| `tools/switch_cases.py` | every case of a decompiled switch, **including inlined bodies**, brace-depth aware so nested switches are not merged in. Has been **wrong twice**: once dropping 94 of 273 cases outright, once reporting the wrong *shape* for 42 of 273 because it tested `depth == want` for case bodies as well as case labels and so discarded everything nested in an `if`. Both were invisible in its output. Re-run it rather than trusting a committed table |
+| `tools/dump_portals.py` | portals, NPCs and mob spawns out of `Map.wz` into `gm-handbook/` - game data regenerated from the client rather than typed into source |
 | `tools/rtti.py` | class names and vtables from RTTI — but there is **no `CStage`, `CLogin` or `CField`**; the stage classes carry none |
 
 `tools/xref.py` returning "0 references" means *nothing takes its address*, not *nothing

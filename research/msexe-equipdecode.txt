@@ -1,0 +1,51 @@
+// 1403095e0 .. 14030969d   block=.text
+1403095e0  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+1403095e5  48 89 74 24 10                    MOV qword ptr [RSP + 0x10],RSI
+1403095ea  57                                PUSH RDI
+1403095eb  48 83 ec 30                       SUB RSP,0x30
+1403095ef  49 8b d8                          MOV RBX,R8
+1403095f2  48 8b f2                          MOV RSI,RDX
+1403095f5  48 8b f9                          MOV RDI,RCX
+1403095f8  48 8b ca                          MOV RCX,RDX
+1403095fb  e8 e0 f4 3d 00                    CALL 0x1406e8ae0
+140309600  44 0f b6 c8                       MOVZX R9D,AL
+140309604  48 c7 44 24 28 00 00 00 00        MOV qword ptr [RSP + 0x28],0x0
+14030960d  41 83 e9 01                       SUB R9D,0x1
+140309611  74 32                             JZ 0x140309645
+140309613  41 83 e9 01                       SUB R9D,0x1
+140309617  74 19                             JZ 0x140309632
+140309619  41 83 f9 01                       CMP R9D,0x1
+14030961d  75 3d                             JNZ 0x14030965c
+14030961f  48 8d 8b e0 12 00 00              LEA RCX,[RBX + 0x12e0]
+140309626  48 8d 54 24 20                    LEA RDX,[RSP + 0x20]
+14030962b  e8 10 4d 00 00                    CALL 0x14030e340
+140309630  eb 20                             JMP 0x140309652
+140309632  48 8d 8b 70 09 00 00              LEA RCX,[RBX + 0x970]
+140309639  48 8d 54 24 20                    LEA RDX,[RSP + 0x20]
+14030963e  e8 bd 44 00 00                    CALL 0x14030db00
+140309643  eb 0d                             JMP 0x140309652
+140309645  48 8d 54 24 20                    LEA RDX,[RSP + 0x20]
+14030964a  48 8b cb                          MOV RCX,RBX
+14030964d  e8 5e 47 00 00                    CALL 0x14030ddb0
+140309652  48 8b 5c 24 28                    MOV RBX,qword ptr [RSP + 0x28]
+140309657  48 85 db                          TEST RBX,RBX
+14030965a  75 1b                             JNZ 0x140309677
+14030965c  48 c7 47 08 00 00 00 00           MOV qword ptr [RDI + 0x8],0x0
+140309664  48 8b c7                          MOV RAX,RDI
+140309667  48 8b 5c 24 40                    MOV RBX,qword ptr [RSP + 0x40]
+14030966c  48 8b 74 24 48                    MOV RSI,qword ptr [RSP + 0x48]
+140309671  48 83 c4 30                       ADD RSP,0x30
+140309675  5f                                POP RDI
+140309676  c3                                RET
+140309677  48 8b 03                          MOV RAX,qword ptr [RBX]
+14030967a  48 8b d6                          MOV RDX,RSI
+14030967d  48 8b cb                          MOV RCX,RBX
+140309680  ff 90 58 03 00 00                 CALL qword ptr [RAX + 0x358]
+140309686  48 89 5f 08                       MOV qword ptr [RDI + 0x8],RBX
+14030968a  48 8b c7                          MOV RAX,RDI
+14030968d  48 8b 5c 24 40                    MOV RBX,qword ptr [RSP + 0x40]
+140309692  48 8b 74 24 48                    MOV RSI,qword ptr [RSP + 0x48]
+140309697  48 83 c4 30                       ADD RSP,0x30
+14030969b  5f                                POP RDI
+14030969c  c3                                RET
+14030969d  cc                                INT3

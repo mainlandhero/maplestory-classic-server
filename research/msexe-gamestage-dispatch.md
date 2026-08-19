@@ -139,6 +139,7 @@ So the inbound opcode space is now accounted for end to end:
 | `0x0051..0x006f` | `FUN_141b82b00` | chained from the login stage's `default` |
 | `0x0070..0x039a` | `FUN_142cbaa80` | singleton entry `FUN_1415d59b0` |
 | `0x01a0..0x01a3` | `FUN_142097ee0` | chained from the login stage's `default` - **`SetField`** |
+| **`0x01a4..0x05ab`** | **`FUN_141820080`** | **`CField::OnPacket`** - found 2026-08-19; it chains to `FUN_142097ee0` and `FUN_141b82b00`, holds a dense 128-case switch for `0x1A4..0x223`, then a range chain to ~15 pool sub-dispatchers. The **NPC pool** is `0x44F..0x468` -> `FUN_141e75800` and the **mob pool** is `0x3C6..0x44E` -> `FUN_141D30E80`. See `research/npc-spawn.md` and `research/mob-spawn.md` |
 | `0x05ac..0x05bf` | `FUN_141072ec0` | a stage vtable |
 | `0x05c5..0x05d2` | `FUN_142279c50` | singleton entry `FUN_1415d5a00` |
 | `0x05d5..0x05dc` | `FUN_14177b7e0` | singleton entry `FUN_1415d5a50` |

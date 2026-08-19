@@ -309,7 +309,7 @@ between the migration and `SetField` is settled:
 | both early returns | pass - `[world+0x33f4]` measured `0x00` |
 | the 33-byte fixed head | decoded field by field, `research/msexe-stage-setfield.md` |
 
-### 1. The character record - the last wall
+### H1. The character record - the last wall (historical: it fell on 2026-08-19)
 
 `SetField` must carry `characterData = 1`, and that branch calls **`FUN_140304b20`**, an
 18525-byte decoder with **126 packet reads** (117 was the listing grep's undercount - it missed a `JMP` thunk and a `u64` primitive; see `research/charrecord-decode.md`). Sending `characterData = 0` instead **faults

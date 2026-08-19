@@ -1,0 +1,92 @@
+// 1420dd920 .. 1420dda3f   block=.text
+1420dd920  48 8b 89 80 04 00 00              MOV RCX,qword ptr [RCX + 0x480]
+1420dd927  48 85 c9                          TEST RCX,RCX
+1420dd92a  74 08                             JZ 0x1420dd934
+1420dd92c  45 33 c0                          XOR R8D,R8D
+1420dd92f  e9 0c 28 ea fe                    JMP 0x140f80140
+1420dd934  c3                                RET
+1420dd935  cc                                INT3
+1420dd936  cc                                INT3
+1420dd937  cc                                INT3
+1420dd938  cc                                INT3
+1420dd939  cc                                INT3
+1420dd93a  cc                                INT3
+1420dd93b  cc                                INT3
+1420dd93c  cc                                INT3
+1420dd93d  cc                                INT3
+1420dd93e  cc                                INT3
+1420dd93f  cc                                INT3
+1420dd940  40 53                             PUSH RBX
+1420dd942  48 83 ec 20                       SUB RSP,0x20
+1420dd946  44 8b 02                          MOV R8D,dword ptr [RDX]
+1420dd949  48 83 c1 08                       ADD RCX,0x8
+1420dd94d  8b 42 08                          MOV EAX,dword ptr [RDX + 0x8]
+1420dd950  41 2b c0                          SUB EAX,R8D
+1420dd953  99                                CDQ
+1420dd954  2b c2                             SUB EAX,EDX
+1420dd956  48 8b 11                          MOV RDX,qword ptr [RCX]
+1420dd959  d1 f8                             SAR EAX,0x1
+1420dd95b  41 8d 1c 00                       LEA EBX,[R8 + RAX*0x1]
+1420dd95f  4c 8b 42 30                       MOV R8,qword ptr [RDX + 0x30]
+1420dd963  48 8d 54 24 30                    LEA RDX,[RSP + 0x30]
+1420dd968  41 ff d0                          CALL R8
+1420dd96b  33 c9                             XOR ECX,ECX
+1420dd96d  3b 18                             CMP EBX,dword ptr [RAX]
+1420dd96f  0f 9c c1                          SETL CL
+1420dd972  8b c1                             MOV EAX,ECX
+1420dd974  48 83 c4 20                       ADD RSP,0x20
+1420dd978  5b                                POP RBX
+1420dd979  c3                                RET
+1420dd97a  cc                                INT3
+1420dd97b  cc                                INT3
+1420dd97c  cc                                INT3
+1420dd97d  cc                                INT3
+1420dd97e  cc                                INT3
+1420dd97f  cc                                INT3
+1420dd980  48 89 5c 24 08                    MOV qword ptr [RSP + 0x8],RBX
+1420dd985  48 89 74 24 10                    MOV qword ptr [RSP + 0x10],RSI
+1420dd98a  55                                PUSH RBP
+1420dd98b  57                                PUSH RDI
+1420dd98c  41 56                             PUSH R14
+1420dd98e  48 8d 6c 24 a0                    LEA RBP,[RSP + -0x60]
+1420dd993  48 81 ec 60 01 00 00              SUB RSP,0x160
+1420dd99a  48 8b f1                          MOV RSI,RCX
+1420dd99d  41 be 08 00 00 00                 MOV R14D,0x8
+1420dd9a3  85 d2                             TEST EDX,EDX
+1420dd9a5  0f 84 a3 05 00 00                 JZ 0x1420ddf4e
+1420dd9ab  ba ff 00 00 00                    MOV EDX,0xff
+1420dd9b0  48 8b 0d e9 ad 9e 01              MOV RCX,qword ptr [0x143ac87a0]
+1420dd9b7  e8 34 34 51 ff                    CALL 0x1415f0df0
+1420dd9bc  8b d8                             MOV EBX,EAX
+1420dd9be  8b 8e 0c 03 00 00                 MOV ECX,dword ptr [RSI + 0x30c]
+1420dd9c4  e8 97 8f 71 fe                    CALL 0x1407f6960
+1420dd9c9  8b c8                             MOV ECX,EAX
+1420dd9cb  0f af cb                          IMUL ECX,EBX
+1420dd9ce  b8 81 80 80 80                    MOV EAX,0x80808081
+1420dd9d3  f7 e9                             IMUL ECX
+1420dd9d5  03 d1                             ADD EDX,ECX
+1420dd9d7  c1 fa 07                          SAR EDX,0x7
+1420dd9da  8b c2                             MOV EAX,EDX
+1420dd9dc  c1 e8 1f                          SHR EAX,0x1f
+1420dd9df  03 d0                             ADD EDX,EAX
+1420dd9e1  89 96 c4 04 00 00                 MOV dword ptr [RSI + 0x4c4],EDX
+1420dd9e7  48 8b be b8 03 00 00              MOV RDI,qword ptr [RSI + 0x3b8]
+1420dd9ee  33 db                             XOR EBX,EBX
+1420dd9f0  48 85 ff                          TEST RDI,RDI
+1420dd9f3  0f 84 47 05 00 00                 JZ 0x1420ddf40
+1420dd9f9  48 89 9d 90 00 00 00              MOV qword ptr [RBP + 0x90],RBX
+1420dda00  48 8b 07                          MOV RAX,qword ptr [RDI]
+1420dda03  48 8d 95 90 00 00 00              LEA RDX,[RBP + 0x90]
+1420dda0a  48 8b cf                          MOV RCX,RDI
+1420dda0d  ff 90 08 02 00 00                 CALL qword ptr [RAX + 0x208]
+1420dda13  85 c0                             TEST EAX,EAX
+1420dda15  79 11                             JNS 0x1420dda28
+1420dda17  4c 8d 05 92 22 1a 01              LEA R8,[0x14327fcb0]
+1420dda1e  48 8b d7                          MOV RDX,RDI
+1420dda21  8b c8                             MOV ECX,EAX
+1420dda23  e8 a8 60 e1 00                    CALL 0x142ef3ad0
+1420dda28  48 8b bd 90 00 00 00              MOV RDI,qword ptr [RBP + 0x90]
+1420dda2f  48 89 bd 98 00 00 00              MOV qword ptr [RBP + 0x98],RDI
+1420dda36  48 85 ff                          TEST RDI,RDI
+1420dda39  0f 84 bb 0a 00 00                 JZ 0x1420de4fa
+1420dda3f  48 8d 4d a0                       LEA RCX,[RBP + -0x60]
