@@ -11,9 +11,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use net::handshake::{greeting, CLIENT_RX_IV, CLIENT_TX_IV};
+use net::handshake::{channel_greeting, CLIENT_RX_IV, CLIENT_TX_IV};
 use net::names::{body_hex, label, opcode_name};
-use net::{Direction, Framer, MapleCipher};
+use net::{ByteShiftCipher, Direction, Framer, Shift};
 use store::Store;
 
 use crate::config::Config;
@@ -31,7 +31,7 @@ pub fn log(msg: &str) {
 
 fn send(
     stream: &mut TcpStream,
-    tx: &mut Framer<MapleCipher>,
+    tx: &mut Framer<ByteShiftCipher>,
     opcode: u16,
     packet: &[u8],
     what: &str,
@@ -46,17 +46,37 @@ fn send(
 fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> std::io::Result<()> {
     stream.set_nodelay(true)?;
 
-    // The same 48 bytes the login server sends. It is the transport's greeting, not
-    // login's, which is why it lives in `net::handshake` - if a channel ever needs
-    // different bytes that will be a finding, not a config option.
-    let hello = greeting(CLIENT_TX_IV, CLIENT_RX_IV);
+    // NOT the login greeting. A channel connection has `conn+0x48 == 0`, so the client
+    // skips the greeting's two gated blocks - send it the login greeting and it reads `G`
+    // from where `A` sits, gets 0, and raises "The client is outdated". See
+    // `net::handshake::channel_greeting` and docs/transport.md.
+    let hello = channel_greeting(CLIENT_TX_IV, CLIENT_RX_IV);
     stream.write_all(&hello)?;
-    log(&format!("-> greeting, {} bytes", hello.len()));
+    log(&format!("-> channel greeting, {} bytes (no A..F, no version block)", hello.len()));
 
-    let mut rx = Framer::new(MapleCipher::new(CLIENT_TX_IV.to_le_bytes(), Direction::ClientToServer));
-    let mut tx = Framer::new(MapleCipher::new(CLIENT_RX_IV.to_le_bytes(), Direction::ServerToClient));
+    // And not AES either: the same `conn+0x48` selects a byte shift for the body. The
+    // header and the IV chain are unchanged, which is why only the cipher type differs.
+    let (rx_shift, tx_shift) = (config.polarity.on_receive(), config.polarity.on_send());
+    log(&format!(
+        "cipher: byte shift, {:?} on receive / {:?} on send ({:?}) - the polarity is a GUESS, \
+         see Config::polarity",
+        rx_shift, tx_shift, config.polarity
+    ));
+    let mut rx = Framer::new(ByteShiftCipher::new(
+        CLIENT_TX_IV.to_le_bytes(),
+        Direction::ClientToServer,
+        rx_shift,
+    ));
+    let mut tx = Framer::new(ByteShiftCipher::new(
+        CLIENT_RX_IV.to_le_bytes(),
+        Direction::ServerToClient,
+        tx_shift,
+    ));
 
-    let mut session = Session::new(store, config);
+    let mut session = Session::new(store, config.clone());
+    // The dual reading is only interesting for the first packet - after that the answer is
+    // known and repeating it is noise.
+    let mut settled_polarity = false;
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
     }
@@ -73,6 +93,9 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
         };
         rx.feed(&buf[..read]);
         loop {
+            // The IV the next packet will be shifted by, captured before `next_packet`
+            // rolls it - the alternative reading below needs it.
+            let iv = rx.cipher().iv();
             let body = match rx.next_packet() {
                 Ok(Some(body)) => body,
                 Ok(None) => break,
@@ -89,6 +112,11 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
                 payload.len(),
                 body_hex(opcode, payload)
             ));
+
+            if !settled_polarity {
+                settled_polarity = true;
+                report_other_polarity(&body, iv, rx_shift);
+            }
 
             if opcode == CLIENT_MIGRATION_HELLO {
                 describe_hello(&mut session, payload);
@@ -111,6 +139,39 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
             }
         }
     }
+}
+
+/// Log what the first packet would have said under the **other** polarity.
+///
+/// Static analysis could not settle which side of the channel cipher subtracts, and rather
+/// than guess in silence this prints both readings of the first body the client sends. The
+/// header is never ciphered, so the framing above is correct either way and only the body
+/// is in question: whichever reading yields a plausible opcode is the right polarity.
+///
+/// `body` has already been decrypted under `used`, so undoing that and applying the inverse
+/// recovers the alternative.
+fn report_other_polarity(body: &[u8], iv: [u8; 4], used: Shift) {
+    let other = crate::session::other_polarity_body(body, iv, used);
+    let opcode_of = |b: &[u8]| {
+        b.get(..2).map(|o| u16::from_le_bytes([o[0], o[1]])).unwrap_or(0xFFFF)
+    };
+    log("   POLARITY CHECK - the channel cipher direction is not yet settled:");
+    log(&format!(
+        "     as decoded ({:?}):  opcode 0x{:04X}  {}",
+        used,
+        opcode_of(body),
+        hex_head(body)
+    ));
+    log(&format!(
+        "     the other way:      opcode 0x{:04X}  {}",
+        opcode_of(&other),
+        hex_head(&other)
+    ));
+    log("   Whichever names a plausible packet is right; set Config::polarity to it.");
+}
+
+fn hex_head(body: &[u8]) -> String {
+    body.iter().take(24).map(|b| format!("{b:02x}")).collect()
 }
 
 /// Search a `0x007D` body for the migration seed and try to claim it.

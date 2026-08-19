@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use net::{shift_body, Shift};
 use store::{ClaimedMigration, Store};
 
 use crate::config::Config;
@@ -116,6 +117,22 @@ impl Session {
     pub fn claimed(&self) -> Option<&ClaimedMigration> {
         self.claimed.as_ref()
     }
+}
+
+/// Read an already-decrypted body the way the **other** cipher polarity would have.
+///
+/// `body` came off the wire as `raw` and was decrypted with `used`, so it currently holds
+/// `raw` shifted one way. Applying `used.inverse()` once recovers `raw`; applying it a
+/// second time gives what the opposite polarity would have produced. Hence twice, which
+/// looks like a mistake and is not - a test pins it.
+///
+/// This exists because static analysis pinned the channel cipher's transform but not its
+/// direction, and the header is unciphered, so a body can be shown both ways from one run.
+pub fn other_polarity_body(body: &[u8], iv: [u8; 4], used: Shift) -> Vec<u8> {
+    let mut other = body.to_vec();
+    shift_body(&mut other, iv, used.inverse());
+    shift_body(&mut other, iv, used.inverse());
+    other
 }
 
 /// Undo one aligned word of the client's obfuscation, in the direction the *client*
@@ -245,6 +262,37 @@ mod tests {
             found.iter().any(|&(at, value)| at == 26 && value == seed),
             "planted seed not among {found:?}"
         );
+    }
+
+    /// The double-inverse has to reproduce exactly what the other polarity would have
+    /// decoded. Built from a known plaintext through a real cipher in each direction, so
+    /// this checks the arithmetic against the cipher rather than against itself.
+    #[test]
+    fn the_other_polarity_reading_matches_what_that_polarity_would_decode() {
+        use net::{ByteShiftCipher, Cipher, Direction};
+
+        for iv in [[1u8, 2, 3, 4], [0x7F, 9, 9, 9], [0xFE, 0, 0, 0]] {
+            let plain: Vec<u8> = (0..64u8).collect();
+
+            // The client sent `raw`; whichever way it shifted, we see one of these two.
+            let mut raw = plain.clone();
+            ByteShiftCipher::new(iv, Direction::ClientToServer, Shift::Add)
+                .encrypt(&mut raw);
+
+            let mut as_sub = raw.clone();
+            ByteShiftCipher::new(iv, Direction::ClientToServer, Shift::Sub)
+                .decrypt(&mut as_sub)
+                .unwrap();
+            let mut as_add = raw.clone();
+            ByteShiftCipher::new(iv, Direction::ClientToServer, Shift::Add)
+                .decrypt(&mut as_add)
+                .unwrap();
+
+            assert_eq!(other_polarity_body(&as_sub, iv, Shift::Sub), as_add, "sub -> add");
+            assert_eq!(other_polarity_body(&as_add, iv, Shift::Add), as_sub, "add -> sub");
+            // And the Sub reading is the true plaintext here, since the client used Add.
+            assert_eq!(as_sub, plain);
+        }
     }
 
     #[test]

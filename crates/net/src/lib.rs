@@ -28,7 +28,10 @@ pub mod opcode;
 pub mod packet;
 pub mod session;
 
-pub use codec::{Cipher, Direction, MapleCipher, PlainCipher, HEADER_LEN, MAX_PACKET_LEN};
+pub use codec::{
+    shift_body, ByteShiftCipher, Cipher, Direction, MapleCipher, PlainCipher, Shift,
+    ShiftPolarity, HEADER_LEN, MAX_PACKET_LEN,
+};
 pub use error::{NetError, Result};
 pub use opcode::{data_wz_up_to_date, zigzag_varint, DATA_WZ_PATCH, LOGIN_OK, LOGIN_RESULT};
 pub use packet::{PacketReader, PacketWriter};

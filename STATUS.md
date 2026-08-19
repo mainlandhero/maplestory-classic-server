@@ -55,6 +55,30 @@ for this rule, and no path in it returns an error in place of a reply.
 
 ## NEXT GOALS - read this first when picking up
 
+### BUILT 2026-08-19: the channel greeting and the channel cipher
+
+Both derived from `conn+0x48`, both entirely from static analysis, neither confirmed on
+screen yet.
+
+* **`net::handshake::channel_greeting`** - the login greeting minus its two gated blocks,
+  **26 bytes shorter**: `A..F` is 14 (it is easy to forget `B`'s 2-byte length prefix, and a
+  test pins it) and the version block is 12. It starts at `G`, which is the field whose
+  zero-read raised "The client is outdated".
+* **`net::ByteShiftCipher`** - `out[i] = in[i] - iv[0]`. It shares `roll_iv` and
+  `header_from_iv` with `MapleCipher` rather than copying them, and a test asserts the two
+  produce identical headers for eight packets in a row, so a channel and a login connection
+  cannot silently drift apart.
+
+**The polarity is still a guess, and the code says so.** `Config::polarity` names it,
+`ShiftPolarity` makes both alternatives constructible, and the channel server logs the first
+body under **both** readings. `tools/channel_smoke.py` shows the discriminator working: the
+right reading yields opcode `0x007D`, the wrong one `0x027F`.
+
+**What the smoke test does and does not prove.** It builds its packet by applying the shift
+itself, so it proves the plumbing - greeting shape, framing, cipher round-trip, the
+dual-polarity report - and it does **not** prove the polarity. Only the real client can.
+
+
 ### RETRACTED 2026-08-19: the login handshake was never failing
 
 An `ELog` record showing `INVALID_CLIENT_VERSION` at the `G`/`H` gate was reported here as

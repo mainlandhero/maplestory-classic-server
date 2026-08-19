@@ -198,6 +198,79 @@ pub const DECOY_AES_KEY: [u8; 32] = [
     0x1B, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x33, 0x00, 0x00, 0x00, 0x52, 0x00, 0x00, 0x00,
 ];
 
+const SHUFFLE: [u8; 256] = [
+        0xEC, 0x3F, 0x77, 0xA4, 0x45, 0xD0, 0x71, 0xBF, 0xB7, 0x98, 0x20, 0xFC,
+        0x4B, 0xE9, 0xB3, 0xE1, 0x5C, 0x22, 0xF7, 0x0C, 0x44, 0x1B, 0x81, 0xBD,
+        0x63, 0x8D, 0xD4, 0xC3, 0xF2, 0x10, 0x19, 0xE0, 0xFB, 0xA1, 0x6E, 0x66,
+        0xEA, 0xAE, 0xD6, 0xCE, 0x06, 0x18, 0x4E, 0xEB, 0x78, 0x95, 0xDB, 0xBA,
+        0xB6, 0x42, 0x7A, 0x2A, 0x83, 0x0B, 0x54, 0x67, 0x6D, 0xE8, 0x65, 0xE7,
+        0x2F, 0x07, 0xF3, 0xAA, 0x27, 0x7B, 0x85, 0xB0, 0x26, 0xFD, 0x8B, 0xA9,
+        0xFA, 0xBE, 0xA8, 0xD7, 0xCB, 0xCC, 0x92, 0xDA, 0xF9, 0x93, 0x60, 0x2D,
+        0xDD, 0xD2, 0xA2, 0x9B, 0x39, 0x5F, 0x82, 0x21, 0x4C, 0x69, 0xF8, 0x31,
+        0x87, 0xEE, 0x8E, 0xAD, 0x8C, 0x6A, 0xBC, 0xB5, 0x6B, 0x59, 0x13, 0xF1,
+        0x04, 0x00, 0xF6, 0x5A, 0x35, 0x79, 0x48, 0x8F, 0x15, 0xCD, 0x97, 0x57,
+        0x12, 0x3E, 0x37, 0xFF, 0x9D, 0x4F, 0x51, 0xF5, 0xA3, 0x70, 0xBB, 0x14,
+        0x75, 0xC2, 0xB8, 0x72, 0xC0, 0xED, 0x7D, 0x68, 0xC9, 0x2E, 0x0D, 0x62,
+        0x46, 0x17, 0x11, 0x4D, 0x6C, 0xC4, 0x7E, 0x53, 0xC1, 0x25, 0xC7, 0x9A,
+        0x1C, 0x88, 0x58, 0x2C, 0x89, 0xDC, 0x02, 0x64, 0x40, 0x01, 0x5D, 0x38,
+        0xA5, 0xE2, 0xAF, 0x55, 0xD5, 0xEF, 0x1A, 0x7C, 0xA7, 0x5B, 0xA6, 0x6F,
+        0x86, 0x9F, 0x73, 0xE6, 0x0A, 0xDE, 0x2B, 0x99, 0x4A, 0x47, 0x9C, 0xDF,
+        0x09, 0x76, 0x9E, 0x30, 0x0E, 0xE4, 0xB2, 0x94, 0xA0, 0x3B, 0x34, 0x1D,
+        0x28, 0x0F, 0x36, 0xE3, 0x23, 0xB4, 0x03, 0xD8, 0x90, 0xC8, 0x3C, 0xFE,
+        0x5E, 0x32, 0x24, 0x50, 0x1F, 0x3A, 0x43, 0x8A, 0x96, 0x41, 0x74, 0xAC,
+        0x52, 0x33, 0xF0, 0xD9, 0x29, 0x80, 0xB1, 0x16, 0xD3, 0xAB, 0x91, 0xB9,
+        0x84, 0x7F, 0x61, 0x1E, 0xCF, 0xC5, 0xD1, 0x56, 0x3D, 0xCA, 0xF4, 0x05,
+        0xC6, 0xE5, 0x08, 0x49,
+        ];
+
+/// Roll a 4-byte IV forward one packet, with the stock MapleStory shuffle table.
+///
+/// Shared by every cipher on this transport. `FUN_1406e9a65` picks the *body* transform
+/// from the connection type (`conn+0x48`) but the header and the IV chain are the same code
+/// either way, so a channel's byte-shift cipher and the login connection's AES roll the IV
+/// identically. Keeping one implementation is what makes that true rather than hopeful.
+pub fn roll_iv(iv: [u8; 4]) -> [u8; 4] {
+    let mut out: [u8; 4] = [0xF2, 0x53, 0x50, 0xC6];
+    for &b in iv.iter() {
+        let t = SHUFFLE[b as usize];
+        out[0] = out[0].wrapping_add(SHUFFLE[out[1] as usize].wrapping_sub(b));
+        out[1] = out[1].wrapping_sub(out[2] ^ t);
+        out[2] ^= SHUFFLE[out[3] as usize].wrapping_add(b);
+        // Note this consumes the *updated* out[0], not the value it had on entry.
+        out[3] = out[3].wrapping_sub(out[0].wrapping_sub(t));
+
+        let merged = u32::from_le_bytes(out).rotate_left(3);
+        out = merged.to_le_bytes();
+    }
+    out
+}
+
+/// The 4-byte header for a body of `len`, given an IV and a direction constant.
+///
+/// **The header is never ciphered**, in either mode: the client does `buf + 4` before
+/// handing the buffer to the body transform (`FUN_1406e9a65`). That is why a channel
+/// connection can be framed correctly before its body cipher is settled.
+pub fn header_from_iv(iv: [u8; 4], header_const: u16, len: u16) -> [u8; HEADER_LEN] {
+    let a = u16::from_le_bytes([iv[2], iv[3]]) ^ header_const;
+    let b = a ^ len;
+    let mut header = [0u8; HEADER_LEN];
+    header[..2].copy_from_slice(&a.to_le_bytes());
+    header[2..].copy_from_slice(&b.to_le_bytes());
+    header
+}
+
+/// Body length encoded in a header, or an error if it is not ours.
+fn len_from_header(header: [u8; HEADER_LEN]) -> Result<usize> {
+    let a = u16::from_le_bytes([header[0], header[1]]);
+    let b = u16::from_le_bytes([header[2], header[3]]);
+    let len = a ^ b;
+    // Sanity-check against a wildly wrong cipher/IV rather than allocating garbage.
+    if len == 0 || len as usize > MAX_PACKET_LEN {
+        return Err(NetError::BadHeader { header, decoded_len: len as usize });
+    }
+    Ok(len as usize)
+}
+
 impl MapleCipher {
     pub fn new(iv: [u8; 4], dir: Direction) -> Self {
         use aes::cipher::KeyInit;
@@ -214,12 +287,7 @@ impl MapleCipher {
     ///
     /// Used for framing-only probes, where a header is sent and the body withheld.
     pub fn peek_header(&self, len: u16) -> [u8; HEADER_LEN] {
-        let a = u16::from_le_bytes([self.iv[2], self.iv[3]]) ^ self.header_const;
-        let b = a ^ len;
-        let mut header = [0u8; HEADER_LEN];
-        header[..2].copy_from_slice(&a.to_le_bytes());
-        header[2..].copy_from_slice(&b.to_le_bytes());
-        header
+        header_from_iv(self.iv, self.header_const, len)
     }
 
     pub fn iv(&self) -> [u8; 4] {
@@ -253,44 +321,7 @@ impl MapleCipher {
     /// Roll the IV forward. Every packet changes it, which is why send and receive
     /// need separate cipher instances.
     fn next_iv(&mut self) {
-        const SHUFFLE: [u8; 256] = [
-        0xEC, 0x3F, 0x77, 0xA4, 0x45, 0xD0, 0x71, 0xBF, 0xB7, 0x98, 0x20, 0xFC,
-        0x4B, 0xE9, 0xB3, 0xE1, 0x5C, 0x22, 0xF7, 0x0C, 0x44, 0x1B, 0x81, 0xBD,
-        0x63, 0x8D, 0xD4, 0xC3, 0xF2, 0x10, 0x19, 0xE0, 0xFB, 0xA1, 0x6E, 0x66,
-        0xEA, 0xAE, 0xD6, 0xCE, 0x06, 0x18, 0x4E, 0xEB, 0x78, 0x95, 0xDB, 0xBA,
-        0xB6, 0x42, 0x7A, 0x2A, 0x83, 0x0B, 0x54, 0x67, 0x6D, 0xE8, 0x65, 0xE7,
-        0x2F, 0x07, 0xF3, 0xAA, 0x27, 0x7B, 0x85, 0xB0, 0x26, 0xFD, 0x8B, 0xA9,
-        0xFA, 0xBE, 0xA8, 0xD7, 0xCB, 0xCC, 0x92, 0xDA, 0xF9, 0x93, 0x60, 0x2D,
-        0xDD, 0xD2, 0xA2, 0x9B, 0x39, 0x5F, 0x82, 0x21, 0x4C, 0x69, 0xF8, 0x31,
-        0x87, 0xEE, 0x8E, 0xAD, 0x8C, 0x6A, 0xBC, 0xB5, 0x6B, 0x59, 0x13, 0xF1,
-        0x04, 0x00, 0xF6, 0x5A, 0x35, 0x79, 0x48, 0x8F, 0x15, 0xCD, 0x97, 0x57,
-        0x12, 0x3E, 0x37, 0xFF, 0x9D, 0x4F, 0x51, 0xF5, 0xA3, 0x70, 0xBB, 0x14,
-        0x75, 0xC2, 0xB8, 0x72, 0xC0, 0xED, 0x7D, 0x68, 0xC9, 0x2E, 0x0D, 0x62,
-        0x46, 0x17, 0x11, 0x4D, 0x6C, 0xC4, 0x7E, 0x53, 0xC1, 0x25, 0xC7, 0x9A,
-        0x1C, 0x88, 0x58, 0x2C, 0x89, 0xDC, 0x02, 0x64, 0x40, 0x01, 0x5D, 0x38,
-        0xA5, 0xE2, 0xAF, 0x55, 0xD5, 0xEF, 0x1A, 0x7C, 0xA7, 0x5B, 0xA6, 0x6F,
-        0x86, 0x9F, 0x73, 0xE6, 0x0A, 0xDE, 0x2B, 0x99, 0x4A, 0x47, 0x9C, 0xDF,
-        0x09, 0x76, 0x9E, 0x30, 0x0E, 0xE4, 0xB2, 0x94, 0xA0, 0x3B, 0x34, 0x1D,
-        0x28, 0x0F, 0x36, 0xE3, 0x23, 0xB4, 0x03, 0xD8, 0x90, 0xC8, 0x3C, 0xFE,
-        0x5E, 0x32, 0x24, 0x50, 0x1F, 0x3A, 0x43, 0x8A, 0x96, 0x41, 0x74, 0xAC,
-        0x52, 0x33, 0xF0, 0xD9, 0x29, 0x80, 0xB1, 0x16, 0xD3, 0xAB, 0x91, 0xB9,
-        0x84, 0x7F, 0x61, 0x1E, 0xCF, 0xC5, 0xD1, 0x56, 0x3D, 0xCA, 0xF4, 0x05,
-        0xC6, 0xE5, 0x08, 0x49,
-        ];
-
-        let mut out: [u8; 4] = [0xF2, 0x53, 0x50, 0xC6];
-        for &b in self.iv.iter() {
-            let t = SHUFFLE[b as usize];
-            out[0] = out[0].wrapping_add(SHUFFLE[out[1] as usize].wrapping_sub(b));
-            out[1] = out[1].wrapping_sub(out[2] ^ t);
-            out[2] ^= SHUFFLE[out[3] as usize].wrapping_add(b);
-            // Note this consumes the *updated* out[0], not the value it had on entry.
-            out[3] = out[3].wrapping_sub(out[0].wrapping_sub(t));
-
-            let merged = u32::from_le_bytes(out).rotate_left(3);
-            out = merged.to_le_bytes();
-        }
-        self.iv = out;
+        self.iv = roll_iv(self.iv);
     }
 }
 
@@ -305,14 +336,7 @@ impl Cipher for MapleCipher {
     }
 
     fn decode_len(&self, header: [u8; HEADER_LEN]) -> Result<usize> {
-        let a = u16::from_le_bytes([header[0], header[1]]);
-        let b = u16::from_le_bytes([header[2], header[3]]);
-        let len = a ^ b;
-        // Sanity-check against a wildly wrong cipher/IV rather than allocating garbage.
-        if len == 0 || len as usize > MAX_PACKET_LEN {
-            return Err(NetError::BadHeader { header, decoded_len: len as usize });
-        }
-        Ok(len as usize)
+        len_from_header(header)
     }
 
     fn decrypt(&mut self, body: &mut [u8]) -> Result<()> {
@@ -326,9 +350,196 @@ impl Cipher for MapleCipher {
 /// allocation.
 pub const MAX_PACKET_LEN: usize = 16 * 1024 * 1024;
 
+/// Which way one [`ByteShiftCipher`] instance moves a body.
+///
+/// The client's routine (`FUN_1406ef9f0`) **subtracts**; whichever side subtracts, the
+/// other must add.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shift {
+    Add,
+    Sub,
+}
+
+impl Shift {
+    /// The operation that undoes this one.
+    pub const fn inverse(self) -> Shift {
+        match self {
+            Shift::Add => Shift::Sub,
+            Shift::Sub => Shift::Add,
+        }
+    }
+}
+
+/// **The one thing static analysis could not settle: which side subtracts.**
+///
+/// `FUN_1406ef9f0` computes `out[i] = in[i] - iv[0]`, and `FUN_1406e9a65` calls it for a
+/// channel connection. But that call site serves both directions - AES-OFB is symmetric so
+/// one routine sufficed for the login connection, and the byte shift inherited the same
+/// shape. Reading it does not say whether the client is encrypting or decrypting there.
+///
+/// Rather than guess in silence, the polarity is named, both alternatives are
+/// constructible, and the channel server logs the body under **both** on the first packet.
+/// The header is never ciphered, so framing is correct either way and one run settles it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShiftPolarity {
+    /// The client subtracts when it **receives**, so the server adds when it sends.
+    ClientSubtractsOnReceive,
+    /// The client subtracts when it **sends**, so the server adds when it receives.
+    ClientSubtractsOnSend,
+}
+
+impl ShiftPolarity {
+    /// What the server does to a body it is about to send.
+    pub const fn on_send(self) -> Shift {
+        match self {
+            ShiftPolarity::ClientSubtractsOnReceive => Shift::Add,
+            ShiftPolarity::ClientSubtractsOnSend => Shift::Sub,
+        }
+    }
+
+    /// What the server does to a body it has just received.
+    pub const fn on_receive(self) -> Shift {
+        self.on_send().inverse()
+    }
+}
+
+/// Apply the channel body shift in place, with `iv[0]` as the amount.
+///
+/// Read straight off `FUN_1406ef9f0`: one wrapping 8-bit operation across the whole body,
+/// with the amount taken from the **first byte** of the 4-byte IV and held constant for the
+/// packet. The client chunks at `0x5B0`/`0x5B4` around the call, but the amount does not
+/// vary within a packet, so a flat loop gives the identical result.
+pub fn shift_body(body: &mut [u8], iv: [u8; 4], shift: Shift) {
+    let amount = iv[0];
+    for b in body.iter_mut() {
+        *b = match shift {
+            Shift::Add => b.wrapping_add(amount),
+            Shift::Sub => b.wrapping_sub(amount),
+        };
+    }
+}
+
+/// The **game channel's** body cipher: a wrapping byte shift, not AES.
+///
+/// `conn+0x48` is the connection type and it selects the body transform: non-zero (login)
+/// runs `FUN_140c75880`, AES-256-OFB; zero (a game channel) runs `FUN_1406ef9f0`,
+/// `out[i] = in[i] - iv[0]`. Everything around the body is shared - the 4-byte header is
+/// unciphered in both, and the IV rolls through the same shuffle table - so this differs
+/// from [`MapleCipher`] in exactly one method.
+///
+/// See `docs/transport.md`.
+pub struct ByteShiftCipher {
+    iv: [u8; 4],
+    header_const: u16,
+    /// What this instance does to a body. One instance per direction, as with `MapleCipher`.
+    shift: Shift,
+}
+
+impl ByteShiftCipher {
+    pub fn new(iv: [u8; 4], dir: Direction, shift: Shift) -> Self {
+        Self { iv, header_const: dir.header_const(), shift }
+    }
+
+    /// The IV this instance will use for the **next** packet.
+    ///
+    /// Exposed so a caller can compute the other polarity's reading of the same body before
+    /// the IV rolls - which is how the unresolved direction gets settled from one run.
+    pub fn iv(&self) -> [u8; 4] {
+        self.iv
+    }
+
+    pub fn shift(&self) -> Shift {
+        self.shift
+    }
+}
+
+impl Cipher for ByteShiftCipher {
+    fn encrypt(&mut self, body: &mut [u8]) -> [u8; HEADER_LEN] {
+        let header = header_from_iv(self.iv, self.header_const, body.len() as u16);
+        shift_body(body, self.iv, self.shift);
+        self.iv = roll_iv(self.iv);
+        header
+    }
+
+    fn decode_len(&self, header: [u8; HEADER_LEN]) -> Result<usize> {
+        len_from_header(header)
+    }
+
+    fn decrypt(&mut self, body: &mut [u8]) -> Result<()> {
+        shift_body(body, self.iv, self.shift);
+        self.iv = roll_iv(self.iv);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The channel cipher must round-trip against itself with opposite shifts, which is
+    /// what a server and a client are.
+    #[test]
+    fn the_byte_shift_round_trips_between_opposite_shifts() {
+        for iv in [[1u8, 2, 3, 4], [0xFF, 0, 0, 0], [0x80, 0x11, 0x22, 0x33]] {
+            let mut tx = ByteShiftCipher::new(iv, Direction::ServerToClient, Shift::Add);
+            let mut rx = ByteShiftCipher::new(iv, Direction::ServerToClient, Shift::Sub);
+            let plain: Vec<u8> = (0..=255u8).collect();
+            let mut body = plain.clone();
+            tx.encrypt(&mut body);
+            assert_ne!(body, plain, "iv {iv:?} produced no change at all");
+            rx.decrypt(&mut body).unwrap();
+            assert_eq!(body, plain, "iv {iv:?} did not round-trip");
+        }
+    }
+
+    /// An IV whose first byte is zero shifts by nothing. That is not a bug - it is what
+    /// `FUN_1406ef9f0` does - but it means a packet that draws such an IV proves nothing
+    /// about polarity, and a test written around one would pass either way.
+    #[test]
+    fn a_zero_first_iv_byte_is_the_identity() {
+        let mut c =
+            ByteShiftCipher::new([0, 0xAA, 0xBB, 0xCC], Direction::ClientToServer, Shift::Sub);
+        let mut body = vec![1u8, 2, 3];
+        c.encrypt(&mut body);
+        assert_eq!(body, vec![1, 2, 3]);
+    }
+
+    /// Both ciphers roll the IV through the same code, so a channel and a login connection
+    /// stay in step packet for packet. If these diverge the transport rots silently.
+    #[test]
+    fn both_ciphers_roll_the_iv_identically() {
+        let iv = [0x01, 0x78, 0x30, 0x52];
+        let mut aes = MapleCipher::new(iv, Direction::ServerToClient);
+        let mut shift = ByteShiftCipher::new(iv, Direction::ServerToClient, Shift::Add);
+        for _ in 0..8 {
+            let mut a = vec![0u8; 24];
+            let mut b = vec![0u8; 24];
+            assert_eq!(aes.encrypt(&mut a), shift.encrypt(&mut b), "headers diverged");
+        }
+    }
+
+    /// The header does not depend on the body transform: it is computed before the shift,
+    /// and the client never ciphers it. This is what lets a channel be framed correctly
+    /// while the polarity is still unsettled.
+    #[test]
+    fn the_header_is_the_same_whichever_way_the_body_shifts() {
+        let iv = [0x11, 0x22, 0x33, 0x44];
+        let mut add = ByteShiftCipher::new(iv, Direction::ServerToClient, Shift::Add);
+        let mut sub = ByteShiftCipher::new(iv, Direction::ServerToClient, Shift::Sub);
+        let mut a = vec![9u8; 40];
+        let mut b = vec![9u8; 40];
+        assert_eq!(add.encrypt(&mut a), sub.encrypt(&mut b));
+        assert_ne!(a, b, "the bodies should differ even though the headers match");
+    }
+
+    #[test]
+    fn polarity_names_opposite_operations_for_the_two_directions() {
+        for p in [ShiftPolarity::ClientSubtractsOnReceive, ShiftPolarity::ClientSubtractsOnSend] {
+            assert_eq!(p.on_send(), p.on_receive().inverse());
+        }
+        assert_eq!(ShiftPolarity::ClientSubtractsOnReceive.on_send(), Shift::Add);
+        assert_eq!(ShiftPolarity::ClientSubtractsOnSend.on_send(), Shift::Sub);
+    }
 
     #[test]
     fn shanda_round_trips() {

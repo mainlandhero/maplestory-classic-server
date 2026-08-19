@@ -25,6 +25,15 @@ pub struct Framer<C: Cipher> {
 }
 
 impl<C: Cipher> Framer<C> {
+    /// The cipher this framer wraps.
+    ///
+    /// Exposed so a caller can read the IV that the *next* packet will be transformed with,
+    /// before `next_packet` rolls it. The channel server needs that to show a body under
+    /// both cipher polarities while the direction is unsettled.
+    pub fn cipher(&self) -> &C {
+        &self.cipher
+    }
+
     pub fn new(cipher: C) -> Self {
         Self {
             cipher,
