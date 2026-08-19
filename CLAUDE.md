@@ -1,0 +1,82 @@
+# MapleCW
+
+A private, local-only server emulator for the MapleStory "Classic World" client the owner owns.
+Rust workspace, SQLite, patched client in `client-patched/`. Testing only.
+
+**Start at `STATUS.md` → NEXT GOALS.** It is kept current; if it contradicts this file, it wins.
+
+## Standing constraints
+
+- **Never store passwords in plain text.** argon2id, salted. Session tokens stored as SHA-256 only.
+- The firewall rule is scoped to the patched executable only.
+- `client-patched/` exists so the original client is never touched.
+- **Nothing authenticates.** The game socket carries no credentials. Say so whenever reporting progress.
+- **Never renumber characters from 1.** Ids start at 200 (`FIRST_CHARACTER_ID`); a create reply carrying id 1 made the client silently refuse to transition.
+
+## Shell
+
+Windows PowerShell **5.1**, from an **elevated** window. `pwsh` is **not installed**.
+
+```
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+```
+
+5.1 has no `&&`, `||`, ternary or null-coalescing.
+
+**Heredocs halve backslashes.** `\\b` written in a `<<'PY'` heredoc reaches Python as `\b`,
+which becomes a backspace and silently breaks a regex or a Rust doc comment. Use the Write
+tool for anything containing backslashes, or avoid them entirely.
+
+## Client runs cost the owner a manual launch
+
+Measure first. `python tools/channel_smoke.py` and `tools/login_smoke.py` exercise the real
+servers over an independent Python transport — framing, cipher, every field offset — without
+a launch. Only run the client when nothing cheaper can answer the question.
+
+When a run happens, **test one variant at a time**. Changing two things at once has already
+produced one unexplained crash. The owner can see the GUI and you cannot, so say exactly what to
+watch for and what each outcome would mean *before* they launch.
+
+## Two rules that come from expensive mistakes
+
+**Always answer.** An unanswered packet freezes the client's entire UI — every button,
+including the quit prompt — and reads on screen as a crash. Never return an error in place
+of a reply.
+
+**Verify the instrument before believing it.** A silent negative is usually a property of
+your search, not evidence of absence. Prove a search can find a positive control before
+reporting that it found nothing. And **enumerate before you filter**: the two worst wrong
+answers here both came from searching a known list — one looked for the wrong *shape*
+(bit tests, when the mask was a byte array), one for the wrong *set* (five decoder
+addresses, when there are seven). Both returned clean, confident numbers.
+
+## Reverse engineering
+
+**`docs/ghidra.md`** — the working command line, JDK 21, the scripts, and the traps.
+Two that bite immediately:
+
+- **The Ghidra project locks.** One process at a time. If you spawn subagents while holding
+  it, tell them not to use it and hand them the text already in `research/`.
+- **Field order from the listing, field meaning from the decompiler**, and cross-check the
+  packet-read count between them first. When they disagree, the instrument is wrong.
+
+The reference source at `C:\Users\user\Desktop\ModernMapleSource` is a **different game
+version**. Good for naming fields and predicting structure; worthless for settling anything.
+Scored against a held-out control it got **1 of 8**. Label every claim from it as a candidate.
+
+## Where output lands
+
+| | |
+|---|---|
+| `login.log` | every packet both ways on the login connection |
+| `world.log` | the same for the channel — read this for anything past character select |
+| `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults |
+| `client-exit.log` | how the client died |
+| `research/` | decompilation as `msexe-<topic>.c`, findings as `.md` beside it |
+
+## Reporting
+
+Be plain about what is measured and what is inferred. This project has repeatedly committed
+a plausible inference as a fact and paid for it later — the channel cipher took three passes
+because a measurement of one direction was written up as covering both. If you retract
+something, say what the evidence actually was and why it did not support the claim.
