@@ -386,7 +386,26 @@ if PROBE:
         check("no mob is sent with hp = 0 - that is a mob at 0 percent",
               hps and all(h != 0 for h in hps), "%s" % hps[:3])
 
-    check("the probe answered every request", len(replies) == 7 + 30 + 2,
+    # ---- the refused !map now says why on screen
+    #
+    # The drive above sends `!map 104040000`, which has no field image in this client. It
+    # must be refused AND explained: a silent refusal is indistinguishable from a command
+    # that did not arrive, which is what the owner hit.
+    CHAT_NOTICE = 0x00BB
+    notices = [r for r in replies if r["opcode"] == CHAT_NOTICE]
+    check("the refused !map explains itself in chat", len(notices) == 1,
+          "%d notices" % len(notices))
+    if notices:
+        nb = notices[0]["body"][2:]
+        # force = 1. With 0 the client shows only the first line after each field entry and
+        # drops the rest, which reads exactly like the feature being broken.
+        check("the notice forces itself onto the screen (force = 1)", nb[0] == 1,
+              "force = %d" % nb[0])
+        n = struct.unpack_from("<H", nb, 1)[0]
+        text = nb[3:3 + n].decode("utf-8", "replace")
+        check("and it names the map id that was refused", "104040000" in text, text)
+
+    check("the probe answered every request", len(replies) == 8 + 30 + 2,
           "%d replies: %s" % (len(replies), sorted(set(hex(r["opcode"]) for r in replies))))
 
     # ---- the NPC the client clicked

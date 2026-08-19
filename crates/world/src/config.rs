@@ -93,6 +93,9 @@ pub struct Config {
     pub npc_strings: HashMap<u32, NpcStrings>,
     /// Every quest the client ships, keyed by quest id, from `gm-handbook/questlines.txt`.
     pub quests: HashMap<u32, Quest>,
+    /// Turn NPC idle chatter off. It is the server's only unsolicited path, so a flag to
+    /// silence it makes "is this packet the problem" answerable in one run.
+    pub chatter_off: bool,
     /// Whether to actually send them. **Default `false`, and that is a measurement.**
     ///
     /// The run of 2026-08-19 faulted the client at `0x141c810b0` on the **first** `0x03C6`,
@@ -627,6 +630,14 @@ pub struct NpcStrings {
     /// the four, which is why their ten lines match an outside list exactly and cannot
     /// discriminate the rest.
     pub chatter: Vec<String>,
+    /// Just the `info/speak` group - the WZ's `n*` lines.
+    ///
+    /// **This is the only group a chat balloon can reach without also changing the NPC's
+    /// animation.** `0x0453` with `nAction = -1` indexes `info/speak`; the other three
+    /// groups hang off the `finger`, `wink` and `heart` animation nodes and need their own
+    /// action value, which is not established. So [`Self::chatter`] is the full list for
+    /// reference and this is the one the server can actually send.
+    pub info: Vec<String>,
 }
 
 /// Every NPC's text, from `tools/dump_npcstrings.py`'s `npcstrings.txt`.
@@ -651,6 +662,7 @@ pub fn load_npc_strings(path: &std::path::Path) -> HashMap<u32, NpcStrings> {
         match key {
             "name" => entry.name = value.to_string(),
             k if k.starts_with("idle") => entry.chatter.push(value.to_string()),
+            k if k.starts_with("info") => entry.info.push(value.to_string()),
             k if k.starts_with('d') => entry.dialogue.push(value.to_string()),
             _ => {}
         }
@@ -762,6 +774,7 @@ impl Default for Config {
             npcs: HashMap::new(),
             mobs: HashMap::new(),
             mob_limit: None,
+            chatter_off: false,
             equips: HashMap::new(),
             npc_strings: HashMap::new(),
             quests: HashMap::new(),

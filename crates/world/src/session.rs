@@ -138,6 +138,70 @@ pub struct Session {
     claimed: Option<ClaimedMigration>,
     /// The NPC conversation in progress, if any.
     conversation: Option<Conversation>,
+    /// Where each NPC on the current field is in its idle chatter.
+    chatter: Vec<Chatter>,
+    /// Drives the chatter cadence. Seeded per session so two connections do not speak in
+    /// lockstep, and seedable so a test can pin the sequence.
+    rng: Xorshift,
+}
+
+/// One NPC's place in its idle-chatter cycle.
+///
+/// **The ordering and the cadence are ours, because the client has neither.** Its own picker
+/// is `rand() % n` twice with no cursor, so "in order" is a decision rather than a
+/// reproduction - which is what the owner asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Chatter {
+    object_id: u32,
+    /// How many lines this NPC's `info/speak` group has. Zero means it never talks.
+    lines: usize,
+    /// The next line to send.
+    cursor: usize,
+    /// When it is next due, in milliseconds since the session's clock started.
+    due_ms: u64,
+}
+
+/// The shortest an NPC waits between idle lines, in milliseconds.
+///
+/// **This is the client's own formula, not an invention.** `FUN_141e46d40` computes
+/// `rand() % 6000 + 3000` for its idle timer, so three to nine seconds *is* this game's
+/// cadence. **[L]** for the formula; that the unit is milliseconds is **[D]**, from the same
+/// per-frame step decrementing a countdown loaded from a WZ `delay`.
+///
+/// The owner asked to match it rather than use a fixed interval. The lines still advance **in
+/// order** - that part is ours, because the client's own picker is `rand() % n` with no
+/// cursor - while the *timing* is the game's.
+pub const CHATTER_MIN_MS: u64 = 3000;
+
+/// The width of the random window above [`CHATTER_MIN_MS`]: the client's `rand() % 6000`.
+pub const CHATTER_SPREAD_MS: u64 = 6000;
+
+/// A tiny xorshift, so the cadence is random without `Session` reaching for a clock or a
+/// global generator.
+///
+/// **Why not the `rand` crate.** `Session` is a pure state machine - bodies and time in,
+/// bodies out - and that is what makes every exchange in this file a unit test rather than
+/// something needing a live socket. A thread-local generator would put hidden state back in.
+/// Seeding this from the session lets a test pin the exact sequence; a real generator is the
+/// right call the moment something needs quality rather than variety.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next(&mut self) -> u64 {
+        // xorshift64*, and the state must never be zero - it is a fixed point.
+        let mut x = self.0 | 1;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// A delay in the client's own window: 3000..=8999 ms.
+    fn chatter_delay(&mut self) -> u64 {
+        CHATTER_MIN_MS + self.next() % CHATTER_SPREAD_MS
+    }
 }
 
 /// Where a conversation with an NPC currently is.
@@ -166,7 +230,17 @@ struct Conversation {
 
 impl Session {
     pub fn new(store: Arc<Store>, config: Arc<Config>) -> Self {
-        Session { store, config, claimed: None, conversation: None }
+        // Any non-zero seed will do; the config's address is simply something that differs
+        // between connections in the same process.
+        let seed = Arc::as_ptr(&config) as u64 | 1;
+        Session {
+            store,
+            config,
+            claimed: None,
+            conversation: None,
+            chatter: Vec::new(),
+            rng: Xorshift(seed),
+        }
     }
 
     /// What the channel sends the moment the client connects: **nothing**.
@@ -177,6 +251,86 @@ impl Session {
     /// migrated connection was rejected with "The client is outdated".
     pub fn on_connect(&mut self) -> Vec<Reply> {
         Vec::new()
+    }
+
+    /// What the server should send when nothing has arrived.
+    ///
+    /// **This is the only unsolicited path in the whole server**, and it exists because NPC
+    /// idle chatter is server-triggered and client-rendered: the client holds the lines, the
+    /// balloon art and a five-second display timer, but the only code that creates a balloon
+    /// is reached from inbound `0x0453`. Nothing in the `0x044F` spawn body turns it on.
+    ///
+    /// `now_ms` is milliseconds since the connection started, and it is a parameter rather
+    /// than a clock read so this stays a pure function of state and time - the same reason
+    /// `Session` has no socket. Every exchange in this file is a unit test because of it.
+    ///
+    /// Returns at most one balloon per NPC per call. A tick that falls a long way behind
+    /// does **not** burst: the next due time is computed from `now_ms`, not from the missed
+    /// one, so a stalled connection resumes at the normal cadence instead of emitting a
+    /// backlog the client would show as a flicker.
+    pub fn tick(&mut self, now_ms: u64) -> Vec<Reply> {
+        if !self.config.set_field_probe || self.config.chatter_off {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for c in &mut self.chatter {
+            if c.lines == 0 || now_ms < c.due_ms {
+                continue;
+            }
+            let index = c.cursor % c.lines;
+            c.cursor = c.cursor.wrapping_add(1);
+            c.due_ms = now_ms + self.rng.chatter_delay();
+            out.push(Reply {
+                opcode: net::npcchat::NPC_CHAT,
+                body: net::npcchat::npc_chat(
+                    c.object_id,
+                    net::npcchat::NPC_CHAT_NO_ANIMATION,
+                    u8::try_from(index).unwrap_or(0),
+                ),
+                what: format!(
+                    "NpcChat: object id {}, line {} of {} - idle chatter. The client holds \
+                     the text; only the index goes on the wire.",
+                    c.object_id,
+                    index + 1,
+                    c.lines
+                ),
+            });
+        }
+        out
+    }
+
+    /// Rebuild the idle-chatter cycle for the field the character has just entered.
+    ///
+    /// The NPC pool is destroyed and rebuilt on every field entry, so the cursors go with
+    /// it - an object id from the previous map addresses nothing, or worse, something else.
+    fn reset_chatter(&mut self, map: u32, now_ms: u64) {
+        let empty: Vec<net::opcode::FieldNpc> = Vec::new();
+        // The rng is moved out and back so the closure below can take it mutably while the
+        // config is borrowed immutably.
+        let mut rng = std::mem::replace(&mut self.rng, Xorshift(1));
+        let chatter: Vec<Chatter> = self
+            .config
+            .npcs
+            .get(&map)
+            .unwrap_or(&empty)
+            .iter()
+            .map(|npc| Chatter {
+                object_id: npc.object_id,
+                lines: self
+                    .config
+                    .npc_strings
+                    .get(&npc.template_id)
+                    .map(|s| s.info.len())
+                    .unwrap_or(0),
+                cursor: 0,
+                // Stagger by position on the field so they do not all speak at once.
+                // The first line waits a full random interval too, so a field does not
+                // erupt the moment it loads.
+                due_ms: now_ms + rng.chatter_delay(),
+            })
+            .collect();
+        self.rng = rng;
+        self.chatter = chatter;
     }
 
     /// Handle one packet body, opcode included.
@@ -212,6 +366,7 @@ impl Session {
             net::script::CLIENT_QUEST_REQUEST => {
                 return self.on_quest_request(body.get(2..).unwrap_or(&[]))
             }
+            net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
             net::script::CLIENT_SCRIPT_REPLY => {
                 return self.on_script_reply(body.get(2..).unwrap_or(&[]))
             }
@@ -259,6 +414,10 @@ impl Session {
     /// `research/npc-spawn.md` has the working, including how the routing was found.
     fn on_field_entered(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
+        // The NPC pool is destroyed and rebuilt on every field entry, so the chatter cursors
+        // go with it: an object id from the previous map addresses nothing here, or worse,
+        // addresses a different NPC.
+        self.reset_chatter(chr.map_id, 0);
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
         let out: Vec<Reply> = self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()
@@ -647,19 +806,64 @@ impl Session {
         let Some(text) = net::opcode::parse_chat(payload) else { return Vec::new() };
         let text = text.trim();
         let Some(rest) = text.strip_prefix("!map ") else { return Vec::new() };
-        let Ok(map) = rest.trim().parse::<u32>() else { return Vec::new() };
+        let rest = rest.trim();
+        let Ok(map) = rest.parse::<u32>() else {
+            return self.notice(format!("!map: \"{rest}\" is not a map id."));
+        };
 
         // Refuse a map the client cannot load. A character sent to an id with no field image
-        // is stranded with no way back except another command, and an id with no String.wz
-        // name entry can take the client into a branch that does not return - see
-        // research/map1-exists.md. Chat is fire-and-forget, so refusing is silent on screen;
-        // the log line is the only feedback there is until an outbound notice exists.
+        // is stranded with no way back except another command. The owner asked for the refusal to
+        // say so on screen rather than only in the log, which needed the outbound chat line
+        // this now sends - see net::notice::CHAT_NOTICE.
         if !self.config.map_exists(map) {
-            return Vec::new();
+            return self.notice(format!(
+                "!map: {map} has no field image in this client, so it would strand you."
+            ));
         }
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         // Portal 0 is the map's spawn point, which is where a GM warp should land.
         self.go_to_map(&mut chr, map, 0, format!("GM !map {map}"))
+    }
+
+    /// One line in the client's chat window.
+    ///
+    /// `force = 1` is not optional: with `0` the client shows only the first line after each
+    /// field entry and silently drops the rest, which reads exactly like the feature being
+    /// broken. See `net::notice::CHAT_NOTICE`.
+    fn notice(&self, text: String) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::notice::CHAT_NOTICE,
+            body: net::notice::chat_notice(&text),
+            what: format!("ChatNotice: {text}"),
+        }]
+    }
+
+    /// Answer Log Out, and **this is not optional in the way most replies are**.
+    ///
+    /// `0x01BE`'s builder sets `world->[0x33f4] = 1`, and the `SetField` handler
+    /// `FUN_142097f80` tests that byte immediately after reading its 8-byte FILETIME and
+    /// returns to its epilogue if it is set. **Only `0x0106` clears it.** So an unanswered
+    /// Log Out does not just leave the player stuck on the field - it makes **every
+    /// subsequent `SetField` vanish in silence**: no dialog, no fault, nothing in any log.
+    /// Same failure class as the `player->[0x2330]` latch in `research/npc-click.md`, far
+    /// worse blast radius.
+    ///
+    /// The message must not be empty; an empty string is a no-op in the client.
+    ///
+    /// **The teardown is in place rather than a reconnect** - the handler builds no
+    /// `sockaddr` and constructs a login stage directly. Whether the client also closes this
+    /// socket is not settled, and the next run answers it for free: watch whether the
+    /// following packet lands in `login.log` or `world.log`.
+    fn on_log_out(&mut self) -> Vec<Reply> {
+        // The conversation and the field's chatter belong to a session that is ending.
+        self.conversation = None;
+        self.chatter.clear();
+        vec![Reply {
+            opcode: net::notice::LOG_OUT_RESULT,
+            body: net::notice::log_out_result("Returning to the login screen."),
+            what: "LogOutResult - and answering this is what clears world->[0x33f4]. Until                    it is cleared the client silently drops every SetField."
+                .to_string(),
+        }]
     }
 
     /// Answer the client walking into a portal.
@@ -1098,6 +1302,186 @@ mod tests {
         b.extend_from_slice(text.as_bytes());
         b.push(action);
         b
+    }
+
+    /// A refused `!map` says why on screen now, and Log Out is answered.
+    ///
+    /// The Log Out half is the one that matters beyond politeness: until `0x0106` clears
+    /// `world->[0x33f4]`, the client drops every `SetField` in silence.
+    #[test]
+    fn a_bad_map_says_why_and_log_out_is_answered() {
+        let path = std::path::Path::new("../../gm-handbook/fields.txt");
+        if !path.exists() {
+            return; // generated data, gitignored
+        }
+        let config = Config {
+            set_field_probe: true,
+            fields: Config::load_fields(path),
+            ..Config::default()
+        };
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+
+        fn chat(text: &str) -> Vec<u8> {
+            let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+            b.extend_from_slice(&[0u8; 4]);
+            b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+            b.extend_from_slice(text.as_bytes());
+            b.push(3);
+            b
+        }
+
+        // A map with no field image is refused, and the refusal reaches the screen.
+        let replies = s.handle(&chat("!map 104040000"));
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].opcode, net::notice::CHAT_NOTICE);
+        assert_eq!(replies[0].body[0], 1, "force must be 1 or only the first line shows");
+        let len = u16::from_le_bytes([replies[0].body[1], replies[0].body[2]]) as usize;
+        let text = String::from_utf8(replies[0].body[3..3 + len].to_vec()).unwrap();
+        assert!(text.contains("104040000"), "the notice must name the id: {text}");
+
+        // So is a non-numeric one, rather than being swallowed.
+        assert_eq!(s.handle(&chat("!map banana"))[0].opcode, net::notice::CHAT_NOTICE);
+
+        // A real map still warps and does NOT produce a notice.
+        assert_eq!(s.handle(&chat("!map 40"))[0].opcode, net::opcode::SET_FIELD);
+
+        // Log out is answered, with a non-empty message - an empty one is a client no-op.
+        let mut body = net::notice::CLIENT_LOG_OUT.to_le_bytes().to_vec();
+        body.truncate(2);
+        let out = s.handle(&body);
+        assert_eq!(out.len(), 1, "an unanswered log out makes every later SetField vanish");
+        assert_eq!(out[0].opcode, net::notice::LOG_OUT_RESULT);
+        assert!(u16::from_le_bytes([out[0].body[0], out[0].body[1]]) > 0);
+    }
+
+    /// Idle chatter: the only unsolicited packet the server sends.
+    ///
+    /// Pins the three things a client run cannot easily show - the cadence window, that the
+    /// lines advance in order and wrap, and that a stalled connection does not burst.
+    #[test]
+    fn npcs_chatter_in_order_on_the_clients_own_cadence() {
+        let npcs = vec![
+            net::opcode::FieldNpc {
+                object_id: 1000, template_id: 8, x: 69, cy: 275, fh: 30,
+                rx0: 19, rx1: 119, f: 0,
+            },
+            net::opcode::FieldNpc {
+                object_id: 1001, template_id: 9, x: 1602, cy: 215, fh: 59,
+                rx0: 1552, rx1: 1652, f: 0,
+            },
+        ];
+        let mut strings = std::collections::HashMap::new();
+        strings.insert(
+            8u32,
+            crate::config::NpcStrings {
+                name: "Robin".into(),
+                info: (0..4).map(|i| format!("line {i}")).collect(),
+                ..Default::default()
+            },
+        );
+        // Template 9 has no info lines at all - it must never speak, and must not panic on
+        // the modulo either.
+        strings.insert(9u32, crate::config::NpcStrings::default());
+
+        let config = Config {
+            set_field_probe: true,
+            npcs: [(40u32, npcs)].into_iter().collect(),
+            npc_strings: strings,
+            ..Config::default()
+        };
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "TestCharD".to_string(), map_id: 40, ..Default::default()
+        };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+        s.on_field_entered();
+
+        // Nothing is due before the minimum wait, ever.
+        assert!(s.tick(0).is_empty());
+        assert!(s.tick(CHATTER_MIN_MS - 1).is_empty(), "3s is the floor");
+
+        // Drive it and collect the lines Robin says, and when.
+        let mut said = Vec::new();
+        let mut gaps = Vec::new();
+        let mut last = 0u64;
+        for now in (0..120_000).step_by(250) {
+            for reply in s.tick(now) {
+                let body = &reply.body;
+                assert_eq!(body.len(), net::npcchat::NPC_CHAT_LEN);
+                let who = u32::from_le_bytes(body[..4].try_into().unwrap());
+                assert_eq!(who, 1000, "only the NPC with lines may speak");
+                assert_eq!(body[4] as i8, net::npcchat::NPC_CHAT_NO_ANIMATION);
+                said.push(body[5]);
+                if last > 0 {
+                    gaps.push(now - last);
+                }
+                last = now;
+            }
+        }
+
+        assert!(said.len() > 10, "only {} lines in two minutes", said.len());
+        // In order, wrapping at the line count. This is the half that is ours.
+        for (i, idx) in said.iter().enumerate() {
+            assert_eq!(*idx as usize, i % 4, "line {i} out of order");
+        }
+        // And the cadence is the client's own window. The tick granularity can only make a
+        // gap look longer, never shorter, so the floor is the strict check.
+        assert!(
+            gaps.iter().all(|g| *g >= CHATTER_MIN_MS),
+            "a gap below the 3s floor: {:?}",
+            gaps.iter().filter(|g| **g < CHATTER_MIN_MS).collect::<Vec<_>>()
+        );
+        let ceiling = CHATTER_MIN_MS + CHATTER_SPREAD_MS + 500;
+        assert!(gaps.iter().all(|g| *g <= ceiling), "a gap above 9s: {gaps:?}");
+        // Randomised, not fixed - a constant interval would be a regression to what the owner
+        // asked to move away from.
+        assert!(gaps.iter().collect::<std::collections::HashSet<_>>().len() > 2, "{gaps:?}");
+    }
+
+    /// A connection that stalls must not emit a backlog when it comes back.
+    #[test]
+    fn a_late_tick_does_not_burst() {
+        let npcs = vec![net::opcode::FieldNpc {
+            object_id: 1000, template_id: 8, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0,
+        }];
+        let mut strings = std::collections::HashMap::new();
+        strings.insert(
+            8u32,
+            crate::config::NpcStrings {
+                info: (0..4).map(|i| format!("line {i}")).collect(),
+                ..Default::default()
+            },
+        );
+        let config = Config {
+            set_field_probe: true,
+            npcs: [(40u32, npcs)].into_iter().collect(),
+            npc_strings: strings,
+            ..Config::default()
+        };
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "TestCharD".to_string(), map_id: 40, ..Default::default()
+        };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+        s.on_field_entered();
+
+        // Ten minutes with no ticks at all, then one. Exactly one line, not sixty.
+        assert_eq!(s.tick(600_000).len(), 1);
+        assert!(s.tick(600_001).is_empty(), "the next one waits the full interval");
     }
 
     /// `!map <id>` typed into the chat box, from the real captured chat body.

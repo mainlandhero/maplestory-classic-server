@@ -25,6 +25,8 @@ pub mod error;
 pub mod handshake;
 pub mod mob;
 pub mod names;
+pub mod notice;
+pub mod npcchat;
 pub mod opcode;
 pub mod packet;
 pub mod script;

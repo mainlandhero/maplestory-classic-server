@@ -29,6 +29,14 @@ pub fn log(msg: &str) {
     let _ = std::io::stdout().flush();
 }
 
+/// How often a quiet connection wakes up to let the session send something.
+///
+/// Short enough that a 6-second chatter interval lands within about half a second of when it
+/// is due, long enough that an idle connection is not spinning. It is **not** the chatter
+/// interval - that lives in `session::CHATTER_INTERVAL_MS`, because it is a game decision
+/// and this is a socket one.
+const TICK_MS: u64 = 500;
+
 fn send(
     stream: &mut TcpStream,
     tx: &mut Framer<ByteShiftCipher>,
@@ -86,14 +94,33 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
         send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
     }
 
-    // No read timeout. The login server has one so it can re-send the startup gate to a
-    // quiet client; there is nothing to nudge a quiet client with here, and waking up to
-    // send nothing is just a wakeup.
+    // A read timeout, and this file used to say a channel needed none. It does now: NPC idle
+    // chatter is server-triggered, so there is finally something to say to a quiet client,
+    // and this wakeup is what says it.
+    //
+    // **A timeout is not a disconnect**, and conflating them is the classic way to write
+    // this bug: `WouldBlock` and `TimedOut` both mean "nothing arrived", and platforms
+    // disagree about which one they raise - Windows tends to `TimedOut` where Unix gives
+    // `WouldBlock`. Both are handled, because getting it wrong drops every idle connection
+    // after one interval and looks exactly like the client disconnecting.
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(TICK_MS)))?;
+    let started = std::time::Instant::now();
     let mut buf = [0u8; 8192];
     loop {
         let read = match stream.read(&mut buf) {
             Ok(0) => return Ok(()),
             Ok(n) => n,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // Nothing arrived. Give the session the clock and send whatever it owes.
+                let now_ms = started.elapsed().as_millis() as u64;
+                for reply in session.tick(now_ms) {
+                    send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
+                }
+                continue;
+            }
             Err(e) => return Err(e),
         };
         rx.feed(&buf[..read]);
