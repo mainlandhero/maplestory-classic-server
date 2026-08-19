@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Every quest the client ships, out of its own `Quest.wz`.
+
+Writes `gm-handbook/quests.json`. Generated game data, gitignored, never hand-edited - same
+contract as `dump_portals.py`, `dump_equips.py`, `dump_mobs.py` and `dump_npcstrings.py`.
+
+**JSON, not a flat table, because the data is a tree.** Every other generator here writes
+TSV or CSV because its data is rows; a quest's `Say` node is a conversation with branches
+(`yes`, `no`, `stop`, `lost`, `ask`) and flattening it would lose the shape the server has
+to walk.
+
+## What is in it
+
+`Quest/QuestData/QuestData_000.wz` has **322 images, and all 322 carry all four nodes**:
+
+| node | what |
+|---|---|
+| `QuestInfo` | `name`, `parent`, `area`, and the numbered journal entries |
+| `Check` | requirements per state - `npc`, `lvmin`, `job`, and more |
+| `Act` | what happens - rewards, `nextQuest` |
+| `Say` | the conversation. Numbered lines per state, plus `yes` / `no` / `stop` / `lost` / `ask` branches |
+
+The branch census across all 322: `0` 607, `stop` 312, `yes` 298, `1` 221, `no` 149,
+`2` 77, `lost` 44, `3` 29, `ask` 18, and a thin tail to `7`.
+
+Quest 1000 is "Borrowing Sera's Mirror": `Check.0.npc = 1` starts it, `Check.1.npc = 2`
+finishes it, `Act.1.nextQuest = 1001`. That matches the `0x0151` a real client sent on
+2026-08-19 - quest id 1000, npc template 1 - which is the cross-check that these ids are the
+same namespace the protocol uses.
+
+## The text carries markup
+
+`#b`/`#k` are colour codes, `#p1#` substitutes NPC template 1's name, `#i4031000#` inlines an
+item icon. **It is emitted raw.** Whether the client expands these is not established, and
+sending them unexpanded makes the screen answer the question - the same reason
+`tools/dump_npcstrings.py` leaves `#p8#` alone.
+
+    python tools/dump_quests.py
+"""
+import json
+import os
+import subprocess
+import sys
+
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+QUEST_ARCHIVE = os.path.join("client-patched", "Data", "Quest", "QuestData",
+                             "QuestData_000.wz")
+WZ_DUMP = os.path.abspath(
+    os.path.join("target", "release", "wz-dump") + (".exe" if os.name == "nt" else "")
+)
+
+
+def run(*args):
+    r = subprocess.run([WZ_DUMP, *args], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    if r.returncode != 0 or not r.stdout:
+        return None
+    return r.stdout
+
+
+def images(archive):
+    out = run("tree", archive, "1")
+    if not out:
+        return
+    for line in out.splitlines():
+        if "[IMG]" in line:
+            yield line.split("[IMG]", 1)[1].split()[0]
+
+
+def main():
+    if not os.path.exists(WZ_DUMP):
+        raise SystemExit("%s is missing - run: cargo build --release -p wz" % WZ_DUMP)
+    if not os.path.exists(QUEST_ARCHIVE):
+        raise SystemExit("%s is missing" % QUEST_ARCHIVE)
+
+    quests, skipped = {}, 0
+    for image in images(QUEST_ARCHIVE):
+        stem = image[:-4] if image.endswith(".img") else image
+        if not stem.isdigit():
+            continue
+        out = run("cat", QUEST_ARCHIVE, image)
+        if not out:
+            skipped += 1
+            continue
+        try:
+            quests[stem] = json.loads(out)
+        except ValueError:
+            skipped += 1
+
+    os.makedirs("gm-handbook", exist_ok=True)
+    path = os.path.join("gm-handbook", "quests.json")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(quests, fh, ensure_ascii=False, indent=1, sort_keys=True)
+        fh.write("\n")
+
+    def has(node):
+        return sum(1 for q in quests.values() if isinstance(q.get(node), dict))
+
+    print("%s: %d quests" % (path, len(quests)))
+    for node in ("QuestInfo", "Check", "Act", "Say"):
+        print("  %-10s %d" % (node, has(node)))
+
+    # Which NPC starts each quest. This is the join the server needs: the client's 0x0151
+    # carries a quest id and an npc template, and Check.<state>.npc is what pairs them.
+    starters = {}
+    for qid, q in quests.items():
+        check = q.get("Check")
+        if not isinstance(check, dict):
+            continue
+        first = check.get("0")
+        if isinstance(first, dict) and "npc" in first:
+            starters.setdefault(int(first["npc"]), []).append(int(qid))
+    print("  %d quests name a starting NPC, across %d NPCs"
+          % (sum(len(v) for v in starters.values()), len(starters)))
+    if skipped:
+        print("  (%d images could not be read)" % skipped, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
