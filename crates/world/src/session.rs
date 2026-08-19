@@ -280,10 +280,20 @@ impl Session {
     ///
     /// Chat is fire-and-forget: the client froze on none of the runs where it went
     /// unanswered, so a command that does nothing is safe.
+    ///
+    /// ## The prefix is `!`, not `/`, and that is not a preference
+    ///
+    /// **The client never transmits a `/` line.** The owner typed `/map 1` and the session's
+    /// entire capture contains no `0x00E7` at all, while a plain "Hello" in the same tab had
+    /// produced one. The client parses slash commands itself: `/find`, `/whisper`, `/party`,
+    /// `/friend`, `/trade`, `/level` and `/h` are all baked into the executable as strings,
+    /// and an unknown one is swallowed before it reaches the wire.
+    ///
+    /// So a server-side command has to look like ordinary chat. `!` is ordinary chat.
     fn on_chat(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(text) = net::opcode::parse_chat(payload) else { return Vec::new() };
         let text = text.trim();
-        let Some(rest) = text.strip_prefix("/map ") else { return Vec::new() };
+        let Some(rest) = text.strip_prefix("!map ") else { return Vec::new() };
         let Ok(map) = rest.trim().parse::<u32>() else { return Vec::new() };
 
         // Refuse a map the client cannot load. A character sent to an id with no field image
@@ -296,7 +306,7 @@ impl Session {
         }
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         // Portal 0 is the map's spawn point, which is where a GM warp should land.
-        self.go_to_map(&mut chr, map, 0, format!("GM /map {map}"))
+        self.go_to_map(&mut chr, map, 0, format!("GM !map {map}"))
     }
 
     /// Answer the client walking into a portal.
@@ -517,7 +527,7 @@ mod tests {
 
     }
 
-    /// `/map <id>` typed into the chat box, from the real captured chat body.
+    /// `!map <id>` typed into the chat box, from the real captured chat body.
     #[test]
     fn the_gm_map_command_moves_the_character() {
         // The exact shape the client sends: u32 tick, u16 length, text, u8 tab.
@@ -529,7 +539,7 @@ mod tests {
             b
         }
         assert_eq!(net::opcode::parse_chat(&chat("Hello")).as_deref(), Some("Hello"));
-        assert_eq!(net::opcode::parse_chat(&chat("/map 40")).as_deref(), Some("/map 40"));
+        assert_eq!(net::opcode::parse_chat(&chat("!map 40")).as_deref(), Some("!map 40"));
 
         // The real 12 bytes the owner sent, so the parser is tested against the client and not
         // only against its own encoder.
@@ -566,8 +576,8 @@ mod tests {
             ..(*s.config).clone()
         };
         s.config = std::sync::Arc::new(cfg);
-        assert!(s.handle(&chat("/map 999999999")).is_empty(), "a nonexistent map moves nobody");
-        assert!(s.handle(&chat("/map 0")).is_empty(), "0 is not a map");
+        assert!(s.handle(&chat("!map 999999999")).is_empty(), "a nonexistent map moves nobody");
+        assert!(s.handle(&chat("!map 0")).is_empty(), "0 is not a map");
 
         // And an EMPTY list must not refuse everything - that would fail closed on a missing
         // generated file rather than on a real problem.

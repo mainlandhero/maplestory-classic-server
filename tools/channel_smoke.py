@@ -174,19 +174,20 @@ try:
         # the capture shows arrives only on the very first field entry.
         send(transport.packet(0x00DC, b""))
 
-        # /map typed into the All tab. Chat is fire-and-forget on the client's side, so a
-        # command that does nothing is safe; this one must actually move the character.
+        # !map typed into the All tab. The prefix is `!` and not `/` because the client
+        # never transmits a slash line - it parses those itself and swallows unknown ones.
+        # Chat is fire-and-forget, so a command that does nothing is safe.
         # A map that ACTUALLY EXISTS. 104040000 was used here until the /map guard landed
         # and refused it - correctly: this client has only Map0 and Map9, so that id has no
         # field image at all. The guard failing this check is the guard working.
-        text = b"/map 40"
+        text = b"!map 40"
         chat = bytes(4) + struct.pack("<H", len(text)) + text + b""
         send(transport.packet(0x00E7, chat))
 
         # A map that does not exist must move nobody. 104040000 has no field image in this
         # client at all, so the guard must refuse it - and refusing means NO extra reply,
         # which is what the reply count below is really asserting.
-        bogus = b"/map 104040000"
+        bogus = b"!map 104040000"
         send(transport.packet(0x00E7, bytes(4) + struct.pack("<H", len(bogus)) + bogus + b""))
 
         # 0x00D1, a transfer-field request, in the form the client actually sends: no

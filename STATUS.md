@@ -238,6 +238,26 @@ That method has now identified four requests and cost no static analysis at all.
 
 None is answered yet. **None has caused a freeze**, so none is a blocking request.
 
+### 2c. GM commands - `!map <id>`
+
+Typed into any chat tab. Moves the character and persists it, so a relog stays put.
+
+**The prefix is `!`, not `/`, and that is measured.** The owner typed `/map 1` and the session's
+entire capture contains **no `0x00E7` at all**, while a plain "Hello" in the same tab had
+produced one. The client parses slash commands itself - `/find`, `/whisper`, `/party`,
+`/friend`, `/trade`, `/level` and `/h` are baked into the executable as strings - and an
+unknown one is swallowed before it reaches the wire. A server-side command therefore has to
+look like ordinary chat.
+
+**Map ids are validated** against `gm-handbook/fields.txt`, the 426 maps with a real field
+image in `Map.wz` - not against the name table, which disagrees with it in both directions
+(12 named-but-absent, 6 present-but-unnamed). A bad id is refused silently, because chat is
+fire-and-forget and there is no outbound notice packet yet; the server log is the only
+feedback.
+
+**No permission check, and there should not be one yet** - nothing on this server
+authenticates and every connection is already the same account.
+
 ### 3. Mob spawns and mob drops - **priority, set by the owner 2026-08-19**
 
 *"there should be tutorial monsters spawning on East Entrance to Mushroom Town (ID 30), can
