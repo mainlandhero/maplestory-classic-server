@@ -34,3 +34,5 @@ maplecw.db-shm
 # Login server run log
 login.log
 login.log.err
+world.log
+world.log.err

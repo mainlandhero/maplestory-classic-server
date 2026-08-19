@@ -1,6 +1,0 @@
-02:41:26.615 world 0 channel 0 listening on 127.0.0.1:8485
-02:41:26.615 database C:\MapleCW\maplecw.db
-02:41:26.616 NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending
-02:41:26.616   migration rather than proving who is on the far end. It is single-use.
-02:41:26.616 This stage is UNDECODED: packets are logged and not answered. See
-02:41:26.617   crates/world/src/session.rs before adding a reply.
