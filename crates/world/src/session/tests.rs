@@ -855,7 +855,7 @@ fn a_kill_drops_the_mobs_own_table_and_the_global_one() {
     // A drop needs somewhere to land; without it the server declines rather than guessing.
     s.last_position = Some((520, 395));
 
-    let out = s.drops_from_kill(2, 2000, 204, net::opcode::START_MAP_ID);
+    let out = s.drops_from_kill(2, 2000, None, 204, net::opcode::START_MAP_ID);
 
     assert_eq!(out.len(), 3, "mesos, the shell, and the event item: {out:?}");
     assert!(
@@ -891,7 +891,7 @@ fn drops_land_on_the_mob_and_are_staggered_apart() {
     s.fields.note_position(map, 2000, (500, 395));
 
     s.last_position = Some((1000, 395)); // the player, far away
-    let out = s.drops_from_kill(2, 2000, 204, map);
+    let out = s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
     assert_eq!(out.len(), 3);
 
     let xs: Vec<i16> = s
@@ -917,7 +917,7 @@ fn a_mob_that_never_moved_drops_at_the_player() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = Some((777, 395));
 
-    s.drops_from_kill(2, 2000, 204, net::opcode::START_MAP_ID);
+    s.drops_from_kill(2, 2000, None, 204, net::opcode::START_MAP_ID);
     let d = s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.on_field(net::opcode::START_MAP_ID).cloned().collect::<Vec<_>>()).into_iter().next().unwrap();
     assert_eq!(d.x, 777);
 }
@@ -968,7 +968,7 @@ fn an_unknown_mob_still_rolls_the_global_table() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = Some((520, 395));
 
-    assert_eq!(s.drops_from_kill(999_999, 2000, 204, 1).len(), 1);
+    assert_eq!(s.drops_from_kill(999_999, 2000, None, 204, 1).len(), 1);
 }
 
 /// **With no known position a kill drops nothing, and says so.**
@@ -984,7 +984,7 @@ fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = None;
 
-    let out = s.drops_from_kill(2, 2000, 204, 1);
+    let out = s.drops_from_kill(2, 2000, None, 204, 1);
     assert!(!out.is_empty(), "it must answer");
     assert!(out.iter().all(|r| r.opcode != net::drops::DROP_ENTER_FIELD), "and drop nothing");
     assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 0);
@@ -995,7 +995,7 @@ fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
 fn a_kill_with_no_table_drops_nothing_quietly() {
     let (mut s, _, _) = gm_session();
     s.last_position = Some((1, 1));
-    assert!(s.drops_from_kill(2, 2000, 204, 1).is_empty());
+    assert!(s.drops_from_kill(2, 2000, None, 204, 1).is_empty());
 }
 
 /// With the shop off, a shopkeeper **talks** instead of ending the session.

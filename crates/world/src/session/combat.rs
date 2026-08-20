@@ -108,9 +108,13 @@ impl Session {
             let hit = net::combat::apply_damage(hp_before, damage);
             // The field owns the death: it removes the mob and books its spawn point to
             // refill from the WZ's own mobTime. Nothing here has to remember a corpse.
+            // **Where it is, BEFORE it dies.** `hurt` removes the mob from the field, so
+            // asking afterwards returns nothing and every drop fell back to the player's
+            // feet - which is exactly what the owner saw twice. Read it first, hand it down.
+            let died_at = self.fields.mob_position(map, target.object_id);
             let left = self.fields.hurt(map, target.object_id, damage, &self.config, self.clock_ms);
             if left.is_none() {
-                out.extend(self.drops_from_kill(template, target.object_id, chr_id, map));
+                out.extend(self.drops_from_kill(template, target.object_id, died_at, chr_id, map));
                 let worth = self.config.mob_exp.get(&template).copied().unwrap_or(0);
                 out.extend(self.award_experience(u64::from(worth), "a kill"));
             }
@@ -161,6 +165,8 @@ impl Session {
         &mut self,
         template: u32,
         object_id: u32,
+        // Where the mob was when it died, read BEFORE it was removed from the field.
+        died_at: Option<(i16, i16)>,
         killer: u32,
         map: u32,
     ) -> Vec<Reply> {
@@ -171,10 +177,11 @@ impl Session {
         // *"they should drop from the killed mob's position, not from the player character
         // position"*. `mob_position` is fed by the client's own movement reports; the
         // player's position is the fallback for a mob that never moved.
-        let at = self.fields.mob_position(map, object_id).or(self.last_position);
+        let _ = object_id;
+        let at = died_at.or(self.last_position);
         let Some((x, y)) = at else {
             return self.notice(
-                "A mob died with drops to give, but the server does not know where you are                  standing, so it dropped nothing rather than putting it out of reach."
+                "A mob died with drops to give, but the server does not know where it was standing, so it dropped nothing rather than putting it out of reach."
                     .to_string(),
             );
         };
