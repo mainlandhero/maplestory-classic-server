@@ -259,6 +259,15 @@ the 219-entry vtable at `0x14337f188`, and the value it passes is a register com
 in that function. **The chain from "the pick-up happened" to "the state became 18" is not
 read**, and that is the honest boundary of this section.
 
+> **One dead end, recorded so it is not walked twice.** The obvious next search - sweep
+> `.text` and `.boot` for a `mov edx, 0x12` or `mov edx, 0x13` within a few instructions of a
+> call to `FUN_140f810e0` - returns **zero rows**, and that zero is worthless. The setter has
+> exactly one call site and it passes `EDX = R15D`; there is no immediate anywhere for the
+> scan to match, so the empty result is a property of the search rather than of the binary.
+> That is the shape `CLAUDE.md` warns about, and it is why the answer has to come from
+> `FUN_14276ecf0`'s computation of `r15d` or from a runtime watch (§2.5), not from another
+> pattern scan.
+
 ### 2.2.2 The CWvsContext latch is still real, and it is still the pick-up's problem
 
 `FUN_142cc42d0(CWvsContext* ctx, int minMs, int skipUiCheck) -> BOOL`, `0x142cc42d0`. **[L]:**
