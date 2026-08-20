@@ -199,7 +199,22 @@ used to add `0x140000000` and every address it printed was `0x40000000` too high
 
 #### The test plan for the next run
 
-`powershell -ExecutionPolicy Bypass -File tools\test-server.ps1` and log in normally.
+```
+powershell -ExecutionPolicy Bypass -File tools\test-server.ps1 -SetFieldProbe
+```
+
+**`-SetFieldProbe` is not optional and its name is a fossil.** Without it
+`Session::handle` returns `Vec::new()` for *every* packet, so the migration hello goes
+unanswered and the client freezes on "Connecting..." - `crates/world/src/session.rs:379`.
+The flag now means "the channel answers at all". `server.rs` says so in the startup banner;
+this line exists because the banner is only readable after the run has already started.
+
+**Do not pass `-Probe` unless you mean to.** With `-SetFieldProbe` and no explicit `-Probe`,
+the launcher installs a matched pair of watches *plus* `140304100:hits=200`, which is the
+**positive control**: no lines from it at all means the hook never armed and nothing else in
+the log proves anything. Passing `-Probe` by hand replaces all four slots and silently drops
+that control. Two of the four are never negotiable - `1415db360:ret` and `141b2a280:rdx=0`
+keep the client alive past ~37s.
 
 **These are four independent observations, not four variants.** Nothing here changes a byte
 that a previous run depended on except the login channel index, and that one shows up before
