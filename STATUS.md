@@ -91,107 +91,97 @@ is already established, so nobody re-derives it, and the **one concrete next ste
 
 ### START HERE - what to do next, in order
 
-**Everything on the previous list is resolved.** Five of the six were built and confirmed on
-screen the same day; the sixth had all three of its explanations retracted. What follows is
-the state after the owner's five runs of 2026-08-19.
+**Last updated after the run of 2026-08-19, late.** Read this section and nothing else to
+know where the project is.
 
-#### WORKING, and confirmed on screen
+#### WORKING, and confirmed on a real client
 
 | | |
 |---|---|
-| the world | a character on a map, **wearing its items with their real stats** |
-| the bag | six inventories, sized by the server at 30 - **built, not yet seen on screen** |
-| chat | the player's own line comes back as a balloon plus a log line - **built, not yet seen** |
-| mobs | **on by default** since 2026-08-19 - built, and the crash fix not yet confirmed |
-| NPCs | visible, clickable, speaking the game's own `Quest.wz` and `String.wz` lines on **both** click paths, and showing **idle chatter** on the client's own 3-9 second cadence |
-| quests | clicking an NPC opens the real dialogue; **Accept answers with the quest's `yes` branch** |
-| movement | portals both ways onto the connecting door, and `!map <id>` |
-| chat | `!map` says **why** it refused, in the chat window |
-| session | world select, and **Log Out returns to the login screen** |
+| the world | a dressed character on a map, items carrying their real `Character.wz` stats |
+| the bag | six inventories sized by the server; **125 slots with a scrollbar, seen on screen** |
+| NPCs | visible, clickable, speaking the game's own lines on both click paths, idle chatter |
+| quests | the dialogue works and Accept answers the `yes` branch |
+| movement | portals both ways, `!map <id>`, chat feedback on refusal |
+| session | world select, Log Out back to the login screen |
+| **mobs** | spawn, and **move properly** - the owner: *"the mob interaction seems normal now"* |
+| **unequip** | a drag takes an item off and it lands in the bag |
 
-Two channels run by default and both are advertised. **Mobs are off by default** and are the
-one thing that still kills the client.
+#### The two things that run settled
 
-#### What to do next
+**1. `0x03E4` MobCtrlAck was the whole freeze.** Before it: 30 grants, 30 move reports inside
+three milliseconds, then silence forever. After it: **955 acks and 1007 move reports in one
+session**, sustained. The client is the clock and it stops without an answer.
 
-| # | do this | why it is here | spec |
-|---|---|---|---|
-| 1 | **Re-run mobs** - now the DEFAULT, not an opt-in | `move_action` (body offset 35) was `0`. That byte is `action*2 + facing`, and **action 0 alone** takes a callback at `141c50da5` into an interface `encodeInit` does not build until `0x148` bytes later - so the read lands on a null pointer. Now `2`. ~~**Pass = no `141c81040` line at all**~~ - **that criterion was wrong.** Mobs render on map 40, confirmed on screen 2026-08-19, and `141c81040` fired **20 times** in the same run (its hit cap). It is an ordinary part of the spawn path; what crashed was a null field read *inside* it, and `move_action = 2` avoids that read. A watch on a function that runs normally is not a pass/fail test | `research/mob-spawn.md` §11 |
-| 2 | **Confirm the bag** - BUILT 2026-08-19, unconfirmed on screen, **run it at 10** | `presence[7]` now sends **six `u16` slot counts**, twelve bytes between the string flags and the equipped list, read off the client's own six-turn loop at `0x140305de8`. Default 24, per character, persisted. **The guess in this row was wrong twice over**: it is not offsets 219-222 and there are not five of them. **Run it with `-InventorySlots 32`** - 24 is a number the client could have defaulted to on its own, so a run at 24 proves nothing. Pass = the tab shows 32, and six `140305e48` lines whose cursors step by 2 | `research/inventory-slots.md` |
-| 3 | **Decode `0x0420`-`0x0426`** | The client volunteers its **own world state** once per session: `0x0421` is 1115 bytes carrying the character id, the name and **our four item ids in equipped-slot order**; `0x0420` carries the NPC object ids we assigned. It is a free read-back instrument - it says what the client *thinks* it has, in its own words - and nothing else here can do that | §2e |
-| 4 | **Read what populates the Change Channel list** | **All three explanations are now retracted** (the four trailing bytes, the enable byte, the route through world select). Two client runs went on the first two. Nothing yet proposed populates that list, so the next step is to find what calls `FUN_142cb8e10` and when - upstream, not downstream | `research/channel-select.md` §0 |
-| 5 | **Quest state** | Goal A below. Everything else about quests works; nothing persists | §"NEW GOAL ... quest state" |
-| 6 | **Level up** | Goal D below, set by the owner once mobs rendered. Partly blocked on combat - EXP has no source until a mob can die - but the EXP curve, the AP/SP rules and the level-up effect are all independent of it | §D |
-| 7 | **First job advancement** | Goal E below. Blocked on D, and shares the script machinery with A. The job ids and the four instructor templates are already measured out of the client; the 35-stat gate is **not in the client at all** and is ours to enforce | §E |
-| 8 | **NPC shops** | Goal F below. Blocked on there being an inventory to buy into. Prices and the quest-item flag are in the client's own `Item.wz`; **shop contents are not** and are ours to author | §F |
-| 9 | **Storage** | Goal G below. Same blocker, plus mesos, which nothing maintains yet. Per-account, so it needs its own table rather than a column on `characters` | §G |
-| 9a | **The bag has to persist** | Goal I below, and it is the blocker under 8 and 9 as well. The unequip works on screen and is not written down, so a `!map` re-equips the item. Needs an `inventory` table **and** the four `presence[2]` bag lists, which are sent empty and have never been decoded | §I |
-| 10 | **Citizenship** | Goal H below. All 88 quests are already in the client and its own data confirms the fan site field for field - including the contribution rule as a literal formula string. **It also settles the grade numbers behind `data/shops.txt`'s rank tags** | §H |
+**2. The client will not target our mobs, and this is now MEASURED rather than assembled.**
 
-#### The evening run of 2026-08-19, and what it cost
-
-Three reports from the owner, and **two of the three had a cause sitting in a log nobody read.**
-
-**1. "I still do not see mobs on maps."** They were standing on map 40, which has six snails.
-The server had all six loaded and sent **zero** `0x03C6`, because `--mobs` was not on the
-command line - and it said so, in `world.log.err`:
-
-> `maplecw-world: mobs are loaded but NOT SENT ... Pass --mobs to send them anyway`
-
-`world.log.err` is not a file anyone opens while a client is running. **A default that
-silently does nothing is worse than a crash**, because a crash reports itself. Mobs are now
-**on by default**, `--no-mobs` / `-NoMobs` turns them off, and the warning prints to stdout.
-
-**2. "I tried to send 3 chat messages and saw nothing."** Measured, not guessed: the capture
-has three `0x00E7` bodies carrying `Hello`, `Hello2`, `Hello3`, and the server answered none
-of them. The client renders **nothing** for its own chat. Now answered with `0x0231` -
-found by intersecting the 17 chat-window printers with the 18 balloon creators, then reading
-the jump table at `0x1429bb5d0`. `research/user-chat.md`.
-
-**3. `!map 20001075` killed the client**, and this one is genuinely open.
-
-> Exit code **`0xC0000374` - STATUS_HEAP_CORRUPTION**, not the `0xC0000005` the mob fault
-> gave. Sequence: `SetField` at `.988`, four `140304100` equip decodes at `.990-.991` (so
-> the record decoded fine), a **C++ throw in KERNELBASE at `.418`**, the client's `0x00DC`
-> at `.420`, our one NPC - template 1117 - at `.421`, and the socket closed at `.503`.
+> `previous-runs/world-20260819-222734.log` is one session containing **34 mob spawns, 1396
+> move reports, and 5 `0x00DF` attacks - every one of them 127 bytes, which is zero targets.**
+> Mobs that are spawned, controlled, moving and visibly alive are still not collected by the
+> client's target loop.
 >
-> **The throw precedes both our NPC and the client's own field-entered packet by ~2 ms**, so
-> the first suspect is the map load itself rather than anything we sent after it. Map
-> 20001075 is a story/cutscene map. Nothing has been read yet; the throw's stack is in
-> `client-patched/maplecw-hook.log` and the `<-TEXT` frames are the place to start - **and
-> per `research/mob-spawn.md` §11 only `called-from=` is exact, the `stack:` line is a
-> heuristic scan.**
+> This supersedes both earlier positions. The first claim was right; the retraction that
+> called it "never measured" was right *about the evidence surviving at that moment* - no
+> single log then contained both halves - and is now itself superseded by a log that does.
+> **The only reason this is settleable is that the launcher stopped deleting `world.log`.**
+
+So combat is not a reply problem. `crates/net/src/combat.rs` and the damage loop in
+`session.rs` are built, tested and correct-shaped, and they will never fire until a mob
+becomes targetable. The next instrument is the collection gate chain `FUN_141d31b20` -
+eleven filters, all documented with addresses in `research/mob-combat.md`. Gates 2
+(`mob+0x504`) and 8 (`mob+0x300 == 0x38`) are both written inside `encodeInit`'s
+`move_action` jump-table region, so **the byte we send may be putting the mob in a state
+that is alive and animated but not hittable.**
+
+#### What to do next, in order
+
+| # | do this | why it is here |
+|---|---|---|
+| 1 | **Inventory persistence** - goal I | **The owner's call**: *"I would like to work on inventory persistence first."* An unequip works on screen and is not written down, so a `!map` re-equips it. Needs an `inventory` table **and** the four `presence[2]` bag lists, which are sent empty and have never been decoded. It is also the blocker under goals F and G |
+| 2 | **Why the client will not target a mob** | `FUN_141d31b20`'s eleven gates, `research/mob-combat.md`. Everything downstream of it is already built. Suspect `move_action` first - it is the one byte we chose |
+| 3 | **Amherst Department Store crashes the client** | New, and it has a twin. See below |
+| 4 | **Chat renders nothing** | `0x0231` is accepted - no crash since the 47-byte fix - but `FUN_142784970` reaches **neither** the chat-window print (`1427856fa`) nor the balloon (`142785927`). Both watched, both zero. It bails between parse and render on a value we send |
+| 5 | **Quest state** - goal A | Built by an agent and **never wired**: `set_field_with_character_dressed_quests` and the `quest_state` table exist and are unused. The owner, this run: *"Quests don't work yet as expected"* |
+| 6 | **The channel list** | Solved and **never wired** - one line in `crates/login/src/session.rs`. `research/channel-select.md` §9 |
+| 7 | **Touch damage** | A snail walked into the owner and did nothing. Both static leads eliminated; the cheap answer is a capture, and unknown opcodes already log their whole body |
+
+#### NEW: two maps kill the client, and they look like the same bug
+
+`!map 1010` was fine. Walking the `in02` portal into **map 1013, Amherst Department Store**,
+killed it **72 ms** after the server sent one `0x044F` NPC - template 21, object id 1000 -
+with **`0xC0000374`, STATUS_HEAP_CORRUPTION**.
+
+That is the same exit code and the same shape as the **map 20001075** crash of the same day:
+field entry, one NPC sent, heap corruption immediately after. 20001075 later stopped
+crashing, which makes it look intermittent rather than fixed.
+
+> **The lead worth testing first, and it is cheap.** Both maps are places with **shops** -
+> Amherst Department Store, and a story map. `data/shops.txt` names a grocer at Amherst. The
+> NPC body we send is 64 bytes of mostly zeros, and nothing in it has ever been checked
+> against an NPC that owns a shop. The `0x044F` decode is `research/npc-spawn.md`.
+>
+> The one-variant test: `-Probe` a watch on the NPC pool's decode entry and walk into 1013.
+> If the fault is inside the NPC decode, it is our body. If it is after, it is the map.
 
 #### Things that are NOT open, so nobody re-opens them
 
-* **The White Map is not broken.** The owner logged in with `900000000` stored and it loaded fine.
-  The crash is in a mid-session **transition**, and `!map 1` and `!map 40` worked mid-session
-  in the same run.
-* **The item tooltips were never a client mystery.** They read zero because `go_to_map` sent
-  the *bare* record, so every `SetField` after the migration carried all-zero stats and every
-  observation was made on a map reached with `!map`. There was no second object. An agent
-  eliminated four candidate homes chasing a ghost one line of mine had put there.
-* **World select cannot change channels.** This client redirects to the login screen on
-  picking a world; the owner tried it.
-* **The channel entry's trailing bytes are not the channel list's problem**, and neither is
-  the world-list packet at all: the bytes were **byte-identical** between a run that listed
-  CH.1/CH.2 and one that listed nothing.
+* **The bag is not the unequip blocker, and it is not broken.** `presence[7]` lands - twelve
+  bytes, six `u16`, watched at `140305e48` stepping by 2 - and 125 slots render with a
+  scrollbar. Minimum 30, maximum 125, both from the owner.
+* **`0x02FF` must be answered.** The old "nothing has to be answered" rested on intersecting
+  a correct scan against a set of *eight* mob-pool handlers when there are **110**.
+* **`0x0107` must always be answered, including refusals.** A chat-notice refusal left
+  `player+0x2330` latched and killed every later inventory action.
+* **The client computes its own damage.** We never send damage numbers - only consequences.
+* **The White Map is not broken**, world select cannot change channels, and the channel
+  entry's trailing bytes are not the channel list's problem.
 
-#### What today cost, and the pattern worth carrying
+#### The pattern this run confirmed, again
 
-Five client runs. Three of them were spent on things that turned out to be **my own bugs or
-my own wrong attributions**, not client behaviour:
-
-* two runs on a channel byte that was never the variable;
-* an entire agent investigation into "which object does the tooltip render" that was
-  `go_to_map` sending the wrong record.
-
-**The tell, both times, was a claim about the client made without an artefact beside it.**
-`research/equip-stats.md` §12 has the version of this that an agent wrote about itself, and
-it generalises: *a prediction recorded in the past tense, with no capture, screenshot or
-listing cited beside it.* The cheap defence is the one that worked here - transcribe the
-screen rather than paraphrase it, and grep your own code before theorising about someone
-else's.
+Three conclusions have died with an overwritten `world.log`, and the fourth was saved by
+archiving it. **The launcher now moves the previous run into `previous-runs/` instead of
+deleting it**, and the single most important fact in this section - that a controlled,
+moving mob still attracts zero targets - is only knowable because of that change.
 
 ### THE NEW GOALS - set by the owner, 2026-08-19, later in the day
 
