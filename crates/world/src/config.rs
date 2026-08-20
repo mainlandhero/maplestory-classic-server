@@ -108,6 +108,12 @@ pub struct Config {
     /// Server-sent for the same reason NPCs are: the client's field loader walks the WZ
     /// `life` node only to preload `Mob/%07d.img` art. 9928 spawns across 289 maps.
     pub mobs: HashMap<u32, Vec<net::mob::FieldMob>>,
+    /// `(map, objectId)` -> the WZ's `mobTime` for that spawn point, in **seconds**.
+    ///
+    /// Kept beside `mobs` rather than on `net::mob::FieldMob`, because it is not a wire
+    /// field: the client never respawns anything, it renders what it is sent. See
+    /// [`respawn_delay_ms`] for what the three cases mean.
+    pub mob_respawn_s: HashMap<(u32, u32), i32>,
     /// How many mobs to send per field, whatever the capacity says. `None` is no limit.
     ///
     /// **A blast-radius control, not game behaviour.** The mob body killed the client on
@@ -432,9 +438,10 @@ impl Config {
     pub fn load_mobs(
         path: &std::path::Path,
         templates: &HashMap<u32, MobTemplate>,
-    ) -> HashMap<u32, Vec<net::mob::FieldMob>> {
+    ) -> LoadedMobs {
         let mut out: HashMap<u32, Vec<net::mob::FieldMob>> = HashMap::new();
-        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        let mut respawn: HashMap<(u32, u32), i32> = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return (out, respawn) };
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -459,6 +466,10 @@ impl Config {
                 .get(&(template as u32))
                 .map(|t| u64::from(t.max_hp))
                 .unwrap_or(DEFAULT_MOB_HP);
+            // Column 8 is the WZ's `mobTime`. Older dumps have eight columns and no such
+            // value; those read as 0, which is "the field's ordinary rate" and is the right
+            // reading for a spawn point with no mobTime node at all.
+            respawn.insert((map as u32, object_id), n(8).unwrap_or(0) as i32);
             list.push(net::mob::FieldMob::new(
                 object_id,
                 template as u32,
@@ -468,7 +479,42 @@ impl Config {
                 hp,
             ));
         }
-        out
+        (out, respawn)
+    }
+}
+
+/// What [`Config::load_mobs`] returns: every map's spawn points, and each one's `mobTime`.
+///
+/// A named pair rather than a tuple because the two halves are keyed differently - one by
+/// map, one by `(map, objectId)` - and a caller that mixes them up gets a compiling program
+/// that respawns nothing.
+pub type LoadedMobs = (HashMap<u32, Vec<net::mob::FieldMob>>, HashMap<(u32, u32), i32>);
+
+/// The ordinary field respawn rate, for a spawn point whose WZ node has no `mobTime`.
+///
+/// **Policy, `[I]`.** 9485 of this client's 9928 spawn points have no `mobTime` at all, so
+/// this number decides how almost every map feels. Seven seconds is this game family's
+/// long-standing field rate. It is one constant in one place precisely because it is a guess.
+pub const DEFAULT_RESPAWN_MS: u64 = 7_000;
+
+/// The WZ value that means **never respawn this spawn point**.
+pub const MOB_TIME_NEVER: i32 = -1;
+
+/// How long after a mob dies its spawn point refills, from the WZ's `mobTime`.
+///
+/// Three cases, and conflating the first two empties a map after one pass:
+///
+/// | `mobTime` | meaning |
+/// |---|---|
+/// | `> 0` | that many **seconds**, from the WZ |
+/// | `0` | no `mobTime` node - the field's ordinary rate, [`DEFAULT_RESPAWN_MS`] |
+/// | `-1` | never. One spawn point in this client says so |
+pub fn respawn_delay_ms(mob_time_s: i32) -> Option<u64> {
+    match mob_time_s {
+        MOB_TIME_NEVER => None,
+        0 => Some(DEFAULT_RESPAWN_MS),
+        s if s > 0 => Some(s as u64 * 1_000),
+        _ => Some(DEFAULT_RESPAWN_MS),
     }
 }
 
@@ -911,6 +957,7 @@ impl Default for Config {
             portal_index: HashMap::new(),
             npcs: HashMap::new(),
             mobs: HashMap::new(),
+            mob_respawn_s: HashMap::new(),
             mob_limit: None,
             shop_rows: None,
             send_shop: false,
@@ -1186,7 +1233,7 @@ mod spawn_tests {
         // a row rather than letting it reach the wire.
         assert!(t.values().all(|m| m.max_hp > 0));
 
-        let fields = Config::load_mobs(mobs, &t);
+        let (fields, _) = Config::load_mobs(mobs, &t);
         for (map, want) in [(30u32, 30u64), (40, 45)] {
             let list = &fields[&map];
             assert!(!list.is_empty());
@@ -1200,7 +1247,7 @@ mod spawn_tests {
         // And a template the table does not know still gets a non-zero fallback rather than
         // a division by zero.
         let empty = HashMap::new();
-        let bare = Config::load_mobs(mobs, &empty);
+        let (bare, _) = Config::load_mobs(mobs, &empty);
         assert!(bare[&30].iter().all(|m| m.hp == DEFAULT_MOB_HP));
         assert_ne!(DEFAULT_MOB_HP, 0);
     }

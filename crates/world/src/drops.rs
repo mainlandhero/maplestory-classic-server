@@ -143,12 +143,13 @@ pub const FIRST_DROP_OBJECT_ID: u32 = 20_000_000;
 /// into `drop+0x158` themselves. So the client will hold a drop forever, and if the server
 /// wants one gone it sends `0x046F` itself.
 ///
-/// That makes the number policy rather than protocol. Three minutes is long enough that a
-/// player who drops something and walks a screen away can come back for it, and short enough
-/// that a forgotten item is not still lying there in the next session. Nothing corroborates
-/// it. It is one constant to change, and [`DropTable::with_lifetime`] takes it as a parameter
-/// so a test does not have to wait.
-pub const DROP_LIFETIME_MS: u64 = 180_000;
+/// That makes the number policy rather than protocol - and **the owner set it to two minutes**
+/// after watching drops on screen: *"should have a disappear timer of 2 minutes if not
+/// picked up within that time period"*. It was three, which was a guess with nothing behind
+/// it. This one is a decision by the person who has seen both this server and the real one.
+///
+/// [`DropTable::with_lifetime`] takes it as a parameter so a test does not have to wait.
+pub const DROP_LIFETIME_MS: u64 = 120_000;
 
 /// How long a drop belongs to the character who dropped it. **Fifteen seconds, and it is [I].**
 ///
@@ -245,6 +246,17 @@ pub fn drop_refused(m: &net::inventory::InventoryMove, why: &str) -> Vec<Reply> 
 // -------------------------------------------------------------------------------------
 // What the server remembers about one item on the floor
 // -------------------------------------------------------------------------------------
+
+/// How far apart to place two drops from the same kill, in pixels.
+///
+/// **The owner, with a screenshot of the live server:** *"the items that drop should also be
+/// slightly staggered from each other (if it drops 3 items, it should drop like the
+/// screenshot from live server)"*. Three items on exactly the same pixel render as one.
+///
+/// Policy, `[I]` - the real server's spacing was not measured, only seen. Twenty pixels is
+/// a little under an item icon's width, so a row of them overlaps slightly the way the
+/// screenshot does rather than lining up like a fence.
+pub const DROP_STAGGER_PX: i16 = 20;
 
 /// One item lying on a map's floor.
 ///

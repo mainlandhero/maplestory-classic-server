@@ -125,14 +125,22 @@ pub const MOB_TEMP_STAT_MASK_LEN: usize = 20;
 /// So the snails drew, animated and walked around perfectly while having no hit box at all,
 /// which is exactly what the owner saw.
 ///
-/// **It does NOT explain the other direction, and that claim was retracted the same day.**
-/// The owner also took no touch damage, and this was written up as the second symptom of one
-/// cause. It is not: the mob-to-player damage path reads the **player's** body rect
-/// (`FUN_141c69f40` -> the user's own `[vtbl+0x10]`) and gets its attack rectangles from the
-/// mob's **attack template**, never from the mob's body rect - none of the ten functions on
-/// that path calls `FUN_141c57120`, `FUN_141c56e00` or `FUN_141caafe0`. On top of that a
-/// snail has no `attack` node at all (`0000001.img` is `info, move, stand, hit1, die1`), so
-/// that machinery is inert for it whatever this field holds. `research/touch-damage.md`.
+/// **It explains the other direction too - CONFIRMED on screen 2026-08-20.** The owner, after the
+/// fix: *"The mob killings work, I'm taking damage, and the mob is also taking damage."* One
+/// field, both directions.
+///
+/// That sentence also un-does a retraction, and the retraction is the more useful story. A
+/// static pass reported that the mob-to-player path reads the **player's** body rect and
+/// takes its rectangles from the mob's **attack template**, and that a snail has no `attack`
+/// node at all - so, it concluded, this field could not be involved. On that basis the
+/// two-direction claim was withdrawn. **The measurement says it was right the first time.**
+///
+/// What that pass had actually found was the *attack-node* path, used by mobs with attack
+/// animations. It said in its own words that a **body**/touch-damage path was **not found**,
+/// and marked the finding `[D]` with a named blind spot. "Not found" was then read as "not
+/// there" - which is the same mistake this file warns about everywhere else, just pointing
+/// the other way. `research/touch-damage.md` is still the best map of the attack-node path;
+/// its negative is what did not hold.
 ///
 /// Exactly `100` matters, not "non-zero": any other value takes the adjustment branch and
 /// resizes the box. There is a runtime counterpart, `0x041C`, if a mob ever needs resizing.

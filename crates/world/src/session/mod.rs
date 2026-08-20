@@ -174,6 +174,18 @@ pub struct Session {
     /// was. It exists for one reason: when a mob dies, its drop table is keyed by template,
     /// and by then the only thing the attack packet gives us is the object id.
     mob_template: std::collections::HashMap<u32, u32>,
+    /// Object id -> where the client last said that mob was, from `0x02FF`.
+    ///
+    /// **The client owns mob movement** - we grant control and it reports back - so this is
+    /// the only source of a mob's live position. It is what makes a drop fall where the mob
+    /// died rather than at the player's feet, which is what the owner asked for after seeing the
+    /// difference on screen.
+    mob_position: std::collections::HashMap<u32, (i16, i16)>,
+    /// Spawn points waiting to refill: `(when, map, objectId)`, from the WZ's `mobTime`.
+    ///
+    /// **The server respawns mobs; the client never does.** Without this a map empties
+    /// permanently after one pass, which is exactly what the owner hit.
+    dead_mobs: Vec<(u64, u32, u32)>,
     /// The NPC whose shop is open, and the rows **exactly as they went on the wire**.
     ///
     /// The client hands back only a `row_key`, so the rows have to be kept to turn one back
@@ -319,6 +331,8 @@ impl Session {
             clock_ms: 0,
             mob_hp: std::collections::HashMap::new(),
             mob_template: std::collections::HashMap::new(),
+            mob_position: std::collections::HashMap::new(),
+            dead_mobs: Vec::new(),
             open_shop: None,
             drops: crate::drops::DropTable::new(),
             last_position: None,
@@ -364,6 +378,10 @@ impl Session {
         // drop table rather than the switch.
         let here = self.claimed_character().map(|c| c.map_id).unwrap_or(0);
         out.extend(self.drops.sweep(here, now_ms));
+        // Refill spawn points whose WZ timer has come due. Before the chatter switch for the
+        // same reason the sweep is: `chatter_off` turns off NPC idle lines and nothing else,
+        // and a run with it set should not also stop the world respawning.
+        out.extend(self.respawn_due_mobs(now_ms));
         if self.config.chatter_off {
             return out;
         }

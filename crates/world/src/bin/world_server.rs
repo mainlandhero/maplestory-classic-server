@@ -196,7 +196,9 @@ fn main() -> ExitCode {
             mob_templates_path.display()
         );
     }
-    config.mobs = world::config::Config::load_mobs(&mobs_path, &mob_templates);
+    let (mob_fields, mob_respawn) = world::config::Config::load_mobs(&mobs_path, &mob_templates);
+    config.mobs = mob_fields;
+    config.mob_respawn_s = mob_respawn;
     if config.mobs.is_empty() {
         eprintln!(
             "maplecw-world: no mobs loaded from {} - maps will have no monsters. Regenerate with: python tools/dump_portals.py",

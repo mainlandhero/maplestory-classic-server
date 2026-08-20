@@ -73,6 +73,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         // a greeting.
         0x00C0 => "CLIENT_AUTH_FAILURE_REPORT (mode, then a Passport error code)",
         0x0070 => "CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version)",
+        0x032C => "CLIENT_DROP_PICK_UP (u32 dropObjectId at body offset 13; MEASURED 2026-08-20)",
         0x00D9 => "CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head)",
         0x0071 => "CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours)",
         0x0079 => "CLIENT_LOAD_TIMING_REPORT",

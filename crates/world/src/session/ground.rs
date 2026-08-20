@@ -169,6 +169,34 @@ impl Session {
         }];
 
         if let Some(drop) = outcome.taken() {
+            // **Mesos are not an item and must never reach a bag.** The first real pick-up,
+            // 2026-08-20, was a meso drop, and this code put `item id 0, quantity 0` through
+            // `add_item`: nothing was placed, the player got nothing, and the client latched
+            // and would not swing again. Whether the missing credit is what latched it is
+            // being established separately - but crediting them is right regardless.
+            if drop.is_meso() {
+                let amount = drop.meso;
+                let credited = self.store.add_mesos(chr.id, i64::from(amount));
+                out.extend(outcome.replies());
+                match credited {
+                    Ok(total) => {
+                        out.push(Reply {
+                            opcode: net::stats::STAT_CHANGED,
+                            body: net::stats::StatChange {
+                                meso: Some(u64::from(total)),
+                                ..Default::default()
+                            }
+                            .build(),
+                            what: format!(
+                                "StatChanged: +{amount} mesos -> {total}. Bit 18, and the ONLY                                  way this client is ever told a meso balance - the SetField                                  stat block has no meso field at all."
+                            ),
+                        });
+                    }
+                    Err(e) => out.extend(self.notice(format!("Could not credit mesos: {e}"))),
+                }
+                return out;
+            }
+
             let max_stack = self
                 .config
                 .shops

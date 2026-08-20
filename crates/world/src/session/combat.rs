@@ -43,6 +43,15 @@ impl Session {
         let Some(req) = net::mobmove::parse_mob_move(payload) else {
             return Vec::new();
         };
+        // Remember where it says the mob is. This is the only source of a live mob position
+        // - the client runs the movement and we only acknowledge it - and it is what lets a
+        // drop fall where the mob died instead of at the player's feet.
+        //
+        // `x`/`y` are the path's START, so this is at most one report stale - about half a
+        // second, which is a few pixels for a snail. The path's END would be exact and needs
+        // the element walk; this is the cheap 95% and it is the difference between a drop at
+        // the mob and a drop across the platform.
+        self.mob_position.insert(req.object_id, (req.x, req.y));
         vec![Reply {
             opcode: net::mobmove::MOB_CTRL_ACK,
             body: net::mobmove::mob_ctrl_ack(req.object_id, req.move_id, false),
@@ -98,7 +107,8 @@ impl Session {
                 self.mob_hp.remove(&target.object_id);
                 let template = self.mob_template.remove(&target.object_id).unwrap_or(0);
                 if let Some((id, map)) = killer {
-                    out.extend(self.drops_from_kill(template, id, map));
+                    self.schedule_respawn(map, target.object_id);
+                    out.extend(self.drops_from_kill(template, target.object_id, id, map));
                     let worth = self.config.mob_exp.get(&template).copied().unwrap_or(0);
                     out.extend(self.award_experience(u64::from(worth), "a kill"));
                     let _ = id;
@@ -149,11 +159,22 @@ impl Session {
     ///
     /// The player's pick-up request opcode is still unknown - see `crate::drops`. Items land
     /// and are visible; collecting them needs one run to name the opcode.
-    pub(super) fn drops_from_kill(&mut self, template: u32, killer: u32, map: u32) -> Vec<Reply> {
+    pub(super) fn drops_from_kill(
+        &mut self,
+        template: u32,
+        object_id: u32,
+        killer: u32,
+        map: u32,
+    ) -> Vec<Reply> {
         if template == 0 {
             return Vec::new(); // an object id we never spawned; nothing to look up
         }
-        let Some((x, y)) = self.last_position else {
+        // **Where the mob was, not where the player is.** The owner, after seeing it on screen:
+        // *"they should drop from the killed mob's position, not from the player character
+        // position"*. `mob_position` is fed by the client's own movement reports; the
+        // player's position is the fallback for a mob that never moved.
+        let at = self.mob_position.remove(&object_id).or(self.last_position);
+        let Some((x, y)) = at else {
             return self.notice(
                 "A mob died with drops to give, but the server does not know where you are                  standing, so it dropped nothing rather than putting it out of reach."
                     .to_string(),
@@ -164,7 +185,14 @@ impl Session {
             self.config.drops.roll(template, &mut || rng.next())
         };
         let mut out = Vec::new();
-        for r in rolled {
+        // **Stagger them.** The owner, with a screenshot of the live server: *"the items that
+        // drop should also be slightly staggered from each other"*. Three items landing on
+        // exactly the same pixel render as one. Centred on the mob so a single drop is
+        // exactly where it died, and spread outward from there.
+        let n = rolled.len() as i16;
+        for (i, r) in rolled.into_iter().enumerate() {
+            let offset = (i as i16 - (n - 1) / 2) * crate::drops::DROP_STAGGER_PX;
+            let x = x.saturating_add(offset);
             let (item, inv_type, meso) = if r.is_mesos() {
                 // A placeholder item: `LiveDrop::is_meso` gates every read of it.
                 (store::Item::bundle(0, 0), store::InventoryType::Etc, r.quantity)
@@ -262,6 +290,81 @@ impl Session {
                 chr.name, chr.level, a.ap
             )));
         }
+        out
+    }
+
+
+    /// A mob died: book its spawn point to refill.
+    ///
+    /// **The server respawns mobs and the client never does.** The owner, after a run: *"The mobs
+    /// that I kill also do not respawn."* Before this, a map emptied permanently after one
+    /// pass, because the only thing that ever sent a `MobEnterField` was field entry.
+    ///
+    /// The delay is the WZ's own `mobTime` for that spawn point - see
+    /// [`crate::config::respawn_delay_ms`] for the three cases and why `0` must not be read
+    /// as "never".
+    pub(super) fn schedule_respawn(&mut self, map: u32, object_id: u32) {
+        let mob_time = self.config.mob_respawn_s.get(&(map, object_id)).copied().unwrap_or(0);
+        let Some(delay) = crate::config::respawn_delay_ms(mob_time) else {
+            return; // the WZ says this spawn point never refills
+        };
+        self.dead_mobs.push((self.clock_ms.saturating_add(delay), map, object_id));
+    }
+
+    /// Refill every spawn point whose timer has come due. Called from [`Session::tick`].
+    ///
+    /// Sends the same pair a field entry does - `MobEnterField` then `MobChangeController` -
+    /// because a mob the client has not been given control of is a picture that never moves,
+    /// and the order matters (`research/mob-behaviour.md` §3).
+    ///
+    /// A respawned mob is at **full HP and its spawn position**, not where it died. That is
+    /// what a spawn point is.
+    pub(super) fn respawn_due_mobs(&mut self, now_ms: u64) -> Vec<Reply> {
+        if self.dead_mobs.is_empty() {
+            return Vec::new();
+        }
+        let Some(here) = self.claimed_character().map(|c| c.map_id) else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut still_dead = Vec::with_capacity(self.dead_mobs.len());
+        for (due, map, object_id) in std::mem::take(&mut self.dead_mobs) {
+            if now_ms < due {
+                still_dead.push((due, map, object_id));
+                continue;
+            }
+            // A spawn point on a map the player has left is simply forgotten. The pool is
+            // rebuilt from scratch on every field entry, so it will be full again when they
+            // come back - re-sending it here would address a pool that no longer exists.
+            if map != here {
+                continue;
+            }
+            let Some(mob) = self
+                .config
+                .mobs
+                .get(&map)
+                .and_then(|list| list.iter().find(|m| m.object_id == object_id))
+            else {
+                continue;
+            };
+            self.mob_hp.insert(mob.object_id, mob.hp);
+            self.mob_template.insert(mob.object_id, mob.template_id);
+            out.push(Reply {
+                opcode: net::mob::MOB_ENTER_FIELD,
+                body: net::mob::mob_enter_field(mob),
+                what: format!(
+                    "MobEnterField: RESPAWN of template {} at ({}, {}), object id {}, hp {}.",
+                    mob.template_id, mob.x, mob.y, mob.object_id, mob.hp
+                ),
+            });
+            out.push(Reply {
+                opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                body: net::mobmove::mob_change_controller(mob, net::mobmove::CONTROL_NORMAL),
+                what: format!(
+                    "MobChangeController: object id {} to this client after a respawn.",
+                    mob.object_id
+                ),
+            });
+        }
+        self.dead_mobs = still_dead;
         out
     }
 }

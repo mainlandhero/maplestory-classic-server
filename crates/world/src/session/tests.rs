@@ -802,7 +802,7 @@ fn a_kill_drops_the_mobs_own_table_and_the_global_one() {
     // A drop needs somewhere to land; without it the server declines rather than guessing.
     s.last_position = Some((520, 395));
 
-    let out = s.drops_from_kill(2, 204, net::opcode::START_MAP_ID);
+    let out = s.drops_from_kill(2, 2000, 204, net::opcode::START_MAP_ID);
 
     assert_eq!(out.len(), 3, "mesos, the shell, and the event item: {out:?}");
     assert!(
@@ -810,6 +810,89 @@ fn a_kill_drops_the_mobs_own_table_and_the_global_one() {
         "a mob drop sends ONLY 0x046E - a 0x0070 would refuse an inventory request the          player never made"
     );
     assert_eq!(s.drops.len(), 3, "and all three are on the floor");
+}
+
+/// **Drops fall where the mob died, not at the player's feet**, and several are staggered.
+///
+/// The owner, with a screenshot of the live server: *"they should drop from the killed mob's
+/// position, not from the player character position"* and *"the items that drop should also
+/// be slightly staggered from each other"*.
+#[test]
+fn drops_land_on_the_mob_and_are_staggered_apart() {
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse(
+        "2 | 4000001 | 100 | 1 | 1 | 9 | Shell
+         2 | 2000000 | 100 | 1 | 1 | 4 | Potion
+         2 | 1302000 | 100 | 1 | 1 | 3 | Sword
+",
+    );
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    s.last_position = Some((1000, 395));         // the player, far away
+    s.mob_position.insert(2000, (500, 395));     // the mob, where it died
+
+    let out = s.drops_from_kill(2, 2000, 204, net::opcode::START_MAP_ID);
+    assert_eq!(out.len(), 3);
+
+    let xs: Vec<i16> = s.drops.on_field(net::opcode::START_MAP_ID).map(|d| d.x).collect();
+    assert!(
+        xs.iter().all(|x| (*x - 500).abs() <= 2 * crate::drops::DROP_STAGGER_PX),
+        "every drop should be near the MOB at 500, not the player at 1000: {xs:?}"
+    );
+    let mut sorted = xs.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), 3, "three drops must not stack on one pixel: {xs:?}");
+}
+
+/// A mob that never moved has no reported position, so its drop falls at the player - the
+/// old behaviour, kept as a fallback rather than a refusal.
+#[test]
+fn a_mob_that_never_moved_drops_at_the_player() {
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse("2 | 4000001 | 100 | 1 | 1 | 9 | Shell
+");
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    s.last_position = Some((777, 395));
+
+    s.drops_from_kill(2, 2000, 204, net::opcode::START_MAP_ID);
+    let d = s.drops.on_field(net::opcode::START_MAP_ID).next().unwrap();
+    assert_eq!(d.x, 777);
+}
+
+/// **A killed mob comes back.** The owner: *"The mobs that I kill also do not respawn."*
+///
+/// The delay is the WZ's own `mobTime`; a spawn point with none uses the field rate, and
+/// reading that `0` as "never" would empty a map after one pass.
+#[test]
+fn a_dead_mob_respawns_when_its_timer_is_due() {
+    let (mut s, _, _) = gm_session();
+    // The gm_session config has no mobs, so give it one spawn point to refill.
+    let mob = net::mob::FieldMob::new(2000, 2, 500, 395, 1, 30);
+    let mut mobs = std::collections::HashMap::new();
+    mobs.insert(net::opcode::START_MAP_ID, vec![mob]);
+    s.config = Arc::new(Config { mobs, ..(*s.config).clone() });
+
+    s.clock_ms = 1_000;
+    s.schedule_respawn(net::opcode::START_MAP_ID, 2000);
+
+    // Not yet.
+    assert!(s.respawn_due_mobs(1_000 + crate::config::DEFAULT_RESPAWN_MS - 1).is_empty());
+    // And now.
+    let out = s.respawn_due_mobs(1_000 + crate::config::DEFAULT_RESPAWN_MS);
+    assert_eq!(out.len(), 2, "MobEnterField then MobChangeController: {out:?}");
+    assert_eq!(out[0].opcode, net::mob::MOB_ENTER_FIELD);
+    assert_eq!(out[1].opcode, net::mobmove::MOB_CHANGE_CONTROLLER);
+    assert_eq!(s.mob_hp.get(&2000), Some(&30), "and it is alive again at full HP");
+    // Once, not forever.
+    assert!(s.respawn_due_mobs(9_999_999).is_empty());
+}
+
+/// `mobTime` of -1 means the spawn point never refills, and one in this client says so.
+#[test]
+fn a_spawn_point_marked_never_is_not_rescheduled() {
+    assert_eq!(crate::config::respawn_delay_ms(crate::config::MOB_TIME_NEVER), None);
+    assert_eq!(crate::config::respawn_delay_ms(0), Some(crate::config::DEFAULT_RESPAWN_MS));
+    assert_eq!(crate::config::respawn_delay_ms(30), Some(30_000));
 }
 
 /// A mob with no table of its own still rolls the **global** table. That is the whole point
@@ -822,7 +905,7 @@ fn an_unknown_mob_still_rolls_the_global_table() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = Some((520, 395));
 
-    assert_eq!(s.drops_from_kill(999_999, 204, 1).len(), 1);
+    assert_eq!(s.drops_from_kill(999_999, 2000, 204, 1).len(), 1);
 }
 
 /// **With no known position a kill drops nothing, and says so.**
@@ -838,7 +921,7 @@ fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
     s.config = Arc::new(Config { drops, ..(*s.config).clone() });
     s.last_position = None;
 
-    let out = s.drops_from_kill(2, 204, 1);
+    let out = s.drops_from_kill(2, 2000, 204, 1);
     assert!(!out.is_empty(), "it must answer");
     assert!(out.iter().all(|r| r.opcode != net::drops::DROP_ENTER_FIELD), "and drop nothing");
     assert_eq!(s.drops.len(), 0);
@@ -849,7 +932,7 @@ fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
 fn a_kill_with_no_table_drops_nothing_quietly() {
     let (mut s, _, _) = gm_session();
     s.last_position = Some((1, 1));
-    assert!(s.drops_from_kill(2, 204, 1).is_empty());
+    assert!(s.drops_from_kill(2, 2000, 204, 1).is_empty());
 }
 
 /// With the shop off, a shopkeeper **talks** instead of ending the session.
