@@ -76,6 +76,19 @@ answers here both came from searching a known list — one looked for the wrong 
 (bit tests, when the mask was a byte array), one for the wrong *set* (five decoder
 addresses, when there are seven). Both returned clean, confident numbers.
 
+**Two scans agreeing is not corroboration when they share a blind spot.** On 2026-08-20 a
+mob-range write-scan and a whole-image write-scan both reported that nothing sets
+`mob+0x42c`. They agreed, and they were wrong the same way: a `[reg+disp]` write-scan cannot
+see a store through a pointer that was `lea`'d and handed off, and the setter does exactly
+that - `141cb4647 lea rdx,[r15+0x42c]`. Dropping the `--write` filter found it in one call.
+Widening the *input* to an instrument with a structural blind spot only makes the blind spot
+bigger, so re-running the same tool is not a second opinion; **changing the question is.**
+
+The same day `tools/callers.py` was found to scan for `call` and nothing else. Of 120 981
+functions, **27 909** would have come back "zero callers" while being reached by a tail `jmp`
+(6 927) or a pointer in data (21 889) - and one of them had already been written up as
+"zero direct callers, therefore virtual", which was wrong twice over.
+
 ## The scratchpad shadows the real tools
 
 The session scratchpad has accumulated **copies of the repo's own instruments** - `reads.py`,

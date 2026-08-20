@@ -141,7 +141,18 @@ static HIT: AtomicBool = AtomicBool::new(false);
 /// the slot: `watch@141b2a280:rdx=0` has to stay armed for the whole session or the login
 /// dialog blocks the button that gets us to character select, and every *other* question
 /// happens after that point. Rather than choose, watch several.
-const WATCH_SLOTS: usize = 4;
+///
+/// **Four was not enough either, for the same reason. Raised to six on 2026-08-20.** Two of
+/// the four are permanently spoken for - `1415db360:ret` and `141b2a280:rdx=0` keep the
+/// client alive - and a third should always be `140304100:hits=200`, the positive control
+/// that separates "the client never called this" from "the hook never armed". That left
+/// **one** slot for the actual question, so the mob-targeting run, which needs a cause and
+/// its effect read side by side, could only be armed by dropping the control.
+///
+/// Trading away the positive control to fit a measurement is the exact trade this project
+/// has lost before. A slot costs an `int3` and a single-step re-arm per hit, which is
+/// cheap; a run that cannot tell a silent negative from an unarmed watch costs a launch.
+const WATCH_SLOTS: usize = 6;
 /// The most stack arguments `:args=` will dump. Sized to cover the deepest argument list
 /// anyone has needed to read here - `FUN_141d31b20` takes seventeen - with room, but not so
 /// much that a typo walks somebody else's frame.
@@ -1368,7 +1379,7 @@ mod tests {
     ///   "the client never called this" and "the hook never armed" back into the same
     ///   observation, which is the distinction the control exists to make.
     #[test]
-    fn every_launcher_probe_string_arms_all_four_slots() {
+    fn every_launcher_probe_string_arms_every_slot_it_names() {
         for text in [
             // the bare default, no -SetFieldProbe
             "watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8",
@@ -1376,8 +1387,11 @@ mod tests {
             "watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200",
             // -SetFieldProbe -InventorySlots N
             "watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200",
-            // -SetFieldProbe -MobTargets
-            "watch@1415db360:ret,141b2a280:rdx=0,141d31b20:args=17:hits=8,140304100:hits=200",
+            // -SetFieldProbe -MobTargets: five targets, which is why WATCH_SLOTS is six.
+            // Kept on ONE line deliberately. Written with a `\` continuation it silently
+            // retained the leading whitespace of the next line and produced a target that
+            // parses and can never resolve - caught only by the whitespace assertion below.
+            "watch@1415db360:ret,141b2a280:rdx=0,141d32675:peek=0xa88:hits=40,141d3267c:peek=0x42c:hits=40,140304100:hits=200",
         ] {
             let rest = text.strip_prefix("watch@").expect("every string is a watch");
             let specs: Vec<&str> = rest.split(',').filter(|s| !s.trim().is_empty()).collect();
@@ -1389,6 +1403,14 @@ mod tests {
                 super::WATCH_SLOTS
             );
             for spec in specs {
+                // No whitespace anywhere. `parse_watch_spec` only trims, so a spec carrying
+                // an embedded space still "parses" and then fails to resolve at launch -
+                // and the one string here written with a Rust `\` line continuation is
+                // exactly where that would creep in.
+                assert!(
+                    !spec.contains(char::is_whitespace),
+                    "{spec:?} in {text:?} carries whitespace; it will not resolve"
+                );
                 assert!(parse_watch_spec(spec).is_ok(), "{spec:?} in {text:?} must parse");
             }
         }
@@ -1403,8 +1425,14 @@ mod tests {
     /// `CLAUDE.md` that was structurally unable to report a failure.
     #[test]
     fn the_four_slot_check_can_fail() {
-        let five = "watch@1415db360:ret,141b2a280:rdx=0,141d31b20:args=17,140304100,141c532ab";
-        let rest = five.strip_prefix("watch@").expect("a watch");
+        // One target per slot, plus one. Built from WATCH_SLOTS rather than written out,
+        // so raising the slot count cannot quietly turn this control into a no-op - which
+        // is exactly what happened when it went from four to six.
+        let mut over_full = String::from("watch@1415db360:ret");
+        for _ in 0..super::WATCH_SLOTS {
+            over_full.push_str(",140304100:hits=1");
+        }
+        let rest = over_full.strip_prefix("watch@").expect("a watch");
         let specs: Vec<&str> = rest.split(',').filter(|s| !s.trim().is_empty()).collect();
         assert!(
             specs.len() > super::WATCH_SLOTS,

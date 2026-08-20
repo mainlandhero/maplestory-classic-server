@@ -26,8 +26,9 @@ Companion listings written beside this file:
 | **but the premise of this task is wrong, and I am saying so rather than confirming it** | **arm C does not switch those six gates on. It switches a seventh one OFF.** Arm C's argument set is *strictly more zeroed* than arm A's: identical everywhere except **arg6**, which arm A may pass non-zero and arm C always passes as 0. Gates 3, 5, 11, 14, 15 and 16 are off under both arms; gate 4 is off under arm C and was the only argument-driven gate that was live under arm A. §2 |
 | **the gate that rejects the snail was never in the table** | `mob-target-gates.md` §4 enumerates 17 gates and **not one of them is geometric**. The collector's actual accept for a plain swing is at **`141d327cc`**, guarded by `141d327c6 test r14b,r14b / je` - "did any of this mob's rectangles intersect any of the attack rectangles". §3 classified that branch as *"inside a nested container-growth block, plus two list-walk exits"*. It is the hit test. §3, §4 |
 | **and it fails silently on an all-zero rectangle** | the per-rect filter is `141d326ae cmp [rdi],eax / jge` (left >= right) and `141d326ba` (top >= bottom). A **zero** rect satisfies both, so it is **skipped, not rejected** - `r14b` stays 0, the loop finishes, and the mob is dropped with all 17 gates passed. §4.2 |
-| **the mob's own rectangle comes from `mob+0x42c`, and the constructor leaves it zero** | `[mobvtbl+0x10] = FUN_141c56e00` -> `[mobvtbl+0x68]` (the stance) -> `FUN_141c57120`, which **bails at `141c573d7` and writes an all-zero 16-byte rect** when `mob+0x42c` is degenerate or `mob+0x98c != 0`. `mob+0x42c` is zeroed by the mob constructor at `141c4d427` and the only 16-byte setter in the mob code range is an accessor thunk with **zero call sites**. §5 |
-| **so `move_action` is back, by a different door** | `mob-target-gates.md` §2 proves `move_action` "round-trips into the animation state and **nothing else**" and concludes it is **exonerated**. That is right about gates 2 and 8 and wrong as a general clearance: the animation state is the input to `[mobvtbl+0x68]`, which is the input to the rect, which is the input to the only geometric gate. §5.3 |
+| **the mob's own rectangle comes from `mob+0x42c`, and the constructor leaves it zero** | `[mobvtbl+0x10] = FUN_141c56e00` -> `[mobvtbl+0x68]` (the stance) -> `FUN_141c57120`, which **bails at `141c573d7` and writes an all-zero 16-byte rect** when `mob+0x42c` is degenerate or `mob+0x98c != 0`. `mob+0x42c` is zeroed by the mob constructor at `141c4d427`, and **every direct write to it anywhere in the image is a zeroing write**. §5 |
+| **and the real setter is gated on `mob+0xa88`, which the constructor also leaves null** | the rect is written by `FUN_141cb4600` through a `lea`'d pointer at `141cb4647` - invisible to a `[reg+disp]` write-scan, which is why an earlier draft of §5.3 stated the opposite and is now **retracted in place**. It returns writing nothing when `mob+0xa88` is null (`141cb4645`), and `FUN_141c57120` independently bails on the same field (`141c57185`). **Two gates, one field.** §5.3, §5.5 |
+| **so `move_action` is back, by a different door** | `mob-target-gates.md` §2 proves `move_action` "round-trips into the animation state and **nothing else**" and concludes it is **exonerated**. That is right about gates 2 and 8 and wrong as a general clearance: the animation state is the input to `[mobvtbl+0x68]`, which is the input to the rect, which is the input to the only geometric gate. §5.4 |
 | **a second, independent candidate that arm A would have caught** | arm A checks its attack rect for `left < right` and `top < bottom` at `1428c2a9d` / `1428c2abf` **before** calling the collector. **Arm C performs no such check.** A degenerate *attack* rect rejects every mob at `141d32713`/`141d32715` with every mob rect perfectly healthy. §6 |
 | **what is now known not to be the problem** | argument 4 is 15 and the loop ran (measured). The early-out is dead. Gates 3, 4, 5, 6, 11, 12, 14, 15, 16, 17 are all argument-off under arm C. §2, §3 |
 
@@ -290,7 +291,7 @@ FUN_141c57120:
 **The bail path zeroes the output rect.** It does not signal failure; it hands back a rect that
 `141d326ae` will skip. That is the silence. [L]
 
-### 5.3 `mob+0x42c` starts zero, and nothing in the mob code sets it
+### 5.3 `mob+0x42c` starts zero - and where the setter actually is
 
 `tools/fieldrefs.py`, **positive control run first and reproduced** (`+0x2f4 --write` over
 `0x141c40000..0x141d60000` gives exactly `141c4d261`, `141c4e6ee`, `141cb7ef3`, the three the
@@ -322,12 +323,23 @@ stores, and it found none) or they are reached indirectly. **`callers.py`'s cont
 this session** (96 sites / 15 functions for `0x1402fa9a0`, 43 in `0x140304b20`, first
 `0x140304e49`, last `0x1403091e7`), so the zero is the tool speaking, not failing. [L]
 
-**What this does and does not establish.** It establishes that *within the mob code range*
-nothing gives `mob+0x42c` a real rectangle. It does **not** establish that nothing anywhere
-does - a whole-image `--write` sweep was started and **had not finished when this was written**,
-and `mob-target-gates.md` §8 is explicit that an unfinished sweep is not a negative result. So
-this is a strong lead, not a closed one. That is exactly why §7 ranks a *measurement* of
-`mob+0x42c` first rather than asserting it is zero. [I]
+**RETRACTED, and this is the interesting part.** An earlier draft of this section read
+"nothing in the mob code range sets `mob+0x42c`". **That was wrong**, and it was wrong in the
+exact way this file had already warned about two sections earlier: **a `[reg+disp]` write-scan
+cannot see a store made through a pointer the code `lea`'d and handed to a callee.** Running the
+scan *without* `--write` shows three such handoffs, and one of them is the setter:
+
+```
+python tools/fieldrefs.py 0x42c --lo 0x141c40000 --hi 0x141d60000     # reads, writes AND lea
+  141c5714a  lea rdx, [rcx + 0x42c]   in 0x141c57120   <- a READ use (the degenerate test)
+  141ca181d  lea rcx, [r15 + 0x42c]   in 0x141ca16c0   <- a READ use, same shape
+  141cb4647  lea rdx, [r15 + 0x42c]   in 0x141cb4600   <- THE SETTER
+```
+
+So the correct statement is: **every *direct* write to `mob+0x42c` anywhere in the image is a
+zeroing write**, and the single real setter reaches it indirectly. §5.5 follows it. The lesson
+is the one `CLAUDE.md` states generally - I wrote the caveat, then drew a conclusion that
+ignored my own caveat, and only the follow-up scan caught it. [L]
 
 ### 5.4 What this does to `move_action`
 
@@ -342,6 +354,40 @@ is not one: `[mobvtbl+0x68]` reads the animation state, `FUN_141c57120` turns it
 rect, and the body rect is the input to the only geometric gate in the collector. **The
 animation state is not a dead end; it is the far end of the chain that ends at `141d327c6`.**
 [D]
+
+### 5.5 The chain, complete
+
+With the setter found, the whole path from packet to rejection is readable end to end: [L]
+
+```
+FUN_141cd1620   141cd1950  mov [r14+0xa88], rax     ; the ONLY setter of mob+0xa88 in mob code.
+                                                    ; the ctor leaves it NULL (141c4ddbb, r14=0)
+                                        |
+FUN_141c68d80   141c6943f/69546  clear mob+0x42c..0x43c
+                141c69873/69ada  call FUN_141cb4600 ; clear, then recompute
+                                        |
+FUN_141cb4600   141cb463b  mov rcx,[r15+0xa88]
+                141cb4645  je  0x141cb4680          ; <<< NULL -> RETURN, WRITING NOTHING
+                141cb4647  lea rdx,[r15+0x42c]
+                141cb4654  call 0x140f82820         ; the body rect is written HERE
+                                        |
+FUN_141c57120   141c5715f/5716b  mob+0x42c degenerate -> bail 141c573d7 -> ALL-ZERO rect
+                141c57178        mob+0x98c != 0     -> bail 141c573d7 -> ALL-ZERO rect
+                141c57185        mob+0xa88 == 0     -> bail 141c5721b
+                                        |
+collector       141d326ae  left >= right -> SKIP the rect (not reject - skip)
+                141d327c6  r14b == 0     -> REJECT THE MOB
+```
+
+**`mob+0xa88` gates the rect in two independent places** - the setter at `141cb4645` and the
+on-demand path at `141c57185` - which is why §7 now watches it rather than only its effect.
+
+Writers of `mob+0xa88` in the mob code range, `fieldrefs.py` control already reproduced:
+**two**, the constructor's null at `141c4ddbb` and `141cd1950` in `FUN_141cd1620`. [L]
+
+*Not chased, and flagged rather than guessed:* what makes `FUN_141cd1620` run, and whether our
+`0x03C6` reaches it. That is the next question if watch 1 comes back null, and it is a question
+about the spawn path rather than the attack path. [I]
 
 ---
 
@@ -381,18 +427,27 @@ Both proposed watches sit **inside the collector's per-mob body**, at addresses 
 just been loaded with the mob (`141d3265c mov rcx,[rbx+8]`, re-loaded at `141d32671`), so they
 fire only while a swing is being processed and `:peek` resolves against the mob.
 
+**These two supersede an earlier pair** (`peek=0x42c` + `peek=0x434`, the rect's two halves).
+§5.5 traced the chain one link further back, and reading the *cause* alongside the *effect*
+separates three outcomes where reading both halves of the rect separated only two.
+
 | rank | watch | reads | fires |
 |---:|---|---|---|
-| **1** | **`141d32675:peek=0x42c:hits=40`** | `[mob+0x42c]` - the cached body rect's **left,top** as one qword | once per mob per swing |
-| **2** | **`141d3267c:peek=0x434:hits=40`** | `[mob+0x434]` - the same rect's **right,bottom** | once per mob per swing |
+| **1** | **`141d32675:peek=0xa88:hits=40`** | `[mob+0xa88]` - **the animation object**, the root of the chain. Null is the constructor's value | once per mob per swing |
+| **2** | **`141d3267c:peek=0x42c:hits=40`** | `[mob+0x42c]` - the cached body rect's **left,top** as one qword | once per mob per swing |
 
-**How to read them.** Together they are the whole 16-byte rect.
+**How to read them.** The pair is diagnostic, not just confirmatory:
 
-* **Both qwords zero** -> `mob+0x42c` is still the constructor's value, `FUN_141c57120` bails at
-  `141c573d7`, the body rect handed to the collector is all zeros, `141d326ae` skips it, and
-  **§5 is the answer.** The follow-up is then "what sets `mob+0x42c` on a real server", and the
-  first place to look is the animation state (§5.4) and `FUN_141c88970`, whose sole caller is
-  `141d33158` - one arm of the `0x03D9..0x044D` per-mob command switch in `FUN_141d32b30`.
+* **`0xa88` null** (and `0x42c` therefore zero) -> the mob has no animation object, so
+  `FUN_141cb4600` never writes a rect and `FUN_141c57120` bails at `141c5721b`. **The chain in
+  §5.5 is the answer end to end**, and the follow-up is `FUN_141cd1620`, the only thing in the
+  mob code range that sets `mob+0xa88`.
+* **`0xa88` non-null but `0x42c` zero** -> the animation object exists and the rect still was not
+  computed. That points at `FUN_141c68d80` (which clears `+0x42c` then calls the setter) never
+  having run for our mobs, or at `FUN_140f82820` producing nothing from the animation data.
+* **`0xa88` non-null and `0x42c` a sane left/top** -> §5 is dead and **§6 becomes the leading
+  candidate**: the mob's geometry is fine, so the intersection is failing on the *attack* rect,
+  which arm C never validates.
 * **A sane rect** (`left < right`, `top < bottom`, near the mob's screen position) -> §5 is dead
   and **§6 becomes the leading candidate**: the mob's geometry is fine, so the intersection is
   failing on the *attack* rect. The next run reads argument 2's contents; the attack rect's
@@ -484,10 +539,21 @@ Listed for correction, not edited. Numbered so they can be struck one at a time.
   see a store made through a pointer it handed off.** So the sweep's emptiness is a property of
   the instrument, and `FUN_141c88970` - sole caller `141d33158`, one arm of the `0x03D9..0x044D`
   per-mob command switch - remains the only thing that fills it.
-* **The equivalent whole-image sweep for `+0x42c` was started and is still running** when this
-  line was written; only the mob-code-range scan in §5.3 is complete. `mob-target-gates.md` §8
-  is explicit that an unfinished sweep is not a negative result, so §5.3's caveat stands as
-  written and §7 still ranks *measuring* `mob+0x42c` above asserting anything about it.
-  Output lands in this session's task file for `bwwduwpec`.
+* **The whole-image sweep for `+0x42c` finished** and returned 29 hits. Only four are qword or
+  xmmword and so could touch a rect: `141c4d427` (ctor), `141c6943f`/`141c69546`
+  (`FUN_141c68d80`), `141fdb9b5` (`FUN_141fdb720`) - **all four are zeroing writes**, confirmed
+  by their shape (runs of stores across `+0x42c`/`+0x434`/`+0x43c`/`+0x444`) and by their source
+  register being a zeroed one (`141c4cf2b xor r14d,r14d`, `141fdb788 xor r15d,r15d`). The
+  remaining 25 are **dword** stores in the `0x141e4`/`0x141e5`/`0x1420a-e`/`0x14216`/`0x14233`/
+  `0x142e5` bands - different classes at the same displacement.
+  `141fdb9b5` is worth one line because it initially looked like a rival setter outside the mob
+  code range: it is not, and `141fdb99d mov rax,[rbx+0x3a8]` two instructions earlier - the
+  template pointer, per `mob-target-gates.md` §4.3 - is what proves `rbx` really is a mob there.
+* **That sweep is also what caught the retraction in §5.3.** The `--write` scans, mob-range and
+  whole-image alike, agreed that every direct write is a clear; both were structurally blind to
+  `141cb4647`, the real setter, because it stores through a `lea`'d pointer. **Two independent
+  scans agreeing is not corroboration when they share a blind spot** - which is the same failure
+  mode `tools/dataref.py`'s docstring records ("two independent filters, both dropping the same
+  evidence, both silently"). Dropping `--write` found it in one call.
 * **No client run. No Ghidra** - the lock was held but nothing here needed it; everything is
   capstone through the repo's own loaders, run with the repo as the working directory.

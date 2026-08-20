@@ -162,7 +162,7 @@ request, which is the only coordinate pair this server currently reads from the 
 | # | do this | why it is here |
 |---|---|---|
 | 1 | **Run the client**, plan below | **Nine** wired things are unseen now: the shop the owner asked for, the drop they asked for, chat, and `!exp`. One run reads on all of them |
-| 2 | **Which gate rejects our mobs, under arm C** | The collector runs, with capacity 15, and accepts nothing - measured, see below. The gate analysis was done against the wrong caller and is being redone. **Static work; no launch needed** |
+| 2 | **Why our mobs have no body rectangle** | The rejecting gate is **named**: `141d327c6`, geometric, and never in the gate table. It fails *silently* - an all-zero rect is SKIPPED, not rejected. The chain reaches one field, `mob+0xa88`. `-SetFieldProbe -MobTargets` reads the cause beside the effect |
 | 3 | **The EXP curve, off a running client** | 121 `u64`s at `0x143AC2400`, in the BSS tail of `.data` - **zero on disk**, so static analysis cannot ever read it. One `-Probe` peek. Without it, levelling has no thresholds |
 | 4 | **Parse `0x00D9`** | The client reporting its own position. It removes the "swing first" awkwardness from dropping, and every positional feature after it needs the same field |
 | 5 | **Amherst (map 1013) is intermittent** | It no longer hard-crashes, and run 2 still failed to enter it. Not fixed - intermittent |
@@ -186,6 +186,41 @@ is the thing `CLAUDE.md` warns about most. All three links now check out, in the
 What is still missing is something to walk over: the drop is currently refused, so nothing
 ever lies on the ground. The field-side drop table is being built now; until it is wired,
 this step cannot be attempted, however good the logging is.
+
+#### The gate that rejects our mobs is geometric, and it was never in the table
+
+`research/mob-gates-arm-c.md`. All seventeen documented gates pass; the rejection is at
+label `141d32a18`, which the earlier write-up dismissed as *"a nested container-growth block,
+plus two list-walk exits"*.
+
+```
+141d326ae  cmp [rdi],eax / jge   left >= right  -> SKIP this rect (not a rejection)
+141d327c6  test r14b,r14b / je   nothing intersected -> REJECT THE MOB
+```
+
+**An all-zero rectangle satisfies the per-rect filter and is skipped**, so `r14b` stays 0,
+the loop finishes clean, and every gate anyone had enumerated is green. Fifteen slots, the
+mob examined, nothing accepted - exactly the symptom.
+
+The chain reaches a single field:
+
+```
+FUN_141cd1620   sets mob+0xa88, the animation object (the constructor leaves it NULL)
+FUN_141cb4600   141cb4645  mob+0xa88 == 0 -> RETURN, writing no rect
+                141cb4647  otherwise -> lea rdx,[r15+0x42c]  <- THE SETTER
+FUN_141c57120   141c57185  mob+0xa88 == 0 -> bail -> ALL-ZERO rect
+```
+
+**`mob+0xa88` gates the rect in two independent places.** `-MobTargets` now reads that field
+and the rect together, because reading the cause beside the effect separates three outcomes
+where two halves of the rect separated only two. The three readings are in the launcher's own
+comment, beside the probe string.
+
+> **A retraction worth reading.** "Nothing in the mob code range sets `mob+0x42c`" was
+> reported, then found wrong. Two scans - one over the mob range, one over the whole image -
+> agreed, and both were blind the same way: a `[reg+disp]` write-scan cannot see a store made
+> through a `lea`'d pointer, which is precisely what the setter does. `CLAUDE.md` now carries
+> the general form: re-running the same tool is not a second opinion.
 
 #### Lucy's counter kills the client - what the logs establish, 2026-08-20
 

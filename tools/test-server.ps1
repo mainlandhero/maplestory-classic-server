@@ -84,7 +84,9 @@ param(
     # but it also routes 0x000B to the classic handler, and THAT is load-bearing. Change
     # one of these at a time, not both.
     [string]$Session = 'mode=2,create=on',
-    # Four watch slots, all used.
+    # Six watch slots since 2026-08-20 (four before). Two are permanently spoken for -
+    # 1415db360:ret and 141b2a280:rdx=0 keep the client alive - and one should always be
+    # the positive control, which left exactly one for the actual question.
     #
     #   1415db360:ret     skip the reachability check - without it the client __fastfails
     #   141b2a280:rdx=0   suppress the login dialog that blocks the Login button's tick
@@ -298,12 +300,32 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   the arm in one word; look it up in research/mob-collector-callsites.md, which
         #   tables all 86 call sites by return address.
         #
-        #   The real question is now which gate rejects a snail under ARM C's arguments.
-        #   When that analysis names gate addresses, swap them into the third slot - there
-        #   is room for exactly one more watch beside the positive control.
+        #   THE GATE IS NAMED, and it was never in the gate table. 141d327c6 rejects a mob
+        #   when no rectangle of it intersected the attack rectangle - and it fails
+        #   SILENTLY, because an all-zero rect satisfies the per-rect filter at 141d326ae
+        #   and is SKIPPED rather than rejected. Fifteen slots, mob examined, every
+        #   documented gate green, nothing accepted.
+        #
+        #   The chain reaches ONE field: mob+0xa88, the animation object. The mob
+        #   constructor leaves it NULL and it gates the rect in two independent places
+        #   (141cb4645 and 141c57185), so these two watches read the CAUSE beside the
+        #   EFFECT rather than reading the same rect twice:
+        #     141d32675:peek=0xa88   the animation object
+        #     141d3267c:peek=0x42c   the cached body rect, left and top
+        #   0xa88 null                 -> the chain explains it end to end, and the next
+        #                                 question is what makes FUN_141cd1620 run - a
+        #                                 SPAWN-path question, not an attack-path one
+        #   0xa88 set, 0x42c zero      -> the object exists but the rect was never
+        #                                 computed; FUN_141c68d80 never ran for our mobs
+        #   both sane                  -> mob geometry is fine, and the remaining lead is
+        #                                 the ATTACK rect, which arm C never validates
+        #                                 (arm A checks left<right / top<bottom; arm C does
+        #                                 not)
         # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
-        #   at all means the hook never armed and the log proves nothing.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141d31b20:args=17:hits=8,140304100:hits=200'
+        #   at all means the hook never armed and the log proves nothing. It KEEPS its slot:
+        #   WATCH_SLOTS went from four to six on 2026-08-20 rather than trade the control
+        #   away to fit a measurement, which is a trade this project has lost before.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141d32675:peek=0xa88:hits=40,141d3267c:peek=0x42c:hits=40,140304100:hits=200'
     } elseif ($InventorySlots -gt 0) {
         # 140305e48:peek=24 - the u16 that sizes ONE inventory, inside the record decoder's
         #   fixed six-turn loop. RCX is the CInPacket and +0x24 is its read cursor. EXPECT
@@ -327,7 +349,7 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
     # written as three statements because 5.1 has no ternary.
     $pair = "mob spawn (141c532ab)"
     if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
-    if ($MobTargets) { $pair = "MOB TARGETING (141d31b20:args=17)" }
+    if ($MobTargets) { $pair = "MOB TARGETING (mob+0xa88 and mob+0x42c in the collector loop)" }
     Write-Host ("probe pair: " + $pair) -ForegroundColor Cyan
 }
 
