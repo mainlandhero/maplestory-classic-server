@@ -190,12 +190,18 @@ pub struct Session {
     /// the *player* - so an item dropped more than about 25 pixels off is drawn, and cannot
     /// be picked up, and on screen that is identical to nothing having happened.
     ///
-    /// `0x00D9` is the client reporting its own movement and would answer this properly;
-    /// nothing here parses it yet. Until it does, this holds the position out of the last
-    /// attack request, which is the only coordinate pair this server currently reads from
-    /// the client - see `net::combat::AttackRequest::x`. A drop with no position at all is
-    /// refused rather than guessed, because a guessed one loses the item to a spot the
-    /// player cannot reach.
+    /// Fed from `0x00D9`, the client reporting its own movement, and from the attack
+    /// request's own coordinates. Both are the client's word for where it is.
+    ///
+    /// **The `0x00D9` value is the END of the movement path, not the head's coordinates.**
+    /// The head reports where the walk *started* and lags by one report - measured 14-50 px
+    /// behind while running, and 50 px is twice the width of the pick-up box, so using it
+    /// would have produced exactly the ambiguous "nothing on the ground" result this field
+    /// exists to avoid. The path's end is exact when standing still, which is the case a
+    /// drag out of the inventory window is. `research/user-move.md`.
+    ///
+    /// A drop with no position at all is refused rather than guessed, because a guessed one
+    /// loses the item to a spot the player cannot reach.
     last_position: Option<(i16, i16)>,
 }
 
@@ -456,6 +462,20 @@ impl Session {
                 return self.on_inventory_move(body.get(2..).unwrap_or(&[]))
             }
             net::mobmove::MOB_MOVE_REQUEST => return self.on_mob_move(body.get(2..).unwrap_or(&[])),
+            // The client telling us where it walked. **Answered with nothing, deliberately**
+            // - 1082 of these went unanswered across every captured session and the client
+            // played on for minutes, so this is not one of the packets that latches.
+            //
+            // `x`/`y` are the END of the path, not its start: the head's coordinates lag by
+            // one report and were measured 14-50 px behind while running, and 50 px is twice
+            // the width of the client's pick-up box. The end is exact when standing still,
+            // which is the case a drag out of the inventory window is.
+            net::usermove::CLIENT_USER_MOVE => {
+                if let Some(m) = net::usermove::parse_user_move(body.get(2..).unwrap_or(&[])) {
+                    self.last_position = Some((m.x, m.y));
+                }
+                return Vec::new();
+            }
             net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
             net::script::CLIENT_SCRIPT_REPLY => {
                 return self.on_script_reply(body.get(2..).unwrap_or(&[]))

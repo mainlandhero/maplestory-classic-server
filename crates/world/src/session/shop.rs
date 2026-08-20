@@ -65,9 +65,28 @@ impl Session {
             return None; // a zero-row shop is a different client arm, not an empty counter
         }
 
+        // **A blast-radius control, exactly like `--mob-limit`.** On 2026-08-20 Lucy's
+        // counter went out with twelve rows and the client threw a C++ exception ten
+        // milliseconds later, then faulted. A fault can come from a row being wrong or from
+        // twelve rows at once, and those look identical on screen. `--shop-rows 1` makes
+        // them distinguishable in one launch, which is the scarcest thing on this project.
+        //
+        // Applied AFTER both loops rather than inside them, so `--shop-rows 1` leaves one
+        // *buy* row - the buy direction is the one with a straight-line trace behind it,
+        // and the sell direction has never been on a wire in either direction.
+        //
+        // A zero-row shop is a different client arm entirely (`140d22656 test edi,edi`), so
+        // the cap can never take the list below one.
+        let capped = match self.config.shop_rows {
+            Some(n) if n < rows.len() => n.max(1),
+            _ => rows.len(),
+        };
+        let dropped_by_cap = rows.len() - capped;
+        rows.truncate(capped);
+
         let body = net::shop::open_shop(template, &rows);
         let what = format!(
-            "OpenShop: {} ({}) for character {character_id} - {} rows ({} buy, {} sell), {} bytes{}",
+            "OpenShop: {} ({}) for character {character_id} - {} rows ({} buy, {} sell), {} bytes{}{}",
             shop.npc,
             shop.role,
             rows.len(),
@@ -76,6 +95,11 @@ impl Session {
             body.len(),
             if skipped_free > 0 {
                 format!(" - {skipped_free} row(s) DROPPED for a zero buy price")
+            } else {
+                String::new()
+            },
+            if dropped_by_cap > 0 {
+                format!(" - {dropped_by_cap} row(s) HELD BACK by --shop-rows")
             } else {
                 String::new()
             }

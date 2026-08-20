@@ -287,21 +287,28 @@ Passing `-Probe` by hand replaces all four slots and silently drops it.
 |---|---|---|---|
 | 1 | glance at the top of `login.log` | an ELog record | the client replays its on-disk error log at startup and then deletes it. Free, and it is the only place a previous crash survives. `python tools/decode_elog.py login.log --stack` |
 | 2 | enter the world, `!item 1302000` | the sword appears in the Equip tab | `!item` works, and so does the `0x0070` Add it rides on |
-| 3 | `!map 1013`, click **Lucy** | the shop counter | rows in **both** tabs = goal F. Buy tab only = the sell rows are wrong. No counter at all = the click never resolved a shop; `world.log` says which |
+| 3 | `!map 1013`, click **Lucy**, with **`-ShopRows 1`** | the shop counter | **the counter opening at all is the result.** Twelve rows killed the client on 2026-08-20; one buy row says whether the shop path is sound. If it opens, raise `-ShopRows` next run |
 | 4 | buy something, then sell it back | mesos, and the bag | both directions, both prices. The **buy** price is authored; the **sell** price is the client's own |
 | 5 | accept a quest, then `!map 40` | the quest journal | still listed = the journal persists |
 | 6 | type **Hello** in the chat box | a balloon and a log line | the flag byte was `0` and the client's own builder sends `3`. Nothing still = the handler is not running, and the next step is `0x0224`, **not** more chat bytes |
 | 7 | `!exp 100` | the EXP bar | it moves **at once** - `0x007C` bit 16 carries the new total. Relog and it is still 100 |
-| 8 | **swing once**, then drag the sword out of the window | the sword on the ground | a refusal saying "the server does not know where you are standing" means the swing did not register, not that dropping is broken. **This step can freeze the client** - see the warning below, so do it near the end |
+| 8 | walk a few steps, then drag the sword out of the window | the sword on the ground | `0x00D9` is parsed now, so the server knows where you are. A `0x025F` in `world.log` means the client **rejected** our `0x046E` and abandoned the drop - read its second `u32` against `research/item-drop.md` §10.1 |
 | 9 | walk over the sword | it goes back in the bag | **even if nothing visible happens, this step succeeded**: `grep UNKNOWN world.log` names the pick-up opcode, which is the whole reason for it |
 | 10 | open Change Channel, **single-click** CH.2 | the row's colour | cream then blue = the enable byte is right. **Do the double-click last of all** - it sends `0x00D2` and either changes channel or ends the session |
 
-**Step 8 is the one that can freeze the client, and it is not a bug in dropping.** The
-client builds `0x025F` **six times from inside `DropEnterField`**, so it will arrive the
-moment the sword lands, and this server has never seen that opcode. If the UI locks up right
-after the item appears - every button dead, including the quit prompt - that is the
-unanswered packet, not the drop. `world.log` will have it as `UNKNOWN`, which is exactly what
-is needed to fix it. Doing this step late means the first seven answers survive it.
+**`0x025F` was a false alarm, and the retraction is worth reading.** The claim was that the
+client "builds it six times from inside `DropEnterField`, so it will arrive the moment a
+sword lands". That misread **six call sites as six sends**. All six are the same shape -
+`test ptr,ptr / jne carry-on / mov r8d,<code> / call the builder / jmp abandon` - so it is an
+**error report**, sent only when the drop handler hits a null and gives up. Nothing waits on
+a reply: the builder's `SendPacket` is followed by the stack cookie and `RET`, five of six
+callers jump straight to the handler's exit, and no capture in the repo contains one.
+
+So it is a **gift, not a hazard**. A `0x025F` means our `0x046E` was rejected and the drop
+was abandoned - which otherwise looks exactly like "nothing on the ground, no fault, nothing
+in any log". Its second `u32` is a `__LINE__`-like code naming which of the six null checks
+failed; `research/item-drop.md` §10.1 turns it into an address. Expect site 2 (`0x3d1`)
+first: it is the only null that comes from a **lookup by id** rather than a packet field.
 
 Two watches, each needing its own run, neither combinable with the above:
 

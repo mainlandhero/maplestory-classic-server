@@ -63,8 +63,7 @@ impl Session {
             return self.refuse_drop(
                 m,
                 "the server does not know where you are standing, and a drop it puts in the \
-                 wrong place cannot be picked up. Swing once first - an attack reports your \
-                 position - then drop",
+                 wrong place cannot be picked up. Walk a step first",
             );
         };
 

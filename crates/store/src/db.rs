@@ -686,12 +686,23 @@ mod tests {
         for account in &accounts {
             for chr in store.characters_for(account.id, 0).unwrap() {
                 characters += 1;
-                // The new column, on a row that predates it.
-                assert_eq!(store.mesos(chr.id).unwrap(), 0);
-                // The bag reads, and it is empty rather than an error.
+                // The new columns read on a row that predates them. **Not asserted to be
+                // zero.** This used to require `mesos == 0` and an empty bag, which was true
+                // only because nothing had ever written either - and on 2026-08-20 it went
+                // red because the owner ran `!item 1302000` on their own character. A test over
+                // live, mutable state must assert what the *upgrade* guarantees, not what
+                // the player happens not to have done yet.
+                store.mesos(chr.id).unwrap();
+                // `chr` came out of `characters_for`, which selects `exp` - so reaching
+                // here at all means the new column read on a pre-existing row.
+                let _ = chr.exp;
+                // The bag reads rather than erroring, and it is sized by the character.
                 let bag = store.bag(chr.id).unwrap();
-                assert!(bag.is_empty(), "no inventory rows existed before this schema");
                 assert_eq!(bag.slots, chr.inventory_slots);
+                assert!(
+                    bag.items.iter().all(|i| i.slot >= 1),
+                    "slot 0 is the hole that makes slots 1-based; a 0 here is a bad read"
+                );
                 // The worn slots still read, now with the stat tail. Rows written before the
                 // columns existed must come back as "no stats stored", NOT as zeros.
                 let worn = store.equipped_items(chr.id).unwrap();

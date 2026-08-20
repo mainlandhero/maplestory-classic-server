@@ -116,6 +116,21 @@ pub struct Config {
     /// allocation failure, so "too many" is not a silly hypothesis. `--mob-limit 1` makes
     /// those two answers distinguishable in one run.
     pub mob_limit: Option<usize>,
+    /// How many rows a shop counter may send, whatever the shop holds. `None` is no limit.
+    ///
+    /// **The same blast-radius control as [`Config::mob_limit`], and for the same reason.**
+    /// On 2026-08-20 Lucy's counter went out with twelve rows - six buy, six sell - and the
+    /// client threw a C++ exception **ten milliseconds later**, stopped sending anything at
+    /// all, and faulted three and a half seconds after that inside a refcount release. A
+    /// crash like that can come from one row's contents or from twelve rows arriving at
+    /// once, and on screen those are the same picture.
+    ///
+    /// `--shop-rows 1` sends a single **buy** row. The buy direction has a straight-line
+    /// trace from the row bytes to the request bytes behind it; the sell direction has
+    /// never been seen on a wire in either direction, so the cap keeps the better-evidenced
+    /// half. It can never take the list to zero: a zero-row shop is a different client arm
+    /// that builds a dialog box instead of a counter.
+    pub shop_rows: Option<usize>,
     /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
     ///
     /// The character record carries an item's stats and upgrade slots per *instance*, and a
@@ -869,6 +884,7 @@ impl Default for Config {
             npcs: HashMap::new(),
             mobs: HashMap::new(),
             mob_limit: None,
+            shop_rows: None,
             chatter_off: false,
             equips: HashMap::new(),
             npc_strings: HashMap::new(),

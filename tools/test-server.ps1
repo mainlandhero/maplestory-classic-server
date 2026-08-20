@@ -143,6 +143,19 @@ param(
     # same number on its own. A run at 125, the maximum, can: the bag either shows a
     # scrollbar or it does not. That is the run that settled it.
     [int]$InventorySlots = 0,
+    # Cap how many rows a shop counter sends. 0 means no cap.
+    #
+    # On 2026-08-20 Lucy's counter went out with twelve rows and the client threw a C++
+    # exception TEN MILLISECONDS later, stopped sending anything at all, and faulted three
+    # and a half seconds after that. A crash like that can come from one row being wrong or
+    # from twelve rows arriving at once, and on screen those are the same picture.
+    #
+    # -ShopRows 1 sends a single BUY row. Both outcomes are worth a launch: the counter
+    # opening means the shop path is sound and the fault is in row content or row count;
+    # still crashing means the shop path itself is wrong and rows are not the variable.
+    #
+    # Same lever as -MobLimit, and it exists for the same reason.
+    [int]$ShopRows = 0,
     # Point the two free watch slots at the melee target collector, FUN_141d31b20.
     #
     # The collector is PROVEN to run once per swing - six swings, six entries, each 1-2 ms
@@ -473,6 +486,7 @@ foreach ($ch in 0..($Channels - 1)) {
     if ($SetFieldProbe) { $chArgs += '--set-field-probe' }
     if ($NoMobs) { $chArgs += '--no-mobs' }
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
+    if ($ShopRows -gt 0) { $chArgs += @('--shop-rows', "$ShopRows") }
     if ($InventorySlots -gt 0) { $chArgs += @('--inventory-slots', "$InventorySlots") }
     $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
         -WindowStyle Hidden `

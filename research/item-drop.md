@@ -508,10 +508,11 @@ that is still there, and do answer the request with something.
    `FUN_1403747c0` block are all timestamps by shape and none was traced to a timer.
 7. **Mesos.** `dropType 0` and `isMoney 1` are built and length-checked, and nothing else
    about them is read - `moneyType` at `drop+0x16d` in particular.
-8. **`0x025F`.** Built by `FUN_1417d29d0` as `u32 itemId, u32 (arg)` and sent **six times
+8. ~~**`0x025F`.** Built by `FUN_1417d29d0` as `u32 itemId, u32 (arg)` and sent **six times
    from inside `DropEnterField`**. It is outbound traffic the client will produce the moment
-   a drop appears, and this server has never seen it. Expect it in `world.log` and answer it
-   or at least log it; it is not decoded.
+   a drop appears.~~ **RETRACTED 2026-08-20 - see §10.** Six *call sites*, not six sends, and
+   every one of them is a null-check failure branch that then abandons the drop. It is an
+   error report, it will not arrive on a healthy drop, and it needs no reply.
 
 ---
 
@@ -537,3 +538,97 @@ powershell -ExecutionPolicy Bypass -File tools\test-server.ps1 -SetFieldProbe
 **Do not** re-enable mobs in the same run (`--mobs` stays off), and do not arm the
 mob-targeting watch - a `0x0301` arriving from a mob that walked onto the sword would look
 exactly like the player's pick-up in the log and would be read as one.
+
+---
+
+## 10. `0x025F` is the client saying the drop FAILED, and it needs no reply
+
+Decoded 2026-08-20 because §8 item 8 had it wrong in a way that would have cost a launch: it
+was written up as traffic the client produces "the moment a drop appears", which made it look
+like something the server has to answer or risk a frozen UI. It is the opposite of routine.
+
+### 10.1 Six call sites, not six sends, and all six are failure branches
+
+`tools/callers.py 0x1417d29d0` finds **6 call sites in exactly 1 function** - `FUN_1417a2ee0`,
+`DropEnterField` - and **no pointer to it anywhere in the image**, so there is no vtable path
+and no other caller. **[L]**
+
+All six are byte-for-byte the same shape: **[L]**
+
+```asm
+1417a57d0  TEST  R12,R12
+1417a57d3  JNE   1417a5803        ; the pointer is fine -> carry on with the drop
+1417a57d5  MOV   RDX,[RBP-0x78]   ; a lazily made 0x428-byte context object
+1417a57de  MOV   ECX,0x428
+1417a57e3  CALL  142e52ed0
+1417a57ec  MOV   R8D,0x3c8        ; <- a per-site constant
+1417a57f2  LEA   RCX,[RBP+0xcf0]
+1417a57f9  CALL  1417d29d0        ; -> builds and sends 0x025F
+1417a57fe  JMP   1417ad50e        ; and ABANDONS the handler
+```
+
+| # | call site | code | what was null | where it goes |
+|---:|---|---:|---|---|
+| 1 | `1417a57f9` | `0x3c8` (968) | `r12` | `jmp 1417ad50e` |
+| 2 | `1417a5f25` | `0x3d1` (977) | `[rbp+0x178]`, the result of `FUN_14039f600(…, id=[rbp+0x44])` - **a lookup that returned nothing** | `jmp 1417a71f8` |
+| 3 | `1417a71c5` | `0x3e7` (999) | `r12` | destructors, then out |
+| 4 | `1417a78d1` | `0x400` (1024) | `r15` | `jmp 1417ad50e` |
+| 5 | `1417aac9d` | `0x4b1` (1201) | `[rbp+8]` | `jmp 1417ad4a9` |
+| 6 | `1417ab85f` | `0x4ba` (1210) | `[rbp+8]` | `jmp 1417ad4a9` |
+
+**The codes are almost certainly `__LINE__`.** They increase monotonically with the call
+site's address, six times out of six - 968, 977, 999, 1024, 1201, 1210 - and the gaps scale
+with the code between them. **[D]** for "monotonic with address", **[I]** for "line number".
+
+### 10.2 The body is the code, not an item id
+
+`FUN_1417d29d0(rcx, rdx, r8d)` stores its **third** argument immediately:
+
+```asm
+1417d2a00  MOV   RSI,RDX                  ; rsi = the 0x428 context object, NOT rcx
+1417d2a03  MOV   [RBP-0x80],R8D           ; the call-site code
+...
+1417d2e42  JNE   1417d3733                ; if [[rsi+0x80]] != 0 the whole send is SKIPPED
+1417d2e48  MOV   EDX,0x25f
+1417d2e51  CALL  1406ed520                ; COutPacket(0x25F)
+1417d32b2  CALL  1406ed9d0                ; w_u32  <- deobfuscated [rsi+0x90]/[rsi+0x98]
+1417d32be  CALL  1406ed9d0                ; w_u32  <- [rbp-0x80], the code
+1417d372d  CALL  1406ed610                ; SendPacket
+1417d3733  ...                            ; stack cookie, RET
+```
+
+So the body is **`u32 <a field of the context object>, u32 <the call-site code>`**. **[L]**
+
+The earlier note called the first field `itemId`. That is **[I]** and probably wrong: the
+object is `0x428` bytes, and the drop `DropEnterField` allocates is `0x238` (§3, read 1), so
+this is a different object. `+0x90`/`+0x98` is the value/key spacing this client uses for
+*every* obfuscated field, so the offset matching the drop's `itemId` slot is a layout
+convention, not an identification. Left unnamed.
+
+### 10.3 Does it need a reply? No - and the honest form of that answer
+
+| | |
+|---|---|
+| the builder sets **no** state | `SendPacket` at `1417d372d` is followed by the stack-cookie check and `RET` at `1417d375c`. Nothing is stored, no flag, no timer. **[L]** |
+| there is no latch like `[ctx+0x2330]` | the only writes after the `COutPacket` go into its own local packet buffer. **[L]** |
+| the callers discard the result | five of six `jmp` straight to the handler's exit; the sixth runs destructors first. **[L]** |
+| it has **never been seen on the wire** | not one `0x025F` in any capture in `research/fixtures/` or `previous-runs/`, across 1082 `0x00D9` bodies' worth of sessions - because this server has never sent a `0x046E` for it to fail on. **[D]** |
+| unanswered packets are not fatal per se | 47 distinct inbound opcodes appear in the fixtures and this server answers about a dozen; the client plays on. The ones that freeze it are the ones that **latch**, and this does not. **[D]** |
+
+**What is not established, and must not be smoothed over:** that no *other* subsystem sets a
+flag before the drop handler runs which only a reply would clear. Proving that negative means
+enumerating everything that touches drop-pool state, which is exactly the shape of search
+`CLAUDE.md` says usually measures itself rather than the client. What is established is
+narrower and is enough to act on: **on the path from the null check to the send and back out
+of the handler, the only state created is a local.**
+
+### 10.4 So treat it as a diagnostic, and a good one
+
+`0x025F` arriving means **our `0x046E` was rejected and the drop was abandoned** - which
+otherwise looks exactly like "nothing on the ground, no fault, nothing in any log". Log it
+loudly with both `u32`s: the second one names which of the six checks failed, and §10.1's
+table turns that into an address.
+
+Site 2 (`0x3d1`) is the one to expect first: it is the only site whose null comes from a
+**lookup by an id** rather than from a field of the packet, so an item id the client cannot
+resolve is the leading candidate. **[I]**

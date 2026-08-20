@@ -720,6 +720,42 @@ fn clicking_a_shopkeeper_opens_the_shop() {
     assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
 }
 
+/// `--shop-rows 1` sends exactly one row, and it is a **buy** row.
+///
+/// The bisect instrument for the 2026-08-20 crash: twelve rows went out, the client threw
+/// ten milliseconds later and faulted. "A row is wrong" and "twelve rows at once" look
+/// identical on screen, and this is what tells them apart in one launch.
+#[test]
+fn the_shop_row_cap_keeps_one_buy_row() {
+    let (mut s, _, _) = shop_session();
+    // Mutated in place rather than by building a second Session: the migration is
+    // single-use, so a fresh one claims nothing and every reply comes back empty.
+    s.config = Arc::new(Config { shop_rows: Some(1), ..(*s.config).clone() });
+
+    let out = s.handle(&npc_click(1000));
+    let body = &out[0].body;
+    assert_eq!(u16::from_le_bytes([body[4], body[5]]), 1, "one row");
+    assert_eq!(body.len(), net::shop::OPEN_SHOP_FIXED_LEN + net::shop::SHOP_ROW_LEN);
+    // The surviving row must be the BUY one. The sell direction has never been on a wire in
+    // either direction, so capping to the untested half would waste the launch.
+    assert!(out[0].what.contains("1 buy, 0 sell"), "{}", out[0].what);
+    assert!(out[0].what.contains("HELD BACK"), "the log must say rows were held: {}", out[0].what);
+}
+
+/// The cap can never produce a zero-row shop, because that is a different client arm.
+///
+/// `140d22656 test edi,edi` sends a `rowCount == 0` shop down a path that builds a dialog
+/// box and never creates a counter at all - so a cap of 0 would test something other than
+/// the shop.
+#[test]
+fn the_shop_row_cap_cannot_empty_the_counter() {
+    let (mut s, _, _) = shop_session();
+    s.config = Arc::new(Config { shop_rows: Some(0), ..(*s.config).clone() });
+
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(u16::from_le_bytes([out[0].body[4], out[0].body[5]]), 1, "clamped up to one");
+}
+
 /// **A quest item gets no sell row, so the player is never offered the option.**
 ///
 /// The owner: *"Please do not allow quest items to be sold."* That is about selling, not

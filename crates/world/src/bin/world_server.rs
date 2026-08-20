@@ -117,6 +117,14 @@ fn main() -> ExitCode {
                     .map(|n: usize| config.mob_limit = Some(n))
                     .map_err(|e| format!("--mob-limit {v}: {e}"))
             }),
+            // The shop counter's blast-radius control. See Config::shop_rows: twelve rows
+            // went out and the client threw ten milliseconds later, and "a row is wrong" and
+            // "twelve rows at once" look identical on screen.
+            "--shop-rows" => value().and_then(|v| {
+                v.parse()
+                    .map(|n: usize| config.shop_rows = Some(n))
+                    .map_err(|e| format!("--shop-rows {v}: {e}"))
+            }),
             // Kept, and a no-op, because it is in the owner's shell history and in three
             // documents. An argument that used to mean something and now errors is a
             // failed launch for a reason nobody would guess.
