@@ -20,18 +20,83 @@ halves of what the owner wants - the balloon and the log line - come from one pa
 
 ## The packet
 
-**Inbound `0x0231`.**
+**Inbound `0x0231`. 43 bytes plus the message.**
 
 ```text
-u32  characterId
-u8   flag          0
-str  text          u16 length, then bytes
-u8   tail A        0
-u8   tail B        0
+u32  characterId          read by the dispatcher, before its switch
+u8   flag                 0                       0x142784998
+str  text                 the message             0x1427849ac
+--- the speaker object, FUN_1408d6760, ALWAYS present ---
+str                       empty                   0x1408d6782
+str                       empty                   0x1408dcba3  } FUN_1408dcb80,
+raw 4                     zero                    0x1408dcbee  } also always present
+raw 4                     zero                    0x1408dcbff
+raw 1                     zero                    0x1408dcc12
+raw 4                     zero                    0x1408dcc25
+raw 4                     zero                    0x1408dcc38
+str                       empty                   0x1408dcc45
+raw 4                     zero                    0x1408dcc9a
+str                       empty                   0x1408dcca7
+--- back in FUN_142784970 ---
+u8                        0                       0x142784a5b
+u8                        0                       0x142784a69
+u8                        0                       0x142784a75
+--- the trailing object, FUN_1408da090 ---
+raw 4    MUST NOT BE 1    zero                    0x1408da0b6
 ```
 
 The leading `u32` is read by the dispatcher, before its switch, so it is shared by every
-opcode in the `0x226..0x276` range. The four fields after it are read by the handler.
+opcode in the `0x226..0x276` range. Everything after it is the handler's. **[L]**
+
+**Nothing in that list is optional.** `FUN_1408d6760` has no branch that skips the
+sub-object - its only `je`s are null-pointer cleanup after each string, a pattern that
+repeats throughout and which is easy to mistake for gating. Same in `FUN_1408dcb80`.
+
+**The trailing object is stopped for four bytes.** `FUN_1408da090` reads a 4-byte block,
+then `CMP r8d,1 / JNE 0x1408da1eb` returns. Any value except 1 ends it there; a 1 would send
+it on to a `u8`, a sub-object and a string. **[L]**
+
+What the speaker object's four strings and 21 raw bytes mean is **not established** - they
+land in out-pointers at `obj+8`, `+0x10`, `+0x18`, `+0x1c`, `+0x20`, `+0x24`, `+0x28`,
+`+0x30`, `+0x38`, `+0x40`. All empty and all zero is the shortest legal encoding. The one
+worth trying later is the speaker's **name** in the first string; it is left empty because a
+name in a field that turns out to be a title or a medal would render as one.
+
+## The first version killed the client, and the way it was wrong is the point
+
+Sent: `u32, u8, str, u8, u8` - **20 bytes**. The owner typed "Hello David" and the client exited
+with **`0xE06D7363`**, an unhandled C++ exception.
+
+The hook log named the exact chain, and unusually **all three return addresses are exact
+rather than heuristic** - each is a call site plus five:
+
+| frame | call site | |
+|---|---|---|
+| `0x142784a58` | `0x142784a53` | `FUN_142784970` -> the speaker object |
+| `0x1408d680f` | `0x1408d680a` | `FUN_1408d6760` -> its sub-object |
+| `0x1408dcba8` | `0x1408dcba3` | `FUN_1408dcb80` -> `read_str`, and nothing left |
+
+Reconstructed: the client read the `u8`, read the 13-byte message, then took **our two
+trailing zeros as an empty string's length**, and had zero bytes left when the next string
+was asked for. It threw three times and died.
+
+### Two instrument failures, stacked
+
+1. **Direct-only read counting.** `FUN_142784970` reads through two helpers, and a scan that
+   only looks for calls to the eight primitives *inside* the function sees neither. This is
+   the third time on this project - `research/mob-spawn.md` records it for `FUN_141cc9410`.
+2. **Scanning bytes for `0xE8` instead of disassembling.** `0xE8` is an ordinary ModRM byte.
+   At `0x142784a6e` the instruction `MOVZX R13D,AL` is `44 0f b6 e8`; a scanner that treats
+   that `e8` as a CALL and skips five bytes lands mid-instruction and **silently loses the
+   read at `0x142784a75`**. So even the direct count was short by one.
+
+Both produce a clean, confident, wrong number - the exact shape `CLAUDE.md` says to distrust.
+**`tools/reads.py` now exists so neither can happen again**: it disassembles with capstone,
+walks helpers transitively, and carries its own positive control.
+
+Its one weakness, documented in the tool: the `gated?` marker over-reports, because it flags
+anything after any conditional jump and string cleanup emits `je` pairs constantly. Confirm a
+guard by reading it.
 
 ## How it was found
 
@@ -54,8 +119,11 @@ decodes a packet:
 
 | | reads | |
 |---|---|---|
-| `FUN_142784970` | `u8, str, u8, u8` | **one** string |
-| `FUN_1427847a0` | `u8, str, str, u8, u8, u8` | **two** strings |
+| `FUN_142784970` | `u8, str, <speaker object>, u8, u8, u8, <trailing object>` | **one** message string |
+| `FUN_1427847a0` | `u8, str, str, <speaker object>, u8, u8, u8` | **two** strings |
+
+`0x0226` is **not the simpler option**: it carries the identical `FUN_1408d6760` speaker
+object, at `0x142784856`. Its extra string is the only difference that matters.
 
 Both are reached from one dispatcher, `FUN_1429bafb0`, which has **zero direct callers** - it
 is virtual - and which normalises the opcode with `LEA EAX,[RSI-0x226]` / `CMP EAX,0x50` at
@@ -72,21 +140,23 @@ out of the exe:
 
 ## What is not known
 
-* **The three `u8`s.** In this game family the one before the text is an admin/GM marker and
-  one of the two after it suppresses the chat-log line so that only the balloon shows. That
-  is **[I]** - nothing here read what they do. All three go out as `0`, which asks for the
-  ordinary case of both balloon and log line.
+* **The four `u8`s** - one before the text and three after. In this game family the leading
+  one is an admin/GM marker and one of the trailing ones suppresses the chat-log line so that
+  only the balloon shows. That is **[I]**; nothing here read what they do. All go out as `0`,
+  which asks for the ordinary case of both balloon and log line.
 * **`0x0226`, the two-string form.** A packet carrying a name *and* a message is the shape of
   a whisper, and the dispatcher gives it special setup at its entry (`CMP EDX,0x226 / JNZ`
   at `0x1429bafcb`, guarding two `u32` reads the other opcodes skip). Untested, so unsent.
-* **Whether the four reads inside `FUN_142784970` are unconditional.** They sit at
-  `0x142784998`, `0x1427849ac`, `0x142784a5b`, `0x142784a69` - a straight run near the top -
-  but no guard-interval pass was done, so a gate is possible.
+* **Whether the path to the trailing object is truly unconditional.** It was checked by
+  disassembling `0x142784a7a`..`0x142784b05`: the only branches are a null check on a
+  `0x30`-byte allocation and a null check on `alloc + 0x10`. Neither can be taken in
+  practice, so the object is on the path. **[D]** rather than **[L]**, because "an
+  allocation never fails" is an assumption.
 
-  **Sending all four is the safe direction either way.** A client that reads fewer bytes than
-  arrive never looks at the rest; one that reads *more* than arrive throws on underrun. A
-  field that turns out to be gated off costs a wasted byte; a field left out costs the
-  session.
+  **Sending every field is the safe direction either way.** A client that reads fewer bytes
+  than arrive never looks at the rest; one that reads *more* than arrive throws on underrun.
+  A field that turns out to be gated off costs a wasted byte; a field left out costs the
+  session - and did.
 
 ## What the server does now
 
@@ -104,4 +174,4 @@ because the server has no concept of a second player in a field yet.
 | a balloon over the head **and** a line in the chat log | `0x0231` is right, and both zero tail bytes are right |
 | balloon but **no** log line | one of the two trailing `u8`s is the "balloon only" flag |
 | log line but **no** balloon | the balloon has its own guard, like the NPC one at `0x141e3b543` |
-| the client dies on the first message | the body is short - a read past the end throws, and `0xC0000374` is what that looked like on 2026-08-19 |
+| the client dies on the first message | the body is still short - a read past the end throws, and `0xE06D7363` is what that looked like on 2026-08-19 |

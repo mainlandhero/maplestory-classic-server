@@ -235,30 +235,34 @@ $ErrorActionPreference = 'Stop'
 # Two free slots, and two different questions competing for them - so the flag that decides
 # which run this is also decides the instrument. Getting the wrong pair costs a whole launch,
 # and the two questions cannot be answered in one run anyway: mobs are off unless -Mobs.
+# **The instrument follows the VARIABLE, not the feature list.**
+#
+# This used to key off the mob flag, and on 2026-08-19 that quietly wasted a run: mobs became
+# the default, so the mob watches were armed, so the bag watch was NOT - and the run came
+# back with "0 hits on 140305e48", which reads exactly like "the client never read the
+# inventory size" when it actually means "nobody was watching". An unarmed instrument that
+# reports a clean zero is the single most expensive failure mode on this project.
+#
+# So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if (-not $NoMobs) {
-        # 141c81040:peek=2b8 - rcx is the mob at entry, so peek prints the field that was
-        #   null. 0 confirms the diagnosis AND the stack trace finally names the caller of a
-        #   virtual with zero direct callers. Non-zero means 141c810b0 faults for some other
-        #   reason.
-        # 141c532ab:peek=24 - rcx is the CInPacket and +0x24 is its read cursor. EXPECT 0x71
-        #   (113 = 6 + 107): that proves encodeInit reached the assignment and the first 107
-        #   body bytes are byte-exact. Anything else says the layout is off by cursor-113.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c81040:peek=2b8:hits=20,141c532ab:peek=24:hits=20'
-    } else {
+    if ($InventorySlots -gt 0) {
         # 140305e48:peek=24 - the u16 that sizes ONE inventory, inside the record decoder's
-        #   fixed six-turn loop. RCX is the CInPacket and +0x24 is its read cursor, so this
-        #   prints where in the packet each of the six reads happened. EXPECT SIX HITS, EACH
-        #   EXACTLY 2 APART. That is the criterion, and it is origin-independent: it does
-        #   not matter what the cursor counts from, only that the client took twelve
-        #   contiguous bytes where we put twelve contiguous bytes. Fewer than six, or a gap
-        #   that is not 2, means presence[7] is not the byte we think it is - and everything
-        #   after those bytes in the record is then being misread.
-        # 140304100:hits=200 - the equip decode, which fires at world entry. THE POSITIVE
-        #   CONTROL: no lines at all means the hook never armed, and a silent log proves
-        #   nothing. See CLAUDE.md, "verify the instrument before believing it".
+        #   fixed six-turn loop. RCX is the CInPacket and +0x24 is its read cursor. EXPECT
+        #   SIX HITS, EACH EXACTLY 2 APART. Origin-independent: it does not matter what the
+        #   cursor counts from, only that the client took twelve contiguous bytes where we
+        #   put twelve. Fewer than six, or an uneven step, means presence[7] is wrong.
+        # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
+        #   at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200'
+    } else {
+        # 141c532ab:peek=24 - rcx is the CInPacket and +0x24 is its read cursor, inside the
+        #   mob's encodeInit. Mobs render now, so this is a regression check rather than a
+        #   diagnosis: the cursor should be consistent across every mob in a field.
+        # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
+        #   at all means the hook never armed and the log proves nothing.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200'
     }
+    Write-Host ("probe pair: " + $(if ($InventorySlots -gt 0) { "THE BAG (140305e48)" } else { "mobs (141c532ab)" })) -ForegroundColor Cyan
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -481,11 +485,16 @@ if ($SetFieldProbe) {
     }
     Write-Host ""
     Write-Host "In client-patched\maplecw-hook.log, two watches:" -ForegroundColor Cyan
-    Write-Host "  140305e48   the inventory-size read. EXPECT SIX LINES, and the peeked"
-    Write-Host "              cursor rising by exactly 2 each time. That is the whole test"
-    Write-Host "              at byte level, and it does not depend on what the cursor"
-    Write-Host "              counts from. Fewer than six, or an uneven step: presence[7]"
-    Write-Host "              is not the byte we think it is."
+    if ($InventorySlots -gt 0) {
+        Write-Host "  140305e48   the inventory-size read. EXPECT SIX LINES, and the peeked"
+        Write-Host "              cursor rising by exactly 2 each time. That is the whole"
+        Write-Host "              test at byte level and it does not depend on what the"
+        Write-Host "              cursor counts from. Fewer than six, or an uneven step:"
+        Write-Host "              presence[7] is not the byte we think it is."
+    } else {
+        Write-Host "  141c532ab   inside the mob's encodeInit. Regression check only - mobs"
+        Write-Host "              render now. Pass -InventorySlots to watch the bag instead."
+    }
     Write-Host "  140304100   the equip decode, at world entry. POSITIVE CONTROL - no lines"
     Write-Host "              at all means the hook never armed and the log proves nothing."
     Write-Host "              The hook arms ~4.5s after connect; see docs."

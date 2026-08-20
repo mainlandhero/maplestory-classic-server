@@ -486,10 +486,20 @@ if PROBE:
         n = struct.unpack_from("<H", sb, 5)[0]
         check("the text survives the round trip", sb[7:7 + n] == b"Hello",
               "%r" % sb[7:7 + n])
-        # FUN_142784970 reads u8, str, u8, u8 - both trailing bytes, unconditionally. A
-        # body that stops after the text makes the client read past the end and throw.
-        check("both bytes after the text are present", len(sb) == 4 + 1 + 2 + n + 2,
-              "%d bytes, wanted %d" % (len(sb), 4 + 1 + 2 + n + 2))
+        # **This is the check that would have caught the crash.** FUN_142784970 reads far
+        # more than the text: a 29-byte speaker object (four strings, 21 raw bytes, none
+        # optional), three u8s, and a 4-byte trailing object. A body that stops after the
+        # text makes the client read past the end and die with 0xE06D7363 - which is
+        # exactly what happened on 2026-08-19.
+        USER_CHAT_OVERHEAD = 4 + 1 + 2 + 29 + 3 + 4
+        check("the body carries every field the client reads, not just the text",
+              len(sb) == USER_CHAT_OVERHEAD + n,
+              "%d bytes, wanted %d" % (len(sb), USER_CHAT_OVERHEAD + n))
+        # The trailing object's first 4 bytes must not be 1: FUN_1408da090 compares them
+        # against 1 and returns when they differ. A 1 sends it on to fields we do not send.
+        check("the trailing object is stopped at its first field",
+              struct.unpack_from("<I", sb, len(sb) - 4)[0] != 1,
+              "%d" % struct.unpack_from("<I", sb, len(sb) - 4)[0])
 
     # ---- the refused !map now says why on screen
     #
