@@ -379,11 +379,19 @@ skill path.
   never by an instruction that names it. So no static search for the string will ever name the
   builder; the type enum has to be traced instead.
 
-  **The caveat that has to travel with that zero.** The operand-resolution logic is proven -
-  the identical matcher in `names.py` resolves `u"onlyHittedByCommonAttack"` out of
-  `140481de5`'s rip operand - but the *sweep* was not itself run against a positive control at
-  the time of writing (one was launched and had not returned). Treat it as supporting, not
-  load-bearing.
+  **And the sweep was run against a positive control before that zero was believed.** The
+  identical whole-image sweep for `0x14328b020` (`u"onlyHittedByCommonAttack"`) returns
+  **exactly one hit**, `140481de5 lea rdx,[rip+0x2e09234] in 0x14047d990`, at the same
+  **666 939** resync points:
+
+  ```text
+  python riprefs.py 0x14328b020
+    140481de5  lea  rdx, [rip + 0x2e09234]  -> 14328b020  in 0x14047d990
+    1 hit(s), 666939 resync point(s)
+  ```
+
+  Same code path, same coverage, one expected hit found and no others. So the zero for the
+  four attack-type names is a property of the client, not of the search. **[L]**
 * A second whole-image sweep, for the immediate `0x0834ae9f` (field 9 of the body,
   byte-identical in this capture and in the one `mob-combat.md` §1.3 quotes, so it is a
   constant rather than a nonce), **hit its 900 s timeout and produced nothing.** That is not a
