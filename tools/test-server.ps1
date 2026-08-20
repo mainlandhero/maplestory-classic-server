@@ -133,10 +133,15 @@ param(
     [int]$MobLimit = 0,
     # Give every inventory this many slots instead of the character's own count.
     #
-    # A test lever. The bag is 24 by default, which is also the number this client could
-    # plausibly have arrived at on its own - so a run at 24 cannot tell "the server sized
-    # the bag" from "the server changed nothing". 32 can: the bag either shows 32 or it
-    # does not.
+    # A test lever, and the numbers in it were wrong until 2026-08-20. The default is 30,
+    # not 24 - the owner: "the default inventory slots is actually what appears on the screen
+    # without the scroll bar, there are 6 rows of 5 slots". 30 is also the MINIMUM the
+    # server will send; below it the value has no use and is clamped.
+    #
+    # The lever exists because a run at the default cannot tell "the server sized the bag"
+    # from "the server changed nothing" - the client would plausibly have arrived at the
+    # same number on its own. A run at 125, the maximum, can: the bag either shows a
+    # scrollbar or it does not. That is the run that settled it.
     [int]$InventorySlots = 0,
     [string]$ClientDir
 )

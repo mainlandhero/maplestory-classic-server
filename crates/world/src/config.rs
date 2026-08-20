@@ -50,10 +50,15 @@ pub struct Config {
     /// so a client launch can put a number on screen that could not have come from anywhere
     /// else.
     ///
-    /// That matters because the default, 24, is also the number this game family's client
-    /// would plausibly have arrived at on its own - so a run at 24 cannot tell "the server
-    /// sized the bag" from "the server changed nothing". A run at 32 can: the bag either
-    /// shows 32 slots or it does not.
+    /// That matters because the default - **30**, six rows of five, corrected by the owner on
+    /// 2026-08-19 from the 24 this comment used to claim - is also the number this game
+    /// family's client would plausibly have arrived at on its own, so a run at it cannot
+    /// tell "the server sized the bag" from "the server changed nothing". A run at **125**,
+    /// the maximum, can: the bag either grows a scrollbar or it does not. That is the run
+    /// that settled it.
+    ///
+    /// 30 is also the floor. Below it the value has no use and is clamped - see
+    /// `net::opcode::MIN_INVENTORY_SLOTS`.
     pub inventory_slots: Option<u16>,
 
     /// Where every portal leads, keyed by `(map, portal name)`.
