@@ -1,0 +1,800 @@
+# NPC shops - Victoria Island, complete as of 2026-08-19
+#
+# AUTHORED DATA, NOT GENERATED. This file is the one place in the repo that holds game
+# content we wrote down rather than extracted, and it is deliberately NOT in gm-handbook/ -
+# that directory is generated, gitignored and never hand-edited. This is the opposite: it is
+# source, it is committed, and nothing regenerates it.
+#
+# Gathered by the owner from the live game, 2026-08-19, and every shop is labelled "COT2 prices"
+# there. It is the only source for these numbers: shop contents are NOT in the client's WZ -
+# see STATUS.md goal F, where that was checked three ways with a control each.
+#
+# ## Prices
+#
+# The number here is the BUY price - what the NPC charges.
+#
+# The SELL price is a different thing and comes from the client: `Item.wz <id>/info/price`.
+# The owner, 2026-08-19: "The prices client side most likely represents sell prices."
+# The evidence beside that reading: every consumable checked is exactly 10.00x its WZ price
+# (Red Potion 5 -> 50, Blue Potion 22 -> 220, Meat 8 -> 80, Lemon 15 -> 150 - nine of nine),
+# but Pet Food is 15 -> 35, so the ratio is NOT a constant and buy prices cannot be derived.
+# They have to be authored, which is what this file is for.
+#
+# ## Format
+#
+#   shop: <npc name> | <role> | <map>
+#   <tab><item name><tab><price>[<tab>rank]
+#
+# Item NAMES, not ids, on purpose: the ids come from the client's own String.wz name table
+# (`gm-handbook/items.txt`), so a name that does not resolve is a transcription error this
+# file can be checked for rather than a wrong item shipped silently.
+#
+# `rank` is the citizenship/reputation gate shown in the live UI ("Town Resident+"). The
+# client's quest data has `citizenshipTown` and `citizenshipGrade` Check keys, so the concept
+# is real in this client; the mapping from these labels to grade numbers is NOT established.
+# Items with a rank are recorded with it and must not be sold to a character below it.
+
+shop: Lucy | Grocer | Maple Road (Beginner Zone)
+	Red Potion	50
+	Orange Potion	150
+	Apple	20
+	Egg	30
+	Orange	50
+	Pet Food	35
+
+shop: Pan | Armor Seller | Maple Road (Beginner Zone)
+	White Undershirt	50
+	Grey T-Shirt	50
+	Undershirt	50
+	White Tube Top	50
+	Yellow T-Shirt	50
+	Green T-Shirt	50
+	Red-Striped top	50
+	Blue Jeans Shorts	50
+	Brown Cotton Shorts	50
+	Red Miniskirt	50
+	Indigo Miniskirt	50
+	Leather Sandals	50
+	Red Rubber Boots	50
+
+shop: Sid | Weapon Seller | Maple Road (Beginner Zone)
+	Sword	50
+	Hand Axe	50
+	Wooden Club	50
+	Razor	500
+
+shop: Mina | Grocer | Victoria Road: Lith Harbor Department Store
+	Sky-blue Wooden Chair	1000
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Warrior Potion	500
+	Speed Potion	500
+	Apple	20
+	Egg	30
+	Meat	80
+	Orange	50
+	Lemon	150
+	Pet Food	35
+	Return Scroll - Nearest Town	400
+	Return Scroll to Lith Harbor	500
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Stars	500
+
+shop: Natasha | Armor Seller | Victoria Road: Lith Harbor Armor Shop
+	Brown Skullcap	600
+	Red Headband	600
+	Black Headband	600
+	Green Headband	600
+	Yellow Headband	600
+	Blue Headband	600
+	Black Swimming Cap	900
+	Blue Swimming Cap	900
+	Red Swimming Cap	900
+	White Bandana	1200
+	Metal Gear	1800
+	Blue One-lined T-Shirt (M)	2400
+	Orange Sporty T-Shirt (M)	2400
+	Pink Starry Shirt (F)	2400
+	Red-Striped T-Shirt (F)	2400
+	Jean Capris	800
+	Grey Thick Sweat Pants (M)	1920
+	Red Rubber Boots	50
+	Yellow Rubber Boots	50
+	Blue Rubber Boots	50
+	Leather Sandals	50
+	Bronze Aroa Boots	1920
+	Brown Aroa Boots	1920
+	Green Aroa Boots	1920
+	Blue Ankle-strap Sandals	3780
+	Red Ankle-strap Sandals	3780
+	Brown Ankle-strap Sandals	3780
+
+shop: Silver | Weapon Seller | Victoria Road: Lith Harbor Armor Shop
+	Stolen Fence	2000
+	Wooden Buckler	4000
+	Sword	50
+	Long Sword	3000
+	Hand Axe	50
+	Double Axe	3000
+	Wooden Club	50
+	Steel Pipe	3000
+	Fruit Knife	1500
+
+shop: Doofus | Pet Food Merchant | Henesys
+	Pet Food	30
+
+shop: Flint | Town Scroll Shop | Victoria Road: Henesys Town Hall
+	Topwear DEF Scroll: Lesser	25000	Town Resident+
+	Bottomwear DEF Scroll: Lesser	25000	Town Resident+
+	Overall Armor DEX Scroll: Lesser	35000	Distinguished Citizen+
+	Overall Armor STR Scroll: Lesser	35000	Distinguished Citizen+
+	Earring Crit. Damage Scroll: Lesser	50000	Helpful Stranger+
+	Gloves Attack Scroll: Lesser	50000	Guardian of the Village+
+	Gloves Magic Attack Scroll: Lesser	50000	Guardian of the Village+
+
+shop: Karl | Weapon Seller | Henesys
+	War Bow	5000
+	Composite Bow	7000
+	Hunter's Bow	13500
+	Battle Bow	16500
+	Ryden	26000
+	Crossbow	5000
+	Battle Crossbow	7000
+	Balanche	13500
+	Mountain Crossbow	16500
+	Eagle Crow	26000
+	Sword	50
+	Leather Purse	3800
+	Red Brick	5000
+	Hard Briefcase	10500
+	Plunger	13500
+
+shop: Luna | Grocer | Victoria Road: Henesys Department Store
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Sniper Potion	500
+	Dexterity Potion	500
+	Speed Potion	500
+	Apple	20
+	Egg	30
+	Meat	80
+	Orange	50
+	Lemon	150
+	Pet Food	35
+	Black Dye	1000
+	White Dye	1000
+	Red Dye	1000
+	Yellow Dye	1000
+	Blue Dye	1000
+	Return Scroll - Nearest Town	400
+	Return Scroll to Henesys	500
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Star	500
+
+shop: Oak | Town Furnishings | Victoria Road: Henesys Town Hall
+	Henesys Resident's Chair	10000	Visitor+
+
+shop: Raymond | Town General Store | Victoria Road: Henesys Town Hall
+	Bronze Arrows for Bows	2	Helpful Stranger+
+	Bronze Arrows for Crossbows	2	Helpful Stranger+
+	Fried Chicken	60
+	Hot Dog	180
+	Salad	220	Visitor+
+	Pizza	252	Recognized Guest+
+	Hamburger	350	Town Resident+
+	Mrs. Ming Ming's Stew	480	Trusted Neighbor+
+	Orange Mushroom Daydream	500	Citizen of Honor+
+	Orange Juice	540	Trusted Neighbor+
+	Supreme Sniper Potion	600
+	Sharpness Potion	750	Helpful Stranger+
+	Fat Sausage	800	Distinguished Citizen+
+	Unagi	1000	Town Patron+
+	Grape Juice	1260	Guardian of the Village+
+	Elixir	3000	Citizen of Honor+
+
+shop: Flora the Fairy | Weapon Seller | Victoria Road: Ellinia Weapon Store
+	Wooden Wand	3000
+	Hardwood Wand	5000
+	Metal Wand	10500
+	Ice Wand	13500
+	Mithril Wand	22000
+	Wooden Staff	3000
+	Sapphire Staff	5000
+	Emerald Staff	5000
+	Old Wooden Staff	10500
+	Wizard Staff	13500
+	Mace	5000
+	Iron Mace	10500
+	Fusion Mace	13500
+	Sky Blue Umbrella	14700
+
+shop: Len the Fairy | Grocer | Victoria Road: Ellinia Department Store
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Magic Potion	500
+	Speed Potion	500
+	Apple	20
+	Egg	30
+	Meat	80
+	Orange	50
+	Lemon	150
+	Pet Food	35
+	Black Dye	1000
+	White Dye	1000
+	Red Dye	1000
+	Yellow Dye	1000
+	Blue Dye	1000
+	Return Scroll - Nearest Town	400
+	Return Scroll to Ellinia	500
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Star	500
+
+shop: Arturo | Grocer | Victoria Road: Perion Department Store
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Warrior Potion	500
+	Sniper Potion	500
+	Speed Potion	500
+	Apple	20
+	Egg	30
+	Meat	80
+	Orange	50
+	Lemon	150
+	Pet Food	35
+	Black Dye	1000
+	White Dye	1000
+	Red Dye	1000
+	Yellow Dye	1000
+	Blue Dye	1000
+	Return Scroll - Nearest Town	400
+	Return Scroll to Perion	500
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Star	500
+
+shop: Ben | City Scroll Shop | Victoria Road: Kerning City Civic Center
+	Earring Evasion Scroll: Lesser	25000	Helpful Stranger+
+	Topwear DEF Scroll: Lesser	25000	Town Resident+
+	Bottomwear DEF Scroll: Lesser	25000	Town Resident+
+	Overall Armor LUK Scroll: Lesser	35000	Distinguished Citizen+
+	Overall Armor INT Scroll: Lesser	35000	Distinguished Citizen+
+	Gloves Attack Scroll: Lesser	50000	Guardian of the Village+
+	Gloves Magic Attack Scroll: Lesser	50000	Guardian of the Village+
+
+shop: Cutthroat Manny | Weapon Seller | Victoria Road: Kerning City Self-Defence Item Store
+	Long Sword	3000
+	Square Shovel	6200
+	Pointed Shovel	11700
+	Triangular Zamadar	3000
+	Field Dagger	5000
+	Triple-Tipped Zamadar	5800
+	Coconut Knife	10500
+	Stinger	11700
+	Iron Dagger	13500
+	Forked Dagger	14700
+	Reef Claw	22000
+	Wooden Sword	5000
+	Metal Axe	5000
+	Wooden Mallet	5000
+	Spear	5000
+	Fork on a Stick	7000
+	Pole Arm	5000
+	Garnier	5000
+	Steel Titans	7000
+	Steel Igor	14100
+	Meba	16500
+	Adamantium Guards	27600
+
+shop: Dr. Faymus | Grocer | Victoria Road: Kerning City Pharmacy
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Warrior Potion	500
+	Dexterity Potion	500
+	Speed Potion	500
+	Apple	20
+	Egg	30
+	Meat	80
+	Orange	50
+	Lemon	150
+	Pet Food	35
+	Black Dye	1000
+	White Dye	1000
+	Red Dye	1000
+	Yellow Dye	1000
+	Blue Dye	1000
+	Return Scroll - Nearest Town	400
+	Return Scroll to Kerning City	500
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Star	500
+
+shop: Max | City General Store | Victoria Road: Kerning City Civic Center
+	Fried Chicken	60
+	Dried Squid	180
+	Salad	220	Visitor+
+	Pizza	252	Recognized Guest+
+	Hamburger	350	Town Resident+
+	Andre's Seafood Soup	480	Trusted Neighbor+
+	Ribbon Pig Daydream	500	Citizen of Honor+
+	Orange Juice	540	Trusted Neighbor+
+	Supreme Dexterity Potion	600
+	Destructive Potion	750	Helpful Stranger+
+	Fat Sausage	800	Distinguished Citizen+
+	Wolbi Throwing Stars	1000	Helpful Stranger+
+	Unagi	1000	Town Patron+
+	Grape Juice	1260	Guardian of the Village+
+
+shop: Weston | City Furnishings | Victoria Road: Kerning City Civic Center
+	Kerning City Resident's Chair	10000	Visitor+
+
+shop: Valen | Grocer | Florina Road: Florina Beach
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Apple	20
+	Egg	30
+	Fried Chicken	60
+	Meat	80
+	Hot Dog	180
+	Pizza	252
+	Hamburger	350
+	Hot Dog Supreme	480
+	Unagi	1000
+	Ice Cream Pop	1500
+	Orange	50
+	Lemon	150
+	Salad	220
+	Pure Water	1120
+	Red Bean Sundae	2250
+	Cake	150
+	Watermelon	1920
+	Pet Food	40
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Stars	500
+
+shop: Mr. Sweatbottom | Sauna Manager | Dungeon Regular Sauna
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Apple	20
+	Egg	30
+	Meat	80
+	Orange	50
+	Lemon	150
+	Pure Water	1120
+	Unagi	1000
+	Return Scroll - Nearest Town	400
+	Return Scroll to Sleepywood	600
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Stars	500
+
+shop: 24 Hr Mobile Store | Mobile Store | Dungeon Ant Tunnel Park
+	Fried Chicken	60
+	Hot Dog	180
+	Pizza	252
+	Hamburger	350
+	Hot Dog Supreme	480
+	Unagi	1000
+	Salad	220
+	Pure Water	1120
+	Cake	150
+	Return Scroll - Nearest Town	400
+	Arrow for Bow	2
+	Arrow for Crossbow	2
+	Subi Throwing Stars	500
+
+shop: Luma | Grocer | Shallow Passage: Cave Fairy Department Store
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Lemon	150
+	Unagi	1000
+	Orange Juice	540
+	Grape Juice	1260
+	Return Scroll - Nearest Town	400
+	Return Scroll to Forgotten Hollow	800
+	Arrow for Bow	1
+	Arrow for Crossbow	1
+	Subi Throwing-Stars	500
+
+shop: Tulcus | Scroll Seller | Warning Street: The Swamp of Despair II
+	Hat Accuracy Scroll: Lesser	15000
+	Hat HP Scroll: Lesser	15000
+	Hat MP Scroll: Lesser	15000
+	Topwear DEF Scroll: Lesser	15000
+	Overall Armor DEF Scroll: Lesser	15000
+	Bottomwear DEF Scroll: Lesser	15000
+	Shoes Evasion Scroll: Lesser	15000
+	Shield DEF Scroll: Lesser	15000
+	Cape Weapon Def. Scroll: Lesser	15000
+	Cape Magic Def. Scroll: Lesser	15000
+	Cape Accuracy Scroll: Lesser	15000
+
+shop: El Moth | Scroll Seller | Victoria Road: The Tree That Grew III
+	One-Handed Sword Attack Scroll: Lesser	25000
+	One-Handed Axe Attack Scroll: Lesser	25000
+	One-Handed Blunt Weapon Attack Scroll: Lesser	25000
+	Dagger Attack Scroll: Lesser	25000
+	Wand Magic Attack Scroll: Lesser	25000
+	Staff Magic Attack Scroll: Lesser	25000
+	Two-handed Sword Attack Scroll: Lesser	50000
+	Two-handed Axe Attack Scroll: Lesser	50000
+	Two-handed Blunt Weapon Attack Scroll: Lesser	50000
+	Spear Attack Scroll: Lesser	50000
+	Polearm Attack Scroll: Lesser	50000
+	Bow Attack Scroll: Lesser	50000
+	Crossbow Attack Scroll: Lesser	50000
+	Claw Attack Scroll: Lesser	50000
+
+shop: Sam | Armor Seller | Henesys
+	Single Earring	4500
+	Amethyst Earrings	4500
+	Brown Skullcap	600
+	Old Wisconsin	2000
+	Red Baseball Cap	3900
+	Black Baseball Cap	3900
+	Yellow Baseball Cap	3900
+	Brown Baseball Cap	3900
+	Blue Baseball Cap	3900
+	Brown Winter Hat	1200
+	Green Winter Hat	1200
+	Green Feather Hat	1800
+	Brown Feather Hat	1800
+	Blue Feather Hat	1800
+	Red Feather Hat	1800
+	Black Feather Hat	1800
+	Green Robin Hat	3600
+	Brown Robin Hat	3600
+	Red Robin Hat	3600
+	Blue Robin Hat	3600
+	Black Robin Hat	3600
+	Green Hunter	4500
+	Brown Hunter	4500
+	Red Hunter	4500
+	Blue Hunter	4500
+	Black Hunter	4500
+	Green Hawkeye	7200
+	Dark Hawkeye	7200
+	Green Archer Top (M)	2000
+	Brown Archer Top (M)	2000
+	Green Leather Hoodwear (M)	3000
+	Silver Leather Hoodwear (M)	3000
+	Brown Hard Leather Top (M)	6000
+	Green Bennis Chainmail (M)	7500
+	Blue Bennis Chainmail (M)	7500
+	Red Bennis Chainmail (M)	7500
+	Black Bennis Chainmail (M)	7500
+	Green Hunter's Armor (M)	12000
+	Dark Hunter's Armor (M)	12000
+	Green Avelin (F)	2000
+	Yellow Avelin (F)	2000
+	Green Able Armor (F)	3000
+	Yellow Able Armor (F)	3000
+	Grey Able Armor (F)	3000
+	Green Shivermail (F)	6000
+	Red Shivermail (F)	6000
+	Purple Shivermail (F)	6000
+	Green Bennis Chainmail (F)	7500
+	Blue Bennis Chainmail (F)	7500
+	Red Bennis Chainmail (F)	7500
+	Yellow Bennis Chainmail (F)	7500
+	Green Huntress Armor (F)	12000
+	Black Huntress Armor (F)	12000
+	Archer Pants (M)	1600
+	Brown Hard Leather Pants	4800
+	Bennis Chain Pants	6000
+	Green Hunter's Pants	9600
+	Dark Hunter's Pants	9600
+	Green Avelin Skirt (F)	1600
+	Yellow Avelin Skirt (F)	1600
+	Green Able Armor Skirt (F)	2400
+	Brown Able Skirt (F)	2400
+	Grey Able Skirt (F)	2400
+	Green Shivermail Skirt (F)	4800
+	Red Shivermail Skirt (F)	4800
+	Purple Shivermail Skirt (F)	4800
+	Green Huntress Pants (F)	9600
+	Black Huntress Pants (F)	9600
+	Green Hard Leather Boots	1200
+	Brown Hard Leather Boots	1200
+	Green Woodsman Boots	1800
+	Brown Woodsman Boots	1800
+	Blue Woodsman Boots	1800
+	Deer Huntertop	3600
+	Rabbit Huntertop	3600
+	Bear Huntertop	3600
+	Lion Huntertop	3600
+	Red Whitebottom Boots	4680
+	Orange Whitebottom Boots	4680
+	Pink Whitebottom Boots	4680
+	Blue Whitebottom Boots	4680
+
+shop: Serabi the Fairy | Armor Seller | Victoria Road: Ellinia Weapon Store
+	Weighted Earrings	9000
+	Yellow Square	9000
+	Gold Earrings	11250
+	Brown Apprentice Hat	1200
+	Blue Apprentice Hat	1200
+	Red Apprentice Hat	1200
+	Blue Moon Conehat	1800
+	Pink Moon Conehat	1800
+	Green Moon Conehat	1800
+	Dark Moon Conehat	1800
+	Brown Moon Conehat	1800
+	Blue Wizardry Hat	3600
+	Red Wizardry Hat	3600
+	Green Wizardry Hat	3600
+	Blue Jester	7200
+	Green Jester	7200
+	Blue Training Shirt	2000
+	Brown Training Shirt	2000
+	Blue Split Piece	6000
+	Orange Split Piece	6000
+	Black Split Piece	6000
+	Black Armine	2000
+	Green Armine	2000
+	Purple Arianne	3000
+	Green Arianne	3000
+	Pink Arianne	3000
+	Yellow Arianne	3000
+	Purple Split	6000
+	Red Split	6000
+	Black Split	6000
+	Blue Fairy Top	12000
+	Green Fairy Top	12000
+	Beige Plain Robe	5400
+	Blue Plain Robe	5400
+	Green Plain Robe	5400
+	Brown Doros Robe	13500
+	Blue Doros Robe	13500
+	Yellow Doros Robe	13500
+	White Doros Robe	13500
+	Blue Wizard Robe	21600
+	Green Wizard Robe	21600
+	Brown Doroness Robe	13500
+	Purple Doroness Robe	13500
+	Red Doroness Robe	13500
+	Blue Training Pants	1600
+	Brown Training Pants	1600
+	White Split Pants	4800
+	Black Split Pants	4800
+	Black Armine Skirt	1600
+	Green Armine Skirt	1600
+	Purple Arianne Skirt	2400
+	Green Arianne Skirt	2400
+	Pink Arianne Skirt	2400
+	Yellow Arianne Skirt	2400
+	White Split Skirt	4800
+	Black Split Skirt	4800
+	Blue Fairy Skirt	9600
+	Green Fairy Skirt	9600
+	Brown Basic Boots	1200
+	Yellow Basic Boots	1200
+	Blue Basic Boots	1200
+	Beige Nitty	1800
+	Black Nitty	1800
+	Blue Jewelry Boots	3600
+	Purple Jewelry Boots	3600
+	Red Jewelry Boots	3600
+	Silver Wind Shoes	4500
+	Yellow Wind Shoes	4500
+	Black Wind Shoes	4500
+
+shop: Harry | Armor Seller | Victoria Road: Perion Weapon Store
+	Bronze Koif	1200
+	Bronze Helmet	1400
+	Bronze Full Helm	1800
+	Bronze Football Helmet	3600
+	Bronze Viking Helm	3600
+	Steel Sharp Helm	3900
+	Iron Burgernet Helm	4500
+	Jousting Helmet	7200
+	Brown Lolico Armor (M)	2000
+	Blue Lolico Armor (M)	2000
+	Brown Corporal (M)	3000
+	Steel Corporal (M)	3000
+	Blue Sergeant (M)	6000
+	Red Sergeant (M)	6000
+	Silver Master Sergeant (M)	7500
+	Orihalcon Master Sergeant (M)	7500
+	Dark Master Sergeant (M)	7500
+	Red Hwarang Shirt (M)	12000
+	Green Hwarang Shirt (M)	12000
+	Orange Lolica Armor (F)	2000
+	Blueberry Lolica Armor (F)	2000
+	Red Lamelle (F)	6000
+	Green Lamelle (F)	6000
+	Brown Lamelle (F)	6000
+	Blue Shark (F)	7500
+	Sky Shark (F)	7500
+	Red Shark (F)	7500
+	Blue Kendo Robe (M)	10800
+	Red Kendo Robe (M)	10800
+	White Kendo Robe (M)	10800
+	Black Dragon Robe (M)	21600
+	Steel Fitted Mail (F)	5400
+	Dark Engrit (F)	21600
+	Red Engrit (F)	21600
+	Blue Engrit (F)	21600
+	Yellow Engrit (F)	21600
+	Brown Lolico Pants (M)	1600
+	Blue Lolico Pants (M)	1600
+	Brown Corporal Pants (M)	2400
+	Steel Corporal Pants (M)	2400
+	Steel Sergeant Kilt (M)	4800
+	Red Sergeant Kilt (M)	4800
+	Silver Master Sergeant Kilt (M)	6000
+	Orihalcon Master Sergeant Kilt (M)	6000
+	Dark Master Sergeant Kilt (M)	6000
+	Red Martial Arts Pants (M)	9600
+	Brown Martial Arts Pants (M)	9600
+	Black Martial Arts Pants (M)	9600
+	White Martial Arts Pants (M)	9600
+	Rookie Pants (F)	1600
+	Sophia Pants (F)	1600
+	Red Ramel Skirt (F)	4800
+	Green Ramel Skirt (F)	4800
+	Brown Ramel Skirt (F)	4800
+	Blue Shark Skirt (F)	6000
+	Sky Shark Skirt (F)	6000
+	Red Shark Skirt (F)	6000
+	Bronze Grieves	1800
+	Steel Grieves	1800
+	Brown High Boots	3600
+	Orange High Boots	3600
+	Blue High Boots	3600
+
+shop: River | Weapon Seller | Victoria Road: Perion Weapon Store
+	Long Sword	3000
+	Sabre	5000
+	Viking Sword	10500
+	Machete	10500
+	Eloon	13500
+	Gladius	22000
+	Field Dagger	5000
+	Coconut Knife	10500
+	Iron Dagger	13500
+	Cass	22000
+	Battle Axe	5000
+	Mithril Axe	13500
+	Fireman's Axe	22000
+	Mace	5000
+	Iron Mace	10500
+	Fusion Mace	13500
+	War Hammer	22000
+	Wooden Sword	5000
+	Two-Handed Sword	13500
+	Broadsword	16500
+	Scimitar	26000
+	Metal Axe	5000
+	Iron Axe	13500
+	Two-Handed Axe	16500
+	Blue Axe	26000
+	Wooden Mallet	5000
+	Heavy Mace	16500
+	Square Hammer	13500
+	Mithril Maul	26000
+	Spear	5000
+	Fork on a Stick	7000
+	Forked Spear	26000
+	Pole Arm	5000
+	Iron Ball	7000
+	Studded Polearm	13500
+	Mithril Pole Arm	26000
+	Wooden Buckler	4000
+	Steel Shield	6000
+	Mithril Buckler	12000
+	Red Triangular Shield	15000
+	Red Cross Shield	24000
+
+shop: Don Hwang | Armor Seller | Victoria Road: Kerning City Self-Defence Item Store
+	White Bandana	1200
+	Red Bandana	1200
+	Blue Bandana	1200
+	Yellow Bandana	1200
+	Black Bandana	1200
+	Red Ghetto Beanie	1200
+	Blue Ghetto Beanie	1200
+	Brown Ghetto Beanie	1200
+	Black Ghetto Beanie	1200
+	Green Ghetto Beanie	1200
+	Yellow Metal Gear	1900
+	Red Thief Hood	1900
+	Green Thief Hood	1900
+	Blue Thief Hood	1900
+	Yellow Thief Hood	1900
+	Black Thief Hood	1900
+	Red Loosecap	3600
+	Black Loosecap	3600
+	Blue Loosecap	3600
+	Brown Loosecap	3600
+	Green Loosecap	3600
+	Red Tiberian	4500
+	Dark Tiberian	4500
+	Blue Tiberian	4500
+	Brown Tiberian	4500
+	Green Tiberian	4500
+	Red Guise	7200
+	Dark Guise	7200
+	Red Cloth Vest	2000
+	Blue Cloth Vest	2000
+	Black Cloth Vest	2000
+	Blue Nightshift	3000
+	Dark Nightshift	3000
+	Red Pao	6000
+	Blue Pao	6000
+	Black Pao	6000
+	Brown Sneak	7500
+	Blue Sneak	7500
+	Black Sneak	7500
+	Dark Silver Stealer	12000
+	Red Gold Stealer	12000
+	Red Nightshift	3000
+	Brown Nightshift	3000
+	Red Qi Pao	6000
+	Pink Qi Pao	6000
+	Blue Qi Pao	6000
+	Blood Sneak	7500
+	Sky Sneak	7500
+	Gold Sneak	7500
+	Dark Sneak	7500
+	Red Steal	12000
+	Black Steal	12000
+	Red Cloth Pants	1600
+	Blue Cloth Pants	1600
+	Black Cloth Pants	1600
+	Blue Nightshift Pants	2400
+	Dark Nightshift Pants	2400
+	Red Pao Bottom	4800
+	Blue Pao Bottom	4800
+	Black Pao Bottom	4800
+	Brown Sneak Pants	6000
+	Dark Brown Sneak Pants	6000
+	Black Sneak Pants	6000
+	Warfare Pants	6240
+	Red / Gold Stealer Pants	9600
+	Silver / Black Stealer Pants	9600
+	Red Nightshift Pants	2400
+	Brown Nightshift Pants	2400
+	Red Qi Pao Pants	4800
+	Blue Qi Pao Pants	4800
+	Purple Qi Pao Pants	4800
+	Red Qi Pao Skirt	5280
+	Blue Qi Pao Skirt	5280
+	Purple Qi Pao Skirt	5280
+	Blood Sneak Pants	6000
+	Sky Sneak Pants	6000
+	Gold Sneak Pants	6000
+	Dark Sneak Pants	6000
+	Red Steal Pants	9600
+	Black Steal Pants	9600
+	White Gomushin	1980
+	Black Gomushin	1980
+	Smelly Gomushin	1980
+	Blue Gidder Shoes	1200
+	Brown Gidder Shoes	1200
+	Red Ninja Sandals	1800
+	Yellow Ninja Sandals	1800
+	Blue Ninja Sandals	1800
+	White Ninja Sandals	1800
+	Red Enamel Boots	3600
+	Blue Enamel Boots	3600
+	Black Enamel Boots	3600
