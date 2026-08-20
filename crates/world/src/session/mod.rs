@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -475,6 +475,9 @@ impl Session {
             // one report and were measured 14-50 px behind while running, and 50 px is twice
             // the width of the client's pick-up box. The end is exact when standing still,
             // which is the case a drag out of the inventory window is.
+            net::userhit::CLIENT_USER_HIT => {
+                return self.on_user_hit(body.get(2..).unwrap_or(&[]))
+            }
             net::usermove::CLIENT_USER_MOVE => {
                 if let Some(m) = net::usermove::parse_user_move(body.get(2..).unwrap_or(&[])) {
                     self.last_position = Some((m.x, m.y));

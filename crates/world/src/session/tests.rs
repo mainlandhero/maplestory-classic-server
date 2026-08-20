@@ -726,6 +726,44 @@ fn clicking_a_shopkeeper_opens_the_shop() {
     assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
 }
 
+/// **Getting hit subtracts HP and tells the client.** The owner: *"Getting hit by the mob does
+/// not subtract my HP."*
+///
+/// The client computes the damage and does not apply it, so the server must - and must send
+/// back the NEW HP, not a delta, because `0x007C` bit 10 is absolute.
+#[test]
+fn being_hit_subtracts_hp_and_answers_with_the_new_value() {
+    let (mut s, store, id) = gm_session();
+    // A real 147-byte body: snail template 2, object id 2004, damage 1.
+    let hex = "00000000ffffffff0100000002002100b663ed0a0000000000000000000001000000010000000100000001000000d4070000d407000001000000000000000000000000000000000000490300008b010000000000000000000000000000ffffffff00000000ffffffff000000000000000002000000000000000000000000000000000000000100000000000000000000000000";
+    let mut packet = net::userhit::CLIENT_USER_HIT.to_le_bytes().to_vec();
+    packet.extend((0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()));
+
+    let before = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().hp;
+    let out = s.handle(&packet);
+
+    let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("a 0x007C");
+    assert_eq!(stat.body, net::stats::StatChange::hp_only(before - 1).build());
+    let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!(after.hp, before - 1, "the database, not just the reply");
+}
+
+/// **`!heal` exists because death does not**, so a character at zero HP is not stuck.
+#[test]
+fn heal_restores_and_says_so() {
+    let (mut s, store, id) = gm_session();
+    let mut chr = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    chr.hp = 1;
+    store.save_character_progress(&chr).unwrap();
+
+    let out = s.handle(&gm_chat("!heal"));
+    assert!(notice_text(&out[0]).contains("restored"), "{}", notice_text(&out[0]));
+    assert!(out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "the client must be told");
+
+    let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!(after.hp, after.max_hp);
+}
+
 /// **A kill awards the mob's own EXP, and enough of it levels the character.**
 ///
 /// Goal D, end to end: the EXP per kill is the client's own `mobtemplates.txt` value, the

@@ -1,0 +1,155 @@
+; 0x14025d810 .. 0x14025da6c  (604 bytes)
+ 00014025d810  mov      qword ptr [rsp + 8], rbx
+ 00014025d815  mov      qword ptr [rsp + 0x10], rsi
+ 00014025d81a  push     rdi
+ 00014025d81b  sub      rsp, 0x20
+ 00014025d81f  mov      rsi, rdx
+ 00014025d822  mov      rdi, rcx
+ 00014025d825  mov      edx, dword ptr [rcx]
+ 00014025d827  mov      rcx, rsi
+ 00014025d82a  call     0x1406ed9d0
+ 00014025d82f  mov      edx, dword ptr [rdi + 4]
+ 00014025d832  mov      rcx, rsi
+ 00014025d835  call     0x1406ed9d0
+ 00014025d83a  mov      edx, dword ptr [rdi + 8]
+ 00014025d83d  mov      rcx, rsi
+ 00014025d840  call     0x1406ed9d0
+ 00014025d845  mov      edx, dword ptr [rdi + 0x10]
+ 00014025d848  mov      rcx, rsi
+ 00014025d84b  call     0x1406ed9d0
+ 00014025d850  mov      edx, dword ptr [rdi + 0x14]
+ 00014025d853  mov      rcx, rsi
+ 00014025d856  call     0x1406ed9d0
+ 00014025d85b  mov      edx, dword ptr [rdi + 0x18]
+ 00014025d85e  mov      rcx, rsi
+ 00014025d861  call     0x1406ed9d0
+ 00014025d866  cmp      byte ptr [rdi + 0x1c], 0
+ 00014025d86a  mov      rcx, rsi
+ 00014025d86d  setne    dl
+ 00014025d870  call     0x1406ed840
+ 00014025d875  mov      edx, dword ptr [rdi + 0x20]
+ 00014025d878  mov      rcx, rsi
+ 00014025d87b  call     0x1406ed9d0
+ 00014025d880  cmp      byte ptr [rdi + 0x24], 0
+ 00014025d884  mov      rcx, rsi
+ 00014025d887  setne    dl
+ 00014025d88a  call     0x1406ed840
+ 00014025d88f  mov      edx, dword ptr [rdi + 0xc]
+ 00014025d892  mov      rcx, rsi
+ 00014025d895  call     0x1406ed9d0
+ 00014025d89a  mov      r8d, 4
+ 00014025d8a0  lea      rdx, [rdi + 0x28]
+ 00014025d8a4  mov      rcx, rsi
+ 00014025d8a7  call     0x1406ede20
+ 00014025d8ac  mov      edx, dword ptr [rdi + 0x30]
+ 00014025d8af  mov      rcx, rsi
+ 00014025d8b2  call     0x1406ed9d0
+ 00014025d8b7  mov      edx, dword ptr [rdi + 0x2c]
+ 00014025d8ba  mov      rcx, rsi
+ 00014025d8bd  call     0x1406ed9d0
+ 00014025d8c2  mov      edx, dword ptr [rdi + 0x34]
+ 00014025d8c5  mov      rcx, rsi
+ 00014025d8c8  call     0x1406ed9d0
+ 00014025d8cd  mov      edx, dword ptr [rdi + 0x38]
+ 00014025d8d0  mov      rcx, rsi
+ 00014025d8d3  call     0x1406ed9d0
+ 00014025d8d8  cmp      byte ptr [rdi + 0x3c], 0
+ 00014025d8dc  mov      rcx, rsi
+ 00014025d8df  setne    dl
+ 00014025d8e2  call     0x1406ed840
+ 00014025d8e7  cmp      byte ptr [rdi + 0x3d], 0
+ 00014025d8eb  mov      rcx, rsi
+ 00014025d8ee  setne    dl
+ 00014025d8f1  call     0x1406ed840
+ 00014025d8f6  cmp      byte ptr [rdi + 0x3e], 0
+ 00014025d8fa  mov      rcx, rsi
+ 00014025d8fd  setne    dl
+ 00014025d900  call     0x1406ed840
+ 00014025d905  cmp      byte ptr [rdi + 0x44], 0
+ 00014025d909  mov      rcx, rsi
+ 00014025d90c  setne    dl
+ 00014025d90f  call     0x1406ed840
+ 00014025d914  cmp      byte ptr [rdi + 0x3f], 0
+ 00014025d918  mov      rcx, rsi
+ 00014025d91b  setne    dl
+ 00014025d91e  call     0x1406ed840
+ 00014025d923  cmp      byte ptr [rdi + 0x48], 0
+ 00014025d927  mov      rcx, rsi
+ 00014025d92a  setne    dl
+ 00014025d92d  call     0x1406ed840
+ 00014025d932  cmp      byte ptr [rdi + 0x49], 0
+ 00014025d936  mov      rcx, rsi
+ 00014025d939  setne    dl
+ 00014025d93c  call     0x1406ed840
+ 00014025d941  mov      rdx, qword ptr [rdi + 0x50]
+ 00014025d945  mov      rcx, rsi
+ 00014025d948  call     0x1406edbc0
+ 00014025d94d  mov      edx, dword ptr [rdi + 0x58]
+ 00014025d950  mov      rcx, rsi
+ 00014025d953  call     0x1406ed9d0
+ 00014025d958  mov      edx, dword ptr [rdi + 0x5c]
+ 00014025d95b  mov      rcx, rsi
+ 00014025d95e  call     0x1406ed9d0
+ 00014025d963  mov      edx, dword ptr [rdi + 0x60]
+ 00014025d966  mov      rcx, rsi
+ 00014025d969  call     0x1406ed9d0
+ 00014025d96e  mov      edx, dword ptr [rdi + 0x64]
+ 00014025d971  mov      rcx, rsi
+ 00014025d974  call     0x1406ed9d0
+ 00014025d979  mov      edx, dword ptr [rdi + 0x68]
+ 00014025d97c  mov      rcx, rsi
+ 00014025d97f  call     0x1406ed9d0
+ 00014025d984  mov      edx, dword ptr [rdi + 0x6c]
+ 00014025d987  mov      rcx, rsi
+ 00014025d98a  call     0x1406ed9d0
+ 00014025d98f  mov      edx, dword ptr [rdi + 0x70]
+ 00014025d992  mov      rcx, rsi
+ 00014025d995  call     0x1406ed9d0
+ 00014025d99a  mov      edx, dword ptr [rdi + 0x74]
+ 00014025d99d  mov      rcx, rsi
+ 00014025d9a0  call     0x1406ed9d0
+ 00014025d9a5  mov      edx, dword ptr [rdi + 0x78]
+ 00014025d9a8  mov      rcx, rsi
+ 00014025d9ab  call     0x1406ed9d0
+ 00014025d9b0  mov      edx, dword ptr [rdi + 0x7c]
+ 00014025d9b3  mov      rcx, rsi
+ 00014025d9b6  call     0x1406ed9d0
+ 00014025d9bb  mov      edx, dword ptr [rdi + 0x80]
+ 00014025d9c1  mov      rcx, rsi
+ 00014025d9c4  call     0x1406ed9d0
+ 00014025d9c9  mov      edx, dword ptr [rdi + 0x84]
+ 00014025d9cf  mov      rcx, rsi
+ 00014025d9d2  call     0x1406ed9d0
+ 00014025d9d7  mov      edx, dword ptr [rdi + 0x88]
+ 00014025d9dd  mov      rcx, rsi
+ 00014025d9e0  call     0x1406ed9d0
+ 00014025d9e5  mov      edx, dword ptr [rdi + 0x8c]
+ 00014025d9eb  mov      rcx, rsi
+ 00014025d9ee  call     0x1406ed9d0
+ 00014025d9f3  mov      edx, dword ptr [rdi + 0x90]
+ 00014025d9f9  mov      rcx, rsi
+ 00014025d9fc  call     0x1406ed9d0
+ 00014025da01  mov      edx, dword ptr [rdi + 0x94]
+ 00014025da07  mov      rcx, rsi
+ 00014025da0a  call     0x1406ed9d0
+ 00014025da0f  cmp      byte ptr [rdi + 0x98], 0
+ 00014025da16  mov      rcx, rsi
+ 00014025da19  setne    dl
+ 00014025da1c  call     0x1406ed840
+ 00014025da21  mov      edx, dword ptr [rdi + 0x9c]
+ 00014025da27  mov      rcx, rsi
+ 00014025da2a  call     0x1406ed9d0
+ 00014025da2f  cmp      byte ptr [rdi + 0xa0], 0
+ 00014025da36  mov      rcx, rsi
+ 00014025da39  setne    dl
+ 00014025da3c  call     0x1406ed840
+ 00014025da41  mov      edx, dword ptr [rdi + 0xa4]
+ 00014025da47  mov      rcx, rsi
+ 00014025da4a  call     0x1406ed9d0
+ 00014025da4f  mov      edx, dword ptr [rdi + 0xa8]
+ 00014025da55  mov      rcx, rsi
+ 00014025da58  mov      rbx, qword ptr [rsp + 0x30]
+ 00014025da5d  mov      rsi, qword ptr [rsp + 0x38]
+ 00014025da62  add      rsp, 0x20
+ 00014025da66  pop      rdi
+ 00014025da67  jmp      0x1406ed9d0

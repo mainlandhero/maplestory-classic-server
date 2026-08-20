@@ -46,6 +46,7 @@ impl Session {
             "map" => self.gm_map(arg),
             "item" => self.gm_item(arg),
             "exp" => self.gm_exp(arg),
+            "heal" => self.gm_heal(),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -111,6 +112,33 @@ impl Session {
         let mut ack = self.gm_ack(format!("{} gains {amount} experience: {before} -> {now}.", chr.name));
         ack.append(&mut out);
         ack
+    }
+
+
+    /// `!heal` - back to full HP and MP.
+    ///
+    /// **This exists because death does not.** Mobs deal contact damage now, and a character
+    /// that reaches zero HP is disabled by the client with no way back: `research/user-hit.md`
+    /// established that `hp = 0` will not hang the client, but not what plays the death and
+    /// revive sequence. Until that is decoded, this is the way out - and it is better than
+    /// silently clamping HP at 1, which would hide the fact that death is missing.
+    pub(super) fn gm_heal(&mut self) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else {
+            return self.gm_ack("!heal REFUSED: no character is claimed on this connection.".to_string());
+        };
+        chr.hp = chr.max_hp;
+        chr.mp = chr.max_mp;
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.gm_ack(format!("!heal FAILED: {e}"));
+        }
+        let mut out = self.gm_ack(format!("{} is restored to {} HP.", chr.name, chr.max_hp));
+        out.push(Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange { hp: Some(chr.hp), mp: Some(chr.mp), ..Default::default() }
+                .build(),
+            what: format!("StatChanged: healed to {}/{} hp, {}/{} mp", chr.hp, chr.max_hp, chr.mp, chr.max_mp),
+        });
+        out
     }
 
 

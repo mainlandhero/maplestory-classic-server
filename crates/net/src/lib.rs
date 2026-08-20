@@ -41,6 +41,7 @@ pub mod session;
 pub mod shop;
 pub mod stats;
 pub mod userchat;
+pub mod userhit;
 pub mod usermove;
 
 pub use codec::{

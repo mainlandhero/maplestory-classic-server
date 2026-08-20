@@ -348,6 +348,24 @@ impl StatChange {
         StatChange { exp: Some(new_total), ..Self::default() }
     }
 
+    /// **The reply a `0x00E5` user-hit report needs** - the new HP and nothing else,
+    /// **13 body bytes**. `research/user-hit.md` is the decode of the report itself.
+    ///
+    /// `new_hp` is the character's HP **after** the damage, not the delta: the client
+    /// stores whatever arrives straight into `charstat+0x5b` and never subtracts.
+    ///
+    /// This is required, not cosmetic. The client **does not** decrement its own HP when it
+    /// sends `0x00E5`; measured in `research/user-hit.md` §4 by enumerating every write to
+    /// `charstat+0x5b` in the image and showing that none is reachable from the hit path.
+    /// Until a `0x007C` arrives the bar does not move, which is exactly what the owner saw.
+    ///
+    /// Sending `0` is **not** a death packet on its own. The `0x007C` handler's HP arm
+    /// (`0x142d5617c`) only gates one UI write on `hp > 0`; it plays no death sequence.
+    /// See `research/user-hit.md` §6 for where that investigation stopped.
+    pub fn hp_only(new_hp: u32) -> Self {
+        StatChange { hp: Some(new_hp), ..Self::default() }
+    }
+
     /// Which mask bits this change will announce.
     ///
     /// Never sets [`bits::NOT_DECODED_BIT_3`] and never sets anything above bit 18, because
@@ -768,6 +786,39 @@ mod tests {
         // the level really is the first value, so the client's `newLevel > oldLevel` test
         // sees it
         assert_eq!(u32::from_le_bytes([b[7], b[8], b[9], b[10]]), 2);
+    }
+
+    /// The answer to a `0x00E5` user-hit report, pinned byte for byte.
+    ///
+    /// Head `1, 0, 1`; mask `0x400` = bit 10 = hp, which is the bit the client tests at
+    /// `0x142d5617c` (`bt r12d, 0xa`) and the same bit `0x1402cbc8e` tests before it stores
+    /// the value at `charstat+0x5b`. Then the u32, then the two absent trailers.
+    #[test]
+    fn the_reply_to_a_user_hit_is_thirteen_bytes() {
+        let b = StatChange::hp_only(44).build();
+        assert_eq!(
+            b,
+            vec![
+                1, 0, 1, // head
+                0x00, 0x04, 0x00, 0x00, // mask = bits::HP, bit 10
+                44, 0, 0, 0, // the new HP, u32 LE
+                0, // charm absent
+                0, // recovery absent
+            ]
+        );
+        assert_eq!(b.len(), 13);
+        assert_eq!(mask_of(&b), bits::HP);
+        assert_eq!(bits::HP, 1 << 10);
+    }
+
+    /// HP zero is a legal value on the wire and must not be silently dropped by `Option`
+    /// handling - the server is the authority on death and `0` is how it says so.
+    #[test]
+    fn hp_zero_still_sets_the_bit_and_carries_the_value() {
+        let b = StatChange::hp_only(0).build();
+        assert_eq!(mask_of(&b), bits::HP, "hp: Some(0) must still announce bit 10");
+        assert_eq!(u32::from_le_bytes([b[7], b[8], b[9], b[10]]), 0);
+        assert_eq!(b.len(), 13);
     }
 
     /// The two trailers are flag-then-value, and both are normally absent.

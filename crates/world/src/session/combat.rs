@@ -325,4 +325,56 @@ impl Session {
         }
         out
     }
+
+
+    /// `0x00E5` - the client says the player took damage. **Apply it.**
+    ///
+    /// The owner, after a run: *"Getting hit by the mob does not subtract my HP."* The client
+    /// computes the damage and does **not** apply it - established three ways with different
+    /// blind spots in `research/user-hit.md` - so nothing moved their bar because nothing was
+    /// moving it. The server is the authority and has to send the new HP back.
+    ///
+    /// **The new HP, not a delta.** `0x007C` mask bit 10 carries an absolute value; sending
+    /// a difference would make the bar wander.
+    ///
+    /// Not a latch, so an unparseable body costs one hit rather than the session - which is
+    /// why this can afford to be strict about the length.
+    pub(super) fn on_user_hit(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some(hit) = net::userhit::parse_user_hit(payload) else {
+            return Vec::new();
+        };
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        if hit.damage == 0 {
+            return Vec::new();
+        }
+
+        let before = chr.hp;
+        chr.hp = chr.hp.saturating_sub(hit.damage);
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.notice(format!("Could not save your health: {e}"));
+        }
+
+        let mut out = vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange::hp_only(chr.hp).build(),
+            what: format!(
+                "StatChanged: hit by mob {} (template {}, attack index {}) for {} - hp {} -> {}.                  Bit 10 carries the NEW HP, not a delta; the client computes damage and does                  not apply it.",
+                hit.mob_object_id, hit.mob_template_id, hit.attack_index, hit.damage, before,
+                chr.hp
+            ),
+        }];
+
+        // **Death is not built.** `research/user-hit.md` established that `hp = 0` in a
+        // `0x007C` is not a death packet and will not hang the client - what it does is
+        // disable the player through some 65 sites that branch on the sign of HP - but what
+        // plays the death sequence was not found. So say so out loud rather than leaving a
+        // character wedged at zero with no explanation.
+        if chr.hp == 0 {
+            out.extend(self.notice(
+                "You are out of HP. Death is not implemented yet - use !heal to carry on."
+                    .to_string(),
+            ));
+        }
+        out
+    }
 }
