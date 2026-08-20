@@ -50,6 +50,28 @@ answers here both came from searching a known list — one looked for the wrong 
 (bit tests, when the mask was a byte array), one for the wrong *set* (five decoder
 addresses, when there are seven). Both returned clean, confident numbers.
 
+## Working alongside agents
+
+An agent's files are **its** files until it reports back. Three rules, all learned the same
+day by breaking them.
+
+**Never `git add -A` while an agent is running.** Stage by path, and stage only paths you
+touched yourself. A green test suite is not evidence that an agent has finished - it is
+evidence that whatever it has written so far compiles. On 2026-08-19 this committed
+half-written work from three different agents, and in one case a file was still being edited
+as it went into the commit.
+
+**Do not edit a file an agent owns.** Give each agent its own new files, tell it which shared
+files are off-limits, and integrate yourself once it reports. `crates/world/src/session.rs`
+is the usual integration point and should stay with the coordinator.
+
+**Re-run your own analysis when you fix a shared instrument.** If a tool was wrong, every
+conclusion drawn with it is suspect - including yours. On 2026-08-19 `tools/reads.py` was
+fixed to count tail-call reads, four agents were told to re-run anything resting on a read
+count, and the person who sent that message did not re-run their own. The result was the same
+packet shipping short a second time and killing the client a second time. The fixed tool's
+own output had already printed the missing read; it scrolled past unread.
+
 ## Reverse engineering
 
 **`docs/ghidra.md`** — the working command line, JDK 21, the scripts, and the traps.

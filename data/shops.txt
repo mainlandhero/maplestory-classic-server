@@ -813,6 +813,13 @@ shop: Don Hwang | Armor Seller | Victoria Road: Kerning City Self-Defence Item S
 	Black Sneak	7500
 	Dark Silver Stealer	12000
 	Red Gold Stealer	12000
+# RESTORED 2026-08-19. These were in the owner's original transcription and I deleted them,
+# calling them duplicate rows. They are not duplicates - they are the FEMALE items, which
+# share a display name with the male ones and differ only in id. The live UI's own count
+# is the proof: Don Hwang reads 98/98 and this shop had 92 until these six came back.
+	Red Cloth Vest (F)	2000
+	Blue Cloth Vest (F)	2000
+	Black Cloth Vest (F)	2000
 	Red Nightshift	3000
 	Brown Nightshift	3000
 	Red Qi Pao	6000
@@ -838,6 +845,11 @@ shop: Don Hwang | Armor Seller | Victoria Road: Kerning City Self-Defence Item S
 	Warfare Pants	6240
 	Red / Gold Stealer Pants	9600
 	Silver / Black Stealer Pants	9600
+# RESTORED 2026-08-19 - the female Cloth Pants, deleted by me as duplicates. See the
+# note above the Cloth Vests.
+	Red Cloth Pants (F)	1600
+	Blue Cloth Pants (F)	1600
+	Black Cloth Pants (F)	1600
 	Red Nightshift Pants	2400
 	Brown Nightshift Pants	2400
 	Red Qi Pao Pants	4800
@@ -962,6 +974,9 @@ shop: Nuri the Fairy | Armor Seller | Orbis: Orbis Weapon Store
 # reason: it displays under this identical name. research/shops.md has the working.
 	Green Bennis Chainmail (M)	7500
 	Red Hunter's Armor	12000
+# RESTORED 2026-08-19 - deleted by me as a duplicate of the (M) row three lines up.
+# Nuri reads 36/36 in the live UI and this shop had 35 until this came back.
+	Green Bennis Chainmail (F)	7500
 	Black Huntress Armor	12000
 	Bennis Chain Pants	6000
 	Red Hunter's Pants	9600
