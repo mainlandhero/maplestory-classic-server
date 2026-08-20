@@ -187,6 +187,53 @@ What is still missing is something to walk over: the drop is currently refused, 
 ever lies on the ground. The field-side drop table is being built now; until it is wired,
 this step cannot be attempted, however good the logging is.
 
+#### Lucy's counter kills the client - what the logs establish, 2026-08-20
+
+Fixtures: `research/fixtures/shop-opens-then-client-faults-{world,hook,exit}.log`.
+
+```
+11:51:21.098  -> 0x0560 OpenShop, 12 rows (6 buy, 6 sell), 379 bytes
+11:51:21.108  C++ THROW #7                       <- ten milliseconds later
+              (the client sends NOTHING further, at all)
+11:51:24.656  CLIENT FAULT 0xc0000005 at 0x140ce89f7
+```
+
+**The throw is the event and the fault is the wreckage**, and that is now a chain rather
+than a guess:
+
+* seven throws in the whole two-minute session, and this one lands 10 ms after our packet;
+* from that instant the client sent nothing - no movement, no shop request - so it was
+  wedged immediately, 3.5 s before it died;
+* `0x140ce89f7` is inside `FUN_140ce89c0`, a **reference-counted release**, and the fault
+  stack's first frame `0x14308e3ed` is the return address of the call at `0x14308e3e8` in
+  `FUN_14308e3db` - a 24-byte destructor thunk;
+* `research/setfield-fault-shape.md` had already characterised that function as **a latent
+  bug in the client's own error path**: any early exit that skips the acquisition leaves the
+  holder's `+8` as uninitialised stack, and the epilogue's guard then releases it.
+
+A throw unwinds, unwinding runs destructors, and one of them ran over a local the skipped
+path never wrote. So **the fault address says "something bailed out", not "the shop"** - it
+is the same address a completely different subsystem faulted at in
+`setfield-accepted-client-entered-world-hook.log`.
+
+**Four hypotheses checked and dead**, so nobody re-checks them:
+
+| | |
+|---|---|
+| the body is short | **no.** `tools/reads.py` over the row decoder gives exactly the nine documented fields plus the trailing `u8`: `4 + 2 + 31n + 1` = 379, which is what went out. The two *extra* `u8` reads it finds in the outer handler belong to the `0x055F` arm - `140d22888` is followed immediately by `jmp` to the exit |
+| an item id the client cannot resolve | **no.** All six ids are in the client's own `itemdata`. `!item` refuses unknown ids; the shop has no such check, so this was the obvious suspect |
+| the disabled flag, or a zero max-per-purchase | **no.** The two fields `research/npc-shop.md` §2.6 names as able to silently break a shop are 0 and 100/200/1 |
+| the old Amherst crash | **no.** That one had the NPC never appearing and died in the `SetField` tail. Here the map loaded, Lucy spawned, and they were clickable |
+
+The array-constructor frame in the throw's stack is **stale** - there is no call to
+`FUN_142ef44fc` anywhere in the shop handler. A stack scan is not a call stack.
+
+**What is not established: which row, or whether rows are the variable at all.**
+`--shop-rows 1` (`-ShopRows 1`) is the lever - one **buy** row, because the buy direction has
+a straight-line trace behind it and the sell direction has never been on a wire in either
+direction. A counter that opens says the shop path is sound; one that still dies says rows
+are not the variable and the next work is static, not another launch.
+
 #### The loop RUNS, with room for fifteen - measured, 2026-08-20, and it moves the question
 
 **No client run was spent on this.** It came out of a fixture that had been sitting in
@@ -1660,6 +1707,11 @@ final ungated `u8`. Verified by walking all 18660 bytes of `FUN_140304b20`: with
   `0x0138` path as a passing control.
 * **No inbound opcode reaches `FUN_140f80140`** (the apply primitive) by direct call - all 23
   callers checked against the 273-case table.
+  **Amended 2026-08-20: the entry set was 23 and is 28.** `tools/callers.py` saw `call` only,
+  so five tail-jump entries were invisible - and with them a chain nobody walked,
+  `FUN_142d012e0` -> `FUN_142797be0` @ `0x142797df5` -> shim `0x1420dd920` -> `FUN_140f80140`.
+  Neither new function is in the case table, so the **conclusion survives**; the *evidence as
+  stated* no longer covers the entry set, which is a different thing and worth saying.
 
 **One value to watch, per the NPC lesson:** `dateExpire`, the `u64` at `+0x40`, is zero =
 1601-01-01. If a run comes back "no fault, still naked", that is the first suspect.
@@ -1834,7 +1886,9 @@ result.**
 before this run. The fault at `0x140ce89d6` is a **scope-exit destructor on a stack local**,
 not the teardown of a long-lived object: both real callers of `FUN_140ce89c0` end
 `LEA RCX,[RSP+N]` / `CALL` / epilogue / `RET`, and the holder's `+8` was non-null garbage
-because the local was never written. That makes it a latent bug in the client's own error
+because the local was never written. **Amended 2026-08-20: there are 10 entries, not 5** -
+the five extra are adjustor thunks, i.e. virtual entries into the same destructor, found once
+`tools/callers.py` learned to see tail jumps and data pointers. That makes it a latent bug in the client's own error
 path - **any** early exit from either function faults at the **same address**.
 
 > So a repeat of `0x140ce89d6` would mean "that function bailed out again", **not** "the map

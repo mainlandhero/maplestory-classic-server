@@ -17,6 +17,28 @@ MSVC x64 layout used here:
 
     python tools/rtti.py --list Login          # class names matching a substring
     python tools/rtti.py --vtable CLogin       # vtables + virtual method addresses
+
+## `rva_to_off` raises on the BSS tail, on purpose
+
+`.data` in this image has `vsize 0xa2aa8` but `rsize 0x67400`: the last **0x3b6a8 bytes
+of it are zero-initialised and are not in the file at all**. A VA in that tail has no file
+offset. Any helper that maps it by `raddr + (rva - vaddr)` anyway walks straight past the
+end of `.data`'s raw bytes and into `.pdata`, and then hands back exception-handling
+records as though they were the data.
+
+That is not hypothetical: `FUN_14087ec50` indexes the EXP curve at `0x143AC2400`, 121
+`u64`s for levels 1-120, and reading it statically produced **120 confident wrong numbers**
+that were `.pdata` unwind entries. Nothing raised; the numbers just looked odd.
+
+So `rva_to_off`/`va_to_off` raise `UninitialisedAddress` for the BSS tail and
+`UnmappedAddress` for anything outside every section, both `ValueError`. A caller that
+genuinely wants to probe may catch them - but it has to say so. **A missing tool raises;
+a stale one answers.**
+
+Note that this is the *only* correct mapper in `tools/`. `reads.py:_foff`,
+`find_ptr_tables.py:show` and `find_handler_table.py --show` each carry their own copy
+that maps by `max(vsize, rsize)` with no raw-size guard; see
+`research/instrument-audit-2026-08-20.md`.
 """
 import argparse
 import re
@@ -57,13 +79,48 @@ def off_to_rva(off, sections):
     return None
 
 
+class UninitialisedAddress(ValueError):
+    """The RVA is inside a section but past its raw bytes - zero-filled at load time."""
+
+
+class UnmappedAddress(ValueError):
+    """The RVA is not inside any section."""
+
+
+def _section_at_offset(off, sections):
+    for s in sections:
+        if s["rsize"] and s["raddr"] <= off < s["raddr"] + s["rsize"]:
+            return s["name"]
+    return "past the end of the file"
+
+
 def rva_to_off(rva, sections):
+    """File offset of an RVA. Raises rather than returning a plausible wrong number.
+
+    See the module docstring: the zero-initialised tail of `.data` is 0x3b6a8 bytes that
+    do not exist on disk, and mapping one of those addresses arithmetically lands in
+    `.pdata`.
+    """
     for s in sections:
         if s["vaddr"] <= rva < s["vaddr"] + max(s["vsize"], s["rsize"]):
             d = rva - s["vaddr"]
             if d < s["rsize"]:
                 return s["raddr"] + d
-    return None
+            would_be = s["raddr"] + d
+            raise UninitialisedAddress(
+                "rva %#x is %#x bytes into section %s, whose raw data is only %#x bytes "
+                "(vsize %#x): it is in the zero-initialised tail and has NO file offset. "
+                "Mapping it arithmetically gives file offset %#x, which is in %s - those "
+                "bytes belong to another section and are not this address's contents. "
+                "Read this address from the running process instead."
+                % (rva, d, s["name"], s["rsize"], s["vsize"], would_be,
+                   _section_at_offset(would_be, sections)))
+    raise UnmappedAddress("rva %#x is not inside any section of this image" % rva)
+
+
+def va_to_off(va, image_base, sections):
+    """`rva_to_off` for a virtual address. Raises the same two errors."""
+    return rva_to_off(va - image_base, sections)
 
 
 def exec_ranges(image_base, sections):
@@ -136,9 +193,9 @@ def find_vtables(data, image_base, sections, col_rva):
 
 def read_vtable(data, image_base, sections, ranges, vt_va, limit=64):
     methods = []
+    # Raises if `vt_va` is not backed by file bytes. Every caller here found `vt_va` by
+    # scanning raw data, so a raise means the scan is wrong, not that the vtable is empty.
     off = rva_to_off(vt_va - image_base, sections)
-    if off is None:
-        return methods
     for i in range(limit):
         q = struct.unpack_from("<Q", data, off + i * 8)[0]
         if not any(lo <= q < hi for lo, hi in ranges):

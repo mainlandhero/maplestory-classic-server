@@ -125,10 +125,18 @@ decodes a packet:
 `0x0226` is **not the simpler option**: it carries the identical `FUN_1408d6760` speaker
 object, at `0x142784856`. Its extra string is the only difference that matters.
 
-Both are reached from one dispatcher, `FUN_1429bafb0`, which has **zero direct callers** - it
-is virtual - and which normalises the opcode with `LEA EAX,[RSI-0x226]` / `CMP EAX,0x50` at
+Both are reached from one dispatcher, `FUN_1429bafb0`, which normalises the opcode with
+`LEA EAX,[RSI-0x226]` / `CMP EAX,0x50` at
 `0x1429bb100` before jumping through a table at `0x1429bb5d0`. Reading that table's 81 RVAs
 out of the exe:
+
+> **Corrected 2026-08-20.** This said `FUN_1429bafb0` "has **zero direct callers** - it is
+> virtual". Both halves were wrong, and the cause was the instrument: `tools/callers.py`
+> scanned for `0xE8` only, so a tail `jmp` was invisible to it. It is reached by a **tail
+> `jmp` at `0x1429b934b`, in `FUN_1429b9300`**, and it has **no pointer anywhere in the
+> image** - so it is not virtual either. The tool now reports calls, tail jumps and data
+> pointers as three distinct kinds; `research/instrument-audit-2026-08-20.md` lists
+> everything the old blind spot touched.
 
 | index | opcode | case | handler |
 |---:|---|---|---|
