@@ -278,6 +278,7 @@ if ($null -ne $code) {
         '0x40010004' { 'DBG_TERMINATE_PROCESS - a debugger ended it.' }
         '0xC000013A' { 'STATUS_CONTROL_C_EXIT - a console control event ended it.' }
         '0x00000718' { 'ERROR_NOT_ENOUGH_QUOTA - a job object time limit. Follow the job line above.' }
+        '0xC0000374' { 'STATUS_HEAP_CORRUPTION. The heap found a damaged block header and killed the process - NOT an ordinary exit code, and this line used to say it was one, which read as "nothing to see here" on both the map 1013 and the map 20001075 deaths. Two things follow from the mechanism. It is raised at the NEXT allocator walk, not where the damage happened, so the address in the fault line names the allocator and not the culprit. And it goes through SEH, so crates/grap-stub SHOULD print a CLIENT FAULT line for it - if none appears, the probe was not armed, because the code is in its fault list.' }
         default { 'a code with no standard meaning, so it was chosen - either by the client as an ordinary application exit code, or by an outside killer passing a value to TerminateProcess. The orderly 2026-08-17 control returned 0x0000002A this way. Repeating exactly across runs says it was deliberate; only the in-process watches say which side chose it.' }
     }
     Write-Line "READ: $read"

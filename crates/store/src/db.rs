@@ -206,10 +206,49 @@ impl Store {
             "#,
         )?;
         Self::add_inventory_slot_columns(&conn)?;
-        // A whole new table, so a plain `CREATE TABLE IF NOT EXISTS` is enough - unlike the
+        Self::add_meso_column(&conn)?;
+        // Whole new tables, so a plain `CREATE TABLE IF NOT EXISTS` is enough - unlike the
         // slot columns above, which had to be ALTERed onto a table that already existed.
         crate::quest::create_tables(&conn)?;
+        // `inventory::create_tables` also ALTERs the stat columns onto `equipment`, which is
+        // NOT a new table; see the note there.
+        crate::inventory::create_tables(&conn)?;
+        crate::storage::create_tables(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
+    }
+
+    /// `characters.mesos`, added to `characters` after the fact.
+    ///
+    /// **Not in the `CREATE TABLE` above, for the same reason the slot columns are not.**
+    /// `CREATE TABLE IF NOT EXISTS` does nothing at all to a table that already exists, so a
+    /// column added there would appear only in databases created from scratch - and the owner's has
+    /// characters in it. `ALTER TABLE ADD COLUMN` is not idempotent (it raises "duplicate
+    /// column name") and this schema runs on **every** open, hence the `PRAGMA table_info`
+    /// guard.
+    ///
+    /// Every existing character starts on 0. Nothing has ever credited a meso, so 0 is what
+    /// they have rather than a value being overwritten - unlike the slot-count repair below,
+    /// this is not a correction and there is nothing here that could destroy a real balance.
+    ///
+    /// Mesos are **not** a field of `net::opcode::Character`, so this column is deliberately
+    /// outside `character.rs`'s exhaustive destructure: adding it there would mean changing a
+    /// protocol type from the storage side. `crate::inventory::Store::mesos` and friends are
+    /// the API.
+    fn add_meso_column(conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(characters)")?;
+        let exists = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "mesos");
+        drop(stmt);
+        if !exists {
+            conn.execute(
+                "ALTER TABLE characters ADD COLUMN mesos INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        Ok(())
     }
 
     /// The six inventory slot counts, added to `characters` after the fact.
@@ -580,6 +619,139 @@ mod tests {
         );
         drop(second);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// **The upgrade path, run against a copy of the owner's real database.**
+    ///
+    /// Every other schema test starts from a file this test suite created, which is exactly
+    /// the case a broken migration still passes: `CREATE TABLE IF NOT EXISTS` does nothing to
+    /// a table that already exists, so a column added there works on a fresh file and never
+    /// appears in a deployed one. The only way to be sure is to open a database that was
+    /// written by an older build.
+    ///
+    /// Skipped when `maplecw.db` is absent - it is gitignored live state, not a fixture - and
+    /// it operates on a **copy**, including the WAL and shm sidecars so the copy is the same
+    /// database rather than a truncated one. Nothing here writes to the original.
+    #[test]
+    fn wisps_real_database_upgrades_in_place() {
+        let live = std::path::Path::new("../../maplecw.db");
+        if !live.exists() {
+            return; // gitignored live state; the rest of the suite covers the synthetic cases
+        }
+        let dir = std::env::temp_dir().join(format!("maplecw-upgrade-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let copy = dir.join("maplecw.db");
+        for suffix in ["", "-wal", "-shm"] {
+            let from = live.with_extension(format!("db{suffix}"));
+            if from.exists() {
+                std::fs::copy(&from, dir.join(format!("maplecw.db{suffix}"))).unwrap();
+            }
+        }
+
+        let store = Store::open(&copy).expect("the live database must open under the new schema");
+        let accounts = store.list_accounts().unwrap();
+        assert!(!accounts.is_empty(), "the live database has accounts in it");
+
+        let mut characters = 0;
+        for account in &accounts {
+            for chr in store.characters_for(account.id, 0).unwrap() {
+                characters += 1;
+                // The new column, on a row that predates it.
+                assert_eq!(store.mesos(chr.id).unwrap(), 0);
+                // The bag reads, and it is empty rather than an error.
+                let bag = store.bag(chr.id).unwrap();
+                assert!(bag.is_empty(), "no inventory rows existed before this schema");
+                assert_eq!(bag.slots, chr.inventory_slots);
+                // The worn slots still read, now with the stat tail. Rows written before the
+                // columns existed must come back as "no stats stored", NOT as zeros.
+                let worn = store.equipped_items(chr.id).unwrap();
+                assert_eq!(worn.len(), chr.equips.len(), "the equipped list did not change");
+                assert!(
+                    worn.iter().all(|e| e.stats.is_none()),
+                    "an existing equip must read as 'derive from the template'"
+                );
+            }
+        }
+        assert!(characters > 0, "the live database has a real character in it");
+
+        // And it survives a second open - the schema runs on EVERY open and ALTER TABLE ADD
+        // COLUMN is not idempotent.
+        drop(store);
+        let again = Store::open(&copy).expect("the second open is where a bad ALTER shows up");
+        assert_eq!(again.list_accounts().unwrap().len(), accounts.len());
+        drop(again);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A character row written before `mesos` existed reads back as zero, and the storage the
+    /// new tables need is there. The synthetic twin of the test above, so the suite still
+    /// covers the upgrade on a machine with no live database.
+    #[test]
+    fn a_database_written_before_mesos_and_the_stat_columns_upgrades() {
+        let dir = std::env::temp_dir().join(format!("maplecw-oldschema-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.db");
+        let _ = std::fs::remove_file(&path);
+
+        let account;
+        let chr;
+        {
+            let store = Store::open(&path).unwrap();
+            account = store.create_account("wisp", "correct horse battery").unwrap();
+            chr = store
+                .create_character(
+                    account,
+                    0,
+                    &net::opcode::Character {
+                        name: "Oldtimer".to_string(),
+                        equips: vec![(5, 1040002)],
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            // Wind the schema back to what an older build wrote: no meso column, no stat tail
+            // on `equipment`, and no new tables at all.
+            let conn = store.conn();
+            conn.execute("ALTER TABLE characters DROP COLUMN mesos", []).unwrap();
+            for column in crate::inventory::EQUIP_STAT_COLUMNS {
+                conn.execute(&format!("ALTER TABLE equipment DROP COLUMN {column}"), []).unwrap();
+            }
+            conn.execute("DROP TABLE inventory", []).unwrap();
+            conn.execute("DROP TABLE storage_item", []).unwrap();
+            conn.execute("DROP TABLE storage", []).unwrap();
+        }
+
+        // The upgrade. This is the statement that has to work on a file it did not create.
+        let store = Store::open(&path).expect("an older database must upgrade, not fail");
+        let loaded = store.characters_for(account, 0).unwrap();
+        assert_eq!(loaded.len(), 1, "the character survived");
+        assert_eq!(loaded[0].equips, vec![(5, 1040002)]);
+        assert_eq!(store.mesos(chr.id).unwrap(), 0, "the meso column arrived with a default");
+        assert_eq!(
+            store.equipped_items(chr.id).unwrap()[0].stats,
+            None,
+            "an equip written before the stat columns is 'no stats stored', not zeros"
+        );
+        // The new containers work on the upgraded file.
+        store.add_mesos(chr.id, 250).unwrap();
+        assert_eq!(store.mesos(chr.id).unwrap(), 250);
+        store
+            .set_inventory_slot(
+                chr.id,
+                crate::inventory::InventoryType::Etc,
+                1,
+                &crate::inventory::Item::bundle(4000000, 3),
+            )
+            .unwrap();
+        assert_eq!(store.bag(chr.id).unwrap().items.len(), 1);
+        assert!(store.storage(account).unwrap().is_empty());
+
+        // Third open: every ALTER in the schema runs again and must be a no-op.
+        drop(store);
+        let again = Store::open(&path).expect("ALTER TABLE ADD COLUMN is not idempotent");
+        assert_eq!(again.mesos(chr.id).unwrap(), 250, "and nothing was reset");
+        drop(again);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A character row written before the columns existed still comes back with a bag.

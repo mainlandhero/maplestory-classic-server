@@ -940,18 +940,32 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             }
             return EXCEPTION_CONTINUE_SEARCH;
         }
+        // **`0xC000_0374` was missing from this list, and that cost a diagnosis.**
+        // `STATUS_HEAP_CORRUPTION` is what killed the client on map 1013 and on map
+        // 20001075, and because the code was not here the run produced *no* CLIENT FAULT
+        // line at all - which was then read as "the client did not fault". That was a
+        // property of this filter, not evidence about the client. `CLAUDE.md`: prove a
+        // search can find a positive control before believing that it found nothing.
+        //
+        // It gets the stack the C++-throw branch above already builds, because a heap
+        // corruption is raised by the allocator at the *next* walk rather than at the
+        // moment of the damage: `at` will be inside ntdll and says nothing about who did
+        // it. Only the `<-TEXT` frames name a client function. `at=` is exact; the frames
+        // are a heuristic scan of the stack, so read them as leads.
         if matches!(
             code,
             0xC000_0005 | 0xC000_001D | 0xC000_0025 | 0xC000_008C | 0xC000_008E
-                | 0xC000_0094 | 0xC000_00FD | 0xC000_0096
+                | 0xC000_0094 | 0xC000_00FD | 0xC000_0096 | 0xC000_0374
         ) {
             let n = FAULT_LOGS.fetch_add(1, Ordering::SeqCst) + 1;
             if n <= 8 {
+                let rsp = *((*info).context.cast::<u8>().add(CTX_RSP).cast::<u64>()) as usize;
                 log(&format!(
                     "***** CLIENT FAULT #{n}: code={code:#010x} at {at:#x}{} - the client \
                      raised this, we did not. An unhandled one ends the process without \
-                     any call to ExitProcess. *****",
-                    crate::netwatch::module_of(at)
+                     any call to ExitProcess. *****{}",
+                    crate::netwatch::module_of(at),
+                    stack_trace(rsp)
                 ));
             }
         }

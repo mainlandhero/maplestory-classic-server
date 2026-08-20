@@ -35,8 +35,25 @@ import binascii
 import re
 import sys
 
-# The client reports raw addresses with the top image-base nibble dropped.
+# The client's stack frames are the **low 32 bits** of the address, not the address.
+#
+# The positive control is in the frame itself: a MapleStory.exe frame printed as
+# `0000000040194DF5` is annotated by the client as `0001:00193DF5`, section 1 offset
+# 0x193DF5, which with `.text` at RVA 0x1000 is VA 0x140194DF5. And 0x140194DF5 masked to
+# 32 bits is exactly 0x40194DF5. A USER32 frame printed as `00000000A7F9EF5C` is the same
+# masking of a 0x7FF... address - which is why a DLL frame **cannot** be recovered here:
+# nothing in the log carries that module's base.
+#
+# The previous arithmetic added `IMAGE_BASE - (addr & 0xF00000000)`, i.e. 0x140000000 to
+# anything below the base, and every VA it printed was 0x40000000 too high. It looked
+# plausible and was never checked against the annotation sitting on the same line.
 IMAGE_BASE = 0x140000000
+
+# What the client dropped: bits 32 and up. Add it back for image frames only.
+HIGH_BITS = 0x100000000
+
+# The one module whose base is known, because it is the image this project reverses.
+KNOWN_MODULE = "maplestory.exe"
 
 # Error codes the client names, from docs/client-messages.md.
 # Raise sites, by source line. See docs/client-messages.md for the full table.
@@ -91,9 +108,16 @@ def main():
                         print("            %s" % SITES[n])
             elif args.stack and re.match(r"^[0-9A-F]{16} ", line):
                 addr = int(line[:16], 16)
-                # The client prints VA - 0x100000000; put the image base back.
-                va = addr + (IMAGE_BASE - (addr & 0xF00000000)) if addr < IMAGE_BASE else addr
-                print("        %016X  -> VA %#x  %s" % (addr, va, line[34:].strip()))
+                tail = line[34:].strip()
+                if KNOWN_MODULE in tail.lower() and addr < HIGH_BITS:
+                    where = "VA %#x" % (addr + HIGH_BITS)
+                elif addr >= HIGH_BITS:
+                    where = "VA %#x" % addr
+                else:
+                    # A DLL frame. Saying "VA 0x1e7f9ef5c" here would be an invented
+                    # number: the log never carries that module's load base.
+                    where = "low 32 bits only, base unknown"
+                print("        %016X  -> %s  %s" % (addr, where, tail))
 
     if seen == 0:
         print("no ELog records in %s." % args.log)

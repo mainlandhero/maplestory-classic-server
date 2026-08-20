@@ -1,0 +1,101 @@
+# The tail of FUN_142097f80 - the 0x01A0 SetField handler.
+#
+# Generated 2026-08-19 with capstone (tools/reads.py's PE loader), no Ghidra.
+# The client died somewhere in this range on map 1013: it had already emitted
+# outbound 0x02DE, and never reached FUN_142defbc0 at 0x14209aa61, which sends 0x0184.
+#
+# FUN_142097f80 .. 0x14209ad59 is the whole handler; this is 0x14209a940..0x14209aa90.
+# Landmarks:
+#   0x14209842d  call 0x140304b20   the character-record decoder (STATUS.md's known site)
+#   0x14209a9d0  call [rax]         virtual, edx=1 - the last virtual before LAB_14209a9de
+#   0x14209aa55  call 0x14246e7a0   minimap-UI state setter on DAT_143acf088; tail-jmps 0x14246e510
+#   0x14209aa61  call 0x142defbc0   SENDS 0x0184   <- NOT REACHED on map 1013
+#   0x14209aa69  call 0x142defc50   SENDS 0x0194   <- NOT REACHED on map 1013
+
+14209a940  add      eax, eax
+14209a942  cmp      edx, 0x132ddd6
+14209a948  jl       0x14209a95f
+14209a94a  jne      0x14209a983
+14209a94c  cmp      r8d, 0x597
+14209a953  jae      0x14209a983
+14209a955  cmp      qword ptr [rip + 0x1a39efb], 0
+14209a95d  jne      0x14209a983
+14209a95f  mov      edx, 0x248
+14209a964  lea      rcx, [rip + 0x1a3bf35]
+14209a96b  call     0x14019b780
+14209a970  mov      qword ptr [rsp + 0x78], rax
+14209a975  test     rax, rax
+14209a978  je       0x14209a983
+14209a97a  mov      rcx, rax
+14209a97d  call     0x1422b6910
+14209a982  nop      
+14209a983  mov      rcx, rbx
+14209a986  call     0x142cc1cf0
+14209a98b  test     eax, eax
+14209a98d  jne      0x14209a9a7
+14209a98f  mov      rcx, rbx
+14209a992  call     0x142cc1e30
+14209a997  test     eax, eax
+14209a999  jne      0x14209a9a7
+14209a99b  mov      rcx, rbx
+14209a99e  call     0x142cf1c00
+14209a9a3  test     al, al
+14209a9a5  jne      0x14209a9d2
+14209a9a7  mov      rcx, qword ptr [rip + 0x1a39eaa]
+14209a9ae  test     rcx, rcx
+14209a9b1  je       0x14209a9d2
+14209a9b3  call     0x142bf3f70
+14209a9b8  mov      rcx, qword ptr [rip + 0x1a39e99]
+14209a9bf  test     rcx, rcx
+14209a9c2  je       0x14209a9d2
+14209a9c4  add      rcx, 8
+14209a9c8  mov      rax, qword ptr [rcx]
+14209a9cb  mov      edx, 1
+14209a9d0  call     qword ptr [rax]
+14209a9d2  mov      rcx, rbx
+14209a9d5  call     0x142cc4030
+14209a9da  mov      rbx, qword ptr [rbp - 0x58]
+14209a9de  mov      rcx, rbx
+14209a9e1  call     0x142cbecc0
+14209a9e6  xor      edx, edx
+14209a9e8  mov      rcx, rax
+14209a9eb  call     0x142122400
+14209a9f0  mov      rcx, rbx
+14209a9f3  call     0x142cbecc0
+14209a9f8  xor      edx, edx
+14209a9fa  mov      rcx, rax
+14209a9fd  call     0x1421223c0
+14209aa02  cmp      dword ptr [rbp - 0x60], 0
+14209aa06  je       0x14209aa17
+14209aa08  xor      r8d, r8d
+14209aa0b  lea      edx, [r8 + 1]
+14209aa0f  mov      rcx, rbx
+14209aa12  call     0x142d9e1c0
+14209aa17  cmp      dword ptr [rbp + 0x90], 0
+14209aa1e  jne      0x14209aa28
+14209aa20  mov      rcx, rbx
+14209aa23  call     0x142d9c9f0
+14209aa28  cmp      qword ptr [rip + 0x1a34658], 0
+14209aa30  je       0x14209aa5e
+14209aa32  call     0x141892840
+14209aa37  test     rax, rax
+14209aa3a  je       0x14209aa5e
+14209aa3c  mov      rbx, qword ptr [rip + 0x1a34645]
+14209aa43  call     0x141892840
+14209aa48  mov      rcx, rax
+14209aa4b  call     0x14182e9b0
+14209aa50  mov      edx, eax
+14209aa52  mov      rcx, rbx
+14209aa55  call     0x14246e7a0
+14209aa5a  mov      rbx, qword ptr [rbp - 0x58]
+14209aa5e  mov      rcx, rbx
+14209aa61  call     0x142defbc0
+14209aa66  mov      rcx, rbx
+14209aa69  call     0x142defc50
+14209aa6e  mov      rcx, rbx
+14209aa71  call     0x142d16c50
+14209aa76  mov      rcx, qword ptr [rip + 0x1a39deb]
+14209aa7d  test     rcx, rcx
+14209aa80  je       0x14209aaa1
+14209aa82  call     0x142bf3f70
+14209aa87  mov      rcx, qword ptr [rip + 0x1a39dda]

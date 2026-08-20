@@ -20,6 +20,7 @@
 //! assert_eq!(r.str().unwrap(), "Scania");
 //! ```
 
+pub mod bag;
 pub mod channel;
 pub mod codec;
 pub mod combat;

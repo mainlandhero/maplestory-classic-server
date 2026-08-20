@@ -1669,8 +1669,10 @@ pub fn character_record_for_set_field_with(
     // the equipped list's gate is at 0x1403061a0. The record has no length prefix and no
     // resync point, so this order is the whole of what makes the bytes after it readable.
     out.extend_from_slice(&inventory_size_block(&chr.inventory_slots));
-    // Gate entry 6 fires here, because presence[2] is set.
-    out.extend_from_slice(&equipped_block_with(equips));
+    // Gate entry 6 fires here, because presence[2] is set. The Equip tab's contents ride
+    // in the same block; `Character` cannot carry them yet, so it goes out empty and
+    // byte-identical to what a real client has already accepted.
+    out.extend_from_slice(&equipped_block_with_bag(equips, &[], chr.inventory_slots[0]));
     out.push(0); // the final ungated read, at 0x140308b3f
     out
 }
@@ -2620,8 +2622,38 @@ pub fn equipped_block(equips: &[(u8, u32)]) -> Vec<u8> {
 /// while the stats become settable. The item body has no length prefix, so the only thing
 /// keeping the record in sync is that each item's mask is derived from its own fields.
 pub fn equipped_block_with(equips: &[(u8, u32, EquipStats)]) -> Vec<u8> {
+    equipped_block_with_bag(equips, &[], DEFAULT_INVENTORY_SLOTS)
+}
+
+/// [`equipped_block_with`], plus the **contents of the Equip tab** - items the character
+/// owns but is not wearing.
+///
+/// # The four lists after the equipped one are not four bags
+///
+/// That was the working assumption for a day and it is wrong. `presence[2]` opens
+/// `FUN_14030b6f0(closure, 1)` and `FUN_14030b9e0` three times, and only the **first** of
+/// those four is an inventory tab: `[R14 + 0x5d0]` with `R15 = 1` is `charData + 0x5d8`,
+/// index 1 of the six the size loop walks - the Equip tab. `FUN_14030b9e0`'s three land in
+/// `charData + 0x5b8`/`+0x5c0`/`+0x5c8` and accept positions **3000-3031, 3100-3131 and
+/// 3200-3231**, out of tables at `0x14327dd50` and `0x14327dd68`. Nothing this server can
+/// create addresses a position in those ranges, so they stay empty terminators.
+///
+/// **The Use / Set Up / Etc / Cash bags are still in the record**, further along and behind
+/// their own presence bytes (type 2 -> byte 3, 3 -> 4, 4 -> 5, 5 -> 6, 6 -> 44). Those bytes
+/// are clear, which is exactly why today's ten zero bytes are byte-correct. Sending them
+/// costs more than a list each - see `research/bag-lists.md` section 6, which prices it.
+///
+/// `slots` is the Equip tab's slot count, the same `V` [`inventory_size_block`] sends: a
+/// position outside `1..=slots` is decoded by the client and thrown away, so
+/// [`crate::bag::equipped_tail`] drops those rather than paying for them.
+pub fn equipped_block_with_bag(
+    equips: &[(u8, u32, EquipStats)],
+    equip_bag: &[crate::bag::BagEquip],
+    slots: u16,
+) -> Vec<u8> {
     let mut b = Vec::new();
-    b.push(0); // 1403061cc  flagA
+    b.push(0); // 1403061cc  flagA - MUST stay 0: TEST SIL,SIL / JNZ at 1403062dd skips the
+               //            FUN_14030b6f0 call entirely, i.e. the Equip bag cannot be sent
     for (slot, item_id, stats) in equips {
         if !EQUIP_SLOTS.contains(slot) {
             continue; // decoded and thrown away by the client - see EQUIP_SLOTS
@@ -2629,9 +2661,7 @@ pub fn equipped_block_with(equips: &[(u8, u32, EquipStats)]) -> Vec<u8> {
         b.extend_from_slice(&u16::from(*slot).to_le_bytes());
         b.extend_from_slice(&equipped_item(*item_id, stats));
     }
-    b.extend_from_slice(&0u16.to_le_bytes()); // end of the equipped list
-    b.extend_from_slice(&0u16.to_le_bytes()); // FUN_14030b6f0
-    b.extend_from_slice(&[0u8; 6]); //           FUN_14030b9e0, three lists
+    b.extend_from_slice(&crate::bag::equipped_tail(equip_bag, slots));
     b
 }
 

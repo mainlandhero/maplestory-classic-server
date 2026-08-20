@@ -1,0 +1,502 @@
+//! The bag lists in the character record: the four `u16`-terminated lists that
+//! `presence[2]` opens after the equipped-item loop.
+//!
+//! Full working, with every address and every `[L]`/`[I]` label:
+//! **`research/bag-lists.md`**. Two things in that document contradict what this module was
+//! commissioned to build, and both are load-bearing:
+//!
+//! 1. **The four lists are not four bags.** One of them is the **Equip tab's** bag
+//!    (inventory type 1, `charData + 0x5d8`). The other three are equipped-*like* containers
+//!    whose positions live in `3000..=3231`, and nothing a character can hold addresses
+//!    them. See [`B9E0_RANGES`].
+//! 2. **The Use / Set Up / Etc / Cash bags exist in the record too**, read by four more
+//!    calls to the same helper at `0x140306845`, `0x140306855`, `0x140306865` and
+//!    `0x140306875` - each re-gated on **its own** presence byte (3, 4, 5, 6). They read
+//!    nothing while those bytes are clear, which is why today's ten zero bytes are correct.
+//!    Switching them on is not free; [`BAG_PRESENCE_BYTE`] and `research/bag-lists.md` §6
+//!    price it.
+//!
+//! So the only list this module can fill today is the **Equip tab**, and an equip in a bag
+//! is still a **type 1** item - the same 125-byte body [`crate::opcode::equipped_item`]
+//! already builds and that was confirmed on screen on 2026-08-19.
+//!
+//! [`bundle_item`] is here for the type-2 (stackable) body, decoded in the same pass, so
+//! that goals F (shops) and G (storage) do not have to re-derive it. **It is not reachable
+//! from the character record today** and nothing calls it outside this module's tests.
+
+use crate::opcode::{equipped_item, EquipStats, ITEM_NEVER_EXPIRES};
+
+// =========================================================================================
+// Where each bag lives, and what switching it on costs
+// =========================================================================================
+
+/// The six inventory types, in the order `FUN_1403023d0` switches on them.
+///
+/// Index is `type - 1`. Names are `research/inventory-slots.md`'s: Equip is **[D]** (its
+/// presence byte is the measured one), the other five came off the owner's screenshot of a
+/// six-tab inventory window and are **[I]**. Nothing on the wire depends on a name.
+pub const BAG_TAB_NAMES: [&str; 6] = ["Equip", "Use", "Set Up", "Etc", "Cash", "Deco"];
+
+/// The presence byte that opens inventory type `n`'s bag list, indexed by `n - 1`. **[L]**
+///
+/// Read out of each gate key's own CRT initialiser - the `mov byte ptr [key + b], 1` that
+/// builds the key's 100-byte mask - for the six keys `FUN_1403023d0`'s jump table at
+/// `0x1403024a4` hands out:
+///
+/// ```text
+/// type 1 Equip   key 0x143abdb20   init 0x140022952   byte  2
+/// type 2 Use     key 0x143abdab0   init 0x140022932   byte  3
+/// type 3 Set Up  key 0x143abda40   init 0x1400229b2   byte  4
+/// type 4 Etc     key 0x143abd9d0   init 0x140022992   byte  5
+/// type 5 Cash    key 0x143abd960   init 0x140022912   byte  6
+/// type 6 Deco    key 0x143abd8f0   init 0x140022972   byte 44
+/// ```
+///
+/// The same scan reports byte 2 for `0x143abedb0` and byte 44 for `0x143abeb80`, which is
+/// exactly what `research/naked-character.md` and `research/charrecord-presence-map.md`
+/// found by other means - two positive controls, both passed. The column also reproduces
+/// `research/inventory-slots.md`'s six-turn size-loop permutation from a different table.
+///
+/// **Only index 0 (byte 2) is set today**, and only it is free: `research/bag-lists.md` §6
+/// measures what bytes 3, 4, 5 and 44 also drag in, and three of them open blocks that have
+/// never been decoded.
+pub const BAG_PRESENCE_BYTE: [usize; 6] = [2, 3, 4, 5, 6, 44];
+
+/// Inventory type 1 - the Equip tab, the one bag `presence[2]` already opens.
+pub const BAG_EQUIP: u8 = 1;
+
+/// The three position ranges `FUN_14030b9e0` accepts when called with `param_2 = 1`, as
+/// `(lower, upper)` half-open pairs. **[L]**
+///
+/// Read straight out of the image at `0x14327dd50` (lower bounds) and `0x14327dd68` (upper),
+/// the two tables `0x14030bc6d` and `0x14030bc7a` index by the outer loop counter. The
+/// helper's outer loop runs indices 0..4 (`CMP EAX,0x5 / JL` at `0x14030be5c`) and proceeds
+/// only where `FUN_140255790(i) == 0`; that function is nine bytes of
+/// `TEST ECX,ECX / JZ / CMP ECX,1 / JZ / XOR EAX,EAX / RET`, so it returns 1 for 0 and 1 and
+/// 0 otherwise - hence indices **2, 3 and 4**.
+///
+/// **These are not inventory tabs.** They are three of five equipped-like containers at
+/// `charData + 0x5a8 + i*8`, sitting between the second equipped array and the six
+/// inventory pointers. What they hold is **not established**. Their positions start at 3000,
+/// which no item this server can create ever reaches, so all three are sent empty and the
+/// six bytes are pure framing.
+pub const B9E0_RANGES: [(u16, u16); 3] = [(3000, 3032), (3100, 3132), (3200, 3232)];
+
+/// How many bytes the three `FUN_14030b9e0` lists cost when empty: one `u16` each.
+pub const B9E0_EMPTY_LEN: usize = 6;
+
+/// The ten bytes `equipped_block_with` writes today, and the regression anchor for this
+/// module: `u16 0` ends the equipped list, `u16 0` ends `FUN_14030b6f0`'s Equip-tab bag,
+/// and three `u16 0` end `FUN_14030b9e0`'s three lists.
+///
+/// This exact sequence is on the wire in the run that put a dressed character on map 1, so
+/// it is the one byte pattern here that a real client has accepted.
+pub const EMPTY_EQUIPPED_TAIL: [u8; 10] = [0; 10];
+
+// =========================================================================================
+// The Equip tab's bag
+// =========================================================================================
+
+/// One equipment item sitting **in the Equip tab of the bag** rather than worn.
+///
+/// `pos` is the bag slot, 1-based. `FUN_14030b6f0` stores the item at `inventory[pos]` only
+/// while `1 <= pos <= slots`, where `slots` is the count sent for this inventory in the
+/// `presence[7]` block (the client resizes the array to `slots + 1` and index 0 is the hole
+/// that makes MapleStory's slots 1-based). A position outside that range is **decoded and
+/// thrown away** - the bytes are consumed and the item vanishes. **[L]**, `0x14030b7c9` /
+/// `0x14030b7d6`.
+///
+/// `stats` is the same [`EquipStats`] the equipped list uses, because a bag equip and a worn
+/// equip are the same type-1 body.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BagEquip {
+    /// The bag slot, 1-based.
+    pub pos: u16,
+    pub item_id: u32,
+    pub stats: EquipStats,
+}
+
+impl BagEquip {
+    /// A bag equip with all four bitmasks zero - the 125-byte body confirmed on screen.
+    pub fn plain(pos: u16, item_id: u32) -> Self {
+        Self { pos, item_id, stats: EquipStats::default() }
+    }
+}
+
+/// Whether the client will actually keep an item at this bag position. **[L]**
+///
+/// `CMP ECX,0x1 / JL` then `CMP ECX,[slotMax] / JG` at `0x14030b7c9` and `0x14030b7d6`.
+/// The position itself is read as an **unsigned** `u16` (`MOVZX` at `0x14030b792` and
+/// `0x14030b99f`), and `0` is the list terminator, so `0` can never address a slot.
+pub fn bag_pos_is_kept(pos: u16, slots: u16) -> bool {
+    pos >= 1 && pos <= slots
+}
+
+/// `FUN_14030b6f0`'s list for the Equip tab: `u16 pos` + a type-1 item body per entry, then
+/// `u16 0`.
+///
+/// Entries whose position the client would discard are dropped rather than sent, the same
+/// way [`crate::opcode::equipped_block`] drops slots outside `EQUIP_SLOTS`. Sending them
+/// would cost 127 bytes each and lose the item anyway.
+///
+/// **This list is read only when `flagA` is 0.** `TEST SIL,SIL / JNZ` at `0x1403062dd` skips
+/// the whole `FUN_14030b6f0` call for a non-zero leading byte, so a non-zero `flagA` means
+/// the Equip tab's bag cannot be sent at all. `equipped_block_with` sends 0 and must keep
+/// doing so.
+pub fn equip_bag_list(items: &[BagEquip], slots: u16) -> Vec<u8> {
+    let mut b = Vec::new();
+    for item in items {
+        if !bag_pos_is_kept(item.pos, slots) {
+            continue;
+        }
+        b.extend_from_slice(&item.pos.to_le_bytes()); // 14030b78d / 14030b99a  u16 pos
+        b.extend_from_slice(&equipped_item(item.item_id, &item.stats)); // 14030b7bd
+    }
+    b.extend_from_slice(&0u16.to_le_bytes()); // the terminator
+    b
+}
+
+/// The four lists `presence[2]` opens **after** the equipped list's own terminator:
+/// `FUN_14030b6f0`'s one Equip-tab list, then `FUN_14030b9e0`'s three.
+///
+/// Eight zero bytes when the bag is empty.
+pub fn bag_lists(equip_bag: &[BagEquip], slots: u16) -> Vec<u8> {
+    let mut b = equip_bag_list(equip_bag, slots); // 1403062ee  FUN_14030b6f0(closure, 1)
+    b.extend_from_slice(&[0u8; B9E0_EMPTY_LEN]); // 1403062ff  FUN_14030b9e0(closure, 1)
+    b
+}
+
+/// Everything `equipped_block_with` writes after its last equipped item: the equipped
+/// list's `u16 0`, then [`bag_lists`].
+///
+/// **This is the drop-in replacement for the three lines at the end of
+/// `opcode::equipped_block_with`**, and with an empty bag it is byte-for-byte
+/// [`EMPTY_EQUIPPED_TAIL`] - the ten bytes a real client has already accepted.
+pub fn equipped_tail(equip_bag: &[BagEquip], slots: u16) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(&0u16.to_le_bytes()); // 1403062c9  end of the equipped list
+    b.extend_from_slice(&bag_lists(equip_bag, slots));
+    b
+}
+
+// =========================================================================================
+// The type-2 bundle item body - built, and NOT reachable from the record today
+// =========================================================================================
+
+/// The `u8` item type that selects the bundle decode `FUN_140304450`. **[L]**
+///
+/// `FUN_1403095e0` reads the byte at `0x1403095fb` and dispatches; the class it allocates
+/// stores vtable `0x14327E588`, whose `+0x88` is literally `mov eax,2 ; ret` and whose
+/// `+0x358` is `0x140304450`.
+pub const BUNDLE_ITEM_TYPE: u8 = 2;
+
+/// The `char[13]` buffer at `item + 0x6d`, read as raw bytes by `FUN_1406e9170` with
+/// `R8D = 0xd` at `0x14030448e`. **[L]**
+///
+/// The constructor writes `0` to its first byte (`MOV byte ptr [RSI+0x6d],AL` at
+/// `0x1402f7d7d`), so all-zero is the constructed, empty state.
+pub const BUNDLE_OWNER_LEN: usize = 13;
+
+/// A type-2 bundle body, for an item that is neither a throwing star nor a bullet.
+///
+/// ```text
+///  1  u8    type = 2
+///  4  u32   itemId
+///  1  u8    hasCashSN = 0
+///  8  raw   dateExpire
+///  4  u32   0
+///  1  u8    0
+///  2  u16   quantity
+/// 13  raw   owner name buffer
+///  2  u16   attribute
+///  1  u8    0
+///  4  u32   0
+/// ```
+pub const BUNDLE_ITEM_LEN: usize = 41;
+
+/// What a throwing star or bullet costs instead: [`BUNDLE_ITEM_LEN`] plus the `raw[8]` at
+/// `0x14030451e`.
+pub const BUNDLE_SERIAL_ITEM_LEN: usize = BUNDLE_ITEM_LEN + 8;
+
+/// The two item-id families that carry an eight-byte serial in the bundle body. **[L]**
+///
+/// `LEA ECX,[RAX-0x1f95f0] / CMP ECX,0x2710 / JC` then `ADD EAX,0xffdc7270 / CMP EAX,0x2710
+/// / JC` at `0x1403044ed`, i.e. `2070000..=2079999` and `2330000..=2339999`. In MapleStory
+/// those are throwing stars and bullets - real game semantics falling out of the listing,
+/// which is the strongest single check that this decode is being read correctly.
+pub const BUNDLE_SERIAL_RANGES: [(u32, u32); 2] = [(2_070_000, 2_080_000), (2_330_000, 2_340_000)];
+
+/// Whether `item_id` pulls in the extra `raw[8]` at `0x14030451e`.
+pub fn bundle_has_serial(item_id: u32) -> bool {
+    BUNDLE_SERIAL_RANGES.iter().any(|&(lo, hi)| item_id >= lo && item_id < hi)
+}
+
+/// How long [`bundle_item`] will be for this id.
+pub fn bundle_item_len(item_id: u32) -> usize {
+    if bundle_has_serial(item_id) {
+        BUNDLE_SERIAL_ITEM_LEN
+    } else {
+        BUNDLE_ITEM_LEN
+    }
+}
+
+/// One stackable item, as `FUN_140304450` - the type-2 `vtable+0x358` decode - reads it.
+///
+/// Every field below is **[L]**, read off `research/msexe-itemslot-bundle-decode.txt` and
+/// `research/msexe-itemslot-base.txt`, and **cross-checked against the client's own
+/// encoder**: `FUN_1402cf5c0` is the same class's serialiser (vtable-only, so
+/// `tools/callers.py` reports zero callers) and it emits the identical sequence - base,
+/// `u16` from `+0x4d/+0x51`, `raw[13]` from `+0x6d`, `u16` from `+0x55/+0x59`, `u8` from
+/// `+0x5d/+0x61`, the star/bullet `raw[8]` from `+0x65`, `u32` from `+0x7a`.
+///
+/// **Which `u16` is the quantity is measured, not assumed.** The two are symmetric on the
+/// wire, so swapping them would be invisible until a client run. Vtable slot `+0x98` is
+/// "how many of this item is here": `mov eax,1 ; ret` for type 1 and type 3, and for type 2
+/// it is `FUN_1402fbe60`, five instructions that de-obfuscate `+0x4d/+0x51` and zero-extend
+/// the result to 16 bits. That field is the **first** `u16` after the base decode. The
+/// other `u16` is a bit field - `FUN_1402fdab0` reads it and immediately does `TEST AL,0x2`.
+///
+/// **`hasCashSN` must be 0.** Unlike the equip body, the bundle has no compensating
+/// `raw[8]`, so a non-zero flag makes this body eight bytes *longer* rather than the same
+/// length - and the character record has no length prefix and no resync point.
+///
+/// The zeros are the constructor's own values: `FUN_1402f7cd0` ends with
+/// `XOR EAX,EAX / MOV [RSI+0x65],RAX / MOV [RSI+0x6d],AL / MOV [RSI+0x7a],EAX`.
+///
+/// **NOT WIRED.** No bag that holds stackables is switched on in the character record - the
+/// Use, Set Up, Etc and Cash lists are behind presence bytes 3, 4, 5 and 6, and three of
+/// those bytes also open blocks that have never been decoded (`research/bag-lists.md` §6).
+/// This function exists so goals F and G start from a decoded body rather than a blank page.
+pub fn bundle_item(item_id: u32, quantity: u16, attribute: u16, owner: &[u8; BUNDLE_OWNER_LEN]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(bundle_item_len(item_id));
+    b.push(BUNDLE_ITEM_TYPE); //                              1403095fb  u8   item type
+
+    // FUN_1403035a0, the base decode. Enumerated rather than filtered: the only read
+    // primitives called anywhere in 0x1403035a0..0x1403037f5 are 2x 0x1406e8c20,
+    // 2x 0x1406e8ae0 and 2x 0x1406e9170. It does NOT call FUN_140303b40 - the two equip
+    // bitmasks belong to FUN_140304100, which is why a bundle is 41 bytes and not 49.
+    b.extend_from_slice(&item_id.to_le_bytes()); //            1403035c5  u32  itemId
+    b.push(0); //                                              140303787  u8   hasCashSN
+    b.extend_from_slice(&ITEM_NEVER_EXPIRES.to_le_bytes()); // 1403037b9  raw[8] dateExpire
+    b.extend_from_slice(&0u32.to_le_bytes()); //               1403037c1  u32  -> +0x48
+    b.push(0); //                                              1403037cc  u8   -> +0x4c
+
+    // Back in FUN_140304450.
+    b.extend_from_slice(&quantity.to_le_bytes()); //           14030446d  u16  -> +0x4d/+0x51
+    b.extend_from_slice(owner); //                             14030448e  raw[13] -> +0x6d
+    b.extend_from_slice(&attribute.to_le_bytes()); //          14030449a  u16  -> +0x55/+0x59
+    b.push(0); //                                              1403044b1  u8   -> +0x5d
+    if bundle_has_serial(item_id) {
+        b.extend_from_slice(&[0u8; 8]); //                     14030451e  raw[8] -> +0x65
+    }
+    b.extend_from_slice(&0u32.to_le_bytes()); //               140304526  u32  -> +0x7a
+
+    debug_assert_eq!(b.len(), bundle_item_len(item_id));
+    b
+}
+
+/// One stackable in a bag: a position and a bundle body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BagBundle {
+    /// The bag slot, 1-based.
+    pub pos: u16,
+    pub item_id: u32,
+    /// How many are in the stack. Vtable slot `+0x98`; see [`bundle_item`].
+    pub quantity: u16,
+    /// The attribute bit field at `+0x55/+0x59`. Only bit 1 is known to be read.
+    pub attribute: u16,
+    /// The `char[13]` name buffer at `+0x6d`. Zeros is the constructed, empty state.
+    pub owner: [u8; BUNDLE_OWNER_LEN],
+}
+
+impl BagBundle {
+    /// A plain stack: no attribute bits, no owner name.
+    pub fn plain(pos: u16, item_id: u32, quantity: u16) -> Self {
+        Self { pos, item_id, quantity, attribute: 0, owner: [0; BUNDLE_OWNER_LEN] }
+    }
+
+    /// This item's wire body.
+    pub fn body(&self) -> Vec<u8> {
+        bundle_item(self.item_id, self.quantity, self.attribute, &self.owner)
+    }
+}
+
+/// A `FUN_14030b6f0` list of stackables - `u16 pos` + a type-2 body per entry, then `u16 0`.
+///
+/// **NOT WIRED, and do not wire it without reading `research/bag-lists.md` §6.** The helper
+/// is the same one the Equip tab uses, so the framing is right, but reaching it for
+/// inventory type 2..5 means setting presence byte 3, 4, 5 or 6, and bytes 3, 4 and 5 also
+/// open regions that read four `u32`, a `u64`, a count and a whole extra item apiece -
+/// none of which is decoded. The record has no resync point.
+pub fn bundle_bag_list(items: &[BagBundle], slots: u16) -> Vec<u8> {
+    let mut b = Vec::new();
+    for item in items {
+        if !bag_pos_is_kept(item.pos, slots) {
+            continue;
+        }
+        b.extend_from_slice(&item.pos.to_le_bytes());
+        b.extend_from_slice(&item.body());
+    }
+    b.extend_from_slice(&0u16.to_le_bytes());
+    b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::opcode::{DEFAULT_INVENTORY_SLOTS, EQUIPPED_ITEM_LEN};
+
+    /// **The regression anchor.** An empty bag has to reproduce, byte for byte, the ten
+    /// zero bytes `equipped_block_with` sends today - the sequence in the record that put a
+    /// dressed character on map 1 with no client fault. Everything else in this module is
+    /// static analysis; this is the one thing a real client has already accepted.
+    #[test]
+    fn an_empty_bag_is_the_ten_zero_bytes_already_on_the_wire() {
+        assert_eq!(equipped_tail(&[], DEFAULT_INVENTORY_SLOTS), EMPTY_EQUIPPED_TAIL);
+        assert_eq!(equipped_tail(&[], DEFAULT_INVENTORY_SLOTS).len(), 10);
+        // and the same split the old code wrote: 2 for the equipped list, 2 for b6f0, 6 for
+        // b9e0's three lists.
+        assert_eq!(bag_lists(&[], DEFAULT_INVENTORY_SLOTS), vec![0u8; 8]);
+        assert_eq!(equip_bag_list(&[], DEFAULT_INVENTORY_SLOTS), vec![0u8; 2]);
+    }
+
+    #[test]
+    fn one_bag_equip_is_a_u16_position_then_a_125_byte_type_1_body() {
+        let bag = [BagEquip::plain(1, 1_040_003)];
+        let list = equip_bag_list(&bag, DEFAULT_INVENTORY_SLOTS);
+        assert_eq!(list.len(), 2 + EQUIPPED_ITEM_LEN + 2);
+        assert_eq!(&list[..2], &1u16.to_le_bytes());
+        assert_eq!(list[2], 1, "the item type byte the factory reads at 1403095fb");
+        assert_eq!(&list[3..7], &1_040_003u32.to_le_bytes());
+        assert_eq!(&list[list.len() - 2..], &0u16.to_le_bytes(), "the list terminator");
+    }
+
+    #[test]
+    fn the_whole_tail_is_the_equipped_terminator_then_the_bag() {
+        let bag = [BagEquip::plain(3, 1_060_002)];
+        let tail = equipped_tail(&bag, DEFAULT_INVENTORY_SLOTS);
+        assert_eq!(&tail[..2], &0u16.to_le_bytes(), "the equipped list still ends first");
+        assert_eq!(&tail[2..], &bag_lists(&bag, DEFAULT_INVENTORY_SLOTS)[..]);
+        assert_eq!(tail.len(), 2 + 2 + EQUIPPED_ITEM_LEN + 2 + B9E0_EMPTY_LEN);
+        assert_eq!(&tail[tail.len() - B9E0_EMPTY_LEN..], &[0u8; 6]);
+    }
+
+    /// `0x14030b7c9` / `0x14030b7d6`: the client keeps `1 <= pos <= slotMax` and consumes
+    /// then discards anything else. Sending a discarded item costs 127 bytes and loses it,
+    /// so it is dropped here instead.
+    #[test]
+    fn positions_the_client_would_discard_are_not_sent() {
+        assert!(!bag_pos_is_kept(0, 30), "0 is the terminator, never a slot");
+        assert!(bag_pos_is_kept(1, 30));
+        assert!(bag_pos_is_kept(30, 30));
+        assert!(!bag_pos_is_kept(31, 30));
+
+        let bag = [BagEquip::plain(0, 1_040_003), BagEquip::plain(31, 1_040_003)];
+        assert_eq!(equip_bag_list(&bag, 30), vec![0u8; 2], "both dropped, list still ends");
+
+        // and a bigger bag keeps the one that now fits
+        assert_eq!(equip_bag_list(&bag, 125).len(), 2 + EQUIPPED_ITEM_LEN + 2);
+    }
+
+    /// The position is read with `MOVZX` at `0x14030b792` and `0x14030b99f`, so it is
+    /// unsigned and the whole `1..=65535` range is expressible. Nothing signed here.
+    #[test]
+    fn the_position_is_an_unsigned_u16() {
+        let bag = [BagEquip::plain(40_000, 1_040_003)];
+        let list = equip_bag_list(&bag, 65_535);
+        assert_eq!(&list[..2], &40_000u16.to_le_bytes());
+    }
+
+    #[test]
+    fn presence_bytes_match_the_key_initialisers() {
+        assert_eq!(BAG_PRESENCE_BYTE, [2, 3, 4, 5, 6, 44]);
+        assert_eq!(BAG_PRESENCE_BYTE[usize::from(BAG_EQUIP) - 1], crate::opcode::PRESENCE_EQUIPPED);
+        assert_eq!(BAG_TAB_NAMES.len(), BAG_PRESENCE_BYTE.len());
+    }
+
+    /// The three `FUN_14030b9e0` lists are not tabs and cannot hold anything this server
+    /// creates: their positions start at 3000.
+    #[test]
+    fn the_b9e0_ranges_are_nowhere_near_a_bag_slot() {
+        assert_eq!(B9E0_RANGES, [(3000, 3032), (3100, 3132), (3200, 3232)]);
+        for (lo, hi) in B9E0_RANGES {
+            assert!(lo > crate::opcode::MAX_INVENTORY_SLOTS);
+            assert_eq!(hi - lo, 32);
+        }
+    }
+
+    // -------------------------------------------------------------------------------------
+    // The type-2 bundle body
+    // -------------------------------------------------------------------------------------
+
+    #[test]
+    fn a_bundle_body_is_41_bytes_with_every_field_where_the_listing_puts_it() {
+        let b = bundle_item(2_000_000, 50, 0, &[0; BUNDLE_OWNER_LEN]);
+        assert_eq!(b.len(), BUNDLE_ITEM_LEN);
+        assert_eq!(b.len(), 41);
+
+        assert_eq!(b[0], 2, "1403095fb  the factory's type byte");
+        assert_eq!(&b[1..5], &2_000_000u32.to_le_bytes(), "1403035c5  itemId");
+        assert_eq!(b[5], 0, "140303787  hasCashSN - a 1 here would lengthen the body by 8");
+        assert_eq!(&b[6..14], &ITEM_NEVER_EXPIRES.to_le_bytes(), "1403037b9  dateExpire");
+        assert_eq!(&b[14..18], &0u32.to_le_bytes(), "1403037c1  -> +0x48");
+        assert_eq!(b[18], 0, "1403037cc  -> +0x4c");
+        assert_eq!(&b[19..21], &50u16.to_le_bytes(), "14030446d  quantity -> +0x4d/+0x51");
+        assert_eq!(&b[21..34], &[0u8; 13], "14030448e  raw[13] -> +0x6d");
+        assert_eq!(&b[34..36], &0u16.to_le_bytes(), "14030449a  attribute -> +0x55/+0x59");
+        assert_eq!(b[36], 0, "1403044b1  u8 -> +0x5d");
+        assert_eq!(&b[37..41], &0u32.to_le_bytes(), "140304526  u32 -> +0x7a");
+    }
+
+    /// The quantity is the **first** `u16`, and it is there because vtable slot `+0x98` -
+    /// `mov eax,1 ; ret` for an equip, `FUN_1402fbe60` reading `+0x4d/+0x51` for a bundle -
+    /// says so. If this ever has to be swapped with the attribute, that measurement is the
+    /// thing to re-check first.
+    #[test]
+    fn the_quantity_is_the_first_u16_and_the_attribute_the_second() {
+        let b = bundle_item(4_000_001, 0x1234, 0x5678, &[0; BUNDLE_OWNER_LEN]);
+        assert_eq!(&b[19..21], &0x1234u16.to_le_bytes());
+        assert_eq!(&b[34..36], &0x5678u16.to_le_bytes());
+    }
+
+    #[test]
+    fn the_owner_buffer_is_thirteen_raw_bytes_and_is_not_length_prefixed() {
+        let mut owner = [0u8; BUNDLE_OWNER_LEN];
+        owner[..4].copy_from_slice(b"Wisp");
+        let b = bundle_item(2_000_001, 1, 0, &owner);
+        assert_eq!(b.len(), BUNDLE_ITEM_LEN, "a name must not change the length");
+        assert_eq!(&b[21..34], &owner);
+    }
+
+    /// `0x1403044ed`: `itemId - 2070000 < 10000` or `itemId - 2330000 < 10000` reads an
+    /// extra `raw[8]`. Throwing stars and bullets - the only two consumable families in this
+    /// game that carry a serial.
+    #[test]
+    fn stars_and_bullets_are_eight_bytes_longer() {
+        assert!(bundle_has_serial(2_070_000), "Subi throwing stars, in gm-handbook/itemdata.txt");
+        assert!(bundle_has_serial(2_079_999));
+        assert!(!bundle_has_serial(2_080_000));
+        assert!(bundle_has_serial(2_330_000));
+        assert!(bundle_has_serial(2_339_999));
+        assert!(!bundle_has_serial(2_340_000));
+        assert!(!bundle_has_serial(2_000_000), "a Red Potion is an ordinary stackable");
+        assert!(!bundle_has_serial(4_000_001), "an ETC drop is an ordinary stackable");
+
+        let star = bundle_item(2_070_000, 200, 0, &[0; BUNDLE_OWNER_LEN]);
+        assert_eq!(star.len(), BUNDLE_SERIAL_ITEM_LEN);
+        assert_eq!(star.len(), 49);
+        // the serial sits between the u8 at +0x5d and the trailing u32
+        assert_eq!(&star[37..45], &[0u8; 8]);
+        assert_eq!(&star[45..49], &0u32.to_le_bytes());
+    }
+
+    #[test]
+    fn a_bundle_list_frames_like_the_equip_one() {
+        let bag = [BagBundle::plain(1, 2_000_000, 100), BagBundle::plain(2, 4_000_001, 3)];
+        let list = bundle_bag_list(&bag, DEFAULT_INVENTORY_SLOTS);
+        assert_eq!(list.len(), 2 * (2 + BUNDLE_ITEM_LEN) + 2);
+        assert_eq!(&list[..2], &1u16.to_le_bytes());
+        assert_eq!(&list[list.len() - 2..], &0u16.to_le_bytes());
+        assert_eq!(bundle_bag_list(&[], DEFAULT_INVENTORY_SLOTS), vec![0u8; 2]);
+    }
+}

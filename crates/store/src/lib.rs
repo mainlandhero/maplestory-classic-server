@@ -12,17 +12,34 @@
 //! * Authentication does not reveal whether an account exists — a wrong name and a
 //!   wrong password give the same answer and cost comparable time.
 //! * Nothing in this crate logs or prints a password or a token.
+//!
+//! Two more rules are enforced here rather than left to callers, for the same reason:
+//!
+//! * **A trade-blocked item cannot be put in storage.** There is no API in [`storage`] that
+//!   can do it; a caller that tries gets [`StoreError::ItemMayNotBeStored`] back. The flag is
+//!   the client's own `info/tradeBlock`, baked into [`inventory::ItemRules`] by
+//!   `tools/gen_item_rules.py`.
+//! * **A meso balance cannot go negative**, and every read-modify-write of one is a single
+//!   transaction, so two concurrent spends cannot both see the same balance.
 
 pub mod character;
 pub mod db;
+pub mod inventory;
 pub mod migration;
 pub mod error;
 pub mod password;
 pub mod quest;
 pub mod session;
+pub mod storage;
 
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
+pub use inventory::{
+    Bag, EquippedItem, InvItem, InventoryType, Item, ItemKind, ItemRules, MoveOutcome,
+};
 pub use quest::{QuestRow, QuestState};
+pub use storage::{
+    StorageBox, StorageItem, DEFAULT_STORAGE_SLOTS, MAX_STORAGE_SLOTS, MIN_STORAGE_SLOTS,
+};
 pub use db::{Account, AuthOutcome, Store, FIRST_CHARACTER_ID, SESSION_TTL_SECS};
 pub use error::{Result, StoreError};
 pub use migration::{ClaimedMigration, MIGRATION_TTL_SECS};
