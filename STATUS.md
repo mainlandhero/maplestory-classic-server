@@ -187,6 +187,49 @@ What is still missing is something to walk over: the drop is currently refused, 
 ever lies on the ground. The field-side drop table is being built now; until it is wired,
 this step cannot be attempted, however good the logging is.
 
+#### THE FIX: every mob was sent a size of **zero percent** - 2026-08-20
+
+Body offset 91 -> `mob+0xd64` is the mob's **size percentage**, and this server sent `0`
+there from the day mobs were implemented. `0` is not "unset"; it is *zero percent*. **[L]**
+
+```text
+141c571bc  cmp   ecx, 0x64          ; scale == 100?
+141c571bf  je    0x141c573c8        ;   yes -> skip the adjustment entirely
+141c571cb  sub   eax, r8d           ; width = right - left
+141c571d4  sar   eax, 1             ; halfWidth
+141c571da  lea   eax, [rcx - 0x64]  ; scale - 100
+141c571f6  mulsd ...                ; delta = halfWidth * (scale - 100) / 100
+141c571fe  add   [rdi + 8], eax     ; right += delta
+141c57201  sub   r8d, eax           ; left  -= delta
+```
+
+At `0` the multiplier is `-1.0`, so `delta = -halfWidth`, both edges collapse onto the centre
+and `left >= right`. `141d326ae` then **skips** the rect instead of rejecting it, `r14b` stays
+`0`, and `141d327c6` drops the mob - with all seventeen documented gates green, which is
+precisely why seventeen green gates explained nothing.
+
+**Invisible because the two paths disagree about what `0` means**: the rendering paths test
+`<= 0` and read it as "no scale set, draw normally"; the hit-box path tests `!= 100`. The
+snails drew, animated and walked while having no hit box at all.
+
+**`mob+0xa88` is not the bug and the label was wrong.** It is the mob's *avatar-look*
+renderer - mobs drawn as player characters - and **0 of 193** mob images carry the
+`avatarLook` node that would allocate it. Null is correct. The animation object is
+`mob+0x610`. `research/mob-a88.md`.
+
+> **RETRACTED within the hour: this does not explain touch damage.** The size fix was
+> written up as explaining both directions - that the owner was not hit either. It does not. The
+> mob-to-player path reads the **player's** body rect (`FUN_141c69f40` -> the user's own
+> `[vtbl+0x10]`) and takes its attack rectangles from the mob's **attack template**; none of
+> the ten functions on it calls `FUN_141c57120`, `FUN_141c56e00` or `FUN_141caafe0`. And a
+> snail has **no `attack` node** - `0000001.img` is `info, move, stand, hit1, die1` - so that
+> machinery is inert for it regardless. A body/touch-damage path was **not found**, which is
+> a `[D]` negative, not a `[L]` one. `research/touch-damage.md`.
+>
+> The evidence for the retracted half was that one agent said so while answering a different
+> question. Nobody had walked the damage path. Do not expect a snail to hurt you on the next
+> run, and do not read that as the size fix having failed.
+
 #### MEASURED: `mob+0xa88` is null on every mob - 2026-08-20, on a real client
 
 `research/fixtures/mob-a88-null-on-every-mob-{world,hook,exit}.log`. The client closed

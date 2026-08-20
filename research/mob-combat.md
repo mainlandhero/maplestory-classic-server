@@ -1,5 +1,22 @@
 # Combat: the attack packet, the death packet, and the stat change
 
+> ## CORRECTION, 2026-08-20: §7.1 and §14 eliminated the right opcode
+>
+> **`0x00E5` *is* the mob-to-player damage report.** §14 ruled it out because "fifteen
+> builders on one opcode is a multiplexed channel, not a hit report" - but that is the
+> argument *for* it: one builder per damage source is exactly what a user-hit packet looks
+> like. **[L]** for the identification: the GM command `/logUserHitDamage` prints
+> `"[Client] User Hit Damage: %d"` (`0x143484d60`), whose single xref is `FUN_142918b40`,
+> whose single caller is `FUN_142771360` - and **13 of the 14 distinct `0x00E5` builders
+> call `FUN_142771360`**.
+>
+> §14's second signal was read backwards too: the strings at `0x1432b4510` are the **user**-
+> side attack-type names, not a mob-side twin.
+>
+> Body: one struct through `FUN_14025d810`, 31 x u32 + 11 x u8 + 4 raw + 1 x u64 = **147
+> bytes**. Field order and the full derivation are in `research/touch-damage.md`, which
+> replaces §7.1 and §14 for this question.
+
 Started 2026-08-19 after the owner reported that mobs render on map 40 but *"does not have any
 touch damage to the player. The player also cannot kill the mobs to gain EXP and items."*
 

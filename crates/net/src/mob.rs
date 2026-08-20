@@ -123,7 +123,16 @@ pub const MOB_TEMP_STAT_MASK_LEN: usize = 20;
 /// **Why it stayed invisible for so long.** The rendering paths test this field for `<= 0`
 /// and read that as "no scale set, draw normally", while the hit-box path tests `!= 100`.
 /// So the snails drew, animated and walked around perfectly while having no hit box at all,
-/// which is exactly what the owner saw. It also explains why they took no touch damage.
+/// which is exactly what the owner saw.
+///
+/// **It does NOT explain the other direction, and that claim was retracted the same day.**
+/// The owner also took no touch damage, and this was written up as the second symptom of one
+/// cause. It is not: the mob-to-player damage path reads the **player's** body rect
+/// (`FUN_141c69f40` -> the user's own `[vtbl+0x10]`) and gets its attack rectangles from the
+/// mob's **attack template**, never from the mob's body rect - none of the ten functions on
+/// that path calls `FUN_141c57120`, `FUN_141c56e00` or `FUN_141caafe0`. On top of that a
+/// snail has no `attack` node at all (`0000001.img` is `info, move, stand, hit1, die1`), so
+/// that machinery is inert for it whatever this field holds. `research/touch-damage.md`.
 ///
 /// Exactly `100` matters, not "non-zero": any other value takes the adjustment branch and
 /// resizes the box. There is a runtime counterpart, `0x041C`, if a mob ever needs resizing.
