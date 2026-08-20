@@ -43,6 +43,13 @@ pub const MODE_MOVE: u8 = 2;
 /// `invType` 1. A negative slot on this type is an equipped slot.
 pub const INV_EQUIP: i8 = 1;
 
+/// `invType` 6, the Decoration tab.
+///
+/// It matters only to [`move_changes_the_avatar`]: the client's `avatarChanged` test names
+/// **1 or 6**, not 1 alone, so a move on this type with a negative side also earns the
+/// trailing byte. Nothing in this server puts an item there yet.
+pub const INV_DECO: i8 = 6;
+
 /// A parsed [`CLIENT_INVENTORY_MOVE`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InventoryMove {
@@ -111,7 +118,11 @@ pub fn inventory_rejected() -> Vec<u8> {
     w.into_vec()
 }
 
-/// Length of an [`inventory_move_result`] body: header 7, one entry 6, one trailing byte.
+/// Length of an [`inventory_move_result`] body **for an equip or an unequip**: header 7,
+/// one entry 6, one trailing byte.
+///
+/// A bag-to-bag move is one byte shorter, because it does not change the avatar and the
+/// client never reads that byte. See [`move_changes_the_avatar`].
 pub const INVENTORY_MOVE_RESULT_LEN: usize = 7 + 6 + 1;
 
 /// Tell the client to perform a move it asked for.
@@ -127,7 +138,7 @@ pub const INVENTORY_MOVE_RESULT_LEN: usize = 7 + 6 + 1;
 /// i16 oldPos
 /// i16 newPos
 /// --- trailing ---
-/// u8  0                        read ONLY because this entry sets avatarChanged
+/// u8  0                        ONLY when this entry sets avatarChanged
 /// ```
 ///
 /// # The first byte is the important one
@@ -145,16 +156,14 @@ pub const INVENTORY_MOVE_RESULT_LEN: usize = 7 + 6 + 1;
 /// # The trailing byte is conditional and this entry earns it
 ///
 /// It is read only when `avatarChanged` is set, and mode 2 sets that on the wire values
-/// alone when `(invType == 1 || invType == 6) && (oldPos < 0 || newPos < 0)`. An unequip is
-/// exactly that case, so the byte is always appended here. `research/msexe-setfield.md`
-/// warns against driving it from mode 3, where the flag depends on client-side inventory
-/// state the server cannot see - this builder never does.
+/// alone when `(invType == 1 || invType == 6) && (oldPos < 0 || newPos < 0)`. An equip and an
+/// unequip are exactly that case; a bag-to-bag move is not, and gets a body one byte shorter.
+/// [`move_changes_the_avatar`] is that rule, and it used to be an assertion that the caller
+/// was always on the equipped side of it.
+///
+/// `research/msexe-setfield.md` warns against driving this flag from mode 3, where it depends
+/// on client-side inventory state the server cannot see - this builder never does.
 pub fn inventory_move_result(inv_type: i8, old_pos: i16, new_pos: i16) -> Vec<u8> {
-    debug_assert!(
-        old_pos < 0 || new_pos < 0,
-        "the trailing byte is appended unconditionally, and mode 2 only earns it when one \
-         side of the move is an equipped slot"
-    );
     let mut w = PacketWriter::new();
     w.u8(1); // bExclRequestSent - clears the +0x2330 latch
     w.u8(0);
@@ -164,8 +173,28 @@ pub fn inventory_move_result(inv_type: i8, old_pos: i16, new_pos: i16) -> Vec<u8
     w.u8(inv_type as u8);
     w.i16(old_pos);
     w.i16(new_pos);
-    w.u8(0); // avatarChanged tail
+    if move_changes_the_avatar(inv_type, old_pos, new_pos) {
+        w.u8(0); // avatarChanged tail
+    }
     w.into_vec()
+}
+
+/// Whether a mode-2 entry earns its trailing byte, **by the client's own rule**.
+///
+/// `(invType == 1 || invType == 6) && (oldPos < 0 || newPos < 0)` - one side of the move is
+/// an equipped slot on an inventory that dresses the avatar. This is computed from the wire
+/// values alone, which is the whole reason mode 2 is safe to drive and mode 3 is not: mode
+/// 3's flag depends on client-side inventory state the server cannot see.
+///
+/// **This used to be a `debug_assert!` that the caller was always in that case**, and the
+/// byte was appended unconditionally. That held while an unequip was the only move this
+/// server would answer. It stopped holding the moment bag-to-bag moves were wired: two
+/// positive positions would have panicked a debug build and, in release, appended a byte the
+/// client never reads. Surplus bytes are harmless here because the frame carries its own
+/// length - but "harmless because of a property of the framing" is not a reason to send a
+/// byte that is wrong, and this is a packet where being one byte out has cost two sessions.
+pub fn move_changes_the_avatar(inv_type: i8, old_pos: i16, new_pos: i16) -> bool {
+    (inv_type == INV_EQUIP || inv_type == INV_DECO) && (old_pos < 0 || new_pos < 0)
 }
 
 #[cfg(test)]
@@ -202,6 +231,33 @@ mod tests {
         let m = InventoryMove { tick: 0, inv_type: INV_EQUIP, src: 1, dst: -5, count: -1 };
         assert!(!m.is_unequip());
         assert_eq!(m.equipped_slot(), None);
+    }
+
+    /// A bag-to-bag move does NOT change the avatar, so it does not get the trailing byte.
+    ///
+    /// The old builder appended it unconditionally behind a `debug_assert!` that one side was
+    /// negative. That held while an unequip was the only move this server answered; the
+    /// moment bag-to-bag moves were wired it would have panicked a debug build and, in
+    /// release, sent a byte the client never reads.
+    #[test]
+    fn a_move_within_one_bag_is_a_byte_shorter() {
+        let worn = inventory_move_result(INV_EQUIP, -5, 1);
+        let in_bag = inventory_move_result(INV_EQUIP, 1, 2);
+        assert_eq!(worn.len(), INVENTORY_MOVE_RESULT_LEN);
+        assert_eq!(in_bag.len(), INVENTORY_MOVE_RESULT_LEN - 1);
+        // The header, the mode and the invType are identical; only the positions and the
+        // presence of the tail differ.
+        assert_eq!(&worn[..9], &in_bag[..9], "same header, same mode 2, same invType");
+    }
+
+    /// The rule itself, both halves of the `&&` and both inventory types.
+    #[test]
+    fn only_an_equipped_side_on_an_avatar_inventory_changes_the_avatar() {
+        assert!(move_changes_the_avatar(INV_EQUIP, -5, 1), "unequip");
+        assert!(move_changes_the_avatar(INV_EQUIP, 1, -5), "equip");
+        assert!(move_changes_the_avatar(INV_DECO, -1, 2), "the client's rule names 6 too");
+        assert!(!move_changes_the_avatar(INV_EQUIP, 1, 2), "bag to bag");
+        assert!(!move_changes_the_avatar(2, -1, 2), "Consume has no equipped side");
     }
 
     #[test]

@@ -214,6 +214,20 @@ pub struct FieldMob {
     /// The reference's condition is character-for-character the same, including the unusual
     /// `-6`, and it annotates the value `// init -> -2, -1 else`. That is why the default is
     /// `-2`. **[I]** - if mobs pop in wrong, `-1` is the one-byte alternative.
+    ///
+    /// # DO NOT send the WZ's `summonType` here
+    ///
+    /// `research/mob-spawn.md` section 2f floats exactly that, and it would make **every mob
+    /// permanently unhittable**. `summonType` is `1` for both templates this server can
+    /// reach, and `appear_type >= 0` takes the default arm of the switch at `141c51a84`,
+    /// which stores the literal `1` into `mob+0x504` - the field gate 2 of the client's
+    /// target collector rejects on.
+    ///
+    /// The reachability, per arm, from `research/mob-target-gates.md`: `-2`, `-1` and `-6`
+    /// write neither `mob+0x504` nor `mob+0x300`, so both keep their constructor values and
+    /// both gates pass; `-3`, `-4` and `-5` write `+0x504`; `>= 0` writes the rejecting `1`.
+    /// **`-2` is on the safe side of that and `-1` is the only other one-byte alternative
+    /// that stays there.**
     pub appear_type: i8,
     /// Only emitted when [`FieldMob::appear_type`] is `-3`, `-6` or `>= 0` (`141c504d0`).
     pub appear_option: u32,

@@ -91,8 +91,8 @@ is already established, so nobody re-derives it, and the **one concrete next ste
 
 ### START HERE - what to do next, in order
 
-**Last updated after the run of 2026-08-19, late.** Read this section and nothing else to
-know where the project is.
+**Last updated 2026-08-19, night, after a four-agent fan-out.** Read this section and
+nothing else to know where the project is.
 
 #### WORKING, and confirmed on a real client
 
@@ -104,70 +104,91 @@ know where the project is.
 | quests | the dialogue works and Accept answers the `yes` branch |
 | movement | portals both ways, `!map <id>`, chat feedback on refusal |
 | session | world select, Log Out back to the login screen |
-| **mobs** | spawn, and **move properly** - the owner: *"the mob interaction seems normal now"* |
-| **unequip** | a drag takes an item off and it lands in the bag |
+| mobs | spawn, and **move properly** - the owner: *"the mob interaction seems normal now"* |
+| unequip | a drag takes an item off and it lands in the bag |
 
-#### The two things that run settled
+#### BUILT AND WIRED, and NOT yet on a screen
 
-**1. `0x03E4` MobCtrlAck was the whole freeze.** Before it: 30 grants, 30 move reports inside
-three milliseconds, then silence forever. After it: **955 acks and 1007 move reports in one
-session**, sustained. The client is the clock and it stops without an answer.
+Everything here compiles, is tested, and is connected. **None of it has been seen by the
+client.** That distinction is the whole reason this heading exists separately - `STATUS.md`
+has twice listed something as done while it was unwired, and listing something as *working*
+because a unit test passes would be the same mistake wearing a different hat.
 
-**2. The client will not target our mobs, and this is now MEASURED rather than assembled.**
-
-> `previous-runs/world-20260819-222734.log` is one session containing **34 mob spawns, 1396
-> move reports, and 5 `0x00DF` attacks - every one of them 127 bytes, which is zero targets.**
-> Mobs that are spawned, controlled, moving and visibly alive are still not collected by the
-> client's target loop.
->
-> This supersedes both earlier positions. The first claim was right; the retraction that
-> called it "never measured" was right *about the evidence surviving at that moment* - no
-> single log then contained both halves - and is now itself superseded by a log that does.
-> **The only reason this is settleable is that the launcher stopped deleting `world.log`.**
-
-So combat is not a reply problem. `crates/net/src/combat.rs` and the damage loop in
-`session.rs` are built, tested and correct-shaped, and they will never fire until a mob
-becomes targetable. The next instrument is the collection gate chain `FUN_141d31b20` -
-eleven filters, all documented with addresses in `research/mob-combat.md`. Gates 2
-(`mob+0x504`) and 8 (`mob+0x300 == 0x38`) are both written inside `encodeInit`'s
-`move_action` jump-table region, so **the byte we send may be putting the mob in a state
-that is alive and animated but not hittable.**
+| | what changed | how the next run reads it |
+|---|---|---|
+| **inventory persistence (goal I)** | `Store::unequip_to_bag` writes the move in one transaction; `Character::equip_bag` carries the Equip tab; both `SetField` paths send it | take an item off, walk a portal, and it must **stay** off and be in the Equip tab |
+| **the quest journal** | both `SetField` paths carry the book; pressing Yes calls `start_quest` and sends `0x0089` sub-case 1 | accept a quest, then open the journal |
+| **the channel list** | `advertised_channel` sends the priming index, `research/channel-select.md` section 9 | the Change Channel dialog shows **two** rows, CH.1 and CH.2 |
+| **`0xC0000374` is a fault we log** | it was missing from `probe.rs`'s list, so a heap corruption produced **no** CLIENT FAULT line at all | walking into map 1013 now prints a fault line with a stack |
 
 #### What to do next, in order
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **Inventory persistence** - goal I | **The owner's call**: *"I would like to work on inventory persistence first."* An unequip works on screen and is not written down, so a `!map` re-equips it. Needs an `inventory` table **and** the four `presence[2]` bag lists, which are sent empty and have never been decoded. It is also the blocker under goals F and G |
-| 2 | **Why the client will not target a mob** | `FUN_141d31b20`'s eleven gates, `research/mob-combat.md`. Everything downstream of it is already built. Suspect `move_action` first - it is the one byte we chose |
-| 3 | **Amherst Department Store crashes the client** | New, and it has a twin. See below |
-| 4 | **Chat renders nothing** | **Narrowed, 2026-08-19 late.** The dispatcher looks the speaker up before it switches: `1429bb099 CUserPool::GetUser(characterId)`, and a null result **silently returns for `0x0231`** while `0x0226` gets a fallback. So the handler may never run at all. If it does, four bails reach neither render site, and both render sites have their own extra guards. The whole chain, with a two-watch one-run test, is `research/user-chat.md` section "Why nothing renders" |
-| ~~5~~ | ~~**Quest state**~~ - goal A | **WIRED 2026-08-19 late.** Both `SetField` paths carry the journal and pressing Yes now calls `start_quest` and sends `0x0089` sub-case 1. Untested on a real client - the next run is the first look at it |
-| ~~6~~ | ~~**The channel list**~~ | **WIRED 2026-08-19 late.** `advertised_channel` in `crates/login/src/session.rs` sends the priming index and logs that it is doing so. A one-channel world still cannot populate the dialog; that case sends the true value and says why. Untested on a real client |
-| 7 | **Touch damage** | A snail walked into the owner and did nothing. Both static leads eliminated; the cheap answer is a capture, and unknown opcodes already log their whole body |
+| 1 | **Run the client.** Test plan below | Four things above are untested, and one of them is the owner's stated priority |
+| 2 | **Why the client will not target a mob** | The `move_action` lead is **dead** and the count of gates was wrong. See below - the next step is a watch, not a byte |
+| 3 | **Amherst (map 1013) kills the client** | The `0x044F` NPC **never ran**. It dies inside the `0x01A0` SetField handler's tail. See below |
+| 4 | **Chat renders nothing** | The dispatcher can drop `0x0231` before the handler exists. `research/user-chat.md`, section "Why nothing renders" |
+| 5 | **Touch damage** | A snail walked into the owner and did nothing. Template 1 does carry `bodyAttack = 1` and `PADamage = 1` - so the damage is **1 point**, and "no damage" and "1 damage" look alike on screen. Measure before assuming it is broken |
+| 6 | **Shops and storage (goals F, G)** | The store API is built and enforces both of the owner's rules. Nothing in `crates/world` calls it, and no shop dialog is decoded in either direction |
 
-#### NEW: two maps kill the client, and they look like the same bug
+#### Mob targeting: the lead was wrong, and one tempting change would make it permanent
 
-`!map 1010` was fine. Walking the `in02` portal into **map 1013, Amherst Department Store**,
-killed it **72 ms** after the server sent one `0x044F` NPC - template 21, object id 1000 -
-with **`0xC0000374`, STATUS_HEAP_CORRUPTION**.
+`research/mob-target-gates.md`, and it corrects `research/mob-combat.md` section 11.2.
 
-That is the same exit code and the same shape as the **map 20001075** crash of the same day:
-field entry, one NPC sent, heap corruption immediately after. 20001075 later stopped
-crashing, which makes it look intermittent rather than fixed.
+* **The `move_action` lead is dead.** The region that writes gates 2 (`mob+0x504`) and 8
+  (`mob+0x300`) is the **default arm of the `appear_type` switch**, not the `move_action`
+  jump table. The `move_action` table is at `141c50dba` and every one of its 16 arms only
+  puts a stance code in `edx` and calls `[mobvtbl+0xd0]`, which writes neither field. Both
+  gates pass for **every** `move_action`.
+* **`appear_type` is a trap.** `research/mob-spawn.md` section 2f floats sending the WZ's
+  `summonType`. It is `1` for both reachable templates, and `appear_type >= 0` stores the
+  literal `1` into `mob+0x504` - **exactly what gate 2 rejects on**. That change would make
+  every mob permanently unhittable. The warning now lives on the field in
+  `crates/net/src/mob.rs` as well as here.
+* **Eleven was not the count.** 27 branches inside the loop jump past the accept; 17 are
+  per-mob filters. Section 11's eleven were the first eleven of fourteen at one label.
+* **Which gate we fail first is NOT established**, and that is the honest answer rather than
+  a pick. Every gate that static analysis can settle passes. Two findings move the question
+  upstream: of the six builders of `0x00DF`/`0x00E0`/`0x00E1`, **only one calls
+  `FUN_141d31b20`**, so it is not established that this function runs for a plain melee
+  swing at all; and `141d31c96` returns before touching a single mob when `arg17 >= arg4`,
+  which also means `1428c2c32`'s stored value is a **packed pair, not a target count**.
+* The one fixture got tighter rather than looser: pairing each `0x00DF` with the last
+  `0x02FF` before it, the player was **4 pixels** from mob 2003 on the same ground line with
+  `targetCount 0`. That closes "they swung at nothing" without splicing two sessions.
 
-> **The lead worth testing first, and it is cheap.** Both maps are places with **shops** -
-> Amherst Department Store, and a story map. `data/shops.txt` names a grocer at Amherst. The
-> NPC body we send is 64 bytes of mostly zeros, and nothing in it has ever been checked
-> against an NPC that owns a shop. The `0x044F` decode is `research/npc-spawn.md`.
->
-> The one-variant test: `-Probe` a watch on the NPC pool's decode entry and walk into 1013.
-> If the fault is inside the NPC decode, it is our body. If it is after, it is the map.
+#### Amherst: the NPC packet never ran
+
+`research/npc-shop-crash.md`. **The shop lead is dead as stated** - map 20001075's crashing
+NPC is Adobis, the Zakum quest giver, who owns no shop, so "both maps have shops" is false.
+
+The client died inside `FUN_142097f80`, the `0x01A0` SetField handler, in its tail - before
+the `0x044F` was dispatched. Three instruments agree, with a control that drops nothing:
+
+| | sent by server | completed in client |
+|---|---:|---:|
+| `0x03C6` mob spawn | 52 | **52** (the control) |
+| `0x01A0` SetField | 8 | **7** |
+| `0x044F` NpcEnterField | 11 | **10** |
+
+Best remaining lead, and it is correlation rather than mechanism: **1013 is the only map in
+the session with no `miniMap` node** while `hideMinimap = 0`, and the last call before the
+`0x0184` that never went out is a minimap-UI setter. Against it: 20001075 *has* a miniMap.
+
+**Free, and first**: read `login.log` at the top of the next run. The client replays its
+on-disk ELog as `0x008F`/`0x0090` at startup and then deletes it, so a log for the 1013 crash
+arrives on the next launch and nowhere else. `tools/decode_elog.py` prints real VAs now - it
+used to add `0x140000000` and every address it printed was `0x40000000` too high.
 
 #### Things that are NOT open, so nobody re-opens them
 
-* **The bag is not the unequip blocker, and it is not broken.** `presence[7]` lands - twelve
-  bytes, six `u16`, watched at `140305e48` stepping by 2 - and 125 slots render with a
-  scrollbar. Minimum 30, maximum 125, both from the owner.
+* **The bag is not the unequip blocker, and it is not broken.** `presence[7]` lands and 125
+  slots render with a scrollbar. Minimum 30, maximum 125, both from the owner.
+* **The four lists after the equipped one are not four bags.** Only the first is - the Equip
+  tab. The other three take positions 3000+, which nothing here can create. The Use / Set Up
+  / Etc / Cash bags are elsewhere in the record behind presence bytes 3, 4, 5 and 6, and
+  bytes 3/4/5 each open a further undecoded block. `research/bag-lists.md` section 6.
 * **`0x02FF` must be answered.** The old "nothing has to be answered" rested on intersecting
   a correct scan against a set of *eight* mob-pool handlers when there are **110**.
 * **`0x0107` must always be answered, including refusals.** A chat-notice refusal left
@@ -176,12 +197,30 @@ crashing, which makes it look intermittent rather than fixed.
 * **The White Map is not broken**, world select cannot change channels, and the channel
   entry's trailing bytes are not the channel list's problem.
 
-#### The pattern this run confirmed, again
+#### The test plan for the next run
 
-Three conclusions have died with an overwritten `world.log`, and the fourth was saved by
-archiving it. **The launcher now moves the previous run into `previous-runs/` instead of
-deleting it**, and the single most important fact in this section - that a controlled,
-moving mob still attracts zero targets - is only knowable because of that change.
+`powershell -ExecutionPolicy Bypass -File tools\test-server.ps1` and log in normally.
+
+**These are four independent observations, not four variants.** Nothing here changes a byte
+that a previous run depended on except the login channel index, and that one shows up before
+anything else does - so a failure at the login screen is immediately attributable and
+everything after it is untouched. Say which step failed; the order is chosen so that is
+always unambiguous.
+
+| # | do | what to watch | what each outcome means |
+|---|---|---|---|
+| 1 | get to character select | the **Change Channel** dialog | **two rows, CH.1 and CH.2** = the channel fix is right. Still one row = the singleton was not `(0,0)`; put a watch on `142cb8e10`. A hang or fault here = new code ran, read the ELog first |
+| 2 | enter the world, take **one** item off, then `!map 40` | the item | **stays off, and is in the Equip tab** = goal I is done. Comes back on = the store wrote nothing; read `world.log` for the `0x0070` label, which now says STORED or REFUSING and why |
+| 3 | take a **second** item off, then put the first back on | the inventory UI | both work = the latch is being cleared on every path. An equip into an occupied worn slot is **refused on purpose** - that is a swap and it is not built |
+| 4 | talk to a quest NPC and press **Yes**, then `!map 40` | the quest journal | the quest is listed after the map change = the journal persists. `world.log` names the `0x0089` either way |
+| 5 | `!map 1010`, walk the `in02` portal into **1013** | it will probably still die | `client-patched\maplecw-hook.log` should now carry **`CLIENT FAULT #1: code=0xc0000374`** with a stack. Read `at=` (exact); the `<-TEXT` frames are a heuristic scan, so read them as leads |
+
+**Do not** change `appear_type`, and do not arm the mob-targeting watch in the same run -
+that one is `watch@141d31b20` on its own, with five or six swings at a snail on map 40, and
+its evidence is `maplecw-hook.log` rather than the screen.
+
+**Nothing authenticates.** The game socket carries no credentials, and none of the above
+changes that.
 
 ### THE NEW GOALS - set by the owner, 2026-08-19, later in the day
 
