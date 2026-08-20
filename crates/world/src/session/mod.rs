@@ -1,0 +1,628 @@
+//! One channel connection's protocol state, as a pure state machine.
+//!
+//! Bodies in, bodies out - no socket, no cipher, no clock, for the same reason
+//! `login::session` is built that way: a client launch costs the owner a manual elevated run,
+//! so anything that can be a unit test has to be one.
+//!
+//! # This stage is not decoded yet
+//!
+//! Everything the client sends on a channel connection is new. The only packet with a name
+//! is `0x007D`, and that name was read out of the client rather than captured: the builder
+//! is `FUN_1415d10e0`, and it writes the `u32` the migration packet handed over. So the
+//! first job here is to log what arrives and pick the seed out of `0x007D` - which is also
+//! the check on the whole `0x0011` decode.
+//!
+//! **Nothing here answers anything yet, deliberately.** An unanswered request freezes the
+//! client's UI, so this is not a state to stay in - but answering a packet whose meaning is
+//! unknown is worse than not answering, because a wrong reply moves the client into a state
+//! nobody has read. Log first, then decode, then answer.
+
+use std::sync::Arc;
+
+use store::{ClaimedMigration, Store};
+
+use crate::config::Config;
+
+/// What `!help` prints, and what an unknown command is told.
+///
+/// One string so the two cannot drift - a help text that lists a command the dispatcher
+/// does not have is worse than no help text.
+const GM_COMMANDS: &str = "GM commands: !map <mapId>, !item <itemId> [count], !help";
+
+/// One packet to send, plus what it is - the label goes in the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reply {
+    pub opcode: u16,
+    pub body: Vec<u8>,
+    pub what: String,
+}
+
+impl Reply {
+    /// Opcode then body - the packet as the framer wants it.
+    pub fn packet(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(2 + self.body.len());
+        out.extend_from_slice(&self.opcode.to_le_bytes());
+        out.extend_from_slice(&self.body);
+        out
+    }
+}
+
+/// The client's hello on a channel connection, built by `FUN_1415d10e0`.
+///
+/// **It carries the character id, not the migration seed.** The seed was the design's
+/// assumption and the capture disproved it - see [`migration_hello_character`] for the
+/// measured layout. The bytes in front of the id are still undecoded: `FUN_1415d10e0`
+/// writes two `u32` before it, and the tail is the same MAC and machine id `0x0073`
+/// carries.
+pub const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
+
+/// The client asking to walk through a portal.
+///
+/// **Decoded from the run that first put a character on map 1**, 2026-08-19 - the owner used the
+/// right-hand portal and nothing happened, because we answered nothing. Full working in
+/// `research/transfer-field-request.md`; every field below marked *proven* was read both off
+/// the builder `FUN_1418283f0` and off the capture.
+///
+/// ```text
+///  0  u32   100          a literal - MOV EDX,0x64 in the builder
+///  4  u16                a checksum-protected counter
+///  6  u64                a protected value, the 0x9a65 family
+/// 14  u8                 0 from the move-path caller
+/// 15  u8                 derived from the current stage
+/// 16  u32   -1           targetField: -1 means "use the portal"        PROVEN
+/// 20  u16 + bytes        portalName, e.g. "out00"                      PROVEN
+/// 27  u16                character x                                   PROVEN
+/// 29  u16                character y                                   PROVEN
+/// 31  u8    0            hard-coded
+/// 32  u8                 0 from the caller
+/// 33  u8                 0 from the caller
+/// ```
+///
+/// **The body is 31 bytes, not 34, when the portal name is empty** - the client skips both
+/// coordinate writes when the name pointer is null, so x and y are not at a fixed offset from
+/// the end. Parse the string first and let it tell you where they are.
+pub const CLIENT_TRANSFER_FIELD: u16 = 0x00D1;
+
+/// The client announcing it has finished entering a field. **Once per field, every time.**
+///
+/// **Measured 2026-08-19**, from `research/fixtures/portal-works-npcs-and-avatar-do-not-world.log`:
+/// this arrives ~420 ms after every `SetField` - the first migration and every portal walk
+/// alike. That is what makes it the per-field marker.
+///
+/// It replaced `0x0238`, and the reason is worth keeping. `0x0238` and `0x024D` are built
+/// back to back by `FUN_142caa4e0`, the world object's field-entry reset, which is why they
+/// looked like the field-entry signal. But the capture shows **`0x0238` arrives only on the
+/// FIRST field entry** and never again - the three portal transitions in that run produced
+/// no `0x0238` at all, only `0x00DC`. So NPCs triggered on `0x0238` could never appear after
+/// a portal walk even if everything else were right.
+pub const CLIENT_FIELD_ENTERED: u16 = 0x00DC;
+
+/// Sent once, with `0x024D`, on the first field entry only - **not** a per-field marker.
+/// Kept named so nobody re-derives it from the capture and reaches for it again.
+pub const CLIENT_ENTERED_WORLD_ONCE: u16 = 0x0238;
+
+/// What the client asked for in a [`CLIENT_TRANSFER_FIELD`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferFieldRequest {
+    /// `-1` on the wire means "no explicit target - resolve `portal_name` instead".
+    pub target_field: Option<u32>,
+    pub portal_name: String,
+    /// Absent when the portal name is empty; the client omits both coordinates then.
+    pub position: Option<(u16, u16)>,
+}
+
+/// Parse a [`CLIENT_TRANSFER_FIELD`] body (opcode already stripped).
+///
+/// Returns `None` only if the body is too short to hold the fixed part. Everything before
+/// offset 16 is a client integrity block we neither check nor echo.
+pub fn parse_transfer_field(body: &[u8]) -> Option<TransferFieldRequest> {
+    const TARGET_AT: usize = 16;
+    const NAME_AT: usize = 20;
+    let raw = u32::from_le_bytes(body.get(TARGET_AT..TARGET_AT + 4)?.try_into().ok()?);
+    let len = u16::from_le_bytes(body.get(NAME_AT..NAME_AT + 2)?.try_into().ok()?) as usize;
+    let name_end = NAME_AT + 2 + len;
+    let portal_name = String::from_utf8_lossy(body.get(NAME_AT + 2..name_end)?).into_owned();
+    let position = if portal_name.is_empty() {
+        None
+    } else {
+        let x = u16::from_le_bytes(body.get(name_end..name_end + 2)?.try_into().ok()?);
+        let y = u16::from_le_bytes(body.get(name_end + 2..name_end + 4)?.try_into().ok()?);
+        Some((x, y))
+    };
+    Some(TransferFieldRequest {
+        target_field: if raw == u32::MAX { None } else { Some(raw) },
+        portal_name,
+        position,
+    })
+}
+
+/// One channel connection.
+pub struct Session {
+    store: Arc<Store>,
+    config: Arc<Config>,
+    /// The migration this connection claimed, once it has claimed one.
+    claimed: Option<ClaimedMigration>,
+    /// The NPC conversation in progress, if any.
+    conversation: Option<Conversation>,
+    /// Where each NPC on the current field is in its idle chatter.
+    chatter: Vec<Chatter>,
+    /// Drives the chatter cadence. Seeded per session so two connections do not speak in
+    /// lockstep, and seedable so a test can pin the sequence.
+    rng: Xorshift,
+    /// The last time [`Session::tick`] was called, in milliseconds since the connection
+    /// opened.
+    ///
+    /// **A field entry needs to know the clock and does not get one**: `handle` takes bytes,
+    /// not time. Without this, `reset_chatter` scheduled from zero, so an NPC on a map
+    /// entered at t = 30 s came due at 3-9 s - already in the past - and the whole field
+    /// spoke on the very next tick. It is at most one tick stale, which is 500 ms.
+    clock_ms: u64,
+    /// Every mob currently on this session's field, and how much HP it has left.
+    ///
+    /// **The server is the only thing that can move a mob's health bar.** A whole-`.text`
+    /// scan found 11 stores to `mob+0x8b4` and only two inside the mob class - the
+    /// constructor and the `0x03F0` handler - so the client never decrements a mob's HP on
+    /// its own, however hard the player hits it. `research/mob-combat.md`.
+    ///
+    /// Keyed by object id and rebuilt on every field entry, because object ids are minted
+    /// per field and a dead mob's id must never be reused.
+    mob_hp: std::collections::HashMap<u32, u64>,
+    /// The NPC whose shop is open, and the rows **exactly as they went on the wire**.
+    ///
+    /// The client hands back only a `row_key`, so the rows have to be kept to turn one back
+    /// into an item and a price. Keeping the sent copy rather than re-deriving it is the
+    /// point: a re-derivation that disagreed by one row would charge the wrong price for the
+    /// right-looking click, and nothing on either side would notice.
+    open_shop: Option<(u32, Vec<net::shop::ShopRow>)>,
+}
+
+/// One NPC's place in its idle-chatter cycle.
+///
+/// **The ordering and the cadence are ours, because the client has neither.** Its own picker
+/// is `rand() % n` twice with no cursor, so "in order" is a decision rather than a
+/// reproduction - which is what the owner asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Chatter {
+    object_id: u32,
+    /// How many lines this NPC's `info/speak` group has. Zero means it never talks.
+    lines: usize,
+    /// The next line to send.
+    cursor: usize,
+    /// When it is next due, in milliseconds since the session's clock started.
+    due_ms: u64,
+}
+
+/// The shortest an NPC waits between idle lines, in milliseconds.
+///
+/// **This is the client's own formula, not an invention.** `FUN_141e46d40` computes
+/// `rand() % 6000 + 3000` for its idle timer, so three to nine seconds *is* this game's
+/// cadence. **[L]** for the formula; that the unit is milliseconds is **[D]**, from the same
+/// per-frame step decrementing a countdown loaded from a WZ `delay`.
+///
+/// The owner asked to match it rather than use a fixed interval. The lines still advance **in
+/// order** - that part is ours, because the client's own picker is `rand() % n` with no
+/// cursor - while the *timing* is the game's.
+pub const CHATTER_MIN_MS: u64 = 3000;
+
+/// The width of the random window above [`CHATTER_MIN_MS`]: the client's `rand() % 6000`.
+pub const CHATTER_SPREAD_MS: u64 = 6000;
+
+/// A tiny xorshift, so the cadence is random without `Session` reaching for a clock or a
+/// global generator.
+///
+/// **Why not the `rand` crate.** `Session` is a pure state machine - bodies and time in,
+/// bodies out - and that is what makes every exchange in this file a unit test rather than
+/// something needing a live socket. A thread-local generator would put hidden state back in.
+/// Seeding this from the session lets a test pin the exact sequence; a real generator is the
+/// right call the moment something needs quality rather than variety.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next(&mut self) -> u64 {
+        // xorshift64*, and the state must never be zero - it is a fixed point.
+        let mut x = self.0 | 1;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// A delay in the client's own window: 3000..=8999 ms.
+    fn chatter_delay(&mut self) -> u64 {
+        CHATTER_MIN_MS + self.next() % CHATTER_SPREAD_MS
+    }
+}
+
+/// Where a conversation with an NPC currently is.
+///
+/// **This exists because `0x00F3` carries no line index.** The client answers a script box
+/// with the box's own text echoed back and a single action byte, so which line the user was
+/// on, and whether the box even had a Next button, are the server's to remember. Getting
+/// that wrong is not a crash - `0x00F3` is not one of the latch setters - it is a
+/// conversation that stops or repeats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Conversation {
+    npc_template: u32,
+    /// `None` for a plain talk (`0x00F2`), which is a one-line conversation.
+    quest_id: Option<u32>,
+    /// The `Say` path being walked - `"0"`, then `"0.yes"` or `"0.no"` after a branch.
+    path: String,
+    /// The index of the line last sent.
+    sent: usize,
+    /// Whether the last box was a yes/no prompt. On those the answer byte is unambiguous.
+    awaiting_yes_no: bool,
+    /// Whether the last box was sent with `next` set. **The client collapses OK and Next
+    /// into the same answer**, so this is the only thing that separates "advance" from
+    /// "the user dismissed the last box".
+    sent_with_next: bool,
+}
+
+mod combat;
+mod field;
+mod gm;
+mod inventory;
+mod npc;
+mod shop;
+#[cfg(test)]
+mod tests;
+
+impl Session {
+    pub fn new(store: Arc<Store>, config: Arc<Config>) -> Self {
+        // Any non-zero seed will do; the config's address is simply something that differs
+        // between connections in the same process.
+        let seed = Arc::as_ptr(&config) as u64 | 1;
+        Session {
+            store,
+            config,
+            claimed: None,
+            conversation: None,
+            chatter: Vec::new(),
+            rng: Xorshift(seed),
+            clock_ms: 0,
+            mob_hp: std::collections::HashMap::new(),
+            open_shop: None,
+        }
+    }
+
+
+    /// What the channel sends the moment the client connects: **nothing**.
+    ///
+    /// The login server sends the `0x0032` startup gate here, unprompted. That is right
+    /// there and wrong here - it releases the login connection's startup loop, and this
+    /// connection has no startup loop. It is also the most likely reason the first
+    /// migrated connection was rejected with "The client is outdated".
+    pub fn on_connect(&mut self) -> Vec<Reply> {
+        Vec::new()
+    }
+
+
+    /// What the server should send when nothing has arrived.
+    ///
+    /// **This is the only unsolicited path in the whole server**, and it exists because NPC
+    /// idle chatter is server-triggered and client-rendered: the client holds the lines, the
+    /// balloon art and a five-second display timer, but the only code that creates a balloon
+    /// is reached from inbound `0x0453`. Nothing in the `0x044F` spawn body turns it on.
+    ///
+    /// `now_ms` is milliseconds since the connection started, and it is a parameter rather
+    /// than a clock read so this stays a pure function of state and time - the same reason
+    /// `Session` has no socket. Every exchange in this file is a unit test because of it.
+    ///
+    /// Returns at most one balloon per NPC per call. A tick that falls a long way behind
+    /// does **not** burst: the next due time is computed from `now_ms`, not from the missed
+    /// one, so a stalled connection resumes at the normal cadence instead of emitting a
+    /// backlog the client would show as a flicker.
+    pub fn tick(&mut self, now_ms: u64) -> Vec<Reply> {
+        self.clock_ms = now_ms;
+        if !self.config.set_field_probe || self.config.chatter_off {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for c in &mut self.chatter {
+            if c.lines == 0 || now_ms < c.due_ms {
+                continue;
+            }
+            let index = c.cursor % c.lines;
+            c.cursor = c.cursor.wrapping_add(1);
+            c.due_ms = now_ms + self.rng.chatter_delay();
+            out.push(Reply {
+                opcode: net::npcchat::NPC_CHAT,
+                body: net::npcchat::npc_chat(
+                    c.object_id,
+                    net::npcchat::NPC_CHAT_NO_ANIMATION,
+                    u8::try_from(index).unwrap_or(0),
+                ),
+                what: format!(
+                    "NpcChat: object id {}, line {} of {} - idle chatter. The client holds \
+                     the text; only the index goes on the wire.",
+                    c.object_id,
+                    index + 1,
+                    c.lines
+                ),
+            });
+        }
+        out
+    }
+
+
+    /// Rebuild the idle-chatter cycle for the field the character has just entered.
+    ///
+    /// The NPC pool is destroyed and rebuilt on every field entry, so the cursors go with
+    /// it - an object id from the previous map addresses nothing, or worse, something else.
+    fn reset_chatter(&mut self, map: u32, now_ms: u64) {
+        let empty: Vec<net::opcode::FieldNpc> = Vec::new();
+        // The rng is moved out and back so the closure below can take it mutably while the
+        // config is borrowed immutably.
+        let mut rng = std::mem::replace(&mut self.rng, Xorshift(1));
+        let chatter: Vec<Chatter> = self
+            .config
+            .npcs
+            .get(&map)
+            .unwrap_or(&empty)
+            .iter()
+            .map(|npc| Chatter {
+                object_id: npc.object_id,
+                lines: self
+                    .config
+                    .npc_strings
+                    .get(&npc.template_id)
+                    .map(|s| s.info.len())
+                    .unwrap_or(0),
+                cursor: 0,
+                // Stagger by position on the field so they do not all speak at once.
+                // The first line waits a full random interval too, so a field does not
+                // erupt the moment it loads.
+                due_ms: now_ms + rng.chatter_delay(),
+            })
+            .collect();
+        self.rng = rng;
+        self.chatter = chatter;
+    }
+
+
+    /// Handle one packet body, opcode included.
+    ///
+    /// **Answers nothing at all unless [`Config::set_field_probe`] is on**, which is why
+    /// `tools/test-server.ps1` must be given `-SetFieldProbe`. Without it the migration
+    /// hello goes unanswered and the client freezes on "Connecting..." - the exact failure
+    /// the "always answer" rule exists to prevent, sitting in the default configuration.
+    ///
+    /// **The flag is a misnomer.** It dates from when the channel's only job was to answer
+    /// the migration hello with a hand-built `SetField` and see whether the client accepted
+    /// it. It now gates six handlers: the migration, the portal walk, field entry (NPCs and
+    /// mobs), chat (the `!map` GM command) and the quest request. Renaming it would break
+    /// the launch line in `STATUS.md` and in every fixture note, so it stays until something
+    /// else about the launcher changes.
+    ///
+    /// The original reasoning still holds for what is *not* answered: a wrong reply moves
+    /// the client into a state nobody has read, which is worse than silence. Every opcode
+    /// below is one whose handler has been read, and unknown ones fall through to nothing.
+    pub fn handle(&mut self, body: &[u8]) -> Vec<Reply> {
+        let opcode = match body.get(..2) {
+            Some(b) => u16::from_le_bytes([b[0], b[1]]),
+            None => return Vec::new(),
+        };
+        if !self.config.set_field_probe {
+            return Vec::new();
+        }
+        match opcode {
+            CLIENT_MIGRATION_HELLO => {}
+            CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
+            CLIENT_FIELD_ENTERED => return self.on_field_entered(),
+            net::opcode::CLIENT_CHAT => return self.on_chat(body.get(2..).unwrap_or(&[])),
+            net::script::CLIENT_QUEST_REQUEST => {
+                return self.on_quest_request(body.get(2..).unwrap_or(&[]))
+            }
+            op if net::combat::is_attack_opcode(op) => {
+                return self.on_attack(body.get(2..).unwrap_or(&[]))
+            }
+            net::inventory::CLIENT_INVENTORY_MOVE => {
+                return self.on_inventory_move(body.get(2..).unwrap_or(&[]))
+            }
+            net::mobmove::MOB_MOVE_REQUEST => return self.on_mob_move(body.get(2..).unwrap_or(&[])),
+            net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
+            net::script::CLIENT_SCRIPT_REPLY => {
+                return self.on_script_reply(body.get(2..).unwrap_or(&[]))
+            }
+            net::script::CLIENT_NPC_CLICK => {
+                return self.on_npc_click(body.get(2..).unwrap_or(&[]))
+            }
+            net::channel::CLIENT_CHANGE_CHANNEL => {
+                return self.on_change_channel(body.get(2..).unwrap_or(&[]))
+            }
+            net::shop::CLIENT_SHOP_REQUEST => {
+                return self.on_shop_request(body.get(2..).unwrap_or(&[]))
+            }
+            _ => return Vec::new(),
+        }
+        // Always answer. An unanswered packet freezes the client's whole UI - every
+        // button, including the quit prompt - and reads on screen as a crash. So a
+        // character we cannot load falls back to the minimal record rather than silence.
+        let (body, what) = match self.claimed_character() {
+            Some(chr) => {
+                let (quests, quest_note) = self.quest_book(chr.id);
+                (
+                net::opcode::set_field_with_character_dressed_quests(
+                    &chr,
+                    self.config.world_id,
+                    self.clock_base(),
+                    self.config.channel_id,
+                    &self.dressed(&chr),
+                    &quests,
+                ),
+                format!(
+                    "SetField, characterData=1, presence[0] set so the character-stat block decodes, carrying map {} for character {} ({}). presence[0] is gate entry 7, settled in research/charrecord-presence-map.md; the map id sits at stat-block offset {}, settled in research/charstat-layout.md{}. Nothing here authenticates anybody.",
+                    chr.map_id,
+                    chr.id,
+                    chr.name,
+                    net::opcode::stat_block_map_id_at(chr.job),
+                    quest_note,
+                ),
+            )
+            }
+            None => (
+                net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
+                "SetField, characterData=1, MINIMAL record - the character could not be loaded, so this falls back to the all-flags-clear form. It is answered rather than dropped because an unanswered packet freezes the client's whole UI. It will NOT put the character on a map: with every presence flag clear the stat block never decodes, so there is no map id at all."
+                    .to_string(),
+            ),
+        };
+        vec![Reply { opcode: net::opcode::SET_FIELD, body, what }]
+    }
+
+
+    /// One line in the client's chat window.
+    ///
+    /// `force = 1` is not optional: with `0` the client shows only the first line after each
+    /// field entry and silently drops the rest, which reads exactly like the feature being
+    /// broken. See `net::notice::CHAT_NOTICE`.
+    fn notice(&self, text: String) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::notice::CHAT_NOTICE,
+            body: net::notice::chat_notice(&text),
+            what: format!("ChatNotice: {text}"),
+        }]
+    }
+
+
+    /// The character this connection claimed a migration for.
+    ///
+    /// `describe_hello` in `server.rs` claims the migration before `handle` runs, so by
+    /// this point `claimed` is populated for a well-formed hello. The store has no
+    /// lookup by character id alone, but a claim carries the account and world, and a
+    /// character id is unique within those.
+    fn claimed_character(&self) -> Option<net::opcode::Character> {
+        let claimed = self.claimed.as_ref()?;
+        let mut chr = self
+            .store
+            .characters_for(claimed.account_id, claimed.world_id)
+            .ok()?
+            .into_iter()
+            .find(|c| c.id == claimed.character_id)?;
+        // The bag override, applied here rather than at either SetField site so a portal
+        // walk and a migration cannot disagree about it. See Config::inventory_slots.
+        if let Some(slots) = self.config.inventory_slots {
+            chr.inventory_slots = [slots; net::opcode::INVENTORY_COUNT];
+        }
+        // **The Equip tab's contents, and this is goal I.** Loaded on the same funnel as the
+        // slot counts for the same reason: both `SetField` sites go through here, and the
+        // one thing that must never differ between a migration and a portal walk is what the
+        // character is carrying. Before this, an unequip moved an item on screen and nowhere
+        // else, so the next field entry re-dressed from `equipment` rows that had not
+        // changed and the item came back on.
+        //
+        // A read failure yields an EMPTY bag rather than dropping the character. The record
+        // has no length prefix and no resync point, so an empty Equip tab costs a bag that
+        // looks empty for one field entry; no character at all costs the minimal record and
+        // a player who is nowhere.
+        chr.equip_bag = match self.store.bag(chr.id) {
+            Ok(bag) => bag
+                .items_in(store::InventoryType::Equip)
+                .filter_map(|row| {
+                    let store::ItemKind::Equip(stored) = row.item.kind else {
+                        return None; // a bundle in the Equip tab is not representable
+                    };
+                    Some(net::bag::BagEquip {
+                        pos: row.slot,
+                        item_id: row.item.item_id,
+                        // None means "derive from the template", which is what every row
+                        // written before per-item stats existed says.
+                        stats: stored.unwrap_or_else(|| self.template_stats(row.item.item_id)),
+                    })
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        Some(chr)
+    }
+
+
+    /// The stats an item's `Character.wz` template gives it, or all-zero if it has none.
+    ///
+    /// Split out of [`Session::dressed`] so a worn item and a bagged one cannot disagree
+    /// about what the same item id is worth.
+    fn template_stats(&self, item_id: u32) -> net::opcode::EquipStats {
+        self.config.equips.get(&item_id).map(|t| t.fresh_stats()).unwrap_or_default()
+    }
+
+
+    /// The 8 bytes the client stores as a server clock base, stamping its own tick beside
+    /// them. A Windows `FILETIME` is the shape the reference server sends; nothing has been
+    /// measured about what this client does with the value, so a plausible one is sent
+    /// rather than zero.
+    fn clock_base(&self) -> u64 {
+        const FILETIME_1970: u64 = 116_444_736_000_000_000;
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        FILETIME_1970 + secs * 10_000_000
+    }
+
+
+    /// Claim the pending migration for a character, and say what happened.
+    ///
+    /// **The seed does not come back.** It was the design's assumption that the `u32` handed
+    /// over in `0x0011` would return in `0x007D`; the capture says otherwise - it is absent
+    /// from the body both plainly and under the obfuscated-block search - and what the
+    /// client sends instead is the character id.
+    ///
+    /// So single use is carried entirely by the database row, which is where it always
+    /// actually lived: a `u32` on the wire was never a secret, and this only removes the
+    /// pretence that it was. Nothing here authenticates anybody.
+    pub fn claim_for_character(&mut self, character_id: u32) -> String {
+        match self.store.claim_migration_for_character(character_id) {
+            Ok(Some(claimed)) => {
+                let wrong_channel = claimed.world_id != self.config.world_id
+                    || claimed.channel_id != self.config.channel_id;
+                let note = format!(
+                    "claimed the migration for character {} of account {} \
+                     (world {} channel {})",
+                    claimed.character_id, claimed.account_id, claimed.world_id, claimed.channel_id
+                );
+                self.claimed = Some(claimed);
+                if wrong_channel {
+                    format!(
+                        "{note} - WRONG CHANNEL: this is world {} channel {}",
+                        self.config.world_id, self.config.channel_id
+                    )
+                } else {
+                    note
+                }
+            }
+            Ok(None) => format!(
+                "character {character_id} has no unconsumed migration - it was never \
+                 minted, or already claimed, or it expired"
+            ),
+            Err(e) => format!("character {character_id} could not be checked: {e}"),
+        }
+    }
+
+
+    /// The migration this connection claimed, if any.
+    pub fn claimed(&self) -> Option<&ClaimedMigration> {
+        self.claimed.as_ref()
+    }
+}
+
+/// Where the character id sits in a `0x007D` body.
+///
+/// **Measured from a real capture, 2026-08-19**, decrypted with AES once the channel's
+/// cipher was settled:
+///
+/// ```text
+/// u32  0
+/// u32  0
+/// u32  characterId      <- 204, TestCharD
+/// u8[6] MAC
+/// u32  machine id
+/// ...                    the same trailing identity block 0x0073 carries
+/// ```
+const HELLO_CHARACTER_AT: usize = 8;
+
+/// The character id out of a `0x007D` body, or `None` if it is too short to hold one.
+pub fn migration_hello_character(payload: &[u8]) -> Option<u32> {
+    payload
+        .get(HELLO_CHARACTER_AT..HELLO_CHARACTER_AT + 4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}

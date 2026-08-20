@@ -139,7 +139,7 @@ pub const MOVE_ACTION_MIN_SAFE: u8 = 2;
 /// Zero pulls in a second `u32` read at `141d336a1` and desynchronises the body; multiples of
 /// [`OBJECT_ID_MULTIPLE_TO_AVOID`] take an unexplored branch. **[L]**
 pub fn object_id_is_usable(id: u32) -> bool {
-    id != 0 && id % OBJECT_ID_MULTIPLE_TO_AVOID != 0
+    id != 0 && !id.is_multiple_of(OBJECT_ID_MULTIPLE_TO_AVOID)
 }
 
 /// The first usable object id at or after `id`. Never returns 0 or a multiple of 178.

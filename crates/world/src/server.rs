@@ -149,7 +149,7 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
             let replies = session.handle(&body);
             if replies.is_empty() {
                 log(&format!(
-                    "   {} is not answered yet{} - see crates/world/src/session.rs",
+                    "   {} is not answered yet{} - see crates/world/src/session/",
                     label(opcode),
                     if opcode_name(opcode).is_none() {
                         ", and it is UNKNOWN, so the full body is above"
@@ -214,7 +214,11 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         log("  carrying the character's real record (presence[0] the stat block, presence[2]");
         log("  the equipped list), 0x00DC with that field's NPCs and mobs, 0x00D1 with the");
         log("  portal's destination, 0x00E7 with the !map GM command, and 0x0151 with a");
-        log("  script Say. Equipment, mobs and the Say are BUILT BUT UNCONFIRMED on screen.");
+        log("  script Say, 0x0104 with the NPC shop, and 0x00D2 with a channel migration.");
+        log("  CONFIRMED on a real client: the dressed character, the bag and its 125 slots,");
+        log("  NPC dialogue, mobs spawning and moving, an unequip that survives a map change.");
+        log("  NOT yet seen on screen: the shop counter, the quest journal, the channel");
+        log("  switch. Dropping an item is refused on purpose - there is nowhere to put it.");
     } else {
         log("Packets are logged and NOT ANSWERED. The stage is no longer undecoded:");
         log("  SetField is inbound 0x01A0, confirmed on a live client, and its 33-byte");

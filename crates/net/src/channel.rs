@@ -108,9 +108,15 @@ pub fn priming_channel(world_id: u32, channel_id: u32, channel_count: u32) -> Op
 /// was missing was that this is the Change Channel action). Reached from `FUN_142a316e0`,
 /// the dialog's OK handler, which re-checks the row's enable predicate first.
 ///
-/// **Nothing answers this yet, and an unanswered packet freezes the client's whole UI.**
-/// The reply is expected to be a migration for the target channel - the same shape as
-/// [`crate::opcode::MIGRATE_COMMAND`] at login - but that is **[I]** and no capture exists.
+/// **Answered since 2026-08-20** by `crates/world`'s `Session::on_change_channel`, with a
+/// migration for the target channel - the same shape as [`crate::opcode::MIGRATE_COMMAND`]
+/// at login. That shape is still **[I]**: no capture of a successful channel change exists,
+/// and this comment does not upgrade it.
+///
+/// It had to be answered in the same change that set [`crate::opcode::CHANNEL_ENABLED`] to
+/// `1`, because draw and click read the same predicate in the client - there was no way to
+/// make a channel row look enabled without making it able to send this, and an unanswered
+/// packet freezes the client's whole UI including the quit prompt.
 pub const CLIENT_CHANGE_CHANNEL: u16 = 0x00D2;
 
 /// A parsed [`CLIENT_CHANGE_CHANNEL`].

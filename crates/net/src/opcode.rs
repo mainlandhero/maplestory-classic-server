@@ -1873,8 +1873,9 @@ pub const INVENTORY_SIZE_BLOCK_LEN: usize = INVENTORY_COUNT * 2;
 /// `MOV byte ptr [0x143abf369],1` - `0x369 - 0x360` = byte **9**. **[L]**
 ///
 /// **A second, independent measurement lands on the same index.** `FUN_1402e5a30` is the
-/// client's own *encoder* for this record - 38 calls to the same gate helper `FUN_1402fa9a0`
-/// - and it uses a **different key table**: its started-quest gate at `0x1402e719e` carries
+/// client's own *encoder* for this record, 38 calls to the same gate helper
+/// `FUN_1402fa9a0` - and it uses a **different key table**: its started-quest gate at
+/// `0x1402e719e` carries
 /// key `0x143abe0d0`, whose initialiser at `0x140022ba0` sets `[0x143abe0d9]`, byte **9**
 /// again. Two tables, two sets of initialisers, one byte index. **[L]**
 ///
@@ -3573,6 +3574,10 @@ mod tests {
             &record[sizes_at..sizes_at + INVENTORY_SIZE_BLOCK_LEN],
             &inventory_size_block(&[DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT])[..]
         );
+        // Indexing by the loop variable rather than zipping, on purpose: the assertion is
+        // that the record's Nth pair of bytes matches INVENTORY_SLOT_ORDER's Nth entry, and
+        // a zip would hide an off-by-one between the two by construction.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..INVENTORY_COUNT {
             let at = sizes_at + i * 2;
             assert_eq!(
@@ -3808,6 +3813,9 @@ mod tests {
 
     /// Setting option bit `k` sets exactly bit `k` and adds exactly that field's width -
     /// 1, 2, 4 or 8 bytes, per `FUN_140303b40`'s listing.
+    // The index IS the subject: bit k must cost OPTION_WIDTHS[k]. Iterating the widths and
+    // counting along would assume the correspondence this test exists to check.
+    #[allow(clippy::needless_range_loop)]
     #[test]
     fn every_option_bit_costs_one_mask_bit_and_its_own_width() {
         for bit in 0..EQUIP_OPTION_BITS {
@@ -3897,7 +3905,10 @@ mod tests {
         }
         let opt_mask = u32::from_le_bytes(item[at..at + 4].try_into().unwrap());
         at += 4;
-        assert_eq!(opt_mask, (1 << 0) | (1 << 2) | (1 << 5) | (1 << 18));
+        assert_eq!(opt_mask, 1 | (1 << 2) | (1 << 5) | (1 << 18));
+        // Walking the bit index, not the widths: this is decoding a mask, and the bit
+        // number is what selects the width.
+        #[allow(clippy::needless_range_loop)]
         for bit in 0..EQUIP_OPTION_BITS {
             if opt_mask & (1 << bit) != 0 {
                 at += OPTION_WIDTHS[bit];
@@ -3931,10 +3942,16 @@ mod tests {
     /// makes `FUN_1403e8c40` print `Scissors Usages Available : 0`.
     #[test]
     fn a_fresh_item_carries_its_template_stats_an_upgrade_count_and_no_karma_restriction() {
-        assert!(
-            NO_SCISSOR_RESTRICTION > SCISSOR_RESTRICTED_MAX,
-            "the whole point is to land above the 0x14 the client compares against"
-        );
+        // Constant by construction, and that is the point: it pins the two constants
+        // against each other so a future edit to either cannot quietly put the value back
+        // inside the range the client treats as restricted.
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(
+                NO_SCISSOR_RESTRICTION > SCISSOR_RESTRICTED_MAX,
+                "the whole point is to land above the 0x14 the client compares against"
+            );
+        }
 
         // 01040002.img/info: incPDD 6, tuc 7. Everything else absent.
         let mut template = [0u16; EQUIP_STAT_BITS];

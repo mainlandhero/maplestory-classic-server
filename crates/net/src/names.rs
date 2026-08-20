@@ -59,7 +59,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         // Established by reading the client, not by guessing at the bytes.
         0x0073 => "CLIENT_SESSION_IDENTITY (never answered)",
         0x007D => "CLIENT_MIGRATION_HELLO (character id at offset 8, then MAC and machine id)",
-        0x008F | 0x0090 | 0x0091 => "CLIENT_ELOG (the client's own error log; decode_elog.py)",
+        0x008F..=0x0091 => "CLIENT_ELOG (the client's own error log; decode_elog.py)",
 
         // Established 2026-08-19 by finding each builder in the client. Five of the eight
         // names previously here were WRONG - they had been inferred from the shape of the

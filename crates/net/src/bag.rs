@@ -21,8 +21,12 @@
 //! already builds and that was confirmed on screen on 2026-08-19.
 //!
 //! [`bundle_item`] is here for the type-2 (stackable) body, decoded in the same pass, so
-//! that goals F (shops) and G (storage) do not have to re-derive it. **It is not reachable
-//! from the character record today** and nothing calls it outside this module's tests.
+//! that goals F (shops) and G (storage) do not have to re-derive it. **It is still not
+//! reachable from the character record** - the Use / Set Up / Etc / Cash bags sit behind
+//! presence bytes 3, 4, 5 and 6, and bytes 3/4/5 each open a further undecoded block
+//! (section 6 of `research/bag-lists.md` prices it). Since 2026-08-20 it *is* reachable
+//! from `0x0070` mode 0, which is how `!item` and a shop purchase put a stack in the bag
+//! without a field re-entry.
 
 use crate::opcode::{equipped_item, EquipStats, ITEM_NEVER_EXPIRES};
 

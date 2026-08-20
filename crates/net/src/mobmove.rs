@@ -769,7 +769,7 @@ mod tests {
 
     fn unhex(s: &str) -> Vec<u8> {
         let clean: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-        assert!(clean.len() % 2 == 0, "odd hex length");
+        assert!(clean.len().is_multiple_of(2), "odd hex length");
         (0..clean.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&clean[i..i + 2], 16).expect("hex"))

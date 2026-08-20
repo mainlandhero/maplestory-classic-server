@@ -37,8 +37,8 @@ pub fn chat_notice(text: &str) -> Vec<u8> {
 
 /// The answer to the client's Log Out request, `0x01BE`.
 ///
-/// Body is **one non-empty string**; an empty one is a no-op. Verified three ways that agree
-/// - the jump table at `0x142cbd9d0` (index `opcode - 0x70`), the listing, and the
+/// Body is **one non-empty string**; an empty one is a no-op. Verified three ways that
+/// agree - the jump table at `0x142cbd9d0` (index `opcode - 0x70`), the listing, and the
 /// decompiler - all showing exactly one read. **[L]**
 ///
 /// It runs `FUN_142d3c670`, which outside the login subsystem's own startup is **the only

@@ -1117,8 +1117,7 @@ mod tests {
         let store = Arc::new(Store::open_in_memory().unwrap());
         store.create_account("maplecw", "correct horse battery").unwrap();
         let account = store.get_account("maplecw").unwrap().unwrap();
-        let mut world = World::default();
-        world.channel_id = 3;
+        let world = World { channel_id: 3, ..World::default() };
         let mut s = Session::new(store, Arc::new(Config { world, ..Config::default() }), account);
         s.handle(&create_request("Wanderer", 30030, &STYLE));
         let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;

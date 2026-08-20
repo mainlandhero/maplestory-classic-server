@@ -156,7 +156,12 @@ impl ItemData {
 
     /// The owner: *"Please do not allow untradeable items to be stored."*
     ///
-    /// No caller yet - storage is goal G. Here because it is the same measurement.
+    /// **The rule that binds is `store::storage`'s, not this one.** `Store::store_item` and
+    /// its siblings refuse a trade-blocked item from their own baked id list, so a caller
+    /// cannot get round it by not asking. This copy exists because it is the same
+    /// measurement out of the same dump, and because a shop that could offer to store one
+    /// should not draw the option in the first place - the same shape as `may_be_sold`,
+    /// which keeps a quest item out of the Sell tab rather than only refusing the sale.
     pub fn may_be_stored(&self) -> bool {
         !self.trade_block
     }

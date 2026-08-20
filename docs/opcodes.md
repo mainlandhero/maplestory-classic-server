@@ -503,7 +503,7 @@ greeting and began talking. The layout above is confirmed by behaviour.
 The `u32` in the tail is stashed at `DAT_143ac80b0` and `FUN_1415d10e0` does write it into
 outbound `0x007D` — but it is **not present in the `0x007D` the client actually sends**.
 Do not build a handoff on it. The client identifies itself there by **character id**; see
-`crates/world/src/session.rs`.
+`crates/world/src/session/`.
 
 ---
 

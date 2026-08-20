@@ -1038,7 +1038,7 @@ mod tests {
     #[test]
     fn the_captured_length_is_accounted_for_byte_for_byte() {
         // FUN_140f31fe0: 12 u8 (one of them the tail jump), 11 u16, 16 u32, 1 str.
-        assert_eq!(ATTACK_HEADER_FIXED, 12 * 1 + 11 * 2 + 16 * 4);
+        assert_eq!(ATTACK_HEADER_FIXED, 12 + 11 * 2 + 16 * 4);
         let header = ATTACK_HEADER_FIXED + 2 + "User Melee".len();
         assert_eq!(header, 110);
         assert_eq!(

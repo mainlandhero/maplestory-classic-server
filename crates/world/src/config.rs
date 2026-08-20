@@ -50,7 +50,13 @@ pub struct Config {
     /// | `0x00DC` field entered | every NPC on the map, then a `UserAvatarModified` attempt |
     ///
     /// **Still off by default**, because it is the whole game path and nothing on it
-    /// authenticates anybody. See `STATUS.md` NEXT GOALS.
+    /// authenticates anybody.
+    ///
+    /// That default is also a trap, and it has cost one of the owner's manual launches: without
+    /// `--set-field-probe`, `Session::handle` returns nothing for *every* packet, the
+    /// migration hello goes unanswered, and the client sits on "Connecting..." looking like
+    /// a server that is not running. `tools/test-server.ps1` takes `-SetFieldProbe` and
+    /// `STATUS.md`'s test plan says so in the command line itself.
     pub set_field_probe: bool,
 
     /// Override every character's inventory slot counts, for one run.
@@ -127,9 +133,10 @@ pub struct Config {
     /// own WZ, and shop contents are provably not in it (STATUS.md goal F checked three ways
     /// with a control each). See [`crate::shops`].
     ///
-    /// Nothing sends these yet - the shop dialog packet is not decoded in either direction -
-    /// so this is a table with no wire behind it, loaded so that the resolution failures are
-    /// visible at startup rather than at the first click.
+    /// **Wired since 2026-08-20.** `0x0560` opens the counter and `0x0104` is answered;
+    /// clicking a shopkeeper sends this table's rows. The join from a shop's NPC *name* onto
+    /// the template id a click carries is [`Self::shop_by_template`], and it was the last
+    /// thing between a decoded packet and a shop on screen.
     pub shops: crate::shops::ShopTable,
     /// `npcTemplateId -> index into shops.shops`, built by
     /// [`crate::shops::resolve_npc_templates`] at startup.
@@ -839,7 +846,6 @@ pub fn load_mob_templates(path: &std::path::Path) -> HashMap<u32, MobTemplate> {
 ///
 /// `!map` is unrestricted again beyond the field-image check. It is a debugging command and
 /// a wrong theory that removes working maps from it costs more than the crash does.
-
 /// The HP a spawned mob starts with until `Mob.wz` is read for the real value.
 ///
 /// **Not zero, deliberately.** Zero is structurally legal and draws a mob at 0% health,

@@ -250,7 +250,7 @@ mod tests {
         // A 130-char UTF-16 string must escape via tag 127 + i32 length. Reading the
         // tag as the length instead silently corrupts every long string in QuestData.
         let n: usize = 130;
-        let text: String = std::iter::repeat('A').take(n).collect();
+        let text: String = std::iter::repeat_n('A', n).collect();
         let mut raw = vec![127u8];
         raw.extend_from_slice(&(n as i32).to_le_bytes());
         for (k, ch) in text.chars().enumerate() {
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn ascii_string_escapes_at_neg128() {
         let n: usize = 200;
-        let text: String = std::iter::repeat('x').take(n).collect();
+        let text: String = std::iter::repeat_n('x', n).collect();
         // Both escapes store a positive count; only the tag's sign picks the encoding.
         let mut raw = vec![0x80u8];
         raw.extend_from_slice(&(n as i32).to_le_bytes());

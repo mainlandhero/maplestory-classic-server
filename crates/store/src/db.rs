@@ -915,9 +915,8 @@ mod tests {
         // accounts silently did nothing.
         let h = dummy_hash();
         assert!(h.starts_with("$argon2id$"), "got {h}");
-        assert_eq!(
-            verify_password("some guess", h).expect("dummy hash must parse"),
-            false
+        assert!(
+            !verify_password("some guess", h).expect("dummy hash must parse")
         );
     }
 

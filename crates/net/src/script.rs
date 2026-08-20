@@ -429,7 +429,6 @@ pub fn script_force_close(result: u8) -> Vec<u8> {
 ///
 /// **There is also an unrelated inbound `case 0x151`** in the channel dispatcher
 /// (`FUN_142da9d00`). Directions are separate namespaces; do not conflate them.
-
 /// Message type **0x10**: the quest yes/no prompt, `BtQYes` / `BtQNo`.
 ///
 /// **This is what an "Accept" button actually needs, and sending a Say instead is why

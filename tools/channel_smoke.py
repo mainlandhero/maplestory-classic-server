@@ -45,7 +45,7 @@ def free_port():
 
 
 # The character id a real client sent in 0x007D, from the capture in
-# crates/world/src/session.rs. Nothing has minted a migration for it here, so the server
+# crates/world/src/session/. Nothing has minted a migration for it here, so the server
 # should say so plainly rather than accepting it - that honest negative is the check.
 CHARACTER_ID = 204
 

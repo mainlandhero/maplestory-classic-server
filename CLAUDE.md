@@ -112,7 +112,7 @@ half-written work from three different agents, and in one case a file was still 
 as it went into the commit.
 
 **Do not edit a file an agent owns.** Give each agent its own new files, tell it which shared
-files are off-limits, and integrate yourself once it reports. `crates/world/src/session.rs`
+files are off-limits, and integrate yourself once it reports. `crates/world/src/session/`
 is the usual integration point and should stay with the coordinator.
 
 **Re-run your own analysis when you fix a shared instrument.** If a tool was wrong, every
