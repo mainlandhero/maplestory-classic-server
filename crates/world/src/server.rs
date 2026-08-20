@@ -51,7 +51,14 @@ fn send(
     Ok(())
 }
 
-fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> std::io::Result<()> {
+fn connection(
+    mut stream: TcpStream,
+    store: Arc<Store>,
+    config: Arc<Config>,
+    // Every connection on this channel shares one set of fields: mobs keep their
+    // positions when a player leaves, and a second player sees the same field.
+    fields: Arc<crate::fields::Fields>,
+) -> std::io::Result<()> {
     stream.set_nodelay(true)?;
 
     // NOT the login greeting. A channel connection has `conn+0x48 == 0`, so the client
@@ -89,7 +96,7 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
         Shift::Add,
     ));
 
-    let mut session = Session::new(store, config.clone());
+    let mut session = Session::joining(store, config.clone(), fields);
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
     }
@@ -227,6 +234,12 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         log("  Pass --set-field-probe to send the head alone as a delivery probe.");
     }
 
+    // **One set of fields per channel process**, shared by every connection on it. Mobs
+    // keep their positions when a player walks away, a field keeps running with nobody
+    // watching, and a second player joining sees the same world as the first.
+    // `crate::fields`.
+    let fields = Arc::new(crate::fields::Fields::new());
+
     let mut nth = 0u64;
     for incoming in listener.incoming() {
         match incoming {
@@ -234,6 +247,7 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                 nth += 1;
                 let store = store.clone();
                 let config = config.clone();
+                let fields = fields.clone();
                 std::thread::spawn(move || {
                     let peer = stream
                         .peer_addr()
@@ -241,7 +255,7 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                         .unwrap_or_else(|_| "unknown".to_string());
                     let peer = format!("ch{} #{nth} {peer}", config.channel_id);
                     log(&format!("connection from {peer}"));
-                    match connection(stream, store, config) {
+                    match connection(stream, store, config, fields) {
                         Ok(()) => log(&format!("{peer} closed")),
                         Err(e) => log(&format!("{peer} ended: {e}")),
                     }

@@ -86,15 +86,18 @@ impl Session {
             Ok(i) => i,
             Err(e) => return self.refuse_drop(m, &format!("the store would not release it: {e}")),
         };
-        self.drops.drop_item(DropFromBag {
-            map_id: chr.map_id,
-            character_id: chr.id,
-            inv_type: inv,
-            slot,
-            item,
-            x,
-            y,
-            now_ms: self.clock_ms,
+        let (map, now) = (chr.map_id, self.clock_ms);
+        self.fields.with_drops(map, |d| {
+            d.drop_item(DropFromBag {
+                map_id: map,
+                character_id: chr.id,
+                inv_type: inv,
+                slot,
+                item,
+                x,
+                y,
+                now_ms: now,
+            })
         })
     }
 
@@ -130,6 +133,7 @@ impl Session {
             ));
         };
 
+        let map = chr.map_id;
         let found = (0..payload.len().saturating_sub(3)).find_map(|at| {
             let id = u32::from_le_bytes([
                 payload[at],
@@ -137,7 +141,7 @@ impl Session {
                 payload[at + 2],
                 payload[at + 3],
             ]);
-            self.drops.get(id).map(|_| (at, id))
+            self.fields.with_drops(map, |d| d.get(id).map(|_| (at, id)))
         });
 
         let Some((at, object_id)) = found else {
@@ -148,11 +152,12 @@ impl Session {
                  ({} live). If an item is lying here and you just walked over it, this IS \
                  the pick-up request and the id is encoded some other way.",
                 payload.len(),
-                self.drops.len()
+                self.fields.with_drops(map, |d| d.len())
             ));
         };
 
-        let outcome = self.drops.take(object_id, chr.id, self.clock_ms);
+        let now = self.clock_ms;
+        let outcome = self.fields.with_drops(map, |d| d.take(object_id, chr.id, now));
         // The log line is the deliverable. It is written to be greppable on one line,
         // because the run that produces it is read by eye.
         let mut out = vec![Reply {
@@ -215,7 +220,7 @@ impl Session {
                 Err(e) => {
                     // Put it back on the floor and send NO leave. A leave for a drop that is
                     // still in the table is how an item disappears from the world entirely.
-                    self.drops.restore(*drop);
+                    self.fields.with_drops(map, |d| d.restore(*drop));
                     out.extend(self.notice(format!("Your bag would not take it: {e}")));
                 }
             }

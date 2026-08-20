@@ -158,34 +158,6 @@ pub struct Session {
     /// entered at t = 30 s came due at 3-9 s - already in the past - and the whole field
     /// spoke on the very next tick. It is at most one tick stale, which is 500 ms.
     clock_ms: u64,
-    /// Every mob currently on this session's field, and how much HP it has left.
-    ///
-    /// **The server is the only thing that can move a mob's health bar.** A whole-`.text`
-    /// scan found 11 stores to `mob+0x8b4` and only two inside the mob class - the
-    /// constructor and the `0x03F0` handler - so the client never decrements a mob's HP on
-    /// its own, however hard the player hits it. `research/mob-combat.md`.
-    ///
-    /// Keyed by object id and rebuilt on every field entry, because object ids are minted
-    /// per field and a dead mob's id must never be reused.
-    mob_hp: std::collections::HashMap<u32, u64>,
-    /// Object id -> the mob's **template** id, filled beside `mob_hp` on every field entry.
-    ///
-    /// Kept separately rather than folded into `mob_hp` so the HP path stays exactly as it
-    /// was. It exists for one reason: when a mob dies, its drop table is keyed by template,
-    /// and by then the only thing the attack packet gives us is the object id.
-    mob_template: std::collections::HashMap<u32, u32>,
-    /// Object id -> where the client last said that mob was, from `0x02FF`.
-    ///
-    /// **The client owns mob movement** - we grant control and it reports back - so this is
-    /// the only source of a mob's live position. It is what makes a drop fall where the mob
-    /// died rather than at the player's feet, which is what the owner asked for after seeing the
-    /// difference on screen.
-    mob_position: std::collections::HashMap<u32, (i16, i16)>,
-    /// Spawn points waiting to refill: `(when, map, objectId)`, from the WZ's `mobTime`.
-    ///
-    /// **The server respawns mobs; the client never does.** Without this a map empties
-    /// permanently after one pass, which is exactly what the owner hit.
-    dead_mobs: Vec<(u64, u32, u32)>,
     /// The NPC whose shop is open, and the rows **exactly as they went on the wire**.
     ///
     /// The client hands back only a `row_key`, so the rows have to be kept to turn one back
@@ -193,14 +165,15 @@ pub struct Session {
     /// point: a re-derivation that disagreed by one row would charge the wrong price for the
     /// right-looking click, and nothing on either side would notice.
     open_shop: Option<(u32, Vec<net::shop::ShopRow>)>,
-    /// Items lying on the ground, and the ids that name them. See `crate::drops`.
+
+    /// Everything alive on this **channel's** maps: mobs, their positions, and the floor.
     ///
-    /// **Per session, so per connection.** With one player that is the same thing as per
-    /// field; with two it would not be, and the second character would not see the first's
-    /// drops. Making it shared means moving the table behind the server rather than the
-    /// session, and no part of `crate::drops` would change. Recorded as a known limit rather
-    /// than solved, because there is no second player to test the fix against.
-    drops: crate::drops::DropTable,
+    /// **Shared by every connection, not owned by this one.** It used to be four maps on the
+    /// `Session`, which meant a mob's position died with the player looking at it and a
+    /// second player would have seen an empty field. The owner set the model: *"Mob locations are
+    /// stored per channel instance per map."* See `crate::fields`.
+    fields: std::sync::Arc<crate::fields::Fields>,
+
     /// Where the character last told us it was standing, if it ever has.
     ///
     /// **The drop position problem, and it is a real one.** `0x0107` carries no coordinates,
@@ -317,7 +290,18 @@ mod shop;
 mod tests;
 
 impl Session {
+    /// A session on a channel of its own. Every test uses this; the server does not.
     pub fn new(store: Arc<Store>, config: Arc<Config>) -> Self {
+        Self::joining(store, config, std::sync::Arc::new(crate::fields::Fields::new()))
+    }
+
+    /// A session joining a channel that already exists, sharing its fields with every other
+    /// connection on it. **This is what the server uses** - see `crate::fields`.
+    pub fn joining(
+        store: Arc<Store>,
+        config: Arc<Config>,
+        fields: std::sync::Arc<crate::fields::Fields>,
+    ) -> Self {
         // Any non-zero seed will do; the config's address is simply something that differs
         // between connections in the same process.
         let seed = Arc::as_ptr(&config) as u64 | 1;
@@ -329,12 +313,8 @@ impl Session {
             chatter: Vec::new(),
             rng: Xorshift(seed),
             clock_ms: 0,
-            mob_hp: std::collections::HashMap::new(),
-            mob_template: std::collections::HashMap::new(),
-            mob_position: std::collections::HashMap::new(),
-            dead_mobs: Vec::new(),
+            fields,
             open_shop: None,
-            drops: crate::drops::DropTable::new(),
             last_position: None,
         }
     }
@@ -377,11 +357,11 @@ impl Session {
         // disabled would leave items on the floor forever and the bug would look like the
         // drop table rather than the switch.
         let here = self.claimed_character().map(|c| c.map_id).unwrap_or(0);
-        out.extend(self.drops.sweep(here, now_ms));
+        out.extend(self.fields.with_drops(here, |d| d.sweep(here, now_ms)));
         // Refill spawn points whose WZ timer has come due. Before the chatter switch for the
         // same reason the sweep is: `chatter_off` turns off NPC idle lines and nothing else,
         // and a run with it set should not also stop the world respawning.
-        out.extend(self.respawn_due_mobs(now_ms));
+        out.extend(self.spawn_due_mobs(here, now_ms));
         if self.config.chatter_off {
             return out;
         }

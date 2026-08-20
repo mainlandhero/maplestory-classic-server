@@ -566,7 +566,12 @@ pub fn spawn_capacity(spawn_points: usize, players: usize) -> usize {
     } else {
         SPAWN_PERCENT_SOLO
     };
-    spawn_points * percent / 100
+    // **A map with spawn points must not have zero mobs.** 75% of one point is 0.75, which
+    // truncates to none - so a one-point map would sit empty forever and a four-point map
+    // would hold three. Found by a test on a one-point map, and it would have been almost
+    // invisible in play: a small map that is simply never populated looks like a small map
+    // with nothing on it.
+    (spawn_points * percent / 100).max(1)
 }
 
 /// Choose which spawn points hold a live mob, keeping each type's **share** of the map.
@@ -1090,12 +1095,20 @@ mod spawn_tests {
     }
 
     /// Map 30's six snails are unaffected in kind but not in number, and the rounding is
-    /// the part that is NOT settled: floor gives 4 where ceiling would give 5, and the one
-    /// datapoint we have (40 -> 30) cannot tell them apart. Pinned so a change is deliberate.
+    /// still NOT settled: floor gives 4 where ceiling would give 5, and the one datapoint we
+    /// have (40 -> 30) cannot tell them apart. Pinned so a change is deliberate.
+    ///
+    /// **The one-point case WAS settled, on 2026-08-20, and it changed.** This used to pin
+    /// `spawn_capacity(1, 1) == 0` - a map with a spawn point and no mob on it, forever.
+    /// That is not a rounding preference, it is a map that is never populated, and it would
+    /// have been nearly invisible in play: a small map with nothing on it looks like a small
+    /// map with nothing on it. There is now a floor of one. The 6 -> 4 question is
+    /// untouched, because that one really is unsettled.
     #[test]
     fn a_small_map_shows_the_rounding_that_is_still_unsettled() {
         assert_eq!(spawn_capacity(6, 1), 4, "floor(6 * 75 / 100); rounding up would be 5");
-        assert_eq!(spawn_capacity(1, 1), 0, "and one spawn point rounds to none");
+        assert_eq!(spawn_capacity(1, 1), 1, "a map with a spawn point is never empty");
+        assert_eq!(spawn_capacity(0, 1), 1, "and the floor applies even with nothing to fill");
     }
     /// The four items a created character wears, read back out of the generated table.
     ///

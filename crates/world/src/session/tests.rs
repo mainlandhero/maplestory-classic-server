@@ -498,7 +498,7 @@ fn a_drop_leaves_the_bag_and_lands_on_the_floor() {
         .map(|i| i.item.item_id)
         .collect();
     assert!(bagged.is_empty(), "the sword really left the bag");
-    assert_eq!(s.drops.len(), 1, "and it is on the floor");
+    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1, "and it is on the floor");
 }
 
 /// The pick-up handler finds the drop id anywhere in the body, because the body's layout is
@@ -509,7 +509,7 @@ fn the_pick_up_handler_finds_a_drop_id_at_an_unknown_offset() {
     s.handle(&gm_chat("!item 1302000"));
     s.last_position = Some((520, 395));
     s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
-    let object_id = s.drops.on_field(net::opcode::START_MAP_ID).next().unwrap().object_id;
+    let object_id = s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.on_field(net::opcode::START_MAP_ID).cloned().collect::<Vec<_>>()).into_iter().next().unwrap().object_id;
 
     // A plausible body: some header bytes, then the id, at an offset nobody has decoded.
     let mut body = crate::drops::PICK_UP_CANDIDATE_FIRST.to_le_bytes().to_vec();
@@ -529,7 +529,7 @@ fn the_pick_up_handler_finds_a_drop_id_at_an_unknown_offset() {
         .map(|i| i.item.item_id)
         .collect();
     assert_eq!(bagged, vec![1302000], "the sword came back");
-    assert_eq!(s.drops.len(), 0, "and left the floor");
+    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 0, "and left the floor");
 }
 
 /// One of the six candidates that is NOT the pick-up still gets an answer.
@@ -809,7 +809,7 @@ fn a_kill_drops_the_mobs_own_table_and_the_global_one() {
         out.iter().all(|r| r.opcode == net::drops::DROP_ENTER_FIELD),
         "a mob drop sends ONLY 0x046E - a 0x0070 would refuse an inventory request the          player never made"
     );
-    assert_eq!(s.drops.len(), 3, "and all three are on the floor");
+    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 3, "and all three are on the floor");
 }
 
 /// **Drops fall where the mob died, not at the player's feet**, and several are staggered.
@@ -826,14 +826,24 @@ fn drops_land_on_the_mob_and_are_staggered_apart() {
          2 | 1302000 | 100 | 1 | 1 | 3 | Sword
 ",
     );
-    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
-    s.last_position = Some((1000, 395));         // the player, far away
-    s.mob_position.insert(2000, (500, 395));     // the mob, where it died
+    let map = net::opcode::START_MAP_ID;
+    let mut mobs = std::collections::HashMap::new();
+    mobs.insert(map, vec![net::mob::FieldMob::new(2000, 2, 100, 395, 1, 30)]);
+    s.config = Arc::new(Config { drops, mobs, send_mobs: true, ..(*s.config).clone() });
 
-    let out = s.drops_from_kill(2, 2000, 204, net::opcode::START_MAP_ID);
+    // Bring the field up and let the mob wander away from its spawn point.
+    let cfg = s.config.clone();
+    s.fields.seed(map, &cfg, 0);
+    s.fields.due_respawns(map, &cfg, 999_999);
+    s.fields.note_position(map, 2000, (500, 395));
+
+    s.last_position = Some((1000, 395)); // the player, far away
+    let out = s.drops_from_kill(2, 2000, 204, map);
     assert_eq!(out.len(), 3);
 
-    let xs: Vec<i16> = s.drops.on_field(net::opcode::START_MAP_ID).map(|d| d.x).collect();
+    let xs: Vec<i16> = s
+        .fields
+        .with_drops(map, |d| d.on_field(map).map(|x| x.x).collect::<Vec<_>>());
     assert!(
         xs.iter().all(|x| (*x - 500).abs() <= 2 * crate::drops::DROP_STAGGER_PX),
         "every drop should be near the MOB at 500, not the player at 1000: {xs:?}"
@@ -855,7 +865,7 @@ fn a_mob_that_never_moved_drops_at_the_player() {
     s.last_position = Some((777, 395));
 
     s.drops_from_kill(2, 2000, 204, net::opcode::START_MAP_ID);
-    let d = s.drops.on_field(net::opcode::START_MAP_ID).next().unwrap();
+    let d = s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.on_field(net::opcode::START_MAP_ID).cloned().collect::<Vec<_>>()).into_iter().next().unwrap();
     assert_eq!(d.x, 777);
 }
 
@@ -866,25 +876,25 @@ fn a_mob_that_never_moved_drops_at_the_player() {
 #[test]
 fn a_dead_mob_respawns_when_its_timer_is_due() {
     let (mut s, _, _) = gm_session();
-    // The gm_session config has no mobs, so give it one spawn point to refill.
-    let mob = net::mob::FieldMob::new(2000, 2, 500, 395, 1, 30);
+    let map = net::opcode::START_MAP_ID;
     let mut mobs = std::collections::HashMap::new();
-    mobs.insert(net::opcode::START_MAP_ID, vec![mob]);
-    s.config = Arc::new(Config { mobs, ..(*s.config).clone() });
+    mobs.insert(map, vec![net::mob::FieldMob::new(2000, 2, 500, 395, 1, 30)]);
+    s.config = Arc::new(Config { mobs, send_mobs: true, ..(*s.config).clone() });
+    let cfg = s.config.clone();
 
-    s.clock_ms = 1_000;
-    s.schedule_respawn(net::opcode::START_MAP_ID, 2000);
+    // **A field starts empty.** Seeding books the spawn points; nothing is alive yet.
+    s.fields.seed(map, &cfg, 0);
+    assert_eq!(s.fields.mob_count(map), 0, "no mobs until the timer fires");
+    assert!(s.spawn_due_mobs(map, crate::config::DEFAULT_RESPAWN_MS - 1).is_empty());
 
-    // Not yet.
-    assert!(s.respawn_due_mobs(1_000 + crate::config::DEFAULT_RESPAWN_MS - 1).is_empty());
-    // And now.
-    let out = s.respawn_due_mobs(1_000 + crate::config::DEFAULT_RESPAWN_MS);
+    // And then it fills in.
+    let out = s.spawn_due_mobs(map, crate::config::DEFAULT_RESPAWN_MS);
     assert_eq!(out.len(), 2, "MobEnterField then MobChangeController: {out:?}");
     assert_eq!(out[0].opcode, net::mob::MOB_ENTER_FIELD);
     assert_eq!(out[1].opcode, net::mobmove::MOB_CHANGE_CONTROLLER);
-    assert_eq!(s.mob_hp.get(&2000), Some(&30), "and it is alive again at full HP");
+    assert_eq!(s.fields.mob_hp(map, 2000), Some(30), "alive at full HP");
     // Once, not forever.
-    assert!(s.respawn_due_mobs(9_999_999).is_empty());
+    assert!(s.spawn_due_mobs(map, 9_999_999).is_empty());
 }
 
 /// `mobTime` of -1 means the spawn point never refills, and one in this client says so.
@@ -924,7 +934,7 @@ fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
     let out = s.drops_from_kill(2, 2000, 204, 1);
     assert!(!out.is_empty(), "it must answer");
     assert!(out.iter().all(|r| r.opcode != net::drops::DROP_ENTER_FIELD), "and drop nothing");
-    assert_eq!(s.drops.len(), 0);
+    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 0);
 }
 
 /// With no drop table at all, a kill is silent - not a panic and not a notice.

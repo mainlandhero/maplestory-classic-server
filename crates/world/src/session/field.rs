@@ -53,72 +53,38 @@ impl Session {
         // NPCs went through. Mobs are the only thing that changed the outcome.
         //
         // Turn back on with `--mobs` when the body is the variant under test.
-        let no_mobs: Vec<net::mob::FieldMob> = Vec::new();
         let mut out = out;
-        let mobs = if self.config.send_mobs {
-            self.config.mobs.get(&chr.map_id).unwrap_or(&no_mobs)
-        } else {
-            &no_mobs
-        };
-        // A spawn point is not a mob. Map 40 has 40 spawn points and a real server keeps
-        // about 30 of them filled for a solo player, so sending one per point
-        // over-populates the field. The cap is NOT in the WZ - map 40's info node has a
-        // mobRate but no capacity of any name - so it is our policy; see
-        // config::spawn_capacity for what is measured and what is inferred.
+
+        // **The field belongs to the channel, not to this visit.** Registering it is a
+        // no-op after the first time, and a brand-new field is EMPTY: every spawn point
+        // starts due and the ordinary respawn tick fills them in over the next few seconds.
+        // The owner: *"on first enter, no mobs should exist until the respawn timer kicks in."*
         //
-        // And which points are filled matters as much as how many: a mixed map keeps each
-        // type's SHARE of the total, so this cannot just take the first N in WZ order.
-        // Players ON THE FIELD, not on the channel. Always 1 today: there is no
-        // field-occupancy tracking here at all, so the 6+ branch of config::spawn_capacity
-        // is written and untaken. Adding occupancy is a change to this line.
-        let players_here = 1;
-        let alive = crate::config::spawn_capacity(mobs.len(), players_here);
-        let alive = match self.config.mob_limit {
-            Some(n) => alive.min(n),
-            None => alive,
-        };
-        let chosen = crate::config::share_balanced(mobs, alive);
-        // A new field means new object ids. Anything remembered from the last one is stale
-        // and, worse, could collide - so it goes.
-        self.mob_hp.clear();
-        self.mob_template.clear();
-        for mob in chosen {
-            self.mob_hp.insert(mob.object_id, mob.hp);
-            self.mob_template.insert(mob.object_id, mob.template_id);
+        // So what goes out here is whatever is alive RIGHT NOW, at its current position -
+        // which for a returning player is where the mobs actually wandered to, not their
+        // spawn points. `crate::fields`.
+        self.fields.seed(chr.map_id, &self.config, self.clock_ms);
+        for live in self.fields.mobs_on(chr.map_id) {
+            let mob = live.as_seen();
             out.push(Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
-                body: net::mob::mob_enter_field(mob),
+                body: net::mob::mob_enter_field(&mob),
                 what: format!(
-                    "MobEnterField: template {} at ({}, {}) on foothold {}, object id {}, hp {} - {} bytes. The client cannot spawn this itself.",
-                    mob.template_id, mob.x, mob.y, mob.fh, mob.object_id, mob.hp,
-                    mob.body_len()
+                    "MobEnterField: template {} at ({}, {}) - its CURRENT position, object id                      {}, hp {}. The client cannot spawn this itself.",
+                    mob.template_id, mob.x, mob.y, mob.object_id, mob.hp
                 ),
             });
-
-            // **And then hand the mob to the client, which is what makes it move.**
-            //
-            // Spawning a mob does not animate it. The owner, 2026-08-19: six snails rendered on
-            // map 40 and stood completely still. The server does not drive mob movement in
-            // this game - it grants CONTROL of a mob to a client, and that client then runs
-            // the wander and the idle animation locally and reports each path back as
-            // `0x02FF`. Without this packet a mob is a picture.
-            //
-            // It explains the second symptom too. The combat agent decoded a real attack
-            // from the same session: the owner at (473, 395), mob 2000 at (424, 395) - 49 pixels
-            // away on the same ground line - and the attack carried **zero targets**. The
-            // client would not aim at a mob nobody had given it. One packet, both symptoms.
-            //
-            // Order matters: `after` its MobEnterField, per research/mob-behaviour.md §3.
-            // And the level must not be 0 - that DESPAWNS rather than releases, which is why
-            // `mob_release_controller` exists under its own name.
+            // Granting control is what makes it move: the server does not drive mob
+            // movement, it hands the mob to a client which then runs the wander locally and
+            // reports each path back as 0x02FF. Order matters - after its MobEnterField,
+            // per research/mob-behaviour.md section 3 - and the level must not be 0, which
+            // despawns rather than releases.
             out.push(Reply {
                 opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
-                body: net::mobmove::mob_change_controller(mob, net::mobmove::CONTROL_NORMAL),
+                body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
                 what: format!(
-                    "MobChangeController: object id {} to this client, level {} - {} bytes. The client runs the mob's movement and reports it as 0x02FF.",
-                    mob.object_id,
-                    net::mobmove::CONTROL_NORMAL,
-                    net::mobmove::change_controller_len(mob)
+                    "MobChangeController: object id {} to this client. The client runs the                      mob's movement and reports it as 0x02FF.",
+                    mob.object_id
                 ),
             });
         }
@@ -135,7 +101,8 @@ impl Session {
         // dropped before a map change would otherwise be invisible on the way back - and an
         // invisible drop is one the player walks over without ever sending the pick-up
         // request this feature is waiting to see.
-        out.extend(self.drops.field_entry(chr.map_id, self.clock_ms));
+        let (map, now) = (chr.map_id, self.clock_ms);
+        out.extend(self.fields.with_drops(map, |d| d.field_entry(map, now)));
         out
     }
 
