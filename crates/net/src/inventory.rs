@@ -228,6 +228,37 @@ pub fn inventory_added(inv_type: i8, pos: i16, blob: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Take an item out of a **bag** slot. Mode 3, and it carries no tail at all.
+///
+/// # `pos` must be positive, and that is a safety property rather than a convention
+///
+/// Mode 3 is the one mode whose `avatarChanged` depends on **client-side state**: it is set
+/// when `(invType == 1 || invType == 6) && oldPos < 0` *and the client already holds an item
+/// at that slot*. The server cannot see the second half, so a negative `pos` would make the
+/// body's length depend on something we cannot know - the client would read a trailing byte
+/// we did not send, or not read one we did. `research/msexe-setfield.md` says outright: do
+/// not drive that flag from mode 3.
+///
+/// A positive `pos` is a bag slot, the first half of the condition is false whatever the
+/// inventory type, and the entry is exactly six bytes. Unequipping goes through
+/// [`inventory_move_result`] instead, which drives the flag from mode 2 where it depends on
+/// the wire values alone.
+pub fn inventory_removed(inv_type: i8, pos: i16) -> Vec<u8> {
+    debug_assert!(pos > 0, "mode 3 on an equipped slot makes the body length client-dependent");
+    let mut w = PacketWriter::new();
+    w.u8(1); // bExclRequestSent
+    w.u8(0);
+    w.u32(1); // nCount, i32
+    w.u8(0); // notRemoveAddInfo
+    w.u8(MODE_REMOVE);
+    w.u8(inv_type as u8);
+    w.i16(pos);
+    w.into_vec()
+}
+
+/// Length of an [`inventory_removed`] body: header 7, one entry 4, no tail.
+pub const INVENTORY_REMOVE_LEN: usize = 7 + 4;
+
 /// The fixed cost of an [`inventory_added`] body, before the item blob.
 pub const INVENTORY_ADD_HEAD_LEN: usize = 7 + 4;
 
@@ -283,6 +314,17 @@ mod tests {
         let m = InventoryMove { tick: 0, inv_type: INV_EQUIP, src: 1, dst: -5, count: -1 };
         assert!(!m.is_unequip());
         assert_eq!(m.equipped_slot(), None);
+    }
+
+    /// Mode 3 is four bytes of entry and nothing else.
+    #[test]
+    fn a_remove_has_no_tail_at_all() {
+        let b = inventory_removed(2, 5);
+        assert_eq!(b.len(), INVENTORY_REMOVE_LEN);
+        assert_eq!(b[0], 1, "bExclRequestSent");
+        assert_eq!(b[7], MODE_REMOVE);
+        assert_eq!(b[8] as i8, 2);
+        assert_eq!(i16::from_le_bytes([b[9], b[10]]), 5);
     }
 
     /// Mode 0 carries the item body and nothing after it.

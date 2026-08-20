@@ -1,0 +1,558 @@
+//===========================================================
+// DropEnterField  FUN_1417a2ee0 @ 1417a2ee0
+// .pdata 0x1417a2ee0 .. 0x1417ad796  (43190 bytes, ONE entry).
+// Ghidra's decompiler TIMES OUT on it - research/msexe-droppool.c records that.
+// Everything below is the listing, which is the authority for field order anyway.
+//
+// 47 packet-read sites, from python tools/reads.py 0x1417a2ee0 3.
+// They are NOT in wire order: the tail is duplicated into two arms that the
+// branch at 0x1417a800b selects between.  See research/item-drop.md.
+//===========================================================
+FUN_1417a2ee0  0x1417a2ee0..0x1417ad796 (43190 bytes)  depth 3
+  0x1417a2f2b  READ u8  (direct)
+  0x1417a2fde  READ u8  (direct)  gated?
+  0x1417a2ff1  READ u32 (direct)  gated?
+  0x1417a3086  READ u8  (direct)  gated?
+  0x1417a3284  READ u32 (direct)  gated?
+  0x1417a32ad  READ u32 (direct)  gated?
+  0x1417a32d6  READ u32 (direct)  gated?
+  0x1417a3310  READ u32 (direct)  gated?
+  0x1417a3513  READ u32 (direct)  gated?
+  0x1417a3539  READ u8  (direct)  gated?
+  0x1417a3560  READ u16 (direct)  gated?
+  0x1417a356f  READ u16 (direct)  gated?
+  0x1417a3597  READ u16 (direct)  gated?
+  0x1417a35a8  READ u16 (direct)  gated?
+  0x1417a35b9  READ u16 (direct)  gated?
+  0x1417a35ca  READ u16 (direct)  gated?
+  0x1417a35db  READ u32 (direct)  gated?
+  0x1417a3601  READ u32 (direct)  gated?
+  0x1417a362a  READ u64 (direct)  gated?
+  0x1417a3655  READ u32 (direct)  gated?
+  0x1417a367e  READ u8  (direct)  gated?
+  0x1417a36ca  call 0x1403747c0 -> READS via helper: u64 u32  gated?
+  0x1417a36d2  READ u8  (direct)  gated?
+  0x1417a36fc  READ u8  (direct)  gated?
+  0x1417a370a  READ u8  (direct)  gated?
+  0x1417a41d2  READ u16 (direct)  gated?
+  0x1417a43af  READ u16 (direct)  gated?
+  0x1417a4646  READ u32 (direct)  gated?
+  0x1417a4658  READ u8  (direct)  gated?
+  0x1417a4688  READ u8  (direct)  gated?
+  0x1417a833d  READ u8  (direct)  gated?
+  0x1417a8367  READ u8  (direct)  gated?
+  0x1417a83a6  READ u16 (direct)  gated?
+  0x1417a83f8  READ u8  (direct)  gated?
+  0x1417a8424  READ u32 (direct)  gated?
+  0x1417a8630  READ u8  (direct)  gated?
+  0x1417a863c  READ u8  (direct)  gated?
+  0x1417a9bab  READ raw (direct)  gated?
+  0x1417a9bde  READ u8  (direct)  gated?
+  0x1417a9c08  READ u8  (direct)  gated?
+  0x1417a9c47  READ u16 (direct)  gated?
+  0x1417a9c9a  READ u8  (direct)  gated?
+  0x1417aa063  READ u32 (direct)  gated?
+  0x1417ac3ba  READ u8  (direct)  gated?
+  0x1417ac3c5  READ u8  (direct)  gated?
+  0x1417ac3ef  READ u32 (direct)  gated?
+  0x1417ac418  READ u32 (direct)  gated?
+
+// --- head: dropType (class select), enterType, objectId (pool key) ---
+ 0001417a2ee0  mov      rax, rsp
+ 0001417a2ee3  mov      qword ptr [rax + 0x10], rdx
+ 0001417a2ee7  mov      qword ptr [rax + 8], rcx
+ 0001417a2eeb  push     rbp
+ 0001417a2eec  push     rbx
+ 0001417a2eed  push     rsi
+ 0001417a2eee  push     rdi
+ 0001417a2eef  push     r12
+ 0001417a2ef1  push     r13
+ 0001417a2ef3  push     r14
+ 0001417a2ef5  push     r15
+ 0001417a2ef7  lea      rbp, [rax - 0xce8]
+ 0001417a2efe  sub      rsp, 0xdc8
+ 0001417a2f05  movaps   xmmword ptr [rax - 0x58], xmm6
+ 0001417a2f09  movaps   xmmword ptr [rax - 0x68], xmm7
+ 0001417a2f0d  mov      r13, rdx
+ 0001417a2f10  mov      rsi, rcx
+ 0001417a2f13  call     0x1429e3ef0
+ 0001417a2f18  mov      dword ptr [rbp + 0x1b0], eax
+ 0001417a2f1e  xor      r14d, r14d
+ 0001417a2f21  mov      dword ptr [rbp + 0x184], r14d
+ 0001417a2f28  mov      rcx, r13
+ 0001417a2f2b  call     0x1406e8ae0   <<< READ u8
+ 0001417a2f30  movzx    eax, al
+ 0001417a2f33  mov      dword ptr [rbp + 0x198], eax
+ 0001417a2f39  mov      edx, 0x238
+ 0001417a2f3e  lea      rcx, [rip + 0x233395b]
+ 0001417a2f45  test     eax, eax
+ 0001417a2f47  je       0x1417a2f98
+ 0001417a2f49  cmp      eax, 1
+ 0001417a2f4c  je       0x1417a2f6e
+ 0001417a2f4e  call     0x14019b780
+ 0001417a2f53  mov      qword ptr [rbp - 0x10], rax
+ 0001417a2f57  test     rax, rax
+ 0001417a2f5a  je       0x1417a2f69
+ 0001417a2f5c  mov      rcx, rax
+ 0001417a2f5f  call     0x1417d16b0
+ 0001417a2f64  mov      rbx, rax
+ 0001417a2f67  jmp      0x1417a2f6c
+>0001417a2f69  mov      rbx, r14
+>0001417a2f6c  jmp      0x1417a2fb6
+>0001417a2f6e  call     0x14019b780
+ 0001417a2f73  mov      rbx, rax
+ 0001417a2f76  mov      qword ptr [rbp - 0x10], rax
+ 0001417a2f7a  test     rax, rax
+ 0001417a2f7d  je       0x1417a2f93
+ 0001417a2f7f  mov      rcx, rax
+ 0001417a2f82  call     0x1417d16b0
+ 0001417a2f87  lea      rax, [rip + 0x1c30fda]
+ 0001417a2f8e  mov      qword ptr [rbx], rax
+ 0001417a2f91  jmp      0x1417a2f96
+>0001417a2f93  mov      rbx, r14
+>0001417a2f96  jmp      0x1417a2fb6
+>0001417a2f98  call     0x14019b780
+ 0001417a2f9d  mov      qword ptr [rbp - 0x10], rax
+ 0001417a2fa1  test     rax, rax
+ 0001417a2fa4  je       0x1417a2fb3
+ 0001417a2fa6  mov      rcx, rax
+ 0001417a2fa9  call     0x1417d16b0
+ 0001417a2fae  mov      rbx, rax
+ 0001417a2fb1  jmp      0x1417a2fb6
+>0001417a2fb3  mov      rbx, r14
+>0001417a2fb6  mov      qword ptr [rbp - 0x78], rbx
+ 0001417a2fba  test     rbx, rbx
+ 0001417a2fbd  je       0x1417a2fdb
+ 0001417a2fbf  mov      rdx, qword ptr [rbx + 8]
+ 0001417a2fc3  cmp      rdx, 0xfffff
+ 0001417a2fca  jbe      0x1417a2fd6
+ 0001417a2fcc  mov      ecx, 0x30f
+ 0001417a2fd1  call     0x142e541f0
+>0001417a2fd6  lock inc qword ptr [rbx + 8]
+>0001417a2fdb  mov      rcx, r13
+ 0001417a2fde  call     0x1406e8ae0   <<< READ u8
+ 0001417a2fe3  movzx    r15d, al
+ 0001417a2fe7  mov      dword ptr [rbp + 0x188], r15d
+ 0001417a2fee  mov      rcx, r13
+ 0001417a2ff1  call     0x1406e8c20   <<< READ u32
+ 0001417a2ff6  mov      edi, eax
+ 0001417a2ff8  mov      rbx, qword ptr [rsi + 0x10]
+ 0001417a2ffc  test     rbx, rbx
+ 0001417a2fff  je       0x1417a3026
+ 0001417a3001  mov      ecx, dword ptr [rsi + 0x18]
+ 0001417a3004  mov      eax, edi
+ 0001417a3006  xor      edx, edx
+ 0001417a3008  div      rcx
+ 0001417a300b  mov      rbx, qword ptr [rbx + rdx*8]
+ 0001417a300f  test     rbx, rbx
+ 0001417a3012  je       0x1417a3026
+>0001417a3014  cmp      dword ptr [rbx + 0x10], edi
+ 0001417a3017  je       0x1417a46cd
+ 0001417a301d  mov      rbx, qword ptr [rbx + 8]
+ 0001417a3021  test     rbx, rbx
+ 0001417a3024  jne      0x1417a3014
+>0001417a3026  cmp      qword ptr [rbp - 0x78], 0
+ 0001417a302b  jne      0x1417a3039
+ 0001417a302d  xor      edx, edx
+ 0001417a302f  mov      ecx, 0x431
+ 0001417a3034  call     0x142e52ed0
+>0001417a3039  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a303d  mov      byte ptr [rax + 0x60], r15b
+ 0001417a3041  lea      eax, [r15 - 1]
+ 0001417a3045  cmp      eax, 1
+ 0001417a3048  setbe    bl
+ 0001417a304b  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a304f  test     rax, rax
+ 0001417a3052  jne      0x1417a3064
+ 0001417a3054  xor      edx, edx
+ 0001417a3056  mov      ecx, 0x431
+ 0001417a305b  call     0x142e52ed0
+ 0001417a3060  mov      rax, qword ptr [rbp - 0x78]
+>0001417a3064  mov      byte ptr [rax + 0x61], bl
+ 0001417a3067  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a306b  test     rax, rax
+ 0001417a306e  jne      0x1417a3080
+ 0001417a3070  xor      edx, edx
+ 0001417a3072  mov      ecx, 0x431
+ 0001417a3077  call     0x142e52ed0
+ 0001417a307c  mov      rax, qword ptr [rbp - 0x78]
+>0001417a3080  mov      dword ptr [rax + 0x64], edi
+ 0001417a3083  mov      rcx, r13
+ 0001417a3086  call     0x1406e8ae0   <<< READ u8
+ 0001417a308b  movzx    ebx, al
+ 0001417a308e  mov      rdi, qword ptr [rbp - 0x78]
+ 0001417a3092  test     rdi, rdi
+ 0001417a3095  jne      0x1417a30a7
+ 0001417a3097  xor      edx, edx
+ 0001417a3099  mov      ecx, 0x431
+ 0001417a309e  call     0x142e52ed0
+ 0001417a30a3  mov      rdi, qword ptr [rbp - 0x78]
+>0001417a30a7  mov      dword ptr [rbp + 0x170], ebx
+ 0001417a30ad  mov      ecx, dword ptr [rdi + 0x78]
+
+// --- reads 5..8 : motionType, random, the float, itemId ---
+
+// --- reads 9..25 : ownerId .. the three bools ---
+ 0001417a3509  mov      r13, qword ptr [rbp + 0xcf8]
+ 0001417a3510  mov      rcx, r13
+ 0001417a3513  call     0x1406e8c20   <<< READ u32
+ 0001417a3518  mov      ebx, eax
+ 0001417a351a  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a351e  test     rcx, rcx
+ 0001417a3521  jne      0x1417a3533
+ 0001417a3523  xor      edx, edx
+ 0001417a3525  mov      ecx, 0x431
+ 0001417a352a  call     0x142e52ed0
+ 0001417a352f  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a3533  mov      dword ptr [rcx + 0x68], ebx
+ 0001417a3536  mov      rcx, r13
+ 0001417a3539  call     0x1406e8ae0   <<< READ u8
+ 0001417a353e  movzx    ebx, al
+ 0001417a3541  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a3545  test     rax, rax
+ 0001417a3548  jne      0x1417a355a
+ 0001417a354a  xor      edx, edx
+ 0001417a354c  mov      ecx, 0x431
+ 0001417a3551  call     0x142e52ed0
+ 0001417a3556  mov      rax, qword ptr [rbp - 0x78]
+>0001417a355a  mov      dword ptr [rax + 0x70], ebx
+ 0001417a355d  mov      rcx, r13
+ 0001417a3560  call     0x1406e8b80   <<< READ u16
+ 0001417a3565  cwde     
+ 0001417a3566  mov      dword ptr [rbp + 0x1a8], eax
+ 0001417a356c  mov      rcx, r13
+ 0001417a356f  call     0x1406e8b80   <<< READ u16
+ 0001417a3574  cwde     
+ 0001417a3575  mov      dword ptr [rbp + 0x1ac], eax
+ 0001417a357b  mov      rbx, qword ptr [rbp - 0x78]
+ 0001417a357f  test     rbx, rbx
+ 0001417a3582  jne      0x1417a3594
+ 0001417a3584  xor      edx, edx
+ 0001417a3586  mov      ecx, 0x431
+ 0001417a358b  call     0x142e52ed0
+ 0001417a3590  mov      rbx, qword ptr [rbp - 0x78]
+>0001417a3594  mov      rcx, r13
+ 0001417a3597  call     0x1406e8b80   <<< READ u16
+ 0001417a359c  movsx    ecx, ax
+ 0001417a359f  mov      dword ptr [rbx + 0x218], ecx
+ 0001417a35a5  mov      rcx, r13
+ 0001417a35a8  call     0x1406e8b80   <<< READ u16
+ 0001417a35ad  movsx    ecx, ax
+ 0001417a35b0  mov      dword ptr [rbx + 0x21c], ecx
+ 0001417a35b6  mov      rcx, r13
+ 0001417a35b9  call     0x1406e8b80   <<< READ u16
+ 0001417a35be  movsx    ecx, ax
+ 0001417a35c1  mov      dword ptr [rbx + 0x220], ecx
+ 0001417a35c7  mov      rcx, r13
+ 0001417a35ca  call     0x1406e8b80   <<< READ u16
+ 0001417a35cf  movsx    ecx, ax
+ 0001417a35d2  mov      dword ptr [rbx + 0x224], ecx
+ 0001417a35d8  mov      rcx, r13
+ 0001417a35db  call     0x1406e8c20   <<< READ u32
+ 0001417a35e0  mov      ebx, eax
+ 0001417a35e2  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a35e6  test     rcx, rcx
+ 0001417a35e9  jne      0x1417a35fb
+ 0001417a35eb  xor      edx, edx
+ 0001417a35ed  mov      ecx, 0x431
+ 0001417a35f2  call     0x142e52ed0
+ 0001417a35f7  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a35fb  mov      dword ptr [rcx + 0x6c], ebx
+ 0001417a35fe  mov      rcx, r13
+ 0001417a3601  call     0x1406e8c20   <<< READ u32
+ 0001417a3606  mov      ebx, eax
+ 0001417a3608  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a360c  test     rcx, rcx
+ 0001417a360f  jne      0x1417a3621
+ 0001417a3611  xor      edx, edx
+ 0001417a3613  mov      ecx, 0x431
+ 0001417a3618  call     0x142e52ed0
+ 0001417a361d  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a3621  mov      dword ptr [rcx + 0x1e0], ebx
+ 0001417a3627  mov      rcx, r13
+ 0001417a362a  call     0x1406e8f10   <<< READ u64
+ 0001417a362f  mov      rbx, rax
+ 0001417a3632  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a3636  test     rcx, rcx
+ 0001417a3639  jne      0x1417a364b
+ 0001417a363b  xor      edx, edx
+ 0001417a363d  mov      ecx, 0x431
+ 0001417a3642  call     0x142e52ed0
+ 0001417a3647  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a364b  mov      qword ptr [rcx + 0x1e8], rbx
+ 0001417a3652  mov      rcx, r13
+ 0001417a3655  call     0x1406e8c20   <<< READ u32
+ 0001417a365a  mov      ebx, eax
+ 0001417a365c  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a3660  test     rcx, rcx
+ 0001417a3663  jne      0x1417a3675
+ 0001417a3665  xor      edx, edx
+ 0001417a3667  mov      ecx, 0x431
+ 0001417a366c  call     0x142e52ed0
+ 0001417a3671  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a3675  mov      dword ptr [rcx + 0x1f0], ebx
+ 0001417a367b  mov      rcx, r13
+ 0001417a367e  call     0x1406e8ae0   <<< READ u8
+ 0001417a3683  test     al, al
+ 0001417a3685  setne    bl
+ 0001417a3688  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a368c  test     rax, rax
+ 0001417a368f  jne      0x1417a36a1
+ 0001417a3691  xor      edx, edx
+ 0001417a3693  mov      ecx, 0x431
+ 0001417a3698  call     0x142e52ed0
+ 0001417a369d  mov      rax, qword ptr [rbp - 0x78]
+>0001417a36a1  mov      byte ptr [rax + 0x210], bl
+ 0001417a36a7  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a36ab  test     rcx, rcx
+ 0001417a36ae  jne      0x1417a36c0
+ 0001417a36b0  xor      edx, edx
+ 0001417a36b2  mov      ecx, 0x431
+ 0001417a36b7  call     0x142e52ed0
+ 0001417a36bc  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a36c0  add      rcx, 0x1f8
+ 0001417a36c7  mov      rdx, r13
+ 0001417a36ca  call     0x1403747c0
+ 0001417a36cf  mov      rcx, r13
+ 0001417a36d2  call     0x1406e8ae0   <<< READ u8
+ 0001417a36d7  movzx    ebx, al
+ 0001417a36da  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a36de  test     rcx, rcx
+ 0001417a36e1  jne      0x1417a36f3
+ 0001417a36e3  xor      edx, edx
+ 0001417a36e5  mov      ecx, 0x431
+ 0001417a36ea  call     0x142e52ed0
+ 0001417a36ef  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a36f3  mov      byte ptr [rcx + 0x16d], bl
+ 0001417a36f9  mov      rcx, r13
+ 0001417a36fc  call     0x1406e8ae0   <<< READ u8
+ 0001417a3701  test     al, al
+ 0001417a3703  setne    byte ptr [rbp - 0x5f]
+ 0001417a3707  mov      rcx, r13
+ 0001417a370a  call     0x1406e8ae0   <<< READ u8
+ 0001417a370f  test     al, al
+ 0001417a3711  setne    byte ptr [rbp]
+ 0001417a3715  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a3719  test     rax, rax
+ 0001417a371c  jne      0x1417a372e
+ 0001417a371e  xor      edx, edx
+ 0001417a3720  mov      ecx, 0x431
+ 0001417a3725  call     0x142e52ed0
+ 0001417a372a  mov      rax, qword ptr [rbp - 0x78]
+
+// --- FUN_1403747c0: u64, u32, u64 straight into drop+0x1f8/0x200/0x208 ---
+ 0001403747c0  mov      qword ptr [rsp + 8], rbx
+ 0001403747c5  push     rdi
+ 0001403747c6  sub      rsp, 0x20
+ 0001403747ca  mov      rdi, rcx
+ 0001403747cd  mov      rbx, rdx
+ 0001403747d0  mov      rcx, rdx
+ 0001403747d3  call     0x1406e8f10   <<< READ u64
+ 0001403747d8  mov      rcx, rbx
+ 0001403747db  mov      qword ptr [rdi], rax
+ 0001403747de  call     0x1406e8c20   <<< READ u32
+ 0001403747e3  mov      rcx, rbx
+ 0001403747e6  mov      dword ptr [rdi + 8], eax
+ 0001403747e9  call     0x1406e8f10   <<< READ u64
+ 0001403747ee  mov      rbx, qword ptr [rsp + 0x30]
+ 0001403747f3  mov      qword ptr [rdi + 0x10], rax
+ 0001403747f7  add      rsp, 0x20
+ 0001403747fb  pop      rdi
+ 0001403747fc  ret      
+
+// --- the enterType gate on the source block, and the block itself ---
+ 0001417a41b1  mov      eax, dword ptr [rbp + 0x188]
+ 0001417a41b7  test     eax, 0xfffffffc
+ 0001417a41bc  jne      0x1417a4651
+ 0001417a41c2  cmp      eax, 2
+ 0001417a41c5  je       0x1417a4651
+ 0001417a41cb  mov      rcx, qword ptr [rbp + 0xcf8]
+ 0001417a41d2  call     0x1406e8b80   <<< READ u16
+ 0001417a41d7  movsx    ebx, ax
+ 0001417a41da  mov      rdi, qword ptr [rbp - 0x78]
+ 0001417a4640  mov      ecx, dword ptr [rbp + 0xcf8]
+ 0001417a4646  call     0x1406e8c20   <<< READ u32
+ 0001417a464b  mov      dword ptr [rbp + 0x184], eax
+ 0001417a4651  mov      rcx, qword ptr [rbp + 0xcf8]
+ 0001417a4658  call     0x1406e8ae0   <<< READ u8
+ 0001417a465d  test     al, al
+ 0001417a465f  setne    bl
+ 0001417a4662  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a4666  test     rcx, rcx
+ 0001417a4669  jne      0x1417a467b
+ 0001417a466b  xor      edx, edx
+ 0001417a466d  mov      ecx, 0x431
+ 0001417a4672  call     0x142e52ed0
+ 0001417a4677  mov      rcx, qword ptr [rbp - 0x78]
+>0001417a467b  mov      byte ptr [rcx + 0x168], bl
+ 0001417a4681  mov      rcx, qword ptr [rbp + 0xcf8]
+ 0001417a4688  call     0x1406e8ae0   <<< READ u8
+ 0001417a468d  movzx    ebx, al
+ 0001417a4690  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a4694  test     rax, rax
+ 0001417a4697  jne      0x1417a46a9
+ 0001417a4699  xor      edx, edx
+ 0001417a469b  mov      ecx, 0x431
+ 0001417a46a0  call     0x142e52ed0
+ 0001417a46a5  mov      rax, qword ptr [rbp - 0x78]
+>0001417a46a9  mov      dword ptr [rax + 0x228], ebx
+
+// --- 0x1417a411b: [rbp+0x1b4] = (itemId == 0) ---
+ 0001417a40fd  movabs   rdx, 0x302a12f7128
+ 0001417a4107  add      rdx, 0x90
+ 0001417a410e  add      rdx, r14
+ 0001417a4111  mov      ecx, 0x182
+ 0001417a4116  call     0x140c79130
+ 0001417a411b  cmp      dword ptr [rbp + 0x38], 0
+ 0001417a411f  mov      dword ptr [rbp + 0x1b4], 1
+ 0001417a4129  je       0x1417a4132
+ 0001417a412b  mov      dword ptr [rbp + 0x1b4], r12d
+
+// --- 0x1417a800b: the branch that picks the tail arm ---
+ 0001417a7ffc  lea      rcx, [rbp + 0x480]
+ 0001417a8003  call     qword ptr [rip + 0x1abaa0f]
+ 0001417a8009  xor      esi, esi
+ 0001417a800b  cmp      dword ptr [rbp + 0x1b4], 0
+ 0001417a8012  je       0x1417a8927
+ 0001417a8018  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417a801c  test     rcx, rcx
+
+// --- SHORT arm (fall through): no FILETIME, no trailing two u32 ---
+ 0001417a82e2  call     0x142e52ed0
+ 0001417a82e7  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a82eb  mov      dword ptr [rax + 0xec], esi
+ 0001417a82f1  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a82f5  test     rax, rax
+ 0001417a82f8  jne      0x1417a830a
+ 0001417a82fa  xor      edx, edx
+ 0001417a82fc  mov      ecx, 0x431
+ 0001417a8301  call     0x142e52ed0
+ 0001417a8306  mov      rax, qword ptr [rbp - 0x78]
+>0001417a830a  mov      qword ptr [rax + 0xf0], rsi
+ 0001417a8311  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a8315  test     rax, rax
+ 0001417a8318  jne      0x1417a832a
+ 0001417a831a  xor      edx, edx
+ 0001417a831c  mov      ecx, 0x431
+ 0001417a8321  call     0x142e52ed0
+ 0001417a8326  mov      rax, qword ptr [rbp - 0x78]
+>0001417a832a  xor      ecx, ecx
+ 0001417a832c  mov      qword ptr [rax + 0x158], rcx
+ 0001417a8333  mov      rdi, qword ptr [rbp + 0xcf8]
+ 0001417a833a  mov      rcx, rdi
+ 0001417a8629  mov      rcx, qword ptr [rbp + 0xcf8]
+ 0001417a8630  call     0x1406e8ae0   <<< READ u8
+ 0001417a8635  mov      rcx, qword ptr [rbp + 0xcf8]
+ 0001417a863c  call     0x1406e8ae0   <<< READ u8
+ 0001417a8641  movzx    ebx, al
+ 0001417a8644  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a8648  test     rax, rax
+ 0001417a864b  mov      r15, qword ptr [rbp - 8]
+ 0001417a864f  mov      r12, qword ptr [rbp + 8]
+ 0001417a8653  jne      0x1417a8665
+ 0001417a8655  xor      edx, edx
+ 0001417a8657  mov      ecx, 0x431
+ 0001417a865c  call     0x142e52ed0
+ 0001417a8661  mov      rax, qword ptr [rbp - 0x78]
+>0001417a8665  mov      dword ptr [rax + 0x190], ebx
+ 0001417a866b  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a866f  test     rax, rax
+ 0001417a8672  jne      0x1417a8684
+ 0001417a8674  xor      edx, edx
+ 0001417a8676  mov      ecx, 0x431
+ 0001417a867b  call     0x142e52ed0
+ 0001417a8680  mov      rax, qword ptr [rbp - 0x78]
+>0001417a8684  mov      byte ptr [rax + 0x16c], 1
+
+// --- LONG arm: if (!isMoney) raw(8) -> drop+0x158, then the same seven, then two u32 ---
+ 0001417a9b5c  movabs   rdx, 0x302a12f7128
+ 0001417a9b66  add      rdx, 0x78
+ 0001417a9b6a  add      rdx, r14
+ 0001417a9b6d  mov      ecx, 0x182
+ 0001417a9b72  call     0x140c79130
+ 0001417a9b77  cmp      dword ptr [rbp + 0x58], 0
+ 0001417a9b7b  jne      0x1417a9bb2
+ 0001417a9b7d  mov      rdx, qword ptr [rbp - 0x78]
+ 0001417a9b81  test     rdx, rdx
+ 0001417a9b84  jne      0x1417a9b94
+ 0001417a9b86  mov      ecx, 0x431
+ 0001417a9b8b  call     0x142e52ed0
+ 0001417a9b90  mov      rdx, qword ptr [rbp - 0x78]
+>0001417a9b94  add      rdx, 0x158
+ 0001417a9b9b  mov      r8d, 8
+ 0001417a9ba1  mov      rdi, qword ptr [rbp + 0xcf8]
+ 0001417a9ba8  mov      rcx, rdi
+ 0001417a9bab  call     0x1406e9170   <<< READ raw
+ 0001417a9bb0  jmp      0x1417a9bdb
+>0001417a9bb2  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a9bb6  test     rax, rax
+ 0001417a9bb9  jne      0x1417a9bcb
+ 0001417a9bbb  xor      edx, edx
+ 0001417a9bbd  mov      ecx, 0x431
+ 0001417a9bc2  call     0x142e52ed0
+ 0001417a9bc7  mov      rax, qword ptr [rbp - 0x78]
+>0001417a9bcb  xor      ecx, ecx
+ 0001417a9bcd  mov      qword ptr [rax + 0x158], rcx
+ 0001417a9bd4  mov      rdi, qword ptr [rbp + 0xcf8]
+>0001417a9bdb  mov      rcx, rdi
+ 0001417a9bde  call     0x1406e8ae0   <<< READ u8
+ 0001417a9be3  movzx    ebx, al
+ 0001417a9be6  mov      rax, qword ptr [rbp - 0x78]
+ 0001417a9bea  test     rax, rax
+ 0001417a9bed  jne      0x1417a9bff
+ 0001417a9bef  xor      edx, edx
+ 0001417a9bf1  mov      ecx, 0x431
+ 0001417a9bf6  call     0x142e52ed0
+ 0001417a9bfb  mov      rax, qword ptr [rbp - 0x78]
+>0001417a9bff  mov      dword ptr [rax + 0x160], ebx
+ 0001417a9c05  mov      rcx, rdi
+ 0001417a9c08  call     0x1406e8ae0   <<< READ u8
+ 0001417a9c0d  test     al, al
+ 0001417ac3a4  lea      r8d, [rdx - 0x12]
+ 0001417ac3a8  mov      ecx, dword ptr [rbp + 0x70]
+ 0001417ac3ab  call     0x1429eeb60
+ 0001417ac3b0  mov      rdi, qword ptr [rbp + 0xcf8]
+ 0001417ac3b7  mov      rcx, rdi
+ 0001417ac3ba  call     0x1406e8ae0   <<< READ u8
+ 0001417ac3bf  mov      byte ptr [rbp], al
+ 0001417ac3c2  mov      rcx, rdi
+ 0001417ac3c5  call     0x1406e8ae0   <<< READ u8
+ 0001417ac3ca  movzx    ebx, al
+ 0001417ac3cd  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417ac3d1  test     rcx, rcx
+ 0001417ac3d4  jne      0x1417ac3e6
+ 0001417ac3d6  xor      edx, edx
+ 0001417ac3d8  mov      ecx, 0x431
+ 0001417ac3dd  call     0x142e52ed0
+ 0001417ac3e2  mov      rcx, qword ptr [rbp - 0x78]
+>0001417ac3e6  mov      dword ptr [rcx + 0x190], ebx
+ 0001417ac3ec  mov      rcx, rdi
+ 0001417ac3ef  call     0x1406e8c20   <<< READ u32
+ 0001417ac3f4  mov      ebx, eax
+ 0001417ac3f6  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417ac3fa  test     rcx, rcx
+ 0001417ac3fd  jne      0x1417ac40f
+ 0001417ac3ff  xor      edx, edx
+ 0001417ac401  mov      ecx, 0x431
+ 0001417ac406  call     0x142e52ed0
+ 0001417ac40b  mov      rcx, qword ptr [rbp - 0x78]
+>0001417ac40f  mov      dword ptr [rcx + 0x19c], ebx
+ 0001417ac415  mov      rcx, rdi
+ 0001417ac418  call     0x1406e8c20   <<< READ u32
+ 0001417ac41d  mov      ebx, eax
+ 0001417ac41f  mov      rcx, qword ptr [rbp - 0x78]
+ 0001417ac423  test     rcx, rcx
+ 0001417ac426  jne      0x1417ac438
+ 0001417ac428  xor      edx, edx
+ 0001417ac42a  mov      ecx, 0x431
+ 0001417ac42f  call     0x142e52ed0
+ 0001417ac434  mov      rcx, qword ptr [rbp - 0x78]
+>0001417ac438  mov      dword ptr [rcx + 0x1a0], ebx
+ 0001417ac43e  mov      r14, qword ptr [rbp - 0x78]
+ 0001417ac442  test     r14, r14
+ 0001417ac445  jne      0x1417ac457
+ 0001417ac447  xor      edx, edx
+ 0001417ac449  mov      ecx, 0x431
+ 0001417ac44e  call     0x142e52ed0
+ 0001417ac453  mov      r14, qword ptr [rbp - 0x78]
+>0001417ac457  cmp      byte ptr [r14 + 0x168], 0

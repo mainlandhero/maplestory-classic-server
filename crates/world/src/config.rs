@@ -131,6 +131,14 @@ pub struct Config {
     /// so this is a table with no wire behind it, loaded so that the resolution failures are
     /// visible at startup rather than at the first click.
     pub shops: crate::shops::ShopTable,
+    /// `npcTemplateId -> index into shops.shops`, built by
+    /// [`crate::shops::resolve_npc_templates`] at startup.
+    ///
+    /// **This is the join that was missing.** `data/shops.txt` names the NPC the way the
+    /// live UI does and the client's click carries a template id; without this map a fully
+    /// decoded shop packet has nobody to send it to, which is exactly what the owner saw when
+    /// clicking Lucy produced placeholder dialogue.
+    pub shop_by_template: HashMap<u32, usize>,
     /// Turn NPC idle chatter off. It is the server's only unsolicited path, so a flag to
     /// silence it makes "is this packet the problem" answerable in one run.
     pub chatter_off: bool,
@@ -860,6 +868,7 @@ impl Default for Config {
             npc_strings: HashMap::new(),
             quests: HashMap::new(),
             shops: crate::shops::ShopTable::default(),
+            shop_by_template: HashMap::new(),
             channels: Vec::new(),
             map_names: HashMap::new(),
             item_names: HashMap::new(),

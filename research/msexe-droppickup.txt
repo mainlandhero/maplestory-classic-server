@@ -1,0 +1,201 @@
+//===========================================================
+// The two pick-up paths, and why only one of them is decoded.
+//
+// A. THE MOB's pick-up.  DECODED.  Outbound 0x0301.
+//    FUN_141c626c0 (mob update) -> FUN_14179dd80 (pool sweep) -> FUN_141c8a4b0.
+//    Body: u32 [mob+0x3a0] (the MOB object id), u32 dropObjectId.
+//
+// B. THE PLAYER's pick-up.  NOT DECODED.  The chain ends in the Themida VM.
+//    FUN_1428af6d0 (key handler) -> FUN_14179c9d0 (pool sweep) -> FUN_142cc6770
+//    -> FUN_1417a2b00 (queue) and then  jmp 0x144f14cca  into .vm_sec.
+//    A sweep of EVERY call 0x1406ed520 in 0x141780000..0x1417f0000 finds four,
+//    with opcodes 0x25f, 0x19d, 0x12d, 0x116 - none of them a pick-up.
+//===========================================================
+
+// --- A: the gate and the send.  drop+0x61 and drop+0xd8 == 3 ---
+ 00014179e8d2  mov      rcx, qword ptr [rbx + 8]
+ 00014179e8d6  test     rcx, rcx
+ 00014179e8d9  jne      0x14179e8eb
+ 00014179e8db  xor      edx, edx
+ 00014179e8dd  mov      ecx, 0x431
+ 00014179e8e2  call     0x142e52ed0
+ 00014179e8e7  mov      rcx, qword ptr [rbx + 8]
+>00014179e8eb  cmp      byte ptr [rcx + 0x61], 0
+ 00014179e8ef  je       0x14179e925
+ 00014179e8f1  cmp      dword ptr [rcx + 0xd8], 3
+ 00014179e8f8  jne      0x14179e925
+ 00014179e8fa  mov      rax, qword ptr [rbp - 0x50]
+ 00014179e8fe  cmp      dword ptr [rbp - 0x60], eax
+ 00014179e901  jg       0x14179e925
+ 00014179e903  cmp      eax, dword ptr [rbp - 0x5c]
+ 00014179e906  jge      0x14179e925
+ 00014179e908  mov      eax, dword ptr [rbp - 0x4c]
+ 00014179e90b  cmp      dword ptr [rbp - 0x58], eax
+ 00014179e90e  jg       0x14179e925
+ 00014179e910  cmp      eax, dword ptr [rbp - 0x54]
+ 00014179e913  jge      0x14179e925
+ 00014179e915  mov      edx, dword ptr [rcx + 0x64]
+ 00014179e918  mov      rcx, qword ptr [rbp + 0x78]
+ 00014179e91c  call     0x141c8a4b0
+ 00014179e921  test     eax, eax
+ 00014179e923  jne      0x14179e963
+
+ 000141c8a4b0  mov      qword ptr [rsp + 0x18], rbx
+ 000141c8a4b5  push     rbp
+ 000141c8a4b6  push     rsi
+ 000141c8a4b7  push     rdi
+ 000141c8a4b8  sub      rsp, 0x480
+ 000141c8a4bf  mov      rax, qword ptr [rip + 0x1e01442]
+ 000141c8a4c6  xor      rax, rsp
+ 000141c8a4c9  mov      qword ptr [rsp + 0x470], rax
+ 000141c8a4d1  mov      esi, edx
+ 000141c8a4d3  mov      rbp, rcx
+ 000141c8a4d6  call     0x1429e3ef0
+ 000141c8a4db  mov      edi, eax
+ 000141c8a4dd  mov      rbx, qword ptr [rbp + 0x600]
+ 000141c8a4e4  test     rbx, rbx
+ 000141c8a4e7  je       0x141c8a546
+ 000141c8a4e9  nop      dword ptr [rax]
+>000141c8a4f0  mov      rdx, qword ptr [rbx - 0x20]
+ 000141c8a4f4  mov      r8, rdx
+ 000141c8a4f7  test     rdx, rdx
+ 000141c8a4fa  je       0x141c8a513
+ 000141c8a4fc  cmp      rdx, 0x10000
+ 000141c8a503  ja       0x141c8a513
+ 000141c8a505  mov      ecx, 0x33e
+ 000141c8a50a  call     0x142e52ed0
+ 000141c8a50f  mov      r8, qword ptr [rbx - 0x20]
+>000141c8a513  lea      rax, [r8 + 0x28]
+ 000141c8a517  xor      ecx, ecx
+ 000141c8a519  test     r8, r8
+ 000141c8a51c  cmovne   rcx, rax
+ 000141c8a520  cmp      dword ptr [rbx], esi
+ 000141c8a522  je       0x141c8a52e
+ 000141c8a524  mov      rbx, rcx
+ 000141c8a527  test     rcx, rcx
+ 000141c8a52a  jne      0x141c8a4f0
+ 000141c8a52c  jmp      0x141c8a546
+>000141c8a52e  mov      eax, dword ptr [rbx + 4]
+ 000141c8a531  sub      edi, eax
+ 000141c8a533  cmp      edi, 0xbb8
+ 000141c8a539  jge      0x141c8a53f
+ 000141c8a53b  xor      eax, eax
+ 000141c8a53d  jmp      0x141c8a59d
+>000141c8a53f  mov      edi, eax
+ 000141c8a541  test     rcx, rcx
+ 000141c8a544  jne      0x141c8a557
+>000141c8a546  lea      rcx, [rbp + 0x5f8]
+ 000141c8a54d  call     0x141d1ad80
+ 000141c8a552  mov      dword ptr [rax], esi
+ 000141c8a554  mov      dword ptr [rax + 4], edi
+>000141c8a557  mov      edx, 0x301
+ 000141c8a55c  lea      rcx, [rsp + 0x20]
+ 000141c8a561  call     0x1406ed520
+ 000141c8a566  nop      
+ 000141c8a567  mov      edx, dword ptr [rbp + 0x3a0]
+ 000141c8a56d  lea      rcx, [rsp + 0x20]
+ 000141c8a572  call     0x1406ed9d0
+ 000141c8a577  mov      edx, esi
+ 000141c8a579  lea      rcx, [rsp + 0x20]
+ 000141c8a57e  call     0x1406ed9d0
+ 000141c8a583  lea      rcx, [rsp + 0x20]
+ 000141c8a588  call     0x1415d01c0
+ 000141c8a58d  nop      
+ 000141c8a58e  lea      rcx, [rsp + 0x20]
+ 000141c8a593  call     0x1406ed610
+ 000141c8a598  mov      eax, 1
+>000141c8a59d  mov      rcx, qword ptr [rsp + 0x470]
+ 000141c8a5a5  xor      rcx, rsp
+ 000141c8a5a8  call     0x142ef44b0
+ 000141c8a5ad  mov      rbx, qword ptr [rsp + 0x4b0]
+ 000141c8a5b5  add      rsp, 0x480
+ 000141c8a5bc  pop      rdi
+ 000141c8a5bd  pop      rsi
+ 000141c8a5be  pop      rbp
+ 000141c8a5bf  ret      
+
+// --- A: the call site inside the MOB update FUN_141c626c0 ---
+ 000141c63045  cmp      dword ptr [r12 + 0x504], 0
+ 000141c6304e  jne      0x141c6310c
+ 000141c63054  mov      rax, qword ptr [r12]
+ 000141c63058  mov      rcx, r12
+ 000141c6305b  call     qword ptr [rax + 0x48]
+ 000141c6305e  test     eax, eax
+ 000141c63060  je       0x141c630b4
+ 000141c63062  mov      rax, qword ptr [r12 + 0x3a8]
+ 000141c6306a  cmp      byte ptr [rax + 0xd8], 0
+ 000141c63071  je       0x141c630b4
+ 000141c63073  mov      eax, r13d
+ 000141c63076  sub      eax, dword ptr [r12 + 0x31c]
+ 000141c6307e  cmp      eax, 0x96
+ 000141c63083  jl       0x141c630b4
+ 000141c63085  mov      rdi, qword ptr [rip + 0x1e6b1b4]
+ 000141c6308c  lea      rcx, [r12 + 8]
+ 000141c63091  mov      rax, qword ptr [rcx]
+ 000141c63094  lea      rdx, [rbp + 0x228]
+ 000141c6309b  call     qword ptr [rax + 0x30]
+ 000141c6309e  mov      r8, rax
+ 000141c630a1  mov      rdx, r12
+ 000141c630a4  mov      rcx, rdi
+ 000141c630a7  call     0x14179dd80
+ 000141c630ac  mov      dword ptr [r12 + 0x31c], r13d
+
+// --- B: the key handler loads the pool and calls the sweep ---
+ 0001428b0cec  mov      rbx, qword ptr [rip + 0x121d54d]
+ 0001428b0cf3  mov      rax, qword ptr [r13 + 8]
+ 0001428b0cf7  lea      rdx, [rbp - 0x48]
+ 0001428b0cfb  lea      rcx, [r13 + 8]
+ 0001428b0cff  call     qword ptr [rax + 0x30]
+ 0001428b0d02  mov      rdx, rax
+ 0001428b0d05  mov      rcx, rbx
+ 0001428b0d08  call     0x14179c9d0
+ 0001428b0d0d  mov      eax, 1
+
+// --- B: the sweep's box, x-0x19..x+0x19 by y-0x32..y+0x0a ---
+ 00014179ca54  mov      edx, dword ptr [rsi]
+ 00014179ca56  lea      eax, [rdx - 0x19]
+ 00014179ca59  mov      dword ptr [rbp + 0x20], eax
+ 00014179ca5c  mov      ecx, dword ptr [rsi + 4]
+ 00014179ca5f  lea      eax, [rcx - 0x32]
+ 00014179ca62  mov      dword ptr [rbp + 0x24], eax
+ 00014179ca65  lea      eax, [rdx + 0x19]
+ 00014179ca68  mov      dword ptr [rbp + 0x28], eax
+ 00014179ca6b  lea      eax, [rcx + 0xa]
+ 00014179ca6e  mov      dword ptr [rbp + 0x2c], eax
+ 00014179ca71  lea      r8, [rbp + 0x20]
+ 00014179ca75  mov      rdx, rsi
+ 00014179ca78  mov      rcx, rdi
+ 00014179ca7b  call     0x142d13c00
+
+// --- B: the hand-off to CWvsContext, carrying drop+0x64 ---
+ 00014179dcf7  mov      rcx, rbx
+ 00014179dcfa  call     0x1417d2850
+ 00014179dcff  mov      eax, dword ptr [rax + 0x214]
+ 00014179dd05  cdq      
+ 00014179dd06  sub      eax, edx
+ 00014179dd08  sar      eax, 1
+ 00014179dd0a  mov      edi, eax
+ 00014179dd0c  mov      rcx, rbx
+ 00014179dd0f  call     0x1417d2850
+ 00014179dd14  mov      dword ptr [rsp + 0x20], edi
+ 00014179dd18  mov      r9d, dword ptr [rbp - 0x74]
+ 00014179dd1c  mov      r8d, dword ptr [rax + 0x64]
+ 00014179dd20  mov      rdx, qword ptr [rbp + 8]
+ 00014179dd24  mov      rcx, qword ptr [rbp + 0x10]
+ 00014179dd28  call     0x142cc6770
+ 00014179dd2d  mov      rcx, rbx
+ 00014179dd30  call     0x1417d2850
+ 00014179dd35  mov      ecx, dword ptr [rbp - 0x70]
+ 00014179dd38  mov      dword ptr [rax + 0xe4], ecx
+
+// --- B: and where FUN_142cc6770 goes: into the VM section ---
+ 000142cc71fd  mov      rax, qword ptr [rsp + 0x660]
+ 000142cc7205  add      rax, 0x2938
+ 000142cc720b  mov      rcx, rax
+ 000142cc720e  call     0x142d2ea10
+ 000142cc7213  mov      qword ptr [rsp + 0x1d0], rax
+ 000142cc721b  mov      edx, dword ptr [rsp + 0x670]
+ 000142cc7222  mov      rcx, qword ptr [rsp + 0x1d0]
+ 000142cc722a  call     0x1417a2b00
+ 000142cc722f  mov      dword ptr [rsp + 0xcc], eax
+ 000142cc7236  jmp      0x144f14cca

@@ -219,6 +219,18 @@ fn main() -> ExitCode {
 
     config.shops =
         world::ShopTable::load(&shops_path, &item_names_path, &item_data_path);
+    // The NPC name -> template join. A shop whose name matches nothing can never open, and
+    // that is invisible on screen - it looks exactly like an NPC with no shop - so every
+    // failure is printed rather than counted.
+    let (by_template, shop_problems) =
+        world::shops::resolve_npc_templates(&config.shops, &config.npc_strings);
+    config.shop_by_template = by_template;
+    for line in &shop_problems {
+        println!("maplecw-world: shops: {line}");
+    }
+    if config.shop_by_template.is_empty() && !config.shops.shops.is_empty() {
+        eprintln!("maplecw-world: NO shop resolves to an NPC template, so no shop can ever open. Regenerate the NPC strings with: python tools/dump_npcstrings.py");
+    }
     // LOUDLY, and on stdout. A shop row that did not resolve is an item an NPC will not
     // sell, and the only symptom at the counter is that it is not in the list - which is
     // indistinguishable from it never having been transcribed. The mob default that

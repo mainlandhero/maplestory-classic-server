@@ -1,0 +1,29 @@
+; CField::OnPacket FUN_141820080 - the range test that routes 0x055F/0x0560 to the shop handler
+ 000141822007  call     0x141b82b00
+ 00014182200c  jmp      0x141822125
+>000141822011  lea      eax, [r9 - 0x55f]
+ 000141822018  cmp      eax, 1
+ 00014182201b  ja       0x14182202d   [branch]
+ 00014182201d  mov      rdx, rbx
+ 000141822020  mov      ecx, r9d
+ 000141822023  call     0x140d225f0   <<< MARKED 0x140d225f0
+ 000141822028  jmp      0x141822125
+>00014182202d  lea      eax, [r9 - 0x600]
+ 000141822034  cmp      eax, 2
+ 000141822037  ja       0x141822056   [branch]
+
+; the 14-entry result jump table at 0x140d22fe8, decoded (index = resultCode - 1)
+[ 0] 0x00d22a66 -> 0x140d22a66
+[ 1] 0x00d22a66 -> 0x140d22a66
+[ 2] 0x00d22a66 -> 0x140d22a66
+[ 3] 0x00d22a9d -> 0x140d22a9d
+[ 4] 0x00d22ad4 -> 0x140d22ad4
+[ 5] 0x00d22b0b -> 0x140d22b0b
+[ 6] 0x00d22b42 -> 0x140d22b42
+[ 7] 0x00d22b79 -> 0x140d22b79
+[ 8] 0x00d22bad -> 0x140d22bad
+[ 9] 0x00d22f02 -> 0x140d22f02
+[10] 0x00d22f09 -> 0x140d22f09
+[11] 0x00d22f10 -> 0x140d22f10
+[12] 0x00d22be1 -> 0x140d22be1
+[13] 0x00d22f17 -> 0x140d22f17

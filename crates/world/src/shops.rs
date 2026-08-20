@@ -503,6 +503,72 @@ impl ShopTable {
     pub fn by_npc(&self, npc: &str) -> Option<&Shop> {
         self.shops.iter().find(|s| s.npc.eq_ignore_ascii_case(npc))
     }
+
+    /// The maximum quantity one purchase may ask for. **Row offset 29.**
+    ///
+    /// The client uses it as the ceiling in its "How many?" box and rejects anything above
+    /// it, so **`0` on the wire makes every quantity fail**. That matters here because
+    /// `info/slotMax` is *absent* on 2495 of the 2785 items in `gm-handbook/itemdata.txt`,
+    /// Red Potion included - the client cannot supply this number on its own.
+    ///
+    /// So the fallbacks are a **server policy, [I]**, not a client fact, and they live in
+    /// one place so there is one thing to change when a run disagrees.
+    pub fn max_per_purchase(&self, item_id: u32) -> u16 {
+        match self.item_data.get(&item_id).map(|d| d.slot_max) {
+            Some(n) if n > 0 => n,              // [L] from info/slotMax
+            _ if item_id / 1_000_000 == 1 => 1, // an equip: one at a time
+            _ => 100,                           // [I] a policy number
+        }
+    }
+}
+
+/// Join `data/shops.txt`'s NPC **names** onto the template ids the client sends.
+///
+/// **This was the last mile.** `data/shops.txt` names Lucy the way the live UI does, the
+/// `0x00F2` click carries a template id, and until now nothing connected the two - so a
+/// fully decoded shop packet had nobody to send it to. `gm-handbook/npcstrings.txt` carries
+/// `21 name Lucy`, which is the join.
+///
+/// Returns `template -> index into shops`, plus a line per problem, ready to print. Two
+/// things go in that list rather than being resolved silently:
+///
+/// * a shop whose NPC name matches **no** template - the shop can never open
+/// * a name that matches **several** templates - every one of them gets the shop, because a
+///   name collision in this data is usually the same character standing in two maps, and
+///   refusing would be worse than opening the right shop in both places. The line says how
+///   many, so a genuine collision is visible rather than assumed away.
+pub fn resolve_npc_templates(
+    table: &ShopTable,
+    npc_strings: &HashMap<u32, crate::config::NpcStrings>,
+) -> (HashMap<u32, usize>, Vec<String>) {
+    let mut out = HashMap::new();
+    let mut problems = Vec::new();
+    for (i, shop) in table.shops.iter().enumerate() {
+        let matches: Vec<u32> = npc_strings
+            .iter()
+            .filter(|(_, s)| s.name.eq_ignore_ascii_case(&shop.npc))
+            .map(|(id, _)| *id)
+            .collect();
+        if matches.is_empty() {
+            problems.push(format!(
+                "shop \"{}\" ({}): no NPC template in gm-handbook/npcstrings.txt is named that, so it can never open",
+                shop.npc, shop.map_label
+            ));
+            continue;
+        }
+        if matches.len() > 1 {
+            problems.push(format!(
+                "shop \"{}\": {} templates share that name ({}) - all of them get it",
+                shop.npc,
+                matches.len(),
+                join_ids(&matches)
+            ));
+        }
+        for template in matches {
+            out.insert(template, i);
+        }
+    }
+    (out, problems)
 }
 
 fn join_ids(ids: &[u32]) -> String {

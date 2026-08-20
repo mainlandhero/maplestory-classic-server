@@ -24,6 +24,7 @@ pub mod bag;
 pub mod channel;
 pub mod codec;
 pub mod combat;
+pub mod drops;
 pub mod error;
 pub mod handshake;
 pub mod inventory;
@@ -37,6 +38,7 @@ pub mod packet;
 pub mod quest;
 pub mod script;
 pub mod session;
+pub mod shop;
 pub mod userchat;
 
 pub use codec::{

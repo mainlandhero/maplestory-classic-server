@@ -1,0 +1,88 @@
+//===========================================================
+// CDropPool::OnPacket  @ 1417a1c30   (48 bytes, NO .pdata entry)
+// Reached from CField::OnPacket FUN_141820080 -> the range test at 141821ec4.
+// Two opcodes wide.  0x46E -> FUN_1417a2ee0,  0x46F -> FUN_1417ad7a0.
+//===========================================================
+ 0001417a1c30  sub      edx, 0x46e
+ 0001417a1c36  je       0x1417a1c45
+ 0001417a1c38  cmp      edx, 1
+ 0001417a1c3b  jne      0x1417a1c4d
+ 0001417a1c3d  mov      rdx, r8
+ 0001417a1c40  jmp      0x1417ad7a0
+>0001417a1c45  mov      rdx, r8
+ 0001417a1c48  jmp      0x1417a2ee0
+>0001417a1c4d  ret      
+ 0001417a1c4e  int3     
+ 0001417a1c4f  int3     
+
+//===========================================================
+// The CField::OnPacket range chain at 141821e24, as the listing has it.
+// NOTE: research/npc-spawn.md section 3 lists 0x469..0x46D as FUN_14290C44E.
+// The listing says FUN_141F0C450, and passes (ecx=opcode, rdx=packet), not a
+// singleton method.  The listing is the authority.
+//===========================================================
+ 000141821e24  lea      eax, [r9 - 0x224]
+ 000141821e2b  cmp      eax, 0x17b
+ 000141821e35  mov      rcx, qword ptr [rip + 0x229fd54]
+ 000141821e3c  call     0x1429b9300
+>000141821e46  lea      eax, [r9 - 0x3a0]
+ 000141821e4d  cmp      eax, 0x25
+ 000141821e55  mov      rcx, qword ptr [rip + 0x22ad21c]
+ 000141821e5c  call     0x1420f8a20
+>000141821e66  lea      eax, [r9 - 0x3c6]
+ 000141821e6d  cmp      eax, 0x88
+ 000141821e77  mov      rcx, qword ptr [rip + 0x229df82]
+ 000141821e7e  call     0x141d30e80
+>000141821e88  lea      eax, [r9 - 0x44f]
+ 000141821e8f  cmp      eax, 0x19
+ 000141821e97  mov      rcx, qword ptr [rip + 0x228665a]
+ 000141821e9e  call     0x141e75800
+>000141821ea8  lea      eax, [r9 - 0x469]
+ 000141821eaf  cmp      eax, 4
+ 000141821eba  call     0x141f0c450
+>000141821ec4  lea      eax, [r9 - 0x46e]
+ 000141821ecb  cmp      eax, 1
+ 000141821ed3  mov      rcx, qword ptr [rip + 0x22ac366]
+ 000141821eda  call     0x1417a1c30
+>000141821ee4  lea      eax, [r9 - 0x470]
+ 000141821eeb  cmp      eax, 2
+ 000141821ef3  mov      rcx, qword ptr [rip + 0x22ad186]
+ 000141821efa  call     0x141c33f20
+>000141821f04  lea      eax, [r9 - 0x473]
+ 000141821f0b  cmp      eax, 2
+ 000141821f13  mov      rcx, qword ptr [rip + 0x22882a6]
+ 000141821f1a  call     0x140d42ed0
+>000141821f24  lea      eax, [r9 - 0x476]
+ 000141821f2b  cmp      eax, 1
+ 000141821f33  mov      rcx, qword ptr [rip + 0x22aa5ee]
+ 000141821f3a  call     0x142141e50
+>000141821f44  lea      eax, [r9 - 0x478]
+ 000141821f4b  cmp      eax, 0x14
+ 000141821f53  mov      rcx, qword ptr [rip + 0x22ad116]
+ 000141821f5a  call     0x141f2c0a0
+>000141821f64  lea      eax, [r9 - 0x48d]
+ 000141821f6b  cmp      eax, 2
+ 000141821f73  mov      rcx, qword ptr [rip + 0x22ad13e]
+ 000141821f7a  call     0x1419c0ce0
+>000141821f84  lea      eax, [r9 - 0x55b]
+ 000141821f8b  cmp      eax, 1
+ 000141821f93  mov      rcx, qword ptr [rip + 0x22ace16]
+ 000141821f9a  call     0x141f6f320
+>000141821fa4  lea      eax, [r9 - 0x5f1]
+ 000141821fab  cmp      eax, 2
+ 000141821fb6  call     0x1419ffff0
+>000141821fc0  lea      eax, [r9 - 0x55d]
+ 000141821fc7  cmp      eax, 1
+ 000141821fd2  call     0x141fa66c0
+>000141821fdc  lea      eax, [r9 - 0x1a0]
+ 000141821fe3  cmp      eax, 3
+ 000141821fee  call     0x142097ee0
+>000141821ff8  lea      eax, [r9 - 0x51]
+ 000141821ffc  cmp      eax, 0x1e
+ 000141822007  call     0x141b82b00
+>000141822011  lea      eax, [r9 - 0x55f]
+ 000141822018  cmp      eax, 1
+ 000141822023  call     0x140d225f0
+>00014182202d  lea      eax, [r9 - 0x600]
+ 000141822034  cmp      eax, 2
+ 000141822039  mov      rcx, qword ptr [rip + 0x2286460]

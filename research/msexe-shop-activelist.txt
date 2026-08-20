@@ -1,0 +1,19 @@
+; 0x140d2d040 .. 0x140d2d085  (69 bytes)
+ 000140d2d040  push     rbx
+ 000140d2d042  sub      rsp, 0x20
+ 000140d2d046  mov      rbx, rcx
+ 000140d2d049  mov      rcx, qword ptr [rcx + 0x2d0]
+ 000140d2d050  test     rcx, rcx
+ 000140d2d053  jne      0x140d2d068   [branch]
+ 000140d2d055  xor      edx, edx
+ 000140d2d057  mov      ecx, 0x431
+ 000140d2d05c  call     0x142e52ed0
+ 000140d2d061  mov      rcx, qword ptr [rbx + 0x2d0]
+>000140d2d068  cmp      dword ptr [rcx + 0x90], 0
+ 000140d2d06f  mov      eax, 0x340
+ 000140d2d074  mov      edx, 0x338
+ 000140d2d079  cmove    eax, edx
+ 000140d2d07c  add      rax, rbx
+ 000140d2d07f  add      rsp, 0x20
+ 000140d2d083  pop      rbx
+ 000140d2d084  ret      

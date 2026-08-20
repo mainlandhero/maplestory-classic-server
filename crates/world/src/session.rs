@@ -167,6 +167,13 @@ pub struct Session {
     /// Keyed by object id and rebuilt on every field entry, because object ids are minted
     /// per field and a dead mob's id must never be reused.
     mob_hp: std::collections::HashMap<u32, u64>,
+    /// The NPC whose shop is open, and the rows **exactly as they went on the wire**.
+    ///
+    /// The client hands back only a `row_key`, so the rows have to be kept to turn one back
+    /// into an item and a price. Keeping the sent copy rather than re-deriving it is the
+    /// point: a re-derivation that disagreed by one row would charge the wrong price for the
+    /// right-looking click, and nothing on either side would notice.
+    open_shop: Option<(u32, Vec<net::shop::ShopRow>)>,
 }
 
 /// One NPC's place in its idle-chatter cycle.
@@ -266,6 +273,7 @@ impl Session {
             rng: Xorshift(seed),
             clock_ms: 0,
             mob_hp: std::collections::HashMap::new(),
+            open_shop: None,
         }
     }
 
@@ -409,6 +417,9 @@ impl Session {
             }
             net::channel::CLIENT_CHANGE_CHANNEL => {
                 return self.on_change_channel(body.get(2..).unwrap_or(&[]))
+            }
+            net::shop::CLIENT_SHOP_REQUEST => {
+                return self.on_shop_request(body.get(2..).unwrap_or(&[]))
             }
             _ => return Vec::new(),
         }
@@ -717,6 +728,14 @@ impl Session {
             // 2026-08-19 capture shows the UI stayed live with 0x00F2 unanswered.
             return Vec::new();
         };
+
+        // **A shopkeeper opens a shop instead of talking.** This is the last mile of goal F:
+        // the packet has been decoded for a while and had nobody to send it to, because
+        // nothing joined `data/shops.txt`'s NPC *name* onto the template id the click
+        // carries. `Config::shop_by_template` is that join.
+        if let Some(replies) = self.open_shop_for(template, chr.id) {
+            return replies;
+        }
 
         // A quest-less NPC is a one-line conversation: its own `d0`. Going through the
         // same state machine means its OK is handled the way a quest's is, rather than
@@ -1246,6 +1265,279 @@ impl Session {
             opcode: net::opcode::MIGRATE_COMMAND,
             body: net::opcode::migrate_refused("Cannot change channel right now."),
             what: format!("Change Channel REFUSED: {why}"),
+        }]
+    }
+
+    /// Build and send this NPC's shop, or `None` if it has no shop.
+    ///
+    /// # The Sell tab is made of negative prices
+    ///
+    /// `140d23ac5 cmp dword [rbx+0x58],0 / jg` files each row into the Buy tab
+    /// (`shopUI+0x338`) or the Sell tab (`+0x340`), and the Sell tab is then intersected
+    /// with what the player is actually carrying. **A shop that sends no negative-price rows
+    /// has an empty Sell tab** - there is no separate "here is what I buy" packet.
+    /// `net::shop::ShopRow::sell` does the negation; do not negate twice.
+    ///
+    /// The two prices come from different places and swapping them is the easy mistake:
+    /// a **buy** price is authored per row in `data/shops.txt`, a **sell** price is
+    /// `ItemData::price`, which is the client's own `info/price` and is what the NPC *pays*.
+    /// The owner established that direction: *"The prices client side most likely represents sell
+    /// prices."*
+    ///
+    /// The owner's rule is enforced here as well as in the store: a quest item gets no sell row,
+    /// so it cannot be offered in the first place.
+    ///
+    /// **An empty row list is not an empty shop.** `140d22656` takes a different arm
+    /// entirely for `rowCount == 0` - a dialog box, and a `0x0104` back - so a shop that
+    /// resolves to nothing falls through to the dialogue path instead.
+    fn open_shop_for(&mut self, template: u32, character_id: u32) -> Option<Vec<Reply>> {
+        let index = *self.config.shop_by_template.get(&template)?;
+        let shop = self.config.shops.shops.get(index)?;
+
+        let mut rows = Vec::new();
+        let mut skipped_free = 0usize;
+        for item in &shop.items {
+            // **A zero buy price is not a free item, it is a SELL row.** The client files a
+            // row by the sign of its price, and `> 0` is the buy test - so a 0 here would
+            // silently appear in the Sell tab offering to buy something the player has, at
+            // nothing. `data/shops.txt` currently has no such row; this is here so that a
+            // future transcription typo shows up as a missing line rather than as junk in
+            // the wrong tab.
+            if item.buy_price == 0 {
+                skipped_free += 1;
+                continue;
+            }
+            rows.push(net::shop::ShopRow::buy(
+                rows.len() as u32,
+                item.item_id,
+                item.buy_price,
+                self.config.shops.max_per_purchase(item.item_id),
+            ));
+        }
+        for item in &shop.items {
+            let Some(data) = self.config.shops.item_data.get(&item.item_id) else { continue };
+            if !data.may_be_sold() {
+                continue; // the owner: "Please do not allow quest items to be sold."
+            }
+            rows.push(net::shop::ShopRow::sell(rows.len() as u32, item.item_id, data.price));
+        }
+        if rows.is_empty() {
+            return None; // a zero-row shop is a different client arm, not an empty counter
+        }
+
+        let body = net::shop::open_shop(template, &rows);
+        let what = format!(
+            "OpenShop: {} ({}) for character {character_id} - {} rows ({} buy, {} sell), {} bytes{}",
+            shop.npc,
+            shop.role,
+            rows.len(),
+            rows.iter().filter(|r| r.is_buy_row()).count(),
+            rows.iter().filter(|r| !r.is_buy_row()).count(),
+            body.len(),
+            if skipped_free > 0 {
+                format!(" - {skipped_free} row(s) DROPPED for a zero buy price")
+            } else {
+                String::new()
+            }
+        );
+        self.open_shop = Some((template, rows));
+        Some(vec![Reply { opcode: net::shop::OPEN_SHOP, body, what }])
+    }
+
+    /// The client's shop request, `0x0104`.
+    ///
+    /// **A transaction must be answered.** `FUN_140d2c060` sets `shopUI+0x14d8 = 1` after
+    /// sending sub-op 1 and returns immediately at `140d2c0a6` while it is set, so every
+    /// further Buy or Sell click is a silent no-op until it clears. It is **not** the
+    /// session-long latch `0x0107` has: `tools/fieldrefs.py 0x14d8` enumerates four writers,
+    /// and a fresh `OPEN_SHOP` clears it too. Dead until the next result or list, not
+    /// forever - a real difference, and worth not overstating.
+    fn on_shop_request(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(request) = net::shop::parse_shop_request(body) else {
+            // No sub-op byte at all. Nothing was latched by a body this short.
+            return Vec::new();
+        };
+        match request {
+            net::shop::ShopRequest::Reopen { npc_template_id } => {
+                // Re-send the SAME rows, so the row keys the client still holds stay valid.
+                let Some((template, rows)) = self.open_shop.clone() else { return Vec::new() };
+                if template != npc_template_id {
+                    return Vec::new();
+                }
+                vec![Reply {
+                    opcode: net::shop::OPEN_SHOP,
+                    body: net::shop::open_shop(template, &rows),
+                    what: format!("OpenShop: re-sent for {template}, same {} rows", rows.len()),
+                }]
+            }
+            net::shop::ShopRequest::Close => {
+                self.open_shop = None;
+                Vec::new() // nothing is owed; the client closed its own UI
+            }
+            net::shop::ShopRequest::Other { .. } => Vec::new(),
+            net::shop::ShopRequest::Transaction(t) => self.on_shop_transaction(t),
+        }
+    }
+
+    /// Buy or sell one row. **Every path here ends in a `0x055F`.**
+    ///
+    /// Three rules this encodes, all of them easy to lose:
+    ///
+    /// 1. **The client's numbers are claims.** It computed `|price| * quantity` against its
+    ///    own meso count before sending, but that is its arithmetic and its balance. The
+    ///    quantity is clamped to the row's own maximum and the price is the server's.
+    /// 2. **A result that re-requests owes a fresh list.** `ShopResult::rerequests` is the
+    ///    client's own tail test at `140d22f51`; five of the fourteen codes set it.
+    /// 3. **Success still owes the bag.** The client does not move an item on a bare
+    ///    success - the `0x0070` does that, and the meso count needs `0x007C`.
+    fn on_shop_transaction(&mut self, t: net::shop::ShopTransaction) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self.shop_answer(net::shop::ShopResult::Busy, "no character is claimed");
+        };
+        let Some((template, rows)) = self.open_shop.clone() else {
+            return self.shop_answer(net::shop::ShopResult::Busy, "no shop is open");
+        };
+        let Some(row) = rows.iter().find(|r| r.row_key == t.row_key).copied() else {
+            return self.shop_answer(
+                net::shop::ShopResult::UnknownItem,
+                &format!("row key {} is not in the {} rows we sent", t.row_key, rows.len()),
+            );
+        };
+        let Some(inv) = store::InventoryType::for_item(row.item_id) else {
+            return self.shop_answer(
+                net::shop::ShopResult::UnknownItem,
+                &format!("item {} belongs to no inventory tab", row.item_id),
+            );
+        };
+        let _ = template;
+
+        if row.is_buy_row() {
+            let qty = t.quantity.clamp(1, row.max_per_purchase.max(1));
+            let unit = row.price.max(0) as u32;
+            let cost = u32::from(qty).saturating_mul(unit);
+            let max_stack = self.config.shops.max_per_purchase(row.item_id);
+            let item = if inv == store::InventoryType::Equip {
+                store::Item::equip(row.item_id)
+            } else {
+                store::Item::bundle(row.item_id, qty)
+            };
+            match self.store.buy_item(chr.id, inv, &item, max_stack, cost) {
+                Ok(changed) => {
+                    let mut out = self.shop_answer(
+                        net::shop::ShopResult::Success,
+                        &format!("bought {qty}x {} for {cost} mesos", row.item_id),
+                    );
+                    out.extend(self.inventory_added_replies(inv, &changed));
+                    out.extend(self.meso_reply(chr.id));
+                    out
+                }
+                Err(store::StoreError::BagFull { .. }) => {
+                    self.shop_answer(net::shop::ShopResult::InventoryFull, "the bag is full")
+                }
+                Err(store::StoreError::NotEnoughMesos { .. }) => self
+                    .shop_answer(net::shop::ShopResult::NotEnoughMesos, "not enough mesos"),
+                Err(e) => self.shop_answer(net::shop::ShopResult::Busy, &format!("buy failed: {e}")),
+            }
+        } else {
+            let unit = row.price.unsigned_abs();
+            match self.store.sell_item(chr.id, inv, t.slot, Some(t.quantity), unit) {
+                Ok(_) => {
+                    let mut out = self.shop_answer(
+                        net::shop::ShopResult::Success,
+                        &format!("sold {}x {} from slot {}", t.quantity, row.item_id, t.slot),
+                    );
+                    out.push(Reply {
+                        opcode: net::inventory::INVENTORY_OPERATION,
+                        body: net::inventory::inventory_removed(inv.as_u8() as i8, t.slot as i16),
+                        what: format!("InventoryOperation REMOVE: {inv:?} slot {}", t.slot),
+                    });
+                    out.extend(self.meso_reply(chr.id));
+                    out
+                }
+                Err(store::StoreError::ItemMayNotBeSold { .. }) => self.shop_answer(
+                    net::shop::ShopResult::UnknownItem,
+                    "that is a quest item and may not be sold - the owner's rule, enforced in the store",
+                ),
+                Err(e) => {
+                    self.shop_answer(net::shop::ShopResult::UnknownItem, &format!("sell failed: {e}"))
+                }
+            }
+        }
+    }
+
+    /// A `0x055F`, plus the fresh list the result may owe.
+    fn shop_answer(&self, result: net::shop::ShopResult, why: &str) -> Vec<Reply> {
+        let mut out = vec![Reply {
+            opcode: net::shop::SHOP_TRANSACTION_RESULT,
+            body: net::shop::shop_result(result),
+            what: format!("ShopResult {result:?} (code {}): {why}", result.code()),
+        }];
+        if result.rerequests() {
+            if let Some((template, rows)) = self.open_shop.as_ref() {
+                out.push(Reply {
+                    opcode: net::shop::OPEN_SHOP,
+                    body: net::shop::open_shop(*template, rows),
+                    what: format!(
+                        "OpenShop: re-sent because ShopResult {result:?} makes the client re-request"
+                    ),
+                });
+            }
+        }
+        out
+    }
+
+    /// One `0x0070` Add per slot a purchase touched.
+    fn inventory_added_replies(
+        &self,
+        inv: store::InventoryType,
+        changed: &[store::InvItem],
+    ) -> Vec<Reply> {
+        changed
+            .iter()
+            .map(|row| {
+                let blob = match row.item.kind {
+                    store::ItemKind::Equip(stored) => net::opcode::equipped_item(
+                        row.item.item_id,
+                        &stored.unwrap_or_else(|| self.template_stats(row.item.item_id)),
+                    ),
+                    store::ItemKind::Bundle { quantity } => net::bag::bundle_item(
+                        row.item.item_id,
+                        quantity,
+                        0,
+                        &[0u8; net::bag::BUNDLE_OWNER_LEN],
+                    ),
+                };
+                Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_added(
+                        inv.as_u8() as i8,
+                        row.slot as i16,
+                        &blob,
+                    ),
+                    what: format!(
+                        "InventoryOperation ADD: item {} into {inv:?} slot {}",
+                        row.item.item_id, row.slot
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    /// Tell the client its new meso count.
+    ///
+    /// `quiet` is `false` on purpose: `142d56242` only fires the meso-gain effect when that
+    /// byte is zero, and a purchase is exactly when a player expects to see the number move.
+    fn meso_reply(&self, character_id: u32) -> Vec<Reply> {
+        let Ok(mesos) = self.store.mesos(character_id) else { return Vec::new() };
+        let change = net::combat::StatChange {
+            excl_request: true,
+            meso: Some(u64::from(mesos)),
+            ..Default::default()
+        };
+        vec![Reply {
+            opcode: net::combat::STAT_CHANGED,
+            body: net::combat::stat_changed(&change),
+            what: format!("StatChanged: mesos now {mesos}"),
         }]
     }
 
@@ -2243,6 +2535,226 @@ mod tests {
         let out = s.handle(&change_channel(0));
         assert_eq!(out.len(), 1);
         assert!(out[0].what.contains("already on"), "{}", out[0].what);
+    }
+
+    /// A session standing next to a shopkeeper, with one buyable row and one quest item.
+    fn shop_session() -> (Session, Arc<Store>, u32) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+
+        let plain = |item_id, buy, sell, quest| crate::shops::ShopItem {
+            item_id,
+            name: format!("item {item_id}"),
+            buy_price: buy,
+            sell_price: sell,
+            min_grade: None,
+            quest_item: quest,
+            trade_blocked: false,
+        };
+        let shop = crate::shops::Shop {
+            npc: "Lucy".to_string(),
+            role: "Grocer".to_string(),
+            map_label: "Maple Road".to_string(),
+            items: vec![plain(2000000, 50, 5, false), plain(4031507, 20, 1, true)],
+        };
+        let mut item_data = std::collections::HashMap::new();
+        item_data.insert(
+            2000000u32,
+            crate::shops::ItemData { price: 5, slot_max: 200, ..Default::default() },
+        );
+        item_data.insert(
+            4031507u32,
+            crate::shops::ItemData { price: 1, quest: true, ..Default::default() },
+        );
+        let table = crate::shops::ShopTable { shops: vec![shop], item_data, problems: Vec::new() };
+
+        let mut npcs = std::collections::HashMap::new();
+        npcs.insert(
+            net::opcode::START_MAP_ID,
+            vec![net::opcode::FieldNpc {
+                object_id: 1000,
+                template_id: 21,
+                x: 0,
+                cy: 0,
+                fh: 1,
+                rx0: 0,
+                rx1: 0,
+                f: 0,
+            }],
+        );
+        let mut shop_by_template = std::collections::HashMap::new();
+        shop_by_template.insert(21u32, 0usize);
+
+        let config = Config {
+            set_field_probe: true,
+            shops: table,
+            shop_by_template,
+            npcs,
+            ..Config::default()
+        };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        (s, store, id)
+    }
+
+    /// The `0x00F2` body: u32 npcObjectId, i16 x, i16 y, u32 tail.
+    fn npc_click(object_id: u32) -> Vec<u8> {
+        let mut b = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        b.extend_from_slice(&object_id.to_le_bytes());
+        b.extend_from_slice(&0i16.to_le_bytes());
+        b.extend_from_slice(&0i16.to_le_bytes());
+        b.extend_from_slice(&u32::MAX.to_le_bytes());
+        b
+    }
+
+    /// **Goal F's last mile.** Clicking a shopkeeper opens the shop rather than saying a line.
+    ///
+    /// The owner, 2026-08-20: *"when I tried to click on Lucy (NPC ID 21), it does not open them
+    /// shop."* The packet had been decoded; nothing joined the shop's NPC *name* onto the
+    /// template id the click carries.
+    #[test]
+    fn clicking_a_shopkeeper_opens_the_shop() {
+        let (mut s, _, _) = shop_session();
+        let out = s.handle(&npc_click(1000));
+
+        assert_eq!(out.len(), 1, "one packet: the shop");
+        assert_eq!(out[0].opcode, net::shop::OPEN_SHOP);
+        assert_eq!(
+            u32::from_le_bytes(out[0].body[0..4].try_into().unwrap()),
+            21,
+            "the NPC template the click named"
+        );
+        // Two buy rows - a quest item is perfectly buyable - and one sell row, because the
+        // quest item gets none. The owner's rule is about SELLING, not stocking.
+        assert_eq!(u16::from_le_bytes([out[0].body[4], out[0].body[5]]), 3, "rowCount is a u16");
+        assert_eq!(
+            out[0].body.len(),
+            net::shop::OPEN_SHOP_FIXED_LEN + 3 * net::shop::SHOP_ROW_LEN
+        );
+        assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
+    }
+
+    /// **A quest item gets no sell row, so the player is never offered the option.**
+    ///
+    /// The owner: *"Please do not allow quest items to be sold."* That is about selling, not
+    /// stocking - an NPC may perfectly well sell you a quest item, and this one does. The
+    /// store refuses the transaction too; this is the same rule one layer earlier, where the
+    /// row never appears in the Sell tab at all.
+    ///
+    /// The tab a row lands in is its price's **sign**: `140d23ac5 cmp dword [rbx+0x58],0 /
+    /// jg` files positive into the Buy tab and the rest into Sell.
+    #[test]
+    fn a_quest_item_is_never_given_a_sell_row() {
+        let (mut s, _, _) = shop_session();
+        let out = s.handle(&npc_click(1000));
+        let rows = &out[0].body[net::shop::OPEN_SHOP_FIXED_LEN - 1..];
+
+        let mut sell_rows = Vec::new();
+        let mut buy_rows = Vec::new();
+        for i in 0..3usize {
+            let at = i * net::shop::SHOP_ROW_LEN;
+            let item_id = u32::from_le_bytes(rows[at + 4..at + 8].try_into().unwrap());
+            let price = i32::from_le_bytes(rows[at + 8..at + 12].try_into().unwrap());
+            if price > 0 { buy_rows.push(item_id) } else { sell_rows.push(item_id) }
+        }
+        assert_eq!(buy_rows, vec![2000000, 4031507], "both are stocked");
+        assert_eq!(sell_rows, vec![2000000], "the quest item is not buyable back");
+    }
+
+    /// A purchase charges the SERVER's price, adds the item, and says so three ways.
+    #[test]
+    fn buying_charges_mesos_and_delivers_the_item() {
+        let (mut s, store, id) = shop_session();
+        store.set_mesos(id, 1000).unwrap();
+        s.handle(&npc_click(1000));
+
+        // sub-op 1: u32 rowKey, u16 quantity, u16 slot. Row 0 is the potion's buy row.
+        let mut body = net::shop::CLIENT_SHOP_REQUEST.to_le_bytes().to_vec();
+        body.push(net::shop::SHOP_REQ_TRANSACTION);
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&3u16.to_le_bytes());
+        body.extend_from_slice(&0u16.to_le_bytes());
+        let out = s.handle(&body);
+
+        assert_eq!(out[0].opcode, net::shop::SHOP_TRANSACTION_RESULT);
+        assert_eq!(out[0].body[1], net::shop::ShopResult::Success.code());
+        assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the bag");
+        assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the meso count");
+
+        assert_eq!(store.mesos(id).unwrap(), 1000 - 3 * 50, "3 at the AUTHORED buy price");
+        let held: u16 = store
+            .bag(id)
+            .unwrap()
+            .items_in(store::InventoryType::Use)
+            .map(|i| i.item.kind.quantity())
+            .sum();
+        assert_eq!(held, 3);
+    }
+
+    /// Too little money is refused with the client's own code, and nothing moves.
+    #[test]
+    fn a_purchase_beyond_the_purse_is_refused_by_code() {
+        let (mut s, store, id) = shop_session();
+        store.set_mesos(id, 10).unwrap();
+        s.handle(&npc_click(1000));
+
+        let mut body = net::shop::CLIENT_SHOP_REQUEST.to_le_bytes().to_vec();
+        body.push(net::shop::SHOP_REQ_TRANSACTION);
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&0u16.to_le_bytes());
+        let out = s.handle(&body);
+
+        assert_eq!(out[0].body[1], net::shop::ShopResult::NotEnoughMesos.code());
+        assert_eq!(store.mesos(id).unwrap(), 10, "nothing was charged");
+        assert!(store.bag(id).unwrap().is_empty(), "and nothing was delivered");
+    }
+
+    /// A row key we never sent is refused **and** the list is re-sent, because that result
+    /// code makes the client re-request it.
+    #[test]
+    fn an_unknown_row_key_is_refused_and_the_list_is_re_sent() {
+        let (mut s, _, _) = shop_session();
+        s.handle(&npc_click(1000));
+
+        let mut body = net::shop::CLIENT_SHOP_REQUEST.to_le_bytes().to_vec();
+        body.push(net::shop::SHOP_REQ_TRANSACTION);
+        body.extend_from_slice(&99u32.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&0u16.to_le_bytes());
+        let out = s.handle(&body);
+
+        assert_eq!(out[0].body[1], net::shop::ShopResult::UnknownItem.code());
+        assert!(net::shop::ShopResult::UnknownItem.rerequests());
+        assert_eq!(out[1].opcode, net::shop::OPEN_SHOP, "a re-requesting code owes a fresh list");
+    }
+
+    /// **The join, against the real data.** All 39 authored shops must resolve to a template,
+    /// and Lucy must be 21 - the id the owner read off their own screen.
+    #[test]
+    fn every_authored_shop_resolves_to_an_npc_template() {
+        let shops = std::path::Path::new("../../data/shops.txt");
+        let strings = std::path::Path::new("../../gm-handbook/npcstrings.txt");
+        if !shops.exists() || !strings.exists() {
+            return; // npcstrings is generated and gitignored
+        }
+        let table = crate::shops::ShopTable::load(
+            shops,
+            std::path::Path::new("../../gm-handbook/items.txt"),
+            std::path::Path::new("../../gm-handbook/itemdata.txt"),
+        );
+        let npc_strings = crate::config::load_npc_strings(strings);
+        let (by_template, problems) = crate::shops::resolve_npc_templates(&table, &npc_strings);
+
+        assert_eq!(table.shops.len(), 39, "the authored shop count");
+        assert_eq!(by_template.get(&21).copied(), table.shops.iter().position(|s| s.npc == "Lucy"));
+        assert!(
+            !problems.iter().any(|p| p.contains("can never open")),
+            "every shop must resolve: {problems:?}"
+        );
     }
 
     /// The channel must not send the login server's startup gate. That packet is what a
