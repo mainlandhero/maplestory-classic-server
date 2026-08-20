@@ -33,7 +33,50 @@ use net::opcode::{
 };
 use store::{Account, NameCheck, Store};
 
-use crate::config::Config;
+use crate::config::{Config, World};
+
+/// The channel index to advertise in `LOGIN_RESULT`, and the sentence explaining it.
+///
+/// **This is deliberately not always the true channel**, and the reason is the one thing
+/// that kept the Change Channel dialog empty for a week.
+///
+/// The client builds its channel list once, at login, from the pair carried in
+/// `LOGIN_RESULT` - it never asks for the list again, which is why opening the dialog sends
+/// nothing at all. `FUN_141b2c7c0` bails out of the rebuild when the incoming
+/// `(world, channel)` equals the pair the singleton already holds, and a client that has
+/// loaded no list holds `(0, 0)`. So a world with id `0` telling the truth about channel `0`
+/// is indistinguishable from saying nothing, and the dialog stays at one row.
+///
+/// [`net::channel::priming_channel`] is that rule. `None` means the world cannot populate
+/// the dialog at all - with a single channel the only index that passes the client's range
+/// check is `0`, which is the pair it already holds - and the honest value is sent instead.
+///
+/// **Sending the wrong index here costs nothing.** `SetField`'s `0x01A0` handler
+/// `FUN_142097f80` reads a `u32` at body offset 8 and passes it to the same setter, and
+/// that field is already the real channel in `opcode::set_field_head`. The only window in
+/// which the value is wrong is the character-select screen, which displays no channel.
+///
+/// Full working, with the addresses: `research/channel-select.md` section 9.
+fn advertised_channel(world: &World) -> (u32, String) {
+    let count = u32::from(world.channel_count());
+    match net::channel::priming_channel(world.id, world.channel_id, count) {
+        Some(c) if c == world.channel_id => (c, format!("channel {c}")),
+        Some(c) => (
+            c,
+            format!(
+                "channel {c} advertised instead of the true {}, so the client rebuilds its channel list - research/channel-select.md section 9",
+                world.channel_id
+            ),
+        ),
+        None => (
+            world.channel_id,
+            format!(
+                "channel {} (the true value: this world advertises {count} channel(s), so no index can make the client rebuild its list and the dialog will stay at one row)",
+                world.channel_id
+            ),
+        ),
+    }
+}
 
 /// One packet to send, plus what it is - the label is written to the log, and the log is
 /// the instrument that gets read when the screen does something unexpected.
@@ -219,6 +262,8 @@ impl Session {
             Reply::new(WORLD_LIST, world_list_end(), format!("{cause}: end of worlds")),
         ];
 
+        let (channel, channel_note) = advertised_channel(world);
+
         let characters = match self.store.characters_for(self.account.id, world.id) {
             Ok(c) => c,
             Err(e) => {
@@ -226,7 +271,7 @@ impl Session {
                 // no characters is recoverable; a client blocked on a reply is not.
                 out.push(Reply::new(
                     LOGIN_RESULT,
-                    login_result(world.id, world.channel_id, &[]),
+                    login_result(world.id, channel, &[]),
                     format!("{cause}: EMPTY LIST - could not read characters: {e}"),
                 ));
                 return out;
@@ -236,8 +281,12 @@ impl Session {
         let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
         out.push(Reply::new(
             LOGIN_RESULT,
-            login_result(world.id, world.channel_id, &characters),
-            format!("{cause}: login result, {} character(s): {}", characters.len(), names.join(", ")),
+            login_result(world.id, channel, &characters),
+            format!(
+                "{cause}: login result, {} character(s): {}; {channel_note}",
+                characters.len(),
+                names.join(", ")
+            ),
         ));
         out
     }
@@ -412,7 +461,7 @@ impl Session {
         let channel = world.channel_id;
         let Some(addr) = world.channel_address(channel) else {
             return refuse(format!(
-                "REFUSED - world {} has no address for channel {channel}; the client would                  be sent nowhere",
+                "REFUSED - world {} has no address for channel {channel}; the client would be sent nowhere",
                 world.id
             ));
         };
@@ -429,7 +478,7 @@ impl Session {
             MIGRATE_COMMAND,
             migrate(addr, id, seed),
             format!(
-                "migrate {:?} (id {id}) to world {} channel {channel} at {addr},                  seed {seed:#010x} - single use, NOT authentication",
+                "migrate {:?} (id {id}) to world {} channel {channel} at {addr}, seed {seed:#010x} - single use, NOT authentication",
                 chosen.name, world.id
             ),
         )]
@@ -481,7 +530,7 @@ const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 pub fn describe(opcode: u16, payload: &[u8]) -> Option<String> {
     if opcode == CLIENT_MIGRATION_HELLO {
         return Some(format!(
-            "MIGRATION HELLO: the client reconnected after 0x0011 and sent {} bytes.              The migration seed is in here, obfuscated with the u32 before its length -              layout not yet decoded, read the body hex. See docs/opcodes.md.",
+            "MIGRATION HELLO: the client reconnected after 0x0011 and sent {} bytes. The migration seed is in here, obfuscated with the u32 before its length -              layout not yet decoded, read the body hex. See docs/opcodes.md.",
             payload.len()
         ));
     }
@@ -530,6 +579,75 @@ mod tests {
 
     fn opcodes(replies: &[Reply]) -> Vec<u16> {
         replies.iter().map(|r| r.opcode).collect()
+    }
+
+    /// The whole point of [`advertised_channel`]: a world whose id is `0` and whose real
+    /// channel is `0` must **not** say so, because that is exactly the pair a client with no
+    /// channel list already holds, and the rebuild bails on a match.
+    #[test]
+    fn a_two_channel_world_at_zero_advertises_channel_one_instead_of_the_truth() {
+        let world = World {
+            id: 0,
+            name: "Scania".to_string(),
+            channels: vec!["127.0.0.1:8485".parse().unwrap(), "127.0.0.1:8486".parse().unwrap()],
+            channel_id: 0,
+        };
+        let (channel, why) = advertised_channel(&world);
+        assert_eq!(channel, 1, "channel 0 is the idle pair and would leave the dialog empty");
+        assert!(why.contains("instead of the true 0"), "{why}");
+    }
+
+    /// One channel and there is no move: index 0 is the only one the client's range check
+    /// accepts and it is the idle pair. The honest value goes out and the label says why,
+    /// because a silent fallback here looks identical to the bug it is working around.
+    #[test]
+    fn a_one_channel_world_sends_the_true_channel_and_says_the_dialog_cannot_populate() {
+        let world = World::default();
+        assert_eq!(world.channels.len(), 1, "this test is about the one-channel case");
+        let (channel, why) = advertised_channel(&world);
+        assert_eq!(channel, world.channel_id);
+        assert!(why.contains("stay at one row"), "{why}");
+    }
+
+    /// A non-zero channel is already unequal to the idle pair, so it travels untouched.
+    /// Nothing here is allowed to invent a channel the client would then try to enter.
+    #[test]
+    fn a_channel_that_is_not_the_idle_pair_is_sent_unchanged() {
+        let world = World {
+            id: 0,
+            name: "Scania".to_string(),
+            channels: vec!["127.0.0.1:8485".parse().unwrap(), "127.0.0.1:8486".parse().unwrap()],
+            channel_id: 1,
+        };
+        assert_eq!(advertised_channel(&world).0, 1);
+    }
+
+    /// The advertised channel reaches the wire. `LOGIN_RESULT`'s channel field is at body
+    /// offset 16 - u8 result, an empty u16-prefixed string, u8, an 8-byte FILETIME, then the
+    /// u32 world id - and this asserts the bytes rather than the call.
+    #[test]
+    fn the_login_result_on_the_wire_carries_the_advertised_channel() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let mut config = Config::default();
+        config.world.channels =
+            vec!["127.0.0.1:8485".parse().unwrap(), "127.0.0.1:8486".parse().unwrap()];
+        config.world.channel_id = 0;
+        let mut s = Session::new(store, Arc::new(config), account);
+
+        let replies = s.world_and_characters("test");
+        let result = replies
+            .iter()
+            .find(|r| r.opcode == LOGIN_RESULT)
+            .expect("a login result is always sent");
+        assert_eq!(&result.body[12..16], &0u32.to_le_bytes(), "the world id, for orientation");
+        assert_eq!(
+            &result.body[16..20],
+            &1u32.to_le_bytes(),
+            "the priming channel, not the true 0 - research/channel-select.md section 9"
+        );
+        assert!(result.what.contains("instead of the true 0"), "{}", result.what);
     }
 
     /// The name-check body: a length-prefixed name.

@@ -132,7 +132,7 @@ fn main() -> ExitCode {
     (config.portals, config.portal_index) = world::config::Config::load_portals(&portals_path);
     if config.portals.is_empty() {
         eprintln!(
-            "maplecw-world: no portals loaded from {} - portal walks will re-send the              current map. Regenerate with: python tools/dump_portals.py",
+            "maplecw-world: no portals loaded from {} - portal walks will re-send the current map. Regenerate with: python tools/dump_portals.py",
             portals_path.display()
         );
     }
@@ -140,7 +140,7 @@ fn main() -> ExitCode {
     config.fields = world::config::Config::load_fields(&fields_path);
     if config.fields.is_empty() {
         eprintln!(
-            "maplecw-world: no field list from {} - map ids will NOT be validated, so a              bad /map can strand a character. Regenerate with: python tools/dump_portals.py",
+            "maplecw-world: no field list from {} - map ids will NOT be validated, so a bad /map can strand a character. Regenerate with: python tools/dump_portals.py",
             fields_path.display()
         );
     }
@@ -148,7 +148,7 @@ fn main() -> ExitCode {
     config.npcs = world::config::Config::load_npcs(&npcs_path);
     if config.npcs.is_empty() {
         eprintln!(
-            "maplecw-world: no NPCs loaded from {} - maps will be empty. Regenerate with:              python tools/dump_portals.py",
+            "maplecw-world: no NPCs loaded from {} - maps will be empty. Regenerate with: python tools/dump_portals.py",
             npcs_path.display()
         );
     }
@@ -156,14 +156,14 @@ fn main() -> ExitCode {
     let mob_templates = world::config::load_mob_templates(&mob_templates_path);
     if mob_templates.is_empty() {
         eprintln!(
-            "maplecw-world: no mob templates from {} - every mob would spawn on a fallback              HP rather than its own. Regenerate with: python tools/dump_mobs.py",
+            "maplecw-world: no mob templates from {} - every mob would spawn on a fallback HP rather than its own. Regenerate with: python tools/dump_mobs.py",
             mob_templates_path.display()
         );
     }
     config.mobs = world::config::Config::load_mobs(&mobs_path, &mob_templates);
     if config.mobs.is_empty() {
         eprintln!(
-            "maplecw-world: no mobs loaded from {} - maps will have no monsters.              Regenerate with: python tools/dump_portals.py",
+            "maplecw-world: no mobs loaded from {} - maps will have no monsters. Regenerate with: python tools/dump_portals.py",
             mobs_path.display()
         );
     }
@@ -173,7 +173,7 @@ fn main() -> ExitCode {
     // had none, for a whole launch.
     if !config.send_mobs {
         println!(
-            "maplecw-world: MOBS ARE OFF (--no-mobs). {} maps have mobs loaded and none of              them will be sent. Maps will look empty; that is this flag, not a bug.",
+            "maplecw-world: MOBS ARE OFF (--no-mobs). {} maps have mobs loaded and none of them will be sent. Maps will look empty; that is this flag, not a bug.",
             config.mobs.len()
         );
     }
@@ -181,7 +181,7 @@ fn main() -> ExitCode {
     config.equips = world::config::Config::load_equips(&equips_path);
     if config.equips.is_empty() {
         eprintln!(
-            "maplecw-world: no equip templates from {} - worn items will have no stats and              no upgrade slots. Regenerate with: python tools/dump_equips.py",
+            "maplecw-world: no equip templates from {} - worn items will have no stats and no upgrade slots. Regenerate with: python tools/dump_equips.py",
             equips_path.display()
         );
     }
@@ -189,7 +189,7 @@ fn main() -> ExitCode {
     config.npc_strings = world::config::load_npc_strings(&npc_strings_path);
     if config.npc_strings.is_empty() {
         eprintln!(
-            "maplecw-world: no NPC text from {} - NPCs will fall back to placeholder              dialogue. Regenerate with: python tools/dump_npcstrings.py",
+            "maplecw-world: no NPC text from {} - NPCs will fall back to placeholder dialogue. Regenerate with: python tools/dump_npcstrings.py",
             npc_strings_path.display()
         );
     }
@@ -197,7 +197,7 @@ fn main() -> ExitCode {
     config.quests = world::config::load_quests(&quests_path);
     if config.quests.is_empty() {
         eprintln!(
-            "maplecw-world: no quest text from {} - NPCs will fall back to their generic              line. Regenerate with: python tools/dump_quests.py",
+            "maplecw-world: no quest text from {} - NPCs will fall back to their generic line. Regenerate with: python tools/dump_quests.py",
             quests_path.display()
         );
     }
@@ -214,7 +214,7 @@ fn main() -> ExitCode {
     }
     if config.shops.is_empty() {
         eprintln!(
-            "maplecw-world: no shops loaded from {} - every NPC shop would be empty. The              file is authored source, not generated; if it is missing it was deleted, not              un-regenerated",
+            "maplecw-world: no shops loaded from {} - every NPC shop would be empty. The file is authored source, not generated; if it is missing it was deleted, not un-regenerated",
             shops_path.display()
         );
     } else {

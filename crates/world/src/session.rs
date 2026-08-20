@@ -407,25 +407,30 @@ impl Session {
         // button, including the quit prompt - and reads on screen as a crash. So a
         // character we cannot load falls back to the minimal record rather than silence.
         let (body, what) = match self.claimed_character() {
-            Some(chr) => (
-                net::opcode::set_field_with_character_dressed(
+            Some(chr) => {
+                let (quests, quest_note) = self.quest_book(chr.id);
+                (
+                net::opcode::set_field_with_character_dressed_quests(
                     &chr,
                     self.config.world_id,
                     self.clock_base(),
                     self.config.channel_id,
                     &self.dressed(&chr),
+                    &quests,
                 ),
                 format!(
-                    "SetField, characterData=1, presence[0] set so the character-stat block                      decodes, carrying map {} for character {} ({}). presence[0] is gate                      entry 7, settled in research/charrecord-presence-map.md; the map id                      sits at stat-block offset {}, settled in research/charstat-layout.md.                      Nothing here authenticates anybody.",
+                    "SetField, characterData=1, presence[0] set so the character-stat block decodes, carrying map {} for character {} ({}). presence[0] is gate entry 7, settled in research/charrecord-presence-map.md; the map id sits at stat-block offset {}, settled in research/charstat-layout.md{}. Nothing here authenticates anybody.",
                     chr.map_id,
                     chr.id,
                     chr.name,
                     net::opcode::stat_block_map_id_at(chr.job),
+                    quest_note,
                 ),
-            ),
+            )
+            }
             None => (
                 net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
-                "SetField, characterData=1, MINIMAL record - the character could not be                  loaded, so this falls back to the all-flags-clear form. It is answered                  rather than dropped because an unanswered packet freezes the client's                  whole UI. It will NOT put the character on a map: with every presence                  flag clear the stat block never decodes, so there is no map id at all."
+                "SetField, characterData=1, MINIMAL record - the character could not be loaded, so this falls back to the all-flags-clear form. It is answered rather than dropped because an unanswered packet freezes the client's whole UI. It will NOT put the character on a map: with every presence flag clear the stat block never decodes, so there is no map id at all."
                     .to_string(),
             ),
         };
@@ -511,7 +516,7 @@ impl Session {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(mob),
                 what: format!(
-                    "MobEnterField: template {} at ({}, {}) on foothold {}, object id {},                      hp {} - {} bytes. The client cannot spawn this itself.",
+                    "MobEnterField: template {} at ({}, {}) on foothold {}, object id {}, hp {} - {} bytes. The client cannot spawn this itself.",
                     mob.template_id, mob.x, mob.y, mob.fh, mob.object_id, mob.hp,
                     mob.body_len()
                 ),
@@ -537,7 +542,7 @@ impl Session {
                 opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
                 body: net::mobmove::mob_change_controller(mob, net::mobmove::CONTROL_NORMAL),
                 what: format!(
-                    "MobChangeController: object id {} to this client, level {} - {} bytes.                      The client runs the mob's movement and reports it as 0x02FF.",
+                    "MobChangeController: object id {} to this client, level {} - {} bytes. The client runs the mob's movement and reports it as 0x02FF.",
                     mob.object_id,
                     net::mobmove::CONTROL_NORMAL,
                     net::mobmove::change_controller_len(mob)
@@ -764,18 +769,22 @@ impl Session {
         }
 
         if convo.awaiting_yes_no {
-            let branch = if reply.action == net::script::SCRIPT_ACTION_YES { "yes" } else { "no" };
+            let accepted = reply.action == net::script::SCRIPT_ACTION_YES;
+            let branch = if accepted { "yes" } else { "no" };
+            // **Record the acceptance before the branch-text check**, not after. A quest
+            // whose `yes` path has no line in `Quest.wz` is still a quest the player just
+            // accepted, and ordering these the other way would silently drop exactly those.
+            let mut out = if accepted { self.accept_quest(&convo) } else { Vec::new() };
             if !self.has_branch(&convo, branch) {
                 self.conversation = None;
-                return Vec::new();
+                return out;
             }
             if let Some(c) = self.conversation.as_mut() {
                 c.path = format!("{}.{}", convo.path, branch);
                 c.sent = 0;
             }
-            // The quest itself still does not advance - there is no quest-result packet -
-            // so this shows the branch's text and nothing more.
-            return self.say_line(0);
+            out.extend(self.say_line(0));
+            return out;
         }
 
         if !convo.sent_with_next {
@@ -783,6 +792,42 @@ impl Session {
             return Vec::new();
         }
         self.say_line(convo.sent + 1)
+    }
+
+    /// The player pressed Yes on a quest's offer: write it down, and tell the journal.
+    ///
+    /// **This is the half that was missing.** The dialogue already worked and already
+    /// answered the `yes` branch, so on screen the conversation looked complete - but
+    /// nothing in this crate had ever called `store::start_quest`, and the quest journal is
+    /// built entirely from the `quest_state` table. The owner, after the run of 2026-08-19:
+    /// *"Quests don't work yet as expected."*
+    ///
+    /// `0x0089` sub-case 1 is the client's quest-record update. It is **not** a packet the
+    /// client blocks on, so a lost one costs a stale journal rather than a frozen UI - and
+    /// that is why a database failure here still sends the record. The player sees the quest
+    /// they just accepted; the label says it will not survive a relog.
+    ///
+    /// **It must not travel with a `SetField`.** `FUN_142d59e20` returns immediately when
+    /// `world+0x2358` - the character-data object - is null, and that field measures `0x00`
+    /// on the *first* `SetField` of a session. This path only ever runs from a live
+    /// conversation, which is long after that. `crates/net/src/quest.rs` carries the working.
+    fn accept_quest(&mut self, convo: &Conversation) -> Vec<Reply> {
+        let Some(quest_id) = convo.quest_id else { return Vec::new() };
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let what = match self.store.start_quest(chr.id, quest_id) {
+            Ok(true) => format!(
+                "quest {quest_id} accepted from NPC {} by character {} ({}) and stored",
+                convo.npc_template, chr.id, chr.name
+            ),
+            Ok(false) => format!(
+                "quest {quest_id} was already started for character {}; the record is re-sent so the journal agrees",
+                chr.id
+            ),
+            Err(e) => format!(
+                "quest {quest_id} accepted but NOT STORED ({e}) - the journal will show it until the next relog and then lose it"
+            ),
+        };
+        vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }]
     }
 
     /// What an NPC should actually say when talked to.
@@ -807,6 +852,35 @@ impl Session {
             .unwrap_or_else(|| {
                 format!("This server has no dialogue for NPC template {template} yet.")
             })
+    }
+
+    /// The character's quest journal, as the record wants it.
+    ///
+    /// **This was built and then not connected for a day**, which on screen is
+    /// indistinguishable from not existing: `crates/net/src/quest.rs`, the `quest_state`
+    /// table and `set_field_with_character_dressed_quests` were all written, tested and
+    /// never called. The owner, after the run of 2026-08-19: *"Quests don't work yet as
+    /// expected."* That is what this is fixing.
+    ///
+    /// A database error yields an **empty** book rather than dropping the `SetField`. The
+    /// record has no length prefix and no resync point, so the only two safe answers are a
+    /// correct book and no book at all; an empty one is the second, and it costs a blank
+    /// quest journal instead of a frozen client. The reason travels in the reply's label.
+    fn quest_book(&self, character_id: u32) -> (net::quest::QuestBook, String) {
+        match self.store.quest_book(character_id) {
+            Ok(book) => {
+                let note = format!(
+                    ", quests: {} started / {} completed",
+                    book.started.len(),
+                    book.completed.len()
+                );
+                (book, note)
+            }
+            Err(e) => (
+                net::quest::QuestBook::default(),
+                format!(", quests: EMPTY BOOK - could not read quest_state ({e})"),
+            ),
+        }
     }
 
     /// Each worn item with the stats its `Character.wz` template gives it.
@@ -859,16 +933,21 @@ impl Session {
         // the record they were hovering really did contain zeros. There was never a second
         // object.
         let dressed = self.dressed(chr);
+        let (quests, quest_note) = self.quest_book(chr.id);
         vec![Reply {
             opcode: net::opcode::SET_FIELD,
-            body: net::opcode::set_field_with_character_dressed(
+            body: net::opcode::set_field_with_character_dressed_quests(
                 chr,
                 self.config.world_id,
                 self.clock_base(),
                 self.config.channel_id,
                 &dressed,
+                &quests,
             ),
-            what: format!("SetField, {why}, for character {} ({}){warn}", chr.id, chr.name),
+            what: format!(
+                "SetField, {why}, for character {} ({}){warn}{quest_note}",
+                chr.id, chr.name
+            ),
         }]
     }
 
@@ -1138,7 +1217,7 @@ impl Session {
         vec![Reply {
             opcode: net::notice::LOG_OUT_RESULT,
             body: net::notice::log_out_result("Returning to the login screen."),
-            what: "LogOutResult - and answering this is what clears world->[0x33f4]. Until                    it is cleared the client silently drops every SetField."
+            what: "LogOutResult - and answering this is what clears world->[0x33f4]. Until it is cleared the client silently drops every SetField."
                 .to_string(),
         }]
     }
@@ -1164,7 +1243,7 @@ impl Session {
             return vec![Reply {
                 opcode: net::opcode::SET_FIELD,
                 body: net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
-                what: "transfer-field request, but the character could not be loaded -                        answered with the minimal record rather than dropped, because an                        unanswered packet freezes the client's whole UI."
+                what: "transfer-field request, but the character could not be loaded -                        answered with the minimal record rather than dropped, because an unanswered packet freezes the client's whole UI."
                     .to_string(),
             }];
         };
@@ -1190,7 +1269,7 @@ impl Session {
                 None => (
                     chr.map_id,
                     format!(
-                        "portal {:?} on map {} is NOT in the portal table, so this re-sends                          the current map rather than guessing a destination",
+                        "portal {:?} on map {} is NOT in the portal table, so this re-sends the current map rather than guessing a destination",
                         r.portal_name, chr.map_id
                     ),
                 ),
@@ -1314,6 +1393,135 @@ mod tests {
         let id = store.create_character(account_id, 0, &chr).unwrap().id;
         let s = Session::new(store.clone(), Arc::new(Config::default()));
         (s, store, account_id, id)
+    }
+
+    /// A session with the migration already claimed, which is what every quest test needs.
+    fn claimed_session() -> (Session, Arc<Store>, u32) {
+        let (mut s, store, account_id, id) = session();
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let note = s.claim_for_character(id);
+        assert!(note.contains("claimed the migration"), "{note}");
+        (s, store, id)
+    }
+
+    /// The `0x00F3` body: u32 handle, u8 messageType, u32 echo, a u16-prefixed string, u8
+    /// action. Built here rather than hand-hexed so a change to the parser breaks this too.
+    fn script_reply(action: i8) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&0u32.to_le_bytes()); // handle
+        b.push(0); //                                messageType
+        b.extend_from_slice(&0u32.to_le_bytes()); // echo
+        b.extend_from_slice(&0u16.to_le_bytes()); // empty text
+        b.push(action as u8);
+        b
+    }
+
+    /// Pressing Yes writes the quest down. **This is the half that was missing**: the
+    /// dialogue already answered the `yes` branch, so the conversation looked finished on
+    /// screen while nothing had ever called `start_quest`.
+    #[test]
+    fn saying_yes_to_a_quest_stores_it_and_sends_the_quest_record() {
+        let (mut s, store, id) = claimed_session();
+        let convo = Conversation {
+            npc_template: 2100,
+            quest_id: Some(1000),
+            path: "0".to_string(),
+            sent: 0,
+            awaiting_yes_no: true,
+            sent_with_next: false,
+        };
+
+        let out = s.accept_quest(&convo);
+        assert_eq!(out.len(), 1, "one quest record");
+        assert_eq!(out[0].opcode, net::quest::MESSAGE);
+        assert_eq!(out[0].body, net::quest::quest_accepted(1000));
+        assert!(out[0].what.contains("and stored"), "{}", out[0].what);
+
+        let rows = store.quest_rows(id).unwrap();
+        assert_eq!(rows.len(), 1, "the quest is in quest_state");
+        assert_eq!(rows[0].quest_id, 1000);
+        assert_eq!(rows[0].state, store::QuestState::InProgress);
+    }
+
+    /// The ordering decision, pinned. `Config::default()` has no quest text at all, so
+    /// `has_branch` is false and the conversation ends immediately - and the acceptance must
+    /// still have been recorded, because a quest whose `yes` path has no line is still a
+    /// quest the player accepted.
+    #[test]
+    fn a_yes_with_no_branch_text_still_records_the_acceptance() {
+        let (mut s, store, id) = claimed_session();
+        s.conversation = Some(Conversation {
+            npc_template: 2100,
+            quest_id: Some(1000),
+            path: "0".to_string(),
+            sent: 0,
+            awaiting_yes_no: true,
+            sent_with_next: false,
+        });
+        assert!(s.config.quests.is_empty(), "this test is about the no-branch-text case");
+
+        let out = s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_YES));
+        assert_eq!(out.len(), 1, "the quest record, and no dialogue line");
+        assert_eq!(out[0].opcode, net::quest::MESSAGE);
+        assert_eq!(store.quest_rows(id).unwrap().len(), 1, "recorded despite the empty branch");
+        assert!(s.conversation.is_none(), "the conversation is over");
+    }
+
+    /// No means no: nothing is written and nothing is sent.
+    #[test]
+    fn saying_no_to_a_quest_records_nothing() {
+        let (mut s, store, id) = claimed_session();
+        s.conversation = Some(Conversation {
+            npc_template: 2100,
+            quest_id: Some(1000),
+            path: "0".to_string(),
+            sent: 0,
+            awaiting_yes_no: true,
+            sent_with_next: false,
+        });
+
+        assert!(s.on_script_reply(&script_reply(net::script::SCRIPT_ACTION_NO)).is_empty());
+        assert!(store.quest_rows(id).unwrap().is_empty());
+    }
+
+    /// The other half: an accepted quest has to come back on the next field entry, or the
+    /// journal is empty every time the player walks through a portal. This asserts the
+    /// **bytes** in the record, not that a function was called.
+    #[test]
+    fn the_field_entry_setfield_carries_the_quest_journal() {
+        let (mut s, store, id) = claimed_session();
+        store.start_quest(id, 1000).unwrap();
+
+        let mut chr = s.claimed_character().expect("the claim resolves to a character");
+        let replies = s.go_to_map(&mut chr, 40, 0, "a test portal walk".to_string());
+        let sf = replies
+            .iter()
+            .find(|r| r.opcode == net::opcode::SET_FIELD)
+            .expect("a field entry always sends a SetField");
+
+        let expected = net::quest::started_quest_block(&[net::quest::StartedQuest {
+            quest_id: 1000,
+            progress: String::new(),
+        }]);
+        assert!(
+            sf.body.windows(expected.len()).any(|w| w == expected.as_slice()),
+            "the started-quest block is not in the record"
+        );
+        assert!(sf.what.contains("1 started / 0 completed"), "{}", sf.what);
+    }
+
+    /// A character with no quests still sends both blocks. They are three bytes each and the
+    /// record has no length prefix, so "send nothing when there is nothing" desynchronises
+    /// everything after it.
+    #[test]
+    fn an_empty_journal_still_costs_two_blocks() {
+        let (s, _store, _id) = claimed_session();
+        let (book, note) = s.quest_book(s.claimed().unwrap().character_id);
+        assert!(book.started.is_empty());
+        assert!(book.completed.is_empty());
+        assert!(note.contains("0 started / 0 completed"), "{note}");
+        assert_eq!(book.started_block().len(), net::quest::EMPTY_QUEST_BLOCK_LEN);
+        assert_eq!(book.completed_block().len(), net::quest::EMPTY_QUEST_BLOCK_LEN);
     }
 
     /// The channel must not send the login server's startup gate. That packet is what a

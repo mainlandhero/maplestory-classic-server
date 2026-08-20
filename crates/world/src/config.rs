@@ -1099,7 +1099,7 @@ mod spawn_tests {
         assert!(config.fields.contains(&900000000), "the White Map has a field image");
         assert!(
             config.map_exists(900000000),
-            "it was denylisted on a theory the run disproved - the owner logged in with this map              stored and it loaded"
+            "it was denylisted on a theory the run disproved - the owner logged in with this map stored and it loaded"
         );
         for map in [1u32, 10, 20, 30, 40] {
             assert!(config.map_exists(map));
