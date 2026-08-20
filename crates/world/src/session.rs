@@ -376,6 +376,7 @@ impl Session {
             net::script::CLIENT_QUEST_REQUEST => {
                 return self.on_quest_request(body.get(2..).unwrap_or(&[]))
             }
+            net::mobmove::MOB_MOVE_REQUEST => return self.on_mob_move(body.get(2..).unwrap_or(&[])),
             net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
             net::script::CLIENT_SCRIPT_REPLY => {
                 return self.on_script_reply(body.get(2..).unwrap_or(&[]))
@@ -484,8 +485,8 @@ impl Session {
             None => alive,
         };
         let chosen = crate::config::share_balanced(mobs, alive);
-        out.extend(chosen.into_iter().map(|mob| {
-            Reply {
+        for mob in chosen {
+            out.push(Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(mob),
                 what: format!(
@@ -493,8 +494,35 @@ impl Session {
                     mob.template_id, mob.x, mob.y, mob.fh, mob.object_id, mob.hp,
                     mob.body_len()
                 ),
-            }
-        }));
+            });
+
+            // **And then hand the mob to the client, which is what makes it move.**
+            //
+            // Spawning a mob does not animate it. The owner, 2026-08-19: six snails rendered on
+            // map 40 and stood completely still. The server does not drive mob movement in
+            // this game - it grants CONTROL of a mob to a client, and that client then runs
+            // the wander and the idle animation locally and reports each path back as
+            // `0x02FF`. Without this packet a mob is a picture.
+            //
+            // It explains the second symptom too. The combat agent decoded a real attack
+            // from the same session: the owner at (473, 395), mob 2000 at (424, 395) - 49 pixels
+            // away on the same ground line - and the attack carried **zero targets**. The
+            // client would not aim at a mob nobody had given it. One packet, both symptoms.
+            //
+            // Order matters: `after` its MobEnterField, per research/mob-behaviour.md §3.
+            // And the level must not be 0 - that DESPAWNS rather than releases, which is why
+            // `mob_release_controller` exists under its own name.
+            out.push(Reply {
+                opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                body: net::mobmove::mob_change_controller(mob, net::mobmove::CONTROL_NORMAL),
+                what: format!(
+                    "MobChangeController: object id {} to this client, level {} - {} bytes.                      The client runs the mob's movement and reports it as 0x02FF.",
+                    mob.object_id,
+                    net::mobmove::CONTROL_NORMAL,
+                    net::mobmove::change_controller_len(mob)
+                ),
+            });
+        }
 
         // The character is dressed by the SetField record itself now, not from here. This
         // used to push a 0x0138 UserAvatarModified as a guess at the equipment problem;
@@ -908,6 +936,27 @@ impl Session {
             body: net::notice::chat_notice(&text),
             what: format!("ChatNotice: {text}"),
         }]
+    }
+
+    /// The client reporting where a mob it controls has moved to. **Deliberately unanswered.**
+    ///
+    /// This is the one place the "always answer" rule in `CLAUDE.md` does not apply, and the
+    /// reason is measured rather than assumed: the client stamps its own move id into
+    /// `mob+0x2f4` and increments it locally (`141cb7ecb` reads, `141cb7ef3` writes back). A
+    /// scan of the whole mob address space for `+0x2f4` finds 20 sites and **not one is
+    /// inside any of the eight mob-pool packet handlers**, so there is no acknowledgement for
+    /// this client to be waiting on. `0x02FF` is a notification, not a request.
+    /// `research/mob-behaviour.md` §6.
+    ///
+    /// **It is logged because its arrival is the cheapest possible confirmation** that the
+    /// controller grant worked. A `0x02FF` in `world.log` means the client accepted the mob,
+    /// is simulating it, and is telling us where it went - which is the whole feature.
+    fn on_mob_move(&mut self, payload: &[u8]) -> Vec<Reply> {
+        // Parsed rather than ignored so a malformed body shows up as a parse failure in
+        // a test rather than as silence, but nothing goes back. `server.rs` prints the
+        // arrival; this type does not print, it returns bodies.
+        let _ = net::mobmove::parse_mob_move(payload);
+        Vec::new()
     }
 
     /// Answer Log Out, and **this is not optional in the way most replies are**.

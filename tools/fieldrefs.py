@@ -93,7 +93,17 @@ def main():
         if s["name"] not in want:
             continue
         secva = base + s["vaddr"]
-        blob = data[s["raddr"]:s["raddr"] + s["rsize"]]
+        start, end = s["raddr"], s["raddr"] + s["rsize"]
+        # Narrow the DISASSEMBLY to the requested VA window, not just the reporting. A whole
+        # -image sweep is ~18.5M instructions and minutes of wall clock; the same scan bounded
+        # to one class's code is seconds, which is the difference between a tool that gets used
+        # and one that gets hand-rolled again.
+        if lo > secva:
+            start = min(end, s["raddr"] + (lo - secva))
+            secva = lo
+        if hi < base + s["vaddr"] + s["rsize"]:
+            end = max(start, min(end, s["raddr"] + (hi - (base + s["vaddr"]))))
+        blob = data[start:end]
         mv = memoryview(blob)          # slicing `bytes` to resync is O(n^2) and never finishes
         n = len(blob)
         cur = 0
@@ -110,7 +120,11 @@ def main():
                         continue
                     if op.mem.base in SKIP_BASES:
                         continue
-                    if args.write and i != 0:
+                    # "Writes the field" = the memory operand is the destination. Capstone
+                    # puts the destination first, but `cmp`/`test`/`push`/`bt` also lead with
+                    # a memory operand they only READ - and letting those through is how a
+                    # `--write` list grows six rows that are not writers at all.
+                    if args.write and (i != 0 or ins.mnemonic in READ_ONLY_DEST):
                         continue
                     o = owner(ins.address)
                     print("%09x  %-9s %-44s in %s" % (

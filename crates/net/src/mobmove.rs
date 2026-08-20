@@ -4,15 +4,19 @@
 //! read at; **[L]** is out of the listing, **[D]** is derived from two or more [L], **[I]** is
 //! inferred.
 //!
-//! # The server does not move mobs
+//! # The server does not author mob behaviour. It hands a mob to a client
 //!
-//! Mobs spawned and rendered on map 40 on 2026-08-19 and stood completely still. The reason is
-//! not a missing movement packet - **this client has no code that reads a movement path from
-//! the server.** `FUN_141d30e80`'s jump table is 19 entries wide (`opcode - 0x3C6 <= 0x12`,
-//! read out of the image at `0x141d31184`) with eight live cases, and the largest read set
-//! among them is five scalars. A path is a variable-length list of 12-byte elements. **[L]**
+//! Mobs spawned and rendered on map 40 on 2026-08-19 and stood completely still, and the
+//! client would not even aim an attack at one 49 pixels away. The missing packet is not a
+//! movement packet - it is this one, which transfers responsibility for the mob.
 //!
-//! What the client *does* have is a **sender**: mob primary-vtable slot 22, `FUN_141cb6880`,
+//! A movement *path* can be pushed from the server, by `0x03D9` (`FUN_141c813b0`, whose second
+//! body byte splits `action * 2 + facing` exactly as `encodeInit` does at `141c50dbf`) - but
+//! that is the rebroadcast of some other client's report to clients which do **not** control
+//! the mob, its encoding is undecoded here, and with one player on the field there is nobody
+//! to send it to. **[L]**
+//!
+//! What the client has instead is a **sender**: mob primary-vtable slot 22, `FUN_141cb6880`,
 //! which builds outbound [`MOB_MOVE_REQUEST`] and fills it from
 //! `FUN_141d57c60` - the same movement-path encoder the player's own `0x00D9` uses. Slot 19,
 //! `FUN_141c8d1b0`, stashes slot 22 in a local at `141c8d31f` and then builds a list of

@@ -25,9 +25,16 @@ dispatcher's case list, and the read counts) were both re-derived from the image
 | smallest legal body, mob already spawned | **87 bytes** [D] |
 | body, mob NOT yet spawned | **137 bytes - byte-for-byte `0x03C6`'s body with byte 0 reinterpreted** [D] |
 | what the client sends back | outbound **`0x02FF`**, built by mob primary-vtable **slot 22** = `FUN_141cb6880` [L] |
-| does the server ever push a movement path? | **no. There is no decoder for one** - the mob pool's jump table has 19 slots and 8 live cases, and not one of them reads a path [L] |
+| does the server ever push a movement path? | **yes, `0x03D9`** - but that is the *rebroadcast* to clients which do **not** control the mob, and it is not how autonomous behaviour is produced. See the retraction in section 2.2 [L] |
 | what has to be answered | **nothing.** No mob-pool handler writes the client's move id `mob+0x2f4` [L] |
 | implemented in | `crates/net/src/mobmove.rs` |
+
+**Independent corroboration, from the combat agent on the same day.** It decoded the client's
+attack packet `0x00DF` out of a real map-40 capture: the owner at `(473, 395)`, mob 2000 at
+`(424, 395)` - 49 pixels away on the same ground line - and the attack carried **zero
+targets**. The client would not even aim at a mob we had spawned. One missing packet that
+hands the client responsibility for a mob explains both symptoms at once, and its leading
+suspect, reached from a different direction, was also `0x03D2`.
 
 **The lead in the brief was right.** The mechanism is control transfer, not movement
 transmission. What the brief did not predict, and what makes this more than a naming
@@ -84,26 +91,79 @@ because "enumerate before you filter" is the rule this file most depends on. See
 | `0x3D8` | `141d3114a` | `FUN_141d34830` |
 
 `research/mob-spawn.md` §1 says the mob pool range is `0x3C6..0x44E`. That is the **routing**
-range in `CField::OnPacket`; the pool's own switch covers `0x3C6..0x3D8` and sends everything
-else to a default that reads no packet bytes. Both statements are true; the second is the one
-that bounds this investigation.
+range in `CField::OnPacket`. The pool's *first* switch covers `0x3C6..0x3D8`; the rest goes to
+`FUN_141d32b30`, which is a **second dispatcher** - section 2.2.
 
-### 2.1 None of the eight decodes a movement path
+### 2.1 What the first eight read
 
-`tools/reads.py`, depth 1-2, over each handler: [L]
+`tools/reads.py`, depth 1-3, re-run after the tool's ten-primitive and tail-`jmp` fixes: [L]
 
-| case | reads |
-|---|---|
-| `0x3D1` | `u32, u8, u8`, then gated `u32, u32`, then gated `u32` |
-| `0x3D3` | `u32, u16, u32, u32, u8` |
-| `0x3D4` | `u32`, gated `u32, u32` |
-| `0x3D6` | `u32 count`, then per element `u32, u32, u8, [u32, u32], u32` |
-| `0x3D7` | `u32, u8` |
-| `0x3D8` | `u32`, gated `u32` |
+| case | reads | name |
+|---|---|---|
+| `0x3C6` | `u8, u32, u8, u32, u8`, mask, `encodeInit` | **MobEnterField** |
+| `0x3D1` | `u32, u8, u8`, then gated `u32, u32`, then gated `u32` | MobLeaveField (the combat agent's reading) |
+| `0x3D2` | see section 3 | **MobChangeController** |
+| `0x3D3` | `u32, u16, u32, u32, u8` -> `FUN_141cdf1e0` | |
+| `0x3D4` | `u32`, gated `u32, u32` | |
+| `0x3D6` | `u32 count`, then per element `u32, u32, u8, [u32, u32], u32` | |
+| `0x3D7` | `u32, u8` | |
+| `0x3D8` | `u32`, gated `u32` | |
 
-The client's own movement path is a **variable-length list of 12-byte elements** - see section
-5 - and nothing in that table can hold one. **The server cannot move a mob by sending it a
-path, because this client has no code to read one.** [D]
+### 2.2 RETRACTION: there IS a second jump table, and `0x03D9` decodes a movement path
+
+**The first version of this file said "the server cannot move a mob, because this client has
+no code to read a path". That is false, and it is false by exactly the mistake section 9 warns
+about: I read one jump table and treated its `default:` as dead.**
+
+`research/msexe-mobpool.c` renders the default as `FUN_141d32b30(param_1)` - one argument, no
+packet - and I believed it. The decompiler dropped two arguments that are passed **implicitly**:
+`FUN_141d30e80(pool, opcode, packet)` reaches its default at `141d31157` without ever
+clobbering `RDX` or `R8`, so `141d31162 MOV RCX,RSI / CALL 0x141d32b30` hands on all three.
+The function's own prologue proves it: [L]
+
+```asm
+141d32b42  MOV  RDI,R8          ; the packet
+141d32b45  MOV  ESI,EDX         ; the opcode
+141d32b47  MOV  RBX,RCX         ; the pool
+141d32b4d  CALL 0x1406e8c20     ; u32 objectId  <- IT READS THE PACKET
+141d32b57  CALL 0x141d2efc0     ; find that mob, or fall through to the default
+141d32b68  LEA  EAX,[RSI - 0x3d9]
+141d32b6e  CMP  EAX,0x74
+141d32b71  JA   default
+141d32b81  MOV  EDX,[RAX + RCX*4 + 0x1d33448]   ; a SECOND 117-entry jump table
+141d32b8b  JMP  RDX
+```
+
+Read out of the image at `0x141d33448`, 117 entries: **102 live cases, 15 defaults.** Every
+live stub is `MOV RDX,RDI / MOV RCX,RBX / CALL handler`, i.e. `handler(mob, packet)`. [L]
+
+The tool that caught it is `tools/reads.py` after its ten-primitive fix: run on the
+dispatcher at depth 2 it printed
+`0x141d31165 call 0x141d32b30 -> READS via helper: u32 u8 u64 u16 raw str`, and that line is
+the whole retraction.
+
+**`0x03D9` is `MobMove`.** Its handler `FUN_141c813b0` (3233 bytes, 23 read sites): [L]
+
+```asm
+141c813d0  u8   flags       bit 0 -> BL, bit 2 -> R13B
+141c813f1  u8   -> EDI
+141c81401  the mob's own animation state at mob+0x2e4, de-obfuscated
+141c81414  CMP EAX,1 / JNE
+141c8141f  SHR ECX,1 / SUB ECX,0xd / CMP ECX,0x10 / JA bail
+```
+
+`SHR ECX,1` on the second byte is the **same `action * 2 + facing` split** `encodeInit` does at
+`141c50dbf`, so byte 1 of a `0x03D9` body is a `move_action`. The handler ends with
+`141c82009 CALL 0x141d598b0` - a decoder in the movement-path neighbourhood, one `.pdata` entry
+away from the encoder `FUN_141d57c60` - and with `141c81784 MOV dword [R14+0xcd0],0`, clearing
+the very field that blocks the move sender. [L]
+
+**What this does and does not change.** `0x03D9` is how a client that does **not** control a
+mob is told where that mob went - the rebroadcast of some other client's `0x02FF`. It is not a
+way to author behaviour: the wander itself is rolled by the controlling client (section 5.1),
+its path encoding is undecoded here, and with one player on the field there is no
+non-controller to send it to. **The conclusion of this file is unchanged. One of the arguments
+it rested on was wrong, and this section is what replaces it.**
 
 ---
 
@@ -431,6 +491,33 @@ analysis is right, and it costs nothing.
    meanings. `0x3D3`'s five reads land in `FUN_141cdf1e0`, the same consumer as `encodeInit`
    offsets 74-86, so it is a candidate for "server retargets a mob" - unread.
 6. **Respawn and death.** Nothing here kills a mob, so nothing here respawns one.
+7. **The 102 second-level cases `0x3D9..0x44D`.** Enumerated and read-counted (section 2.2);
+   only `0x3D9` was decoded. The five largest by read site count, as a starting list for
+   whoever needs them: `0x3D9` -> `FUN_141c813b0` (23), `0x413` -> `FUN_141c87890` (16),
+   `0x3FE` -> `FUN_141cc38e0` (13), `0x3F7` -> `FUN_141c83a60` (11), `0x3EB` ->
+   `FUN_141c82bd0` (10). **This whole range was invisible to this project until today.**
+
+---
+
+## 7a. Two corrections to `research/mob-spawn.md` §6.3, found by re-running the fixed tool
+
+Both are gates that section calls free, and both cost bytes the moment they are not zero.
+Neither changes `crates/net/src/mob.rs`, which sends `0` for both - but a future field that
+sets either would desynchronise the rest of the body with nothing to resync on. [L]
+
+| offset | §6.3 says | actually |
+|---|---|---|
+| 107, `u8` at `141c532ab` | "gate (no reads inside)" | `141c532b2 TEST AL,AL / JE 141c534d6` - the non-zero branch reaches `141c533bf CALL 0x14023dca0`, which reads **8 x u32 + u64 = 40 bytes** unconditionally, plus whatever else is in that block |
+| 117, `u32` at `141c53518` | "gate (no reads inside)" | `141c53524 JE 0x141c535ab` jumps **past** `141c535a6 CALL 0x14028d820`, which reads **2 x u32 = 8 bytes** |
+
+Both were invisible to the old read walk because it counted only direct calls to a primitive.
+Both callees take the `CInPacket *` in `RDX` from `R12` at the call site, which is what
+separates them from the false positive in section 9.
+
+**And the 137-byte spawn body is confirmed *not* short.** Those are the only two read sites in
+`encodeInit` that `crates/net/src/mob.rs` does not account for, and both sit inside branches
+the bytes we send do not take. That was checked rather than assumed, because a body that is
+48 bytes short is precisely the failure that has cost this project a client session.
 
 ---
 
@@ -448,6 +535,17 @@ analysis is right, and it costs nothing.
 
 ## 9. Instrument notes worth keeping
 
+* **A decompiled call can drop arguments that are passed implicitly.** `msexe-mobpool.c`
+  renders the mob dispatcher's default as `FUN_141d32b30(param_1)`. It takes three, and the
+  other two are `RDX` and `R8` still holding `FUN_141d30e80`'s own arguments. Believing the
+  decompiler's arity hid **102 opcodes**, including the one that decodes a movement path. If a
+  forwarding call looks like it drops the packet, read the callee's prologue.
+* **`tools/reads.py` follows a helper without checking that the helper gets the packet.** It
+  reported `FUN_141d32b30` as reading - correct - and it would equally report a helper that
+  reads some unrelated stream. The discriminator is one instruction at the call site: is the
+  `CInPacket *` in `RDX`? For `141c533bf` and `141c535a6` it is (`MOV RDX,R12`, and `R12` is
+  the packet two instructions later). Check it every time; `research/mob-spawn.md` §10 says
+  the same thing and it is still the rule that decides.
 * **`call qword ptr [reg + 0xb0]` is not "mob vtable slot 22".** All four such sites in the mob
   address range are COM calls on an unrelated object - each is followed by
   `TEST EAX,EAX / JNS` and an `HRESULT` reporter at `0x142ef3ad0`. The real slot-22 use is a
