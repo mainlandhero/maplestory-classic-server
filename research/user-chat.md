@@ -305,3 +305,44 @@ watch@142784970,14276df20:peek=10d0
 `peek=<off>` logs the byte and dword at `rcx + off`, and `rcx` at `14276df20` is the local
 user - so `peek=10d0` reads the id straight out of the field the accessor returns.
 `crates/grap-stub/src/probe.rs` has four watch slots, so both fit with room to spare.
+
+### 5. What writes `user+0x10D0`, and a wrong turn worth recording
+
+A whole-image `tools/fieldrefs.py 0x10d0 --write` sweep - 666 939 resync points, instrument
+checked first against its documented control (`0x2f4` in the mob range must return
+`141cb7ef3`) - finds **five** writers:
+
+```text
+14079ed0a  mov   qword [r14 + 0x10d0], rbp      in 0x14079e660
+14089c306  mov   dword [rbx + 0x10d0], r8d      in 0x14089c2d0
+141c8168a  movss dword [r14 + 0x10d0], xmm0     in 0x141c813b0
+142768f56  mov   dword [rsi + 0x10d0], ebx      in 0x142768ee0
+1429c143c  mov   dword [rsi + 0x10d0], eax      in 0x1429c13b0
+```
+
+**Only one of those is the user class.** `FUN_142768ee0` is a constructor: it installs four
+vtables at `+0`, `+8`, `+0x10` and `+0x100`, then zeroes a contiguous run from `+0x10b0` to
+`+0x1102` with `+0x10D0` inside it, and the value it stores there is `ebx = edx`, its **second
+argument**. It also sits in the same neighbourhood as the accessor `FUN_14276df20`. So the
+client's local user is constructed with its character id, `CUser::CUser(dwId)`, and the id is
+decided at creation rather than patched later. It has 7 call sites.
+
+**The wrong turn.** I followed `FUN_1429c13b0` instead, because it is in the same address
+range as the user pool (`FUN_1429b6c90`, `FUN_1429bafb0`) and it also takes the value from an
+argument. Two hops up, at `141e727d7`, that argument turns out to be
+`[rbp-0x6c] + [rcx+0x1c]` - an addition, next to `psrldq`/`movd`/`inc`/`dec` on `xmm6`. That
+is coordinate arithmetic, not an id, and `FUN_1429c13b0` is a different class that happens to
+use the same offset.
+
+**A displacement match is not a class match.** `fieldrefs.py` finds `[reg + 0x10d0]` whatever
+`reg` points at, and five hits across five unrelated classes is exactly what a big binary
+should produce. Two more hops and this would have been written up as "the client stores a
+computed screen coordinate where the id should be", which is the kind of clean, confident,
+wrong answer `CLAUDE.md` is mostly a list of.
+
+**So this is still not settled statically**, and it does not need to be: the watch in section
+4 reads the field's actual value out of a running client for the price of a run the owner is
+taking anyway. What the sweep did settle is that the id is a constructor argument, so if it
+is wrong it is wrong from the moment the user is made - which is a different place to look
+than "something overwrote it later", and that is worth knowing before the run rather than
+after.
