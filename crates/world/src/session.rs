@@ -897,15 +897,7 @@ impl Session {
     fn dressed(&self, chr: &net::opcode::Character) -> Vec<(u8, u32, net::opcode::EquipStats)> {
         chr.equips
             .iter()
-            .map(|&(slot, item_id)| {
-                let stats = self
-                    .config
-                    .equips
-                    .get(&item_id)
-                    .map(|t| t.fresh_stats())
-                    .unwrap_or_default();
-                (slot, item_id, stats)
-            })
+            .map(|&(slot, item_id)| (slot, item_id, self.template_stats(item_id)))
             .collect()
     }
 
@@ -1085,7 +1077,7 @@ impl Session {
         }]
     }
 
-    /// Move an item, which today means: let the player take something off.
+    /// Move an item, and **write it down**.
     ///
     /// **Answering this is not optional.** `FUN_142cc5b00` sets `player->[0x2330]` to 1 the
     /// moment it sends `0x0107`, and its own gate 2 at `142cc5b5d` refuses every later
@@ -1094,49 +1086,117 @@ impl Session {
     /// `0x0107` does not fail one drag - it silently kills every inventory action for the
     /// rest of the session. Same class as Log Out and `world->[0x33f4]`.
     ///
-    /// # What this does NOT do yet, and it is visible
+    /// **Every path here answers, including every refusal.** A refusal is
+    /// [`net::inventory::inventory_rejected`], which moves nothing and still clears the
+    /// latch; answering with a chat notice and no `0x0070` is what killed the whole
+    /// inventory UI on 2026-08-19.
     ///
-    /// **The move is not persisted.** There is no inventory table: the character record's
-    /// equipped list is built from `crates/store`'s `equipment` rows, so the next `SetField`
-    /// - a portal, a `!map`, a relog - puts the item back on. The alternative today would be
-    /// to delete the equipment row, and then the item would be nowhere at all, because
-    /// nothing stores bag contents. **Losing an item is worse than one that comes back**, so
-    /// this answers the client and leaves the database alone until there is somewhere to put
-    /// it. See STATUS.md goals F and G, both of which need the same table.
+    /// # This is goal I
+    ///
+    /// Until 2026-08-19 the unequip moved an item on screen and nowhere else: the record's
+    /// equipped list is built from the `equipment` rows, so the next `SetField` - a portal, a
+    /// `!map`, a relog - put the item straight back on. The owner: *"items taken off should
+    /// persist as is during transitions from map to map."*
+    ///
+    /// The store now has somewhere to put it. `Store::unequip_to_bag` deletes the
+    /// `equipment` row and inserts the `inventory` row **in one transaction**, so there is no
+    /// instant in which the item is in both places or neither - which was the whole reason
+    /// the old code refused to touch the database at all. Per-item stats travel with it, so
+    /// a scrolled item does not come back flattened.
     fn on_inventory_move(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(m) = net::inventory::parse_inventory_move(payload) else {
             return Vec::new();
         };
-        // Only the unequip direction is answered. An equip, or a bag-to-bag move, needs to
-        // know what is IN the bag to be legal, and nothing tracks that - answering blind
-        // would tell the client to move an item that may not be there.
-        if !m.is_unequip() {
-            // **A refusal is a packet.** Answering this with a chat notice and no 0x0070 is
-            // what killed the whole inventory UI on 2026-08-19: the client latches
-            // player+0x2330 when it sends, and only an inbound handler clears it, so the
-            // refusal left every later request to be dropped before it was even built.
-            let mut out = vec![Reply {
-                opcode: net::inventory::INVENTORY_OPERATION,
-                body: net::inventory::inventory_rejected(),
-                what: format!(
-                    "InventoryOperation: REFUSING invType {} slot {} -> {} with nCount 0. \
-                     Nothing moves, but bExclRequestSent = 1 clears the +0x2330 latch - \
-                     without this the client's inventory UI stops responding entirely.",
-                    m.inv_type, m.src, m.dst
+        let Some(chr) = self.claimed_character() else {
+            return self.inventory_refused(&m, "no character is claimed on this connection");
+        };
+
+        if let Some(equip_slot) = m.equipped_slot() {
+            let dst = u16::try_from(m.dst).ok();
+            return match self.store.unequip_to_bag(chr.id, equip_slot, dst) {
+                Ok(row) => self.inventory_moved(
+                    &m,
+                    format!(
+                        "unequipped slot {equip_slot} into Equip bag slot {} - item {}, STORED, so the next SetField will not re-dress it",
+                        row.slot, row.item.item_id
+                    ),
                 ),
-            }];
-            out.extend(self.notice(
-                "That move is not implemented yet - only taking equipment off is.".to_string(),
-            ));
-            return out;
+                Err(e) => self.inventory_refused(&m, &format!("unequip refused: {e}")),
+            };
         }
+
+        // An equip: out of a bag slot, into a negative worn slot.
+        if m.inv_type == net::inventory::INV_EQUIP && m.src > 0 && m.dst < 0 {
+            let Ok(worn) = u8::try_from(-i32::from(m.dst)) else {
+                return self.inventory_refused(&m, "the worn slot does not fit in a u8");
+            };
+            let Ok(src) = u16::try_from(m.src) else {
+                return self.inventory_refused(&m, "the bag slot does not fit in a u16");
+            };
+            return match self.store.equip_from_bag(chr.id, src, worn) {
+                Ok(item_id) => self.inventory_moved(
+                    &m,
+                    format!("equipped item {item_id} from Equip bag slot {src} into slot {worn}"),
+                ),
+                Err(e) => self.inventory_refused(&m, &format!("equip refused: {e}")),
+            };
+        }
+
+        // Bag to bag. The client sends -1 for `count` when the item is not a bundle.
+        let Ok(inv) = store::InventoryType::from_wire(i16::from(m.inv_type)) else {
+            return self.inventory_refused(&m, &format!("invType {} is not a bag", m.inv_type));
+        };
+        let (Ok(src), Ok(dst)) = (u16::try_from(m.src), u16::try_from(m.dst)) else {
+            return self.inventory_refused(&m, "a bag-to-bag move needs two positive slots");
+        };
+        let count = (m.count >= 0).then(|| m.count as u16);
+        let max_stack = self.max_stack(&chr, inv, src);
+        match self.store.move_item(chr.id, inv, src, dst, count, max_stack) {
+            Ok(outcome) => self.inventory_moved(&m, format!("{inv:?} bag: {outcome:?}")),
+            Err(e) => self.inventory_refused(&m, &format!("move refused: {e}")),
+        }
+    }
+
+    /// How many of the item in `slot` fit in one stack, from `info/slotMax`.
+    ///
+    /// **`0` and `1` both mean "does not stack"**, and `0` is what every equip has because
+    /// the property is simply absent - 290 of 2785 items carry one. An unknown item also
+    /// lands here, and treating it as non-stacking is the safe direction: the worst case is
+    /// a merge that does not happen, against a merge that silently destroys the overflow.
+    fn max_stack(&self, chr: &net::opcode::Character, inv: store::InventoryType, slot: u16) -> u16 {
+        let Ok(items) = self.store.bag_items(chr.id, inv) else { return 1 };
+        let Some(row) = items.iter().find(|i| i.slot == slot) else { return 1 };
+        self.config
+            .shops
+            .item_data
+            .get(&row.item.item_id)
+            .map(|d| d.slot_max.max(1))
+            .unwrap_or(1)
+    }
+
+    /// The `0x0070` that says a move happened.
+    fn inventory_moved(&self, m: &net::inventory::InventoryMove, why: String) -> Vec<Reply> {
         vec![Reply {
             opcode: net::inventory::INVENTORY_OPERATION,
             body: net::inventory::inventory_move_result(m.inv_type, m.src, m.dst),
             what: format!(
-                "InventoryOperation: move invType {} slot {} -> {}. The first byte is 1, \
-                 which clears the client's +0x2330 request latch; a 0 there would block \
-                 every later inventory action. NOT persisted - the next SetField re-equips.",
+                "InventoryOperation: move invType {} slot {} -> {}. {why}. The first byte is 1, which clears the client's +0x2330 request latch; a 0 there would block every later inventory action.",
+                m.inv_type, m.src, m.dst
+            ),
+        }]
+    }
+
+    /// The `0x0070` that says nothing happened - and it is **still a reply**.
+    ///
+    /// `nCount` is 0, so the client skips the entry loop entirely and moves no item, but
+    /// `bExclRequestSent` is 1 and that is what unlocks the UI. A refusal that sends nothing
+    /// is not a refusal; it is a dead inventory for the rest of the session.
+    fn inventory_refused(&self, m: &net::inventory::InventoryMove, why: &str) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::inventory::INVENTORY_OPERATION,
+            body: net::inventory::inventory_rejected(),
+            what: format!(
+                "InventoryOperation: REFUSING invType {} slot {} -> {} with nCount 0 - {why}. Nothing moves, but bExclRequestSent = 1 clears the +0x2330 latch.",
                 m.inv_type, m.src, m.dst
             ),
         }]
@@ -1300,7 +1360,44 @@ impl Session {
         if let Some(slots) = self.config.inventory_slots {
             chr.inventory_slots = [slots; net::opcode::INVENTORY_COUNT];
         }
+        // **The Equip tab's contents, and this is goal I.** Loaded on the same funnel as the
+        // slot counts for the same reason: both `SetField` sites go through here, and the
+        // one thing that must never differ between a migration and a portal walk is what the
+        // character is carrying. Before this, an unequip moved an item on screen and nowhere
+        // else, so the next field entry re-dressed from `equipment` rows that had not
+        // changed and the item came back on.
+        //
+        // A read failure yields an EMPTY bag rather than dropping the character. The record
+        // has no length prefix and no resync point, so an empty Equip tab costs a bag that
+        // looks empty for one field entry; no character at all costs the minimal record and
+        // a player who is nowhere.
+        chr.equip_bag = match self.store.bag(chr.id) {
+            Ok(bag) => bag
+                .items_in(store::InventoryType::Equip)
+                .filter_map(|row| {
+                    let store::ItemKind::Equip(stored) = row.item.kind else {
+                        return None; // a bundle in the Equip tab is not representable
+                    };
+                    Some(net::bag::BagEquip {
+                        pos: row.slot,
+                        item_id: row.item.item_id,
+                        // None means "derive from the template", which is what every row
+                        // written before per-item stats existed says.
+                        stats: stored.unwrap_or_else(|| self.template_stats(row.item.item_id)),
+                    })
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
         Some(chr)
+    }
+
+    /// The stats an item's `Character.wz` template gives it, or all-zero if it has none.
+    ///
+    /// Split out of [`Session::dressed`] so a worn item and a bagged one cannot disagree
+    /// about what the same item id is worth.
+    fn template_stats(&self, item_id: u32) -> net::opcode::EquipStats {
+        self.config.equips.get(&item_id).map(|t| t.fresh_stats()).unwrap_or_default()
     }
 
     /// The 8 bytes the client stores as a server clock base, stamping its own tick beside
@@ -1522,6 +1619,143 @@ mod tests {
         assert!(note.contains("0 started / 0 completed"), "{note}");
         assert_eq!(book.started_block().len(), net::quest::EMPTY_QUEST_BLOCK_LEN);
         assert_eq!(book.completed_block().len(), net::quest::EMPTY_QUEST_BLOCK_LEN);
+    }
+
+    /// A session whose character is wearing four items, which is what a real one wears.
+    fn dressed_session() -> (Session, Arc<Store>, u32) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Wanderer".to_string(),
+            equips: vec![(5, 1040002), (6, 1060002), (7, 1072001), (11, 1302000)],
+            ..Default::default()
+        };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store.clone(), Arc::new(Config::default()));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        (s, store, id)
+    }
+
+    /// The `0x0107` body: u32 tick, i8 invType, i16 src, i16 dst, i16 count.
+    fn inventory_move(inv_type: i8, src: i16, dst: i16, count: i16) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.push(inv_type as u8);
+        b.extend_from_slice(&src.to_le_bytes());
+        b.extend_from_slice(&dst.to_le_bytes());
+        b.extend_from_slice(&count.to_le_bytes());
+        b
+    }
+
+    /// **Goal I, end to end.** The owner: *"items taken off should persist as is during
+    /// transitions from map to map."*
+    ///
+    /// Take the hat off, then walk a portal, and read the record that comes back: the hat
+    /// must be gone from the equipped list and present in the Equip tab. Before the store
+    /// had somewhere to put it this test could not be written - the unequip touched no row,
+    /// so the next `SetField` re-dressed the character and the item came back on.
+    #[test]
+    fn an_unequipped_item_is_still_off_after_a_map_change() {
+        let (mut s, store, id) = dressed_session();
+
+        let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, -5, 1, -1));
+        assert_eq!(out.len(), 1, "exactly one reply, and it is never zero");
+        assert_eq!(out[0].opcode, net::inventory::INVENTORY_OPERATION);
+        assert_eq!(out[0].body[0], 1, "bExclRequestSent - without it the UI locks up");
+        assert!(out[0].what.contains("STORED"), "{}", out[0].what);
+
+        // The database, not the reply.
+        let worn: Vec<u8> = store.equipped_items(id).unwrap().iter().map(|e| e.slot).collect();
+        assert_eq!(worn, vec![6, 7, 11], "slot 5 is off");
+        let bagged: Vec<(u16, u32)> = store
+            .bag(id)
+            .unwrap()
+            .items_in(store::InventoryType::Equip)
+            .map(|i| (i.slot, i.item.item_id))
+            .collect();
+        assert_eq!(bagged, vec![(1, 1040002)], "and it is in the Equip tab, slot 1");
+
+        // The wire, on the next field entry.
+        let mut chr = s.claimed_character().expect("the claim resolves");
+        assert!(!chr.equips.iter().any(|&(slot, _)| slot == 5), "not worn any more");
+        assert_eq!(chr.equip_bag.len(), 1, "and the record will carry it");
+
+        let replies = s.go_to_map(&mut chr, 40, 0, "a test portal walk".to_string());
+        let sf = replies
+            .iter()
+            .find(|r| r.opcode == net::opcode::SET_FIELD)
+            .expect("a field entry always sends a SetField");
+
+        let expected = net::bag::equipped_tail(
+            &[net::bag::BagEquip::plain(1, 1040002)],
+            net::opcode::DEFAULT_INVENTORY_SLOTS,
+        );
+        assert!(
+            sf.body.windows(expected.len()).any(|w| w == expected.as_slice()),
+            "the Equip tab's list is not in the record"
+        );
+        // And it costs what one bag equip costs, rather than merely appearing somewhere. A
+        // 125-byte item body is mostly zeros, so "the ten empty bytes are absent" is NOT a
+        // usable check - the pattern occurs inside any item. The length delta is exact.
+        let mut bare = chr.clone();
+        bare.equip_bag.clear();
+        let without = s.go_to_map(&mut bare, 40, 0, "the same walk, empty bag".to_string());
+        let without = &without
+            .iter()
+            .find(|r| r.opcode == net::opcode::SET_FIELD)
+            .expect("a SetField")
+            .body;
+        assert_eq!(
+            sf.body.len() - without.len(),
+            2 + net::opcode::EQUIPPED_ITEM_LEN,
+            "one u16 position plus one type-1 item body"
+        );
+    }
+
+    /// Putting it back on is the same transaction in reverse, and it also persists.
+    #[test]
+    fn equipping_from_the_bag_moves_the_row_back() {
+        let (mut s, store, id) = dressed_session();
+        s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, -5, 1, -1));
+
+        let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, -5, -1));
+        assert_eq!(out[0].body[0], 1, "still answered");
+        assert!(out[0].what.contains("equipped item 1040002"), "{}", out[0].what);
+
+        let worn: Vec<u8> = store.equipped_items(id).unwrap().iter().map(|e| e.slot).collect();
+        assert_eq!(worn, vec![5, 6, 7, 11], "back on");
+        assert_eq!(store.bag(id).unwrap().items.len(), 0, "and out of the bag");
+    }
+
+    /// A move the store refuses is still answered, and with the byte that unlocks the UI.
+    ///
+    /// **This is the failure that cost a whole session on 2026-08-19**: a refusal sent as a
+    /// chat notice left `player+0x2330` latched, and every later inventory action was dropped
+    /// by the client before it was built.
+    #[test]
+    fn a_refused_move_still_clears_the_request_latch() {
+        let (mut s, store, id) = dressed_session();
+
+        // Slot 9 is empty, so this cannot succeed.
+        let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, -9, 1, -1));
+        assert_eq!(out.len(), 1, "a refusal is a packet");
+        assert_eq!(out[0].opcode, net::inventory::INVENTORY_OPERATION);
+        assert_eq!(out[0].body, net::inventory::inventory_rejected());
+        assert_eq!(out[0].body[0], 1, "bExclRequestSent, even on a refusal");
+        assert!(out[0].what.contains("REFUSING"), "{}", out[0].what);
+
+        assert_eq!(store.equipped_items(id).unwrap().len(), 4, "nothing moved");
+        assert!(store.bag(id).unwrap().is_empty());
+    }
+
+    /// A connection with no claimed migration is answered too, rather than dropped.
+    #[test]
+    fn an_unclaimed_connection_is_refused_rather_than_ignored() {
+        let (mut s, _, _, _) = session();
+        let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, -5, 1, -1));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].body, net::inventory::inventory_rejected());
     }
 
     /// The channel must not send the login server's startup gate. That packet is what a

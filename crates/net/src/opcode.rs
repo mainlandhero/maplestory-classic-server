@@ -771,6 +771,18 @@ pub struct Character {
     pub portal: u8,
     /// `(slot, itemId)` pairs for the avatar's visible equipment.
     pub equips: Vec<(u8, u32)>,
+    /// What is in the **Equip tab of the bag** - owned, not worn.
+    ///
+    /// This is the field that makes an unequip survive a map change. Taking an item off
+    /// used to move it on screen and nowhere else, so the next `SetField` re-dressed the
+    /// character from the `equipment` rows, which had never changed.
+    ///
+    /// It is **not** in the `characters` table - it lives in `inventory`, keyed by
+    /// `(character_id, inv_type, slot)`, and `crates/store/src/character.rs` skips it in the
+    /// destructure for that reason. Only the Equip tab is here because only the Equip tab is
+    /// in the character record: see [`equipped_block_with_bag`] for why the other three
+    /// lists after it are not bags at all.
+    pub equip_bag: Vec<crate::bag::BagEquip>,
     /// How many slots each of the six inventories has - the size of the bag.
     ///
     /// **The client does not assume this; it is told.** See [`INVENTORY_SLOT_ORDER`] for
@@ -819,6 +831,7 @@ impl Default for Character {
             map_id: START_MAP_ID,
             portal: 0, // the map's spawn point
             equips: Vec::new(),
+            equip_bag: Vec::new(),
             inventory_slots: [DEFAULT_INVENTORY_SLOTS; INVENTORY_COUNT],
         }
     }
@@ -1670,9 +1683,13 @@ pub fn character_record_for_set_field_with(
     // resync point, so this order is the whole of what makes the bytes after it readable.
     out.extend_from_slice(&inventory_size_block(&chr.inventory_slots));
     // Gate entry 6 fires here, because presence[2] is set. The Equip tab's contents ride
-    // in the same block; `Character` cannot carry them yet, so it goes out empty and
-    // byte-identical to what a real client has already accepted.
-    out.extend_from_slice(&equipped_block_with_bag(equips, &[], chr.inventory_slots[0]));
+    // in the same block, sized by the same number the presence[7] block just sent - a
+    // position past that is decoded by the client and thrown away.
+    out.extend_from_slice(&equipped_block_with_bag(
+        equips,
+        &chr.equip_bag,
+        chr.inventory_slots[0],
+    ));
     out.push(0); // the final ungated read, at 0x140308b3f
     out
 }

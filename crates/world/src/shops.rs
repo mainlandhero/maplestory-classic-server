@@ -197,6 +197,13 @@ pub struct Shop {
 #[derive(Debug, Clone, Default)]
 pub struct ShopTable {
     pub shops: Vec<Shop>,
+    /// Every item's measured properties, by id - **not just the ones a shop sells**.
+    ///
+    /// It is kept here because this is where it is already loaded, and because the two
+    /// callers that need it are the same file's shop rows and the inventory move that has to
+    /// know whether two items in a bag stack. `slot_max` is `0` for an item with no
+    /// `info/slotMax`, which is every equip; see [`ItemData::slot_max`].
+    pub item_data: HashMap<u32, ItemData>,
     /// One line per row that could not be loaded, ready to print.
     ///
     /// **Nothing is dropped quietly.** A shop row that cannot be resolved is a row that
@@ -319,7 +326,7 @@ impl ShopTable {
     pub fn load(shops: &Path, item_names: &Path, item_data: &Path) -> ShopTable {
         let names = load_item_names(item_names);
         let data = load_item_data(item_data);
-        let mut table = ShopTable::default();
+        let mut table = ShopTable { item_data: data.clone(), ..ShopTable::default() };
 
         if names.is_empty() {
             table.problems.push(format!(

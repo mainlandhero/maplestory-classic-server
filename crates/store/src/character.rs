@@ -98,6 +98,11 @@ impl Store {
             ap,
             map_id,
             equips,
+            // Not persisted HERE. The Equip tab's contents live in the `inventory` table,
+            // written by `Store::unequip_to_bag` and friends and read back by `Store::bag`;
+            // a copy in `characters` would be a second source of truth for the same rows.
+            // Named rather than `..`-ignored so this stays a decision someone made.
+            equip_bag: _,
             inventory_slots,
         } = chr;
 
@@ -206,6 +211,11 @@ impl Store {
                 ap: row.get(16)?,
                 map_id: row.get(17)?,
                 equips: Vec::new(),
+                // Filled by the caller that needs it, which is the world server on field
+                // entry - see Store::bag. The login server's character-select list does not
+                // send bag contents, so loading them here would be a query per character
+                // for bytes nobody puts on the wire.
+                equip_bag: Vec::new(),
                 inventory_slots: [
                     row.get(18)?,
                     row.get(19)?,
