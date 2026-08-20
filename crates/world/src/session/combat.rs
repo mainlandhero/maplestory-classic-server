@@ -119,7 +119,15 @@ impl Session {
                 out.extend(self.award_experience(u64::from(worth), "a kill"));
                 out.extend(self.credit_kill_to_quests(template, chr_id));
             }
-            for (opcode, body) in net::combat::mob_hit_replies(target.object_id, &hit) {
+            // The template's real maxHP, because 0x03F0 carries a PERCENTAGE.
+            let max_hp = self
+                .config
+                .mobs
+                .get(&map)
+                .and_then(|l| l.iter().find(|m| m.object_id == target.object_id))
+                .map(|m| m.hp)
+                .unwrap_or(hp_before);
+            for (opcode, body) in net::combat::mob_hit_replies(target.object_id, &hit, max_hp) {
                 out.push(Reply {
                     opcode,
                     body,
@@ -325,12 +333,23 @@ impl Session {
                 }
             ),
         }];
-        if a.levels > 0 {
-            out.extend(self.notice(format!(
-                "Level up! {} is now level {}. +{} AP, and HP/MP restored.",
-                chr.name, chr.level, a.ap
-            )));
-        }
+        // **The right-hand message area, not the chat log.** The owner: *"it should actually show
+        // on the right hand side of the client. We should not be outputting in the chat log
+        // regarding level ups and item pickups."*
+        //
+        // `0x0089` type 3 carries the number and the client composes the sentence from its
+        // own string table - `You received EXP (+211)` in this build. The third field is what
+        // chooses the destination: non-zero routes the line to the chat log, zero routes it
+        // to the other place. `research/client-messages.md`.
+        //
+        // The level-up itself gets no message: there is no level-up type in the table, and
+        // `0x007C` already plays the animation when the level in it is higher than the one
+        // the client holds. That is a "did not find", not a "there is none".
+        out.push(Reply {
+            opcode: net::message::MESSAGE,
+            body: net::message::exp_gained(gained),
+            what: format!("Message: +{gained} exp, in the screen message area, not the chat log"),
+        });
         out
     }
 

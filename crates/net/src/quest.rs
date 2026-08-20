@@ -1131,7 +1131,7 @@ mod tests {
             completed: Vec::new(),
         };
         let plain = crate::opcode::set_field_with_character_dressed(&chr, 0, 0, 0, &equips);
-        let quested = set_field_with_character_dressed_quests(&chr, 0, 0, 0, &equips, &book);
+        let quested = set_field_with_character_dressed_quests(&chr, 0, 0, 0, &equips, &book, &[]);
         assert_eq!(quested.len(), plain.len() + book.record_len());
         assert_eq!(&quested[..40], &plain[..40], "the head is untouched");
     }

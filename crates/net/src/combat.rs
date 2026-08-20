@@ -550,18 +550,41 @@ pub fn apply_damage(hp_before: u64, damage: u64) -> MobHit {
 /// as one [`stat_changed`] carrying the player's **new total** - see
 /// [`StatChange::exp_only`]. Sending one `0x007C` per mob in a multi-target swing would
 /// send several packets where one suffices.
-pub fn mob_hit_replies(object_id: u32, hit: &MobHit) -> Vec<(u16, Vec<u8>)> {
+pub fn mob_hit_replies(object_id: u32, hit: &MobHit, max_hp: u64) -> Vec<(u16, Vec<u8>)> {
     if hit.hp_before == 0 {
         return Vec::new();
     }
     if hit.died {
         vec![(MOB_LEAVE_FIELD, mob_leave_field(object_id, death::ANIMATED))]
     } else {
-        vec![(
-            MOB_HP_CHANGE,
-            mob_hp_change(object_id, hit.hp_after.min(u32::MAX as u64) as u32, true),
-        )]
+        vec![(MOB_HP_CHANGE, mob_hp_change(object_id, hp_percent(hit.hp_after, max_hp), true))]
     }
+}
+
+/// **`0x03F0` carries a PERCENTAGE, 0..100 - not an absolute HP.**
+///
+/// This was sent as the absolute remaining HP until 2026-08-20, and the owner spotted it on
+/// screen: a snail with 45 HP hit for 18 should show a bar a little under two thirds, and it
+/// did not. Sending 27 draws **27 %**.
+///
+/// The doc block on [`mob_hp_change`] had it wrong in a specific and instructive way. It
+/// said the client divides by `template+0x100`, "the mob's max HP". `template+0x100` is
+/// **`hpNoticePerNum`**, a different `Mob.wz` property - and a census of all 193 mob images
+/// in this client finds it on **none** of them. The constructor therefore does
+/// `mob+0x8b4 = hpNoticePerNum ? hpNoticePerNum : 100.0`, every reader converts with
+/// `v * 100 / (hpNoticePerNum ?: 100)`, and the gauge draws `value / 100.0 * width`. The
+/// real `maxHP` is `template+0x20`, which is what `tools/dump_mobs.py` already dumps.
+///
+/// So the arithmetic was never wrong; the **unit** was. `research/mob-hp-bar.md`.
+///
+/// Rounds up, so a mob on its last sliver of health never shows an empty bar while alive -
+/// an empty bar on a living mob reads as a bug in exactly the way this one did.
+pub fn hp_percent(hp: u64, max_hp: u64) -> u32 {
+    if max_hp == 0 {
+        return 0; // no maximum to divide by; a zero bar is the honest answer
+    }
+    let pct = (hp.saturating_mul(100)).div_ceil(max_hp);
+    pct.min(100) as u32
 }
 
 // ---------------------------------------------------------------------------------------
@@ -996,6 +1019,34 @@ pub fn stat_changed(change: &StatChange) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The HP field is a percentage, and sending the absolute was the bug the owner saw.**
+    ///
+    /// A snail has 45 HP. Hit for 18, it has 27 left - which is 60%, not 27%.
+    #[test]
+    fn the_hp_field_is_a_percentage_not_an_absolute() {
+        assert_eq!(hp_percent(27, 45), 60, "27 of 45 is three fifths");
+        assert_eq!(hp_percent(45, 45), 100);
+        assert_eq!(hp_percent(0, 45), 0);
+        // Rounds UP, so a mob on its last sliver never shows an empty bar while alive - an
+        // empty bar on a living mob reads as a bug in exactly the way this one did.
+        assert_eq!(hp_percent(1, 45), 3);
+        assert_eq!(hp_percent(1, 1_000_000), 1);
+        // No maximum to divide by is answered honestly rather than by guessing 100.
+        assert_eq!(hp_percent(10, 0), 0);
+        // Never over 100, whatever the caller does.
+        assert_eq!(hp_percent(90, 45), 100);
+    }
+
+    /// The whole path: a wounded mob's packet carries the percentage.
+    #[test]
+    fn a_wounded_mob_reports_its_percentage() {
+        let out = mob_hit_replies(2000, &apply_damage(45, 18), 45);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, MOB_HP_CHANGE);
+        let expected = mob_hp_change(2000, 60, true);
+        assert_eq!(out[0].1, expected, "27 remaining of 45 must go out as 60");
+    }
 
     /// The one real attack this project has ever captured: `world.log`, 2026-08-19,
     /// `23:58:33.878`, map 40, standing at `(473, 395)`.
@@ -1481,12 +1532,16 @@ mod tests {
     /// death and nothing else, corpse -> silence.
     #[test]
     fn the_reply_for_a_hit_is_the_bar_and_the_reply_for_a_kill_is_the_death() {
-        let alive = mob_hit_replies(2000, &apply_damage(45, 12));
+        let alive = mob_hit_replies(2000, &apply_damage(45, 12), 45);
         assert_eq!(alive.len(), 1);
         assert_eq!(alive[0].0, MOB_HP_CHANGE);
-        assert_eq!(&alive[0].1[4..8], &33u32.to_le_bytes());
+        // **A PERCENTAGE, not the absolute 33.** This line asserted 33 until 2026-08-20 and
+        // that is the bug the owner saw on screen: 33 of 45 drew a bar at 33 % rather than 73 %.
+        // See `hp_percent` for why the field's unit was misread for so long.
+        assert_eq!(&alive[0].1[4..8], &hp_percent(33, 45).to_le_bytes());
+        assert_eq!(hp_percent(33, 45), 74, "33/45 rounds up to 74");
 
-        let killed = mob_hit_replies(2000, &apply_damage(45, 45));
+        let killed = mob_hit_replies(2000, &apply_damage(45, 45), 45);
         assert_eq!(killed.len(), 1);
         assert_eq!(killed[0].0, MOB_LEAVE_FIELD);
         assert_eq!(killed[0].1, mob_leave_field(2000, death::ANIMATED));
@@ -1495,7 +1550,7 @@ mod tests {
             "a mob leaving the field must not also get a bar update"
         );
 
-        assert!(mob_hit_replies(2000, &apply_damage(0, 12)).is_empty());
+        assert!(mob_hit_replies(2000, &apply_damage(0, 12), 45).is_empty());
     }
 
     /// A whole swing, end to end from the wire: parse an attack that carries one target,
@@ -1536,7 +1591,7 @@ mod tests {
 
         let hit = apply_damage(45, a.targets[0].total_damage());
         assert!(hit.died);
-        let replies = mob_hit_replies(a.targets[0].object_id, &hit);
+        let replies = mob_hit_replies(a.targets[0].object_id, &hit, 45);
         assert_eq!(replies[0].0, MOB_LEAVE_FIELD);
     }
 

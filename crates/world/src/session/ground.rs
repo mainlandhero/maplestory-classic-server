@@ -163,11 +163,8 @@ impl Session {
         let outcome = self.fields.with_drops(map, |d| d.take(object_id, chr.id, now));
         // The log line is the deliverable. It is written to be greppable on one line,
         // because the run that produces it is read by eye.
-        let mut out = vec![Reply {
-            opcode: net::notice::CHAT_NOTICE,
-            body: net::notice::chat_notice(&format!("Picked up drop {object_id}.")),
-            what: format!("0x{opcode:04X} pick-up of drop {object_id} - {}", outcome.what()),
-        }];
+        let mut out: Vec<Reply> = Vec::new();
+        let _ = opcode;
 
         if let Some(drop) = outcome.taken() {
             // **Mesos are not an item and must never reach a bag.** The first real pick-up,
@@ -198,6 +195,11 @@ impl Session {
                     }
                     Err(e) => out.extend(self.notice(format!("Could not credit mesos: {e}"))),
                 }
+                out.push(Reply {
+                    opcode: net::message::MESSAGE,
+                    body: net::message::meso_gained(amount.min(i32::MAX as u32) as i32),
+                    what: format!("Message: +{amount} mesos, screen message area"),
+                });
                 out.extend(outcome.replies());
                 return out;
             }
@@ -213,6 +215,18 @@ impl Session {
             match self.store.add_item(chr.id, inv, &drop.item, max_stack) {
                 Ok(placed) => {
                     out.extend(self.inventory_added_replies(inv, &placed, "picked up"));
+                    // The client composes "<item> x<n> earned." from its own string table.
+                    // A zero count would make it format a string it never built, so the
+                    // builder refuses one - see net::message::item_gained.
+                    let picked = drop.quantity().max(1);
+                    out.push(Reply {
+                        opcode: net::message::MESSAGE,
+                        body: net::message::item_gained(drop.item_id(), u32::from(picked)),
+                        what: format!(
+                            "Message: picked up {} x{picked}, screen message area",
+                            drop.item_id()
+                        ),
+                    });
                     // Only now is the drop really gone. The leave packet goes last, after
                     // the bag write it depends on has succeeded.
                     out.extend(outcome.replies());

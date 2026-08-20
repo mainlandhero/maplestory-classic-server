@@ -286,6 +286,7 @@ mod ground;
 mod inventory;
 mod npc;
 mod shop;
+mod skills;
 #[cfg(test)]
 mod tests;
 
@@ -475,6 +476,9 @@ impl Session {
             // one report and were measured 14-50 px behind while running, and 50 px is twice
             // the width of the client's pick-up box. The end is exact when standing still,
             // which is the case a drag out of the inventory window is.
+            net::skills::CLIENT_USER_SKILL_UP_REQUEST => {
+                return self.on_skill_up(body.get(2..).unwrap_or(&[]))
+            }
             net::userhit::CLIENT_USER_HIT => {
                 return self.on_user_hit(body.get(2..).unwrap_or(&[]))
             }
@@ -513,6 +517,7 @@ impl Session {
         let (body, what) = match self.claimed_character() {
             Some(chr) => {
                 let (quests, quest_note) = self.quest_book(chr.id);
+                let skills = self.store.skills(chr.id).unwrap_or_default();
                 (
                 net::opcode::set_field_with_character_dressed_quests(
                     &chr,
@@ -521,6 +526,7 @@ impl Session {
                     self.config.channel_id,
                     &self.dressed(&chr),
                     &quests,
+                    &skills,
                 ),
                 format!(
                     "SetField, characterData=1, presence[0] set so the character-stat block decodes, carrying map {} for character {} ({}). presence[0] is gate entry 7, settled in research/charrecord-presence-map.md; the map id sits at stat-block offset {}, settled in research/charstat-layout.md{}. Nothing here authenticates anybody.",

@@ -30,6 +30,7 @@ pub mod error;
 pub mod password;
 pub mod quest;
 pub mod session;
+pub mod skills;
 pub mod storage;
 
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};

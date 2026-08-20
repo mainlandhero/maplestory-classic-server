@@ -1968,13 +1968,43 @@ pub fn character_record_for_set_field_with_quests(
     equips: &[(u8, u32, EquipStats)],
     quests: &crate::quest::QuestBook,
 ) -> Vec<u8> {
+    character_record_for_set_field_with_quests_and_skills(chr, world_id, equips, quests, &[])
+}
+
+/// The record with quests **and skills**.
+///
+/// # The skill block is `presence[8]`, and it goes before the quest blocks
+///
+/// Gate `0x140306d28`, key `0x143abf280`, whose single initialiser writes byte **+8**; the
+/// client's own *encoder* gates the same block with a different key that also writes byte 8.
+/// Its position is after the equipped list (`0x1403061a0`) and before both quest gates
+/// (`0x1403074a3`) - and the record has no length prefix and no resync point, so that order
+/// is the whole of what makes the bytes after it readable. `research/skills.md`.
+///
+/// **A character with no skills sends no block and does not set the byte**, so the record is
+/// byte-identical to what this server sent before skills existed. That is deliberate: it
+/// keeps the change to characters that have actually raised something, which is the only
+/// case anyone has looked at.
+pub fn character_record_for_set_field_with_quests_and_skills(
+    chr: &Character,
+    world_id: u32,
+    equips: &[(u8, u32, EquipStats)],
+    quests: &crate::quest::QuestBook,
+    skills: &[crate::skills::Skill],
+) -> Vec<u8> {
     let mut out = character_record_for_set_field_with(chr, world_id, equips);
-    out[PRESENCE_QUEST_STARTED] = 1;
-    out[PRESENCE_QUEST_COMPLETED] = 1;
     // The base record's last byte is the ungated read at 0x140308b3f, past every gate this
-    // server sets. Both quest gates come before it, so the blocks go in front of it.
+    // server sets. Every block below comes before it, so they go in front of it.
     let tail = out.pop().expect("the character record is never empty");
     debug_assert_eq!(tail, 0, "the final ungated u8 at 0x140308b3f is the byte being moved");
+
+    if !skills.is_empty() {
+        out[crate::skills::PRESENCE_SKILLS] = 1;
+        out.extend_from_slice(&crate::skills::skill_block(skills));
+    }
+
+    out[PRESENCE_QUEST_STARTED] = 1;
+    out[PRESENCE_QUEST_COMPLETED] = 1;
     out.extend_from_slice(&quests.started_block());
     out.extend_from_slice(&quests.completed_block());
     out.push(tail);
@@ -1993,11 +2023,14 @@ pub fn set_field_with_character_dressed_quests(
     channel: u32,
     equips: &[(u8, u32, EquipStats)],
     quests: &crate::quest::QuestBook,
+    skills: &[crate::skills::Skill],
 ) -> Vec<u8> {
     let mut b = set_field_head(clock, channel, 0);
     b[SET_FIELD_CHARACTER_DATA_AT] = SET_FIELD_WITH_CHARACTER_DATA;
     b.extend_from_slice(&[0u8; 12]); // three u32s the caller reads before the record decoder
-    b.extend_from_slice(&character_record_for_set_field_with_quests(chr, world_id, equips, quests));
+    b.extend_from_slice(&character_record_for_set_field_with_quests_and_skills(
+        chr, world_id, equips, quests, skills,
+    ));
     // 142098435, and the same 384-byte margin set_field_with_character_dressed carries: a
     // zero u8 here jumps past the next seven reads, and surplus bytes are never looked at
     // because the frame carries its own length.

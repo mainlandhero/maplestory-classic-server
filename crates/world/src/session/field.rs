@@ -132,6 +132,10 @@ impl Session {
         // object.
         let dressed = self.dressed(chr);
         let (quests, quest_note) = self.quest_book(chr.id);
+        // A character with no skills sends no skill block and does not set its presence
+        // byte, so the record stays byte-identical to what this server sent before skills
+        // existed. Only a character that has raised something gets the new block.
+        let skills = self.store.skills(chr.id).unwrap_or_default();
         vec![Reply {
             opcode: net::opcode::SET_FIELD,
             body: net::opcode::set_field_with_character_dressed_quests(
@@ -141,6 +145,7 @@ impl Session {
                 self.config.channel_id,
                 &dressed,
                 &quests,
+                &skills,
             ),
             what: format!(
                 "SetField, {why}, for character {} ({}){warn}{quest_note}",

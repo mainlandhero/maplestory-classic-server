@@ -523,8 +523,15 @@ fn the_pick_up_handler_reads_the_drop_id_at_the_measured_offset() {
     body.extend_from_slice(&[0u8; 17]);
 
     let out = s.handle(&body);
-    let told = out.iter().map(|r| r.what.clone()).collect::<Vec<_>>().join(" | ");
-    assert!(told.contains("pick-up of drop"), "{told}");
+    // The pick-up reports itself in the screen message area, not the chat log.
+    assert!(
+        out.iter().any(|r| r.opcode == net::message::MESSAGE),
+        "a pick-up should post to the screen message area: {out:?}"
+    );
+    assert!(
+        out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE),
+        "and nothing about it belongs in the chat log"
+    );
 
     let bagged: Vec<u32> = store
         .bag(id)
@@ -796,11 +803,16 @@ fn enough_experience_levels_the_character_and_says_so() {
 
     let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("a 0x007C");
     assert!(stat.what.contains("LEVEL 1 -> 2"), "{}", stat.what);
+    // **No chat line.** The owner asked for level-ups and pick-ups to stop going to the chat
+    // log; the level-up animation comes from the `0x007C` itself, and the EXP gain goes to
+    // the screen message area as `0x0089` type 3.
     assert!(
-        out.iter()
-            .filter(|r| r.opcode == net::notice::CHAT_NOTICE)
-            .any(|r| notice_text(r).contains("Level up!")),
-        "the player should be told"
+        out.iter().all(|r| r.opcode != net::notice::CHAT_NOTICE),
+        "nothing about a level-up belongs in the chat log"
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::message::MESSAGE),
+        "the EXP gain goes to the screen message area"
     );
 
     // The database, not the reply.

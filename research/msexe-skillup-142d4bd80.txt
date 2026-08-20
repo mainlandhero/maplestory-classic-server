@@ -1,0 +1,46 @@
+; 0x142d4bd80 .. 0x142d4be2c  (172 bytes)
+ 000142d4bd80  push     rbx
+ 000142d4bd82  push     rsi
+ 000142d4bd83  push     rdi
+ 000142d4bd84  sub      rsp, 0x480
+ 000142d4bd8b  mov      rax, qword ptr [rip + 0xd3fb76]
+ 000142d4bd92  xor      rax, rsp
+ 000142d4bd95  mov      qword ptr [rsp + 0x470], rax
+ 000142d4bd9d  mov      esi, r8d
+ 000142d4bda0  mov      edi, edx
+ 000142d4bda2  mov      rbx, rcx
+ 000142d4bda5  xor      r8d, r8d
+ 000142d4bda8  mov      edx, 0x1f4
+ 000142d4bdad  call     0x142cc42d0
+ 000142d4bdb2  test     eax, eax
+ 000142d4bdb4  je       0x142d4be11   [branch]
+ 000142d4bdb6  mov      edx, 0x13b
+ 000142d4bdbb  lea      rcx, [rsp + 0x20]
+ 000142d4bdc0  call     0x1406ed520
+ 000142d4bdc5  nop      
+ 000142d4bdc6  call     0x1429e3ef0
+ 000142d4bdcb  mov      edx, eax
+ 000142d4bdcd  lea      rcx, [rsp + 0x20]
+ 000142d4bdd2  call     0x1406ed9d0
+ 000142d4bdd7  mov      edx, edi
+ 000142d4bdd9  lea      rcx, [rsp + 0x20]
+ 000142d4bdde  call     0x1406ed9d0
+ 000142d4bde3  mov      edx, esi
+ 000142d4bde5  lea      rcx, [rsp + 0x20]
+ 000142d4bdea  call     0x1406ed9d0
+ 000142d4bdef  lea      rcx, [rsp + 0x20]
+ 000142d4bdf4  call     0x1415d01c0
+ 000142d4bdf9  mov      edx, 1
+ 000142d4bdfe  mov      rcx, rbx
+ 000142d4be01  call     0x142cc4430
+ 000142d4be06  nop      
+ 000142d4be07  lea      rcx, [rsp + 0x20]
+ 000142d4be0c  call     0x1406ed610
+>000142d4be11  mov      rcx, qword ptr [rsp + 0x470]
+ 000142d4be19  xor      rcx, rsp
+ 000142d4be1c  call     0x142ef44b0
+ 000142d4be21  add      rsp, 0x480
+ 000142d4be28  pop      rdi
+ 000142d4be29  pop      rsi
+ 000142d4be2a  pop      rbx
+ 000142d4be2b  ret      
