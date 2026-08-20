@@ -1,0 +1,173 @@
+; MapleCW research dump - the Change Channel row-enable predicate
+; produced 2026-08-20 by tools/listing.py and a raw capstone range dump (no Ghidra)
+; singleton = 0x143AA84A0   (RIP-resolved from 142a316ef and 142a3176d)
+
+; ============ FUN_142cb9510 - reads singleton+0x2cc8[i]. NO .pdata entry.
+; ============ raw range dump; element size 4, length at [array-8]
+000142cb9510  85 d2                      test edx, edx
+000142cb9512  78 18                      js 0x142cb952c
+000142cb9514  48 8b 89 c8 2c 00 00       mov rcx, qword ptr [rcx + 0x2cc8]
+000142cb951b  48 85 c9                   test rcx, rcx
+000142cb951e  74 0c                      je 0x142cb952c
+000142cb9520  3b 51 f8                   cmp edx, dword ptr [rcx - 8]
+000142cb9523  73 07                      jae 0x142cb952c
+000142cb9525  48 63 c2                   movsxd rax, edx
+000142cb9528  8b 04 81                   mov eax, dword ptr [rcx + rax*4]
+000142cb952b  c3                         ret 
+000142cb952c  33 c0                      xor eax, eax
+000142cb952e  c3                         ret 
+000142cb952f  cc                         int3 
+
+; ============ FUN_142cb9490 - reads singleton+0x2cc0[i]. Bounds-checked against
+; ============ the NAME array at +0x2cb8, not against its own length.
+; 0x142cb9490 .. 0x142cb94fd  (109 bytes)
+ 000142cb9490  mov      qword ptr [rsp + 8], rbx
+ 000142cb9495  push     rdi
+ 000142cb9496  sub      rsp, 0x20
+ 000142cb949a  movsxd   rbx, edx
+ 000142cb949d  mov      rdi, rcx
+ 000142cb94a0  test     edx, edx
+ 000142cb94a2  js       0x142cb94f0   [branch]
+ 000142cb94a4  mov      rax, qword ptr [rcx + 0x2cb8]
+ 000142cb94ab  test     rax, rax
+ 000142cb94ae  je       0x142cb94f0   [branch]
+ 000142cb94b0  cmp      ebx, dword ptr [rax - 8]
+ 000142cb94b3  jae      0x142cb94f0   [branch]
+ 000142cb94b5  mov      rcx, qword ptr [rcx + 0x2cc0]
+ 000142cb94bc  test     rcx, rcx
+ 000142cb94bf  je       0x142cb94cc   [branch]
+ 000142cb94c1  mov      r8d, dword ptr [rcx - 8]
+ 000142cb94c5  cmp      ebx, r8d
+ 000142cb94c8  jb       0x142cb94e2   [branch]
+ 000142cb94ca  jmp      0x142cb94cf
+>000142cb94cc  xor      r8d, r8d
+>000142cb94cf  mov      edx, ebx
+ 000142cb94d1  mov      ecx, 0xc6
+ 000142cb94d6  call     0x142e54290
+ 000142cb94db  mov      rcx, qword ptr [rdi + 0x2cc0]
+>000142cb94e2  mov      eax, dword ptr [rcx + rbx*4]
+ 000142cb94e5  mov      rbx, qword ptr [rsp + 0x30]
+ 000142cb94ea  add      rsp, 0x20
+ 000142cb94ee  pop      rdi
+ 000142cb94ef  ret      
+>000142cb94f0  mov      rbx, qword ptr [rsp + 0x30]
+ 000142cb94f5  xor      eax, eax
+ 000142cb94f7  add      rsp, 0x20
+ 000142cb94fb  pop      rdi
+ 000142cb94fc  ret      
+
+; ============ FUN_142a316e0 - the Change/OK button (vtable slot 39, this = real base)
+; 0x142a316e0 .. 0x142a31743  (99 bytes)
+ 000142a316e0  mov      qword ptr [rsp + 8], rbx
+ 000142a316e5  push     rdi
+ 000142a316e6  sub      rsp, 0x20
+ 000142a316ea  mov      rbx, rcx
+ 000142a316ed  mov      edi, edx
+ 000142a316ef  mov      rcx, qword ptr [rip + 0x1076daa]
+ 000142a316f6  test     rcx, rcx
+ 000142a316f9  je       0x142a31738   [branch]
+ 000142a316fb  cmp      edx, 1
+ 000142a316fe  jne      0x142a3172e   [branch]
+ 000142a31700  mov      edx, dword ptr [rbx + 0x298]
+ 000142a31706  test     edx, edx
+ 000142a31708  js       0x142a31738   [branch]
+ 000142a3170a  cmp      edx, dword ptr [rbx + 0x29c]
+ 000142a31710  je       0x142a31738   [branch]
+ 000142a31712  call     0x142cb9510   <<< MARKED 0x142cb9510
+ 000142a31717  test     eax, eax
+ 000142a31719  je       0x142a31738   [branch]
+ 000142a3171b  call     0x141892840
+ 000142a31720  mov      edx, dword ptr [rbx + 0x298]
+ 000142a31726  mov      rcx, rax
+ 000142a31729  call     0x1418287f0
+>000142a3172e  mov      edx, edi
+ 000142a31730  mov      rcx, rbx
+ 000142a31733  call     0x14177f850
+>000142a31738  mov      rbx, qword ptr [rsp + 0x30]
+ 000142a3173d  add      rsp, 0x20
+ 000142a31741  pop      rdi
+ 000142a31742  ret      
+
+; ============ FUN_142a31750 - the mouse hit test (second vtable, this = base+8)
+; 0x142a31750 .. 0x142a31869  (281 bytes)
+ 000142a31750  mov      qword ptr [rsp + 8], rbx
+ 000142a31755  mov      qword ptr [rsp + 0x10], rbp
+ 000142a3175a  mov      qword ptr [rsp + 0x18], rsi
+ 000142a3175f  push     rdi
+ 000142a31760  sub      rsp, 0x20
+ 000142a31764  mov      r11d, dword ptr [rcx + 0x298]
+ 000142a3176b  xor      ebx, ebx
+ 000142a3176d  mov      rsi, qword ptr [rip + 0x1076d2c]
+ 000142a31774  mov      r10d, r9d
+ 000142a31777  mov      ebp, edx
+ 000142a31779  mov      rdi, rcx
+ 000142a3177c  test     r11d, r11d
+ 000142a3177f  jle      0x142a317d7   [branch]
+ 000142a31781  mov      r8d, dword ptr [rsp + 0x50]
+ 000142a31786  nop      word ptr [rax + rax]
+>000142a31790  mov      eax, 0x2aaaaaab
+ 000142a31795  imul     ebx
+ 000142a31797  mov      eax, edx
+ 000142a31799  shr      eax, 0x1f
+ 000142a3179c  add      edx, eax
+ 000142a3179e  mov      eax, ebx
+ 000142a317a0  lea      ecx, [rdx + rdx*2]
+ 000142a317a3  add      ecx, ecx
+ 000142a317a5  sub      eax, ecx
+ 000142a317a7  imul     ecx, edx, 0x15
+ 000142a317aa  imul     r9d, eax, 0x46
+ 000142a317ae  add      ecx, 0x43
+ 000142a317b1  add      r9d, 9
+ 000142a317b5  cmp      r9d, r10d
+ 000142a317b8  jg       0x142a317d0   [branch]
+ 000142a317ba  lea      eax, [r9 + 0x44]
+ 000142a317be  cmp      r10d, eax
+ 000142a317c1  jge      0x142a317d0   [branch]
+ 000142a317c3  cmp      ecx, r8d
+ 000142a317c6  jg       0x142a317d0   [branch]
+ 000142a317c8  lea      eax, [rcx + 0x14]
+ 000142a317cb  cmp      r8d, eax
+ 000142a317ce  jl       0x142a317dc   [branch]
+>000142a317d0  inc      ebx
+ 000142a317d2  cmp      ebx, r11d
+ 000142a317d5  jl       0x142a31790   [branch]
+>000142a317d7  mov      ebx, 0xffffffff
+>000142a317dc  cmp      dword ptr [rdi + 0x2a0], 0
+ 000142a317e3  jne      0x142a317fa   [branch]
+ 000142a317e5  mov      edx, ebx
+ 000142a317e7  mov      rcx, rsi
+ 000142a317ea  call     0x142cb9490   <<< MARKED 0x142cb9490
+ 000142a317ef  test     eax, eax
+ 000142a317f1  jne      0x142a31854   [branch]
+ 000142a317f3  mov      rsi, qword ptr [rip + 0x1076ca6]
+>000142a317fa  test     rsi, rsi
+ 000142a317fd  je       0x142a31854   [branch]
+ 000142a317ff  test     ebx, ebx
+ 000142a31801  js       0x142a31854   [branch]
+ 000142a31803  cmp      ebx, dword ptr [rdi + 0x294]
+ 000142a31809  je       0x142a31854   [branch]
+ 000142a3180b  mov      edx, ebx
+ 000142a3180d  mov      rcx, rsi
+ 000142a31810  call     0x142cb9510   <<< MARKED 0x142cb9510
+ 000142a31815  test     eax, eax
+ 000142a31817  je       0x142a31854   [branch]
+ 000142a31819  cmp      ebp, 0x201
+ 000142a3181f  jne      0x142a31839   [branch]
+ 000142a31821  mov      rax, qword ptr [rdi - 8]
+ 000142a31825  lea      rcx, [rdi - 8]
+ 000142a31829  xor      edx, edx
+ 000142a3182b  mov      dword ptr [rdi + 0x290], ebx
+ 000142a31831  call     qword ptr [rax + 0x90]
+ 000142a31837  jmp      0x142a31854
+>000142a31839  cmp      ebp, 0x203
+ 000142a3183f  jne      0x142a31854   [branch]
+ 000142a31841  mov      rax, qword ptr [rdi - 8]
+ 000142a31845  lea      rcx, [rdi - 8]
+ 000142a31849  mov      edx, 1
+ 000142a3184e  call     qword ptr [rax + 0x138]
+>000142a31854  mov      rbx, qword ptr [rsp + 0x30]
+ 000142a31859  mov      rbp, qword ptr [rsp + 0x38]
+ 000142a3185e  mov      rsi, qword ptr [rsp + 0x40]
+ 000142a31863  add      rsp, 0x20
+ 000142a31867  pop      rdi
+ 000142a31868  ret      

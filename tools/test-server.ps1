@@ -417,6 +417,11 @@ foreach ($ch in 0..($Channels - 1)) {
     Save-PreviousLog $chLog
     Remove-Item $chLog -Force -ErrorAction SilentlyContinue
     $chArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$chPort", '--channel', "$ch")
+    # Every channel is told where every channel listens, because Change Channel (0x00D2)
+    # arrives on the CHANNEL connection and has to be answered with the target's address.
+    # Same list the login server advertises, built from the same two numbers, so the two
+    # cannot drift into advertising a channel nobody can enter.
+    $chArgs += @('--channels', $channelList)
     if ($SetFieldProbe) { $chArgs += '--set-field-probe' }
     if ($NoMobs) { $chArgs += '--no-mobs' }
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }

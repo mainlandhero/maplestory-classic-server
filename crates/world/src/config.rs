@@ -22,6 +22,16 @@ pub struct Config {
     pub world_id: u32,
     pub channel_id: u32,
 
+    /// **One address per channel, in channel order** - the same list the login server
+    /// advertises, and for the same reason: a Change Channel request has to be answered with
+    /// the address of the channel being entered, and a channel with no address is one nobody
+    /// can enter.
+    ///
+    /// It is here rather than only on the login server because `0x00D2` arrives on the
+    /// *channel* connection, not the login one. Empty is legal and means Change Channel is
+    /// refused with a message rather than ignored - see `Session::on_change_channel`.
+    pub channels: Vec<std::net::SocketAddrV4>,
+
     /// Play the game: answer the migration hello, portal walks, and field entry.
     ///
     /// **The name is a fossil and the doc that went with it was badly stale.** It was written
@@ -850,6 +860,7 @@ impl Default for Config {
             npc_strings: HashMap::new(),
             quests: HashMap::new(),
             shops: crate::shops::ShopTable::default(),
+            channels: Vec::new(),
             map_names: HashMap::new(),
             item_names: HashMap::new(),
             send_mobs: true,

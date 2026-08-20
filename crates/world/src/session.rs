@@ -407,6 +407,9 @@ impl Session {
             net::script::CLIENT_NPC_CLICK => {
                 return self.on_npc_click(body.get(2..).unwrap_or(&[]))
             }
+            net::channel::CLIENT_CHANGE_CHANNEL => {
+                return self.on_change_channel(body.get(2..).unwrap_or(&[]))
+            }
             _ => return Vec::new(),
         }
         // Always answer. An unanswered packet freezes the client's whole UI - every
@@ -1164,6 +1167,86 @@ impl Session {
     /// `net::notice` records that colour is not controllable through this packet.
     fn gm_ack(&self, text: String) -> Vec<Reply> {
         self.notice(text)
+    }
+
+    /// **Change Channel.** The client pressed the button in the dialog.
+    ///
+    /// # This exists because enabling one byte made the button reachable
+    ///
+    /// `net::opcode::CHANNEL_ENABLED` went from `0` to `1` on 2026-08-20, which is what makes
+    /// a channel row clickable at all. Before that the click produced nothing on the wire and
+    /// this handler would have been dead code. `research/channel-two-greyed.md` establishes
+    /// that draw and click read the **same** predicate - all six callers of `FUN_142cb9510`
+    /// test its result with a bare `test eax,eax` - so there was never an option to make the
+    /// row look enabled without making it send.
+    ///
+    /// **So this had to be answered in the same change.** An unanswered packet freezes the
+    /// client's entire UI, quit prompt included, and shipping a newly-clickable button whose
+    /// packet nobody answers would have been building the freeze deliberately.
+    ///
+    /// # The reply shape is inference, and the honest label is [I]
+    ///
+    /// No capture of a successful channel change exists. `net::opcode::migrate` is what the
+    /// login server answers character-select with, and a channel change is the same
+    /// operation - "connect to this address as this character" - so it is sent here too.
+    /// `crates/net/src/channel.rs` records that expectation as **[I]**; this does not upgrade
+    /// it. A wrong reply is a different failure from a frozen UI, and only one of the two is
+    /// certain in advance.
+    ///
+    /// **The migration is minted here, and it is still not authentication.** A `u32` seed
+    /// identifies a pending migration; it does not prove who is on the far end. Single use.
+    fn on_change_channel(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let request = net::channel::ChangeChannelRequest::parse(payload);
+        let Some(req) = request else {
+            return self.change_channel_refused(
+                "the Change Channel body did not parse - see net::channel::ChangeChannelRequest"
+                    .to_string(),
+            );
+        };
+        let target = u32::from(req.target_channel);
+        let Some(claimed) = self.claimed.clone() else {
+            return self
+                .change_channel_refused("no character is claimed on this connection".to_string());
+        };
+        let Some(addr) = self.config.channels.get(target as usize).copied() else {
+            return self.change_channel_refused(format!(
+                "this world has no address for channel {target} - pass --channels to the world server"
+            ));
+        };
+        if target == self.config.channel_id {
+            return self.change_channel_refused(format!(
+                "channel {target} is the one you are already on"
+            ));
+        }
+        let seed = match self.store.create_migration(
+            claimed.account_id,
+            claimed.character_id,
+            self.config.world_id,
+            target,
+        ) {
+            Ok(seed) => seed,
+            Err(e) => return self.change_channel_refused(format!("could not mint a migration: {e}")),
+        };
+        vec![Reply {
+            opcode: net::opcode::MIGRATE_COMMAND,
+            body: net::opcode::migrate(addr, claimed.character_id, seed),
+            what: format!(
+                "Change Channel: character {} to channel {target} at {addr}, seed {seed:#010x} - single use, NOT authentication. The reply SHAPE is inference; no capture of a channel change exists.",
+                claimed.character_id
+            ),
+        }]
+    }
+
+    /// Refuse a channel change **with a packet**, not with silence.
+    ///
+    /// `migrate_refused` carries a message the client renders, which is the same shape the
+    /// login server uses when it cannot migrate. Saying nothing would freeze the UI.
+    fn change_channel_refused(&self, why: String) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::opcode::MIGRATE_COMMAND,
+            body: net::opcode::migrate_refused("Cannot change channel right now."),
+            what: format!("Change Channel REFUSED: {why}"),
+        }]
     }
 
     /// Say something as the player: a balloon over the head and a line in the chat log.
@@ -2087,6 +2170,79 @@ mod tests {
             .map(|i| i.item.item_id)
             .collect();
         assert_eq!(bagged, vec![1302000], "losing an item is worse than one that will not leave");
+    }
+
+    /// A `0x00D2` body in the **preamble-first** shape: the 14-byte integrity block that
+    /// begins with the client's literal `100`, then the target channel.
+    fn change_channel(target: u8) -> Vec<u8> {
+        let mut b = net::channel::CLIENT_CHANGE_CHANNEL.to_le_bytes().to_vec();
+        b.extend_from_slice(&100u32.to_le_bytes());
+        b.extend_from_slice(&[0u8; 10]);
+        b.push(target);
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b
+    }
+
+    /// A session that knows where both channels listen, which is what answering a channel
+    /// change needs.
+    fn two_channel_session() -> (Session, Arc<Store>, u32) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let config = Config {
+            set_field_probe: true,
+            channel_id: 0,
+            channels: vec!["127.0.0.1:8485".parse().unwrap(), "127.0.0.1:8486".parse().unwrap()],
+            ..Config::default()
+        };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        (s, store, id)
+    }
+
+    /// **Change Channel must be answered, and now it is.**
+    ///
+    /// `net::opcode::CHANNEL_ENABLED` went to `1` in the same change, which is what makes the
+    /// button reachable at all. Draw and click read the same predicate in the client, so
+    /// there was no way to make the row look enabled without making it send - and an
+    /// unanswered packet freezes the whole UI.
+    #[test]
+    fn a_channel_change_is_answered_with_a_migration_for_the_target() {
+        let (mut s, store, id) = two_channel_session();
+        let out = s.handle(&change_channel(1));
+
+        assert_eq!(out.len(), 1, "exactly one reply, and never zero");
+        assert_eq!(out[0].opcode, net::opcode::MIGRATE_COMMAND);
+        // The address must be the TARGET channel's, not this one's. Getting that backwards
+        // sends the client to the channel it is already on.
+        assert_eq!(&out[0].body[4..8], &[127, 0, 0, 1]);
+        assert_eq!(&out[0].body[8..10], &8486u16.to_le_bytes(), "channel 1's port");
+        assert!(out[0].what.contains("NOT authentication"), "{}", out[0].what);
+
+        // And a migration was minted for the target, so the other channel can claim it.
+        let mut other = Session::new(store, Arc::new(Config { channel_id: 1, ..Config::default() }));
+        assert!(other.claim_for_character(id).contains("claimed the migration"));
+    }
+
+    /// A channel with no address is one nobody can enter, so it is refused **with a packet**.
+    #[test]
+    fn a_channel_with_no_address_is_refused_rather_than_ignored() {
+        let (mut s, _, _) = two_channel_session();
+        let out = s.handle(&change_channel(7));
+        assert_eq!(out.len(), 1, "silence here would freeze the client's whole UI");
+        assert_eq!(out[0].opcode, net::opcode::MIGRATE_COMMAND);
+        assert!(out[0].what.contains("no address for channel 7"), "{}", out[0].what);
+    }
+
+    /// Asking for the channel you are already on is refused too - and still answered.
+    #[test]
+    fn changing_to_the_current_channel_is_refused_and_still_answered() {
+        let (mut s, _, _) = two_channel_session();
+        let out = s.handle(&change_channel(0));
+        assert_eq!(out.len(), 1);
+        assert!(out[0].what.contains("already on"), "{}", out[0].what);
     }
 
     /// The channel must not send the login server's startup gate. That packet is what a

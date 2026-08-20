@@ -250,11 +250,38 @@ pub fn world_list_entry(world_id: u8, name: &str, channels: u8) -> Vec<u8> {
 /// | 4th byte | what the owner saw |
 /// |---|---|
 /// | `0` | CH.1 and CH.2 both listed. CH.2 grey, and clicking it sends **nothing** |
-/// | `1` | **no channels listed at all** |
+/// | `1` | **no channels listed at all** - but see below, this was confounded |
 ///
-/// Do not set this non-zero again without reading what consumes it *before* the array. See
-/// `research/channel-select.md`, which now carries the retraction.
-pub const CHANNEL_ENABLED: u8 = 0;
+/// # Why it is `1` again, and why that is not a repeat of the same mistake
+///
+/// The `1` row above was measured **before the priming fix**. At that time the dialog was
+/// empty by default and populated only by accident - `research/channel-select.md` section 9
+/// explains the mechanism - so "1 emptied it" and "0 populated it" are **both** consistent
+/// with the byte having no effect at all on the row count. The byte was un-measured, not
+/// disproven, and it could not be measured until rows appeared reliably. They now do:
+/// The owner saw CH.1 and CH.2 on 2026-08-20.
+///
+/// What has since been read rather than guessed (`research/channel-two-greyed.md`):
+///
+/// * `singleton+0x2cc8` is a **dword array, stride 4**, indexed by channel - `142cb9528
+///   mov eax,[rcx+rax*4]`. Not a bitmask and not a byte array, which is the shape two
+///   earlier wrong answers in this project assumed.
+/// * A whole-image `fieldrefs.py 0x2cc8 --write` finds **one fill in the entire image**,
+///   `142cb8ed9`, which steals a `std::vector<int>`'s buffer - so the array's length is the
+///   channel count for free.
+/// * This byte is what lands in it: per channel the entry ends `u8 worldId, u8 index,
+///   u8, u8`, and the fourth is the one read into `chan+0x18`.
+/// * **Draw and click read the same predicate.** All six callers of `FUN_142cb9510` test
+///   its result with a bare `test eax,eax`, and the function is in no pointer table - so
+///   there is no draw/click split and one byte moves all six.
+///
+/// **The third byte stays `0`** - it is the adult-channel flag, and its gate needs
+/// `singleton+0x2250 >= 18` where that field is initialised to `-1` and its only setter has
+/// no callers. That gate can never open.
+///
+/// **Enabling this makes CH.2 clickable, which makes the client able to send `0x00D2`.**
+/// That is why `crates/world` answers it now; an unanswered packet freezes the whole UI.
+pub const CHANNEL_ENABLED: u8 = 1;
 
 /// The packet that closes a [`WORLD_LIST`] run, with no notice.
 pub fn world_list_end() -> Vec<u8> {
@@ -3008,10 +3035,15 @@ mod tests {
     #[test]
     fn the_one_world_list_we_actually_send_has_these_exact_bytes() {
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        // The 5th byte from the end changed from 00 to 01 on 2026-08-20 - that is
+        // CHANNEL_ENABLED, and it is what makes a channel row clickable. Its doc comment
+        // carries the whole working, including why the earlier `1` measurement was
+        // confounded and does not contradict this.
         assert_eq!(
             hex(&world_list_entry(0, "Scania", 1)),
-            "0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
+            "0006005363616e6961000000000108005363616e69612d30000000000000000100000000000000"
         );
+        assert_eq!(CHANNEL_ENABLED, 1, "the byte the golden string above encodes");
         assert_eq!(hex(&world_list_end()), "ff0000");
 
         // The fourth trailing u8 of each channel entry is what makes its row clickable in
@@ -3023,11 +3055,12 @@ mod tests {
         for i in 0..2u8 {
             at += 2 + "Scania-0".len() + 4; // the channel name and its user count
             assert_eq!(&two[at..at + 4], &[0, i, 0, CHANNEL_ENABLED], "channel {i}");
-            // Both trailing bytes are 0, and both readings of them are unproven. `0` is the
-            // only value measured to LIST the channels at all: `1` in the fourth emptied
-            // the dialog on 2026-08-19. See CHANNEL_ENABLED.
-            assert_eq!(CHANNEL_ENABLED, 0, "1 emptied the Change Channel dialog - measured");
-            assert_eq!(two[at + 2], 0);
+            // **The third byte must stay 0**, and unlike the fourth this one has a reason
+            // that cannot change: it is the adult-channel flag, and its gate needs
+            // `singleton+0x2250 >= 18` where that field starts at -1 and its only setter has
+            // no callers of any kind. The gate can never open, so a non-zero value here can
+            // only block the row. research/channel-two-greyed.md.
+            assert_eq!(two[at + 2], 0, "the adult-channel flag - its gate can never open");
             at += 4;
         }
     }

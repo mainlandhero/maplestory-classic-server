@@ -1,0 +1,168 @@
+; MapleCW research dump - the Change Channel DRAW path picks one of four bitmaps
+; produced 2026-08-20. r15 = the dialog at its real base; r12d = the row index i.
+; +0x2b0 channel0 cream | +0x2b8 channel1 grey | +0x2c0 channel2 blue | +0x2c8 channel3 grey/disabled
+
+; ---- the four-way decision, verbatim
+000142a31168  45 3b a7 98 02 00 00       cmp r12d, dword ptr [r15 + 0x298]
+000142a3116f  0f 85 12 01 00 00          jne 0x142a31287
+000142a31287  45 3b a7 9c 02 00 00       cmp r12d, dword ptr [r15 + 0x29c]
+000142a3128e  0f 84 51 02 00 00          je 0x142a314e5
+000142a31294  41 83 bf a8 02 00 00 00    cmp dword ptr [r15 + 0x2a8], 0
+000142a3129c  75 14                      jne 0x142a312b2
+000142a3129e  41 8b d4                   mov edx, r12d
+000142a312a1  48 8b 4d b0                mov rcx, qword ptr [rbp - 0x50]
+000142a312a5  e8 e6 81 28 00             call 0x142cb9490
+000142a312aa  85 c0                      test eax, eax
+000142a312ac  0f 85 33 02 00 00          jne 0x142a314e5
+000142a312b2  41 8b d4                   mov edx, r12d
+000142a312b5  48 8b 4d b0                mov rcx, qword ptr [rbp - 0x50]
+000142a312b9  e8 52 82 28 00             call 0x142cb9510
+000142a312be  48 8d 4c 24 30             lea rcx, [rsp + 0x30]
+
+; ---- which canvas each arm loads (grep of the whole function)
+ 000142a30c51  cmp      dword ptr [r15 + 0x2a0], edi
+>000142a31168  cmp      r12d, dword ptr [r15 + 0x298]
+ 000142a31256  mov      r9, qword ptr [r15 + 0x2c0]
+>000142a31287  cmp      r12d, dword ptr [r15 + 0x29c]
+ 000142a31294  cmp      dword ptr [r15 + 0x2a8], 0
+ 000142a312a5  call     0x142cb9490
+ 000142a312b9  call     0x142cb9510
+ 000142a313a7  mov      r9, qword ptr [r15 + 0x2b0]
+ 000142a314b4  mov      r9, qword ptr [r15 + 0x2c8]
+ 000142a315c6  mov      r9, qword ptr [r15 + 0x2b8]
+ 000142a3164e  cmp      r12d, dword ptr [r15 + 0x2a0]
+
+; ---- OnCreate FUN_142a2e7a0: dialog+0x2a8 = (singleton+0x2250 >= 0x12), and
+; ---- dialog+0x298 (selection) := dialog+0x29c (current channel)
+000142a2e7f5  85 c0                      test eax, eax
+000142a2e7f7  0f 84 33 1f 00 00          je 0x142a30730
+000142a2e7fd  48 8b c8                   mov rcx, rax
+000142a2e800  e8 9b 9c 28 00             call 0x142cb84a0
+000142a2e805  8b c8                      mov ecx, eax
+000142a2e807  ba 12 00 00 00             mov edx, 0x12
+000142a2e80c  e8 8f 9a fd ff             call 0x142a082a0
+000142a2e811  41 89 85 a8 02 00 00       mov dword ptr [r13 + 0x2a8], eax
+000142a2e818  33 f6                      xor esi, esi
+000142a2e81a  44 8b fe                   mov r15d, esi
+000142a30662  41 8b 85 9c 02 00 00       mov eax, dword ptr [r13 + 0x29c]
+000142a30669  41 89 85 98 02 00 00       mov dword ptr [r13 + 0x298], eax
+
+; ---- the two leaves behind the age gate
+; FUN_142cb84a0 = mov eax,[rcx+0x2250] ; FUN_142a082a0 = setge(ecx >= edx)
+000142cb84a0  8b 81 50 22 00 00          mov eax, dword ptr [rcx + 0x2250]
+000142cb84a6  c3                         ret 
+000142cb84a7  cc                         int3 
+000142a082a0  33 c0                      xor eax, eax
+000142a082a2  3b ca                      cmp ecx, edx
+000142a082a4  0f 9d c0                   setge al
+000142a082a7  c3                         ret 
+
+; ---- FUN_1418287f0, the 0x00D2 Change Channel builder, and its gates
+; 0x1418287f0 .. 0x1418289ac  (444 bytes)
+ 0001418287f0  mov      qword ptr [rsp + 8], rbx
+ 0001418287f5  mov      qword ptr [rsp + 0x18], rsi
+ 0001418287fa  push     rdi
+ 0001418287fb  sub      rsp, 0x4c0
+ 000141828802  mov      rax, qword ptr [rip + 0x22630ff]
+ 000141828809  xor      rax, rsp
+ 00014182880c  mov      qword ptr [rsp + 0x4b0], rax
+ 000141828814  mov      edi, edx
+ 000141828816  mov      rsi, rcx
+ 000141828819  mov      rbx, qword ptr [rip + 0x227fc80]
+ 000141828820  xor      r8d, r8d
+ 000141828823  mov      edx, 0x1f4
+ 000141828828  mov      rcx, rbx
+ 00014182882b  call     0x142cc42d0
+ 000141828830  test     eax, eax
+ 000141828832  je       0x141828987   [branch]
+ 000141828838  mov      edx, edi
+ 00014182883a  mov      rcx, rbx
+ 00014182883d  call     0x142cb9490   <<< MARKED 0x142cb9490
+ 000141828842  test     eax, eax
+ 000141828844  je       0x141828862   [branch]
+ 000141828846  mov      rcx, rbx
+ 000141828849  call     0x142cb84a0   <<< MARKED 0x142cb84a0
+ 00014182884e  mov      ecx, eax
+ 000141828850  mov      edx, 0x12
+ 000141828855  call     0x142a082a0   <<< MARKED 0x142a082a0
+ 00014182885a  test     eax, eax
+ 00014182885c  je       0x141828987   [branch]
+>000141828862  cmp      qword ptr [rip + 0x227fcae], 0
+ 00014182886a  je       0x141828987   [branch]
+ 000141828870  mov      rcx, rbx
+ 000141828873  call     0x142cb8a50
+ 000141828878  test     eax, eax
+ 00014182887a  jne      0x1418288af   [branch]
+ 00014182887c  mov      rcx, qword ptr [rip + 0x227fc95]
+ 000141828883  add      rcx, 0x100
+ 00014182888a  call     0x140f80f20
+ 00014182888f  test     eax, eax
+ 000141828891  jne      0x1418288a3   [branch]
+ 000141828893  mov      rcx, qword ptr [rip + 0x227fc7e]
+ 00014182889a  call     0x14290dee0
+ 00014182889f  test     eax, eax
+ 0001418288a1  je       0x1418288af   [branch]
+>0001418288a3  mov      cl, 1
+ 0001418288a5  call     0x142a20d50
+ 0001418288aa  jmp      0x141828987
+>0001418288af  call     0x141892840
+ 0001418288b4  test     rax, rax
+ 0001418288b7  je       0x14182890c   [branch]
+ 0001418288b9  mov      rcx, qword ptr [rax + 0xa8]
+ 0001418288c0  add      rcx, 0xd0
+ 0001418288c7  call     0x1403326d0
+ 0001418288cc  test     al, 0x10
+ 0001418288ce  je       0x14182890c   [branch]
+>0001418288d0  mov      edx, 0xb9
+ 0001418288d5  lea      rcx, [rsp + 0x50]
+ 0001418288da  call     0x1408a9e40
+ 0001418288df  xor      ecx, ecx
+ 0001418288e1  mov      dword ptr [rsp + 0x48], ecx
+ 0001418288e5  mov      dword ptr [rsp + 0x40], ecx
+ 0001418288e9  mov      dword ptr [rsp + 0x38], ecx
+ 0001418288ed  mov      dword ptr [rsp + 0x30], ecx
+ 0001418288f1  mov      dword ptr [rsp + 0x28], ecx
+ 0001418288f5  mov      dword ptr [rsp + 0x20], ecx
+ 0001418288f9  lea      r9d, [rcx + 1]
+ 0001418288fd  xor      r8d, r8d
+ 000141828900  xor      edx, edx
+ 000141828902  mov      rcx, rax
+ 000141828905  call     0x142a26280
+ 00014182890a  jmp      0x141828987
+>00014182890c  call     0x142350c90
+ 000141828911  test     al, al
+ 000141828913  je       0x141828987   [branch]
+ 000141828915  mov      rax, qword ptr [rsi + 0xa8]
+ 00014182891c  cmp      dword ptr [rax + 0x19b0], 0
+ 000141828923  jne      0x1418288d0   [branch]
+ 000141828925  mov      edx, 0xd2
+ 00014182892a  lea      rcx, [rsp + 0x60]
+ 00014182892f  call     0x1406ed520
+ 000141828934  nop      
+ 000141828935  movzx    edx, dil
+ 000141828939  lea      rcx, [rsp + 0x60]
+ 00014182893e  call     0x1406ed840
+ 000141828943  call     0x1429e3ef0
+ 000141828948  mov      edx, eax
+ 00014182894a  lea      rcx, [rsp + 0x60]
+ 00014182894f  call     0x1406ed9d0
+ 000141828954  lea      rdx, [rsp + 0x60]
+ 000141828959  mov      rcx, qword ptr [rip + 0x229f8b0]
+ 000141828960  call     0x140c7b890
+ 000141828965  lea      rcx, [rsp + 0x60]
+ 00014182896a  call     0x1415d01c0
+ 00014182896f  mov      edx, 1
+ 000141828974  mov      rcx, rbx
+ 000141828977  call     0x142cc4430
+ 00014182897c  nop      
+ 00014182897d  lea      rcx, [rsp + 0x60]
+ 000141828982  call     0x1406ed610
+>000141828987  mov      rcx, qword ptr [rsp + 0x4b0]
+ 00014182898f  xor      rcx, rsp
+ 000141828992  call     0x142ef44b0
+ 000141828997  lea      r11, [rsp + 0x4c0]
+ 00014182899f  mov      rbx, qword ptr [r11 + 0x10]
+ 0001418289a3  mov      rsi, qword ptr [r11 + 0x20]
+ 0001418289a7  mov      rsp, r11
+ 0001418289aa  pop      rdi
+ 0001418289ab  ret      
