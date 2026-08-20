@@ -161,8 +161,10 @@ request, which is the only coordinate pair this server currently reads from the 
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **Why `0x0560` kills the client** | Rows are not the variable and neither is the map - see below. Static work first; the next launch should be earned by a named suspect |
-| 2 | **Make `mob+0xa88` non-null** | **ANSWERED 2026-08-20 on a real client**: it is null on every mob, which is why zero targets are collected. Now a *spawn*-path question - what makes `FUN_141cd1620` run - not an attack-path one. See below |
+| 1 | **What puts the user in state 18/19** | It is what stopped the owner attacking after a pick-up, and the **same predicate** skips the drop-pool clear and refuses the pick-up pre-check. `(user->[0x5e4] & ~1) == 0x12`, checked by four of the six attack builders. What SETS it is `[I]`. `-UserState` watches the only setter; one ordinary session prints the state machine |
+| 2 | **Run the client** | Six things are wired and unseen: drops on the floor, pick-up, EXP per kill, levelling, HP loss, mob respawn |
+| 3 | **Why `0x0560` kills the client** | Rows are not the variable and neither is the map. The window needs `UI/UIWindow2.img`, which this client does not ship; the WZ has `UIShop.img/Shop` instead, and which opcode builds THAT is the question. Static work |
+| 4 | ~~Make `mob+0xa88` non-null~~ | **SOLVED, and it was not that field.** Every mob was sent a size of **zero percent**, which collapsed its hit rectangle onto its own centre. Confirmed on screen: the owner kills mobs and takes damage. `mob+0xa88` is the avatar-look renderer and null is correct for it |
 | 3 | **The EXP curve, off a running client** | 121 `u64`s at `0x143AC2400`, in the BSS tail of `.data` - **zero on disk**, so static analysis cannot ever read it. One `-Probe` peek. Without it, levelling has no thresholds |
 | 4 | **Parse `0x00D9`** | The client reporting its own position. It removes the "swing first" awkwardness from dropping, and every positional feature after it needs the same field |
 | 5 | **Amherst (map 1013) is intermittent** | It no longer hard-crashes, and run 2 still failed to enter it. Not fixed - intermittent |
@@ -217,18 +219,24 @@ renderer - mobs drawn as player characters - and **0 of 193** mob images carry t
 `avatarLook` node that would allocate it. Null is correct. The animation object is
 `mob+0x610`. `research/mob-a88.md`.
 
-> **RETRACTED within the hour: this does not explain touch damage.** The size fix was
-> written up as explaining both directions - that the owner was not hit either. It does not. The
-> mob-to-player path reads the **player's** body rect (`FUN_141c69f40` -> the user's own
-> `[vtbl+0x10]`) and takes its attack rectangles from the mob's **attack template**; none of
-> the ten functions on it calls `FUN_141c57120`, `FUN_141c56e00` or `FUN_141caafe0`. And a
-> snail has **no `attack` node** - `0000001.img` is `info, move, stand, hit1, die1` - so that
-> machinery is inert for it regardless. A body/touch-damage path was **not found**, which is
-> a `[D]` negative, not a `[L]` one. `research/touch-damage.md`.
+> **CONFIRMED ON SCREEN, and this un-does a retraction.** The owner, after the fix: *"The mob
+> killings work, I'm taking damage, and the mob is also taking damage."* One field, both
+> directions.
 >
-> The evidence for the retracted half was that one agent said so while answering a different
-> question. Nobody had walked the damage path. Do not expect a snail to hurt you on the next
-> run, and do not read that as the size fix having failed.
+> The retraction is worth keeping because it was the more expensive mistake. A static pass
+> reported that the mob-to-player path reads the **player's** body rect and takes its
+> rectangles from the mob's **attack template**, and that a snail has no `attack` node - so
+> this field could not be involved. The two-direction claim was withdrawn on that basis, and
+> The owner was told not to expect the snail to hurt them.
+>
+> What that pass had found was the *attack-node* path, for mobs with attack animations. It
+> stated in its own words that a **body**/touch-damage path was **not found**, and marked it
+> `[D]` with a named blind spot: a function handed the template as an argument reads
+> `[rcx+0x7c]` without touching `+0x3a8`, so the intersection scan cannot prove absence.
+> **"Not found" was read as "not there".** That is this file's own rule pointing the other
+> way - a silent negative believed because it was tidy - and it cost a correct answer being
+> withdrawn hours after it was made. `research/touch-damage.md` remains the best map of the
+> attack-node path; only its negative failed.
 
 #### MEASURED: `mob+0xa88` is null on every mob - 2026-08-20, on a real client
 
