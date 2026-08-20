@@ -537,63 +537,64 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  IN THIS ORDER. Step 6 can end the session.' -ForegroundColor Yellow
+    Write-Host '  IN THIS ORDER. The last two can end the session.' -ForegroundColor Yellow
     Write-Host ''
-    Write-Host '  0. log in and enter the world with a character that HAS equipment.'
-    Write-Host '     This is the gate. The equipment change is inside the character record,'
-    Write-Host '     which has no length prefix and no resync point, so if it is wrong world'
-    Write-Host '     entry breaks and NOTHING BELOW can be observed. A fault or a freeze on'
-    Write-Host '     Connecting... means the record desynchronised - read the ELog (0x008F,'
-    Write-Host '     0x0090) and run tools/pdata_lookup.py on its RVAs to name the field.'
+    Write-Host '  0. Enter the world with a character that HAS equipment. This is the'
+    Write-Host '     gate: the record has no length prefix and no resync point, so if it'
+    Write-Host '     is wrong, world entry breaks and nothing below can be observed.'
+    Write-Host '     Undressed or no entry -> read the ELog (0x008F/0x0090) and run'
+    Write-Host '     tools/pdata_lookup.py on its RVAs. Everything else is meaningless.'
     Write-Host ''
-    Write-Host '  1. HOVER AN EQUIPPED ITEM. READ ITS TOOLTIP.' -ForegroundColor Cyan
-    Write-Host '     The character being dressed is already confirmed. What is new is what'
-    Write-Host '     each item SAYS. On the Grey T-Shirt expect:'
-    Write-Host '       - a "Weapon Def.: +6" line, where before there was no stat line at all'
-    Write-Host '       - "Remaining Enhancements: 7", not 0'
-    Write-Host '       - NO "Cannot be Traded when equipped"'
-    Write-Host '     HOVER THE COAT OR TROUSERS, NOT THE SWORD, for the watch to mean'
-    Write-Host '     anything - Weapon Def. is only set on those.'
-    Write-Host '     AND ANSWER THIS EVEN IF NOTHING CHANGED: are the Remaining'
-    Write-Host '     Enhancements and Scissors Usages lines PRESENT AT ALL? Both sit behind'
-    Write-Host '     the same gate as the stat lines, so "they are there and the stats are'
-    Write-Host '     not" and "all three are gone" are completely different diagnoses.'
-    Write-Host '     On the sword expect a weapon attack of 17.'
-    Write-Host '     still no stat line -> the packet value is not what the tooltip reads.'
-    Write-Host '     wrong NUMBER      -> the bit order is off; say which stat shows which.'
-    Write-Host '     fault or freeze   -> the record desynchronised. Items are 129 bytes now'
-    Write-Host '                          and the record 759, so a width error is live again.'
+    if (-not $NoMobs) {
+        Write-Host '  1. WATCH THE SNAILS FOR ~15 SECONDS. This is the headline.' -ForegroundColor Cyan
+        Write-Host '     0x03D2 MobChangeController now hands each mob to the client, and'
+        Write-Host '     the CLIENT runs the wander and the idle animation - the server'
+        Write-Host '     never sends a movement path. Without that packet a mob is a picture.'
+        Write-Host '       they wander and idle -> the control model is confirmed'
+        Write-Host '       still frozen     -> the grant alone is not sufficient; that was'
+        Write-Host '                           the [I] in research/mob-behaviour.md section 7'
+        Write-Host ''
+        Write-Host '  2. ATTACK A SNAIL four or five times. Nothing answers - this is a'
+        Write-Host '     CAPTURE. Afterwards the 0x00DF bodies in world.log settle it:'
+        Write-Host '       longer than 127 bytes -> the client targets our mobs now'
+        Write-Host '       exactly 127 every time -> it still will not, and no reply fixes that'
+    } else {
+        Write-Host '  1. MOBS ARE OFF for this run (-NoMobs). Map 40 will look empty and'
+        Write-Host '     that is the flag, not a bug. Skip to the bag.'
+    }
     Write-Host ''
-    Write-Host '  2. MOBS ARE OFF. Nothing to test here.' -ForegroundColor DarkGray
-    Write-Host '     The mob body faulted the client on 2026-08-19: 0xC0000005 at'
-    Write-Host '     0x141c810b0, mob+0x2b8 null, on the FIRST 0x03C6. --mobs re-enables'
-    Write-Host '     them, and only when the mob body is the variant under test.'
-    Write-Host '     !map <id> still works and the prefix is ! not / - the client swallows'
-    Write-Host '     unknown slash lines and never puts them on the wire.'
+    if ($InventorySlots -gt 0) {
+        Write-Host "  3. OPEN THE INVENTORY. Count the USABLE slots in the Equip tab." -ForegroundColor Cyan
+        Write-Host "     You passed -InventorySlots $InventorySlots."
+        Write-Host '       about that many usable, rest dead -> presence[7] lands, and the'
+        Write-Host '                                            30-cell grid is a viewport'
+        Write-Host '       still 30 usable -> the field is not reaching the array'
+        Write-Host '     Check the other five tabs agree. If ONE differs, the field order'
+        Write-Host '     is wrong - say which tab.'
+    } else {
+        Write-Host '  3. The bag will be 30, which is exactly what the window already'
+        Write-Host '     draws, so this run cannot tell a working field from no field.'
+        Write-Host '     Use -InventorySlots 10 to make it decisive.'
+    }
     Write-Host ''
-    Write-Host '  3. CLICK AN NPC. DOES A DIALOG BOX APPEAR?' -ForegroundColor Cyan
-    Write-Host '     Robin on map 40 is the one that was silent last time: they have no quests,'
-    Write-Host '     so their click sends 0x00F2 and not the 0x0151 we were answering. Both'
-    Write-Host '     are answered now, so try a quest NPC (Heena, map 1) AND a quest-less'
-    Write-Host '     one (Robin, map 40) - they take different paths through the client.'
-    Write-Host '     The text says the quest is not implemented. That is the point: there is'
-    Write-Host '     no quest-result packet, so NO STATE ADVANCES.'
-    Write-Host '     Nothing, no fault -> check world.log shows 0x055B going out, then'
-    Write-Host '     suspect the message type or the flags.'
+    Write-Host '  4. DRAG AN EQUIP INTO THE BAG. Looking for 0x0107 in world.log. If it'
+    Write-Host '     appears, the zero-slot bag really was the unequip blocker.'
     Write-Host ''
-    Write-Host '  4. OPEN CHANGE CHANNEL. IS CH.2 CREAM RATHER THAN GREY?' -ForegroundColor Cyan
-    Write-Host '     CH.1 draws BLUE - it is the selected row, not a grey one. The two greys'
-    Write-Host '     differ by about six RGB points, so judge CH.2 against CH.1, not by eye'
-    Write-Host '     alone. Clicking CH.2 turning it blue is only a highlight move, not a send.'
+    Write-Host '  5. TYPE SOMETHING IN CHAT. This killed the client on the last run, so'  -ForegroundColor Yellow
+    Write-Host '     it goes late. The body was 20 bytes and needed 43.'
+    Write-Host '       balloon AND a chat-log line -> correct'
+    Write-Host '       balloon but no log line     -> a trailing byte is balloon-only'
+    Write-Host '       client dies                 -> still short; the exit code says where'
     Write-Host ''
-    Write-Host '  5. Report any dialog wording exactly, and whether the UI ever freezes -'
-    Write-Host '     a freeze is an unanswered packet, not a crash; world.log names it.'
+    Write-Host '  6. !map 1 then !map 40. Regression: items keep their stats and the bag'
+    Write-Host '     keeps its size. Every SetField carries both, not just the first.'
     Write-Host ''
-    Write-Host '  6. LAST: CLICK THE CHANGE BUTTON.' -ForegroundColor Yellow
-    Write-Host '     Nothing answers 0x00D2 yet, and an unanswered packet freezes the whole'
-    Write-Host '     UI including the quit prompt. A FREEZE HERE IS THE MEASUREMENT, not a'
-    Write-Host '     crash - world.log last inbound line names the packet. Do everything'
-    Write-Host '     else first.'
+    Write-Host '  7. LAST: Log Out. Regression.'
+    Write-Host ''
+    Write-Host '  DO NOT CLICK THE CHANGE CHANNEL BUTTON. Nothing answers 0x00D2 and an' -ForegroundColor Red
+    Write-Host '  unanswered packet freezes the whole UI including the quit prompt. The' -ForegroundColor Red
+    Write-Host '  channel list is understood now (research/channel-select.md section 9)' -ForegroundColor Red
+    Write-Host '  and its fix is NOT wired yet, so there is nothing to learn by clicking.' -ForegroundColor Red
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'
