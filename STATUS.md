@@ -123,6 +123,8 @@ one thing that still kills the client.
 | 5 | **Quest state** | Goal A below. Everything else about quests works; nothing persists | §"NEW GOAL ... quest state" |
 | 6 | **Level up** | Goal D below, set by the owner once mobs rendered. Partly blocked on combat - EXP has no source until a mob can die - but the EXP curve, the AP/SP rules and the level-up effect are all independent of it | §D |
 | 7 | **First job advancement** | Goal E below. Blocked on D, and shares the script machinery with A. The job ids and the four instructor templates are already measured out of the client; the 35-stat gate is **not in the client at all** and is ours to enforce | §E |
+| 8 | **NPC shops** | Goal F below. Blocked on there being an inventory to buy into. Prices and the quest-item flag are in the client's own `Item.wz`; **shop contents are not** and are ours to author | §F |
+| 9 | **Storage** | Goal G below. Same blocker, plus mesos, which nothing maintains yet. Per-account, so it needs its own table rather than a column on `characters` | §G |
 
 #### The evening run of 2026-08-19, and what it cost
 
@@ -302,6 +304,76 @@ whether the client needs anything beyond the stat block's `job` field at the nex
 `research/charstat-layout.md` has the stat block; the job field is at `+0x33` and it is
 already sent on every `SetField`, so the cheapest first experiment is whether simply storing
 a new job and re-sending the record is enough to make the client show a first-job character.
+
+#### F. NPC shops - set by the owner, 2026-08-19
+
+> *"NPC shops when clicked on by the client should open the appropriate NPC shop with the
+> appropriate shop list with appropriate item prices. Users should also be able to sell items
+> in their inventory back to the NPC shop for mesos, such as unused equips and monster ETC
+> drops. Please do not allow quest items to be sold."*
+
+#### G. Storage - set by the owner, 2026-08-19
+
+> *"Storage is kind of like inventory, except all of the characters of a particular account
+> share this inventory. The storage stores mesos and items. Please do not allow untradeable
+> items to be stored."*
+
+Both are blocked on the **inventory** existing at all - today the server sends slot counts
+and nothing else; there is no item-in-a-bag anywhere, no mesos field being maintained, and
+`0x0107` (the inventory operation) has never been sent. Shops and storage are both "move an
+item between two containers", so the container comes first.
+
+##### What the client already gives us, measured
+
+| | where | |
+|---|---|---|
+| **item price** | `Item.wz` `<item>/info/price` | **[L]** - read directly out of `Item/Etc/Etc_000.wz`; `04000001` is `price: 1`, `04000002` is `price: 2` |
+| **the quest-item flag** | `Item.wz` `<item>/info/quest` | **[L]** - `04000000` carries `quest: 1` **and** `price: 0`. The owner's "do not allow quest items to be sold" is enforceable from the client's own data, not a fan site |
+| **the untradeable flag** | `info/tradeBlock` | **[L]** - already extracted for equips by `tools/dump_equips.py`, which measured **7 of 1760**. The owner's "do not allow untradeable items to be stored" is likewise enforceable from client data |
+| **stack size** | `info/slotMax` | **[L]** - `200` on the ETC items sampled |
+
+That is a good outcome and worth saying explicitly: **both of the owner's restrictions are
+properties the client ships**, so neither has to be invented or taken from a fan site. Extend
+the `tools/dump_*.py` family to write a `gm-handbook/itemdata.txt` carrying
+`id, price, quest, tradeBlock, slotMax` and both rules become table lookups.
+
+##### What the client does NOT have, and this is the scoping fact
+
+**Shop contents are not in the client.** Checked three ways, each with a control:
+
+* `Data/Etc/Script/Script_000.wz` contains **no images at all** - the client ships no NPC
+  scripts. Control: the same `wz-dump tree` call on `Etc_000.wz` lists 67.
+* Of those 67 images, none is a shop or storage list. The only near-misses are
+  `CashShopCategory.img` (cash shop UI categories) and `NpcNoticeBoard.img` (13 bytes).
+* `Npc.wz` carries no shop node reachable from the NPC template.
+
+So **which items an NPC sells, and for how much, is server data we author** - which is how
+the real service works too, and it is why `price` alone is not a shop.
+
+> **An instrument correction, because it nearly became a finding.** The first pass at this
+> searched the `.wz` files for the raw bytes `shop`/`storage` and got zero, which looked like
+> an answer. It was not: WZ encodes property names, and the same search returns **zero for
+> `price`, `quest`, `info` and `icon`** - all of which had just been read out of that exact
+> archive with `wz-dump`. A raw byte grep over a WZ archive is a broken instrument and any
+> negative from one is worthless. Use `wz-dump`.
+
+##### What still has to be found
+
+1. **The inventory item itself** - the record block that puts an item in a bag, and `0x0107`.
+   The equipped-list block (`presence[2]`) is already decoded and is the closest model.
+2. **The shop dialog packet** - what opens the shop UI and carries the list, and the inbound
+   buy/sell request. The NPC-click path (`0x00F2`) already reaches the server, so the trigger
+   exists; only the reply is missing.
+3. **The storage dialog packet**, and the storage NPC templates.
+4. **Mesos.** Nothing maintains a meso balance today. The character stat block has a field
+   for it (`research/charstat-layout.md`); it is sent as zero and has never been exercised.
+
+##### Storage is per ACCOUNT, and that is a schema decision
+
+`characters` is keyed per character; storage is not. It wants its own table keyed on
+`account_id`, alongside a meso column - **not** a column on `characters`. Worth stating
+before anyone adds it in the wrong place: the account is already the unit that owns
+characters (`crates/store/src/db.rs`), so the foreign key is natural.
 
 ### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
 
