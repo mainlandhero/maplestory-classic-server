@@ -76,6 +76,30 @@ answers here both came from searching a known list — one looked for the wrong 
 (bit tests, when the mask was a byte array), one for the wrong *set* (five decoder
 addresses, when there are seven). Both returned clean, confident numbers.
 
+## The scratchpad shadows the real tools
+
+The session scratchpad has accumulated **copies of the repo's own instruments** - `reads.py`,
+`dis.py`, `callers.py`, `rangescan.py`, `poolscan.py`, `encodes.py`, `listing.py` and more -
+left behind by earlier work. Python puts the script's own directory first on `sys.path`, so
+**a script run from the scratchpad imports those instead of `tools/`**, silently.
+
+This is not hypothetical and it is not merely untidy. The scratchpad's `reads.py` is 3359
+bytes from an earlier session; `tools/reads.py` is 8500 bytes. The old one **does not contain
+`0x142d23ef0`** - the tenth read primitive, the one that sits 6 MB from the other nine and was
+found only by enumerating every `jmp` into a reader instead of searching the neighbourhood.
+A read walk that imports it comes back **short, clean and confident**, which is exactly the
+failure that shipped a truncated chat packet and killed the client **twice**.
+
+Two habits, either is enough:
+
+* Run repo tooling with **the repo as the working directory** - `python tools/reads.py ...`.
+* When a script must live in the scratchpad, pipe it in rather than naming it:
+  `python - args < script.py`, which leaves `sys.path[0]` empty.
+
+And the general form, which is the same rule this file makes everywhere else: **an instrument
+that is silently the wrong version is worse than one that is missing.** A missing tool raises;
+a stale one answers.
+
 ## Working alongside agents
 
 An agent's files are **its** files until it reports back. Three rules, all learned the same
