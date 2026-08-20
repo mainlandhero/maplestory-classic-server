@@ -1,4 +1,4 @@
-# NPC shops - Victoria Island, complete as of 2026-08-19
+# NPC shops - Victoria Island and Ossyria, complete as of 2026-08-19
 #
 # AUTHORED DATA, NOT GENERATED. This file is the one place in the repo that holds game
 # content we wrote down rather than extracted, and it is deliberately NOT in gm-handbook/ -
@@ -798,3 +798,241 @@ shop: Don Hwang | Armor Seller | Victoria Road: Kerning City Self-Defence Item S
 	Red Enamel Boots	3600
 	Blue Enamel Boots	3600
 	Black Enamel Boots	3600
+
+shop: Barun | Scroll Seller | Orbis: Orbis Tower <11th Floor>
+	One-Handed Sword Attack Scroll: Lesser	25000
+	One-Handed Axe Attack Scroll: Lesser	25000
+	One-Handed Blunt Weapon Attack Scroll: Lesser	25000
+	Dagger Attack Scroll: Lesser	25000
+	Wand Magic Attack Scroll: Lesser	25000
+	Staff Magic Attack Scroll: Lesser	25000
+	Two-handed Sword Attack Scroll: Lesser	50000
+	Two-handed Axe Attack Scroll: Lesser	50000
+	Two-handed Blunt Weapon Attack Scroll: Lesser	50000
+	Spear Attack Scroll: Lesser	50000
+	Polearm Attack Scroll: Lesser	50000
+	Bow Attack Scroll: Lesser	50000
+	Crossbow Attack Scroll: Lesser	50000
+	Claw Attack Scroll: Lesser	50000
+
+shop: Edel the Fairy | Grocer | Orbis: Orbis Department Store
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Warrior Potion	500
+	Magic Potion	500
+	Sniper Potion	500
+	Dexterity Potion	500
+	Speed Potion	500
+	Apple	20
+	Egg	30
+	Meat	80
+	Orange	50
+	Lemon	150
+	Pet Food	35
+	Black Dye	1000
+	White Dye	1000
+	Red Dye	1000
+	Yellow Dye	1000
+	Blue Dye	1000
+	Return Scroll - Nearest Town	400
+	Return Scroll to Orbis	1000
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
+
+shop: Neri the Fairy | Weapon Seller | Orbis: Orbis Weapon Store
+	Eloon	13500
+	Gladius	22000
+	Mithril Axe	13500
+	Fireman's Axe	22000
+	Fusion Mace	13500
+	War Hammer	22000
+	Iron Dagger	13500
+	Reef Claw	22000
+	Cass	22000
+	Wizard Staff	13500
+	Ice Wand	13500
+	Mithril Wand	22000
+	Broadsword	16500
+	Scimitar	26000
+	Two-Handed Axe	16500
+	Blue Axe	26000
+	Mithril Maul	26000
+	Forked Spear	26000
+	Mithril Pole Arm	26000
+	Battle Bow	16500
+	Ryden	26000
+	Mountain Crossbow	16500
+	Eagle Crow	26000
+	Meba	16500
+	Steel Guards	26000
+	Red Triangular Shield	15000
+	Red Cross Shield	18000
+
+shop: Nuri the Fairy | Armor Seller | Orbis: Orbis Weapon Store
+	Iron Burgernet Helm	4500
+	Jousting Helmet	7200
+	Orihalcon Master Sergeant	7500
+	Red Hwarang Shirt	12000
+	Red Shark	7500
+	Orihalcon Master Sergeant Kilt	6000
+	Brown Martial Arts Pants	9600
+	Red Shark Skirt	6000
+	Red Engrit	21600
+	Black Jester	7200
+	Blue Doros Robe	13500
+	White Wizard Robe	21600
+	Brown Doroness Robe	13500
+	Purple Fairy Top	12000
+	Purple Fairy Skirt	9600
+	Green Hunter	4500
+	Brown Hawkeye	7200
+	Green Bennis Chainmail	7500
+	Red Hunter's Armor	12000
+	Black Huntress Armor	12000
+	Bennis Chain Pants	6000
+	Red Hunter's Pants	9600
+	Red Huntress Pants	9600
+	Dark Tiberian	4500
+	Green Guise	7200
+	Black Sneak	7500
+	Dark Brown Stealer	12000
+	Dark Sneak	7500
+	Blue Steal	12000
+	Dark Brown Sneak Pants	6000
+	Dark Brown Stealer Pants	9600
+	Dark Sneak Pants	6000
+	Blue Steal Pants	9600
+	Red Whitebottom Boots	4680
+	Orange Whitebottom Boots	4680
+
+shop: Glibber | Merchant | El Nath: Ice Valley II
+	Red Bean Porridge	400
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Warrior Potion	500
+	Magic Potion	500
+	Sniper Potion	500
+	Dexterity Potion	500
+	Speed Potion	500
+	Meat	80
+	Hot Dog	180
+	Hot Dog Supreme	480
+	Melting Cheese	2000
+	Reindeer Milk	2500
+	Lemon	150
+	Pure Water	1120
+	Sunrise Dew	3000
+	Sunset Dew	3750
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
+
+shop: Hana | Grocer | El Nath: El Nath Department Store
+	Red Bean Porridge	400
+	Red Potion	50
+	Orange Potion	150
+	White Potion	350
+	Blue Potion	220
+	Warrior Potion	500
+	Magic Potion	500
+	Sniper Potion	500
+	Dexterity Potion	500
+	Speed Potion	500
+	Meat	80
+	Hot Dog	180
+	Hot Dog Supreme	480
+	Melting Cheese	2000
+	Reindeer Milk	2500
+	Lemon	150
+	Pure Water	1120
+	Sunrise Dew	3000
+	Sunset Dew	3750
+	Pet Food	35
+	Black Dye	1000
+	White Dye	1000
+	Red Dye	1000
+	Yellow Dye	1000
+	Blue Dye	1000
+	Return Scroll - Nearest Town	400
+	Return Scroll to El Nath	1000
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
+
+shop: Scott | Weapon Seller | El Nath: El Nath Weapon Store
+	Gladius	22000
+	Cutlus	30000
+	Fireman's Axe	22000
+	Dankke	30000
+	War Hammer	22000
+	Heavy Hammer	30000
+	Reef Claw	22000
+	Halfmoon Zamadar	30000
+	Mithril Wand	22000
+	Wizard Wand	30000
+	Scimitar	26000
+	Lionheart	36000
+	Blue Axe	26000
+	Niam	36000
+	Mithril Maul	26000
+	Sledgehammer	36000
+	Forked Spear	26000
+	Nakamaki	36000
+	Mithril Pole Arm	26000
+	Axe Pole Arm	36000
+	Ryden	26000
+	Red Viper	36000
+	Eagle Crow	26000
+	Heckler	36000
+	Steel Guards	26000
+	Bronze Guardian	36000
+	Red Cross Shield	24000
+	Battle Shield	40000
+
+shop: Rumi | Armor Seller | El Nath: El Nath Weapon Store
+	Red Snowshoes	3600
+	Blue Snowshoes	3600
+	Green Snowshoes	3600
+	Black Snowshoes	3600
+	Jousting Helmet	7200
+	Great Brown Helmet	12000
+	Red Hwarang Shirt	12000
+	Blue Sky	20000
+	Brown Martial Arts Pants	9600
+	White Martial Arts Shorts	16000
+	Red Engrit	21600
+	Silver Fitted Mail	36000
+	Black Jester	7200
+	Green Matty	12000
+	White Wizard Robe	21600
+	Dark Chaos Robe	36000
+	Purple Fairy Top	12000
+	Black Amoria Top	20000
+	Purple Fairy Skirt	9600
+	Black Amoria Skirt	16000
+	Brown Hawkeye	7200
+	Brown Pole-Feather Hat	12000
+	Red Hunter's Armor	12000
+	Brown Legolier	20000
+	Black Huntress Armor	12000
+	Brown Legolia	20000
+	Red Hunter's Pants	9600
+	Brown Legolier Pants	16000
+	Red Huntress Pants	9600
+	Brown Legolia Pants	16000
+	Green Guise	7200
+	Green Burgler	12000
+	Dark Brown Stealer	12000
+	Green Knucklevest	20000
+	Blue Steal	12000
+	Purple Avenger	36000
+	Dark Brown Stealer Pants	9600
+	Blue Knucklevest Pants	16000
+	Blue Steal Pants	9600
+	Pink Whitebottom Boots	4680
+	Blue Whitebottom Boots	4680
