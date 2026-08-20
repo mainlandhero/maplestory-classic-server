@@ -747,10 +747,18 @@ The original brief:
 > share this inventory. The storage stores mesos and items. Please do not allow untradeable
 > items to be stored."*
 
-Both are blocked on the **inventory** existing at all - today the server sends slot counts
-and nothing else; there is no item-in-a-bag anywhere, no mesos field being maintained, and
-`0x0107` (the inventory operation) has never been sent. Shops and storage are both "move an
-item between two containers", so the container comes first.
+**That blocker is gone, 2026-08-20.** This paragraph used to say storage was blocked on the
+inventory existing at all: no item in a bag, no meso balance, `0x0107` never sent. All three
+are now false. The bag persists across a map change (goal I, confirmed on screen), every
+`0x0107` is answered including refusals, and meso drops credit `characters.mesos` and report
+the new balance with `0x007C` bit 18 - the only way this client is ever told one.
+
+What storage still needs is its own work: an **account-scoped** container beside the
+character-scoped one, and **the opcode that opens the storage window - which nobody has
+looked for.** There is no storage decompilation in `research/` at all, so treat that as the
+first step rather than assuming it resembles the shop window. `crates/world/src/shops.rs`
+already has `may_be_stored` waiting for a caller. Shops and storage are both "move an item
+between two containers", so whichever gets built first should own that machinery.
 
 ##### What the client already gives us, measured
 

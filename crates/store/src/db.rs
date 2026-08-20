@@ -228,9 +228,11 @@ impl Store {
     /// column name") and this schema runs on **every** open, hence the `PRAGMA table_info`
     /// guard.
     ///
-    /// Every existing character starts on 0. Nothing has ever credited a meso, so 0 is what
-    /// they have rather than a value being overwritten - unlike the slot-count repair below,
-    /// this is not a correction and there is nothing here that could destroy a real balance.
+    /// Every existing character starts on 0. When the column was added nothing credited mesos,
+    /// so 0 was what they already had rather than a value being overwritten. **Meso drops
+    /// credit real balances now**, and this stays safe only because of the `PRAGMA` guard: it
+    /// never runs against a database that already carries the column. Unlike the slot-count
+    /// repair below, this is not a correction and cannot destroy a balance.
     ///
     /// Mesos are **not** a field of `net::opcode::Character`, so this column is deliberately
     /// outside `character.rs`'s exhaustive destructure: adding it there would mean changing a
