@@ -125,6 +125,7 @@ one thing that still kills the client.
 | 7 | **First job advancement** | Goal E below. Blocked on D, and shares the script machinery with A. The job ids and the four instructor templates are already measured out of the client; the 35-stat gate is **not in the client at all** and is ours to enforce | §E |
 | 8 | **NPC shops** | Goal F below. Blocked on there being an inventory to buy into. Prices and the quest-item flag are in the client's own `Item.wz`; **shop contents are not** and are ours to author | §F |
 | 9 | **Storage** | Goal G below. Same blocker, plus mesos, which nothing maintains yet. Per-account, so it needs its own table rather than a column on `characters` | §G |
+| 10 | **Citizenship** | Goal H below. All 88 quests are already in the client and its own data confirms the fan site field for field - including the contribution rule as a literal formula string. **It also settles the grade numbers behind `data/shops.txt`'s rank tags** | §H |
 
 #### The evening run of 2026-08-19, and what it cost
 
@@ -374,6 +375,104 @@ the real service works too, and it is why `price` alone is not a shop.
 `account_id`, alongside a meso column - **not** a column on `characters`. Worth stating
 before anyone adds it in the wrong place: the account is already the unit that owns
 characters (`crates/store/src/db.rs`), so the foreign key is natural.
+
+#### H. Citizenship - set by the owner, 2026-08-19
+
+Classic World's town-membership system, and **it is the thing the shop data's rank tags
+were waiting for.** Pick Henesys or Kerning City, work a community board, climb ten grades
+that unlock town shop items, discounts, storage rates and eventually housing.
+
+##### This is the best-corroborated spec in the project, and that is measurable
+
+The owner's source is a fan site drawn from the second closed online test - the same "COT2" the
+shop data is labelled with. Normally that would make every number **[I]**. It does not here,
+because **the client ships the same data and it agrees**.
+
+All **88** citizenship quests exist in this client's own `Quest.wz`, ids `506000`-`506141`,
+and the count matches the site's exactly. Quest `506001` ("First Greeting with Rina")
+checks field for field:
+
+| | client `Quest.wz` | the site |
+|---|---|---|
+| level gate | `Check.0.lvmin = 12` | Lv 12 |
+| town | `Check.0.citizenshipTown = 1` | Henesys |
+| grade gate | `Check.0.citizenshipGrade = 1` | grade 1 |
+| the board | `Check.0.npc = 235` | Community Board (Henesys) |
+| the resident | `Check.1.npc = 201` | Rina |
+| EXP | `Act.1.exp = 321` | 321 |
+| mesos | `Act.1.money = 351` | 351 |
+| reward | `Act.1.item.0 = 2010004 x5` | Orange x5 |
+| contribution | `Act.1.citizenshipContr.amountFormula` | "100 at grade 1, +50 per grade" |
+
+That last row is the striking one: the client carries the rule as a **literal formula
+string**, `100 + ( ( citizenshipGrade - 1 ) x 50 )`, in 36 quests. **[L]**
+
+##### What the client's own data establishes
+
+| | |
+|---|---|
+| `Check.N.citizenshipTown` | 86 uses, values **1 and 2** only - 45 quests for town 1, 41 for town 2 |
+| `Check.N.citizenshipGrade` | 86 uses, values **1..9** as gates |
+| `Act.N.citizenshipContr.town` | 86 uses - which town banks the contribution |
+| `Act.N.citizenshipContr.amount` | 50 uses, flat: 50, 80, 100, 180, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500 |
+| `Act.N.citizenshipContr.amountFormula` | 36 uses, the formula above |
+
+So **contribution is awarded through `Act.citizenshipContr`**, with either a flat `amount` or
+a formula, and it is gated by `Check.citizenshipTown` + `citizenshipGrade`. All **[L]**.
+
+##### The grade table
+
+Levels, contribution thresholds and the three discount columns are **[I]** from the site -
+none of them appears in `Quest.wz`. The names are corroborated: they are exactly the rank
+tags in `data/shops.txt`.
+
+| grade | name | Lv | contribution | shop disc. | storage disc. | storage fee/item |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | Traveler | 12 | from the quest | 5% | 5% | 95 |
+| 2 | Visitor | 17 | 1,000 | 7% | 10% | 90 |
+| 3 | Helpful Stranger | 22 | 2,000 | 9% | 15% | 85 |
+| 4 | Recognized Guest | 27 | 3,000 | 11% | 20% | 80 |
+| 5 | **Town Resident** | 32 | 4,000 | 13% | 25% | 75 |
+| 6 | Trusted Neighbor | 37 | 5,000 | 15% | 30% | 70 |
+| 7 | Distinguished Citizen | 42 | 6,000 | 17% | 35% | 65 |
+| 8 | Town Patron | 47 | 7,000 | 19% | 40% | 60 |
+| 9 | Guardian of the Village | 52 | 8,000 | 21% | 45% | 55 |
+| 10 | Citizen of Honor | 57 | 10,000 | 25% | 50% | 50 |
+
+Grade 5 unlocks VIP dailies from the town leaders - 3,487 EXP against 321 for a regular
+daily, and both numbers appear in the client's quest data.
+
+##### THIS UNBLOCKS THE SHOP DATA
+
+`data/shops.txt` records rank tags exactly as the live UI shows them - `Visitor+`,
+`Town Resident+`, `Guardian of the Village+` - and its header says the mapping to grade
+numbers "is NOT established". **It is now**, and it is just the table above: the tag is the
+grade name, `+` means that grade or higher. That turns every gated shop row into an integer
+comparison.
+
+##### The rest of the rules, all [I] from the site
+
+* Sign with **Arthur** (Henesys Town Hall) or **Roxy** (Kerning City Civic Center). One town
+  at a time; switching banks the old town's progress and restores it on return. First move
+  free; reactivation 50,000 mesos at grade 1, other grades unconfirmed **by the site itself**.
+* Dailies: `First Greeting` runs once, `Asking After` repeats. Weekly asks for 100 of one
+  monster's ETC drop and pays 500 contribution at grade 1, +250 per grade.
+* Citizen discounts apply in the **active** town, on tagged items only - buff potions, pet
+  food, return scrolls, the town cab.
+* Resident's Chair: 10,000 mesos from the furnishings store at Visitor, **trade-blocked**,
+  restores 20 HP / 5 MP per 10 seconds seated, one per town. Both chairs are already in
+  `data/shops.txt` (Oak, Weston) tagged `Visitor+`.
+* Town Earrings: Lv 57, awarded at Citizen of Honor, untradeable.
+* Ten NPCs per town greet with different dialogue as the grade rises - which is the same
+  machinery as goal B's idle chatter, keyed on grade.
+
+##### Dependencies
+
+Blocked on **D (level up)** for the level gates to mean anything, and it shares the quest
+machinery with **A**. But the quest data is already extracted and the gates are already
+expressible: `crates/store` needs a per-character `(town, grade, contribution)` and
+`crates/world` needs to honour `Check.citizenshipTown`/`citizenshipGrade`, both of which are
+small next to what is already built.
 
 ### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
 
