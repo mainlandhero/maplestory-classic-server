@@ -121,6 +121,7 @@ one thing that still kills the client.
 | 3 | **Decode `0x0420`-`0x0426`** | The client volunteers its **own world state** once per session: `0x0421` is 1115 bytes carrying the character id, the name and **our four item ids in equipped-slot order**; `0x0420` carries the NPC object ids we assigned. It is a free read-back instrument - it says what the client *thinks* it has, in its own words - and nothing else here can do that | §2e |
 | 4 | **Read what populates the Change Channel list** | **All three explanations are now retracted** (the four trailing bytes, the enable byte, the route through world select). Two client runs went on the first two. Nothing yet proposed populates that list, so the next step is to find what calls `FUN_142cb8e10` and when - upstream, not downstream | `research/channel-select.md` §0 |
 | 5 | **Quest state** | Goal A below. Everything else about quests works; nothing persists | §"NEW GOAL ... quest state" |
+| 6 | **Level up** | Goal D below, set by the owner once mobs rendered. Partly blocked on combat - EXP has no source until a mob can die - but the EXP curve, the AP/SP rules and the level-up effect are all independent of it | §D |
 
 #### The evening run of 2026-08-19, and what it cost
 
@@ -220,6 +221,35 @@ are still placeholders.
 #### C. Mob drops
 
 Follows the mob body. A mob has to exist before it can drop, so this is blocked on item 3.
+
+#### D. Character level up - set by the owner, 2026-08-19, after mobs rendered
+
+> *"Once we can kill mobs, the next thing to handle is character level up. Once the EXP
+> reaches or exceeds 100%, the player advances to the next level. They receive their level up
+> animation client side and gets extra HP/MP, 5 ability points, and 3 skill points. If they
+> are under level 10, they only receive 1 skill point per level."*
+
+Blanket-accepted as the rule. What it needs, and which parts are blocked:
+
+| part | blocked on |
+|---|---|
+| EXP arriving at all | **mob combat** - EXP has no source until a mob can be killed |
+| the EXP-to-next-level curve | nothing - it is in the client, and extracting it is independent |
+| +5 AP, +3 SP (1 below level 10) | nothing - server-side arithmetic |
+| extra HP/MP | nothing to *decide*, but the per-level amounts come from the client's own job data |
+| the stat change reaching the client | **mob combat** - that agent owns the stat-change packet, and level/HP/MP/AP/SP ride the same one |
+| the level-up animation | nothing - the owner says the client owns the animation, so this is one effect packet |
+
+**One ambiguity, and it is stated rather than guessed.** "If they are under level 10" is read
+here as **the level being reached**: 5 -> 6 gives 1 SP, and 9 -> **10** gives 3, because the
+new level is not under 10. The other reading (the level being left) would make 9 -> 10 give
+1. It is one comparison to flip if that is wrong, and it is called out here so it is a
+decision rather than an accident.
+
+**The trap to avoid.** HP/MP per level is exactly the kind of number this project keeps
+getting from the reference server and paying for later - the inventory bag was 24 for a
+commit because of it. Take it from this client's own WZ, and if it cannot be found there,
+say so and label the number **[I]** rather than shipping it as fact.
 
 ### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
 
