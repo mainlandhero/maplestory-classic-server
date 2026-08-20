@@ -672,7 +672,11 @@ mod tests {
         }
         let table = ShopTable::load(shops, names, data);
         assert_eq!(table.shops.len(), 39, "39 shops were transcribed");
-        assert_eq!(table.item_count(), 925, "and 925 item rows");
+        // 932 since 2026-08-19: seven female rows were restored to Don Hwang and Nuri
+        // after the coordinator had deleted them as "duplicates". They were not - they
+        // are the female variants, sharing a display name and differing only in id, and
+        // the live UI counts (98/98 and 36/36) are what proved it.
+        assert_eq!(table.item_count(), 932, "and 932 item rows");
         assert!(
             table.problems.is_empty(),
             "every row must resolve; still open:\n{}",

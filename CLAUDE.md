@@ -72,6 +72,23 @@ count, and the person who sent that message did not re-run their own. The result
 packet shipping short a second time and killing the client a second time. The fixed tool's
 own output had already printed the missing read; it scrolled past unread.
 
+## The test summary that could not count failures
+
+`cargo test --workspace | awk -F'[ ;]' '{p+=$4; f+=$6}'` **always reports zero failures.**
+With `;` as a separator, `0 failed` lands in field 7 and field 6 is the empty string between
+`passed;` and the space. It was used to report "N passed, 0 failed" repeatedly on 2026-08-19
+before anyone noticed the counter was structurally incapable of returning anything else.
+
+Count with something that reads the word, not the position:
+
+```
+cargo test --workspace 2>&1 | grep -E "^test result:"   | sed -E 's/test result: (ok|FAILED)\. ([0-9]+) passed; ([0-9]+) failed.*/  /'   | awk '{p+=$2; f+=$3} END {print p" passed, "f" failed"}'
+```
+
+Or simply look for `FAILED` and `^---- `. A summary line is not a check; it is a claim, and
+this one is exactly the shape `CLAUDE.md` warns about everywhere else - a clean, confident
+number from an instrument nobody verified.
+
 ## Reverse engineering
 
 **`docs/ghidra.md`** — the working command line, JDK 21, the scripts, and the traps.
