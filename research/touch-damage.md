@@ -1,5 +1,21 @@
 # Touch damage: the client's hit packet is `0x00E5`, and it does **not** read the mob's body rect
 
+> ## CORRECTION, 2026-08-20: the negative did not hold
+>
+> This file concluded that the mob-to-player path could not involve the mob's body
+> rectangle, and that a snail - having no `attack` node - could not deal contact damage
+> through the machinery described here. **On that basis a correct answer was withdrawn.**
+>
+> The owner, after the mob size-scale fix: *"The mob killings work, I'm taking damage, and the
+> mob is also taking damage."* One field, both directions.
+>
+> What this file found is the **attack-node** path, and that part stands. Its `[D]` negative
+> on a **body**/touch-damage path - correctly labelled here, with its blind spot named - was
+> read as "not there" rather than "not found". That is the mistake, and it was the reader's,
+> not this file's.
+>
+> `0x00E5` is decoded and wired since; see `research/user-hit.md`.
+
 2026-08-20. Static only - **no client run was spent on this.** Tags: **[L]** measured/read
 off the image or the WZ, **[D]** derived from something [L], **[I]** inference or from the
 reference source.

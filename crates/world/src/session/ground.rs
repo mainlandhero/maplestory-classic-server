@@ -8,15 +8,13 @@
 //! Dropping is built out of packets read off the client: `0x0107` with **`dst == 0`** is the
 //! request (the owner dragged a sword out of the window and the capture shows `01 0100 0000 0100`),
 //! and `0x046E` puts the item on the floor. Picking up is **not**. The player's pick-up
-//! request opcode cannot be found statically - the chain runs into the Themida VM - so
-//! [`Session::on_pick_up`] accepts the whole unclaimed range `0x0329..0x032E` and reports
-//! which one arrived. One walk over one drop names it in `world.log`.
+//! request opcode could never be found statically - the chain runs into `.themida`, whose
+//! `SizeOfRawData` is 0 - and **one walk over one drop named it: `0x032C`**, with the drop's
+//! object id at body offset 13. Measured 2026-08-20.
 //!
-//! The body layout of that request is unknown too, which is why the handler **searches** the
-//! body for a `u32` matching a live drop id instead of reading a fixed offset. That is only
-//! safe because the ids start at 20 000 000 and nothing else mints them - see
-//! `crate::drops::FIRST_DROP_OBJECT_ID`. It makes one run name the opcode, the field offset
-//! *and* complete the pick-up, instead of needing three.
+//! The handler used to **search** the body for a `u32` matching a live drop id, because the
+//! layout was unknown; that is what made one run name the opcode, the field offset *and*
+//! complete the pick-up instead of needing three. It reads offset 13 directly now.
 //!
 //! # Always answer
 //!
@@ -115,7 +113,7 @@ impl Session {
     }
 
 
-    /// One of `0x0329..0x032E` arrived, and one of them is the pick-up request.
+    /// `0x032C` - the player walked over a drop.
     ///
     /// **This handler exists to be read in a log.** Until a run names the opcode it reports
     /// what came in, whether a live drop id was found in the body, and at what byte offset.

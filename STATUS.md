@@ -104,90 +104,135 @@ stand as written.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-20, after runs 1-3 and a refactor.** Read this section and nothing
-else to know where the project is.
+**Last updated 2026-08-20, after five client runs and a large day.** Read this section and
+nothing else to know where the project is. Everything under it is older and kept for its
+working, not its verdicts.
 
 #### CONFIRMED on a real client
 
-| | confirmed |
+| | |
 |---|---|
 | the world | a dressed character on a map, items carrying their real `Character.wz` stats |
 | the bag | six inventories sized by the server; 125 slots with a scrollbar |
 | NPCs | visible, clickable, speaking the game's own lines on both click paths |
 | movement | portals both ways, `!map <id>` |
 | session | world select, Log Out back to the login screen |
-| mobs | spawn, and move properly |
-| **inventory persistence (goal I)** | **2026-08-20.** An item taken off *stays* off across a map change, and goes back on when asked. All four equips, off and on. The owner: *"very good"* |
-| **two channel rows** | CH.1 and CH.2 both listed in the Change Channel dialog |
+| **inventory persistence (goal I)** | an item taken off *stays* off across a map change |
+| two channel rows | CH.1 and CH.2 both listed in the Change Channel dialog |
+| **combat, both directions** | The owner: *"The mob killings work, I'm taking damage, and the mob is also taking damage."* |
+| **drops** | items fall when a mob dies, and the pick-up works |
+
+#### The two fixes that made combat work, and what they cost to find
+
+**Every mob was sent a size of ZERO PERCENT.** Body offset 91 -> `mob+0xd64`. `0` is not
+"unset"; `FUN_141c57120` reads it and, when it is not exactly `100`, resizes the hit
+rectangle by `(scale - 100)%` of half its width. At `0` both edges collapse onto the centre,
+`141d326ae` **skips** the rect rather than rejecting it, and `141d327c6` drops the mob - with
+all seventeen documented gates green. Invisible because the render paths test `<= 0` ("no
+scale set, draw normally") while the hit-box path tests `!= 100`, so the mobs drew, animated
+and walked while having no hit box at all. One field, both directions of damage.
+
+**`0x00E5` is the client reporting that it took damage, and it does not apply it.** Three
+scans with different blind spots found zero writers of the player's HP field. The server is
+the authority and answers with `0x007C` bit 10 - the **new HP**, not a delta.
 
 #### WIRED, and NOT yet seen on a screen
 
 Everything here compiles, is tested, and is connected. **None of it has been seen by the
-client.** That heading exists separately because `STATUS.md` has twice called something done
-while it was unwired, and "a unit test passes" is not "it works".
+client.** The heading exists separately because `STATUS.md` has twice called something done
+while it was unwired.
 
-| | what to look for on the next run |
+| | what to look for |
 |---|---|
-| **the NPC shop (goal F)** | click Lucy on map 1013: the counter opens, Buy has rows, **Sell has rows too** (they are the negative-price ones), buying charges mesos, selling pays |
-| **the quest journal (goal A)** | accept Heena's quest, then `!map 40` - it must still be listed. The accept is now recorded on `0x0151`, which is the handler the client actually uses |
-| **CH.2 clickable** | single-click CH.2 - it should turn cream, then blue. **Double-click and the Change button send `0x00D2`**, which is answered now but with a reply shape that is inference |
-| **`!item <itemId> [count]`** | `!item 1302000` puts a sword in the Equip tab without a relog |
-| **GM acknowledgements** | every `!` command says what it is about to do. Colour is expected to be yellow and has never been measured |
-| **chat renders** | **a one-byte fix.** The client shows a line only if bit 1 of the first `u8` after the speaker id is set (`142785722 test byte [rbp+0x168],2 / je` past *both* balloon sites); we sent `0`, and the client's own `0x00E7` builder hardcodes `3`. Type "Hello" - a balloon over the head and a line in the log. **Necessary, possibly not sufficient**: if the client's `GetUser` misses, the byte changes nothing, and that failure is a silent NULL rather than a fault |
-| **dropping an item** | drag the sword out of the window: it leaves the bag and lands on the floor. **Swing once first** - see the position note below |
-| **picking it up** | walk over it. Even if nothing happens on screen, `world.log` names the opcode - that is the point of the step |
-| **`!exp <amount>`** | `!exp 100` moves the EXP bar **immediately**, via `0x007C` bit 16, and the total survives a relog |
-
-#### BUILT, and deliberately NOT wired
-
-| | why not, and what unblocks it |
-|---|---|
-| **level up and job advancement** (`crates/net/src/stats.rs`) | the packets are decoded and tested - `0x007C` with its u32 mask, `0x02AF` for what other players see, and the level-up animation comes free because the `0x007C` handler plays it itself when the level goes up. What is missing is **the EXP curve**: it lives at `0x143AC2400`, 121 `u64`s, in the **BSS tail of `.data`** - zero on disk, so no static read can get it. One `-Probe` peek on a running client is the cheap way. Nothing in `crates/world` references `net::stats` except `!exp` |
-| **storage (goal G)** | the store API is done and enforces the owner's untradeable rule; no storage dialog is decoded in either direction |
-
-#### The drop position, and why a drop can be refused
-
-`0x0107` carries no coordinates and **nothing here parses `0x00D9`**, the packet in which the
-client reports its own movement. The client's pick-up sweep is a box of `x-0x19..x+0x19` by
-`y-0x32..y+0x0a` around the *player*, so an item put down more than about 25 pixels off is
-drawn and cannot be reached - and on screen that is the same picture as nothing happening.
-
-So a drop with no known position is **refused with a notice** rather than guessed: a guess
-would make a broken run look like a working one. The position comes from the last attack
-request, which is the only coordinate pair this server currently reads from the client.
-**Swing once before dropping**, or the drop will politely refuse and tell you so.
+| **drops land on the mob** | not at the player's feet. Fixed twice: the second time, `hurt()` removed the mob before the drop asked where it was |
+| **the mob HP bar** | `0x03F0` carries a **percentage**, not an absolute. We sent 27 of 45 and it drew 27% |
+| **EXP and pick-ups in the screen message area** | `0x0089` with a type byte, not `0x00BB`. The chat notices are gone |
+| **kill quests count** | Sam's Suggestion is quest 1006 - mob template 2, ten of them |
+| **skills** | `0x013B` answered with `0x0081`; levels persist and ride the character record as `presence[8]` |
+| **mob respawn** | from the WZ's own `mobTime`; a field starts **empty** and fills in |
+| **levelling** | EXP per kill from the client's own template data, curve in `data/exp-curve.txt` |
 
 #### What to do next, in order
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **What puts the user in state 18/19** | It is what stopped the owner attacking after a pick-up, and the **same predicate** skips the drop-pool clear and refuses the pick-up pre-check. `(user->[0x5e4] & ~1) == 0x12`, checked by four of the six attack builders. What SETS it is `[I]`. `-UserState` watches the only setter; one ordinary session prints the state machine |
-| 2 | **Run the client** | Six things are wired and unseen: drops on the floor, pick-up, EXP per kill, levelling, HP loss, mob respawn |
-| 3 | **Why `0x0560` kills the client** | Rows are not the variable and neither is the map. The window needs `UI/UIWindow2.img`, which this client does not ship; the WZ has `UIShop.img/Shop` instead, and which opcode builds THAT is the question. Static work |
-| 4 | ~~Make `mob+0xa88` non-null~~ | **SOLVED, and it was not that field.** Every mob was sent a size of **zero percent**, which collapsed its hit rectangle onto its own centre. Confirmed on screen: the owner kills mobs and takes damage. `mob+0xa88` is the avatar-look renderer and null is correct for it |
-| 3 | **The EXP curve, off a running client** | 121 `u64`s at `0x143AC2400`, in the BSS tail of `.data` - **zero on disk**, so static analysis cannot ever read it. One `-Probe` peek. Without it, levelling has no thresholds |
-| 4 | **Parse `0x00D9`** | The client reporting its own position. It removes the "swing first" awkwardness from dropping, and every positional feature after it needs the same field |
-| 5 | **Amherst (map 1013) is intermittent** | It no longer hard-crashes, and run 2 still failed to enter it. Not fixed - intermittent |
-| 6 | **Touch damage** | Template 1 carries `bodyAttack = 1` and `PADamage = 1`, so a snail is meant to hurt for **1 point**. "No damage" and "1 damage" look alike on screen. Measure before assuming it is broken |
-| 7 | **Level up (goal D), job advancement (goal E)** | The packets are built. The *rules* need item 3, and awarding EXP for a kill needs item 2 |
+| 1 | **Run the client**, plan below | Seven wired things are unseen |
+| 2 | **The skill-window crash** | The cheapest discrimination costs no code and is step 8 of the plan. If the inventory window also crashes, the teardown is generic and skills are innocent |
+| 3 | **What puts the user in state 18/19** | `(user->[0x5e4] & ~1) == 0x12`, checked by four of the six attack builders, and the same predicate skips the drop-pool clear and refuses the pick-up pre-check. What SETS it is `[I]`. `-UserState` watches the only setter |
+| 4 | **The classic shop counter** | `0x0560` cannot work: its window needs `UI/UIWindow2.img`, absent from this client's WZ. The WZ ships `UIShop.img/Shop` instead and **which opcode builds that is the open question**. Static work |
+| 5 | **Death** | `hp = 0` disables the player and does not hang the client, but nothing plays the death or revive sequence. `!heal` is the escape hatch until it exists |
+| 6 | **Job advancement (goal E)** | Needs SP, and the stat block's SP field forks into a pool list nobody has decoded |
 
-#### The pick-up walk will actually see the packet - checked, 2026-08-20
+#### THE TEST PLAN for the next run
 
-"One walk over one drop names it" was a claim about an instrument nobody had verified, which
-is the thing `CLAUDE.md` warns about most. All three links now check out, in the source:
+```
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
+```
 
-* **every** inbound packet is logged with its opcode and body before dispatch, handled or
-  not - `crates/world/src/server.rs`, the `<- {label}, {n} byte body {hex}` line;
-* an opcode with no handler additionally logs *"is not answered yet, and it is UNKNOWN, so
-  the full body is above"*, so `grep UNKNOWN world.log` finds it;
-* `body_hex` truncates to 96 bytes **only when the opcode has a name**, and **none of
-  `0x0329..0x032E` is named** - checked against `crates/net/src/names.rs`. A named candidate
-  would have been truncated *and* missing from a `grep UNKNOWN`, which is exactly the silent
-  negative that would have wasted the run.
+**The path is absolute on purpose** - the launch needs an elevated window, and an elevated
+window opens in `C:\Windows\System32`. **`-SetFieldProbe` is not optional**: without it
+`Session::handle` returns nothing for *every* packet and the client sits on "Connecting...".
 
-What is still missing is something to walk over: the drop is currently refused, so nothing
-ever lies on the ground. The field-side drop table is being built now; until it is wired,
-this step cannot be attempted, however good the logging is.
+**The map will be EMPTY when you arrive and fill in over about seven seconds.** That is the
+model the owner asked for, not a bug.
+
+| # | do | what to watch | what it means |
+|---|---|---|---|
+| 1 | `!map 40`, wait | snails appearing over a few seconds | the field seeds empty and refills from the WZ's `mobTime` |
+| 2 | hit one snail **once** | the HP bar over it | 18 damage on a 45 HP snail should leave it near **three fifths**. About a quarter means the percentage change did not land |
+| 3 | kill it | drops on the floor, **at the mob** | not at your feet, and several drops slightly apart rather than stacked |
+| 4 | watch the bottom right | `You received EXP (+2)` | **not** in the chat log. Different wording from the live server - this build's string table says "received", not "gained" |
+| 5 | walk over a drop | it goes in the bag, and a line bottom-right | `0x032C` is measured now, so this should simply work |
+| 6 | kill snails until you level | the level-up animation, +5 AP | the client plays the animation itself from `0x007C` |
+| 7 | accept Sam's Suggestion, kill snails | the quest counter moving | ten snails. The count is a **string** in the packet - if it reads 0/10 forever, that is where to look |
+| 8 | open the **inventory** window, close it. Then the **stat** window | whether the client survives | **this is the skill-window crash test and it needs no code.** If either also crashes, the teardown is generic and unrelated to skills |
+| 9 | open the skill window, click `+` on Three Snails | the level going up, **twice** | the first click always went out; the second was swallowed by a latch only a server packet clears |
+| 10 | relog | the skill level, the EXP, the quest count | all three persist now |
+
+**Do not click Lucy.** `0x0560` is off by default and they will simply talk, but there is no
+point spending attention on it until the classic counter is found.
+
+Two watches, each needing its own run, neither combinable with the above:
+
+* the user state machine: `-SetFieldProbe -UserState`
+* mob targeting: `-SetFieldProbe -MobTargets` (kept, though the mob question is answered)
+
+**Every `-SetFieldProbe` run also dumps the client's own EXP curve for free**, on the
+positive-control watch's first hit. `python tools/decode_dump.py --exp-curve` decodes it, and
+comparing it against `data/exp-curve.txt` is a five-second job nobody has done. If they
+disagree, **the client wins**.
+
+#### Things that are NOT open, so nobody re-opens them
+
+* **The pick-up opcode is `0x032C`**, object id at body offset 13. It can never be confirmed
+  further: the builder is in `.themida`, whose `SizeOfRawData` is **0**.
+* **`pool+0x90` is not a latch.** It is a client-side anti-cheat check that clears itself.
+* **`mob+0xa88` is not the mob's animation object** - it is the avatar-look renderer, and
+  `0` is correct for it on all 193 mob templates. The animation object is `mob+0x610`.
+* **Item quests need no running count.** The client counts the bag live.
+* **The shop is not a row problem and not a map problem.** One correctly-formed row killed
+  the client exactly as twelve did, and the map loads fine without a shop.
+* **The bag is not the unequip blocker**, `0x02FF` must be answered, `0x0107` must always be
+  answered including refusals, and the client computes its own damage.
+* **`0x0301` is a MOB picking up a drop**, not the player's request.
+
+#### Instruments that have lied, and are now fixed
+
+Every one of these produced a clean, confident, wrong answer. They are listed because the
+next wrong answer will come from an instrument nobody has checked yet.
+
+| tool | what it did |
+|---|---|
+| `tools/callers.py` | scanned for `call` only. **27 909** of 120 981 functions would have come back "zero callers" while reachable by a tail `jmp` or a vtable pointer. Now reports three kinds |
+| `tools/rtti.py` | mapped addresses in the zero-initialised tail of `.data` into `.pdata` and returned those bytes as data - 120 confident wrong numbers for the EXP curve. Now raises |
+| `tools/fieldrefs.py`, `tools/rangescan.py` | **silently drop `rbp`-based operands.** A scan for a field's writers came back without the one writer everybody already knew about. **Not fixed** - work around it and say you did |
+| `tools/encodes.py` | misses fields written by a **loop**, so a body length from it alone is short and confident. **Not fixed** |
+| the probe's throw log | logged throws only 25 s after arming, so a client that died at 23 s recorded **zero throws** and read as "it did not throw". Now logs the first eight always, and every fault line reports throws *seen* against *logged* |
+
+---
+
+> Everything below is **older working, kept for its method rather than its verdicts.**
+> Where it disagrees with the section above, the section above is right.
 
 #### THE FIX: every mob was sent a size of **zero percent** - 2026-08-20
 
@@ -534,7 +579,19 @@ changes that.
 
 These are goals rather than tasks; each is bigger than a sitting.
 
-#### A. Quest state that actually advances
+#### A. Quest state that actually advances - **kill quests DONE 2026-08-20**
+
+**The paragraph below is stale and kept for its method.** Quests persist, accepting is
+recorded on `0x0151` action 1, the journal is sent on field entry, and a kill now counts
+toward every started quest that named that mob. The count is **three zero-padded decimal
+characters per mob slot** - an integer there renders as nothing, which is exactly what a
+broken counter looks like. Item quests need no running count: the client counts the bag live.
+`research/quest-progress.md`.
+
+What is *not* done: turning a finished quest in, and what the client expects when the player
+returns to the NPC short of the requirement.
+
+The original write-up, from when none of it worked:
 
 **Nothing about quests persists or changes.** Accepting does nothing, the same line comes
 back every time, and the journal never fills. Full write-up is in its own section below
@@ -560,11 +617,28 @@ itself, the way its minimap reads the WZ directly and the way it picks its own
 because `isEnabled` and `alpha` were zero while the layout was perfect. Several fields there
 are still placeholders.
 
-#### C. Mob drops
+#### C. Mob drops - **DONE 2026-08-20**
 
-Follows the mob body. A mob has to exist before it can drop, so this is blocked on item 3.
+Items fall when a mob dies, at the mob's position, staggered, expiring after two minutes,
+and the pick-up works. 993 rows over 170 mob templates from the community database, plus a
+global table for event items that every mob rolls. `crates/world/src/droptables.rs`,
+`data/drops.txt`, `tools/scrape_drops.py`.
 
-#### D. Character level up - set by the owner, 2026-08-19, after mobs rendered
+**The chances are ours, not data.** The source has vote scores and no drop rates; only the
+meso rows carry a real chance. The score is kept as a column so the policy can be retuned
+without scraping again.
+
+#### D. Character level up - **DONE 2026-08-20**, and the curve is worth a check
+
+A kill awards the mob's own EXP from `gm-handbook/mobtemplates.txt`, levels carry over, and
+the client plays its own level-up animation from the `0x007C`. The curve is
+`data/exp-curve.txt`, levels 1..99, from a community guide - **the client keeps its own copy
+and the client wins if they disagree**. Every `-SetFieldProbe` run now dumps it;
+`python tools/decode_dump.py --exp-curve` compares them in five seconds, and nobody has.
+
+What a level *awards* is policy, tagged `[I]`, in one place: five AP, flat HP/MP, no SP.
+
+The original brief follows.
 
 > *"Once we can kill mobs, the next thing to handle is character level up. Once the EXP
 > reaches or exceeds 100%, the player advances to the next level. They receive their level up
@@ -644,7 +718,23 @@ whether the client needs anything beyond the stat block's `job` field at the nex
 already sent on every `SetField`, so the cheapest first experiment is whether simply storing
 a new job and re-sending the record is enough to make the client show a first-job character.
 
-#### F. NPC shops - set by the owner, 2026-08-19
+#### F. NPC shops - **BLOCKED on client data, 2026-08-20**
+
+**`0x0560` cannot work on this client and no server byte can change that.** The shop window's
+constructor loads `UI/UIWindow2.img/Shop2/backgrnd`; that image is **not in this client's
+WZ**; the resource call fails, `_com_issue_errorex` throws, and the unwinder faults. The
+client never returns from the handler - neither crashing run has a numbered dispatch line for
+`0x0560` - and it dies **before reading a single row byte**, which is why one correctly-formed
+row killed it exactly as twelve did. Two of the owner's manual launches went on this.
+
+It is **off by default** and a shopkeeper falls through to ordinary dialogue. Not abandoned:
+the WZ ships `UIShop.img/Shop`, the classic-layout counter, and **which opcode builds that is
+the open question**. `research/npc-shop-crash2.md`.
+
+Everything else about the shop is built and tested - the row layout, both tabs, the
+transaction, the untradeable rule - and is waiting on that one answer.
+
+The original brief:
 
 > *"NPC shops when clicked on by the client should open the appropriate NPC shop with the
 > appropriate shop list with appropriate item prices. Users should also be able to sell items

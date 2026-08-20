@@ -22,10 +22,12 @@
 //! | **field entry** (re-send the floor) | nothing | one call in `Session::on_field_entered` |
 //! | **expiry** | nothing | one call in `Session::tick` |
 //!
-//! The pick-up opcode cannot be found statically - the send is behind a `jmp` into the
-//! Themida VM section, and that is a *verified* negative with a positive control in
-//! `research/item-drop.md` § UNRESOLVED, not a search that came back empty. It is narrowed to
-//! the six opcodes [`PICK_UP_CANDIDATE_FIRST`]`..=`[`PICK_UP_CANDIDATE_LAST`].
+//! **The pick-up opcode is `0x032C`, measured 2026-08-20**, with the drop's object id at
+//! body offset 13. It could never have been found statically - the send is behind a `jmp`
+//! into `.themida`, whose `SizeOfRawData` is 0, so those bytes are not in the file at any
+//! offset. One walk over one drop named it, exactly as `research/item-drop.md` said it would.
+//! The six-candidate range below is history now; `PICK_UP_CANDIDATE_FIRST` survives only
+//! because a stray sibling opcode should still be answered rather than ignored.
 //!
 //! **So this module never sees an opcode.** [`DropTable::take`] takes an object id and a
 //! character id. When a run names the opcode, the wiring is one match arm that reads a `u32`

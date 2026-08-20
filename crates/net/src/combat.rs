@@ -482,7 +482,21 @@ pub const MOB_HP_CHANGE_LEN: usize = 9;
 ///   stamps `mob+0x6c0` with the current tick. So `showBar` is "show it now even though
 ///   this template would not normally". **[L]** for the branches, **[I]** for the name.
 ///
-/// # `hp` is an ABSOLUTE HP, not a percentage - unlike the spawn packet's
+/// # `hp` is a PERCENTAGE, 0..100 - and this doc said the opposite until 2026-08-20
+///
+/// **The paragraph below is WRONG and is kept because the way it was wrong is instructive.**
+/// It reads `template+0x100` as "the mob's max HP". That field is `hpNoticePerNum`, a
+/// different `Mob.wz` property, and a census of all 193 mob images in this client finds it
+/// on **none** of them - so it is 0 everywhere, the constructor substitutes `100.0`, and
+/// every reader converts with `v * 100 / (hpNoticePerNum ?: 100)`. The real `maxHP` is
+/// `template+0x20`.
+///
+/// The arithmetic was never wrong; the **unit** was. The owner saw it: a snail with 45 HP hit for
+/// 18 has 27 left, we sent 27, and the bar drew at 27% instead of 60%. Use [`hp_percent`].
+/// `research/mob-hp-bar.md`.
+///
+/// ## The original paragraph, retained
+///
 ///
 /// `0x03C6` carries an absolute HP too, but the client turns it into a percentage
 /// immediately with a *different* divisor (`FUN_141c8a730`, the template's `+0x20` qword -

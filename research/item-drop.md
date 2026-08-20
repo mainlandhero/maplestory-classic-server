@@ -13,6 +13,20 @@ New files beside this one: `research/msexe-droppool-onpacket.txt`,
 
 ---
 
+## RESOLVED, 2026-08-20 - read this before believing the section below
+
+Two of the three things this file called unresolved are now settled, and one of its
+conclusions is **falsified**. The sections below are kept for their working, not their
+verdicts.
+
+| | |
+|---|---|
+| **the pick-up opcode** | **`0x032C`**, object id at body offset **13** of a 34-byte body. Measured on a real client. §1's prediction from the v214 reference - a source scored 1 of 8 - was right, and §1's advice ("finish this with a measurement, not more static analysis") is exactly what worked |
+| **why it can never be read** | `.themida` has `SizeOfRawData = 0`. The builder's bytes are **not in the file at any offset**, so no disassembler will ever produce that layout. The body is `[D]`/`[I]` from one capture cross-checked against `0x00D9` and `0x00DF` of the same session |
+| **`pool+0x90` is NOT a latch** - §6 and §8 item 4 are **wrong** | Three writers, one reader, all client-side. `FUN_1417a2c90` is an anti-cheat consistency check that clears the flag itself, and its caller runs the sweep and the clear inside the same key press. No inbound handler touches it. `research/pick-up-latch.md` |
+| **`0x025F` is not routine traffic** - §8 item 8 is **retracted** | It is an *error report*, sent only when the drop handler hits a null and gives up. Six call sites were misread as six sends. A `0x025F` in `world.log` is a gift: it means our `0x046E` was rejected |
+| what really locked the player | a user state field, `(user->[0x5e4] & ~1) == 0x12`, which four of the six attack builders check - and the same predicate skips the drop-pool clear and refuses the pick-up pre-check. `research/pick-up-latch.md` §2 |
+
 ## UNRESOLVED - read this before building on anything below
 
 ### 1. The player's pick-up request opcode is NOT found

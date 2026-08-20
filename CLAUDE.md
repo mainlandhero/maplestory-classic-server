@@ -95,7 +95,45 @@ functions, **27 909** would have come back "zero callers" while being reached by
 (6 927) or a pointer in data (21 889) - and one of them had already been written up as
 "zero direct callers, therefore virtual", which was wrong twice over.
 
+## "Not found" is not "not there", and the retraction can be the mistake
+
+On 2026-08-20 a static pass reported that a mob's body rectangle could not be involved in
+touch damage. It said so carefully: the negative was tagged **[D]**, and it **named its own
+blind spot**. On the strength of it a correct claim was withdrawn, and the owner was told not to
+expect a snail to hurt them. Ten minutes with the client: *"I'm taking damage, and the mob is
+also taking damage."* One field explained both directions all along.
+
+The rest of this file is about not believing confident positives. This is the mirror: **a
+carefully-hedged negative is not a licence to retract a measurement.** What the pass had
+found was one path; what it had not found was another, and it said so.
+
+Two habits fall out. When a report's negative contradicts something already seen on screen,
+**the screen wins**. And when an agent labels a finding `[D]` with a named blind spot, quote
+that blind spot when acting on it - if the sentence cannot be written down, the finding is
+not strong enough to retract anything.
+
+The same day, an agent swept for an immediate `0x12` near a state setter, found nothing, and
+**refused to report it**: the setter's one call site passes a computed register, so an empty
+result was the only possible outcome. That is the standard.
+
+## The unit, not the arithmetic
+
+Three separate bugs this month were a correct number in the wrong unit, and all three read on
+screen as "the feature is broken":
+
+* `0x03F0`'s mob HP was sent as an absolute; the field is a **percentage**. 27 of 45 drew a
+  bar at 27%.
+* A quest's progress count was going to be sent as an integer; the client stores **three
+  zero-padded decimal characters per slot**, and an integer renders as nothing at all.
+* A mob's size was sent as `0` meaning "unset"; `0` means **zero percent**, and it collapsed
+  every mob's hit box onto its own centre.
+
+In each case the doc block above the builder confidently described the wrong unit. **When a
+number reaches the client and draws wrongly, suspect the unit before the arithmetic** - and
+when a field's meaning comes from a comment rather than a listing, check the listing.
+
 ## The scratchpad shadows the real tools
+
 
 The session scratchpad has accumulated **copies of the repo's own instruments** - `reads.py`,
 `dis.py`, `callers.py`, `rangescan.py`, `poolscan.py`, `encodes.py`, `listing.py` and more -

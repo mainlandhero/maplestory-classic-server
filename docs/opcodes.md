@@ -59,13 +59,15 @@ a structural fingerprint, useful for recognising a packet by shape.
 | `0x00A0` | GC:SelectWorld / accountno / nexonsn | `u8` |
 | `0x00B7` | maple_hf / maple_hf2 | `` |
 | `0x00D4` | YoYoLogSet / mableDice | `u8` |
-| `0x00D9` | Portal | `u8,u32,u32,u8` |
+| `0x00D9` | **CLIENT_USER_MOVE** - the client's own movement. `crates/net/src/usermove.rs`. *(this table's "Portal" is a reference-tree name and is wrong)* | `u8,u32,u32,u8,path` |
 | `0x00DF` | Melee / User Force Atom / User Melee Target | `u8,u8,u32,u32,u8,u32,u32,u8` |
 | `0x00E0` | Melee / Shoot / User Box2D | `u8,u8,u8,u32,u32,u8,u32,u32` |
 | `0x00E1` | Magic / User Magic | `` |
 | `0x00E2` | User Body | `u8,u8,u32,u32,u32,u32,u8,u8` |
 | `0x00E3` | User Dot | `u8,u8,u32,u32,u32,u32,u8,u8` |
-| `0x00E5` | DelayFever | `` |
+| `0x00E5` | **CLIENT_USER_HIT** - the client reporting it took damage. 147 bytes MINIMUM. damage at +8, mob object id at +46, template at +113. `research/user-hit.md`. *("DelayFever" was a reference-tree name; measured 2026-08-20)* | `147+` |
+| `0x013B` | **CLIENT_USER_SKILL_UP_REQUEST** - the `+` button. Sets a latch only a server packet clears. `research/skills.md` | `u32,u32,u32` |
+| `0x032C` | **CLIENT_DROP_PICK_UP** - object id at body offset 13. Measured 2026-08-20; its builder is inside `.themida` and can never be read | `34` |
 | `0x00F5` | point | `u8` |
 | `0x00F6` | InCoin / exit / outCoin | `u8` |
 | `0x0116` | Meso / path / stateChangeItem | `u32,u32,u32,u32` |
