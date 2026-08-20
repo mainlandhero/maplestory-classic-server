@@ -85,7 +85,9 @@ Not by aligning an enum. The chain was:
    `FUN_140d23fb0` (`CreateLayout`, 7413 bytes). So the shop UI lives at `0x140d2xxxx`.
 3. `tools/callers.py` on all **ten** read primitives, filtered to that range - not five,
    not seven; the whole list from `tools/reads.py`'s `PRIM`. Exactly two functions in the
-   shop UI read packets: `FUN_140d225f0` and `FUN_140d23030`.
+   shop UI read packets: `FUN_140d225f0` and `FUN_140d23030`. (The *range* in that step is
+   a guess and was later replaced by an enumeration over the class's vtable - see §4.0,
+   which is where the guess turned out to matter.)
 4. `tools/callers.py 0x140d225f0` -> one call site, `0x141822023`, inside `CField::OnPacket`.
    Reading the range test there gives the opcodes.
 
@@ -362,8 +364,40 @@ One opcode, a leading `u8` sub-op, four shapes. All four builders were enumerate
 | `140d23efe` | **2** | nothing | `FUN_140d23ed0` - the dialog closing |
 | `14216a837` | **3** | `u32` | `FUN_14216a810` - **not the shop UI**; unread |
 
-`tools/callers.py 0x1406ed520` filtered to `0x140d2xxxx` confirms the shop UI builds no other
-packet at all - the four sites above are all of it.
+### 4.0 "The shop UI builds no other packet" - enumerated, after the first version was filtered
+
+The first version of this claim was `tools/callers.py 0x1406ed520` **filtered to
+`0x140d2xxxx`**, an address range picked by looking at where the functions happened to sit.
+That is a filter over a guessed set, which is the shape `CLAUDE.md` names as the source of
+the two worst wrong answers on this project - and here it was demonstrably too narrow:
+`FUN_140d31a00` builds three packets from just past the `0x140d30000` bound.
+
+Redone as an enumeration over the class's **actual** method set - the 76 entries of the shop
+UI's vtable at `0x14336c6e0`, walked to the `COutPacket` ctor with `tools/reads.py`'s own
+loader and tail-`jmp` handling, so it cannot disagree with the read and encode counters:
+
+```text
+vtable 0x14336c6e0: 76 entries
+methods reaching the COutPacket ctor within 3 levels: 5
+  IN-RANGE  0x140d23ed0   direct ctor site 0x140d23efe     the close, sub-op 2
+  IN-RANGE  0x140d262f0   via a helper                     -> FUN_140d2c060, sub-op 1
+  IN-RANGE  0x140d26630   via a helper                     -> FUN_140d2c060, sub-op 1
+  OUT-RANGE 0x142bf24a0   via a helper                     -> not 0x0104
+  OUT-RANGE 0x142bf5d90   via a helper -> FUN_142d178d0    builds 0x02D9, u32 u32
+```
+
+The two the range filter would have missed are **inherited base-class UI methods** and build
+`0x02D9` and one deeper unidentified packet - neither is `0x0104`. Note also that they are
+not evidence of anything shop-specific: `research/msexe-gamestage-dispatch.md` records that
+MSVC `/OPT:ICF` folds identical stubs, so one method address appears in hundreds of unrelated
+vtables, and a shared slot is not ownership.
+
+`FUN_140d225f0` - which builds sub-ops 0 and 2 - is not a vtable method at all; it is the
+free function the dispatcher calls, found through `tools/callers.py` in §0a. So the two
+routes into this class are both covered, and **the five sites in the table above are all of
+`0x0104`.**
+
+`tools/callers.py 0x1406ed520` restricted to the same class agrees.
 
 `tools/encodes.py` at depth 3 gives the same five bodies with nothing extra:
 

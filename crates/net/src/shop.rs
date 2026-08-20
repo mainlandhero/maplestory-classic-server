@@ -425,10 +425,12 @@ pub fn shop_result(result: ShopResult) -> Vec<u8> {
 
 /// **The client's only shop request opcode.** Every sub-op below rides on it.
 ///
-/// **[L]** Found by enumeration rather than by guessing at an opcode map: the four builders
-/// inside the shop UI's own address range are the only `0x0104` sites in
-/// `research/msexe-send-opcodes.txt` below `0x14216a810`, and `tools/callers.py` on
-/// `FUN_1406ed520` confirms the shop UI builds no other packet at all.
+/// **[L]** Found by enumeration rather than by guessing at an opcode map. The set is closed
+/// over the shop UI class's **76 vtable methods** at `0x14336c6e0`, not over an address
+/// range: exactly five of them reach the `COutPacket` ctor, three are the shop's own and
+/// two are inherited base-class methods that build `0x02D9` and one other packet, neither
+/// of them `0x0104`. The first version of this claim used an address range and would have
+/// missed both - see `research/npc-shop.md` §4.0.
 ///
 /// | site | sub-op | body after the `u8` |
 /// |---|---|---|
