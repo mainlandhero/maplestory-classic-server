@@ -988,9 +988,24 @@ impl Session {
         // know what is IN the bag to be legal, and nothing tracks that - answering blind
         // would tell the client to move an item that may not be there.
         if !m.is_unequip() {
-            return self.notice(
+            // **A refusal is a packet.** Answering this with a chat notice and no 0x0070 is
+            // what killed the whole inventory UI on 2026-08-19: the client latches
+            // player+0x2330 when it sends, and only an inbound handler clears it, so the
+            // refusal left every later request to be dropped before it was even built.
+            let mut out = vec![Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_rejected(),
+                what: format!(
+                    "InventoryOperation: REFUSING invType {} slot {} -> {} with nCount 0. \
+                     Nothing moves, but bExclRequestSent = 1 clears the +0x2330 latch - \
+                     without this the client's inventory UI stops responding entirely.",
+                    m.inv_type, m.src, m.dst
+                ),
+            }];
+            out.extend(self.notice(
                 "That move is not implemented yet - only taking equipment off is.".to_string(),
-            );
+            ));
+            return out;
         }
         vec![Reply {
             opcode: net::inventory::INVENTORY_OPERATION,

@@ -79,6 +79,38 @@ pub fn parse_inventory_move(body: &[u8]) -> Option<InventoryMove> {
     })
 }
 
+/// Length of an [`inventory_rejected`] body: the 7-byte header and nothing else.
+pub const INVENTORY_REJECTED_LEN: usize = 7;
+
+/// Refuse a move **without leaving the client's UI latched**.
+///
+/// `nCount = 0` makes `FUN_142d51930` skip its entire entry loop - the `TEST/JLE` on the
+/// `i32` at `142d51b2b` - so no entry is read, no `avatarChanged` is set, and the
+/// conditional trailing byte is not read either. Seven bytes, and nothing moves.
+///
+/// **But the header still runs**, and that is the whole point: `bExclRequestSent = 1` clears
+/// `player+0x2330`, so the next request is not refused before it is built.
+///
+/// # Why this exists
+///
+/// The first version of this module answered an unsupported move with a chat notice and no
+/// `0x0070` at all. On 2026-08-19 the owner unequipped an item successfully, tried to put it back
+/// on, got the notice - and then **every further inventory interaction was dead**, including
+/// unequipping a different item. The client had latched on the equip request and nothing
+/// cleared it.
+///
+/// The module doc had already spelled out that hazard. Writing the explanation is not the
+/// same as obeying it: **every `0x0107` must be answered with a `0x0070`, including - most
+/// of all - the ones being refused.**
+pub fn inventory_rejected() -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(1); // bExclRequestSent - the one byte this packet exists to deliver
+    w.u8(0);
+    w.u32(0); // nCount = 0: skip the entry loop entirely
+    w.u8(0); // notRemoveAddInfo
+    w.into_vec()
+}
+
 /// Length of an [`inventory_move_result`] body: header 7, one entry 6, one trailing byte.
 pub const INVENTORY_MOVE_RESULT_LEN: usize = 7 + 6 + 1;
 
@@ -193,5 +225,21 @@ mod tests {
         for (t, o, n) in [(INV_EQUIP, -5i16, 1i16), (INV_EQUIP, -11, 3), (6, -1, 2)] {
             assert_eq!(inventory_move_result(t, o, n)[0], 1);
         }
+    }
+
+    /// A refusal is a packet, not a silence. This is the test for the bug that killed the
+    /// inventory UI on 2026-08-19: an unsupported move answered with anything other than a
+    /// `0x0070` leaves `player+0x2330` set and every later request is dropped before it is
+    /// built.
+    #[test]
+    fn a_refusal_still_unlocks_the_latch_and_moves_nothing() {
+        let b = inventory_rejected();
+        assert_eq!(b.len(), INVENTORY_REJECTED_LEN, "header only - seven bytes");
+        assert_eq!(b[0], 1, "bExclRequestSent: the entire reason this packet is sent");
+        assert_eq!(
+            u32::from_le_bytes([b[2], b[3], b[4], b[5]]),
+            0,
+            "nCount 0 skips the entry loop, so nothing moves and no trailing byte is read"
+        );
     }
 }
