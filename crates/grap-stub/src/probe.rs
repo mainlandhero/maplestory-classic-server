@@ -256,6 +256,13 @@ const WATCH_MAX_HITS: u32 = 32;
 const THROW_LOG_AFTER_MS: u64 = 25_000;
 /// How many throws to log inside that window.
 const THROW_LOG_MAX: u32 = 32;
+/// How many throws to log **regardless of the clock**, so a short-lived run is not silent.
+///
+/// A run that dies before [`THROW_LOG_AFTER_MS`] used to record no throws at all, which
+/// reads as "the client did not throw" and is not the same statement. Eight is enough to
+/// catch the one that follows a packet we just sent - the case that matters here - without
+/// reinstating the flood the window exists to prevent.
+const THROW_LOG_EARLY_MAX: u32 = 8;
 /// A C++ exception, as raised by `_CxxThrowException`.
 const CPP_EXCEPTION: u32 = 0xE06D_7363;
 
@@ -1032,9 +1039,22 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             } else {
                 GetTickCount64().saturating_sub(armed)
             };
-            if age >= THROW_LOG_AFTER_MS {
+            // **Log the first few unconditionally, whatever the clock says.**
+            //
+            // The window alone is not enough, and that cost a diagnosis on 2026-08-20. The
+            // shop crash killed the client 23.2 s after the watches armed; the window opens
+            // at 25 s, so it opened 1.8 s AFTER the process was gone and the run recorded
+            // **zero throws**. Read naively that says "the client did not throw" - the exact
+            // opposite of the truth, and the previous run had caught the throw 10 ms after
+            // the same packet. A silent negative produced by the instrument's own schedule.
+            //
+            // So: the first `THROW_LOG_EARLY_MAX` are always logged, which covers any run
+            // that dies young, and the deadline window still catches the one that reaches
+            // `terminate` in a run that lives long enough to `__fastfail`.
+            let early = seen <= THROW_LOG_EARLY_MAX;
+            if early || age >= THROW_LOG_AFTER_MS {
                 let n = THROW_LOGS.fetch_add(1, Ordering::SeqCst) + 1;
-                if n <= THROW_LOG_MAX {
+                if early || n <= THROW_LOG_MAX {
                     let rsp = *((*info).context.cast::<u8>().add(CTX_RSP).cast::<u64>()) as usize;
                     log(&format!(
                         "***** C++ THROW #{seen} at {at:#x}{} on tid {} at +{age}ms{} *****",
@@ -1069,8 +1089,14 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
                 log(&format!(
                     "***** CLIENT FAULT #{n}: code={code:#010x} at {at:#x}{} - the client \
                      raised this, we did not. An unhandled one ends the process without \
-                     any call to ExitProcess. *****{}",
+                     any call to ExitProcess. {} C++ throw(s) seen before this, {} logged. \
+                     *****{}",
                     crate::netwatch::module_of(at),
+                    // Counted even when not logged, so that "no THROW lines in this file"
+                    // can be told apart from "the client did not throw". Those two were
+                    // indistinguishable on 2026-08-20 and the difference was the diagnosis.
+                    THROWS.load(Ordering::SeqCst),
+                    THROW_LOGS.load(Ordering::SeqCst),
                     stack_trace(rsp)
                 ));
             }

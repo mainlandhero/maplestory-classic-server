@@ -161,7 +161,7 @@ request, which is the only coordinate pair this server currently reads from the 
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **Run the client**, plan below | **Nine** wired things are unseen now: the shop the owner asked for, the drop they asked for, chat, and `!exp`. One run reads on all of them |
+| 1 | **Why `0x0560` kills the client** | Rows are not the variable and neither is the map - see below. Static work first; the next launch should be earned by a named suspect |
 | 2 | **Make `mob+0xa88` non-null** | **ANSWERED 2026-08-20 on a real client**: it is null on every mob, which is why zero targets are collected. Now a *spawn*-path question - what makes `FUN_141cd1620` run - not an attack-path one. See below |
 | 3 | **The EXP curve, off a running client** | 121 `u64`s at `0x143AC2400`, in the BSS tail of `.data` - **zero on disk**, so static analysis cannot ever read it. One `-Probe` peek. Without it, levelling has no thresholds |
 | 4 | **Parse `0x00D9`** | The client reporting its own position. It removes the "swing first" awkwardness from dropping, and every positional feature after it needs the same field |
@@ -255,6 +255,31 @@ comment, beside the probe string.
 > agreed, and both were blind the same way: a `[reg+disp]` write-scan cannot see a store made
 > through a `lea`'d pointer, which is precisely what the setter does. `CLAUDE.md` now carries
 > the general form: re-running the same tool is not a second opinion.
+
+#### THE ROWS ARE NOT THE VARIABLE - run 2, 2026-08-20
+
+`research/fixtures/shop-one-row-still-faults-{world,hook,exit}.log`. `-ShopRows 1` sent
+**one buy row, 38 bytes** (`4 + 2 + 31 + 1`, and the log line confirms *"1 rows (1 buy, 0
+sell) - 11 row(s) HELD BACK"*). The client hung, then died: fault at `0x140ce89d6`, 2.9 s
+after the packet, exit `0xC0000005`.
+
+Twelve rows killed it and one correctly-formed row killed it. **So the fault is not in row
+content, not in row count, and not in the sell rows.** It is the shop path itself.
+
+**And map 1013 is not the variable either - established without spending a launch on it.**
+In `research/fixtures/mob-a88-null-on-every-mob-world.log` the client entered the world
+**on map 1013**, received Lucy's `NpcEnterField` (template 21), stood there 5.4 s, walked
+away and exited cleanly with code 0. The map loads, Lucy spawns, everything is fine. The
+only difference in the two crashing runs is that they were **clicked** and we answered with
+`0x0560`.
+
+> **Run 2 logged zero C++ throws, and that is the instrument, not the client.** The probe
+> logged throws only 25 s after arming. The watches armed at `09:46:10.6`, so the window
+> opened at `09:46:35.6` - and the client was already dead at `09:46:33.8`. Read naively
+> that says "the client did not throw", which is the opposite of the truth, since run 1
+> caught a throw 10 ms after the same packet. **Fixed**: the first eight throws are now
+> logged whatever the clock says, and every fault line reports how many throws were *seen*
+> against how many were *logged*, so those two can never be confused again.
 
 #### Lucy's counter kills the client - what the logs establish, 2026-08-20
 
