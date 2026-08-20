@@ -1779,17 +1779,22 @@ pub const INVENTORY_SLOT_ORDER: [&str; INVENTORY_COUNT] =
 /// arrives, which is what makes buying slots expressible.
 pub const DEFAULT_INVENTORY_SLOTS: u16 = 30;
 
-/// The largest slot count the server will put in a record.
+/// The largest slot count a bag can reach: **125**.
 ///
-/// **This is our limit and it is arbitrary.** Nothing in the decoder bounds `V`: it is a
-/// `u16` and the resize takes whatever arrives. The cap exists only so that a typo cannot
-/// ask the client to allocate 65535 slots and then walk them, six times over.
+/// The owner, 2026-08-19: *"The inventory slots starts at 30 default and is expandable up to 125
+/// slots using slot expansion USE items of that type of tab."* **[I]** - it is their knowledge
+/// of the live game, and nothing in the client has been read to confirm the ceiling.
 ///
-/// 100 is a round multiple of the window's five-wide row, comfortably above the
-/// [`DEFAULT_INVENTORY_SLOTS`] of 30. It is **not** a measured client maximum, and it is not
-/// the 96 this game family's other versions use - that number goes with a 24-slot bag and a
-/// four-wide row, neither of which is this client.
-pub const MAX_INVENTORY_SLOTS: u16 = 100;
+/// It was 100 for one commit, which was mine and arbitrary. Nothing in the decoder bounds
+/// `V` at all - it is a `u16` and the resize takes whatever arrives - so this cap exists only
+/// so a typo cannot ask the client to allocate 65535 slots and walk them six times over.
+pub const MAX_INVENTORY_SLOTS: u16 = 125;
+
+/// **Never send fewer than 30.** The owner, 2026-08-19: *"the minimum number has to be 30, setting
+/// it below 30 has no use."* The window draws a fixed 5x6 grid, so a smaller number cannot
+/// show on screen - which is why the run at 10 could not answer the question it was designed
+/// for, and why the WATCH is what answered it instead.
+pub const MIN_INVENTORY_SLOTS: u16 = DEFAULT_INVENTORY_SLOTS;
 
 /// The six inventory sizes, in the order the client reads them.
 ///
@@ -1799,7 +1804,8 @@ pub const MAX_INVENTORY_SLOTS: u16 = 100;
 pub fn inventory_size_block(slots: &[u16; INVENTORY_COUNT]) -> Vec<u8> {
     let mut b = Vec::with_capacity(INVENTORY_SIZE_BLOCK_LEN);
     for &count in slots {
-        b.extend_from_slice(&count.min(MAX_INVENTORY_SLOTS).to_le_bytes());
+        let count = count.clamp(MIN_INVENTORY_SLOTS, MAX_INVENTORY_SLOTS);
+        b.extend_from_slice(&count.to_le_bytes());
     }
     b
 }

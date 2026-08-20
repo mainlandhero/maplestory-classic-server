@@ -106,6 +106,16 @@ pub struct Config {
     pub npc_strings: HashMap<u32, NpcStrings>,
     /// Every quest the client ships, keyed by quest id, from `gm-handbook/questlines.txt`.
     pub quests: HashMap<u32, Quest>,
+    /// Every NPC shop, from `data/shops.txt` - **authored, not generated**.
+    ///
+    /// The odd one out in this struct: every other table here is extracted from the client's
+    /// own WZ, and shop contents are provably not in it (STATUS.md goal F checked three ways
+    /// with a control each). See [`crate::shops`].
+    ///
+    /// Nothing sends these yet - the shop dialog packet is not decoded in either direction -
+    /// so this is a table with no wire behind it, loaded so that the resolution failures are
+    /// visible at startup rather than at the first click.
+    pub shops: crate::shops::ShopTable,
     /// Turn NPC idle chatter off. It is the server's only unsolicited path, so a flag to
     /// silence it makes "is this packet the problem" answerable in one run.
     pub chatter_off: bool,
@@ -797,6 +807,7 @@ impl Default for Config {
             equips: HashMap::new(),
             npc_strings: HashMap::new(),
             quests: HashMap::new(),
+            shops: crate::shops::ShopTable::default(),
             send_mobs: true,
             fields: std::collections::HashSet::new(),
         }

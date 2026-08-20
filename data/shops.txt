@@ -23,16 +23,74 @@
 # ## Format
 #
 #   shop: <npc name> | <role> | <map>
-#   <tab><item name><tab><price>[<tab>rank]
+#   <tab><item name>[ (M)|(F)]<tab><price>[<tab>rank]
 #
 # Item NAMES, not ids, on purpose: the ids come from the client's own String.wz name table
 # (`gm-handbook/items.txt`), so a name that does not resolve is a transcription error this
 # file can be checked for rather than a wrong item shipped silently.
 #
-# `rank` is the citizenship/reputation gate shown in the live UI ("Town Resident+"). The
-# client's quest data has `citizenshipTown` and `citizenshipGrade` Check keys, so the concept
-# is real in this client; the mapping from these labels to grade numbers is NOT established.
-# Items with a rank are recorded with it and must not be sold to a character below it.
+# ## The (M) / (F) tag
+#
+# A trailing `(M)` or `(F)` is part of the format, not decoration, and it is NOT stripped
+# before the name is looked up - it SELECTS between two ids sharing one name. MapleStory
+# equips encode gender in the id itself, `(id / 1000) % 10`: 0 male, 1 female, 2+ unisex.
+# Sam sells `Green Bennis Chainmail (M)` at 1040033 and `Green Bennis Chainmail (F)` at
+# 1041040, and without the tag those two rows are indistinguishable.
+#
+# That convention is measured here, not taken from the family's usual shape: of the 97 tagged
+# rows in this file, **90 were transcribed off the live UI by the owner** and there are ZERO whose
+# tag disagrees with the gender their id implies. The client agrees from the other side too -
+# its own String.wz ships one item name with the suffix baked into the name itself,
+# `Natalie's Fashion Box (M)` / `(F)` at 2430001 / 2430002.
+#
+# The remaining 7 tags were added here rather than transcribed; each is marked at its row.
+#
+# What is NOT established is *when* the live UI adds the suffix. It is not "the item is
+# gender-locked" - `Green Hunter's Pants` is male-only (1060034) and untagged, while
+# `Archer Pants (M)` is unisex (1062000) and tagged - and it is not "two rows in this shop
+# share a name" either, since `Green Archer Top (M)` has no female twin. A tag is therefore
+# read as a HINT that narrows, never as an assertion about the item, which is why a tag on an
+# unambiguous name is accepted and ignored rather than checked.
+#
+# A tag on an item whose name is unique is harmless and is left as transcribed.
+#
+# ## rank - citizenship grade
+#
+# `rank` is the citizenship gate shown in the live UI ("Town Resident+"). The tag is a grade
+# NAME and `+` means that grade or higher, so every gated row is an integer comparison:
+#
+#    1 Traveler          3 Helpful Stranger    5 Town Resident   7 Distinguished Citizen
+#    2 Visitor           4 Recognized Guest    6 Trusted Neighbor  8 Town Patron
+#    9 Guardian of the Village                10 Citizen of Honor
+#
+# The system is the client's own: all 88 citizenship quests are in `Quest.wz` (506000-506141,
+# count matches exactly), and `citizenshipGrade` / `citizenshipTown` are real Check keys with
+# 86 uses each. The grade NAMES are corroborated by being exactly the tags in this file. The
+# grade-to-character-level mapping (Traveler 12, Visitor 17, ... Citizen of Honor 57) is [I]
+# from a fan site - see STATUS.md goal H for the full working.
+#
+# Items with a rank must not be sold to a character below that grade. The prices below are
+# the UNDISCOUNTED list prices as shown in the live UI; citizenship discounts are goal H's
+# business and are applied on top, not baked in here.
+#
+# ## Corrections applied 2026-08-19 - spelling only, never a price
+#
+# Every name in this file was resolved against the client's own name table. 121 rows did not
+# resolve, in three systematic classes, and each was corrected to the client's spelling. The
+# transcription was right about the item every time; it differed only in punctuation and
+# number. The owner's original wording, where it is not obvious from the correction:
+#
+#     Red-Striped top          -> Red Striped Top          (hyphen; the client uses a space)
+#     Red-Striped T-Shirt (F)  -> Red Striped T-Shirt (F)
+#     Subi Throwing-Star(s)    -> Subi Throwing Stars      (hyphen, and always plural)
+#     Blue Jeans Shorts        -> Blue Jean Shorts         (the client's is singular "Jean")
+#     Arrow for Bow            -> Arrows for Bows          (the client pluralises both nouns)
+#     Arrow for Crossbow       -> Arrows for Crossbows
+#     <colour> Pao Bottom      -> <colour> Pao Bottoms     (plural)
+#
+# Seven further rows named an item that exists twice, once per gender, and carried no tag.
+# They are tagged `(M)` below, derived from position - see the comment at each one and
+# `research/shops.md`. NO PRICE IN THIS FILE HAS BEEN CHANGED.
 
 shop: Lucy | Grocer | Maple Road (Beginner Zone)
 	Red Potion	50
@@ -49,8 +107,8 @@ shop: Pan | Armor Seller | Maple Road (Beginner Zone)
 	White Tube Top	50
 	Yellow T-Shirt	50
 	Green T-Shirt	50
-	Red-Striped top	50
-	Blue Jeans Shorts	50
+	Red Striped Top	50
+	Blue Jean Shorts	50
 	Brown Cotton Shorts	50
 	Red Miniskirt	50
 	Indigo Miniskirt	50
@@ -79,9 +137,9 @@ shop: Mina | Grocer | Victoria Road: Lith Harbor Department Store
 	Pet Food	35
 	Return Scroll - Nearest Town	400
 	Return Scroll to Lith Harbor	500
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Stars	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: Natasha | Armor Seller | Victoria Road: Lith Harbor Armor Shop
 	Brown Skullcap	600
@@ -98,7 +156,7 @@ shop: Natasha | Armor Seller | Victoria Road: Lith Harbor Armor Shop
 	Blue One-lined T-Shirt (M)	2400
 	Orange Sporty T-Shirt (M)	2400
 	Pink Starry Shirt (F)	2400
-	Red-Striped T-Shirt (F)	2400
+	Red Striped T-Shirt (F)	2400
 	Jean Capris	800
 	Grey Thick Sweat Pants (M)	1920
 	Red Rubber Boots	50
@@ -173,9 +231,9 @@ shop: Luna | Grocer | Victoria Road: Henesys Department Store
 	Blue Dye	1000
 	Return Scroll - Nearest Town	400
 	Return Scroll to Henesys	500
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Star	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: Oak | Town Furnishings | Victoria Road: Henesys Town Hall
 	Henesys Resident's Chair	10000	Visitor+
@@ -234,9 +292,9 @@ shop: Len the Fairy | Grocer | Victoria Road: Ellinia Department Store
 	Blue Dye	1000
 	Return Scroll - Nearest Town	400
 	Return Scroll to Ellinia	500
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Star	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: Arturo | Grocer | Victoria Road: Perion Department Store
 	Red Potion	50
@@ -259,9 +317,9 @@ shop: Arturo | Grocer | Victoria Road: Perion Department Store
 	Blue Dye	1000
 	Return Scroll - Nearest Town	400
 	Return Scroll to Perion	500
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Star	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: Ben | City Scroll Shop | Victoria Road: Kerning City Civic Center
 	Earring Evasion Scroll: Lesser	25000	Helpful Stranger+
@@ -317,9 +375,9 @@ shop: Dr. Faymus | Grocer | Victoria Road: Kerning City Pharmacy
 	Blue Dye	1000
 	Return Scroll - Nearest Town	400
 	Return Scroll to Kerning City	500
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Star	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: Max | City General Store | Victoria Road: Kerning City Civic Center
 	Fried Chicken	60
@@ -363,9 +421,9 @@ shop: Valen | Grocer | Florina Road: Florina Beach
 	Cake	150
 	Watermelon	1920
 	Pet Food	40
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Stars	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: Mr. Sweatbottom | Sauna Manager | Dungeon Regular Sauna
 	Red Potion	50
@@ -381,9 +439,9 @@ shop: Mr. Sweatbottom | Sauna Manager | Dungeon Regular Sauna
 	Unagi	1000
 	Return Scroll - Nearest Town	400
 	Return Scroll to Sleepywood	600
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Stars	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: 24 Hr Mobile Store | Mobile Store | Dungeon Ant Tunnel Park
 	Fried Chicken	60
@@ -396,8 +454,8 @@ shop: 24 Hr Mobile Store | Mobile Store | Dungeon Ant Tunnel Park
 	Pure Water	1120
 	Cake	150
 	Return Scroll - Nearest Town	400
-	Arrow for Bow	2
-	Arrow for Crossbow	2
+	Arrows for Bows	2
+	Arrows for Crossbows	2
 	Subi Throwing Stars	500
 
 shop: Luma | Grocer | Shallow Passage: Cave Fairy Department Store
@@ -411,9 +469,9 @@ shop: Luma | Grocer | Shallow Passage: Cave Fairy Department Store
 	Grape Juice	1260
 	Return Scroll - Nearest Town	400
 	Return Scroll to Forgotten Hollow	800
-	Arrow for Bow	1
-	Arrow for Crossbow	1
-	Subi Throwing-Stars	500
+	Arrows for Bows	1
+	Arrows for Crossbows	1
+	Subi Throwing Stars	500
 
 shop: Tulcus | Scroll Seller | Warning Street: The Swamp of Despair II
 	Hat Accuracy Scroll: Lesser	15000
@@ -734,9 +792,17 @@ shop: Don Hwang | Armor Seller | Victoria Road: Kerning City Self-Defence Item S
 	Green Tiberian	4500
 	Red Guise	7200
 	Dark Guise	7200
-	Red Cloth Vest	2000
-	Blue Cloth Vest	2000
-	Black Cloth Vest	2000
+# The three rows below and the three Cloth Pants rows were transcribed without a
+# gender tag, and each name exists twice - male 1040010-1040012 / 1060008-1060010
+# and female 1041011-1041013 / 1061009-1061011. Tagged (M) from position: every row
+# from here to `Red Gold Stealer` resolves to a male id (1040019..1040048), and the
+# female block starts below at `Red Nightshift` (1041023). The female Cloth Vest and
+# Cloth Pants are almost certainly sold here too and are simply missing from the
+# transcription - the female block has no 2000/1600 tier at all, and that is the one
+# tier whose two items share a name. research/shops.md has the working.
+	Red Cloth Vest (M)	2000
+	Blue Cloth Vest (M)	2000
+	Black Cloth Vest (M)	2000
 	Blue Nightshift	3000
 	Dark Nightshift	3000
 	Red Pao	6000
@@ -758,14 +824,14 @@ shop: Don Hwang | Armor Seller | Victoria Road: Kerning City Self-Defence Item S
 	Dark Sneak	7500
 	Red Steal	12000
 	Black Steal	12000
-	Red Cloth Pants	1600
-	Blue Cloth Pants	1600
-	Black Cloth Pants	1600
+	Red Cloth Pants (M)	1600
+	Blue Cloth Pants (M)	1600
+	Black Cloth Pants (M)	1600
 	Blue Nightshift Pants	2400
 	Dark Nightshift Pants	2400
-	Red Pao Bottom	4800
-	Blue Pao Bottom	4800
-	Black Pao Bottom	4800
+	Red Pao Bottoms	4800
+	Blue Pao Bottoms	4800
+	Black Pao Bottoms	4800
 	Brown Sneak Pants	6000
 	Dark Brown Sneak Pants	6000
 	Black Sneak Pants	6000
@@ -889,7 +955,12 @@ shop: Nuri the Fairy | Armor Seller | Orbis: Orbis Weapon Store
 	Purple Fairy Skirt	9600
 	Green Hunter	4500
 	Brown Hawkeye	7200
-	Green Bennis Chainmail	7500
+# Tagged (M) from position: Nuri's list runs male-then-female within each class, and
+# this row sits above `Red Hunter's Armor` (male 1040044) with the female archer top
+# `Black Huntress Armor` (1041052) after it. The female 1041040 at this same 7500 tier
+# is missing from the transcription, exactly as in Don Hwang's shop, and for the same
+# reason: it displays under this identical name. research/shops.md has the working.
+	Green Bennis Chainmail (M)	7500
 	Red Hunter's Armor	12000
 	Black Huntress Armor	12000
 	Bennis Chain Pants	6000

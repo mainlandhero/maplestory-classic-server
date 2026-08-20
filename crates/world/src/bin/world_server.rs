@@ -32,6 +32,9 @@ maplecw-world - one channel of the MapleCW game world
                       from one that never arrived, which the handler's two silent
                       early returns otherwise make identical. Arm a watch on
                       142097f80 or the run measures nothing.
+  --shops PATH     the authored NPC shop file      (default data/shops.txt)
+  --item-names PATH  id -> name, from tools/dump_names.py
+  --item-data PATH   id -> price/quest/tradeBlock/slotMax, from tools/dump_itemdata.py
   -h, --help       this
 
 The database is shared with the login server: that is how a migration minted at
@@ -47,6 +50,10 @@ fn main() -> ExitCode {
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
     let mut quests_path = PathBuf::from("gm-handbook/questlines.txt");
+    // Authored source, not generated data - the only path here that is not gm-handbook/.
+    let mut shops_path = PathBuf::from("data/shops.txt");
+    let mut item_names_path = PathBuf::from("gm-handbook/items.txt");
+    let mut item_data_path = PathBuf::from("gm-handbook/itemdata.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -77,6 +84,9 @@ fn main() -> ExitCode {
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
             "--quests" => value().map(|v| quests_path = PathBuf::from(v)),
+            "--shops" => value().map(|v| shops_path = PathBuf::from(v)),
+            "--item-names" => value().map(|v| item_names_path = PathBuf::from(v)),
+            "--item-data" => value().map(|v| item_data_path = PathBuf::from(v)),
             "--inventory-slots" => value().and_then(|v| {
                 v.parse::<u16>()
                     .map_err(|e| format!("--inventory-slots {v}: {e}"))
@@ -189,6 +199,30 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no quest text from {} - NPCs will fall back to their generic              line. Regenerate with: python tools/dump_quests.py",
             quests_path.display()
+        );
+    }
+
+    config.shops =
+        world::ShopTable::load(&shops_path, &item_names_path, &item_data_path);
+    // LOUDLY, and on stdout. A shop row that did not resolve is an item an NPC will not
+    // sell, and the only symptom at the counter is that it is not in the list - which is
+    // indistinguishable from it never having been transcribed. The mob default that
+    // "silently did nothing" cost a whole client launch for exactly this reason, and its
+    // warning was in world.log.err, which nobody opens during a run.
+    for problem in &config.shops.problems {
+        println!("maplecw-world: shops: {problem}");
+    }
+    if config.shops.is_empty() {
+        eprintln!(
+            "maplecw-world: no shops loaded from {} - every NPC shop would be empty. The              file is authored source, not generated; if it is missing it was deleted, not              un-regenerated",
+            shops_path.display()
+        );
+    } else {
+        println!(
+            "maplecw-world: {} NPC shops, {} item rows, {} unresolved",
+            config.shops.shops.len(),
+            config.shops.item_count(),
+            config.shops.problems.len()
         );
     }
 

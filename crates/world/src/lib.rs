@@ -30,7 +30,9 @@
 pub mod config;
 pub mod server;
 pub mod session;
+pub mod shops;
 
 pub use config::Config;
 pub use server::serve;
 pub use session::{Reply, Session};
+pub use shops::{ItemData, Shop, ShopItem, ShopTable};

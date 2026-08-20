@@ -81,6 +81,9 @@ INVENTORY_SIZE_BLOCK_LEN = INVENTORY_COUNT * 2
 # fold. 24 is the classic-MapleStory bag and it was carried over from a different game
 # version for exactly one commit.
 DEFAULT_INVENTORY_SLOTS = 30
+# The owner: the minimum is 30 and going below it has no use - the window draws a fixed
+# 5x6 grid, so a smaller number cannot show on screen.
+MIN_INVENTORY_SLOTS = 30
 # FUN_140303b40's 21 optional fields, in mask-bit order, by width in bytes.
 EQUIP_OPTION_WIDTHS = [1, 1, 2, 1, 1, 8, 4, 4, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 8, 4]
 
@@ -491,7 +494,10 @@ if PROBE:
         # optional), three u8s, and a 4-byte trailing object. A body that stops after the
         # text makes the client read past the end and die with 0xE06D7363 - which is
         # exactly what happened on 2026-08-19.
-        USER_CHAT_OVERHEAD = 4 + 1 + 2 + 29 + 3 + 4
+        # 33, not 29: FUN_1408dcb80 ends with a TAIL JMP into read_raw at
+        # 0x1408dcd11 with r8d=4, and a call-only walk misses it. Being four
+        # bytes short here killed the client on 2026-08-19, twice.
+        USER_CHAT_OVERHEAD = 4 + 1 + 2 + 33 + 3 + 4
         check("the body carries every field the client reads, not just the text",
               len(sb) == USER_CHAT_OVERHEAD + n,
               "%d bytes, wanted %d" % (len(sb), USER_CHAT_OVERHEAD + n))

@@ -21,6 +21,7 @@ use crate::PacketWriter;
 /// str                       0x1408dcc45
 /// raw  4                    0x1408dcc9a
 /// str                       0x1408dcca7
+/// raw  4                    0x1408dcd11   <- a TAIL JMP, missed on the first pass
 /// --- back in FUN_142784970 ---
 /// u8                        0x142784a5b
 /// u8                        0x142784a69
@@ -29,7 +30,7 @@ use crate::PacketWriter;
 /// raw  4   MUST NOT BE 1    0x1408da0b6, then `CMP r8d,1 / JNE` exits
 /// ```
 ///
-/// **43 bytes plus the message.** See [`user_chat`].
+/// **47 bytes plus the message.** See [`user_chat`].
 ///
 /// **The client renders nothing locally.** Typing in the chat box sends `0x00E7` and stops;
 /// the balloon and the chat-log line both come from this packet coming back.
@@ -77,7 +78,23 @@ pub const USER_CHAT: u16 = 0x0231;
 /// option**: it carries the identical `FUN_1408d6760` object.
 pub const USER_CHAT_TWO_STRINGS: u16 = 0x0226;
 
-/// The speaker object at `0x142784a53`: four strings and 21 raw bytes, none of it optional.
+/// The speaker object at `0x142784a53`: four strings and **25** raw bytes, none optional.
+///
+/// # It was 21 for one run, and the client died twice
+///
+/// `FUN_1408dcb80` does not `ret`. Its last instruction is `jmp 0x1406e9170` at
+/// `0x1408dcd11` - a **tail call into `read_raw`**, with `r8d = 4` set at `0x1408dccee`. A
+/// walker that only looks at `call` sees nine reads where there are ten, and the packet goes
+/// out four bytes short.
+///
+/// **`tools/reads.py` was fixed to count tail jumps hours before this shipped, and this
+/// analysis was never re-run against the fixed tool.** I told four agents to re-run anything
+/// resting on a read count and did not do it here. The first crash was `0xE06D7363`, an
+/// unhandled C++ exception from a body 23 bytes short; the second was `0xC0000005` from a
+/// body 4 bytes short, and its stack named `0x1408da0bb` - `0x1408da0b6 + 5`, the trailing
+/// object's first read, reached with the buffer already empty.
+///
+/// The two crashes are the same bug found twice, and the second one was avoidable.
 ///
 /// **All empty and all zero.** What the fields mean is not established - the strings land in
 /// out-pointers at `obj+8`, `+0x10`, `+0x38`, `+0x40` and the raws at `+0x18`, `+0x1c`,
@@ -85,7 +102,7 @@ pub const USER_CHAT_TWO_STRINGS: u16 = 0x0226;
 /// client on the path this was measured on. The one thing worth trying later is the
 /// speaker's **name** in the first string; it is left empty because a name in a field that
 /// turns out to be a title or a medal would render as one.
-const SPEAKER_OBJECT_LEN: usize = 2 + 2 + 4 + 4 + 1 + 4 + 4 + 2 + 4 + 2;
+const SPEAKER_OBJECT_LEN: usize = 2 + 2 + 4 + 4 + 1 + 4 + 4 + 2 + 4 + 2 + 4;
 
 /// The trailing object at `0x142784b05`, in its four-byte early-exit form.
 ///
@@ -117,6 +134,7 @@ pub fn user_chat(character_id: u32, text: &str) -> Vec<u8> {
     w.str(""); // 0x1408dcc45
     w.zeros(4); // 0x1408dcc9a
     w.str(""); // 0x1408dcca7
+    w.zeros(4); // 0x1408dcd11 - the tail jmp; see the note on SPEAKER_OBJECT_LEN
 
     w.u8(0); // 0x142784a5b
     w.u8(0); // 0x142784a69
@@ -137,7 +155,7 @@ mod tests {
         assert_eq!(
             b.len(),
             USER_CHAT_OVERHEAD + "Hello David".len(),
-            "43 + the message; 20 bytes is the version that killed the client"
+            "47 + the message; 20 and 43 are the two versions that killed the client"
         );
         assert_eq!(u32::from_le_bytes([b[0], b[1], b[2], b[3]]), 204);
         assert_eq!(b[4], 0);
@@ -165,9 +183,11 @@ mod tests {
 
     /// The four strings inside the speaker object are length-prefixed and empty, so the
     /// object is exactly the size the listing adds up to.
+    /// The tail-jmp read at `0x1408dcd11` is in this number. It was missing twice.
     #[test]
     fn the_speaker_object_is_the_size_the_listing_adds_up_to() {
-        assert_eq!(SPEAKER_OBJECT_LEN, 29);
+        assert_eq!(SPEAKER_OBJECT_LEN, 33, "29 omits the tail-jmp raw 4 at 0x1408dcd11");
+        assert_eq!(USER_CHAT_OVERHEAD, 47);
         let short = user_chat(1, "");
         let long = user_chat(1, "abcd");
         assert_eq!(long.len() - short.len(), 4, "only the message may vary");
