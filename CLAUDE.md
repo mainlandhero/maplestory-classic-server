@@ -82,8 +82,15 @@ before anyone noticed the counter was structurally incapable of returning anythi
 Count with something that reads the word, not the position:
 
 ```
-cargo test --workspace 2>&1 | grep -E "^test result:"   | sed -E 's/test result: (ok|FAILED)\. ([0-9]+) passed; ([0-9]+) failed.*/  /'   | awk '{p+=$2; f+=$3} END {print p" passed, "f" failed"}'
+cargo test --workspace 2>&1 | grep -E "^test result:" | awk '{for(i=1;i<=NF;i++){if($i=="passed;")p+=$(i-1); if($i=="failed;")f+=$(i-1)}} END {print p" passed, "f" failed"}'
 ```
+
+That reads the number *before* the word `passed;` / `failed;` instead of trusting a field
+index, so a change in the line's punctuation cannot silently zero it. It also contains no
+backslashes, and that is deliberate: the first version of this section used `sed` with
+backreferences, and the heredoc mangled `\1 \2 \3` into raw control bytes exactly as the
+shell note above says it would. **The documented fix for a broken instrument was itself
+committed broken.** Check a code block after writing it, not just the prose around it.
 
 Or simply look for `FAILED` and `^---- `. A summary line is not a check; it is a claim, and
 this one is exactly the shape `CLAUDE.md` warns about everywhere else - a clean, confident
