@@ -175,3 +175,133 @@ because the server has no concept of a second player in a field yet.
 | balloon but **no** log line | one of the two trailing `u8`s is the "balloon only" flag |
 | log line but **no** balloon | the balloon has its own guard, like the NPC one at `0x141e3b543` |
 | the client dies on the first message | the body is still short - a read past the end throws, and `0xE06D7363` is what that looked like on 2026-08-19 |
+
+---
+
+## Why nothing renders: the gate chain, read end to end (2026-08-19, late)
+
+The run of 2026-08-19 settled that `0x0231` is **accepted** - no crash since the 47-byte fix
+- and that `FUN_142784970` reaches **neither** the chat-window print at `1427856fa` **nor**
+the balloon at `142785927`. Both were watched; both were zero.
+
+That measurement does **not** say the handler ran and bailed. It is equally consistent with
+the handler never being called. This section walks both halves and finds the gates. Every
+row is **[L]** unless marked; the listings came from a capstone sweep bounded by the merged
+`.pdata` extent (`FUN_142784970` is `0x142784970..0x142785e0c`, one entry, nothing merged),
+and the instrument was checked against `FUN_140304100` first, where it reproduced
+`tools/reads.py`'s direct reads at the same addresses.
+
+### 1. The dispatcher can drop the packet before the handler exists
+
+`FUN_1429bafb0` does not simply switch. It reads the leading `u32` and **looks the speaker
+up in the user pool**, and for `0x0231` a miss is a silent return.
+
+```text
+1429bb08d  call 0x1406e8c20        the leading u32 - the characterId
+1429bb092  mov  ebx, eax
+1429bb094  mov  edx, ebx
+1429bb096  mov  rcx, rbp           rbp = this, the user pool
+1429bb099  call 0x1429b6c90        CUserPool::GetUser(characterId)
+1429bb09e  mov  rbx, rax
+1429bb0a1  test rax, rax
+1429bb0a4  jne  0x1429bb0bf        found -> go on to the switch
+1429bb0a6  cmp  esi, 0x226
+1429bb0ac  jne  0x1429bb5b0        NOT 0x226 -> RETURN, having done nothing
+1429bb0b2  call 0x14285ff30        0x226 alone gets a fallback
+```
+
+**The asymmetry is the point.** `0x0226` has somewhere to go when the speaker is unknown;
+`0x0231` does not. A `0x0231` naming a character the client has no user object for produces
+no packet error, no exception and no pixel - exactly what the owner saw.
+
+`FUN_1429b6c90` is a lookup by id, not a cast:
+
+```text
+1429b6ca9  mov  rcx, [rcx + 0x10]   the LOCAL user
+1429b6cb2  call 0x14276df20         its id
+1429b6cb7  cmp  eax, ebx            == the requested id?
+1429b6cb9  jne  0x1429b6cca         no -> fall through to the hash walk
+1429b6cbb  mov  rax, [rdi + 0x10]   yes -> return the local user
+...
+1429b6cde  mov  rax, rbx / div rcx  bucket = id % [pool+0x100]
+1429b6cf0  cmp  [rax + 0x10], ebx   walk the chain, matching the id
+1429b6cfe  xor  eax, eax            no match -> NULL
+```
+
+And `FUN_14276df20` is six bytes, dumped rather than decompiled:
+
+```text
+14276df20  8b 81 d0 10 00 00   MOV EAX, [RCX + 0x10D0]
+14276df26  c3                  RET
+```
+
+So **the client's local user carries its character id at `user+0x10D0`**, and `0x0231` is
+delivered only when the id in our packet equals it. We send `chr.id` - 204 - which is also
+what goes into the character stat block at offset 0. Whether `+0x10D0` ends up holding that
+value is **not established**; it is written from the character data during `SetField` and
+nothing here has read that write.
+
+### 2. If the handler does run, four bails reach neither render site
+
+`FUN_142784970` has exactly one `ret`, at `142785e0b`. Everything that gives up jumps to the
+epilogue, and between the last packet read (`142784a75`) and the chat-window print there are
+four such jumps:
+
+| at | condition | what bails |
+|---|---|---|
+| `142784af9` | a `0x30`-byte allocation returned null | not plausible in practice |
+| `142784b14` -> `142784b3c` | the global at **`0x143AC2F58`** is null | plausible |
+| `142784b69` | `FUN_1415abcc0()` is true **and** `FUN_1415ab8b0()` is non-zero | plausible |
+| `142784d84` | `FUN_142d01050(list, id)` is non-zero - the shape of a block/mute list | skipped entirely when the vtable call at `[user+0x50]` returns non-zero |
+
+The two tiny functions in row three, dumped rather than decompiled:
+
+```text
+1415abcc0  CMP qword [0x143ACAB80], 0 / SETNE AL / RET      "is that singleton live"
+1415ab8b0  MOV RAX,[0x143ACAB70] / TEST / JZ ret / MOV EAX,[RAX+0x3b0] / RET
+```
+
+Two adjacent globals, sixteen bytes apart. What they *mean* is **[I] and unread** - the
+shape is that of a mode flag ("a cutscene or a modal UI owns the screen"), and that is a
+guess, not a finding.
+
+### 3. The two render sites have their own guards, on top of the four
+
+```text
+1427856eb  cmp dword [rbp - 0x40], 0
+1427856ef  je  0x1427856ff              skip the chat-window post
+1427856fa  call 0x1415eca30             <- the chat window, type 7
+```
+
+`[rbp-0x40]` is the return of `FUN_1408bef90` at `142784db4`, a formatting call taking a
+`0x400`-byte buffer. A zero there costs the log line and nothing else.
+
+```text
+1427856ff  lea rcx, [r15 + 0x100]
+142785706  call 0x140f8abc0
+14278570d  jne  0x142785d86             skip everything below, balloon included
+142785927  call 0x14158f5c0             <- the balloon factory
+```
+
+So "log line but no balloon" and "balloon but no log line" both have a named mechanism now,
+which is more than the guess in the older table below.
+
+### 4. The one-variant test
+
+Two **read-only** watches, one run. Neither changes a byte we send, so this is not two
+variants - it is one observation with two probes:
+
+```text
+watch@142784970,14276df20:peek=10d0
+```
+
+| what happens | what it means |
+|---|---|
+| `142784970` never fires | the dispatcher dropped it. `GetUser(204)` returned null, and the id we send is not the id the client's local user holds |
+| `142784970` fires, and the `peek` dword is **204** | the lookup worked and the handler ran. The bail is one of the four in section 2; the next run watches `142784b41` and `142784b6f` to bisect them |
+| `142784970` fires and the `peek` dword is **something else** | that is the answer. Send that id instead, and note what it is - it would mean the client renumbers the local user independently of the stat block |
+| neither fires | the packet is not reaching this dispatcher at all, which contradicts `world.log`; re-check that the run actually sent a `0x0231` before believing it |
+
+`peek=<off>` logs the byte and dword at `rcx + off`, and `rcx` at `14276df20` is the local
+user - so `peek=10d0` reads the id straight out of the field the accessor returns.
+`crates/grap-stub/src/probe.rs` has four watch slots, so both fit with room to spare.
