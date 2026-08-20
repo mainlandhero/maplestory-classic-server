@@ -640,7 +640,7 @@ One launch. The variant is **the shop packet**; nothing else in this change touc
 any previous run depended on.
 
 ```
-powershell -ExecutionPolicy Bypass -File tools\test-server.ps1 -SetFieldProbe
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
 ```
 
 `-SetFieldProbe` is not optional - without it `Session::handle` returns nothing for every

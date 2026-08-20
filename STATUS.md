@@ -352,8 +352,13 @@ like a regression somewhere else. The warning is on the field in `crates/net/src
 #### The test plan for the next run
 
 ```
-powershell -ExecutionPolicy Bypass -File tools\test-server.ps1 -SetFieldProbe
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
 ```
+
+**The path is absolute on purpose - write it that way in anything the owner runs.** The launch has
+to come from an **elevated** window, and an elevated window opens in `C:\Windows\System32`,
+so a relative `tools\test-server.ps1` is not a shorter spelling of the same command. It is
+one that works in the agent's shell and fails in theirs.
 
 **`-SetFieldProbe` is not optional and its name is a fossil.** Without it `Session::handle`
 returns nothing for *every* packet: the migration hello goes unanswered and the client
@@ -367,7 +372,7 @@ Passing `-Probe` by hand replaces all four slots and silently drops it.
 
 | # | do | what to watch | what it means |
 |---|---|---|---|
-| 1 | glance at the top of `login.log` | an ELog record | the client replays its on-disk error log at startup and then deletes it. Free, and it is the only place a previous crash survives. `python tools/decode_elog.py login.log --stack` |
+| 1 | glance at the top of `login.log` | an ELog record | the client replays its on-disk error log at startup and then deletes it. Free, and it is the only place a previous crash survives. Run it **from the repo** - `cd C:\MapleCW` then `python tools/decode_elog.py login.log --stack`; the repo has to be the working directory or the script imports the scratchpad's stale copies |
 | 2 | enter the world, `!item 1302000` | the sword appears in the Equip tab | `!item` works, and so does the `0x0070` Add it rides on |
 | 3 | `!map 1013`, click **Lucy**, with **`-ShopRows 1`** | the shop counter | **the counter opening at all is the result.** Twelve rows killed the client on 2026-08-20; one buy row says whether the shop path is sound. If it opens, raise `-ShopRows` next run |
 | 4 | buy something, then sell it back | mesos, and the bag | both directions, both prices. The **buy** price is authored; the **sell** price is the client's own |
@@ -2018,7 +2023,7 @@ them, but any non-zero count costs more wire than the census implies.
 Swap in the real record, check it with `python tools/channel_smoke.py --set-field-probe`
 first - that validates framing, the cipher and every field offset without spending a client
 launch - then run
-`powershell -ExecutionPolicy Bypass -File tools/test-server.ps1 -SetFieldProbe`.
+`powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe`.
 
 ### 3. Then the ordinary game-stage work
 
@@ -3132,7 +3137,7 @@ at the start of the day.
 The recipe, all four parts needed together:
 
 ```
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Reply ping
   -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4 -HookLog on
   -Session mode=2 -Probe watch@141b2a280:rdx=0 -ReplyTo 0x0080
   -ReplySeq "000b:0006005363616e6961000000000108005363616e69612d30000000000000000000000000000000"
@@ -3259,7 +3264,7 @@ Two ways forward, and they answer different questions.
 success for code `0`, so rewriting the code at its entry answers that in one run.
 
 ```
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Reply ping
   -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4
   -HookLog on -Probe watch@141b2a280:rdx=0 -Session watch
 ```
@@ -3303,7 +3308,7 @@ breakpoint sits on the function's first byte, so the `call` has just pushed the 
 address. Re-run the same command; the caller names itself.
 
 ```
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Reply ping
   -Opcode 0x0032 -Body 00 -PingFirst 0x0032 -PingBody 00 -QuietBefore 4
   -HookLog on -Probe watch@141b4ac80 -Session watch
 ```
@@ -3326,7 +3331,7 @@ than announcing one hit and disarming. `rdx` is the result code, and the switch 
 that number into the dialog on screen.
 
 ```
-powershell -ExecutionPolicy Bypass -File "<repo>\tools\test-one.ps1" -Reply ping
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-one.ps1" -Reply ping
   -Opcode 0x0010 -PingFirst 0x0032 -PingBody 00 -ReplyTo 0x0080 -QuietBefore 4
   -HookLog on -Probe watch@141b267c0
 ```
@@ -3472,7 +3477,9 @@ screen exists cannot work no matter what address is used.
   `-Probe` parameter.
 * A parameter that never arrives looks exactly like one that arrives and does nothing -
   `test-one.ps1` echoes the real command line for that reason.
-* Scripts are invoked as `powershell -ExecutionPolicy Bypass -File "<abs path>"`.
+* Scripts are invoked as `powershell -ExecutionPolicy Bypass -File "<abs path>"` - and the
+  path really is absolute, never relative. The window is elevated, so it opens in
+  `C:\Windows\System32` rather than in the repo.
 * **Rebuilding `grap-stub` does not update the client.** `cargo build` writes
   `target/release/grap64.dll`, but the client loads `client-patched/grap64.dll`, and only
   `tools/setup-client.ps1` copies one to the other. Skip it and the run silently uses the
@@ -3515,9 +3522,12 @@ When editing these scripts, remember what 5.1 does not have: `&&`, `||`, ternary
 null-coalescing.
 
 - Firewall rule `MapleCW - block patched client outbound` is **active**. Remove with
-  `powershell -ExecutionPolicy Bypass -File tools/firewall.ps1 -Remove` (needs elevation).
-- `client-patched/` has the GameGuard stub installed; `powershell -ExecutionPolicy Bypass -File tools/setup-client.ps1
-  -Restore` puts the real DLL back.
+  `powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\firewall.ps1" -Remove`
+  (needs elevation, which is also why the path is absolute - an elevated window opens in
+  `C:\Windows\System32`).
+- `client-patched/` has the GameGuard stub installed;
+  `powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\setup-client.ps1" -Restore`
+  puts the real DLL back.
 - Ghidra projects in `research/ghidra/` (~1.2 GB, gitignored). `msexe`, `grap64`,
   `mssecure`, `nexoncm` are all analysed — reuse them rather than re-importing.
 - **Ghidra: `docs/ghidra.md` is the full workflow** - read that, not this bullet. The two

@@ -21,6 +21,12 @@ Windows PowerShell **5.1**, from an **elevated** window. `pwsh` is **not install
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
 ```
 
+**Always write that path in full, quoted, in anything the owner will run.** An elevated window
+opens in `C:\Windows\System32`, not in the repo, so a relative `tools\test-server.ps1` is
+not a shorter way of saying the same thing - it is a command that fails on their machine and
+works on yours. Same for any `-Probe`, `python tools/...` or `git` line handed over to be
+pasted: full path, or say explicitly which directory to be in first.
+
 5.1 has no `&&`, `||`, ternary or null-coalescing.
 
 **Heredocs halve backslashes.** `\\b` written in a `<<'PY'` heredoc reaches Python as `\b`,

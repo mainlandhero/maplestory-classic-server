@@ -522,7 +522,7 @@ that is still there, and do answer the request with something.
 `0x046E` follows it. Nothing else on the wire moves, so any failure is attributable.
 
 ```
-powershell -ExecutionPolicy Bypass -File tools\test-server.ps1 -SetFieldProbe
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
 ```
 
 `-SetFieldProbe` is not optional - without it the channel answers nothing at all.
