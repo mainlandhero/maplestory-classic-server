@@ -539,10 +539,15 @@ if PROBE:
     # that did not arrive, which is what the owner hit.
     CHAT_NOTICE = 0x00BB
     notices = [r for r in replies if r["opcode"] == CHAT_NOTICE]
-    check("the refused !map explains itself in chat", len(notices) == 1,
-          "%d notices" % len(notices))
-    if notices:
-        nb = notices[0]["body"][2:]
+    # Pick the REFUSAL out rather than counting notices. This asserted `== 1` and went red on
+    # 2026-08-20 when every GM command started acknowledging itself - the owner asked for that, so
+    # the successful `!map 40` in the same drive is a second, legitimate notice. Counting was
+    # never what this test cared about.
+    refusals = [r for r in notices if b"REFUSED" in r["body"]]
+    check("the refused !map explains itself in chat", len(refusals) == 1,
+          "%d refusals among %d notices" % (len(refusals), len(notices)))
+    if refusals:
+        nb = refusals[0]["body"][2:]
         # force = 1. With 0 the client shows only the first line after each field entry and
         # drops the rest, which reads exactly like the feature being broken.
         check("the notice forces itself onto the screen (force = 1)", nb[0] == 1,
@@ -687,8 +692,17 @@ if PROBE:
                   "presence[2]=%d" % presence[2])
             check("presence[7] is set, so the bag gets a size", presence[7] == 1,
                   "presence[7]=%d" % presence[7])
-            stray = [i for i, b in enumerate(presence) if b and i not in (0, 2, 7)]
-            check("no other presence flag is set", not stray, "also set: %s" % stray[:6])
+            # 9 and 14 are the two quest blocks, and they are built - they arrived with quest
+            # state and this allowlist was not updated with them, so it went red for a reason
+            # that had nothing to do with the change in front of it. 8 is the skill block,
+            # which is set ONLY for a character that has raised a skill; the smoke character
+            # has none, so seeing 8 here would be a real regression.
+            built = (0, 2, 7, 9, 14)
+            stray = [i for i, b in enumerate(presence) if b and i not in built]
+            check("no presence flag is set for a block nobody has built", not stray,
+                  "also set: %s" % stray[:6])
+            check("the skill block is absent for a character with no skills", presence[8] == 0,
+                  "presence[8]=%d" % presence[8])
 
             # The six head fields between the array and the gate are counts and flags the
             # client uses to SKIP. A non-zero byte here pulls in loops that read.
