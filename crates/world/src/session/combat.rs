@@ -117,6 +117,7 @@ impl Session {
                 out.extend(self.drops_from_kill(template, target.object_id, died_at, chr_id, map));
                 let worth = self.config.mob_exp.get(&template).copied().unwrap_or(0);
                 out.extend(self.award_experience(u64::from(worth), "a kill"));
+                out.extend(self.credit_kill_to_quests(template, chr_id));
             }
             for (opcode, body) in net::combat::mob_hit_replies(target.object_id, &hit) {
                 out.push(Reply {
@@ -381,6 +382,63 @@ impl Session {
                 "You are out of HP. Death is not implemented yet - use !heal to carry on."
                     .to_string(),
             ));
+        }
+        out
+    }
+
+
+    /// Count a kill against every started quest that asked for that mob.
+    ///
+    /// The owner: *"I accepted Sam's suggestion which requires Snail kills, but the quest is not
+    /// progressing even when I kill snails."* Accepting was recorded; nothing counted.
+    ///
+    /// # The count is a string, and that is not a stylistic choice
+    ///
+    /// The client stores a quest's progress as **three zero-padded decimal characters per
+    /// mob requirement**, concatenated in slot order - four snails is the three bytes
+    /// `"004"`. `FUN_14070cb70` takes `substr(slot*3, slot*3+3)` and converts base 10. A
+    /// count sent as an integer would render as nothing at all.
+    ///
+    /// # A kill fans out
+    ///
+    /// One template can be named by several quests - template 13 by six of them - so this
+    /// cannot stop at the first match.
+    ///
+    /// # Item quests are not counted here, deliberately
+    ///
+    /// The client counts the bag live whenever it checks, so an item quest needs no running
+    /// total and gets no packet. Only mob requirements have a counter, which is why the
+    /// progress string's length is measured in mob slots.
+    pub(super) fn credit_kill_to_quests(&mut self, template: u32, character_id: u32) -> Vec<Reply> {
+        let quests = self.config.quest_reqs.quests_for_mob(template);
+        if quests.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for &quest_id in quests {
+            let Some(reqs) = self.config.quest_reqs.get(quest_id) else { continue };
+            // Only a quest the player actually has. `quest_row` returns the in-progress row
+            // or nothing, so a completed or unaccepted quest counts nothing.
+            let Ok(Some(row)) = self.store.quest_row(character_id, quest_id) else { continue };
+            if row.state != store::QuestState::InProgress {
+                continue;
+            }
+            let Some(next) = net::quest::apply_kill(reqs, &row.progress, template) else {
+                continue; // no requirement on this template, or the counter is already full
+            };
+            if self.store.set_quest_progress(character_id, quest_id, &next).is_err() {
+                continue;
+            }
+            out.push(Reply {
+                opcode: net::quest::MESSAGE,
+                body: net::quest::quest_record(
+                    quest_id,
+                    &net::quest::QuestProgress::InProgress { progress: next.clone() },
+                ),
+                what: format!(
+                    "QuestRecord: quest {quest_id} progress {next:?} after killing template                      {template}. Three zero-padded characters per mob slot - an integer here                      renders as nothing."
+                ),
+            });
         }
         out
     }

@@ -60,6 +60,7 @@ fn main() -> ExitCode {
     // Authored source like data/shops.txt: it cannot be regenerated from the client.
     let mut drops_path = PathBuf::from("data/drops.txt");
     let mut exp_curve_path = PathBuf::from("data/exp-curve.txt");
+    let mut quest_reqs_path = PathBuf::from("gm-handbook/questreq.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -102,6 +103,7 @@ fn main() -> ExitCode {
             "--item-data" => value().map(|v| item_data_path = PathBuf::from(v)),
             "--drops" => value().map(|v| drops_path = PathBuf::from(v)),
             "--exp-curve" => value().map(|v| exp_curve_path = PathBuf::from(v)),
+            "--quest-reqs" => value().map(|v| quest_reqs_path = PathBuf::from(v)),
             "--inventory-slots" => value().and_then(|v| {
                 v.parse::<u16>()
                     .map_err(|e| format!("--inventory-slots {v}: {e}"))
@@ -244,6 +246,14 @@ fn main() -> ExitCode {
     // why this degrades rather than refusing to start.
     config.drops = world::droptables::DropTables::load(&drops_path);
     config.exp_curve = world::expcurve::ExpCurve::load(&exp_curve_path);
+    config.quest_reqs = match std::fs::read_to_string(&quest_reqs_path) {
+        Ok(text) => net::quest::QuestRequirementTable::parse(&text),
+        Err(e) => {
+            println!("maplecw-world: quest requirements: {}: {e} - no quest will progress",
+                     quest_reqs_path.display());
+            net::quest::QuestRequirementTable::default()
+        }
+    };
     config.mob_exp = mob_templates.iter().map(|(id, t)| (*id, t.exp)).collect();
     for line in &config.exp_curve.problems {
         println!("maplecw-world: exp curve: {line}");

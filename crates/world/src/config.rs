@@ -165,6 +165,11 @@ pub struct Config {
     /// Unlike the curve and the drop tables, this **is** the client's data - `tools/dump_mobs.py`
     /// reads it out of `Mob.wz` - so it is generated, gitignored, and not a guess.
     pub mob_exp: HashMap<u32, u32>,
+    /// What each quest requires: mobs to kill and items to hold. `gm-handbook/questreq.txt`.
+    ///
+    /// Generated from the client's own `Quest.wz`, so this is the client's data rather than
+    /// a guess - unlike the drop chances or the level gains.
+    pub quest_reqs: net::quest::QuestRequirementTable,
     /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
     ///
     /// The character record carries an item's stats and upgrade slots per *instance*, and a
@@ -969,6 +974,7 @@ impl Default for Config {
             drops: crate::droptables::DropTables::default(),
             exp_curve: crate::expcurve::ExpCurve::default(),
             mob_exp: HashMap::new(),
+            quest_reqs: net::quest::QuestRequirementTable::default(),
             chatter_off: false,
             equips: HashMap::new(),
             npc_strings: HashMap::new(),

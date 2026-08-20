@@ -837,6 +837,56 @@ fn an_award_of_zero_sends_no_packet() {
     assert!(s.award_experience(0, "a worthless mob").is_empty());
 }
 
+/// **A kill counts toward a started quest.** The owner: *"I accepted Sam's suggestion which
+/// requires Snail kills, but the quest is not progressing even when I kill snails."*
+///
+/// The count is three zero-padded characters per mob slot - an integer renders as nothing.
+#[test]
+fn a_kill_advances_a_started_quest_and_the_count_is_a_string() {
+    let (mut s, store, id) = gm_session();
+    // Sam's Suggestion in the real data: quest 1006 wants ten of template 2.
+    let reqs = net::quest::QuestRequirementTable::parse(
+        "1006	1	mob	0	2	10
+",
+    );
+    s.config = Arc::new(Config { quest_reqs: reqs, ..(*s.config).clone() });
+    assert!(store.start_quest(id, 1006).unwrap());
+
+    let out = s.credit_kill_to_quests(2, id);
+    assert_eq!(out.len(), 1, "one started quest wants this mob: {out:?}");
+    assert_eq!(out[0].opcode, net::quest::MESSAGE);
+    assert_eq!(
+        store.quest_row(id, 1006).unwrap().unwrap().progress,
+        "001",
+        "three zero-padded characters, not an integer"
+    );
+
+    // And it keeps counting.
+    s.credit_kill_to_quests(2, id);
+    assert_eq!(store.quest_row(id, 1006).unwrap().unwrap().progress, "002");
+}
+
+/// A kill counts toward **nothing** if the quest was never accepted.
+#[test]
+fn a_kill_credits_no_quest_the_player_has_not_started() {
+    let (mut s, _, id) = gm_session();
+    let reqs = net::quest::QuestRequirementTable::parse("1006	1	mob	0	2	10
+");
+    s.config = Arc::new(Config { quest_reqs: reqs, ..(*s.config).clone() });
+
+    assert!(s.credit_kill_to_quests(2, id).is_empty());
+}
+
+/// A mob no quest asks about produces no packet at all.
+#[test]
+fn a_kill_of_an_unwanted_mob_sends_nothing() {
+    let (mut s, _, id) = gm_session();
+    let reqs = net::quest::QuestRequirementTable::parse("1006	1	mob	0	2	10
+");
+    s.config = Arc::new(Config { quest_reqs: reqs, ..(*s.config).clone() });
+    assert!(s.credit_kill_to_quests(9999, id).is_empty());
+}
+
 /// **Killing a mob puts its drops on the floor** - the mob's own table, then the global one.
 ///
 /// This is what the owner asked for: *"when a mob dies, it checks for its mob specific drop table
