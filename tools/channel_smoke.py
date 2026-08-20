@@ -313,6 +313,13 @@ try:
         send(transport.packet(0x00E7, bytes(4) + struct.pack("<H", len(said)) + said
                               + bytes([3])))
 
+        # An unequip, in exactly the form the real client sent on 2026-08-19:
+        # invType 1, src -5 (equipped slot 5), dst 1, count -1. Answering this is not
+        # optional - the client latches +0x2330 on send and refuses every later inventory
+        # action until an inbound handler clears it.
+        mv = struct.pack("<Ibhhh", 0x073cad06, 1, -5, 1, -1)
+        send(transport.packet(0x0107, mv))
+
         # 0x00D1, a transfer-field request, in the form the client actually sends: no
         # explicit target field (0xFFFFFFFF), a named portal, and coordinates after it. This
         # exercises the generated portal table end to end - map 1's "out00" leads to map 10.
@@ -471,6 +478,24 @@ if PROBE:
                for r in mobs if len(r["body"]) - 2 == 137]
         check("no mob is sent with hp = 0 - that is a mob at 0 percent",
               hps and all(h != 0 for h in hps), "%s" % hps[:3])
+
+    # ---- the unequip is answered, and the answer unlocks the UI
+    INVENTORY_OPERATION = 0x0070
+    invops = [r for r in replies if r["opcode"] == INVENTORY_OPERATION]
+    check("the unequip request is answered", len(invops) == 1, "%d" % len(invops))
+    if invops:
+        ib = invops[0]["body"][2:]
+        check("the result is the 14-byte move layout", len(ib) == 14, "%d bytes" % len(ib))
+        # THE byte. FUN_142cc5b00 sets player+0x2330 when it sends 0x0107 and its own gate
+        # refuses every later request while it is set; only an inbound handler clears it.
+        check("bExclRequestSent is 1, which unlocks the request latch", ib[0] == 1,
+              "byte 0 = %d" % ib[0])
+        check("nCount is a 4-byte 1", struct.unpack_from("<i", ib, 2)[0] == 1)
+        check("the entry is mode 2 Move on invType 1", ib[7] == 2 and ib[8] == 1,
+              "mode %d invType %d" % (ib[7], ib[8]))
+        check("it moves slot -5 to slot 1",
+              struct.unpack_from("<h", ib, 9)[0] == -5
+              and struct.unpack_from("<h", ib, 11)[0] == 1)
 
     # ---- ordinary chat comes back as a balloon
     #

@@ -25,6 +25,7 @@ pub mod codec;
 pub mod combat;
 pub mod error;
 pub mod handshake;
+pub mod inventory;
 pub mod mob;
 pub mod mobmove;
 pub mod names;

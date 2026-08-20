@@ -376,6 +376,9 @@ impl Session {
             net::script::CLIENT_QUEST_REQUEST => {
                 return self.on_quest_request(body.get(2..).unwrap_or(&[]))
             }
+            net::inventory::CLIENT_INVENTORY_MOVE => {
+                return self.on_inventory_move(body.get(2..).unwrap_or(&[]))
+            }
             net::mobmove::MOB_MOVE_REQUEST => return self.on_mob_move(body.get(2..).unwrap_or(&[])),
             net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
             net::script::CLIENT_SCRIPT_REPLY => {
@@ -957,6 +960,48 @@ impl Session {
         // arrival; this type does not print, it returns bodies.
         let _ = net::mobmove::parse_mob_move(payload);
         Vec::new()
+    }
+
+    /// Move an item, which today means: let the player take something off.
+    ///
+    /// **Answering this is not optional.** `FUN_142cc5b00` sets `player->[0x2330]` to 1 the
+    /// moment it sends `0x0107`, and its own gate 2 at `142cc5b5d` refuses every later
+    /// request while that latch is set. Only an inbound handler clears it, and for this
+    /// packet that means the `bExclRequestSent` byte of our `0x0070`. So an unanswered
+    /// `0x0107` does not fail one drag - it silently kills every inventory action for the
+    /// rest of the session. Same class as Log Out and `world->[0x33f4]`.
+    ///
+    /// # What this does NOT do yet, and it is visible
+    ///
+    /// **The move is not persisted.** There is no inventory table: the character record's
+    /// equipped list is built from `crates/store`'s `equipment` rows, so the next `SetField`
+    /// - a portal, a `!map`, a relog - puts the item back on. The alternative today would be
+    /// to delete the equipment row, and then the item would be nowhere at all, because
+    /// nothing stores bag contents. **Losing an item is worse than one that comes back**, so
+    /// this answers the client and leaves the database alone until there is somewhere to put
+    /// it. See STATUS.md goals F and G, both of which need the same table.
+    fn on_inventory_move(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some(m) = net::inventory::parse_inventory_move(payload) else {
+            return Vec::new();
+        };
+        // Only the unequip direction is answered. An equip, or a bag-to-bag move, needs to
+        // know what is IN the bag to be legal, and nothing tracks that - answering blind
+        // would tell the client to move an item that may not be there.
+        if !m.is_unequip() {
+            return self.notice(
+                "That move is not implemented yet - only taking equipment off is.".to_string(),
+            );
+        }
+        vec![Reply {
+            opcode: net::inventory::INVENTORY_OPERATION,
+            body: net::inventory::inventory_move_result(m.inv_type, m.src, m.dst),
+            what: format!(
+                "InventoryOperation: move invType {} slot {} -> {}. The first byte is 1, \
+                 which clears the client's +0x2330 request latch; a 0 there would block \
+                 every later inventory action. NOT persisted - the next SetField re-equips.",
+                m.inv_type, m.src, m.dst
+            ),
+        }]
     }
 
     /// Answer Log Out, and **this is not optional in the way most replies are**.
