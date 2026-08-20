@@ -73,6 +73,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         // a greeting.
         0x00C0 => "CLIENT_AUTH_FAILURE_REPORT (mode, then a Passport error code)",
         0x0070 => "CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version)",
+        0x00D9 => "CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head)",
         0x0071 => "CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours)",
         0x0079 => "CLIENT_LOAD_TIMING_REPORT",
         0x007A => "CLIENT_TASK_TIMING_REPORT (four task durations, then their sum)",
@@ -160,9 +161,14 @@ fn never_truncate(opcode: u16) -> bool {
     // attack this project has captured came from a session with no mobs in it, so a
     // zero target count has never been a measurement of anything; the next run's bodies
     // are what settle whether the client targets our mobs, and a truncated body cannot.
+    // 0x00D9 got a name on 2026-08-20 and has to be exempted in the same breath. Its bodies
+    // run just past the 96-byte cap, and what falls off the end is the key-state trailer -
+    // the exact part `tools/encodes.py` was found to be blind to, because it is written by a
+    // loop rather than by a named primitive. Naming it without this would have re-hidden the
+    // bytes that caught that bug.
     matches!(
         opcode,
-        0x008F | 0x0090 | 0x0091 | 0x00DF | 0x00E0 | 0x00E1 | 0x0151 | 0x01A0 | 0x02FF
+        0x008F | 0x0090 | 0x0091 | 0x00D9 | 0x00DF | 0x00E0 | 0x00E1 | 0x0151 | 0x01A0 | 0x02FF
     )
 }
 
