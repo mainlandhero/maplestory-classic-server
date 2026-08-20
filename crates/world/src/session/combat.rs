@@ -77,6 +77,13 @@ impl Session {
         let Ok(attack) = net::combat::parse_attack(payload) else {
             return Vec::new();
         };
+        // **The only coordinate pair this server reads from the client.** The attack body
+        // carries the player's own position (fields 13/14), which is how the zero-target
+        // captures were paired against mob positions in `research/mob-target-gates.md` §1.
+        // Nothing parses `0x00D9`, so until something does, this is where a drop learns
+        // where to land - see `Session::last_position`. Recording it here rather than in the
+        // drop path means it survives the swing that produced it.
+        self.last_position = Some((attack.x as i16, attack.y as i16));
         let mut out = Vec::new();
         for target in &attack.targets {
             let Some(hp_before) = self.mob_hp.get(&target.object_id).copied() else {

@@ -175,6 +175,28 @@ pub struct Session {
     /// point: a re-derivation that disagreed by one row would charge the wrong price for the
     /// right-looking click, and nothing on either side would notice.
     open_shop: Option<(u32, Vec<net::shop::ShopRow>)>,
+    /// Items lying on the ground, and the ids that name them. See `crate::drops`.
+    ///
+    /// **Per session, so per connection.** With one player that is the same thing as per
+    /// field; with two it would not be, and the second character would not see the first's
+    /// drops. Making it shared means moving the table behind the server rather than the
+    /// session, and no part of `crate::drops` would change. Recorded as a known limit rather
+    /// than solved, because there is no second player to test the fix against.
+    drops: crate::drops::DropTable,
+    /// Where the character last told us it was standing, if it ever has.
+    ///
+    /// **The drop position problem, and it is a real one.** `0x0107` carries no coordinates,
+    /// and the client's pick-up sweep is a box of `x-0x19..x+0x19` by `y-0x32..y+0x0a` around
+    /// the *player* - so an item dropped more than about 25 pixels off is drawn, and cannot
+    /// be picked up, and on screen that is identical to nothing having happened.
+    ///
+    /// `0x00D9` is the client reporting its own movement and would answer this properly;
+    /// nothing here parses it yet. Until it does, this holds the position out of the last
+    /// attack request, which is the only coordinate pair this server currently reads from
+    /// the client - see `net::combat::AttackRequest::x`. A drop with no position at all is
+    /// refused rather than guessed, because a guessed one loses the item to a spot the
+    /// player cannot reach.
+    last_position: Option<(i16, i16)>,
 }
 
 /// One NPC's place in its idle-chatter cycle.
@@ -263,6 +285,7 @@ struct Conversation {
 mod combat;
 mod field;
 mod gm;
+mod ground;
 mod inventory;
 mod npc;
 mod shop;
@@ -284,6 +307,8 @@ impl Session {
             clock_ms: 0,
             mob_hp: std::collections::HashMap::new(),
             open_shop: None,
+            drops: crate::drops::DropTable::new(),
+            last_position: None,
         }
     }
 
@@ -316,10 +341,19 @@ impl Session {
     /// backlog the client would show as a flicker.
     pub fn tick(&mut self, now_ms: u64) -> Vec<Reply> {
         self.clock_ms = now_ms;
-        if !self.config.set_field_probe || self.config.chatter_off {
+        if !self.config.set_field_probe {
             return Vec::new();
         }
         let mut out = Vec::new();
+        // Expire drops BEFORE the chatter switch is consulted. `chatter_off` turns off NPC
+        // idle lines and nothing else; if the sweep sat after it, a run with chatter
+        // disabled would leave items on the floor forever and the bug would look like the
+        // drop table rather than the switch.
+        let here = self.claimed_character().map(|c| c.map_id).unwrap_or(0);
+        out.extend(self.drops.sweep(here, now_ms));
+        if self.config.chatter_off {
+            return out;
+        }
         for c in &mut self.chatter {
             if c.lines == 0 || now_ms < c.due_ms {
                 continue;
@@ -434,6 +468,14 @@ impl Session {
             }
             net::shop::CLIENT_SHOP_REQUEST => {
                 return self.on_shop_request(body.get(2..).unwrap_or(&[]))
+            }
+            // The pick-up request, whichever of the six it turns out to be. Its opcode
+            // **cannot be found statically** - the chain runs into the Themida VM - so the
+            // arm accepts the whole unclaimed range and lets one walk over one drop name it.
+            // Answering all six is safe: none is built by anything in the image, and a body
+            // that carries no live drop id gets a notice rather than a guess.
+            op if crate::drops::may_be_the_pick_up_request(op) => {
+                return self.on_pick_up(op, body.get(2..).unwrap_or(&[]))
             }
             _ => return Vec::new(),
         }

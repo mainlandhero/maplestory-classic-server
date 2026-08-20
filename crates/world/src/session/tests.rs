@@ -361,11 +361,16 @@ fn the_exp_command_awards_and_persists_experience() {
     let before = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
     assert_eq!(before.exp, 0, "a fresh character has earned nothing");
 
-    let ack = notice_text(&s.handle(&gm_chat("!exp 250"))[0]);
+    let out = s.handle(&gm_chat("!exp 250"));
+    let ack = notice_text(&out[0]);
     assert!(ack.starts_with("TestCharD gains 250 experience: 0 -> 250"), "{ack}");
-    // The ack must not overstate what the player will see. The number reaches the client in
-    // the character record, which is built on a field entry and nowhere else.
-    assert!(ack.contains("Change maps"), "{ack}");
+
+    // And the live update, so the bar moves without a map change. Bit 16 carries the new
+    // TOTAL - a packet that sent the award instead would make the client draw the gain
+    // twice as large on the second award and nothing would say so.
+    let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("a 0x007C");
+    assert_eq!(stat.body, net::stats::StatChange::exp(250).build());
+    assert_ne!(stat.body, net::stats::StatChange::exp(0).build(), "and it is not the old total");
 
     let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
     assert_eq!(after.exp, 250, "the database, not the reply");
@@ -435,13 +440,18 @@ fn an_unknown_command_lists_the_real_ones() {
     assert!(notice_text(&s.handle(&gm_chat("!help"))[0]).contains("!map"));
 }
 
-/// **A drag out of the inventory window is a drop**, and dropping is not built.
+/// **A drag out of the inventory window is a drop**, and a drop with no known position is
+/// refused rather than guessed.
 ///
 /// Measured 2026-08-20: `dst == 0`, which is not a move to slot zero - slots are 1-based
-/// and 0 is the hole that makes them so. It must still be answered, and the item must
-/// still be in the bag afterwards, because there is nowhere on the ground to put it.
+/// and 0 is the hole that makes them so.
+///
+/// Dropping IS built now. What this pins is the fallback: the client's pick-up sweep is a
+/// box around the *player*, so an item put down at a guessed position is drawn and cannot be
+/// reached - and on screen that is the same picture as nothing happening. Refusing keeps the
+/// item, and the reply still clears the `+0x2330` latch.
 #[test]
-fn a_drop_is_answered_and_the_item_stays_in_the_bag() {
+fn a_drop_with_no_known_position_is_answered_and_the_item_stays_in_the_bag() {
     let (mut s, store, id) = gm_session();
     s.handle(&gm_chat("!item 1302000"));
 
@@ -460,6 +470,81 @@ fn a_drop_is_answered_and_the_item_stays_in_the_bag() {
         .map(|i| i.item.item_id)
         .collect();
     assert_eq!(bagged, vec![1302000], "losing an item is worse than one that will not leave");
+}
+
+/// Once the server knows where the character stands, a drop leaves the bag and lands on the
+/// floor - and the two packets go out in the order the client needs.
+///
+/// The `0x0070` Remove **first**: it is the inventory reply that clears `player+0x2330`, and
+/// an out-of-order pair would leave the latch set for the rest of the session.
+#[test]
+fn a_drop_leaves_the_bag_and_lands_on_the_floor() {
+    let (mut s, store, id) = gm_session();
+    s.handle(&gm_chat("!item 1302000"));
+    // The position comes from an attack, which is the only coordinate pair this server
+    // reads from the client today.
+    s.last_position = Some((520, 395));
+
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
+
+    assert_eq!(out[0].opcode, net::inventory::INVENTORY_OPERATION, "the Remove goes first");
+    assert_eq!(out[0].body[7], net::inventory::MODE_REMOVE);
+    assert_eq!(out[1].opcode, net::drops::DROP_ENTER_FIELD, "then the item on the ground");
+
+    let bagged: Vec<u32> = store
+        .bag(id)
+        .unwrap()
+        .items_in(store::InventoryType::Equip)
+        .map(|i| i.item.item_id)
+        .collect();
+    assert!(bagged.is_empty(), "the sword really left the bag");
+    assert_eq!(s.drops.len(), 1, "and it is on the floor");
+}
+
+/// The pick-up handler finds the drop id anywhere in the body, because the body's layout is
+/// unknown - and it says where it found it, which is the whole point of the run.
+#[test]
+fn the_pick_up_handler_finds_a_drop_id_at_an_unknown_offset() {
+    let (mut s, store, id) = gm_session();
+    s.handle(&gm_chat("!item 1302000"));
+    s.last_position = Some((520, 395));
+    s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
+    let object_id = s.drops.on_field(net::opcode::START_MAP_ID).next().unwrap().object_id;
+
+    // A plausible body: some header bytes, then the id, at an offset nobody has decoded.
+    let mut body = crate::drops::PICK_UP_CANDIDATE_FIRST.to_le_bytes().to_vec();
+    body.extend_from_slice(&[0u8; 5]);
+    body.extend_from_slice(&object_id.to_le_bytes());
+
+    let out = s.handle(&body);
+    let told = out.iter().map(|r| r.what.clone()).collect::<Vec<_>>().join(" | ");
+    assert!(told.contains("THE PICK-UP REQUEST IS"), "{told}");
+    assert!(told.contains("body offset 5"), "it must say WHERE it found it: {told}");
+
+    // And it completed: back in the bag, off the floor.
+    let bagged: Vec<u32> = store
+        .bag(id)
+        .unwrap()
+        .items_in(store::InventoryType::Equip)
+        .map(|i| i.item.item_id)
+        .collect();
+    assert_eq!(bagged, vec![1302000], "the sword came back");
+    assert_eq!(s.drops.len(), 0, "and left the floor");
+}
+
+/// One of the six candidates that is NOT the pick-up still gets an answer.
+///
+/// **Always answer.** These six opcodes are accepted on suspicion, so five of them will be
+/// something else - and returning nothing to a packet the client sent is how the UI latches.
+#[test]
+fn a_candidate_opcode_that_names_no_drop_is_still_answered() {
+    let (mut s, _, _) = gm_session();
+    let mut body = crate::drops::PICK_UP_CANDIDATE_FIRST.to_le_bytes().to_vec();
+    body.extend_from_slice(&[0xAA; 8]);
+
+    let out = s.handle(&body);
+    assert!(!out.is_empty(), "a packet with no answer freezes the whole UI");
+    assert!(notice_text(&out[0]).contains("none of it names a drop"), "{}", notice_text(&out[0]));
 }
 
 /// A `0x00D2` body in the **preamble-first** shape: the 14-byte integrity block that

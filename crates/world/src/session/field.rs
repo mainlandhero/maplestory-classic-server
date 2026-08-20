@@ -127,6 +127,13 @@ impl Session {
         // 0x1407f5ce0, which is three bytes of `xor eax,eax; ret`, followed by TEST/JZ. No
         // trigger and no timing would ever have made it work, so sending it was noise in
         // the log. See net::opcode::USER_AVATAR_MODIFIED and research/naked-character.md.
+
+        // The floor. Drops already lying here have to be re-sent for the same reason mobs
+        // do: the pool is destroyed and rebuilt empty on every field entry, so an item
+        // dropped before a map change would otherwise be invisible on the way back - and an
+        // invisible drop is one the player walks over without ever sending the pick-up
+        // request this feature is waiting to see.
+        out.extend(self.drops.field_entry(chr.map_id, self.clock_ms));
         out
     }
 

@@ -169,7 +169,7 @@ impl Session {
                         net::shop::ShopResult::Success,
                         &format!("bought {qty}x {} for {cost} mesos", row.item_id),
                     );
-                    out.extend(self.inventory_added_replies(inv, &changed));
+                    out.extend(self.inventory_added_replies(inv, &changed, "bought"));
                     out.extend(self.meso_reply(chr.id));
                     out
                 }

@@ -110,11 +110,25 @@ impl Session {
             // whole UI, which reads on screen as a crash.
             return self.gm_ack(format!("!exp FAILED: {e}"));
         }
-        self.gm_ack(format!(
-            "{} gains {amount} experience: {before} -> {}. Change maps to see it - \
-             the bar only redraws on a field entry.",
+        let mut out = self.gm_ack(format!(
+            "{} gains {amount} experience: {before} -> {}.",
             chr.name, chr.exp
-        ))
+        ));
+        // **The live update.** `0x007C` carries a u32 mask and the changed values in
+        // ascending bit order; bit 16 is experience and it is the **new total**, not the
+        // award - the client subtracts its own snapshot and draws "+N EXP" itself.
+        // Without this the number reached the client only inside the next `SetField`, so
+        // `!exp` had to be followed by a map change to see anything.
+        out.push(Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange::exp(chr.exp).build(),
+            what: format!(
+                "StatChanged: exp -> {} (mask bit 16, the new TOTAL). The client draws the \
+                 gain by differencing its own snapshot.",
+                chr.exp
+            ),
+        });
+        out
     }
 
 
@@ -180,21 +194,7 @@ impl Session {
             chr.name,
             placed.iter().map(|r| r.slot.to_string()).collect::<Vec<_>>().join(", ")
         ));
-        // One 0x0070 Add per slot touched. A stack that overflows into a second slot is two
-        // entries, and the client draws what it is told rather than working it out.
-        for row in &placed {
-            let blob = self.item_blob(&row.item);
-            out.push(Reply {
-                opcode: net::inventory::INVENTORY_OPERATION,
-                body: net::inventory::inventory_added(inv.as_u8() as i8, row.slot as i16, &blob),
-                what: format!(
-                    "InventoryOperation ADD: item {} into {inv:?} slot {} - {} byte blob. GM !item.",
-                    row.item.item_id,
-                    row.slot,
-                    blob.len()
-                ),
-            });
-        }
+        out.extend(self.inventory_added_replies(inv, &placed, "GM !item"));
         out
     }
 

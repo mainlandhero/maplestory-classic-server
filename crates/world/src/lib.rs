@@ -28,6 +28,7 @@
 //! store gives is **single use**. See `store::migration`.
 
 pub mod config;
+pub mod drops;
 pub mod server;
 pub mod session;
 pub mod shops;

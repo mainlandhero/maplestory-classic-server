@@ -55,11 +55,17 @@ impl Session {
     }
 
 
-    /// One `0x0070` Add per slot a purchase touched.
+    /// One `0x0070` Add per slot an arrival touched.
+    ///
+    /// A stack that overflows into a second slot is two entries: the client draws what it
+    /// is told rather than working it out. `why` goes in the log line, so a run says whether
+    /// an item arrived from a purchase, from `!item`, or off the floor - which matters most
+    /// for the floor, where reading the log IS the experiment.
     pub(super) fn inventory_added_replies(
         &self,
         inv: store::InventoryType,
         changed: &[store::InvItem],
+        why: &str,
     ) -> Vec<Reply> {
         changed
             .iter()
@@ -73,8 +79,10 @@ impl Session {
                         &blob,
                     ),
                     what: format!(
-                        "InventoryOperation ADD: item {} into {inv:?} slot {}",
-                        row.item.item_id, row.slot
+                        "InventoryOperation ADD: item {} into {inv:?} slot {} - {} byte blob. {why}.",
+                        row.item.item_id,
+                        row.slot,
+                        blob.len()
                     ),
                 }
             })
@@ -152,19 +160,10 @@ impl Session {
         // dst 0, count 1. It is not a move to slot zero; slots are 1-based and slot 0 is the
         // hole that makes them so.
         //
-        // Refusing is deliberate and temporary. The item stays in the bag, which is the safe
-        // direction: `Store::remove_item` would take it out and there is nowhere to put it -
-        // no drop pool, no `DropEnterField`, no pickup. Losing an item is worse than one
-        // that will not leave. `crates/net/src/drops.rs` is where that lands.
+        // Wired 2026-08-20. Every early return below is still a `0x0070`, so no path here is
+        // silent - see this module's header for what silence costs.
         if m.dst == 0 {
-            let mut out = self.inventory_refused(
-                &m,
-                "dst 0 is a DROP, and dropping is not built yet - the item is still in your bag",
-            );
-            out.extend(self.notice(
-                "Dropping is not built yet - the item is still in your bag.".to_string(),
-            ));
-            return out;
+            return self.on_drop_request(&m, &chr);
         }
 
         // Bag to bag. The client sends -1 for `count` when the item is not a bundle.

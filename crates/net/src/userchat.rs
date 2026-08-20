@@ -23,7 +23,7 @@ use crate::PacketWriter;
 /// str                       0x1408dcca7
 /// raw  4                    0x1408dcd11   <- a TAIL JMP, missed on the first pass
 /// --- back in FUN_142784970 ---
-/// u8                        0x142784a5b
+/// u8   flags                0x142784a5b   <- A BITMASK. bit 1 is the balloon.
 /// u8                        0x142784a69
 /// u8                        0x142784a75
 /// --- the trailing object, FUN_1408da090 ---
@@ -109,20 +109,96 @@ const SPEAKER_OBJECT_LEN: usize = 2 + 2 + 4 + 4 + 1 + 4 + 4 + 2 + 4 + 2 + 4;
 /// `FUN_1408da090` reads a 4-byte block and then `CMP r8d,1 / JNE 0x1408da1eb` returns.
 /// **Any value except 1 stops it there**, so zero costs four bytes and nothing else. With a
 /// 1 it would go on to read a `u8`, a sub-object and a string. **[L]**
+///
+/// The handler branches on the same value again at `0x142785064`
+/// (`cmp dword [r14+0x10], 1 / je`), but only **inside** the [`CHAT_FLAG_CHAT_WINDOW`]
+/// block, so with that bit clear the value is read and never looked at.
 const TRAILING_OBJECT_LEN: usize = 4;
 
 /// What [`user_chat`] adds beyond the message text itself.
 pub const USER_CHAT_OVERHEAD: usize =
     4 + 1 + 2 + SPEAKER_OBJECT_LEN + 3 + TRAILING_OBJECT_LEN;
 
-/// Build a [`USER_CHAT`].
+/// Byte offset of the flag byte inside a [`user_chat`] body, given a message of `n` bytes.
+///
+/// `4` id + `1` leading flag + `2` length + `n` text + the speaker object.
+pub const fn chat_flags_offset(text_len: usize) -> usize {
+    4 + 1 + 2 + text_len + SPEAKER_OBJECT_LEN
+}
+
+/// The flag byte read at `0x142784a5b` - the first `u8` **after** the speaker object.
+///
+/// **It is a bitmask, and it was going out as `0`.** `FUN_142784970` stores it in
+/// `[rbp+0x168]` (rbp is `lea`'d once at `0x142784980` and never written again, so the slot
+/// is stable) and tests three separate bits of it:
+///
+/// | test | at | what it gates |
+/// |---|---|---|
+/// | `test al, 1` | `0x142784ece` | a chat post through `FUN_1415a8b80`; clear -> `je 0x142785537` |
+/// | `test byte [rbp+0x168], 2` | `0x142785722` | **the balloon**; clear -> `je 0x142785b96`, past *both* `FUN_14158f5c0` call sites (`0x142785927` and `0x142785ac1`) |
+/// | `test al, 4` | `0x142785537` | a post through `FUN_1415ed1c0(.., 0x1f)` |
+///
+/// All **[L]**, off `tools/listing.py 0x142784970`.
+///
+/// The sibling handler for `0x0226` does the same thing with the same field: in
+/// `FUN_1427834b0` the byte arrives as the 5th argument (`[rbp+0x100]`, and
+/// `FUN_1427847a0` passes its own first post-speaker `u8` there at `0x1427848d0`), and it is
+/// tested `test al,1` at `0x142783aa0`, `test byte [rbp+0x100],2` at `0x142783dcf` - the
+/// balloon - and `test al,4` at `0x142783af1`. Two handlers, one convention. **[L]**
+pub const CHAT_FLAG_CHAT_WINDOW: u8 = 0x01;
+
+/// Bit 1 of the flag byte: **draw the balloon over the character's head.**
+///
+/// See [`CHAT_FLAG_CHAT_WINDOW`] for the listing. With this bit clear the handler jumps
+/// from `0x142785729` to `0x142785b96` and no `FUN_14158f5c0` call is reachable, so a
+/// balloon is impossible however correct the rest of the body is.
+pub const CHAT_FLAG_BALLOON: u8 = 0x02;
+
+/// Bit 2 of the flag byte: a third posting route, `FUN_1415ed1c0(.., 0x1f)`.
+///
+/// What it renders is **not established** - only that the bit selects it. Not sent.
+pub const CHAT_FLAG_BIT2: u8 = 0x04;
+
+/// What the client itself puts in the equivalent byte of its **outbound** `0x00E7`.
+///
+/// `FUN_1418cd030` builds `0x00E7` as `u32 tick, str text, u8` and the `u8` is the
+/// immediate `3`: `mov dl, 3` at `0x1418cd247`, then `call 0x1406ed840` (encode `u8`) at
+/// `0x1418cd24e`. **[L]** The second `0x00E7` builder, at `0x141824a26` inside
+/// `FUN_141824980`, encodes its `u8` from an argument (`movzx edx, sil` at `0x141824a4f`)
+/// rather than a constant - which is what says the field is a flag byte and not a literal.
+///
+/// Every capture agrees: the three `0x00E7` bodies the owner sent on 2026-08-19 and the `!map 40`
+/// of 2026-08-20 all end in `03`.
+///
+/// That the **inbound** byte uses the same encoding as the outbound one is **[D]**, not
+/// **[L]** - nothing has read a server-shaped `0x0231` into this client. What is measured is
+/// that inbound bit 1 is the balloon and that the client's own outbound constant has bit 1
+/// set.
+pub const CHAT_FLAGS_CLIENT_DEFAULT: u8 = CHAT_FLAG_CHAT_WINDOW | CHAT_FLAG_BALLOON;
+
+/// Build a [`USER_CHAT`] with the flag byte the client's own sender uses.
+///
+/// **This still only renders if the handler runs at all.** `FUN_142784970` is reached
+/// through `CField::OnPacket FUN_141820080` -> `FUN_1429b9300` -> `FUN_1429bafb0`, and that
+/// last one drops `0x0231` in silence when `CUserPool::GetUser` returns null - which it does
+/// both when the pool singleton `[0x143AC1B90]` is null (`0x1429b6ca7`) and when no `CUser`
+/// carries the id we sent. See `research/user-chat-round2.md` for the watch that settles it.
 pub fn user_chat(character_id: u32, text: &str) -> Vec<u8> {
+    user_chat_with_flags(character_id, text, CHAT_FLAGS_CLIENT_DEFAULT)
+}
+
+/// Build a [`USER_CHAT`] with an explicit flag byte - see [`CHAT_FLAG_BALLOON`].
+///
+/// The knob exists because the flag is the one field in this body whose *value* changes what
+/// appears on screen, and because a run costs the owner a manual launch: bisecting it should not
+/// mean editing this file.
+pub fn user_chat_with_flags(character_id: u32, text: &str, flags: u8) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u32(character_id);
-    w.u8(0); // the flag before the text
+    w.u8(0); // 0x142784998 - the leading flag; only reaches `FUN_1415ed1c0`'s 0/0xa argument
     w.str(text);
 
-    // The speaker object. Four empty strings and 21 zero bytes, in this exact order - see
+    // The speaker object. Four empty strings and 25 zero bytes, in this exact order - see
     // SPEAKER_OBJECT_LEN. None of it is optional; the client reads every field.
     w.str(""); // 0x1408d6782
     w.str(""); // 0x1408dcba3
@@ -136,7 +212,7 @@ pub fn user_chat(character_id: u32, text: &str) -> Vec<u8> {
     w.str(""); // 0x1408dcca7
     w.zeros(4); // 0x1408dcd11 - the tail jmp; see the note on SPEAKER_OBJECT_LEN
 
-    w.u8(0); // 0x142784a5b
+    w.u8(flags); // 0x142784a5b - the balloon lives in bit 1 of this byte
     w.u8(0); // 0x142784a69
     w.u8(0); // 0x142784a75
 
@@ -191,5 +267,83 @@ mod tests {
         let short = user_chat(1, "");
         let long = user_chat(1, "abcd");
         assert_eq!(long.len() - short.len(), 4, "only the message may vary");
+    }
+
+    /// The whole body, byte for byte, with the flag byte pinned at its exact offset.
+    ///
+    /// This is the test the previous two crashes did not have. It is not a length check:
+    /// it names every byte, so a field that moves shows up as a diff rather than as a
+    /// still-passing total.
+    #[test]
+    fn the_body_is_pinned_byte_for_byte() {
+        let b = user_chat_with_flags(204, "hi", CHAT_FLAGS_CLIENT_DEFAULT);
+        let want: Vec<u8> = [
+            &[0xCC, 0x00, 0x00, 0x00][..], // u32 characterId = 204, read by the dispatcher
+            &[0x00][..],                   // 0x142784998
+            &[0x02, 0x00][..],             // the message length
+            b"hi",                         // 0x1427849ac
+            &[0x00, 0x00][..],             // 0x1408d6782  empty str
+            &[0x00, 0x00][..],             // 0x1408dcba3  empty str
+            &[0x00; 4][..],                // 0x1408dcbee
+            &[0x00; 4][..],                // 0x1408dcbff
+            &[0x00; 1][..],                // 0x1408dcc12
+            &[0x00; 4][..],                // 0x1408dcc25
+            &[0x00; 4][..],                // 0x1408dcc38
+            &[0x00, 0x00][..],             // 0x1408dcc45  empty str
+            &[0x00; 4][..],                // 0x1408dcc9a
+            &[0x00, 0x00][..],             // 0x1408dcca7  empty str
+            &[0x00; 4][..],                // 0x1408dcd11  the TAIL JMP read
+            &[0x03][..],                   // 0x142784a5b  THE FLAG BYTE
+            &[0x00][..],                   // 0x142784a69
+            &[0x00][..],                   // 0x142784a75
+            &[0x00; 4][..],                // 0x1408da090, stopped because it is not 1
+        ]
+        .concat();
+        assert_eq!(b, want);
+        assert_eq!(b.len(), USER_CHAT_OVERHEAD + 2);
+    }
+
+    /// The flag byte sits where `chat_flags_offset` says, whatever the message length.
+    ///
+    /// `0x142784a5b` reads it straight after the speaker object, so its offset moves with
+    /// the text and with nothing else.
+    #[test]
+    fn the_flag_byte_is_where_the_offset_helper_says() {
+        for text in ["", "hi", "Hello David", &"x".repeat(300)] {
+            let b = user_chat_with_flags(7, text, 0x2A);
+            let at = chat_flags_offset(text.len());
+            assert_eq!(b[at], 0x2A, "flag byte for {:?} landed elsewhere", text.len());
+            assert_eq!(at, b.len() - 3 - 4, "flag, two more u8s, then the trailing object");
+        }
+    }
+
+    /// **The balloon bit must be set by default.**
+    ///
+    /// This is the whole finding of `research/user-chat-round2.md`: the byte went out as
+    /// `0`, and `0x142785722` (`test byte [rbp+0x168], 2 / je 0x142785b96`) jumps past both
+    /// `FUN_14158f5c0` call sites when bit 1 is clear. A zero here cannot draw a balloon no
+    /// matter what else is right, so a regression to `0` is worth failing the build over.
+    #[test]
+    fn the_default_flags_ask_for_the_balloon() {
+        assert_eq!(CHAT_FLAG_BALLOON, 0x02);
+        assert_eq!(CHAT_FLAG_CHAT_WINDOW, 0x01);
+        assert_eq!(CHAT_FLAG_BIT2, 0x04);
+        assert_eq!(CHAT_FLAGS_CLIENT_DEFAULT, 0x03, "the client's own 0x00E7 constant");
+        let b = user_chat(204, "Hello");
+        let flags = b[chat_flags_offset("Hello".len())];
+        assert_ne!(flags & CHAT_FLAG_BALLOON, 0, "no balloon bit, no balloon");
+    }
+
+    /// Changing the flag byte must not change the length - it is one byte, not a section.
+    #[test]
+    fn the_flag_byte_does_not_resize_the_body() {
+        let a = user_chat_with_flags(204, "same", 0x00);
+        let c = user_chat_with_flags(204, "same", 0xFF);
+        assert_eq!(a.len(), c.len());
+        assert_eq!(a.len(), USER_CHAT_OVERHEAD + 4);
+        let at = chat_flags_offset(4);
+        assert_eq!((a[at], c[at]), (0x00, 0xFF));
+        assert_eq!(a[..at], c[..at]);
+        assert_eq!(a[at + 1..], c[at + 1..]);
     }
 }

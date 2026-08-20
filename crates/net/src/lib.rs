@@ -39,6 +39,7 @@ pub mod quest;
 pub mod script;
 pub mod session;
 pub mod shop;
+pub mod stats;
 pub mod userchat;
 
 pub use codec::{
