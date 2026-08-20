@@ -402,6 +402,35 @@ So **`142cb8ed9` is the only instruction in the image that puts a non-null array
 `channel-select.md` §9.8's conclusion is reproduced by a second, independent run of a
 different tool.
 
+The unfiltered pass adds the reads — same resync count, so the same complete coverage:
+
+```
+$ python tools/fieldrefs.py 0x2cc8
+12 hit(s), 666939 resync point(s)
+14086584c  lea    rcx, [rdi + 0x2cc8]                 in 0x140862520
+14087324e  lea    rdx, [rbx + 0x2cc8]                 in 0x1408674e0
+                                     ... the seven --write rows above, unchanged ...
+142ca9a44  mov    rcx, qword ptr [rbx + 0x2cc8]       in 0x142ca88c0   destructor, before the free
+142cb8eb0  mov    rcx, qword ptr [rdi + 0x2cc8]       in 0x142cb8e10   the old array, before the free
+142cb9514  mov    rcx, qword ptr [rcx + 0x2cc8]       in -  (no .pdata entry)   <-- THE PREDICATE
+```
+
+**Three in-class reads, and the only one that looks at a value is `FUN_142cb9510`.** The other
+two read the pointer in order to release it — `142ca9a44` in the destructor and `142cb8eb0` in
+`FUN_142cb8e10` itself, each immediately followed by `add rcx,-8 / call FUN_142ef3bb8`. **[L]**
+
+The remaining five rows (`0x140862520`, `0x1408674e0`, `0x140886810`, `0x140c460a0`,
+`0x1429446b0`) are **assumed to be other classes on the strength of the operand alone** — two
+`lea`s that never dereference, two `movsd` doubles and one `mov dword`, none of which can be
+the qword pointer `FUN_142cb9510` indexes. **I did not run the group-membership check on
+them**: the `0x2cb8`/`0x2cc0` sweeps behind §8 were bounded to `0x142a00000..0x142d40000` and
+all five of those addresses fall outside it, so "they never touch the sibling fields" is
+something I would have to measure and have not. Recorded as a gap rather than smoothed over.
+
+Within that limit this closes the read side of the question the bounded `rangescan` could only
+answer locally: **no code that dereferences this array consumes it except the six callers of
+`FUN_142cb9510`.** **[D]**
+
 **A displacement is a class fact, not an offset fact**, and the object here was confirmed
 three independent ways before any of the above was trusted: the RIP-relative loads in the OK
 handler and the mouse hit test resolve to the same global `0x143AA84A0`; `FUN_142cb8e10` is
@@ -443,12 +472,6 @@ Stated plainly, because everything above is only worth what this section admits.
   balloon list does 90 bytes later at `141b325f0` (`shl r15,4`). Such a loop calls none of the
   three accessors and would not appear above. This is the honest residue of §0's worry, and it
   is the reason §10 asks for one byte and not two.
-* **The whole-image *read* sweep for `+0x2cc8` had not finished** when this was written; only
-  the `--write` half is reported in §8.1. The read side therefore rests on the bounded
-  `rangescan` over `0x142a00000..0x142d40000` (which contains the whole singleton and the
-  whole dialog) plus the caller enumeration in §5, not on a whole-image pass. A reader in
-  some *other* class at the same displacement would not change anything — the six consumers
-  of the value are the six callers of `FUN_142cb9510`, and those are enumerated.
 * **What writes `singleton+0x2250`.** Nothing observed does, but the sweep behind that was
   bounded to `0x142c00000..0x142d40000` plus a caller/pointer check, not a whole-image
   `fieldrefs` run. An inlined `mov [reg+0x2250], imm` elsewhere would have been missed.
