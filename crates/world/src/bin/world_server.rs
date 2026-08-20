@@ -59,6 +59,7 @@ fn main() -> ExitCode {
     let mut item_data_path = PathBuf::from("gm-handbook/itemdata.txt");
     // Authored source like data/shops.txt: it cannot be regenerated from the client.
     let mut drops_path = PathBuf::from("data/drops.txt");
+    let mut exp_curve_path = PathBuf::from("data/exp-curve.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -100,6 +101,7 @@ fn main() -> ExitCode {
             "--item-names" => value().map(|v| item_names_path = PathBuf::from(v)),
             "--item-data" => value().map(|v| item_data_path = PathBuf::from(v)),
             "--drops" => value().map(|v| drops_path = PathBuf::from(v)),
+            "--exp-curve" => value().map(|v| exp_curve_path = PathBuf::from(v)),
             "--inventory-slots" => value().and_then(|v| {
                 v.parse::<u16>()
                     .map_err(|e| format!("--inventory-slots {v}: {e}"))
@@ -239,6 +241,16 @@ fn main() -> ExitCode {
     // What mobs drop. Missing is legal and means nothing drops - see DropTables::load for
     // why this degrades rather than refusing to start.
     config.drops = world::droptables::DropTables::load(&drops_path);
+    config.exp_curve = world::expcurve::ExpCurve::load(&exp_curve_path);
+    config.mob_exp = mob_templates.iter().map(|(id, t)| (*id, t.exp)).collect();
+    for line in &config.exp_curve.problems {
+        println!("maplecw-world: exp curve: {line}");
+    }
+    println!(
+        "maplecw-world: exp curve: {} levels; {} mob templates carry an EXP value",
+        config.exp_curve.levels(),
+        config.mob_exp.values().filter(|e| **e > 0).count()
+    );
     for line in &config.drops.problems {
         println!("maplecw-world: drops: {line}");
     }

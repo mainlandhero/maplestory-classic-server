@@ -79,56 +79,38 @@ impl Session {
     }
 
 
-    /// `!exp <amount>` - award experience, and persist it.
+    /// `!exp <amount>` - award experience, and level up if it pays for a level.
     ///
-    /// **This is the cheap half of goal D, and it exists to be measurable.** Levelling up
-    /// properly needs a mob to die, which is blocked on why the client collects zero targets;
-    /// this awards the same experience by hand, so the storage-and-wire half can be seen on a
-    /// screen without waiting for that. Until 2026-08-20 the record's `exp` field was a
-    /// hardcoded zero, so there was no chain here to test at all.
+    /// A shortcut to the same machinery a kill uses, so goal D can be exercised without
+    /// finding a mob: [`Session::award_experience`] does the levelling, the persistence and
+    /// the `0x007C`. It adds rather than sets, because what is being checked is that a
+    /// number *moves*.
     ///
-    /// **It will not move the bar until the next field entry**, and the ack says so. The
-    /// number reaches the client inside the character record, which is only built on a
-    /// `SetField`; the packet that updates a stat *in place* has not been decoded, so
-    /// `!exp 100` then `!map 40` is the whole test. Saying "it worked" and letting the owner
-    /// watch an unchanged bar would burn a launch.
-    ///
-    /// Adds rather than sets, because what is being checked is that a number *moves*.
-    /// Saturating, so a typo with twenty digits cannot wrap the total back to nearly zero.
+    /// Three things this doc used to say are no longer true and are worth naming, because
+    /// each was fixed by something measured rather than by a rewrite: levelling was "blocked
+    /// on why the client collects zero targets" (the mob size scale, fixed); the bar "will
+    /// not move until the next field entry" (`0x007C` moves it in place); and `exp` was "a
+    /// hardcoded zero" in the record (it is a real column now).
     pub(super) fn gm_exp(&mut self, arg: &str) -> Vec<Reply> {
         let Ok(amount) = arg.parse::<u64>() else {
             return self.gm_ack(format!("!exp: {arg:?} is not an amount. Try !exp 100."));
         };
-        let Some(mut chr) = self.claimed_character() else {
+        let Some(chr) = self.claimed_character() else {
             return self
                 .gm_ack("!exp REFUSED: no character is claimed on this connection.".to_string());
         };
+        // One path for every source of experience - see `Session::award_experience`. `!exp`
+        // used to add and persist on its own, which meant a GM award could never level
+        // anyone while a kill could, and nothing would have said so.
         let before = chr.exp;
-        chr.exp = before.saturating_add(amount);
-        if let Err(e) = self.store.save_character_progress(&chr) {
-            // Always answer, including a refusal. Silence here would freeze the client's
-            // whole UI, which reads on screen as a crash.
-            return self.gm_ack(format!("!exp FAILED: {e}"));
+        let mut out = self.award_experience(amount, "!exp");
+        if out.is_empty() {
+            return self.gm_ack(format!("!exp {amount}: nothing to award."));
         }
-        let mut out = self.gm_ack(format!(
-            "{} gains {amount} experience: {before} -> {}.",
-            chr.name, chr.exp
-        ));
-        // **The live update.** `0x007C` carries a u32 mask and the changed values in
-        // ascending bit order; bit 16 is experience and it is the **new total**, not the
-        // award - the client subtracts its own snapshot and draws "+N EXP" itself.
-        // Without this the number reached the client only inside the next `SetField`, so
-        // `!exp` had to be followed by a map change to see anything.
-        out.push(Reply {
-            opcode: net::stats::STAT_CHANGED,
-            body: net::stats::StatChange::exp(chr.exp).build(),
-            what: format!(
-                "StatChanged: exp -> {} (mask bit 16, the new TOTAL). The client draws the \
-                 gain by differencing its own snapshot.",
-                chr.exp
-            ),
-        });
-        out
+        let now = self.claimed_character().map(|c| c.exp).unwrap_or(before);
+        let mut ack = self.gm_ack(format!("{} gains {amount} experience: {before} -> {now}.", chr.name));
+        ack.append(&mut out);
+        ack
     }
 
 

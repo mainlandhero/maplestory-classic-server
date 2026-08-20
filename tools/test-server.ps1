@@ -120,6 +120,17 @@ param(
     # question: does 0x01A0 reach FUN_142097f80? Both of that handler's early returns are
     # silent, so without the watches the run cannot tell an ignored packet from one that
     # never arrived, which is the whole reason for spending the launch.
+    # EVERY -SetFieldProbe run also dumps the EXP curve, and it costs nothing.
+    #
+    # 143AC2400 is 121 u64s, the experience needed for levels 1..120. It lives in the
+    # ZERO-INITIALISED TAIL of .data - vsize 0xa2aa8, rsize 0x67400 - so it has no bytes on
+    # disk at all and no static read can ever produce it. Reading it statically returned 120
+    # confident wrong numbers that were actually exception-handling records, which is why
+    # tools/rtti.py now raises for addresses in that region instead of answering.
+    #
+    # A running client has the real table. The dump rides the 140304100 positive control,
+    # which fires at world entry - late enough that the table is populated - and fires ONCE,
+    # so it is one log line and no extra watch slot. Decode it with tools/decode_dump.py.
     [switch]$SetFieldProbe,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
@@ -321,27 +332,27 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #                                 the ATTACK rect, which arm C never validates
         #                                 (arm A checks left<right / top<bottom; arm C does
         #                                 not)
-        # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
+        # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE CONTROL: no lines
         #   at all means the hook never armed and the log proves nothing. It KEEPS its slot:
         #   WATCH_SLOTS went from four to six on 2026-08-20 rather than trade the control
         #   away to fit a measurement, which is a trade this project has lost before.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141d32675:peek=0xa88:hits=40,141d3267c:peek=0x42c:hits=40,140304100:hits=200'
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141d32675:peek=0xa88:hits=40,141d3267c:peek=0x42c:hits=40,140304100:hits=200:dump=143AC2400/968'
     } elseif ($InventorySlots -gt 0) {
         # 140305e48:peek=24 - the u16 that sizes ONE inventory, inside the record decoder's
         #   fixed six-turn loop. RCX is the CInPacket and +0x24 is its read cursor. EXPECT
         #   SIX HITS, EACH EXACTLY 2 APART. Origin-independent: it does not matter what the
         #   cursor counts from, only that the client took twelve contiguous bytes where we
         #   put twelve. Fewer than six, or an uneven step, means presence[7] is wrong.
-        # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
+        # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE CONTROL: no lines
         #   at all means the hook never armed and the log proves nothing.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200'
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968'
     } else {
         # 141c532ab:peek=24 - rcx is the CInPacket and +0x24 is its read cursor, inside the
         #   mob's encodeInit. Mobs render now, so this is a regression check rather than a
         #   diagnosis: the cursor should be consistent across every mob in a field.
-        # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
+        # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE CONTROL: no lines
         #   at all means the hook never armed and the log proves nothing.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200'
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968'
     }
     # Announce which pair actually got armed. The old line said "mobs" for 141c532ab, which
     # is the mob SPAWN decoder - now that -MobTargets arms a mob TARGETING watch, one word

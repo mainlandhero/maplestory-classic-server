@@ -30,6 +30,7 @@
 pub mod config;
 pub mod drops;
 pub mod droptables;
+pub mod expcurve;
 pub mod server;
 pub mod session;
 pub mod shops;

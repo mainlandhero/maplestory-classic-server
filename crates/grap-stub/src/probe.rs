@@ -157,6 +157,9 @@ const WATCH_SLOTS: usize = 6;
 /// anyone has needed to read here - `FUN_141d31b20` takes seventeen - with room, but not so
 /// much that a typo walks somebody else's frame.
 const WATCH_ARGS_MAX: u32 = 32;
+/// The most memory one `dump=` may copy. The EXP curve is 968 bytes; this is room for a few
+/// tables of that size and not enough for a typo to write a megabyte of hex into the log.
+const DUMP_MAX_BYTES: u32 = 8192;
 
 #[allow(clippy::declare_interior_mutable_const)]
 const WATCH_ZERO: AtomicU64 = AtomicU64::new(0);
@@ -194,6 +197,16 @@ static PEEK_OFF: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 /// Arguments 1-4 arrive in registers and are already logged, so this only ever means
 /// "and also slots 5 through N".
 static WATCH_ARGS: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
+/// `dump=<VA>/<len>`: absolute address to dump on this watch's FIRST hit, or 0 for none.
+///
+/// **This exists because some of the client's data is not in the file at all.** The EXP
+/// curve - 121 `u64`s at `0x143AC2400` - lives in the zero-initialised tail of `.data`, so
+/// it has no bytes on disk and no static read can ever produce it; `tools/rtti.py` now
+/// raises rather than returning the `.pdata` bytes that happen to sit at that file offset.
+/// A running client has the real table, and one watch hit is enough to copy it out.
+static DUMP_AT: [AtomicU64; WATCH_SLOTS] = [WATCH_ZERO; WATCH_SLOTS];
+/// How many bytes [`DUMP_AT`] should copy. Capped by `DUMP_MAX_BYTES`.
+static DUMP_LEN: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
 /// Set once, however many slots are armed - the handler must not be registered twice.
 static VEH_REGISTERED: AtomicBool = AtomicBool::new(false);
 /// Faults reported to the log, capped so a repeating one cannot fill the disk.
@@ -514,6 +527,8 @@ struct WatchSpec<'a> {
     hits: Option<&'a str>,
     /// Highest integer argument to dump off the stack - see [`stack_args`].
     args: Option<&'a str>,
+    /// `<VA>/<len>`: dump raw memory at an absolute address on this watch's first hit.
+    dump: Option<&'a str>,
     /// Return from the function immediately instead of running it.
     ret: bool,
 }
@@ -545,6 +560,7 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
         peek: None,
         hits: None,
         args: None,
+        dump: None,
         ret: false,
     };
     for opt in fields {
@@ -557,6 +573,8 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
             parsed.hits = Some(v.trim());
         } else if let Some(v) = opt.strip_prefix("args=") {
             parsed.args = Some(v.trim());
+        } else if let Some(v) = opt.strip_prefix("dump=") {
+            parsed.dump = Some(v.trim());
         } else if opt == "ret" {
             parsed.ret = true;
         } else {
@@ -569,8 +587,8 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
 }
 
 unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
-    let (target_txt, force, peek, hits, args, want_ret) = match parse_watch_spec(spec) {
-        Ok(p) => (p.target, p.force, p.peek, p.hits, p.args, p.ret),
+    let (target_txt, force, peek, hits, args, dump, want_ret) = match parse_watch_spec(spec) {
+        Ok(p) => (p.target, p.force, p.peek, p.hits, p.args, p.dump, p.ret),
         Err(why) => {
             log(&format!("probe: {why}"));
             return;
@@ -616,6 +634,34 @@ unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
         log(&format!(
             "probe: will dump stack arguments 5..={v} on every entry to {va:#x}"
         ));
+    }
+    if let Some(d) = dump {
+        // `<VA>/<len>`, both in hex and decimal respectively - the address is an address and
+        // the length is a count, so they are written the way each is normally written.
+        let (va_txt, len_txt) = match d.split_once('/') {
+            Some(pair) => pair,
+            None => {
+                log(&format!("probe: {spec:?} dump= needs <VA>/<len>"));
+                return;
+            }
+        };
+        let at = u64::from_str_radix(va_txt.trim().trim_start_matches("0x"), 16);
+        let len = len_txt.trim().parse::<u32>();
+        match (at, len) {
+            (Ok(a), Ok(n)) if a != 0 && n > 0 && n <= DUMP_MAX_BYTES => {
+                DUMP_AT[slot].store(a, Ordering::SeqCst);
+                DUMP_LEN[slot].store(n, Ordering::SeqCst);
+                log(&format!(
+                    "probe: will dump {n} bytes at {a:#x} on the FIRST entry to {va:#x}"
+                ));
+            }
+            _ => {
+                log(&format!(
+                    "probe: {spec:?} dump= wants <hex VA>/<len 1..={DUMP_MAX_BYTES}>"
+                ));
+                return;
+            }
+        }
     }
     if let Some(p) = peek {
         match u64::from_str_radix(p.trim().trim_start_matches("0x"), 16) {
@@ -950,6 +996,33 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             ));
             if n == cap {
                 log("probe: watch hit limit reached, further calls will not be logged");
+            }
+        }
+
+        // `dump=` - copy raw memory out, once, on this watch's first hit.
+        //
+        // On the FIRST hit rather than every hit because the target is a table, not a
+        // variable: repeating it would bury the log and tell us nothing new. And on a hit
+        // rather than at arming time because the interesting tables live in the
+        // zero-initialised tail of `.data` - they contain nothing at all until the client
+        // has run far enough to fill them in.
+        if n == 1 {
+            let at = DUMP_AT[slot].load(Ordering::SeqCst) as usize;
+            let len = DUMP_LEN[slot].load(Ordering::SeqCst) as usize;
+            if at != 0 && len != 0 {
+                if crate::session::can_read(at, len) {
+                    let bytes = std::slice::from_raw_parts(at as *const u8, len);
+                    let mut hex = String::with_capacity(len * 2);
+                    for b in bytes {
+                        hex.push_str(&format!("{b:02x}"));
+                    }
+                    log(&format!("***** DUMP {len} bytes at {at:#x}: {hex} *****"));
+                } else {
+                    // Say which, rather than printing nothing: an address that is not mapped
+                    // is a different fact from a table that is all zeroes, and only one of
+                    // them means "look somewhere else".
+                    log(&format!("***** DUMP {at:#x}+{len} is NOT READABLE - nothing copied *****"));
+                }
             }
         }
 
@@ -1410,14 +1483,14 @@ mod tests {
             // the bare default, no -SetFieldProbe
             "watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8",
             // -SetFieldProbe, default pair: mob spawn
-            "watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200",
+            "watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968",
             // -SetFieldProbe -InventorySlots N
-            "watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200",
+            "watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968",
             // -SetFieldProbe -MobTargets: five targets, which is why WATCH_SLOTS is six.
             // Kept on ONE line deliberately. Written with a `\` continuation it silently
             // retained the leading whitespace of the next line and produced a target that
             // parses and can never resolve - caught only by the whitespace assertion below.
-            "watch@1415db360:ret,141b2a280:rdx=0,141d32675:peek=0xa88:hits=40,141d3267c:peek=0x42c:hits=40,140304100:hits=200",
+            "watch@1415db360:ret,141b2a280:rdx=0,141d32675:peek=0xa88:hits=40,141d3267c:peek=0x42c:hits=40,140304100:hits=200:dump=143AC2400/968",
         ] {
             let rest = text.strip_prefix("watch@").expect("every string is a watch");
             let specs: Vec<&str> = rest.split(',').filter(|s| !s.trim().is_empty()).collect();
@@ -1467,6 +1540,21 @@ mod tests {
         // And an unparseable member is caught rather than skipped.
         assert!(parse_watch_spec("141d31b20:args").is_err());
         assert!(parse_watch_spec("141d31b20:rip=0").is_err());
+    }
+
+    #[test]
+    fn dump_parses_and_wants_an_address_and_a_length() {
+        let s = parse_watch_spec("140304100:hits=200:dump=143AC2400/968").expect("valid");
+        assert_eq!(s.dump, Some("143AC2400/968"));
+        assert_eq!(s.hits, Some("200"));
+        // Order must not matter, and it must coexist with the other options.
+        let s = parse_watch_spec("140304100:dump=143AC2400/968:peek=1c0").expect("valid");
+        assert_eq!(s.dump, Some("143AC2400/968"));
+        assert_eq!(s.peek, Some("1c0"));
+        assert!(parse_watch_spec("140304100").expect("valid").dump.is_none());
+        // A bare `dump` with no value is not an option and must be refused, like any other
+        // malformed spec - a watch that arms and measures nothing costs a whole launch.
+        assert!(parse_watch_spec("140304100:dump").is_err());
     }
 
     #[test]

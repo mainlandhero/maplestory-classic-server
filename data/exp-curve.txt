@@ -1,0 +1,118 @@
+# level | expToNextLevel
+#
+# The experience needed to go from `level` to `level + 1`. NOT cumulative.
+#
+# Source: meowdb.com/msclassic/guides/exp-table-level-1-to-100. COMMITTED rather than
+# generated, for the same reason data/drops.txt and data/shops.txt are: it cannot be
+# rebuilt from the client the way gm-handbook/ can.
+#
+# THE CLIENT HAS ITS OWN COPY AND THE CLIENT WINS. The table lives at 0x143AC2400, 121 u64s,
+# in the zero-initialised tail of `.data` - no bytes on disk, so no static read can produce
+# it, and reading it that way once returned 120 confident wrong numbers that were actually
+# exception-handling records. Every `-SetFieldProbe` run now dumps it from the running
+# process on the positive-control watch's first hit; decode with
+#   python tools/decode_dump.py --exp-curve
+# and compare against this file. If they disagree, the dump is right and this is wrong: the
+# client draws the EXP bar from its own copy, so a server that disagrees shows a bar that
+# does not fill when it should.
+#
+# Levels 1..99. A character at 100 has no next level here and stops gaining.
+1 | 15
+2 | 34
+3 | 57
+4 | 92
+5 | 135
+6 | 372
+7 | 560
+8 | 840
+9 | 1242
+10 | 1716
+11 | 2360
+12 | 3216
+13 | 4200
+14 | 5460
+15 | 7050
+16 | 8840
+17 | 11040
+18 | 13716
+19 | 16680
+20 | 20216
+21 | 24402
+22 | 28980
+23 | 34320
+24 | 40512
+25 | 47216
+26 | 54900
+27 | 63666
+28 | 73080
+29 | 83720
+30 | 95700
+31 | 108480
+32 | 122760
+33 | 138666
+34 | 155540
+35 | 174216
+36 | 194832
+37 | 216600
+38 | 240500
+39 | 266682
+40 | 294216
+41 | 324240
+42 | 356916
+43 | 391160
+44 | 428280
+45 | 468450
+46 | 510420
+47 | 555680
+48 | 604416
+49 | 655200
+50 | 709716
+51 | 748608
+52 | 789631
+53 | 832902
+54 | 878545
+55 | 926689
+56 | 977471
+57 | 1031036
+58 | 1087536
+59 | 1147132
+60 | 1209994
+61 | 1276301
+62 | 1346242
+63 | 1420016
+64 | 1497832
+65 | 1579913
+66 | 1666492
+67 | 1757815
+68 | 1854143
+69 | 1955750
+70 | 2062925
+71 | 2175973
+72 | 2295216
+73 | 2420993
+74 | 2553663
+75 | 2693603
+76 | 2841212
+77 | 2996910
+78 | 3161140
+79 | 3334370
+80 | 3517093
+81 | 3709829
+82 | 3913127
+83 | 4127566
+84 | 4353756
+85 | 4592341
+86 | 4844001
+87 | 5109452
+88 | 5389449
+89 | 5684790
+90 | 5996316
+91 | 6324914
+92 | 6671519
+93 | 7037118
+94 | 7422752
+95 | 7829518
+96 | 8258575
+97 | 8711144
+98 | 9188514
+99 | 9692044

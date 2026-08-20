@@ -726,6 +726,64 @@ fn clicking_a_shopkeeper_opens_the_shop() {
     assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
 }
 
+/// **A kill awards the mob's own EXP, and enough of it levels the character.**
+///
+/// Goal D, end to end: the EXP per kill is the client's own `mobtemplates.txt` value, the
+/// curve is `data/exp-curve.txt`, and the `0x007C` carries the new level so the client plays
+/// its own level-up effect without a separate packet.
+#[test]
+fn enough_experience_levels_the_character_and_says_so() {
+    let (mut s, store, id) = gm_session();
+    let curve = crate::expcurve::ExpCurve::parse("1 | 15
+2 | 34
+");
+    s.config = Arc::new(Config { exp_curve: curve, ..(*s.config).clone() });
+
+    let out = s.award_experience(15, "a test");
+
+    let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("a 0x007C");
+    assert!(stat.what.contains("LEVEL 1 -> 2"), "{}", stat.what);
+    assert!(
+        out.iter()
+            .filter(|r| r.opcode == net::notice::CHAT_NOTICE)
+            .any(|r| notice_text(r).contains("Level up!")),
+        "the player should be told"
+    );
+
+    // The database, not the reply.
+    let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!((after.level, after.exp), (2, 0), "levelled, and the remainder is nothing");
+    assert_eq!(after.ap, 5, "five ability points a level");
+    assert_eq!(after.hp, after.max_hp, "a level-up restores");
+}
+
+/// Experience short of a level is banked and levels nobody.
+#[test]
+fn experience_short_of_a_level_is_just_banked() {
+    let (mut s, store, id) = gm_session();
+    let curve = crate::expcurve::ExpCurve::parse("1 | 15
+");
+    s.config = Arc::new(Config { exp_curve: curve, ..(*s.config).clone() });
+
+    let out = s.award_experience(14, "a test");
+    assert!(!out
+        .iter()
+        .filter(|r| r.opcode == net::notice::CHAT_NOTICE)
+        .any(|r| notice_text(r).contains("Level up!")));
+
+    let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!((after.level, after.exp, after.ap), (1, 14, 0));
+}
+
+/// An award of zero sends nothing at all - a `0x007C` that changes nothing is a packet the
+/// client parses for no reason, and most mobs in this game are worth some EXP but some are
+/// worth none.
+#[test]
+fn an_award_of_zero_sends_no_packet() {
+    let (mut s, _, _) = gm_session();
+    assert!(s.award_experience(0, "a worthless mob").is_empty());
+}
+
 /// **Killing a mob puts its drops on the floor** - the mob's own table, then the global one.
 ///
 /// This is what the owner asked for: *"when a mob dies, it checks for its mob specific drop table

@@ -152,6 +152,13 @@ pub struct Config {
     /// Empty is legal and means mobs drop nothing - see `crate::droptables::DropTables::load`
     /// for why a missing file degrades rather than refusing to start.
     pub drops: crate::droptables::DropTables,
+    /// How much experience each level costs, and what a level awards. `data/exp-curve.txt`.
+    pub exp_curve: crate::expcurve::ExpCurve,
+    /// Template id -> experience for killing one, from the client's own `mobtemplates.txt`.
+    ///
+    /// Unlike the curve and the drop tables, this **is** the client's data - `tools/dump_mobs.py`
+    /// reads it out of `Mob.wz` - so it is generated, gitignored, and not a guess.
+    pub mob_exp: HashMap<u32, u32>,
     /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
     ///
     /// The character record carries an item's stats and upgrade slots per *instance*, and a
@@ -908,6 +915,8 @@ impl Default for Config {
             shop_rows: None,
             send_shop: false,
             drops: crate::droptables::DropTables::default(),
+            exp_curve: crate::expcurve::ExpCurve::default(),
+            mob_exp: HashMap::new(),
             chatter_off: false,
             equips: HashMap::new(),
             npc_strings: HashMap::new(),

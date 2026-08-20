@@ -99,6 +99,9 @@ impl Session {
                 let template = self.mob_template.remove(&target.object_id).unwrap_or(0);
                 if let Some((id, map)) = killer {
                     out.extend(self.drops_from_kill(template, id, map));
+                    let worth = self.config.mob_exp.get(&template).copied().unwrap_or(0);
+                    out.extend(self.award_experience(u64::from(worth), "a kill"));
+                    let _ = id;
                 }
             } else {
                 self.mob_hp.insert(target.object_id, hit.hp_after);
@@ -190,6 +193,74 @@ impl Session {
                 now_ms: self.clock_ms,
             });
             out.push(reply);
+        }
+        out
+    }
+
+
+    /// Give the character experience, level them up if it pays for one, and tell the client.
+    ///
+    /// **One path for every source of experience**, so a kill and `!exp` cannot drift: the
+    /// levelling rule, the persistence and the `0x007C` all live here. `crate::expcurve`
+    /// owns the arithmetic.
+    ///
+    /// The level-up animation comes free - the `0x007C` handler plays
+    /// `Effect/BasicEff.img/LevelUp` itself when the level in the packet is higher than the
+    /// one the client is holding, so there is no separate effect packet to send.
+    ///
+    /// Returns nothing at all for an award of zero, which is the ordinary case for a mob
+    /// with no EXP value: a `0x007C` that changes nothing is a packet the client has to
+    /// parse for no reason.
+    pub(super) fn award_experience(&mut self, gained: u64, why: &str) -> Vec<Reply> {
+        if gained == 0 {
+            return Vec::new();
+        }
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let before_level = chr.level;
+        let a = self.config.exp_curve.award(chr.level, chr.exp, gained);
+        chr.level = a.level;
+        chr.exp = a.exp;
+        if a.levels > 0 {
+            // Gains apply to the maximums, and a level-up refills - which is this game's
+            // behaviour and also the only reading under which the numbers cannot end up
+            // above their own maximum.
+            chr.max_hp += a.max_hp;
+            chr.max_mp += a.max_mp;
+            chr.hp = chr.max_hp;
+            chr.mp = chr.max_mp;
+            chr.ap += a.ap;
+        }
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.notice(format!("Could not save your experience: {e}"));
+        }
+
+        let mut change = net::stats::StatChange::exp(chr.exp);
+        if a.levels > 0 {
+            change.level = Some(chr.level);
+            change.max_hp = Some(chr.max_hp);
+            change.max_mp = Some(chr.max_mp);
+            change.hp = Some(chr.hp);
+            change.mp = Some(chr.mp);
+            change.ap = Some(chr.ap);
+        }
+        let mut out = vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: change.build(),
+            what: format!(
+                "StatChanged: +{gained} exp from {why} -> {} total{}. Bit 16 carries the NEW                  TOTAL; the client differences its own snapshot to draw the gain.",
+                chr.exp,
+                if a.levels > 0 {
+                    format!(", LEVEL {before_level} -> {} (+{} ap)", chr.level, a.ap)
+                } else {
+                    String::new()
+                }
+            ),
+        }];
+        if a.levels > 0 {
+            out.extend(self.notice(format!(
+                "Level up! {} is now level {}. +{} AP, and HP/MP restored.",
+                chr.name, chr.level, a.ap
+            )));
         }
         out
     }
