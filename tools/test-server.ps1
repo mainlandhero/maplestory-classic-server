@@ -365,6 +365,29 @@ Start-Sleep -Milliseconds 300
 # only when the owner ran it. Verify a change to this block by STARTING the server, not by parsing.
 $channelList = (0..($Channels - 1) | ForEach-Object { "127.0.0.1:$($ChannelPort + $_)" }) -join ','
 
+# Keep the previous run's log instead of deleting it.
+#
+# **Three separate conclusions have died with an overwritten world.log.** The most expensive:
+# an attack capture showing 127-byte zero-target bodies was read out of a world.log that also
+# carried 90 mob-control packets, the pair was reported as "the client will not target our
+# mobs", and by the time anyone tried to re-check it the file had been replaced by the next
+# launch. No fixture had been taken. The observation was real and is now unverifiable, which
+# is the worst of both.
+#
+# A client launch costs the owner a manual launch. Throwing away its output to save a few hundred
+# kilobytes is the wrong trade in every direction.
+function Save-PreviousLog([string]$Path) {
+    if (-not (Test-Path $Path)) { return }
+    $dir = Split-Path -Parent $Path
+    $prev = Join-Path $dir 'previous-runs'
+    if (-not (Test-Path $prev)) { New-Item -ItemType Directory -Path $prev | Out-Null }
+    $stamp = (Get-Item $Path).LastWriteTime.ToString('yyyyMMdd-HHmmss')
+    $name = [IO.Path]::GetFileNameWithoutExtension($Path)
+    $ext = [IO.Path]::GetExtension($Path)
+    Move-Item $Path (Join-Path $prev ("{0}-{1}{2}" -f $name, $stamp, $ext)) -Force
+}
+
+Save-PreviousLog $serverLog
 Remove-Item $serverLog -Force -ErrorAction SilentlyContinue
 $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
     -WindowStyle Hidden `
@@ -386,6 +409,7 @@ $worldSrv = $null
 foreach ($ch in 0..($Channels - 1)) {
     $chPort = $ChannelPort + $ch
     $chLog = if ($ch -eq 0) { $worldLog } else { Join-Path $root "world-ch$ch.log" }
+    Save-PreviousLog $chLog
     Remove-Item $chLog -Force -ErrorAction SilentlyContinue
     $chArgs = @('--db', "`"$Database`"", '--bind', "127.0.0.1:$chPort", '--channel', "$ch")
     if ($SetFieldProbe) { $chArgs += '--set-field-probe' }

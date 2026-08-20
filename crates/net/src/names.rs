@@ -110,9 +110,21 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         // it. research/mob-behaviour.md.
         0x02FF => "CLIENT_MOB_MOVE (u32 mobObjectId, u16 moveId, then a conditional tail and the path)",
 
+        // The three attack opcodes that share one body: header FUN_140f31fe0, targets
+        // FUN_140f31f60, trailer FUN_14083b270. The client works out its own damage and
+        // sends it as a u64 per hit, so nothing we reply supplies a number. Their BODIES
+        // are the only evidence there is about whether the client targets our mobs, which
+        // is why all three are in never_truncate(). research/mob-combat.md.
+        0x00DF => "CLIENT_MELEE_ATTACK (u64 damages per target; the CLIENT computes them)",
+        0x00E0 => "CLIENT_SHOOT_ATTACK (same body as 0x00DF)",
+        0x00E1 => "CLIENT_MAGIC_ATTACK (same body as 0x00DF)",
+
         // Outbound, so that a run's log does not read as if the server were guessing.
+        0x007C => "STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order)",
         0x01A0 => "SET_FIELD",
+        0x03D1 => "MOB_LEAVE_FIELD (u32 objectId, u8 deathType, u8, [u32, u32])",
         0x03D2 => "MOB_CHANGE_CONTROLLER (u8 level - 0 DESPAWNS - then the mob body)",
+        0x03F0 => "MOB_HP_CHANGE (u32 objectId, u32 hp, u8 showBar) - moves the health bar",
         0x044F => "NPC_ENTER_FIELD",
         0x055B => "SCRIPT_MESSAGE",
 
@@ -144,7 +156,14 @@ fn never_truncate(opcode: u16) -> bool {
     // u16 lists, a block gated on a mob field, and the movement path itself - all of it
     // unread, and all of it the evidence that would settle how this client encodes a path.
     // Truncating it would hide exactly the bytes the next question needs.
-    matches!(opcode, 0x008F | 0x0090 | 0x0091 | 0x0151 | 0x01A0 | 0x02FF)
+    // 0x00DF/0x00E0/0x00E1 are named but their target list is the whole question. Every
+    // attack this project has captured came from a session with no mobs in it, so a
+    // zero target count has never been a measurement of anything; the next run's bodies
+    // are what settle whether the client targets our mobs, and a truncated body cannot.
+    matches!(
+        opcode,
+        0x008F | 0x0090 | 0x0091 | 0x00DF | 0x00E0 | 0x00E1 | 0x0151 | 0x01A0 | 0x02FF
+    )
 }
 
 /// One packet as a log line body: hex, truncated only when we both know the opcode and do

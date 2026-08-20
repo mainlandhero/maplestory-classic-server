@@ -17,16 +17,52 @@
 //! This module builds the second half. It cannot build the first, and neither can any
 //! reply.
 //!
-//! # And the measurement that says the first half is real
+//! # RETRACTION: "the client will not target our mobs" was never measured
 //!
-//! `world.log` from 2026-08-19 contains exactly one attack - `0x00DF`, 127 bytes, at
-//! `23:58:33.878`, standing at `(473, 395)` with mob `2000` at `(424, 395)`. Its target
-//! count is **zero**. All 127 bytes are accounted for field for field ([`ATTACK_HEADER_FIXED`]
-//! and [`ATTACK_TRAILER_LEN`]), so that zero is read, not assumed.
+//! This module used to say that a captured `0x00DF` had **zero targets** while a mob stood
+//! 49 pixels away, and treated that as the wall in front of combat. **The two halves of
+//! that sentence come from two different sessions.** The `(424, 395)` mob is in the
+//! `world.log` of a *later* run; the attack it was compared against is in a session whose
+//! log no longer exists (`world.log` is gitignored and has been overwritten).
 //!
-//! `research/mob-combat.md` §8 has the run that separates "they swung out of range" from
-//! "the client will not target our mobs": attack a snail four or five times and look at
-//! whether any `0x00DF` body is longer than 127 bytes.
+//! What does survive, and what it says:
+//!
+//! | fixture | `0x00DF` | `0x03C6` |
+//! |---|---:|---:|
+//! | `channel-list-shows-two-but-unselectable-world.log` | **9** | **0** |
+//! | `sweep-0024-01c3-reply-0171.log` | **1** | **0** |
+//! | `mob-body-faults-client-world.log` | 0 | many |
+//! | `mob-watch-2b8-null-second-object-world.log` | 0 | 1 |
+//! | `world.log` (newest, 30 mobs on map 40, 5 minutes) | **0** | 30 |
+//!
+//! **No log in this repository contains both an attack and a mob spawn.** Every zero-target
+//! attack we have was swung on a map where the server had sent no mobs at all, so a zero
+//! target count is the only thing those packets *could* have carried. The layout work built
+//! on them stands - all 127 bytes are still accounted for field for field
+//! ([`ATTACK_HEADER_FIXED`], [`ATTACK_TRAILER_LEN`]) - but the *targeting* conclusion does
+//! not, and the next client run is what settles it.
+//!
+//! # What the client does NOT do, which is why [`mob_hp_change`] exists
+//!
+//! `mob+0x8b4` is the client's copy of a mob's absolute HP, and it is what the on-screen
+//! health bar is computed from. `tools/fieldrefs.py 0x8b4 --sections .text --write` over
+//! the **whole** `.text` finds **11** stores at that displacement. Two of them are inside
+//! the mob class - the constructor `FUN_141c4cee0` and the handler for [`MOB_HP_CHANGE`] -
+//! and of the other nine, two are `movsd` inside bulk struct copies (`FUN_140886810`,
+//! `FUN_1429446b0`, which copy `+0x8a8`, `+0x8b0`, `+0x8b4`, `+0x8bc`, `+0x8c0` in a row)
+//! and seven are in functions with no `CMob` signature at all - no `[reg+0x3a8]`, no `0x431`
+//! assert, no mob-pool call.
+//!
+//! **Nothing in the client computes a new HP for a mob it hits.** It works out the damage,
+//! draws the number and leaves the bar where it was. So the bar moving is entirely ours to
+//! send, and [`MOB_HP_CHANGE`] is what sends it.
+//!
+//! That negative is what the whole first half of the owner's request turns on, so it is worth
+//! saying how it was made trustworthy: `tools/fieldrefs.py --write` **crashed with a
+//! `NameError` on every invocation** in the commit this work started from, so a `--write`
+//! run was not returning a wrong answer, it was returning no answer. The missing constant
+//! is restored, and the tool's own documented positive control (`0x2f4` -> exactly
+//! `141c4d261`, `141c4e6ee`, `141cb7ef3`) reproduces before any of the counts above.
 
 use crate::error::Result;
 use crate::packet::{PacketReader, PacketWriter};
@@ -76,6 +112,18 @@ pub const MOB_LEAVE_FIELD: u16 = 0x03D1;
 ///
 /// See [`StatChange`] for the mask and [`stat_changed`] for the body.
 pub const STAT_CHANGED: u16 = 0x007C;
+
+/// **A mob's HP changed - server -> client. This is what moves the health bar.**
+///
+/// Found by asking who writes `mob+0x8b4`, the field
+/// `FUN_141cbb320` divides to get the bar percentage. Two writers in the whole mob class:
+/// the constructor at `141c4eb7e`, and `FUN_141c83440` at `141c83460`. `FUN_141c83440` has
+/// exactly one caller, `141d32c03`, inside the second-level mob dispatcher
+/// `FUN_141d32b30` - and the entry of the 117-wide jump table at `0x141d33448` that lands
+/// on `141d32bfd` is index **23**, so the opcode is `0x3D9 + 23` = **`0x03F0`**. **[L]**
+///
+/// See [`mob_hp_change`] for the body.
+pub const MOB_HP_CHANGE: u16 = 0x03F0;
 
 /// Is this one of the attack opcodes [`parse_attack`] understands?
 ///
@@ -401,6 +449,170 @@ pub fn mob_leave_field(object_id: u32, death_type: u8) -> Vec<u8> {
         w.u32(0);
     }
     w.into_vec()
+}
+
+// ---------------------------------------------------------------------------------------
+// The mob's health bar moves
+// ---------------------------------------------------------------------------------------
+
+/// Every byte of a [`MOB_HP_CHANGE`]: `u32 objectId, u32 hp, u8 showBar`. **[L]**
+pub const MOB_HP_CHANGE_LEN: usize = 9;
+
+/// Body of a [`MOB_HP_CHANGE`] - the packet that moves a mob's health bar.
+///
+/// ```text
+/// u32 objectId     141d32b4d   read by the dispatcher FUN_141d32b30 BEFORE the switch
+/// u32 hp           141c83458   -> mob+0x8b4 and mob+0x8bc
+/// u8  showBar      141c8346c   -> a bool
+/// ```
+///
+/// `tools/reads.py 0x141c83440` reports **exactly those two reads** and nothing else, so
+/// the body is nine bytes with no gated tail. **[L]**
+///
+/// # What the client does with it
+///
+/// * `mob+0x8b4 = mob+0x8bc = hp`, unconditionally.
+/// * If the template says this mob shows a gauge (`template+0x81 != 0` and
+///   `+0x105`/`+0x380`/`+0x17c` all zero, plus a global check at `140479ea0`), it
+///   **tail-jumps to `FUN_141cd7b40`**, which recomputes `mob+0xb60` as
+///   `hp * 100 / template[0x100]`, sets the "bar is dirty" flag `mob+0xb64 = 1` and calls
+///   the mob's own `vtable+0xc0` to redraw. **[L]**
+/// * Otherwise it pushes `hp` into the timed list at `mob+0x6d8` - the floating damage /
+///   HP display over the mob - and, when `template+0xfc != 0` **or** `showBar` is set,
+///   stamps `mob+0x6c0` with the current tick. So `showBar` is "show it now even though
+///   this template would not normally". **[L]** for the branches, **[I]** for the name.
+///
+/// # `hp` is an ABSOLUTE HP, not a percentage - unlike the spawn packet's
+///
+/// `0x03C6` carries an absolute HP too, but the client turns it into a percentage
+/// immediately with a *different* divisor (`FUN_141c8a730`, the template's `+0x20` qword -
+/// `research/mob-spawn.md` §6.5) and stores only the percentage. This packet stores the
+/// absolute number and lets `FUN_141cbb320` divide it by `template+0x100` on demand.
+///
+/// **`template+0x100` is the mob's max HP**, and that is derived rather than assumed: the
+/// mob constructor initialises `mob+0x8b4` **from `template+0x100`** at `141c4eb5e..7e`
+/// (with a constant fallback when it is zero), and `FUN_141cbb320` then computes
+/// `mob+0x8b4 * 100 / template[0x100]`. A freshly constructed mob therefore reads 100%,
+/// which is only true if that field is the maximum. **[D]**
+///
+/// So send the mob's true remaining HP, and make sure the server's idea of max HP is the
+/// same `maxHP` the client read out of `Mob.wz` - which it is, because
+/// `world::config::MobTemplate::max_hp` comes from `tools/dump_mobs.py` reading that very
+/// property. If `template+0x100` were ever zero, `FUN_141cbb320` returns the raw HP as if
+/// it were a percentage; all 193 templates in this client have one.
+pub fn mob_hp_change(object_id: u32, hp: u32, show_bar: bool) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(object_id);
+    w.u32(hp);
+    w.bool(show_bar);
+    w.into_vec()
+}
+
+/// What applying one attack's damage to one mob did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MobHit {
+    /// The mob's HP before this hit.
+    pub hp_before: u64,
+    /// The mob's HP after it, floored at zero.
+    pub hp_after: u64,
+    /// How much of the claimed damage actually landed - `hp_before` when the mob was
+    /// overkilled, so a caller crediting damage does not credit more than the mob had.
+    pub damage_applied: u64,
+    /// True when this hit took the mob to zero **and it was alive before**. A second hit
+    /// on an already-dead mob reports `false`, so a duplicate `0x03D1` is impossible.
+    pub died: bool,
+}
+
+/// Subtract a claimed damage from a mob's HP.
+///
+/// Saturating in both directions: a client claiming `u64::MAX` kills the mob once and
+/// credits only the HP it had.
+pub fn apply_damage(hp_before: u64, damage: u64) -> MobHit {
+    let damage_applied = damage.min(hp_before);
+    let hp_after = hp_before - damage_applied;
+    MobHit {
+        hp_before,
+        hp_after,
+        damage_applied,
+        died: hp_after == 0 && hp_before > 0,
+    }
+}
+
+/// The packets one hit on one mob has to produce, **in send order**.
+///
+/// * Still alive -> one [`MOB_HP_CHANGE`], which is the only thing that moves the bar.
+/// * Killed -> one [`MOB_LEAVE_FIELD`] with [`death::ANIMATED`], and **no**
+///   [`MOB_HP_CHANGE`]: the mob is being torn down, and a bar update for an object that is
+///   about to leave the field is a write to a pool entry the client is removing.
+/// * Already dead before the hit -> nothing at all. That is the duplicate-`0x03D1` guard.
+///
+/// EXP is deliberately not here: it belongs to the *player*, not the mob, and it goes out
+/// as one [`stat_changed`] carrying the player's **new total** - see
+/// [`StatChange::exp_only`]. Sending one `0x007C` per mob in a multi-target swing would
+/// send several packets where one suffices.
+pub fn mob_hit_replies(object_id: u32, hit: &MobHit) -> Vec<(u16, Vec<u8>)> {
+    if hit.hp_before == 0 {
+        return Vec::new();
+    }
+    if hit.died {
+        vec![(MOB_LEAVE_FIELD, mob_leave_field(object_id, death::ANIMATED))]
+    } else {
+        vec![(
+            MOB_HP_CHANGE,
+            mob_hp_change(object_id, hit.hp_after.min(u32::MAX as u64) as u32, true),
+        )]
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// A mob hurts the player
+// ---------------------------------------------------------------------------------------
+
+/// Touch damage from a mob's body, and **every number in it is [I]**.
+///
+/// # Why this is a formula rather than a packet
+///
+/// The client -> server "I was hit" packet has **not** been found. `research/mob-combat.md`
+/// §7 records the search: `0x00E5` was a candidate family and is not it (fifteen builders
+/// sharing one encoder, none with a mob in the argument list that reaches the wire), and
+/// `0x0154` - the only outbound builder in the image that calls the mob-pool lookup
+/// `FUN_141d2efc0` right after building a body - turns out to be a diagnostic carrying a
+/// hard-coded `0xd9`, not a hit.
+///
+/// What *is* settled is that the server can do this without the client's help: the client
+/// reports mob positions (`0x02FF`, and it is the controller) and its own (`0x00D9`), so
+/// the server knows when a player is standing in a mob. And the reply that moves the HP bar
+/// is [`STAT_CHANGED`] bit [`stat::HP`], which is fully decoded.
+///
+/// # The formula
+///
+/// `mobtemplates.txt` carries `PADamage` and `level` for every template, generated from
+/// this client's own `Mob.wz` - those two inputs are **[L]**. How they combine into touch
+/// damage is **[I]**, from the shape the game family uses, and it is written here in one
+/// place so it is one edit to change:
+///
+/// ```text
+/// base   = PADamage
+/// gap    = mobLevel - playerLevel                 (only when the mob is higher)
+/// damage = base * (1 + gap * 5 / 100)             +5% per level of gap
+/// floor  = 1                                      never zero
+/// ```
+///
+/// A level-1 snail (template 2, `PADamage` 3) hits a level-1 character for **3**.
+pub fn touch_damage(pa_damage: u32, mob_level: u32, player_level: u32) -> u32 {
+    let gap = mob_level.saturating_sub(player_level);
+    let scaled = (pa_damage as u64) * (100 + (gap as u64) * 5) / 100;
+    scaled.max(1).min(u32::MAX as u64) as u32
+}
+
+/// The player's HP after taking `damage`, floored at zero.
+///
+/// Separate from [`touch_damage`] because the floor is a **rule**, not arithmetic: this
+/// server has no death packet (nothing has looked for one), so a character reaching zero
+/// would sit at zero with the client showing an empty bar and no death screen. A caller
+/// that is not ready for that should clamp to 1 and say so.
+pub fn player_hp_after(hp: u32, damage: u32) -> u32 {
+    hp.saturating_sub(damage)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1203,5 +1415,165 @@ mod tests {
         // hp/maxHp/mp/maxMp 4 each, ap 2, sp 1+(1+4), exp 8, fame 4, meso 8
         let fields = 5 + 4 + 4 + 4 + 4 + 8 + 16 + 2 + 6 + 8 + 4 + 8;
         assert_eq!(stat_changed(&every).len(), 9 + fields);
+    }
+
+    // -----------------------------------------------------------------------------------
+    // MOB_HP_CHANGE - the packet that moves the health bar
+    // -----------------------------------------------------------------------------------
+
+    /// Nine bytes, in the order the two readers take them, and the opcode is derived
+    /// rather than typed: `0x3D9` is the first case of the second-level mob table and the
+    /// HP setter sits at index 23.
+    #[test]
+    fn mob_hp_change_is_the_nine_bytes_the_handler_reads() {
+        assert_eq!(MOB_HP_CHANGE, 0x03D9 + 23);
+        let body = mob_hp_change(2000, 41, true);
+        assert_eq!(body.len(), MOB_HP_CHANGE_LEN);
+        assert_eq!(&body[0..4], &2000u32.to_le_bytes());
+        assert_eq!(&body[4..8], &41u32.to_le_bytes());
+        assert_eq!(body[8], 1);
+
+        // The flag really is a flag, and it is the only thing that changes.
+        let quiet = mob_hp_change(2000, 41, false);
+        assert_eq!(quiet[8], 0);
+        assert_eq!(&quiet[0..8], &body[0..8]);
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Applying damage
+    // -----------------------------------------------------------------------------------
+
+    #[test]
+    fn a_snail_takes_three_hits_and_dies_once() {
+        // Template 2, maxHP 45 - the mob the server actually spawns on map 40.
+        let mut hp = 45u64;
+
+        let h1 = apply_damage(hp, 12);
+        assert_eq!((h1.hp_after, h1.damage_applied, h1.died), (33, 12, false));
+        hp = h1.hp_after;
+
+        let h2 = apply_damage(hp, 20);
+        assert_eq!((h2.hp_after, h2.damage_applied, h2.died), (13, 20, false));
+        hp = h2.hp_after;
+
+        // Overkill: it dies, and only the 13 it had is credited.
+        let h3 = apply_damage(hp, 9_000);
+        assert_eq!((h3.hp_after, h3.damage_applied, h3.died), (0, 13, true));
+        hp = h3.hp_after;
+
+        // A fourth swing that lands on the corpse must NOT report a second death, or the
+        // field sends a second 0x03D1 and hands out the EXP twice.
+        let h4 = apply_damage(hp, 5);
+        assert!(!h4.died);
+        assert_eq!(h4.damage_applied, 0);
+    }
+
+    /// A client claiming an absurd number must not wrap.
+    #[test]
+    fn a_lying_damage_value_cannot_overflow_or_revive() {
+        let h = apply_damage(1, u64::MAX);
+        assert_eq!(h.hp_after, 0);
+        assert_eq!(h.damage_applied, 1);
+        assert!(h.died);
+    }
+
+    /// The reply set is the whole contract with the coordinator: alive -> bar, dead ->
+    /// death and nothing else, corpse -> silence.
+    #[test]
+    fn the_reply_for_a_hit_is_the_bar_and_the_reply_for_a_kill_is_the_death() {
+        let alive = mob_hit_replies(2000, &apply_damage(45, 12));
+        assert_eq!(alive.len(), 1);
+        assert_eq!(alive[0].0, MOB_HP_CHANGE);
+        assert_eq!(&alive[0].1[4..8], &33u32.to_le_bytes());
+
+        let killed = mob_hit_replies(2000, &apply_damage(45, 45));
+        assert_eq!(killed.len(), 1);
+        assert_eq!(killed[0].0, MOB_LEAVE_FIELD);
+        assert_eq!(killed[0].1, mob_leave_field(2000, death::ANIMATED));
+        assert!(
+            killed.iter().all(|(op, _)| *op != MOB_HP_CHANGE),
+            "a mob leaving the field must not also get a bar update"
+        );
+
+        assert!(mob_hit_replies(2000, &apply_damage(0, 12)).is_empty());
+    }
+
+    /// A whole swing, end to end from the wire: parse an attack that carries one target,
+    /// apply it, and check the packets that come back.
+    #[test]
+    fn one_swing_with_one_target_kills_a_snail() {
+        // The captured header verbatim, then a target list with one entry instead of none.
+        let mut body = hex(CAPTURED_MELEE)[..110].to_vec();
+        let mut w = PacketWriter::new();
+        w.u32(1); // target count
+        w.u32(0);
+        w.u32(0);
+        // one target block
+        w.u32(2000); // [t+0x10] object id
+        w.u32(0); // [t+0x14]
+        w.u8(2); // nDamage
+        w.u8(0);
+        w.u8(0);
+        w.u64(20);
+        w.u8(1);
+        w.u8(0);
+        w.u64(25);
+        w.zeros(55); // the fixed tail
+        w.u16(0); // the std::map count
+        w.u8(0); // [t+0x1a0] no sub-object
+        w.u8(0); // [t+0x1b0] mode 0
+        w.u32(0); // the trailer, FUN_14083b270
+        w.u8(0);
+        body.extend_from_slice(w.as_slice());
+
+        let a = parse_attack(&body).expect("a one-target attack must parse");
+        assert!(!a.truncated);
+        assert_eq!(a.attack_type, "User Melee");
+        assert_eq!(a.target_count, 1);
+        assert_eq!(a.targets.len(), 1);
+        assert_eq!(a.targets[0].object_id, 2000);
+        assert_eq!(a.targets[0].total_damage(), 45);
+
+        let hit = apply_damage(45, a.targets[0].total_damage());
+        assert!(hit.died);
+        let replies = mob_hit_replies(a.targets[0].object_id, &hit);
+        assert_eq!(replies[0].0, MOB_LEAVE_FIELD);
+    }
+
+    // -----------------------------------------------------------------------------------
+    // A mob hurts the player
+    // -----------------------------------------------------------------------------------
+
+    /// The snail's own numbers from `gm-handbook/mobtemplates.txt`:
+    /// `2, 45, 30, 1, 2, 3, …` - maxHP 45, level 1, exp 2, **PADamage 3**.
+    #[test]
+    fn a_level_one_snail_hits_a_level_one_character_for_three() {
+        assert_eq!(touch_damage(3, 1, 1), 3);
+        // A player above the mob gets no reduction from this formula - only the gap the
+        // other way scales.
+        assert_eq!(touch_damage(3, 1, 20), 3);
+    }
+
+    #[test]
+    fn a_higher_level_mob_hits_harder_and_nothing_ever_hits_for_zero() {
+        assert_eq!(touch_damage(100, 21, 1), 200); // +5% x 20 levels
+        assert_eq!(touch_damage(0, 1, 1), 1, "a hit is never for nothing");
+    }
+
+    #[test]
+    fn player_hp_floors_at_zero_rather_than_wrapping() {
+        assert_eq!(player_hp_after(50, 3), 47);
+        assert_eq!(player_hp_after(2, 3), 0);
+    }
+
+    /// The reply that actually moves the player's HP bar is one `0x007C` with bit 10.
+    #[test]
+    fn touch_damage_reaches_the_client_as_one_stat_change() {
+        let change = StatChange::hp_only(player_hp_after(50, 3));
+        assert_eq!(change.mask(), stat::HP);
+        let body = stat_changed(&change);
+        assert_eq!(body.len(), 9 + 4);
+        assert_eq!(&body[3..7], &stat::HP.to_le_bytes());
+        assert_eq!(&body[7..11], &47u32.to_le_bytes());
     }
 }

@@ -49,6 +49,16 @@ try:
 except ImportError:  # pragma: no cover - the message is the point
     sys.exit("capstone is not installed; `pip install capstone`")
 
+# Instructions whose FIRST operand is a memory operand they only READ. Capstone puts the
+# destination first, so "operand 0 is memory" is otherwise a good proxy for a store - but
+# these lead with a memory source, and letting them through grows a `--write` list with rows
+# that write nothing. The name was referenced by `main()` and never defined, so **every
+# `--write` run crashed with a NameError** from the commit that introduced the check until
+# 2026-08-19. A tool that cannot run is not a negative result; see `research/mob-combat.md`.
+READ_ONLY_DEST = frozenset((
+    "cmp", "test", "push", "bt", "jmp", "call", "cmpsb", "cmpsw", "cmpsd", "cmpsq",
+))
+
 SKIP_BASES = (
     capstone.x86.X86_REG_RSP,
     capstone.x86.X86_REG_RBP,

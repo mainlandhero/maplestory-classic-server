@@ -148,20 +148,6 @@ fn connection(mut stream: TcpStream, store: Arc<Store>, config: Arc<Config>) -> 
 
             let replies = session.handle(&body);
             if replies.is_empty() {
-                // **A deliberate silence is not an unimplemented one**, and printing them
-                // the same way makes the log lie in the direction that costs most: it turns
-                // a working feature into something that reads as broken. `0x02FF` is the one
-                // packet this server is measured-certain it must NOT answer.
-                if opcode == net::mobmove::MOB_MOVE_REQUEST {
-                    log(
-                        "   0x02FF MobMove: the client is moving a mob it controls. NOT \
-                         answered, and that is correct - the client owns the move id at \
-                         mob+0x2f4 and no mob-pool handler reads it back. This line arriving \
-                         at all is the confirmation that MobChangeController worked. See \
-                         research/mob-behaviour.md section 6.",
-                    );
-                    continue;
-                }
                 log(&format!(
                     "   {} is not answered yet{} - see crates/world/src/session.rs",
                     label(opcode),

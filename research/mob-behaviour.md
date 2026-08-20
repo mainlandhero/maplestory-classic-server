@@ -26,7 +26,9 @@ dispatcher's case list, and the read counts) were both re-derived from the image
 | body, mob NOT yet spawned | **137 bytes - byte-for-byte `0x03C6`'s body with byte 0 reinterpreted** [D] |
 | what the client sends back | outbound **`0x02FF`**, built by mob primary-vtable **slot 22** = `FUN_141cb6880` [L] |
 | does the server ever push a movement path? | **yes, `0x03D9`** - but that is the *rebroadcast* to clients which do **not** control the mob, and it is not how autonomous behaviour is produced. See the retraction in section 2.2 [L] |
-| what has to be answered | **nothing.** No mob-pool handler writes the client's move id `mob+0x2f4` [L] |
+| ~~what has to be answered~~ | ~~**nothing.**~~ **RETRACTED 2026-08-19 - see sections 10 and 10.1.** `0x03E4` **is** a `MobCtrlAck`: `FUN_141c82060` reads a `u16`, compares it against the client's own move counter at `141c82212`, and sets the mob's state. The old scan was right and the *set it was intersected with* was stale [L] |
+| the rebroadcast to other clients | **`0x03D9`**, `FUN_141c813b0` - decoded in section 12. Not what freezes a single-player field [L] |
+| why the mobs still froze | the client reported **one** move each and stopped; nothing answered. Section 10 [L] |
 | implemented in | `crates/net/src/mobmove.rs` |
 
 **Independent corroboration, from the combat agent on the same day.** It decoded the client's
@@ -51,7 +53,7 @@ control on this binary before any absence was reported.
 |---|---|
 | `tools/reads.py 0x140304100 2` | the equipped-item decoder, showing a **mix** of `(direct)` and `-> READS via helper` - the documented control in its own docstring |
 | `tools/callers.py` | `0x141cc20b0` returns 6 call sites in 5 functions, including `0x141d34a70` which I had already read by hand |
-| a capstone range scan for a `[reg + DISP]` operand (`scratchpad/rangescan.py`) | scanning `+0x2f4` over the mob range returned `141cb7ef3 MOV [R12+0x2f4],EAX`, an instruction read by hand first; scanning `+0x960` returned the constructor's `MOV byte [RSI+0x960],0` |
+| a capstone range scan for a `[reg + DISP]` operand (`tools/rangescan.py`) | scanning `+0x2f4` over the mob range returned `141cb7ef3 MOV [R12+0x2f4],EAX`, an instruction read by hand first; scanning `+0x960` returned the constructor's `MOV byte [RSI+0x960],0` |
 
 The scan **disassembles** - it never looks for a `0xE8` byte - and it resyncs one byte at a
 time on undecodable input, so it does not stop silently at the first bad byte.
@@ -453,7 +455,14 @@ report a move.** Keep it negative in both packets. [D]
 
 ---
 
-## 6. Nothing has to be answered
+## 6. Nothing has to be answered — **RETRACTED, see section 10**
+
+> **This section is wrong, and section 10 is the replacement.** The scan it rests on was
+> right; the *intersection* was made against "the eight mob-pool handlers" while the second
+> jump table's 102 opcodes were still undiscovered — the same mistake section 2.2 retracts
+> one level up, made twice in one file. `0x03E4` is a `MobCtrlAck` and it reads the move id
+> back. The text below is kept unaltered because the scan in it is reusable and its exact
+> wording is what section 10.1 dissects.
 
 The client stamps its own move id into `mob+0x2f4` and increments it locally
 (`141cb7ecb` reads it, `141cb7ef3` writes it back). A range scan over the mob address space
@@ -560,3 +569,347 @@ the bytes we send do not take. That was checked rather than assumed, because a b
 * **A decompiled `default:` can hide the switch's real domain.** `msexe-mobpool.c` renders the
   bound as `param_2 - 0x3d9U < 0x75`, which reads as "0x3D9..0x44D are handled". They are not
   reached at all: the table is 19 entries wide. Read the table.
+
+---
+
+# THE 2026-08-19 RUN: the grant works, the mobs move once, and section 6 was wrong
+
+Written after the owner's runs of 2026-08-19. Everything above this line stands - `0x03D2` is the
+packet that starts a mob, and it was confirmed on screen. What follows is what the runs added,
+and the one retraction they forced.
+
+> **`world.log` is a LIVE capture and it rolled while this was being written.** The `01:21:37`
+> session analysed below is preserved as
+> `research/fixtures/mobs-move-once-then-freeze-0x02ff-bodies.txt`; the file in the repo root
+> now holds the `02:06:47` session. **That is a gift rather than a nuisance** - the two are
+> independent runs and section 10 holds on both. Nothing here rests on a file that has since
+> changed.
+
+## 10. What the runs measured, twice
+
+**The grant works.** Thirty `0x03D2` went out at `01:21:36.919`-`.924`, one per mob on map 40,
+level `1`, 87 bytes each. The client accepted every one and began simulating. **[L]**
+
+**The mobs moved exactly once each and stopped.** Thirty `0x02FF` arrived at
+`01:21:37.122`-`.125` - 198 ms after the grants, and **all thirty inside three
+milliseconds**. Nothing after that for the rest of the session. The owner, on screen: *"the mobs
+moved for half a second before freezing again."* **[L]**
+
+**Every one of the thirty carried `moveId = 1`.** The client's counter is `deobf(mob+0x2f0)`
+and the builder sends `that + 1` (`141cb7ee0 LEA EDI,[RAX+1]`), so `1` means the counter never
+left `0`. **No mob ever reported a second step.** **[L]**
+
+That shape rules something out immediately. Thirty mobs firing in the same 3 ms window and
+then all falling silent is not thirty independent timers expiring; it is one condition opening
+for all of them at once and closing for all of them at once. **[D]**
+
+**And it reproduced, on a second session nobody set up as a control.** `world.log` rolled to a
+later run while this analysis was in progress, and that run is the same measurement again:
+30 grants at `02:06:47.242`-`.248`, 30 reports at `02:06:47.417`-`.420` (175 ms later, all 30
+inside 3 ms), **every one `moveId = 1`**, nothing after. Two sessions, 60 bodies, identical
+behaviour. **[L]**
+
+### 10.1 RETRACTION: `0x02FF` has an acknowledgement, and it is `0x03E4`
+
+Section 6 says:
+
+> *"A range scan over the mob address space for `+0x2f4` returns 20 sites; **not one of them
+> is inside any of the eight mob-pool packet handlers**."*
+
+Re-run today, the identical scan over `0x141c40000..0x141d60000` returns the identical **20
+sites** (`tools/rangescan.py`; its positive controls `141cb7ef3` and the constructor's
+`+0x960` zero both fired). **The scan was never the problem.** One of those twenty is:
+
+```text
+141c821f8  MOV EDX,dword ptr [RDI + 0x2f4]     in FUN_141c82060
+```
+
+and `tools/callers.py 0x141c82060` returns **exactly one** call site, `141d32ba3` - the stub
+for **`case 0x3E4`** in the second dispatcher. `FUN_141c82060` *is* a mob-pool packet handler.
+**[L]**
+
+**The intersection was made against a set of eight.** Section 2.2 had already established that
+the pool has 110 handlers rather than eight, and section 6 was written against the old list
+anyway. This is `CLAUDE.md`'s "enumerate before you filter", failed twice in one document -
+the second time immediately after retracting the first.
+
+The general form is worth keeping: **a negative built from `scan` intersected with a
+hand-maintained set fails silently when the set grows, and it keeps returning the same
+confident answer.** The scan is not the instrument; the *set* is. Re-derive the set inside the
+same script that does the intersection - `tools/poolscan.py` reads both jump tables out
+of the image on every run for exactly that reason, and prints the handler count in its header
+so a shrunken set is visible on sight.
+
+### 10.2 `0x03E4` decoded - `MobCtrlAck`, 26 bytes, no conditional read
+
+`FUN_141c82060(mob, packet)`. The dispatcher `FUN_141d32b30` reads the object id itself at
+`141d32b4d` and looks the mob up; **an unknown id returns silently** (`141d32b62 JE` to the
+epilogue), so a stale id costs nothing. **[L]**
+
+The handler's only branch before its reads is at `141c82082`, and both arms converge at
+`141c82092`. A disassembly of `141c82092..141c82121` contains **no jump of any kind** - all
+eight reads are straight-line, so the body is a fixed **26 bytes**. **[L]**
+
+| off | size | read at | what |
+|---:|---|---|---|
+| 0 | u32 | `141d32b4d` | object id, read by the dispatcher |
+| 4 | u16 | `141c8209e` | **the move id being acknowledged** |
+| 6 | u8 | `141c820ab` | non-zero makes the resulting state `4` instead of `3` |
+| 7 | u32 | `141c820b7` | obfuscated into `mob+0x3b0`/`+0x3b4`/`+0x3b8`. **[I]** MP |
+| 11 | u32 | `141c820f0` | skill id - `0` short-circuits the whole skill block |
+| 15 | u16 | `141c820fa` | skill level; the two feed `FUN_14049a080(template, id, lvl, 0)` |
+| 17 | u32 | `141c82105` | `0` skips the `FUN_140401b30` call at `141c821f3` |
+| 21 | u32 | `141c82114` | **read and discarded** - `EAX` is clobbered by the next read |
+| 25 | u8 | `141c8211c` | **read and discarded** |
+
+Two things it does, and both matter.
+
+**It compares our move id against the client's own counter, and sets the mob's state.** **[L]**
+
+```asm
+141c821f8  MOV   EDX,[RDI + 0x2f4]         ; the obfuscation KEY
+141c821fe  LEA   RCX,[RDI + 0x2f0]         ; the obfuscated move id
+141c82205  CALL  0x1401ab420               ; -> AX, the client's current move id
+141c8220a  MOVSX ECX,AX
+141c8220d  MOVSX EAX,word ptr [RSP + 0x60] ; the value WE sent
+141c82212  CMP   EAX,ECX
+141c82214  JNS   141c8221d                 ; ack >= current
+141c82216  MOV   EBX,2                     ; ack <  current  -> state 2
+141c8221b  JMP   141c82226
+141c8221d  TEST  R13D,R13D                 ; the u8 at body offset 6
+141c82220  SETNE BL
+141c82223  ADD   EBX,3                     ; -> state 3, or 4 if that byte is set
+141c82232  MOV   [RDI + 0x2e4],EAX         ; ... obfuscated across +0x2e4/+0x2e8/+0x2ec
+```
+
+> **A naming correction to sections 5 and 6.** The move id is **not** at `mob+0x2f4`. It is
+> the obfuscated pair `mob+0x2f0` (value) / `mob+0x2f4` (key), and both the sender
+> (`141cb7ecb`/`141cb7ed3`) and this handler (`141c821f8`/`141c821fe`) use it that way. The
+> scan found `+0x2f4` because the key is what gets loaded into a register; the *field* is the
+> pair. Same class of error as `mob+0x3a0` vs `mob+0x3a8` in section 5. **[L]**
+
+**It re-runs the same activation `0x03D2` runs.** `141c8207d` calls `[vtable+0x48]` (slot 9);
+if that returns 0, `141c8208f` calls `[vtable+0x40]` - **slot 8, `FUN_141c54200`** - with a
+hardcoded `EDX = 1`. Section 4 called that "the one virtual call the spawn packet never makes"
+and said only the change-controller handler makes it. **`0x03E4` makes it too, and it is the
+only other packet that does.** **[L]**
+
+Slot 8, re-read directly rather than from section 4's paraphrase, has one branch section 4 did
+not record:
+
+```asm
+141c5423a  MOV  RCX,RDI
+141c5423d  TEST EDX,EDX
+141c5423f  JE   141c542b5          ; arg2 == 0 -> a different path entirely
+141c54241  CALL 0x1409c5080        ; = FUN_1409d4840(anim + 0x108): is it running?
+141c54248  JNE  141c5436e          ; ALREADY RUNNING -> do nothing at all
+141c5424e  LEA  EDX,[RAX + 3]      ; RAX == 0 here, so 3
+141c54254  CALL 0x141c4ff30        ; mob+0x2e4 := 3
+141c54261  CALL 0x141c55750(mob, 1)
+```
+
+**"Do nothing if the animation is already running, otherwise start it" is the shape of a
+pump**, not of an initialiser. **[D]**
+
+### 10.3 The state field, and what is still NOT proven
+
+`mob+0x2e4` (obfuscated across `+0x2e4`/`+0x2e8`/`+0x2ec`) has these writers in the mob code
+range - `tools/rangescan.py 0x2e4 0x141c40000 0x141d60000`, 31 sites: **[L]**
+
+| where | what it writes |
+|---|---|
+| `141c4d232` | the base constructor, `FUN_141c4cee0` |
+| `141c4ff4b` | the generic setter `FUN_141c4ff30(mob, v)` |
+| `141c52ba7`, `141c5373f` | inside `encodeInit` |
+| `141c82232` | **`0x03E4`** - 2, 3 or 4 |
+| `141cb8748` | **the move sender itself**, immediately before `SendPacket` |
+
+That last one is the interesting one, and it is read here rather than assumed:
+
+```asm
+141cb8642  LEA  RSI,[R12 + 0x2e4]
+141cb864a  ... de-obfuscate -> EDI
+141cb86ba  CMP  EDI,-2 / JE 141cb8748      ; -2 -> keep EBX (which is 1)
+141cb873e  CMP  EDI,1  / JE 141cb8748      ; 1  -> keep EBX
+141cb8743  MOV  EBX,2                      ; anything else -> 2
+141cb8748  ... obfuscate EBX into mob+0x2e4/+0x2e8/+0x2ec
+141cb8777  CALL SendPacket
+```
+
+So: **the grant sets the state to 3; sending a move drops it to 1 or 2; the ack puts it back
+to 3 (or 4).** That is a request/response cycle written into one field. **[D]**
+
+> **What is NOT established, and this is the honest part.** No instruction has been found that
+> *blocks* the second wander roll. Slot 19 (`FUN_141c8d1b0`, where the wander is rolled -
+> section 5.1) reads the state at `141c8dcbe` and only requires `state == -2 || state > 0`,
+> which both `1` and `2` satisfy. Its harder gates are `mob+0x4e4 == 0` at `141c8d1e7` and
+> `FUN_1409c5080(anim) != 0` at `141c8d2bc` - the second being "the animation is running", the
+> exact thing slot 8 restarts.
+>
+> The chain is therefore: **the ack is the only packet in this client that can restart a
+> stopped mob animation, and a stopped animation is what slot 19 refuses to act on.** Every
+> link in that sentence is **[L]**. That the animation actually stops after one wander is
+> **[I]** - it is the missing measurement, and only a client run can supply it.
+>
+> Do not write "sending `0x03E4` makes mobs keep moving" as measured. Write "it is the only
+> thing in the client that can", which is what the listing supports.
+
+## 11. `0x02FF` decoded in full, and verified against sixty real bodies
+
+The `01:21` capture is 30 bodies of **111, 132, 153 and 174** bytes: a clean 21-byte ladder
+over element counts 1, 2, 3 and 4, i.e. `90 + 21n`. The `02:06` capture is 30 more, at 111,
+132 and 153. **[L]**
+
+Field order is `FUN_141cb6880`'s encode order, taken with `tools/encodes.py` - a mirror
+of `tools/reads.py` that reuses its loader and `calls_of`, so it inherits that tool's
+positive control. Its own control is in its docstring and fires: the `0x2ff` `COutPacket`
+ctor at `141cb7eb1` and `SendPacket` at `141cb8365`, both hand-read in section 5.
+
+> **A correction to section 5 found by that control.** `FUN_141cb6880` has **two**
+> `SendPacket` calls. `141cb8365` is an *early* send taken when `FUN_141d57c60` sets its
+> out-param at `[rbp-0x80]`; `141cb8777` is the normal one, and it is the one the captured
+> bodies came from. Section 5's "exactly one `COutPacket` construction" is correct; "one
+> send" would not have been, and a decoder written against the early branch would be 29 bytes
+> short.
+
+| off | size | encoded at | what |
+|---:|---|---|---|
+| 0 | u32 | `141cb7ec6` | object id, `mob+0x3a0` |
+| 4 | u16 | `141cb7f05` | **move id**, `deobf(mob+0x2f0) + 1` |
+| 6 | u8 | `141cb7f20` | packed, `((a<<2)\|b)<<2\|c` - **`0` in all 30** |
+| 7 | u8 | `141cb7f31` | **`0xFF` in all 30** |
+| 8 | u64 | `141cb7f44` | **`0` in all 30** |
+| 16 | u8 | `141cb7f55` | |
+| 17 | u8 | `141cb7f65` | |
+| 18 | u8 + n x (u16,u16) | `141cb7f80`/`91`, `141cb7ff2`, `141cb803a` | list from `mob+0x8c8` - **empty in all 30** |
+| .. | u8 + n x u16 | `141cb8063`/`71`, `141cb80ca` | list from `mob+0x8d0` - **empty in all 30** |
+| .. | u32 | `141cb80e9` | `mob+0x10b0`; if non-zero, **11 more u32** follow |
+| .. | u8 | `141cb820e` | |
+| 25 | u32 | `141cb8231` | `1` in all 30 |
+| **29** | u32 | `141cb828c` | **`0x00ffddcc`** |
+| **33** | u32 | `141cb829a` | **`0x00ffddcc`** |
+| 37 | u32 | `141cb82b4` | `0x3cd98750` in all 30 |
+| 41 | u32 | `141cb82d9` | |
+| 45 | u8 | `141cb82f0` | |
+| **46** | | `141cb8353` -> `FUN_141d57c60` | **the movement path** |
+| .. | u8 + ceil(n/2) | `141d580e5`, `141d58182` | a nibble list - **only `0x02FF` carries it** |
+| .. | 29 bytes | `141cb83e7` .. `141cb8626` | the tail |
+
+The path itself, from `FUN_1404b2630` - the *reader* that `FUN_141d598b0` calls; the encoder
+side is `FUN_1404b2000`, its immediate neighbour, with the mirrored `u32 u16 u8` signature:
+
+| off | size | read at | what |
+|---:|---|---|---|
+| 0 | u32 | `1404b2650` | -> `this+0x40` |
+| 4 | i16 | `1404b265b` | **x**, stored obfuscated at `this+0x20`, key `+0x24` |
+| 6 | i16 | `1404b2675` | **y**, `this+0x28`, key `+0x2c` |
+| 8 | u16 | `1404b2690` | |
+| 10 | u16 | `1404b269c` | |
+| 12 | i16 | `1404b26a9` | **element count**, signed (`MOVSX / TEST / JLE` bails) |
+| 14 | 21 x n | | the elements |
+
+### 11.1 Four independent checks, because a byte layout that merely adds up is a coincidence
+
+1. **It adds up sixty times out of sixty, across two sessions.** Head + path + tail lands
+   exactly on the body length for every captured body, at four different element counts. A
+   wrong width anywhere before the path would break all of them at once.
+   `python tools/decode_mobmove.py world.log` re-runs it and exits non-zero if it ever stops
+   being 100%.
+2. **A literal from the encoder turns up where the layout predicts it.** `141cb827e` is
+   `MOV EBX,0xffddcc`, encoded at `141cb828c` and `141cb829a`; body offsets 29 and 33 are
+   `cc dd ff 00`, twice.
+3. **The tail echoes our own grant back.** `141cb85fe` encodes `mob+0x960`, the controller
+   level. Every captured body carries **`1`** there - the value this server sent. The client
+   is telling us, in its own words, that the grant landed.
+4. **The coordinates match a capture nobody here made.** Section 0 records the combat agent
+   decoding `0x00DF` on the same map with mob 2000 at **`(424, 395)`**. This decoder reads mob
+   2000's `0x02FF` path head as **`(424, 395)`**. Two packets, two agents, two methods, same
+   pixel.
+
+`crates/net/src/mobmove.rs` carries checks 1-4 as unit tests over two of the real bodies.
+
+## 12. `0x03D9` decoded - and it is NOT a verbatim relay
+
+`FUN_141c813b0`, 3233 bytes, 23 read sites (`tools/reads.py 0x141c813b0 3`).
+
+| off | size | read at | what |
+|---:|---|---|---|
+| 0 | u32 | `141d32b4d` | object id, read by the dispatcher |
+| 4 | u8 | `141c813d0` | bit 0 -> `BL`, bit 2 -> `R13B`. **This is `0x02FF` offset 6** |
+| 5 | u8 | `141c813f1` | `action*2 + facing` (`141c81766 SHR EBP,1`); **`0xFF` = none** (`141c8176d CMP AL,0xFF / JE`). **This is `0x02FF` offset 7** |
+| 6 | u64 | `141c814c1` | |
+| 14 | u8 + n x (u16,u16) | `141c814f4`, `141c81566`, `141c815a8` | -> `mob+0x8c8`, the same list `0x02FF` sends |
+| .. | u8 + n x u16 | `141c815fe`, `141c81614` | -> `mob+0x8d0`, likewise |
+| .. | u32 | `141c81635` | -> `mob+0x10b0`; if non-zero, **11 more u32** into `mob+0x10cc`, `+0x10c4`, `+0x10c8` and eight floats from `+0x10d0` |
+| .. | u32 | `141c8173e` | outside that gate - `141c81648 JE` lands just before it |
+| .. | | `141c82009` -> `FUN_141d598b0` | **the path** |
+| .. | u8 | `141c82011` | non-zero reaches `[vtable]` and `mob+0x988`; send `0` |
+
+The two count-prefixed lists and the gate-plus-eleven block are **the same blocks writing the
+same fields** as `0x02FF` sends. The differences: no move id, no pair of `u8`s at `0x02FF`
+offsets 16/17, and one `u32` where `0x02FF` has `u8 + 5 x u32 + u8`. **[L]**
+
+**The one-byte trap.** `FUN_141d598b0`'s third argument gates the nibble block at
+`141d5991a TEST EBX,EBX / JE`, and the two call sites pass different values:
+
+```text
+0x02FF   141cb8346  MOV  R8D,R13D     -> the nibble count byte IS written
+0x03D9   141c82000  XOR  R8D,R8D      -> it is NOT read
+```
+
+So a rebroadcast that copies `0x02FF`'s path *including* that byte is one byte long, every
+time. This is the same failure mode as the tail-`jmp` bug in `CLAUDE.md` - a length that is
+right in one direction and wrong in the other. `MobMoveRequest::path` stops before it, and a
+unit test pins that.
+
+`141c81784 MOV dword ptr [R14+0xcd0],0` - the handler **clears** the field that blocks the
+move sender (section 5.2). Consistent with `0x03D9` being for a client that does *not* control
+the mob: it is told where the mob went, and its own sender is left unblocked.
+
+Minimum body: **`25 + 14 + 21n`** - 60 bytes for a one-element path.
+
+### 12.1 What `0x03D9` is for, and what it is not for
+
+The owner: *"the server needs all of the clients to see the same mob movement."* That is exactly
+right, and `0x03D9` is exactly that packet. **It is also not what froze anything on
+2026-08-19**, because there was one player on the field and nobody to send it to. The two
+things are independent and should not be conflated:
+
+* `0x03E4` -> **the controller**, so it keeps simulating. One player needs this.
+* `0x03D9` -> **everyone else**, so they see the same mob. Two players need this.
+
+**Never send `0x03D9` to the client that sent the `0x02FF`.** `FUN_141c813b0` overwrites the
+mob's position, animation and `mob+0xcd0` from the packet - state the controller owns. **[I]**
+as to what that looks like on screen; the overwrite itself is **[L]**.
+
+## 13. Nothing here needs a timer
+
+Both new packets are **reactive**: one `0x03E4` per inbound `0x02FF`, and one `0x03D9` per
+inbound `0x02FF` per *other* client on the field. No periodic send is required by anything
+read here, and none should be added speculatively - the client is the clock, and it is the
+thing that decides when a mob has finished a step.
+
+The one open scheduling question is **re-granting**. A real server rotates control as players
+move, and `0x03D2` with level `0` **despawns** rather than releasing (section 3), so a naive
+rotation deletes the mob. Section 7 item 4 still stands.
+
+## 14. Instruments added, with their controls
+
+| tool | what it does | control that fired |
+|---|---|---|
+| `tools/encodes.py` | `tools/reads.py` for the **encode** side; same loader, same `calls_of`, same tail-`jmp` handling | `0x141cb6880` depth 1 must show the ctor at `141cb7eb1` and a send at `141cb8365`, both hand-read in section 5 |
+| `tools/mobpool_tables.py` | reads the second jump table (`0x141d33448`, 117 entries) out of the image and names all 102 live handlers | cross-checked with `tools/callers.py`: `0x141c82060` has exactly one caller and it is that table's `0x3E4` stub |
+| `tools/poolscan.py` | scans **both** tables' handler subtrees for a `[reg+DISP]` operand, and **re-derives the handler set on every run** | `0x960` must name `141d34ca0 MOV [RDI+0x960],AL` inside `FUN_141d34a70`; section 4.2 read it by hand |
+| `tools/rangescan.py` | bounded whole-range operand scan, disassembling and resyncing | `0x2f4` must return `141cb7ef3`; it returns 20 sites, the same 20 section 6 got |
+| `tools/decode_mobmove.py` | decodes every captured `0x02FF` and **asserts the total length** | 30/30 exact |
+
+Two notes worth carrying beyond this file:
+
+* **`capstone` with `detail = True` over the whole 52 MB `.text` takes 17 minutes**, and it
+  answers a question nobody asked: `+0x2f4` exists on dozens of unrelated classes, because a
+  displacement is a class fact (section 9). The bounded version - `rangescan.py` over the mob
+  module, `poolscan.py` over a handler subtree - takes seconds and answers the real question.
+  Bound it, and say in the write-up what you bounded it to.
+* **A tool that intersects a scan with a hand-maintained set of addresses keeps giving the
+  same answer after the set goes stale.** Put the set's derivation *inside* the tool and make
+  it print the set's size. That one line is what would have caught section 6.

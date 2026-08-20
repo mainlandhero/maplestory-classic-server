@@ -941,25 +941,51 @@ impl Session {
         }]
     }
 
-    /// The client reporting where a mob it controls has moved to. **Deliberately unanswered.**
+    /// The client reporting where a mob it controls has moved to. **This must be answered.**
     ///
-    /// This is the one place the "always answer" rule in `CLAUDE.md` does not apply, and the
-    /// reason is measured rather than assumed: the client stamps its own move id into
-    /// `mob+0x2f4` and increments it locally (`141cb7ecb` reads, `141cb7ef3` writes back). A
-    /// scan of the whole mob address space for `+0x2f4` finds 20 sites and **not one is
-    /// inside any of the eight mob-pool packet handlers**, so there is no acknowledgement for
-    /// this client to be waiting on. `0x02FF` is a notification, not a request.
-    /// `research/mob-behaviour.md` §6.
+    /// # A retraction, and the reason it happened is worth more than the fix
     ///
-    /// **It is logged because its arrival is the cheapest possible confirmation** that the
-    /// controller grant worked. A `0x02FF` in `world.log` means the client accepted the mob,
-    /// is simulating it, and is telling us where it went - which is the whole feature.
+    /// This handler returned nothing for one run, on the strength of
+    /// `research/mob-behaviour.md` §6: a scan for `mob+0x2f4` found 20 sites and *"not one of
+    /// them is inside any of the eight mob-pool packet handlers"*. Re-running that scan gives
+    /// the **identical 20 sites** - it was never wrong. What was wrong is the set it was
+    /// intersected against: there are **110** mob-pool handlers, not eight, and §2.2 of that
+    /// same document had already said so. One of the 20 is `141c821f8` inside
+    /// `FUN_141c82060`, whose only caller is the stub for **`0x03E4`**.
+    ///
+    /// Enumerate before you filter, failed twice inside one file. On screen it looked like
+    /// mobs moving for half a second and then freezing forever.
+    ///
+    /// # What the answer does
+    ///
+    /// `0x03E4` **MobCtrlAck** de-obfuscates the client's own move counter from
+    /// `mob+0x2f0`/`+0x2f4` - the pair the sender incremented - compares it against the
+    /// `move_id` we echo (`141c82212 CMP EAX,ECX / JNS`, so `ack >= current` passes), and
+    /// re-runs slot 8 `FUN_141c54200`. That slot no-ops when the animation is already running
+    /// (`141c54248 JNE ret`), which is what makes it a pump rather than an initialiser.
+    ///
+    /// # The broadcast half, which has no recipient yet
+    ///
+    /// `0x03D9` is the *rebroadcast to every other client on the field* - the owner's point that a
+    /// second player must see the same movement. `net::mobmove::mob_move_broadcast` builds it
+    /// and is tested, but this server has no field-occupancy registry: a `Session` is one
+    /// connection and knows of no other. **It is deliberately not sent to the mover** - that
+    /// would be a different packet than the one they are owed. Wiring it needs the player
+    /// list that `config::spawn_capacity`'s `players_here = 1` is also waiting on.
     fn on_mob_move(&mut self, payload: &[u8]) -> Vec<Reply> {
-        // Parsed rather than ignored so a malformed body shows up as a parse failure in
-        // a test rather than as silence, but nothing goes back. `server.rs` prints the
-        // arrival; this type does not print, it returns bodies.
-        let _ = net::mobmove::parse_mob_move(payload);
-        Vec::new()
+        let Some(req) = net::mobmove::parse_mob_move(payload) else {
+            return Vec::new();
+        };
+        vec![Reply {
+            opcode: net::mobmove::MOB_CTRL_ACK,
+            body: net::mobmove::mob_ctrl_ack(req.object_id, req.move_id, false),
+            what: format!(
+                "MobCtrlAck: mob {} move {} acknowledged. Without this the client runs one \
+                 simulation step and stops - measured twice, 30 grants and 30 reports all \
+                 with moveId 1, then silence.",
+                req.object_id, req.move_id
+            ),
+        }]
     }
 
     /// Move an item, which today means: let the player take something off.

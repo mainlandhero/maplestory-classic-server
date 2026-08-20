@@ -52,3 +52,7 @@ gm-handbook/
 # A side target directory, used to build the servers when a run still holds
 # target/release open. See tools/channel_smoke.py MAPLECW_BIN_DIR.
 /target-smoke
+
+# The launcher now archives the previous run here instead of deleting it. Generated
+# per-run output, not source - runs worth keeping are copied into research/fixtures/.
+previous-runs/

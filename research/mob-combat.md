@@ -21,7 +21,8 @@ version** and scored 1 of 8 against a held-out control. Every [I] is a candidate
 | the client's attack packet | **`0x00DF`** melee, **`0x00E0`** shoot, **`0x00E1`** magic - **one shared body format** [L] |
 | **it is in `world.log`** | one `0x00DF`, 127 bytes, at `23:58:33.878` on map 40, and its 127 bytes are accounted for **field for field** [L] |
 | **the client computes the damage itself** | the body carries a per-target list of `u64` damages. Nothing the server sends supplies a number the client does not already have [L] |
-| that capture carried **zero targets** | `targetCount == 0`. The owner swung and the client registered no mob. That is a measurement, not a theory, and it is the open question [L] |
+| ~~that capture carried **zero targets**~~ | **RETRACTED - see §10.** The count really was zero, but the session had **no mobs in it**, so zero was the only possible answer. There has never been a capture of this client swinging at a mob it could see |
+| **the mob's health bar moves** | **`0x03F0`**, `u32 objectId, u32 hp, u8 showBar` - nine bytes, and **nothing in the client moves that bar by itself**. §12, §13 [L] |
 | the mob dies with | **`0x03D1`**, `u32 objectId, u8 deathType, u8, [u32, u32], …` [L] |
 | EXP, HP, level, AP, SP all ride | **`0x007C` StatChanged**, a `u32` bitmask, **19 bits, 18 of them read** [L] |
 | what is **not** established | the mob -> player touch-damage packet, and drops. See §7 |
@@ -506,6 +507,12 @@ common exit and do nothing. [L]
 
 ## 8. The one client run this needs, and what each outcome means
 
+> **SUPERSEDED by §16, and its premise is retracted in §10.** The capture this section
+> reasons from came from a session with **no mobs in it**, and that session's log no longer
+> exists. The run below is still the right run; the outcome table under it assigns the wrong
+> meaning to the 127-byte case, because 127 bytes has never yet been measured against a mob
+> the client could see. Read §16 instead.
+
 Everything above is static or from a capture that carried no targets. **One run separates
 the two halves of the symptom**, and it needs no server change at all beyond logging:
 
@@ -525,6 +532,9 @@ assumption that the client draws its own numbers, and this run is what tests tha
 ---
 
 ## 9. Wire it like this
+
+> **§9.2 is superseded by §15.2**, which adds the health-bar packet and the mob-HP state.
+> Everything else in §9 still stands.
 
 `crates/net/src/combat.rs` builds bodies and parses inbound bodies. It touches no session
 state and edits neither `crates/world/src/session.rs` nor `crates/net/src/mob.rs`.
@@ -603,3 +613,404 @@ Not added here, because that file is shared and several agents are in it. The li
 **`0x00DF` must NOT be truncated** - add it to `never_truncate`. Its body is the only
 evidence there is about whether the client targets our mobs, and §8's run depends on
 reading it whole.
+
+---
+---
+
+# Second pass, 2026-08-19 (later): the wall was never measured, and the health bar has a packet
+
+Everything above this line is the first pass. Two of its conclusions change, one of them
+completely, and one new packet answers the first half of the owner's request outright.
+
+## 10. RETRACTION: "the client will not target our mobs" rests on nothing
+
+§1 and §8 are built on one sentence:
+
+> *"The owner stood at `(473, 395)`; mob 2000 was at `(424, 395)`, 49 pixels away on the same
+> ground line, and the client registered no mob at all."*
+
+**The two halves of that sentence are from two different sessions.** The `(424, 395)` mob is
+`world.log:35` of a run made *after* the attack; the attack itself came from a `world.log`
+that no longer exists, because `world.log` is gitignored and every run overwrites it. The
+tick `0x06eeac37` and the body `...9fae340801040000...` quoted in §1 appear in **no** file in
+this repository any more - `grep -rn "37acee06" research/fixtures/` is empty, and so is a
+grep for the whole prefix.
+
+What *does* survive, counted rather than remembered: [L]
+
+| log | `0x00DF` bodies | `0x03C6` sent |
+|---|---:|---:|
+| `research/fixtures/channel-list-shows-two-but-unselectable-world.log` | **9** | **0** |
+| `research/fixtures/sweep-0024-01c3-reply-0171.log` | **1** | **0** |
+| `research/fixtures/mob-body-faults-client-world.log` | 0 | many |
+| `research/fixtures/mob-watch-2b8-null-second-object-world.log` | 0 | 1 |
+| `world.log` (newest: 30 mobs on map 40, five minutes of play) | **0** | 30 |
+
+**No log in this repository contains both an attack and a mob spawn.** Every zero-target
+attack we hold was swung on a map where the server had sent no mobs at all - the
+`channel-list...` session was on map 30 and then map 40 with mobs switched off - so a target
+count of zero is the only thing those nine packets *could* have carried.
+
+So:
+
+* **The layout work stands.** All 127 bytes are still accounted for field for field, and the
+  parser still consumes the capture exactly. That reading never depended on there being a
+  mob.
+* **The targeting conclusion does not stand.** There is no measurement of what this client
+  does when a mob is in range, and §8's "every `0x00DF` is exactly 127 bytes -> the client
+  will not target our mobs" row has never been run.
+* **The mechanism that would have explained it did not exist yet either.** `0x03D2`
+  MobChangeController was written after that session; the newest run shows 30 mobs handed
+  over and 30 `0x02FF` movement reports coming back.
+
+This is the failure mode `STATUS.md` names: *a prediction recorded in the past tense, with no
+capture cited beside it.* The defence that would have caught it is one `grep -c` on the file
+being cited. `crates/net/src/names.rs` now lists `0x00DF`/`0x00E0`/`0x00E1` in
+`never_truncate`, so the next run's bodies survive whole in the log even though they are
+named.
+
+## 11. What a mob must satisfy before the client will collect it - `FUN_141d31b20`
+
+§8 named `0x1428c53a2` as the next instrument. That address turns out to be the **bottom** of
+a loop that walks targets already collected (stride `0x1d8`, matching `FUN_140f31f60`'s
+per-target stride). The collection itself is one call, twenty lines earlier:
+
+```asm
+1428c2c2d  call 0x141d31b20                 ; CMobPool::GetMobsInRect-equivalent
+1428c2c32  mov  [rbp+0x870], eax            ; <- THE TARGET COUNT
+```
+
+`FUN_141d31b20` (`.pdata 0x141d31b20..0x141d32b1c`, 4092 bytes) walks the pool and applies
+**eleven filters** in order. Each failure is `jmp 0x141d32a24`, the loop's continue. `rbx` is
+the pool node and the mob is `[rbx+8]`; every `call 0x142e52ed0` with `ecx = 0x431` is the
+null assertion on it and is noise. All [L].
+
+| # | at | test | mob passes when |
+|---:|---|---|---|
+| 1 | `141d31cb8` | `FUN_141c543c0(mob)` | **non-zero** |
+| 2 | `141d31cde` | `FUN_141c55a80(mob)` = `mob+0x504 != 0` | **zero** |
+| 3 | `141d31d10` | arg5 non-null: compare `mob+0x3a0` with arg5's | ids **differ** (exclude-self) |
+| 4 | `141d31d4b` | arg6 non-zero: `mob+0x3a0` | **equals arg6** (a single-target filter) |
+| 5 | `141d31d7c` | arg8 non-zero: `template+0x60`, the template id | **equals arg8** |
+| 6 | `141d31dac` | skill node non-null: `FUN_1407a2eb0(skillNode, templateId)` | **true** |
+| 7 | `141d31ddc` | `FUN_141c55b00(mob)` = `template+0x130 > 0` | **`template+0x130 == 0`**, or arg10 non-zero |
+| 8 | `141d31e0b` | `FUN_141caeaf0(mob)` = `mob+0x300 == 0x38` | **`mob+0x300 != 0x38`** |
+| 9 | `141d31e39` | arg9 zero: `FUN_141c565b0(mob)` | `[mob+0x3c8]+0x1e0 == 0` **and** `template+0x138 == 0` |
+| 10 | `141d31e61` | `FUN_141c561a0(mob, 0)` | `[mob+0x3c8]+0x2c0 == 0`, `mob->vtbl[0x58]() == 0`, `template+0x150 == 0` |
+| 11 | `141d31e87` | `mob+0xb50 == arg13` and arg12 non-zero | the rect-centre distance is `<= arg12` |
+
+### 11.1 The argument map, because every gate above is conditioned on one
+
+`FUN_141d31b20` builds its frame as `lea rbp,[rsp-0x560]` after **seven** pushes, so
+`rbp = R - 0x598` where `R` is the entry `RSP`. Stack argument *N* is at `[R + 8N]`, giving:
+
+| in the listing | argument |
+|---|---|
+| `[rbp+0x5c0]` (`[rbp-0x78]`) | 5 - a mob to exclude |
+| `[rbp+0x5c8]` (`r15d`) | 6 - a single object id to accept |
+| `[rbp+0x5d8]` | 8 - a template id to accept |
+| `[rbp+0x5e0]` | 9 - suppress filter 9 |
+| `[rbp+0x5e8]` | 10 - **accept mobs with `template+0x130 > 0`** |
+| `[rbp+0x5f0]`, `[rbp+0x5f8]`, `[rbp+0x600]` | 11, 12, 13 - the filter-11 triple |
+| `[rbp+0x608]` | 14 - a skill id, looked up at `141d31b8e` |
+
+### 11.2 What gates 1, 2 and 8 actually are, since those are the ones our packets touch
+
+* **Gate 1 is the "in the field" flag, and both mob packets set it.** `FUN_141c543c0` is
+  `FUN_141d11770(mob+0x2d8, mob+0x2e0)` - the client's obfuscated-value getter,
+  `rol([mob+0x2dc],5) xor [mob+0x2d8]` with `mob+0x2e0` as the checksum, the same shape
+  `research/mob-spawn.md` §2g found on `move_action`. Its setter `FUN_141c543e0` has
+  **three call sites in the whole image**: `141d3372c` and `141d338f2` inside
+  **`0x03C6` MobEnterField**, both passing **1**, and `141d33dfc` inside **`0x03D1`
+  MobLeaveField**, passing **0**. So spawning a mob makes it targetable and killing it makes
+  it untargetable, with no packet field involved. [L]
+* **Gate 2 (`mob+0x504`) and gate 8 (`mob+0x300`) are both written by `encodeInit`.**
+  `tools/fieldrefs.py 0x504 --write` over the mob class gives 13 writers, four of them
+  inside `FUN_141c4ff80` (`141c523a9`, `141c52708`, `141c52764`, `141c52b4b`);
+  `0x300 --write` gives exactly two, the constructor's `0xffffffff` at `141c4d26e` and
+  `141c52b44` inside `encodeInit`. Both live in the `move_action` jump-table region
+  (`141c52a95..141c52b7d`), which is the same 16-way switch `research/mob-spawn.md` §2g
+  traced. **A different `move_action` therefore lands the mob in a different state**, and
+  `mob+0x300 == 0x38` is a state that is not targetable. We send `2`; which state that is
+  has **not** been read. [L] for the writers, **[I]** that this could matter.
+
+### 11.3 The honest limits of §11
+
+Three things this does **not** establish, written down so nobody builds on them:
+
+1. **This is not proven to be the melee path.** The call site read here is inside
+   `FUN_1428c1fa0`, and the rect it passes comes from `FUN_14079fe90(skill, level) + 0x5e0` -
+   **the skill's own attack rectangle**, deobfuscated four fields at a time at
+   `1428c2af8..1428c2b39`. That is a *skill* attack. `FUN_1428c1fa0` has two other
+   collectors (`FUN_141d2a4f0` at `1428c30b1`, `FUN_141d25360` at `1428c32e9`) writing the
+   same count slot, and the other group-A builder `FUN_1428baa50` calls **no** collector at
+   all - it receives an already-built list of up to 15 targets from its caller
+   (`142ef44fc(&[rbp+0x5c0], 0x1d8, 0xf, ...)` at `1428bb314`). Which builder produced the
+   `"User Melee"` capture is **not** established.
+2. **`FUN_141d31b20` is a shared primitive, not the attack's own code.** `tools/callers.py`
+   gives **86 call sites in 74 functions**. Argument values are per call site; §11.1's
+   values are the ones `1428c2c2d` passes and nothing more.
+3. **`template+0x130` is unnamed.** It is copied at `1404966c5` from `[rdi+0x4d8]` in
+   `FUN_140496180`, and that source offset could not be tied to a WZ property name - a scan
+   of the parser `FUN_14047d990` for `[reg+0x4d8]` finds only its own stack frame. A second
+   predicate `FUN_141c55b20` tests `template+0x130 == 2`, so it is a small integer rather
+   than a flag. At this call site argument 10 is **zero** (`1428c2bfa mov [rsp+0x48], ebx`
+   with `ebx = 0`), so gate 7 is live here - but naming the field, and therefore knowing
+   whether a snail passes it, is open.
+
+## 12. `0x03F0` MOB_HP_CHANGE - the packet that moves the health bar. [L]
+
+This is the answer to the first half of the owner's request, and it was found by asking a
+different question: *what does the client divide to draw a mob's health bar?*
+
+```asm
+FUN_141cbb320(mob):                          ; recompute the bar percentage
+141cbb37f    ecx = [template + 0x100]
+141cbb387    if ecx == 0: return [mob + 0x8b4]           ; raw, no percentage
+141cbb395    return (int)( [mob+0x8b4] * 100.0 / (double)ecx )
+```
+
+So `mob+0x8b4` is the mob's absolute HP as the client holds it. Who writes it?
+
+```text
+python tools/fieldrefs.py 0x8b4 --lo 0x141c40000 --hi 0x141d60000 --write
+  141c4eb7e  mov [rsi+0x8b4], eax   in 0x141c4cee0   the mob constructor
+  141c83460  mov [rdi+0x8b4], eax   in 0x141c83440   <- and this one takes a CInPacket
+```
+
+`FUN_141c83440` has **one** caller, `141d32c03`, inside `FUN_141d32b30` - the second-level
+mob dispatcher for `0x03D9..0x044D`. Decoding its 117-entry jump table at `0x141d33448`
+(`target = 0x140000000 + dword[table + i*4]`) puts `141d32bfd` at index **23**, so:
+
+> **`0x03D9 + 23` = `0x03F0`.**
+
+### 12.1 The body: nine bytes
+
+```text
+u32 objectId      141d32b4d   read by FUN_141d32b30 before the switch
+u32 hp            141c83458   -> mob+0x8b4 AND mob+0x8bc
+u8  showBar       141c8346c   -> a bool
+```
+
+`tools/reads.py 0x141c83440` reports **exactly those two reads and nothing else**, so there
+is no gated tail. [L]
+
+### 12.2 What the client does with it
+
+* `mob+0x8b4 = mob+0x8bc = hp`, unconditionally.
+* If the template says this mob owns a gauge - `template+0x81 != 0`, `template+0x105 == 0`,
+  `template+0x380 == 0`, `template+0x17c == 0`, and a global check at `140479ea0` - it
+  **tail-jumps to `FUN_141cd7b40`** (`141c834c2`), which recomputes `mob+0xb60`, sets the
+  dirty flag `mob+0xb64 = 1` and calls the mob's own `vtable+0xc0` to redraw. That is the
+  health bar moving.
+* Otherwise it pushes `hp` into the timed list at `mob+0x6d8` - the floating display over
+  the mob - and stamps `mob+0x6c0` with the tick when `template+0xfc != 0` **or** `showBar`
+  is set. So `showBar` is "show it now even though this template would not". [L] for the
+  branches, **[I]** for the name.
+
+### 12.3 `hp` is absolute, and `template+0x100` is maxHP - derived, not assumed
+
+`0x03C6` also carries an absolute HP, but `encodeInit` converts it to a percentage
+immediately using a *different* divisor (`FUN_141c8a730`, the template's `+0x20` qword -
+`research/mob-spawn.md` §6.5) and keeps only the percentage. `0x03F0` keeps the absolute
+number and divides on demand by `template+0x100`.
+
+That those are the same quantity is **[D]**, from the constructor:
+
+```asm
+141c4eb5e  ecx = [template + 0x100]
+141c4eb66  je  <default>                  ; zero -> a constant from .rdata
+141c4eb7e  [mob + 0x8b4] = (int)ecx       ; current HP := template+0x100
+```
+
+A freshly constructed mob therefore reads `hp*100/template[0x100]` = **100%**, which is only
+true if `template+0x100` is the maximum. And `world::config::MobTemplate::max_hp` comes from
+`tools/dump_mobs.py` reading the WZ's own `maxHP`, so the server and the client are dividing
+by the same number. Send the mob's true remaining HP.
+
+## 13. The client never computes a new HP for a mob it hits. [L]
+
+This is the claim that makes §12 *necessary* rather than merely available, so it was made
+over the whole of `.text` rather than the mob class:
+
+```text
+python tools/fieldrefs.py 0x8b4 --sections .text --write        # 3m06s, 11 hits
+```
+
+| hit | in | verdict |
+|---|---|---|
+| `141c4eb7e` | `0x141c4cee0` | **the mob constructor** |
+| `141c83460` | `0x141c83440` | **the `0x03F0` handler** |
+| `140887bd0`, `142945a72` | `0x140886810`, `0x1429446b0` | `movsd`, inside a **bulk struct copy** that moves `+0x8a8`, `+0x8b0`, `+0x8b4`, `+0x8bc`, `+0x8c0` in a row - a clone, not a computation |
+| the other seven | `0x1408222e0`, `0x14089b830`, `0x1410d9b70`, `0x142b79390`, `0x142b7ff60` (x2), `0x142bb0f80` | no `CMob` signature at all: no `[reg+0x3a8]`, no `0x431` assert, no mob-pool call |
+
+**Nothing anywhere in the client decrements a mob's HP when the player hits it.** It works
+out the damage, draws the number, and leaves the bar where it was. The bar is entirely ours
+to move.
+
+### 13.1 The instrument had to be repaired before that negative meant anything
+
+`tools/fieldrefs.py --write` **crashed with `NameError: READ_ONLY_DEST` on every
+invocation** in the commit this pass started from - the name is referenced in `main()` and
+was never defined. A `--write` run was not returning a wrong answer; it was returning no
+answer, and any conclusion drawn from "I ran the scan" would have been drawn from a
+traceback. The constant is restored (`cmp`, `test`, `push`, `bt`, `jmp`, `call`, the string
+compares), and the tool's **own documented positive control** reproduces exactly before any
+count above was believed:
+
+```text
+python tools/fieldrefs.py 0x2f4 --lo 0x141c40000 --hi 0x141d60000 --write
+  141c4d261  in 0x141c4cee0
+  141c4e6ee  in 0x141c4cee0
+  141cb7ef3  in 0x141cb6880
+```
+
+## 14. Touch damage: still not found, and here is what has been eliminated
+
+§7.1 offered `0x00E5` as a candidate family. **It is not the packet**, and the search is
+recorded so it is not repeated:
+
+* **`0x00E5` has fifteen builders**, all sharing `FUN_14025d810`. The one that looked
+  promising, `FUN_14185ad30`, calls the mob-pool lookup `FUN_141d2efc0` and `FUN_141c54dd0`
+  **after** `FUN_1406ed610` - i.e. after the packet is already destroyed. Fifteen builders
+  on one opcode is a multiplexed channel, not a hit report.
+* **`0x0154` is the only outbound builder in the whole image that looks up a mob while
+  building a body.** `grep FUN_141d2efc0 research/msexe-packet-fields.txt` gives four hits;
+  the other three are `0x01D1`, `0x02BE` and the `0x00E5` above. Read at `FUN_141001570`:
+  its body is `u16 5, u32, u32 0, u32 0xd9, u32` - a **hard-coded `0xd9`** and a literal
+  subtype 5. It is a diagnostic about the movement opcode, not a hit. [L]
+* **The mob attack-type name table exists** at `0x1432b4510` - `Summon, Melee, Magic,
+  Screen, Force Atom Non-target, Body, Summon Attack`, the mob-side twin of the
+  `User Normal / User Melee / ...` table §1.1 found. Nothing `lea`s either table
+  (`tools/xref.py --va` returns 0 for both bases, and §6 already records that both are
+  indexed rather than addressed), so it does not lead anywhere by itself.
+* **`FUN_141000fa0` and `FUN_140fffc90`** read `template+0x130` through the same two
+  predicates gate 7 uses, and looked like the collision path. They are not: both look up
+  **two** mobs and both test the same `0xd9` literal. Same anti-cheat family as `0x0154`.
+
+### 14.1 The cheap way to find it is a client run, not more static analysis
+
+The client is the mob's controller now. In this game family the controller is what decides a
+mob's body has touched the player, computes the damage and tells the server. So:
+
+> **Walk into a snail on map 40 and read `world.log`.** A packet that has never been seen
+> before, arriving at the moment of contact, *is* the answer - and every inbound opcode is
+> already logged with its full body when it is unknown.
+
+The newest run's inbound set is `0x0070, 0x007D, 0x00B8, 0x00DC, 0x00D9, 0x00E7, 0x00ED,
+0x00F3, 0x0107, 0x013D, 0x0151, 0x0184, 0x0194, 0x01A5, 0x01BE, 0x01ED, 0x0238, 0x024D,
+0x02B2, 0x02DE, 0x02EB, 0x02FF, 0x0408, 0x0420-0x0426`. None of them is combat-shaped
+(`0x013D` is a 30-second keepalive, `0x00B8` a 1-byte toggle), so whatever arrives on
+contact will be new.
+
+### 14.2 What the server can do meanwhile, which is everything that matters on screen
+
+The server already knows both positions - the client reports mob movement as `0x02FF` and
+its own as `0x00D9` - so it can decide a touch itself. The reply that moves the player's HP
+bar is `0x007C` with bit 10, which §4 settles completely. `combat::touch_damage` holds the
+damage formula in one place; its inputs (`PADamage`, `level`) are **[L]** out of
+`gm-handbook/mobtemplates.txt`, and the way they combine is **[I]**.
+
+## 15. Wire it like this - the version that supersedes §9.2
+
+`crates/net/src/combat.rs` still touches no session state.
+
+### 15.1 Inbound
+
+| opcode | do |
+|---|---|
+| `0x00DF` / `0x00E0` / `0x00E1` | `combat::parse_attack(body)`; `combat::is_attack_opcode` is the test |
+| `0x00E2` | log it, answer nothing - different body, not decoded |
+| anything new that arrives when the player walks into a mob | **log the whole body and tell the owner** - that is §14's run |
+
+### 15.2 Server-side state: one `u64` per live mob
+
+`net::mob::FieldMob` already carries `hp`. Seed it from
+`world::config::MobTemplate::max_hp` - the same number `0x03C6` sends and the same number
+the client divides by - and keep it as the authority.
+
+```rust
+for target in &req.targets {
+    let Some(mob) = field.mob_mut(target.object_id) else { continue };   // stale id
+    let hit = combat::apply_damage(mob.hp, target.total_damage());
+    mob.hp = hit.hp_after;
+    for (opcode, body) in combat::mob_hit_replies(target.object_id, &hit) {
+        send(opcode, body);          // 0x03F0 while alive, 0x03D1 on the kill
+    }
+    if hit.died {
+        exp_gained += template.exp;  // gm-handbook/mobtemplates.txt column 4
+        // and free the object id: a respawn must take a fresh one
+    }
+}
+if exp_gained > 0 {
+    character.exp += exp_gained;
+    send(0x007C, combat::stat_changed(&combat::StatChange::exp_only(character.exp)));
+}
+```
+
+Five rules, each of which would otherwise cost a session:
+
+1. **`0x03F0` while alive, `0x03D1` on the kill, and never both.** `mob_hit_replies`
+   enforces it. A bar update for an object the client is tearing down writes into a pool
+   entry that is being removed.
+2. **`exp` is the character's NEW TOTAL, not the delta** - it lands in the same obfuscated
+   slot `+0x9b` the character record's `exp` does.
+3. **One `0x007C` per swing, not per mob.** EXP belongs to the player; a five-mob swing is
+   one packet.
+4. **Do not re-use a mob object id after its `0x03D1`.** `research/mob-spawn.md` §2 - a
+   repeat id makes `0x03C6` stop after 31 bytes and desynchronises the stream.
+5. **Answer even when `parse_attack` errors or truncates.** `CLAUDE.md`'s always-answer
+   rule. For an attack the correct *content* is often nothing at all, but that is a decision,
+   not a give-up.
+
+### 15.3 A mob hurts the player
+
+```rust
+let damage = combat::touch_damage(template.pa_damage, template.level, character.level);
+character.hp = combat::player_hp_after(character.hp, damage);
+send(0x007C, combat::stat_changed(&combat::StatChange::hp_only(character.hp)));
+```
+
+`MobTemplate` does not carry `pa_damage` yet; the column is already in
+`gm-handbook/mobtemplates.txt` (index 5) and `world::config::load_mob_templates` reads only
+the first five. Adding it is four lines in `crates/world/src/config.rs`.
+
+**There is no death packet.** Nothing has looked for one, so a character reaching 0 HP will
+sit at 0 with an empty bar and no death screen. Clamp to 1 until somebody finds it, and say
+so in the log rather than silently.
+
+## 16. The client run this needs, and what each outcome means
+
+One run, and it now tests three things instead of one. **Mobs are on by default; map 40 has
+snails; `-SetFieldProbe` is still required.**
+
+| # | do | look at | what it means |
+|---:|---|---|---|
+| 1 | Stand next to a snail and swing **five or six times** | `world.log`, the `0x00DF` bodies (now logged whole) | **Longer than 127 bytes** - the client targets our mobs, the wall never existed, and bytes 110-113 are the count. **Exactly 127 every time** - now it *is* a measurement, and §11 is the instrument: gate 7 and `move_action`'s effect on `mob+0x300` are the two leads |
+| 2 | If any swing had a target, watch the **snail's HP bar** | the bar over the mob | The server is sending `0x03F0`. **Bar moves** - §12 is right end to end. **Bar still full after damage** - `template+0x100` is not maxHP after all, and §12.3's derivation is wrong. **No bar at all** - this template does not own a gauge; look for the floating number instead |
+| 3 | Keep swinging until one dies | the mob | **Death animation and it leaves** - `0x03D1` with `deathType 1` works. **It vanishes with no animation** - wrong death type. **Client fault** - `0x03D1`'s two trailing `u32`s are not free after all |
+| 4 | Watch the **EXP bar** | the bar | `0x007C` bit 16 with the new total |
+| 5 | **Walk into a snail and stand there** | `world.log`'s inbound lines | **A new opcode** - that is the touch-damage packet, §14. **Nothing new at all** - the client does not report it, and the server must detect the touch itself from `0x02FF` + `0x00D9` |
+
+Steps 1-4 are one chain sharing one observable, so they do not violate one-variant-at-a-time;
+step 5 is a separate subsystem with a separate observable and can be done in the same
+session.
+
+## 17. Instrument notes from this pass
+
+* **A gitignored log is not a citation.** `world.log` is overwritten by every run. Anything
+  quoted from it must be copied into `research/fixtures/` in the same sitting, or the claim
+  becomes unfalsifiable within a day. §10 is what that costs.
+* **`tools/fieldrefs.py --write` was broken and said so loudly** - a `NameError`, not a
+  wrong number. That is the *good* kind of broken; the dangerous kind is §13.1's opposite.
+  Run the tool's documented positive control anyway.
+* **A `.pdata`-bounded disassembly needs an instruction-aligned start.** Disassembling from
+  an arbitrary mid-function address produces plausible-looking garbage - `0x141c52ab0`
+  decodes as `push rsi / dec byte ptr [rax-0x75] / popfq` and none of it is real. Always
+  start from the function head and index into the listing.
+* **A jump table is worth decoding rather than reading one arm of.** The 117-entry table at
+  `0x141d33448` turned "some handler in a range nobody has looked at" into an exact opcode
+  in one script: `target = 0x140000000 + dword[table + i*4]`, `opcode = 0x3D9 + i`.
+* **Ask what the client *divides*, not what it *stores*.** `0x03F0` was found from the
+  health bar's arithmetic, after a direct search for a damage packet had already produced
+  one wrong answer (§2.1's `0x03D6`).
