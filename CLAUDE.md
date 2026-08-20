@@ -37,6 +37,32 @@ When a run happens, **test one variant at a time**. Changing two things at once 
 produced one unexplained crash. The owner can see the GUI and you cannot, so say exactly what to
 watch for and what each outcome would mean *before* they launch.
 
+## A run's output is evidence. Do not destroy it.
+
+`world.log` used to be deleted at the start of every launch. **Four conclusions have turned on
+that file and three of them died before they could be checked** - including one that was
+reported to the owner as decisive, retracted a day later as unmeasurable, and finally proved right
+by a log that only existed because the launcher had stopped deleting them.
+
+`tools/test-server.ps1` now moves the previous run into `previous-runs/` (gitignored,
+timestamped) instead of removing it. **Copy anything that settles a question into
+`research/fixtures/` under a name that says what it proves**, because `previous-runs/` is
+itself a rolling buffer.
+
+The rule behind it: a launch costs the owner a manual launch, so its output is the most expensive
+data this project produces. Never trade it for disk space, and **never state a conclusion
+drawn from two different sessions as though one capture showed both halves** - that is exactly
+how the mob-targeting answer went right, then wrong, then right again.
+
+## Built is not wired
+
+Several subsystems have been fully decoded, implemented, tested - and never connected, so on
+screen they look identical to not existing. Quest state and the channel-list fix were both in
+that state for a day while `STATUS.md` listed them as done.
+
+When an agent hands back a "wire it like this" section, either wire it or record loudly that
+it is unwired. `STATUS.md`'s START HERE marks these explicitly; keep doing that.
+
 ## Two rules that come from expensive mistakes
 
 **Always answer.** An unanswered packet freezes the client's entire UI — every button,
@@ -120,7 +146,8 @@ Scored against a held-out control it got **1 of 8**. Label every claim from it a
 | `client-patched\maplecw-hook.log` | `WATCH` lines, session patches, client faults |
 | `client-exit.log` | how the client died |
 | `research/` | decompilation as `msexe-<topic>.c`, findings as `.md` beside it |
-| `research/fixtures/` | runs worth keeping, named for what they prove |
+| `previous-runs/` | the last few runs' logs, archived by the launcher instead of deleted. A rolling buffer - gitignored |
+| `research/fixtures/` | runs worth keeping, named for what they prove. Copy from `previous-runs/` before it rolls |
 | `gm-handbook/` | game data **generated** from the client's WZ — maps, items, mobs, NPCs, portals. Gitignored; regenerate with `tools/dump_names.py` and `tools/dump_portals.py`. Never hand-edit, never commit |
 
 ## Reporting
