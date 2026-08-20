@@ -1,0 +1,1309 @@
+09:39:06.865 install_once: our code IS running. env=true marker=true -> installing
+09:39:06.917 install: .text settled after 51 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+09:39:06.917 install: base=0x140000000 target=0x1415d60e0
+09:39:06.917 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+09:39:06.917 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+09:39:06.917 09:39:06.917 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+
+09:39:06.918 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+09:39:06.918 probe: watch on 0x141d32675 will log up to 40 hits
+09:39:06.918 probe: will log [rcx+0xa88] on every entry to 0x141d32675
+09:39:06.918 probe: watching 0x141d32675 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 40)
+09:39:06.919 probe: watch on 0x141d3267c will log up to 40 hits
+09:39:06.919 probe: will log [rcx+0x42c] on every entry to 0x141d3267c
+09:39:06.919 probe: watching 0x141d3267c (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 40)
+09:39:06.919 probe: watch on 0x140304100 will log up to 200 hits
+09:39:06.919 probe: watching 0x140304100 (slot 4), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 200)
+09:39:06.919 install: hook active
+09:39:07.118 session: object at 0x642d1c8 is now readable
+09:39:07.118 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:39:08.841     0 opcode=0x0032 elapsed_us=76.1 ret=114291504 flag=0->1 state=0->2
+09:39:08.841 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+09:39:08.922 ***** SOCKET conn=0x5c1ba78 +0x20=0x684 - the client holds a socket *****
+09:39:09.357     1 opcode=0x0032 elapsed_us=61.8 ret=1 flag=1->1 state=2->2
+09:39:09.925 ***** SOCKET 0x684 is now VALID (client still holds it) *****
+09:39:09.925 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:39:12.932 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:39:13.372     2 opcode=0x0032 elapsed_us=85.5 ret=1 flag=1->1 state=2->2
+09:39:15.939 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:39:16.500 ***** WATCH #1: 0x141b2a280 ENTERED on tid 693244 while dispatching opcode 0x0032 rcx=0x338205f8 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe (as i32 14) called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+09:39:16.500       forced rdx -> 0x0
+09:39:16.601     3 opcode=0x0000 elapsed_us=369.8 ret=1 flag=1->1 state=2->2
+09:39:16.602 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+09:39:16.602     4 opcode=0x000B elapsed_us=213.9 ret=1 flag=1->1 state=2->2
+09:39:16.602     5 opcode=0x000B elapsed_us=132.0 ret=1 flag=1->1 state=2->2
+09:39:16.603 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+09:39:16.603     6 opcode=0x0010 elapsed_us=380.9 ret=1 flag=1->1 state=2->2
+09:39:18.947 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:21.952 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:24.959 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:27.967 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:30.973 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:33.981 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:36.987 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:39.437 ***** WATCH #1: 0x1415db360 ENTERED on tid 693244 while dispatching opcode 0x0010 rcx=0x9de700d [0x00000000] rdx=0x7530 (as i32 30000) r8=0x7584 r9=0xf6d8d091 (as i32 -153562991) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+09:39:39.991 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:42.999 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:46.007 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:49.075 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:52.082 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:55.089 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:39:58.099 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+09:40:00.271     7 opcode=0x0011 elapsed_us=1517.6 ret=1 flag=1->1 state=2->2
+09:40:00.282 ***** WATCH #1: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eaa358 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x80338 r9=0x2755c879 (as i32 659933305) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+09:40:00.282 ***** WATCH #2: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eaa7e8 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x19397a r9=0x3ad7eddf (as i32 987229663) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+09:40:00.282 ***** WATCH #3: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eacc68 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x52dc r9=0x20908794 (as i32 546342804) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+09:40:00.282 ***** WATCH #4: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eabeb8 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x17732e r9=0x2cefcddd (as i32 753913309) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+09:40:00.282 ***** WATCH #5: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37ead0f8 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x1abcd7 r9=0x8dab5f31 (as i32 -1918148815) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x14030b7c2<-TEXT 0x14019a9da<-TEXT 0x140309686<-TEXT 0x1403062f3<-TEXT 0x140309f70<-TEXT *****
+09:40:00.789 ***** C++ THROW #3 at 0x7ffca5eb5369 in KERNELBASE.dll on tid 693244 at +53875ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+09:40:00.832 ***** WATCH #2: 0x1415db360 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x642fd20 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 (as i32 1128374932) called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+09:40:00.835 ***** C++ THROW #4 at 0x7ffca5eb5369 in KERNELBASE.dll on tid 693244 at +53906ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+09:40:00.838     8 opcode=0x044F elapsed_us=913.2 ret=1 flag=1->1 state=2->2
+09:40:01.108 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:03.323     9 opcode=0x01A0 elapsed_us=3041729.7 ret=864159224 flag=1->1 state=2->2
+09:40:04.115 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:05.719    10 opcode=0x00BB elapsed_us=1174.8 ret=1 flag=1->1 state=2->2
+09:40:05.720 ***** WATCH #6: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eac348 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0xf8f59 r9=0xabede290 (as i32 -1410473328) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT 0x140dfefe2<-TEXT *****
+09:40:05.720 ***** WATCH #7: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eac7d8 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0xac5ca r9=0x3bdfc70b (as i32 1004521227) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT 0x140dfefe2<-TEXT *****
+09:40:05.720 ***** WATCH #8: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eb1568 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x16847e r9=0xf9633cdf (as i32 -110936865) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT 0x140dfefe2<-TEXT *****
+09:40:05.720 ***** WATCH #9: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37ea9a38 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x1c23d0 r9=0xe0b497f8 (as i32 -525035528) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT 0x140dfefe2<-TEXT *****
+09:40:05.721 ***** WATCH #10: 0x140304100 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x37eadea8 [0x4327e1d8] rdx=0x14e920 (as i32 1370400) [0x00000002] r8=0x140f1b r9=0xfbf16f77 (as i32 -68063369) called-from=0x140309686
+      stack: 0x140309686<-TEXT 0x14030b7c2<-TEXT 0x14019a9da<-TEXT 0x140309686<-TEXT 0x1403062f3<-TEXT 0x140309f70<-TEXT *****
+09:40:06.168 ***** C++ THROW #5 at 0x7ffca5eb5369 in KERNELBASE.dll on tid 693244 at +59250ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+09:40:06.168 ***** C++ THROW #6 at 0x7ffca5eb5369 in KERNELBASE.dll on tid 693244 at +59250ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+09:40:06.173 ***** WATCH #3: 0x1415db360 ENTERED on tid 693244 while dispatching opcode 0x01A0 rcx=0x642fd20 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 (as i32 1128374932) called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+09:40:06.174    11 opcode=0x01A0 elapsed_us=454734.4 ret=1192675992 flag=1->1 state=2->2
+09:40:06.175    12 opcode=0x044F elapsed_us=326.4 ret=1 flag=1->1 state=2->2
+09:40:06.175    13 opcode=0x044F elapsed_us=381.0 ret=1 flag=1->1 state=2->2
+09:40:06.176    14 opcode=0x03C6 elapsed_us=366.2 ret=1 flag=1->1 state=2->2
+09:40:06.176    15 opcode=0x03D2 elapsed_us=52.1 ret=1 flag=1->1 state=2->2
+09:40:06.177    16 opcode=0x03C6 elapsed_us=103.7 ret=1 flag=1->1 state=2->2
+09:40:06.177    17 opcode=0x03D2 elapsed_us=60.2 ret=1 flag=1->1 state=2->2
+09:40:06.177    18 opcode=0x03C6 elapsed_us=131.8 ret=1 flag=1->1 state=2->2
+09:40:06.178    19 opcode=0x03D2 elapsed_us=48.8 ret=1 flag=1->1 state=2->2
+09:40:06.178    20 opcode=0x03C6 elapsed_us=107.3 ret=1 flag=1->1 state=2->2
+09:40:06.178    21 opcode=0x03D2 elapsed_us=44.7 ret=1 flag=1->1 state=2->2
+09:40:06.179    22 opcode=0x03C6 elapsed_us=109.2 ret=1 flag=1->1 state=2->2
+09:40:06.179    23 opcode=0x03D2 elapsed_us=44.8 ret=1 flag=1->1 state=2->2
+09:40:06.179    24 opcode=0x03C6 elapsed_us=101.7 ret=1 flag=1->1 state=2->2
+09:40:06.180    25 opcode=0x03D2 elapsed_us=59.1 ret=1 flag=1->1 state=2->2
+09:40:06.180    26 opcode=0x03C6 elapsed_us=127.6 ret=1 flag=1->1 state=2->2
+09:40:06.180    27 opcode=0x03D2 elapsed_us=48.1 ret=1 flag=1->1 state=2->2
+09:40:06.181    28 opcode=0x03C6 elapsed_us=107.6 ret=1 flag=1->1 state=2->2
+09:40:06.181    29 opcode=0x03D2 elapsed_us=44.6 ret=1 flag=1->1 state=2->2
+09:40:06.181    30 opcode=0x03C6 elapsed_us=100.8 ret=1 flag=1->1 state=2->2
+09:40:06.182    31 opcode=0x03D2 elapsed_us=42.7 ret=1 flag=1->1 state=2->2
+09:40:06.182    32 opcode=0x03C6 elapsed_us=98.5 ret=1 flag=1->1 state=2->2
+09:40:06.182    33 opcode=0x03D2 elapsed_us=41.9 ret=1 flag=1->1 state=2->2
+09:40:06.183    34 opcode=0x03C6 elapsed_us=105.3 ret=1 flag=1->1 state=2->2
+09:40:06.183    35 opcode=0x03D2 elapsed_us=48.5 ret=1 flag=1->1 state=2->2
+09:40:06.183    36 opcode=0x03C6 elapsed_us=104.4 ret=1 flag=1->1 state=2->2
+09:40:06.183    37 opcode=0x03D2 elapsed_us=43.7 ret=1 flag=1->1 state=2->2
+09:40:06.184    38 opcode=0x03C6 elapsed_us=108.1 ret=1 flag=1->1 state=2->2
+09:40:06.184    39 opcode=0x03D2 elapsed_us=42.7 ret=1 flag=1->1 state=2->2
+09:40:06.184    40 opcode=0x03C6 elapsed_us=100.9 ret=1 flag=1->1 state=2->2
+09:40:06.185    41 opcode=0x03D2 elapsed_us=48.1 ret=1 flag=1->1 state=2->2
+09:40:06.185    42 opcode=0x03C6 elapsed_us=101.1 ret=1 flag=1->1 state=2->2
+09:40:06.185    43 opcode=0x03D2 elapsed_us=43.3 ret=1 flag=1->1 state=2->2
+09:40:06.186    44 opcode=0x03C6 elapsed_us=107.8 ret=1 flag=1->1 state=2->2
+09:40:06.186    45 opcode=0x03D2 elapsed_us=44.0 ret=1 flag=1->1 state=2->2
+09:40:06.186    46 opcode=0x03C6 elapsed_us=101.4 ret=1 flag=1->1 state=2->2
+09:40:06.186    47 opcode=0x03D2 elapsed_us=42.9 ret=1 flag=1->1 state=2->2
+09:40:06.187    48 opcode=0x03C6 elapsed_us=99.4 ret=1 flag=1->1 state=2->2
+09:40:06.187    49 opcode=0x03D2 elapsed_us=42.1 ret=1 flag=1->1 state=2->2
+09:40:06.187    50 opcode=0x03C6 elapsed_us=104.5 ret=1 flag=1->1 state=2->2
+09:40:06.188    51 opcode=0x03D2 elapsed_us=41.9 ret=1 flag=1->1 state=2->2
+09:40:06.188    52 opcode=0x03C6 elapsed_us=96.7 ret=1 flag=1->1 state=2->2
+09:40:06.188    53 opcode=0x03D2 elapsed_us=42.0 ret=1 flag=1->1 state=2->2
+09:40:06.189    54 opcode=0x03C6 elapsed_us=96.6 ret=1 flag=1->1 state=2->2
+09:40:06.189    55 opcode=0x03D2 elapsed_us=41.3 ret=1 flag=1->1 state=2->2
+09:40:06.189    56 opcode=0x03C6 elapsed_us=95.5 ret=1 flag=1->1 state=2->2
+09:40:06.189    57 opcode=0x03D2 elapsed_us=48.4 ret=1 flag=1->1 state=2->2
+09:40:06.190    58 opcode=0x03C6 elapsed_us=109.3 ret=1 flag=1->1 state=2->2
+09:40:06.190    59 opcode=0x03D2 elapsed_us=45.8 ret=1 flag=1->1 state=2->2
+09:40:06.190    60 opcode=0x03C6 elapsed_us=100.0 ret=1 flag=1->1 state=2->2
+09:40:06.191    61 opcode=0x03D2 elapsed_us=43.1 ret=1 flag=1->1 state=2->2
+09:40:06.191    62 opcode=0x03C6 elapsed_us=103.4 ret=1 flag=1->1 state=2->2
+09:40:06.191    63 opcode=0x03D2 elapsed_us=42.4 ret=1 flag=1->1 state=2->2
+09:40:06.192    64 opcode=0x03C6 elapsed_us=101.2 ret=1 flag=1->1 state=2->2
+09:40:06.192    65 opcode=0x03D2 elapsed_us=41.5 ret=1 flag=1->1 state=2->2
+09:40:06.192    66 opcode=0x03C6 elapsed_us=97.0 ret=1 flag=1->1 state=2->2
+09:40:06.192    67 opcode=0x03D2 elapsed_us=41.6 ret=1 flag=1->1 state=2->2
+09:40:06.193    68 opcode=0x03C6 elapsed_us=98.8 ret=1 flag=1->1 state=2->2
+09:40:06.193    69 opcode=0x03D2 elapsed_us=41.2 ret=1 flag=1->1 state=2->2
+09:40:06.193    70 opcode=0x03C6 elapsed_us=96.1 ret=1 flag=1->1 state=2->2
+09:40:06.194    71 opcode=0x03D2 elapsed_us=42.9 ret=1 flag=1->1 state=2->2
+09:40:06.194    72 opcode=0x03C6 elapsed_us=100.6 ret=1 flag=1->1 state=2->2
+09:40:06.194    73 opcode=0x03D2 elapsed_us=49.3 ret=1 flag=1->1 state=2->2
+09:40:06.387    74 opcode=0x03E4 elapsed_us=89.8 ret=1 flag=1->1 state=2->2
+09:40:06.387    75 opcode=0x03E4 elapsed_us=57.5 ret=1 flag=1->1 state=2->2
+09:40:06.388    76 opcode=0x03E4 elapsed_us=44.8 ret=1 flag=1->1 state=2->2
+09:40:06.388    77 opcode=0x03E4 elapsed_us=38.6 ret=1 flag=1->1 state=2->2
+09:40:06.388    78 opcode=0x03E4 elapsed_us=34.7 ret=1 flag=1->1 state=2->2
+09:40:06.388    79 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:06.389    80 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:06.389    81 opcode=0x03E4 elapsed_us=202.1 ret=1 flag=1->1 state=2->2
+09:40:06.390    82 opcode=0x03E4 elapsed_us=42.4 ret=1 flag=1->1 state=2->2
+09:40:06.390    83 opcode=0x03E4 elapsed_us=39.7 ret=1 flag=1->1 state=2->2
+09:40:06.390    84 opcode=0x03E4 elapsed_us=39.8 ret=1 flag=1->1 state=2->2
+09:40:06.391    85 opcode=0x03E4 elapsed_us=38.8 ret=1 flag=1->1 state=2->2
+09:40:06.391    86 opcode=0x03E4 elapsed_us=39.3 ret=1 flag=1->1 state=2->2
+09:40:06.391    87 opcode=0x03E4 elapsed_us=36.2 ret=1 flag=1->1 state=2->2
+09:40:06.391    88 opcode=0x03E4 elapsed_us=34.4 ret=1 flag=1->1 state=2->2
+09:40:06.392    89 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+09:40:06.392    90 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:06.392    91 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:06.392    92 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:06.393    93 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:06.393    94 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:06.393    95 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:06.393    96 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+09:40:06.394    97 opcode=0x03E4 elapsed_us=36.1 ret=1 flag=1->1 state=2->2
+09:40:06.394    98 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+09:40:06.394    99 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:06.394   100 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:06.395   101 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:06.395   102 opcode=0x03E4 elapsed_us=34.6 ret=1 flag=1->1 state=2->2
+09:40:06.395   103 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:07.122 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:07.335   104 opcode=0x03E4 elapsed_us=91.5 ret=1 flag=1->1 state=2->2
+09:40:07.335   105 opcode=0x03E4 elapsed_us=68.6 ret=1 flag=1->1 state=2->2
+09:40:07.335   106 opcode=0x03E4 elapsed_us=58.3 ret=1 flag=1->1 state=2->2
+09:40:07.336   107 opcode=0x03E4 elapsed_us=50.0 ret=1 flag=1->1 state=2->2
+09:40:07.336   108 opcode=0x03E4 elapsed_us=49.3 ret=1 flag=1->1 state=2->2
+09:40:07.336   109 opcode=0x03E4 elapsed_us=41.1 ret=1 flag=1->1 state=2->2
+09:40:07.336   110 opcode=0x03E4 elapsed_us=37.0 ret=1 flag=1->1 state=2->2
+09:40:07.337   111 opcode=0x03E4 elapsed_us=35.0 ret=1 flag=1->1 state=2->2
+09:40:07.337   112 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:07.337   113 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:07.337   114 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:07.337   115 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:07.338   116 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:07.338   117 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:07.338   118 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:07.338   119 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:07.339   120 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:07.339   121 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:07.339   122 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:07.340   123 opcode=0x03E4 elapsed_us=165.0 ret=1 flag=1->1 state=2->2
+09:40:07.340   124 opcode=0x03E4 elapsed_us=36.3 ret=1 flag=1->1 state=2->2
+09:40:07.340   125 opcode=0x03E4 elapsed_us=39.4 ret=1 flag=1->1 state=2->2
+09:40:07.340   126 opcode=0x03E4 elapsed_us=54.1 ret=1 flag=1->1 state=2->2
+09:40:07.341   127 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+09:40:07.341   128 opcode=0x03E4 elapsed_us=36.6 ret=1 flag=1->1 state=2->2
+09:40:07.341   129 opcode=0x03E4 elapsed_us=33.7 ret=1 flag=1->1 state=2->2
+09:40:07.342   130 opcode=0x03E4 elapsed_us=39.9 ret=1 flag=1->1 state=2->2
+09:40:07.342   131 opcode=0x03E4 elapsed_us=36.2 ret=1 flag=1->1 state=2->2
+09:40:07.342   132 opcode=0x03E4 elapsed_us=34.3 ret=1 flag=1->1 state=2->2
+09:40:07.342   133 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:08.450   134 opcode=0x03E4 elapsed_us=122.1 ret=1 flag=1->1 state=2->2
+09:40:08.450   135 opcode=0x03E4 elapsed_us=101.4 ret=1 flag=1->1 state=2->2
+09:40:08.451   136 opcode=0x03E4 elapsed_us=92.4 ret=1 flag=1->1 state=2->2
+09:40:08.451   137 opcode=0x03E4 elapsed_us=78.5 ret=1 flag=1->1 state=2->2
+09:40:08.452   138 opcode=0x03E4 elapsed_us=69.7 ret=1 flag=1->1 state=2->2
+09:40:08.452   139 opcode=0x03E4 elapsed_us=47.6 ret=1 flag=1->1 state=2->2
+09:40:08.452   140 opcode=0x03E4 elapsed_us=45.4 ret=1 flag=1->1 state=2->2
+09:40:08.452   141 opcode=0x03E4 elapsed_us=35.9 ret=1 flag=1->1 state=2->2
+09:40:08.453   142 opcode=0x03E4 elapsed_us=35.3 ret=1 flag=1->1 state=2->2
+09:40:08.453   143 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:08.453   144 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:08.453   145 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:08.454   146 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:08.454   147 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:08.454   148 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:08.454   149 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:08.455   150 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:08.455   151 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:08.455   152 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:08.455   153 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:08.455   154 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:08.456   155 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:08.456   156 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:08.456   157 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:08.456   158 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:08.457   159 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:08.457   160 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:08.457   161 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:08.457   162 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:08.458   163 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:09.471   164 opcode=0x03E4 elapsed_us=103.0 ret=1 flag=1->1 state=2->2
+09:40:09.471   165 opcode=0x03E4 elapsed_us=44.1 ret=1 flag=1->1 state=2->2
+09:40:09.471   166 opcode=0x03E4 elapsed_us=40.0 ret=1 flag=1->1 state=2->2
+09:40:09.472   167 opcode=0x03E4 elapsed_us=40.4 ret=1 flag=1->1 state=2->2
+09:40:09.472   168 opcode=0x03E4 elapsed_us=38.7 ret=1 flag=1->1 state=2->2
+09:40:09.472   169 opcode=0x03E4 elapsed_us=38.6 ret=1 flag=1->1 state=2->2
+09:40:09.473   170 opcode=0x03E4 elapsed_us=38.4 ret=1 flag=1->1 state=2->2
+09:40:09.473   171 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:09.473   172 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:09.473   173 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:09.474   174 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:09.474   175 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:09.474   176 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:09.474   177 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:09.474   178 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:09.475   179 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:09.475   180 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:09.475   181 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:09.475   182 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:09.476   183 opcode=0x03E4 elapsed_us=38.8 ret=1 flag=1->1 state=2->2
+09:40:09.476   184 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:09.476   185 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:09.476   186 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:09.476   187 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:09.477   188 opcode=0x03E4 elapsed_us=39.2 ret=1 flag=1->1 state=2->2
+09:40:09.477   189 opcode=0x03E4 elapsed_us=35.4 ret=1 flag=1->1 state=2->2
+09:40:09.477   190 opcode=0x03E4 elapsed_us=37.0 ret=1 flag=1->1 state=2->2
+09:40:09.477   191 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:09.478   192 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:09.478   193 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:10.130 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:10.455 ***** WATCH #4: 0x1415db360 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x9dee4ef [0x00000000] rdx=0xea60 (as i32 60000) r8=0xea66 r9=0xfedc (as i32 65244) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+09:40:10.562   194 opcode=0x03E4 elapsed_us=98.5 ret=1 flag=1->1 state=2->2
+09:40:10.562   195 opcode=0x03E4 elapsed_us=43.7 ret=1 flag=1->1 state=2->2
+09:40:10.562   196 opcode=0x03E4 elapsed_us=40.2 ret=1 flag=1->1 state=2->2
+09:40:10.563   197 opcode=0x03E4 elapsed_us=47.6 ret=1 flag=1->1 state=2->2
+09:40:10.563   198 opcode=0x03E4 elapsed_us=43.0 ret=1 flag=1->1 state=2->2
+09:40:10.563   199 opcode=0x03E4 elapsed_us=40.6 ret=1 flag=1->1 state=2->2
+09:40:10.564   200 opcode=0x03E4 elapsed_us=47.2 ret=1 flag=1->1 state=2->2
+09:40:10.564   201 opcode=0x03E4 elapsed_us=35.3 ret=1 flag=1->1 state=2->2
+09:40:10.564   202 opcode=0x03E4 elapsed_us=33.9 ret=1 flag=1->1 state=2->2
+09:40:10.564   203 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:10.565   204 opcode=0x03E4 elapsed_us=33.9 ret=1 flag=1->1 state=2->2
+09:40:10.565   205 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:10.565   206 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:10.565   207 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:10.566   208 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:10.566   209 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:10.566   210 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:10.566   211 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:10.567   212 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:10.567   213 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:10.567   214 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:10.567   215 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:10.567   216 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:10.568   217 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:10.568   218 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:10.568   219 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:10.569   220 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:10.569   221 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:10.569   222 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:10.569   223 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:10.616 ***** WATCH #5: 0x1415db360 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x9dee582 [0x00000000] rdx=0x7530 (as i32 30000) r8=0x7575 r9=0xc2c63b02 (as i32 -1027196158) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+09:40:11.642   224 opcode=0x03E4 elapsed_us=118.9 ret=1 flag=1->1 state=2->2
+09:40:11.642   225 opcode=0x03E4 elapsed_us=35.2 ret=1 flag=1->1 state=2->2
+09:40:11.642   226 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:11.642   227 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:11.643   228 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:11.643   229 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:11.643   230 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:11.643   231 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:11.644   232 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:11.645   233 opcode=0x03E4 elapsed_us=47.7 ret=1 flag=1->1 state=2->2
+09:40:11.645   234 opcode=0x03E4 elapsed_us=35.9 ret=1 flag=1->1 state=2->2
+09:40:11.645   235 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+09:40:11.645   236 opcode=0x03E4 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+09:40:11.646   237 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:11.646   238 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:11.646   239 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:11.646   240 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:11.647   241 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:11.647   242 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:11.647   243 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+09:40:11.647   244 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:11.648   245 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:11.648   246 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:11.648   247 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:11.648   248 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:11.649   249 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:11.649   250 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:11.649   251 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:11.649   252 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:11.650   253 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:12.308   254 opcode=0x0453 elapsed_us=600.4 ret=1 flag=1->1 state=2->2
+09:40:12.308   255 opcode=0x0453 elapsed_us=135.6 ret=1 flag=1->1 state=2->2
+09:40:12.309 ***** WATCH #1: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x376923f8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x1 r9=0x1 (as i32 1) called-from=0x143ad2c68
+      stack: 0x143ad2c68(?) 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.309 ***** WATCH #1: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x376923f8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x1 r9=0x1 (as i32 1) called-from=0x143ad2c68
+      stack: 0x143ad2c68(?) 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.310 ***** WATCH #2: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3769ba88 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x3da r9=0x18b (as i32 395) called-from=0x378edbf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.310 ***** WATCH #2: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3769ba88 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x3da r9=0x18b (as i32 395) called-from=0x378edbf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.310 ***** WATCH #3: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3769ee78 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x25c r9=0xffdd (as i32 65501) called-from=0x378edc30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.310 ***** WATCH #3: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3769ee78 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x25c r9=0xffdd (as i32 65501) called-from=0x378edc30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.310 ***** WATCH #4: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x380103b8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x24b r9=0xfbf4 (as i32 64500) called-from=0x378edc70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.311 ***** WATCH #4: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x380103b8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x24b r9=0xfbf4 (as i32 64500) called-from=0x378edc70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.311 ***** WATCH #5: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x380137a8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x392 r9=0x18b (as i32 395) called-from=0x378edcb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.311 ***** WATCH #5: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x380137a8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x392 r9=0x18b (as i32 395) called-from=0x378edcb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.312 ***** WATCH #6: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38016b98 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x749 r9=0x18b (as i32 395) called-from=0x378edcf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.312 ***** WATCH #6: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38016b98 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x749 r9=0x18b (as i32 395) called-from=0x378edcf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.312 ***** WATCH #7: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38019f88 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x96f r9=0x18b (as i32 395) called-from=0x378edd30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.312 ***** WATCH #7: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38019f88 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x96f r9=0x18b (as i32 395) called-from=0x378edd30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.313 ***** WATCH #8: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3801d378 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0xa14 r9=0x18b (as i32 395) called-from=0x378edd70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.313 ***** WATCH #8: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3801d378 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0xa14 r9=0x18b (as i32 395) called-from=0x378edd70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.313 ***** WATCH #9: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38020768 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0xaa9 r9=0x18b (as i32 395) called-from=0x378eddb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.313 ***** WATCH #9: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38020768 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0xaa9 r9=0x18b (as i32 395) called-from=0x378eddb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.313 ***** WATCH #10: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38023b58 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x8f1 r9=0x23 (as i32 35) called-from=0x378eddf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.314 ***** WATCH #10: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38023b58 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x8f1 r9=0x23 (as i32 35) called-from=0x378eddf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.314 ***** WATCH #11: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38024da8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x99e r9=0xfffffebb (as i32 -325) called-from=0x378ede30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.314 ***** WATCH #11: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38024da8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x99e r9=0xfffffebb (as i32 -325) called-from=0x378ede30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.314 ***** WATCH #12: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38025ff8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0xae7 r9=0xfffffebb (as i32 -325) called-from=0x378ede70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.315 ***** WATCH #12: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38025ff8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0xae7 r9=0xfffffebb (as i32 -325) called-from=0x378ede70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.315 ***** WATCH #13: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38027248 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x92f r9=0xfffffd53 (as i32 -685) called-from=0x378edeb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.315 ***** WATCH #13: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38027248 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x92f r9=0xfffffd53 (as i32 -685) called-from=0x378edeb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.315 ***** WATCH #14: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38028498 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x4a0 r9=0xfffffd8f (as i32 -625) called-from=0x378edef0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.315 ***** WATCH #14: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x38028498 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x4a0 r9=0xfffffd8f (as i32 -625) called-from=0x378edef0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.316 ***** WATCH #15: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x380296e8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x36d r9=0x7bf9 (as i32 31737) called-from=0x378edf30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.316 ***** WATCH #15: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x380296e8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x36d r9=0x7bf9 (as i32 31737) called-from=0x378edf30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.316 ***** WATCH #16: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3b430088 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x404 r9=0xffffff33 (as i32 -205) called-from=0x378edf70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.316 ***** WATCH #16: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3b430088 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x404 r9=0xffffff33 (as i32 -205) called-from=0x378edf70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.316 ***** WATCH #17: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3b4332e8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x6e6 r9=0xffffff33 (as i32 -205) called-from=0x378eecf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.316 ***** WATCH #17: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3b4332e8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x6e6 r9=0xffffff33 (as i32 -205) called-from=0x378eecf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.317 ***** WATCH #18: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3b43a7d8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x19 r9=0xfffffecc (as i32 -308) called-from=0x378eed30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.317 ***** WATCH #18: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x3b43a7d8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x19 r9=0xfffffecc (as i32 -308) called-from=0x378eed30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.317 ***** WATCH #19: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c6621b8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0xfffffeee r9=0x7f6f (as i32 32623) called-from=0x378eed70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.317 ***** WATCH #19: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c6621b8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0xfffffeee r9=0x7f6f (as i32 32623) called-from=0x378eed70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.318 ***** WATCH #20: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c65d578 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x288 r9=0xff7d (as i32 65405) called-from=0x378eedb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.318 ***** WATCH #20: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c65d578 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x288 r9=0xff7d (as i32 65405) called-from=0x378eedb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.318 ***** WATCH #21: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c6634c8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x2f0 r9=0xfffffd69 (as i32 -663) called-from=0x378eedf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.318 ***** WATCH #21: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c6634c8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x2f0 r9=0xfffffd69 (as i32 -663) called-from=0x378eedf0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.318 ***** WATCH #22: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c665ae8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x4b9 r9=0xfd7d (as i32 64893) called-from=0x378eee30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.319 ***** WATCH #22: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c665ae8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x4b9 r9=0xfd7d (as i32 64893) called-from=0x378eee30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.319 ***** WATCH #23: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c6647d8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x3df r9=0xfdf8 (as i32 65016) called-from=0x378eee70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.319 ***** WATCH #23: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c6647d8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x3df r9=0xfdf8 (as i32 65016) called-from=0x378eee70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.319 ***** WATCH #24: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c666df8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x881 r9=0x18b (as i32 395) called-from=0x378eeeb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.320 ***** WATCH #24: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c666df8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x881 r9=0x18b (as i32 395) called-from=0x378eeeb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.320 ***** WATCH #25: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c669418 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x9d8 r9=0xfffffebb (as i32 -325) called-from=0x378eeef0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.321 ***** WATCH #25: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c669418 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x9d8 r9=0xfffffebb (as i32 -325) called-from=0x378eeef0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.321 ***** WATCH #26: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c668108 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x7bb r9=0xfdc9 (as i32 64969) called-from=0x378eef30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.322 ***** WATCH #26: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c668108 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x7bb r9=0xfdc9 (as i32 64969) called-from=0x378eef30
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.322 ***** WATCH #27: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c66a728 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x56 r9=0xfff5 (as i32 65525) called-from=0x378eef70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.322 ***** WATCH #27: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x2c66a728 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x56 r9=0xfff5 (as i32 65525) called-from=0x378eef70
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.323 ***** WATCH #28: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x5a8cce8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x101 r9=0xffe0 (as i32 65504) called-from=0x378eefb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.323 ***** WATCH #28: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x5a8cce8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x101 r9=0xffe0 (as i32 65504) called-from=0x378eefb0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.323 ***** WATCH #29: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x5a8f308 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0xb r9=0xff9d (as i32 65437) called-from=0x378eeff0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.323 ***** WATCH #29: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x5a8f308 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0xb r9=0xff9d (as i32 65437) called-from=0x378eeff0
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.323 ***** WATCH #30: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x47d4e5d8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x24 r9=0x5bb4 (as i32 23476) called-from=0x378ef030
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.324 ***** WATCH #30: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x0453 rcx=0x47d4e5d8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x24 r9=0x5bb4 (as i32 23476) called-from=0x378ef030
+      stack: 0x143ad68a0(?) 0x14019d38d<-TEXT 0x14019d38d<-TEXT 0x140cf0000<-TEXT 0x140cea983<-TEXT 0x140cf3457<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:12.722   256 opcode=0x03E4 elapsed_us=87.2 ret=1 flag=1->1 state=2->2
+09:40:12.722   257 opcode=0x03E4 elapsed_us=50.7 ret=1 flag=1->1 state=2->2
+09:40:12.722   258 opcode=0x03E4 elapsed_us=41.7 ret=1 flag=1->1 state=2->2
+09:40:12.723   259 opcode=0x03E4 elapsed_us=36.3 ret=1 flag=1->1 state=2->2
+09:40:12.723   260 opcode=0x03E4 elapsed_us=39.4 ret=1 flag=1->1 state=2->2
+09:40:12.723   261 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+09:40:12.723   262 opcode=0x03E4 elapsed_us=38.7 ret=1 flag=1->1 state=2->2
+09:40:12.724   263 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:12.724   264 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:12.724   265 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:12.724   266 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:12.725   267 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:12.725   268 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:12.725   269 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:12.725   270 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:12.726   271 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:12.726   272 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:12.726   273 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:12.726   274 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:12.726   275 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:12.727   276 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:12.727   277 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:12.727   278 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:12.727   279 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:12.728   280 opcode=0x03E4 elapsed_us=43.7 ret=1 flag=1->1 state=2->2
+09:40:12.728   281 opcode=0x03E4 elapsed_us=35.6 ret=1 flag=1->1 state=2->2
+09:40:12.728   282 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:12.728   283 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:12.729   284 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:12.729   285 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:13.138 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:13.639 ***** WATCH #31: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x376923f8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x1ae r9=0x18b (as i32 395) called-from=0x378edbb0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.639 ***** WATCH #31: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x376923f8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x1ae r9=0x18b (as i32 395) called-from=0x378edbb0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.639 ***** WATCH #32: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x3769ba88 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x40f r9=0x7ffd (as i32 32765) called-from=0x378edbf0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.639 ***** WATCH #32: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x3769ba88 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x40f r9=0x7ffd (as i32 32765) called-from=0x378edbf0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.640 ***** WATCH #33: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x3769ee78 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x29b r9=0xfef4 (as i32 65268) called-from=0x378edc30
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.640 ***** WATCH #33: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x3769ee78 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x29b r9=0xfef4 (as i32 65268) called-from=0x378edc30
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.640 ***** WATCH #34: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x380103b8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x285 r9=0x18b (as i32 395) called-from=0x378edc70
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.640 ***** WATCH #34: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x380103b8 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x285 r9=0x18b (as i32 395) called-from=0x378edc70
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.640 ***** WATCH #35: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x380137a8 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x3a1 r9=0xf6d8 (as i32 63192) called-from=0x378edcb0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.641 ***** WATCH #35: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x380137a8 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x3a1 r9=0xf6d8 (as i32 63192) called-from=0x378edcb0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.641 ***** WATCH #36: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38016b98 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x774 r9=0x7fc9 (as i32 32713) called-from=0x378edcf0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.641 ***** WATCH #36: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38016b98 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x774 r9=0x7fc9 (as i32 32713) called-from=0x378edcf0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.641 ***** WATCH #37: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38019f88 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x94a r9=0xffe0 (as i32 65504) called-from=0x378edd30
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.641 ***** WATCH #37: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38019f88 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x94a r9=0xffe0 (as i32 65504) called-from=0x378edd30
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.642 ***** WATCH #38: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x3801d378 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x9d9 r9=0xf570 (as i32 62832) called-from=0x378edd70
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.642 ***** WATCH #38: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x3801d378 [0x434077e8] [rcx+0x42c]=u8:0xef/u32:0xffffffef rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x9d9 r9=0xf570 (as i32 62832) called-from=0x378edd70
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.642 ***** WATCH #39: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38020768 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0xa7f r9=0x18b (as i32 395) called-from=0x378eddb0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.642 ***** WATCH #39: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38020768 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0xa7f r9=0x18b (as i32 395) called-from=0x378eddb0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.642 ***** WATCH #40: 0x141d32675 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38023b58 [0x434077e8] [rcx+0xa88]=u8:0x00/u32:0x00000000 rdx=0x2f9970a0 (as i32 798584992) [0x00000000] r8=0x8dd r9=0x23 (as i32 35) called-from=0x378eddf0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.642 probe: watch hit limit reached, further calls will not be logged
+09:40:13.643 probe: watch on 0x141d32675 disarmed after the hit limit
+09:40:13.643 ***** WATCH #40: 0x141d3267c ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x38023b58 [0x434077e8] [rcx+0x42c]=u8:0xee/u32:0xffffffee rdx=0x143ad2c68 (as i32 1135422568) [0x2f9970a0] r8=0x8dd r9=0x23 (as i32 35) called-from=0x378eddf0
+      stack: 0x1415d0266<-TEXT 0x140ce5fdc<-TEXT *****
+09:40:13.643 probe: watch hit limit reached, further calls will not be logged
+09:40:13.643 probe: watch on 0x141d3267c disarmed after the hit limit
+09:40:13.818   286 opcode=0x03E4 elapsed_us=84.2 ret=1 flag=1->1 state=2->2
+09:40:13.818   287 opcode=0x03E4 elapsed_us=36.2 ret=1 flag=1->1 state=2->2
+09:40:13.819   288 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:13.819   289 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:13.819   290 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:13.819   291 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:13.820   292 opcode=0x03E4 elapsed_us=38.7 ret=1 flag=1->1 state=2->2
+09:40:13.820   293 opcode=0x03E4 elapsed_us=35.5 ret=1 flag=1->1 state=2->2
+09:40:13.820   294 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:13.821   295 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+09:40:13.821   296 opcode=0x03E4 elapsed_us=38.5 ret=1 flag=1->1 state=2->2
+09:40:13.821   297 opcode=0x03E4 elapsed_us=35.6 ret=1 flag=1->1 state=2->2
+09:40:13.821   298 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:13.821   299 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:13.822   300 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:13.822   301 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:13.822   302 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:13.822   303 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:13.823   304 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:13.823   305 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:13.823   306 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:13.823   307 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:13.824   308 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:13.824   309 opcode=0x03E4 elapsed_us=36.1 ret=1 flag=1->1 state=2->2
+09:40:13.824   310 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:13.824   311 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:13.824   312 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:13.825   313 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:13.825   314 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:13.825   315 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:14.892   316 opcode=0x03E4 elapsed_us=95.5 ret=1 flag=1->1 state=2->2
+09:40:14.892   317 opcode=0x03E4 elapsed_us=35.5 ret=1 flag=1->1 state=2->2
+09:40:14.892   318 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:14.893   319 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:14.893   320 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:14.893   321 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:14.893   322 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:14.894   323 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:14.894   324 opcode=0x03E4 elapsed_us=36.1 ret=1 flag=1->1 state=2->2
+09:40:14.894   325 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:14.894   326 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:14.894   327 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:14.895   328 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:14.895   329 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:14.895   330 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:14.895   331 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:14.896   332 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:14.896   333 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:14.896   334 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:14.896   335 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:14.897   336 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:14.897   337 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:14.897   338 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:14.897   339 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:14.897   340 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:14.898   341 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:14.898   342 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:14.898   343 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:14.898   344 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:14.899   345 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:15.983   346 opcode=0x03E4 elapsed_us=85.9 ret=1 flag=1->1 state=2->2
+09:40:15.983   347 opcode=0x03E4 elapsed_us=53.4 ret=1 flag=1->1 state=2->2
+09:40:15.983   348 opcode=0x03E4 elapsed_us=42.0 ret=1 flag=1->1 state=2->2
+09:40:15.984   349 opcode=0x03E4 elapsed_us=36.9 ret=1 flag=1->1 state=2->2
+09:40:15.984   350 opcode=0x03E4 elapsed_us=35.9 ret=1 flag=1->1 state=2->2
+09:40:15.984   351 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+09:40:15.984   352 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:15.985   353 opcode=0x03E4 elapsed_us=39.2 ret=1 flag=1->1 state=2->2
+09:40:15.985   354 opcode=0x03E4 elapsed_us=35.5 ret=1 flag=1->1 state=2->2
+09:40:15.985   355 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:15.985   356 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:15.986   357 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:15.986   358 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:15.986   359 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:15.986   360 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:15.986   361 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:15.987   362 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:15.987   363 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:15.987   364 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:15.987   365 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:15.988   366 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:15.988   367 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:15.988   368 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:15.988   369 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:15.988   370 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:15.989   371 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:15.989   372 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:15.989   373 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:15.989   374 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:15.990   375 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:16.149 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:16.493   376 opcode=0x0453 elapsed_us=308.5 ret=1 flag=1->1 state=2->2
+09:40:16.494   377 opcode=0x0453 elapsed_us=74.6 ret=1 flag=1->1 state=2->2
+09:40:17.043   378 opcode=0x03E4 elapsed_us=146.2 ret=1 flag=1->1 state=2->2
+09:40:17.044   379 opcode=0x03E4 elapsed_us=78.2 ret=1 flag=1->1 state=2->2
+09:40:17.044   380 opcode=0x03E4 elapsed_us=54.9 ret=1 flag=1->1 state=2->2
+09:40:17.045   381 opcode=0x03E4 elapsed_us=44.4 ret=1 flag=1->1 state=2->2
+09:40:17.045   382 opcode=0x03E4 elapsed_us=47.6 ret=1 flag=1->1 state=2->2
+09:40:17.045   383 opcode=0x03E4 elapsed_us=40.5 ret=1 flag=1->1 state=2->2
+09:40:17.045   384 opcode=0x03E4 elapsed_us=36.5 ret=1 flag=1->1 state=2->2
+09:40:17.046   385 opcode=0x03E4 elapsed_us=35.8 ret=1 flag=1->1 state=2->2
+09:40:17.046   386 opcode=0x03E4 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+09:40:17.046   387 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:17.046   388 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:17.047   389 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:17.047   390 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:17.047   391 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:17.047   392 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:17.048   393 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:17.048   394 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:17.048   395 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:17.048   396 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:17.049   397 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:17.049   398 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:17.049   399 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+09:40:17.049   400 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:17.049   401 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:17.050   402 opcode=0x03E4 elapsed_us=33.8 ret=1 flag=1->1 state=2->2
+09:40:17.050   403 opcode=0x03E4 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+09:40:17.050   404 opcode=0x03E4 elapsed_us=34.8 ret=1 flag=1->1 state=2->2
+09:40:17.050   405 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:17.051   406 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:17.051   407 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:18.133   408 opcode=0x03E4 elapsed_us=85.1 ret=1 flag=1->1 state=2->2
+09:40:18.133   409 opcode=0x03E4 elapsed_us=59.9 ret=1 flag=1->1 state=2->2
+09:40:18.133   410 opcode=0x03E4 elapsed_us=59.7 ret=1 flag=1->1 state=2->2
+09:40:18.134   411 opcode=0x03E4 elapsed_us=48.1 ret=1 flag=1->1 state=2->2
+09:40:18.134   412 opcode=0x03E4 elapsed_us=42.4 ret=1 flag=1->1 state=2->2
+09:40:18.134   413 opcode=0x03E4 elapsed_us=39.7 ret=1 flag=1->1 state=2->2
+09:40:18.135   414 opcode=0x03E4 elapsed_us=39.0 ret=1 flag=1->1 state=2->2
+09:40:18.135   415 opcode=0x03E4 elapsed_us=39.0 ret=1 flag=1->1 state=2->2
+09:40:18.135   416 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:18.135   417 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:18.135   418 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:18.136   419 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:18.136   420 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:18.136   421 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:18.136   422 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:18.137   423 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:18.137   424 opcode=0x03E4 elapsed_us=35.1 ret=1 flag=1->1 state=2->2
+09:40:18.137   425 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:18.137   426 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:18.138   427 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:18.138   428 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:18.138   429 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:18.138   430 opcode=0x03E4 elapsed_us=47.2 ret=1 flag=1->1 state=2->2
+09:40:18.139   431 opcode=0x03E4 elapsed_us=44.0 ret=1 flag=1->1 state=2->2
+09:40:18.139   432 opcode=0x03E4 elapsed_us=40.4 ret=1 flag=1->1 state=2->2
+09:40:18.139   433 opcode=0x03E4 elapsed_us=38.7 ret=1 flag=1->1 state=2->2
+09:40:18.139   434 opcode=0x03E4 elapsed_us=38.2 ret=1 flag=1->1 state=2->2
+09:40:18.140   435 opcode=0x03E4 elapsed_us=38.0 ret=1 flag=1->1 state=2->2
+09:40:18.140   436 opcode=0x03E4 elapsed_us=38.1 ret=1 flag=1->1 state=2->2
+09:40:18.140   437 opcode=0x03E4 elapsed_us=38.1 ret=1 flag=1->1 state=2->2
+09:40:19.156 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:19.223   438 opcode=0x03E4 elapsed_us=109.3 ret=1 flag=1->1 state=2->2
+09:40:19.223   439 opcode=0x03E4 elapsed_us=71.5 ret=1 flag=1->1 state=2->2
+09:40:19.224   440 opcode=0x03E4 elapsed_us=58.1 ret=1 flag=1->1 state=2->2
+09:40:19.224   441 opcode=0x03E4 elapsed_us=48.5 ret=1 flag=1->1 state=2->2
+09:40:19.224   442 opcode=0x03E4 elapsed_us=37.1 ret=1 flag=1->1 state=2->2
+09:40:19.224   443 opcode=0x03E4 elapsed_us=40.8 ret=1 flag=1->1 state=2->2
+09:40:19.225   444 opcode=0x03E4 elapsed_us=35.4 ret=1 flag=1->1 state=2->2
+09:40:19.225   445 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:19.225   446 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:19.225   447 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:19.226   448 opcode=0x03E4 elapsed_us=42.3 ret=1 flag=1->1 state=2->2
+09:40:19.226   449 opcode=0x03E4 elapsed_us=39.3 ret=1 flag=1->1 state=2->2
+09:40:19.226   450 opcode=0x03E4 elapsed_us=34.4 ret=1 flag=1->1 state=2->2
+09:40:19.226   451 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:19.227   452 opcode=0x03E4 elapsed_us=40.1 ret=1 flag=1->1 state=2->2
+09:40:19.227   453 opcode=0x03E4 elapsed_us=37.8 ret=1 flag=1->1 state=2->2
+09:40:19.227   454 opcode=0x03E4 elapsed_us=35.6 ret=1 flag=1->1 state=2->2
+09:40:19.227   455 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+09:40:19.228   456 opcode=0x03E4 elapsed_us=36.7 ret=1 flag=1->1 state=2->2
+09:40:19.228   457 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:19.228   458 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:19.228   459 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:19.229   460 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:19.229   461 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:19.229   462 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:19.229   463 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:19.229   464 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:19.230   465 opcode=0x03E4 elapsed_us=39.3 ret=1 flag=1->1 state=2->2
+09:40:19.230   466 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+09:40:19.230   467 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:20.284   468 opcode=0x03E4 elapsed_us=93.9 ret=1 flag=1->1 state=2->2
+09:40:20.284   469 opcode=0x03E4 elapsed_us=58.5 ret=1 flag=1->1 state=2->2
+09:40:20.284   470 opcode=0x03E4 elapsed_us=57.2 ret=1 flag=1->1 state=2->2
+09:40:20.285   471 opcode=0x03E4 elapsed_us=46.8 ret=1 flag=1->1 state=2->2
+09:40:20.285   472 opcode=0x03E4 elapsed_us=42.1 ret=1 flag=1->1 state=2->2
+09:40:20.285   473 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+09:40:20.285   474 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:20.285   475 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:20.286   476 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:20.286   477 opcode=0x03E4 elapsed_us=35.4 ret=1 flag=1->1 state=2->2
+09:40:20.286   478 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:20.286   479 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:20.287   480 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:20.287   481 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:20.287   482 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:20.287   483 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:20.287   484 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:20.288   485 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:20.288   486 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:20.288   487 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:20.288   488 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:20.289   489 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:20.289   490 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:20.289   491 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:20.289   492 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:20.290   493 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:20.290   494 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:20.290   495 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:20.290   496 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:20.291   497 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:21.333   498 opcode=0x0453 elapsed_us=340.3 ret=1 flag=1->1 state=2->2
+09:40:21.364   499 opcode=0x03E4 elapsed_us=138.8 ret=1 flag=1->1 state=2->2
+09:40:21.364   500 opcode=0x03E4 elapsed_us=45.7 ret=1 flag=1->1 state=2->2
+09:40:21.364   501 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+09:40:21.365   502 opcode=0x03E4 elapsed_us=47.1 ret=1 flag=1->1 state=2->2
+09:40:21.365   503 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+09:40:21.365   504 opcode=0x03E4 elapsed_us=39.3 ret=1 flag=1->1 state=2->2
+09:40:21.366   505 opcode=0x03E4 elapsed_us=35.0 ret=1 flag=1->1 state=2->2
+09:40:21.366   506 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:21.366   507 opcode=0x03E4 elapsed_us=34.6 ret=1 flag=1->1 state=2->2
+09:40:21.366   508 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:21.366   509 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:21.367   510 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:21.367   511 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:21.367   512 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+09:40:21.367   513 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+09:40:21.368   514 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:21.368   515 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:21.368   516 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:21.368   517 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:21.369   518 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:21.369   519 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:21.369   520 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:21.369   521 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+09:40:21.370   522 opcode=0x03E4 elapsed_us=35.3 ret=1 flag=1->1 state=2->2
+09:40:21.370   523 opcode=0x03E4 elapsed_us=34.4 ret=1 flag=1->1 state=2->2
+09:40:21.370   524 opcode=0x03E4 elapsed_us=34.2 ret=1 flag=1->1 state=2->2
+09:40:21.370   525 opcode=0x03E4 elapsed_us=33.9 ret=1 flag=1->1 state=2->2
+09:40:21.371   526 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:21.371   527 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:21.371   528 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:22.163 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:22.454   529 opcode=0x03E4 elapsed_us=89.6 ret=1 flag=1->1 state=2->2
+09:40:22.454   530 opcode=0x03E4 elapsed_us=43.2 ret=1 flag=1->1 state=2->2
+09:40:22.455   531 opcode=0x03E4 elapsed_us=41.3 ret=1 flag=1->1 state=2->2
+09:40:22.455   532 opcode=0x03E4 elapsed_us=38.9 ret=1 flag=1->1 state=2->2
+09:40:22.455   533 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:22.455   534 opcode=0x03E4 elapsed_us=38.8 ret=1 flag=1->1 state=2->2
+09:40:22.456   535 opcode=0x03E4 elapsed_us=35.1 ret=1 flag=1->1 state=2->2
+09:40:22.456   536 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:22.456   537 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:22.456   538 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:22.457   539 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:22.457   540 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:22.457   541 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:22.457   542 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:22.458   543 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:22.458   544 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:22.458   545 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:22.458   546 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:22.458   547 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:22.459   548 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:22.459   549 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:22.459   550 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:22.459   551 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:22.460   552 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:22.460   553 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:22.460   554 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:22.460   555 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:22.461   556 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:22.461   557 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:22.461   558 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:22.969   559 opcode=0x0453 elapsed_us=115.3 ret=1 flag=1->1 state=2->2
+09:40:23.525   560 opcode=0x03E4 elapsed_us=133.2 ret=1 flag=1->1 state=2->2
+09:40:23.525   561 opcode=0x03E4 elapsed_us=37.3 ret=1 flag=1->1 state=2->2
+09:40:23.525   562 opcode=0x03E4 elapsed_us=33.7 ret=1 flag=1->1 state=2->2
+09:40:23.525   563 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:23.526   564 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:23.526   565 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:23.526   566 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:23.526   567 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:23.527   568 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:23.527   569 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:23.527   570 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:23.527   571 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:23.527   572 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:23.528   573 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:23.528   574 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:23.528   575 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:23.528   576 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:23.529   577 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:23.529   578 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:23.529   579 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:23.529   580 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:23.530   581 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:23.530   582 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:23.530   583 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:23.530   584 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:23.530   585 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:23.531   586 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:23.531   587 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:23.531   588 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:23.531   589 opcode=0x03E4 elapsed_us=47.7 ret=1 flag=1->1 state=2->2
+09:40:24.644   590 opcode=0x03E4 elapsed_us=96.1 ret=1 flag=1->1 state=2->2
+09:40:24.644   591 opcode=0x03E4 elapsed_us=60.1 ret=1 flag=1->1 state=2->2
+09:40:24.645   592 opcode=0x03E4 elapsed_us=50.7 ret=1 flag=1->1 state=2->2
+09:40:24.645   593 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+09:40:24.645   594 opcode=0x03E4 elapsed_us=34.8 ret=1 flag=1->1 state=2->2
+09:40:24.645   595 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:24.645   596 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:24.646   597 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:24.646   598 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:24.646   599 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:24.646   600 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:24.647   601 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:24.647   602 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:24.647   603 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:24.647   604 opcode=0x03E4 elapsed_us=46.9 ret=1 flag=1->1 state=2->2
+09:40:24.648   605 opcode=0x03E4 elapsed_us=42.1 ret=1 flag=1->1 state=2->2
+09:40:24.648   606 opcode=0x03E4 elapsed_us=40.1 ret=1 flag=1->1 state=2->2
+09:40:24.648   607 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:24.648   608 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:24.649   609 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:24.649   610 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:24.649   611 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:24.649   612 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:24.650   613 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:24.650   614 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:24.650   615 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:24.650   616 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:24.651   617 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:24.651   618 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:24.651   619 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:25.172 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:25.701   620 opcode=0x03E4 elapsed_us=176.9 ret=1 flag=1->1 state=2->2
+09:40:25.702   621 opcode=0x03E4 elapsed_us=52.7 ret=1 flag=1->1 state=2->2
+09:40:25.702   622 opcode=0x03E4 elapsed_us=39.8 ret=1 flag=1->1 state=2->2
+09:40:25.702   623 opcode=0x03E4 elapsed_us=35.4 ret=1 flag=1->1 state=2->2
+09:40:25.703   624 opcode=0x03E4 elapsed_us=33.8 ret=1 flag=1->1 state=2->2
+09:40:25.703   625 opcode=0x03E4 elapsed_us=48.0 ret=1 flag=1->1 state=2->2
+09:40:25.703   626 opcode=0x03E4 elapsed_us=47.1 ret=1 flag=1->1 state=2->2
+09:40:25.704   627 opcode=0x03E4 elapsed_us=42.5 ret=1 flag=1->1 state=2->2
+09:40:25.704   628 opcode=0x03E4 elapsed_us=40.3 ret=1 flag=1->1 state=2->2
+09:40:25.704   629 opcode=0x03E4 elapsed_us=42.6 ret=1 flag=1->1 state=2->2
+09:40:25.704   630 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:25.705   631 opcode=0x03E4 elapsed_us=55.6 ret=1 flag=1->1 state=2->2
+09:40:25.705   632 opcode=0x03E4 elapsed_us=37.3 ret=1 flag=1->1 state=2->2
+09:40:25.705   633 opcode=0x03E4 elapsed_us=36.7 ret=1 flag=1->1 state=2->2
+09:40:25.705   634 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:25.706   635 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:25.706   636 opcode=0x03E4 elapsed_us=39.8 ret=1 flag=1->1 state=2->2
+09:40:25.706   637 opcode=0x03E4 elapsed_us=35.9 ret=1 flag=1->1 state=2->2
+09:40:25.706   638 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:25.707   639 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:25.707   640 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:25.707   641 opcode=0x03E4 elapsed_us=37.0 ret=1 flag=1->1 state=2->2
+09:40:25.707   642 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:25.708   643 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:25.708   644 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:25.708   645 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:25.708   646 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:25.708   647 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:25.709   648 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:25.709   649 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:26.775   650 opcode=0x03E4 elapsed_us=92.9 ret=1 flag=1->1 state=2->2
+09:40:26.775   651 opcode=0x03E4 elapsed_us=65.7 ret=1 flag=1->1 state=2->2
+09:40:26.775   652 opcode=0x03E4 elapsed_us=55.9 ret=1 flag=1->1 state=2->2
+09:40:26.776   653 opcode=0x03E4 elapsed_us=55.0 ret=1 flag=1->1 state=2->2
+09:40:26.776   654 opcode=0x03E4 elapsed_us=47.4 ret=1 flag=1->1 state=2->2
+09:40:26.776   655 opcode=0x03E4 elapsed_us=43.2 ret=1 flag=1->1 state=2->2
+09:40:26.777   656 opcode=0x03E4 elapsed_us=41.2 ret=1 flag=1->1 state=2->2
+09:40:26.777   657 opcode=0x03E4 elapsed_us=41.0 ret=1 flag=1->1 state=2->2
+09:40:26.777   658 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:26.777   659 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:26.778   660 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:26.778   661 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:26.778   662 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+09:40:26.778   663 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:26.779   664 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:26.779   665 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:26.779   666 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+09:40:26.779   667 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:26.780   668 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:26.780   669 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:26.780   670 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:26.780   671 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:26.781   672 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:26.781   673 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:26.781   674 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:26.781   675 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:26.781   676 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:26.782   677 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:26.782   678 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:26.782   679 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:27.853   680 opcode=0x03E4 elapsed_us=100.2 ret=1 flag=1->1 state=2->2
+09:40:27.853   681 opcode=0x03E4 elapsed_us=53.7 ret=1 flag=1->1 state=2->2
+09:40:27.853   682 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+09:40:27.853   683 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:27.854   684 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:27.854   685 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:27.854   686 opcode=0x03E4 elapsed_us=37.2 ret=1 flag=1->1 state=2->2
+09:40:27.854   687 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:27.855   688 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:27.855   689 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:27.855   690 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:27.855   691 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:27.856   692 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+09:40:27.856   693 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:27.856   694 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:27.856   695 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:27.856   696 opcode=0x03E4 elapsed_us=37.7 ret=1 flag=1->1 state=2->2
+09:40:27.857   697 opcode=0x03E4 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+09:40:27.857   698 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:27.857   699 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:27.857   700 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:27.858   701 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:27.858   702 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:27.858   703 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:27.858   704 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:27.859   705 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:27.859   706 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:27.859   707 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+09:40:27.859   708 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:27.859   709 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:28.180 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:28.931   710 opcode=0x03E4 elapsed_us=83.0 ret=1 flag=1->1 state=2->2
+09:40:28.931   711 opcode=0x03E4 elapsed_us=53.8 ret=1 flag=1->1 state=2->2
+09:40:28.931   712 opcode=0x03E4 elapsed_us=44.0 ret=1 flag=1->1 state=2->2
+09:40:28.932   713 opcode=0x03E4 elapsed_us=38.5 ret=1 flag=1->1 state=2->2
+09:40:28.932   714 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+09:40:28.932   715 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:28.932   716 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:28.932   717 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:28.933   718 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:28.933   719 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:28.933   720 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:28.933   721 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:28.934   722 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:28.934   723 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:28.934   724 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:28.934   725 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:28.934   726 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:28.935   727 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:28.935   728 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:28.935   729 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:28.935   730 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:28.936   731 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:28.936   732 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:28.936   733 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:28.936   734 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:28.937   735 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:28.937   736 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:28.937   737 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:28.937   738 opcode=0x03E4 elapsed_us=35.3 ret=1 flag=1->1 state=2->2
+09:40:28.938   739 opcode=0x03E4 elapsed_us=47.6 ret=1 flag=1->1 state=2->2
+09:40:30.028   740 opcode=0x03E4 elapsed_us=90.4 ret=1 flag=1->1 state=2->2
+09:40:30.028   741 opcode=0x03E4 elapsed_us=36.7 ret=1 flag=1->1 state=2->2
+09:40:30.029   742 opcode=0x03E4 elapsed_us=33.9 ret=1 flag=1->1 state=2->2
+09:40:30.029   743 opcode=0x03E4 elapsed_us=41.5 ret=1 flag=1->1 state=2->2
+09:40:30.029   744 opcode=0x03E4 elapsed_us=35.6 ret=1 flag=1->1 state=2->2
+09:40:30.029   745 opcode=0x03E4 elapsed_us=33.9 ret=1 flag=1->1 state=2->2
+09:40:30.030   746 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:30.030   747 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:30.030   748 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:30.030   749 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:30.031   750 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:30.031   751 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:30.031   752 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+09:40:30.031   753 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:30.031   754 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:30.032   755 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:30.032   756 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:30.032   757 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:30.032   758 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:30.033   759 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:30.033   760 opcode=0x03E4 elapsed_us=30.7 ret=1 flag=1->1 state=2->2
+09:40:30.033   761 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:30.033   762 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:30.033   763 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:30.034   764 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:30.034   765 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:30.034   766 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:30.034   767 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:30.035   768 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:30.035   769 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:30.645   770 opcode=0x0453 elapsed_us=385.4 ret=1 flag=1->1 state=2->2
+09:40:30.645   771 opcode=0x0453 elapsed_us=45.6 ret=1 flag=1->1 state=2->2
+09:40:31.085   772 opcode=0x03E4 elapsed_us=81.6 ret=1 flag=1->1 state=2->2
+09:40:31.085   773 opcode=0x03E4 elapsed_us=36.1 ret=1 flag=1->1 state=2->2
+09:40:31.085   774 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+09:40:31.085   775 opcode=0x03E4 elapsed_us=39.6 ret=1 flag=1->1 state=2->2
+09:40:31.086   776 opcode=0x03E4 elapsed_us=38.7 ret=1 flag=1->1 state=2->2
+09:40:31.086   777 opcode=0x03E4 elapsed_us=37.9 ret=1 flag=1->1 state=2->2
+09:40:31.086   778 opcode=0x03E4 elapsed_us=35.5 ret=1 flag=1->1 state=2->2
+09:40:31.086   779 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:31.087   780 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:31.087   781 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:31.087   782 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:31.087   783 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:31.088   784 opcode=0x03E4 elapsed_us=37.9 ret=1 flag=1->1 state=2->2
+09:40:31.088   785 opcode=0x03E4 elapsed_us=34.6 ret=1 flag=1->1 state=2->2
+09:40:31.088   786 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:31.088   787 opcode=0x03E4 elapsed_us=35.8 ret=1 flag=1->1 state=2->2
+09:40:31.089   788 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:31.089   789 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:31.089   790 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:31.089   791 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:31.090   792 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:31.090   793 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:31.090   794 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:31.090   795 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:31.091   796 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:31.091   797 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:31.091   798 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:31.091   799 opcode=0x03E4 elapsed_us=37.1 ret=1 flag=1->1 state=2->2
+09:40:31.092   800 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:31.092   801 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:31.185 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:32.166   802 opcode=0x03E4 elapsed_us=106.6 ret=1 flag=1->1 state=2->2
+09:40:32.166   803 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+09:40:32.166   804 opcode=0x03E4 elapsed_us=40.1 ret=1 flag=1->1 state=2->2
+09:40:32.167   805 opcode=0x03E4 elapsed_us=36.2 ret=1 flag=1->1 state=2->2
+09:40:32.167   806 opcode=0x03E4 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+09:40:32.167   807 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:32.167   808 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:32.168   809 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:32.168   810 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:32.168   811 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:32.168   812 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:32.168   813 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:32.169   814 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:32.169   815 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:32.169   816 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:32.169   817 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:32.170   818 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:32.170   819 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:32.170   820 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:32.170   821 opcode=0x03E4 elapsed_us=35.5 ret=1 flag=1->1 state=2->2
+09:40:32.171   822 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:32.171   823 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:32.171   824 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:32.171   825 opcode=0x03E4 elapsed_us=51.5 ret=1 flag=1->1 state=2->2
+09:40:32.172   826 opcode=0x03E4 elapsed_us=38.9 ret=1 flag=1->1 state=2->2
+09:40:32.172   827 opcode=0x03E4 elapsed_us=35.3 ret=1 flag=1->1 state=2->2
+09:40:32.172   828 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:32.172   829 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:32.173   830 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:32.173   831 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:33.246   832 opcode=0x03E4 elapsed_us=118.8 ret=1 flag=1->1 state=2->2
+09:40:33.246   833 opcode=0x03E4 elapsed_us=43.0 ret=1 flag=1->1 state=2->2
+09:40:33.246   834 opcode=0x03E4 elapsed_us=40.4 ret=1 flag=1->1 state=2->2
+09:40:33.247   835 opcode=0x03E4 elapsed_us=47.2 ret=1 flag=1->1 state=2->2
+09:40:33.247   836 opcode=0x03E4 elapsed_us=42.2 ret=1 flag=1->1 state=2->2
+09:40:33.247   837 opcode=0x03E4 elapsed_us=40.5 ret=1 flag=1->1 state=2->2
+09:40:33.248   838 opcode=0x03E4 elapsed_us=39.0 ret=1 flag=1->1 state=2->2
+09:40:33.248   839 opcode=0x03E4 elapsed_us=38.8 ret=1 flag=1->1 state=2->2
+09:40:33.248   840 opcode=0x03E4 elapsed_us=38.1 ret=1 flag=1->1 state=2->2
+09:40:33.248   841 opcode=0x03E4 elapsed_us=37.6 ret=1 flag=1->1 state=2->2
+09:40:33.249   842 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:33.249   843 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:33.249   844 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:33.249   845 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:33.249   846 opcode=0x03E4 elapsed_us=38.1 ret=1 flag=1->1 state=2->2
+09:40:33.250   847 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:33.250   848 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:33.250   849 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:33.250   850 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:33.251   851 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+09:40:33.251   852 opcode=0x03E4 elapsed_us=35.1 ret=1 flag=1->1 state=2->2
+09:40:33.251   853 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:33.251   854 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:33.252   855 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:33.252   856 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:33.252   857 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:33.252   858 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:33.253   859 opcode=0x03E4 elapsed_us=40.5 ret=1 flag=1->1 state=2->2
+09:40:33.253   860 opcode=0x03E4 elapsed_us=36.4 ret=1 flag=1->1 state=2->2
+09:40:33.253   861 opcode=0x03E4 elapsed_us=34.7 ret=1 flag=1->1 state=2->2
+09:40:34.193 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:34.266   862 opcode=0x0453 elapsed_us=268.2 ret=1 flag=1->1 state=2->2
+09:40:34.326   863 opcode=0x03E4 elapsed_us=87.2 ret=1 flag=1->1 state=2->2
+09:40:34.326   864 opcode=0x03E4 elapsed_us=36.3 ret=1 flag=1->1 state=2->2
+09:40:34.326   865 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:34.327   866 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:34.327   867 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:34.327   868 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:34.327   869 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:34.327   870 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:34.328   871 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:34.328   872 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:34.328   873 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:34.328   874 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:34.329   875 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:34.329   876 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+09:40:34.329   877 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:34.329   878 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:34.329   879 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:34.330   880 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:34.330   881 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:34.330   882 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:34.330   883 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:34.331   884 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:34.331   885 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:34.331   886 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:34.331   887 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:34.332   888 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:34.332   889 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:34.332   890 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:34.332   891 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:34.332   892 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:35.406   893 opcode=0x03E4 elapsed_us=134.6 ret=1 flag=1->1 state=2->2
+09:40:35.406   894 opcode=0x03E4 elapsed_us=38.8 ret=1 flag=1->1 state=2->2
+09:40:35.406   895 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+09:40:35.407   896 opcode=0x03E4 elapsed_us=33.7 ret=1 flag=1->1 state=2->2
+09:40:35.407   897 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:35.407   898 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:35.407   899 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:35.408   900 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+09:40:35.408   901 opcode=0x03E4 elapsed_us=35.3 ret=1 flag=1->1 state=2->2
+09:40:35.409   902 opcode=0x03E4 elapsed_us=34.9 ret=1 flag=1->1 state=2->2
+09:40:35.409   903 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:35.409   904 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:35.409   905 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:35.409   906 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:35.410   907 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:35.410   908 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:35.410   909 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:35.410   910 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:35.411   911 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:35.411   912 opcode=0x03E4 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+09:40:35.411   913 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:35.411   914 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:35.411   915 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:35.412   916 opcode=0x03E4 elapsed_us=39.3 ret=1 flag=1->1 state=2->2
+09:40:35.412   917 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+09:40:35.412   918 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:35.412   919 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:35.413   920 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:35.413   921 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:35.413   922 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:36.487   923 opcode=0x03E4 elapsed_us=143.6 ret=1 flag=1->1 state=2->2
+09:40:36.487   924 opcode=0x03E4 elapsed_us=85.9 ret=1 flag=1->1 state=2->2
+09:40:36.487   925 opcode=0x03E4 elapsed_us=67.5 ret=1 flag=1->1 state=2->2
+09:40:36.488   926 opcode=0x03E4 elapsed_us=62.2 ret=1 flag=1->1 state=2->2
+09:40:36.488   927 opcode=0x03E4 elapsed_us=35.4 ret=1 flag=1->1 state=2->2
+09:40:36.488   928 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:36.488   929 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:36.488   930 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:36.489   931 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+09:40:36.489   932 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:36.489   933 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:36.489   934 opcode=0x03E4 elapsed_us=34.1 ret=1 flag=1->1 state=2->2
+09:40:36.490   935 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:36.490   936 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:36.490   937 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:36.490   938 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:36.491   939 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:36.491   940 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:36.491   941 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:36.491   942 opcode=0x03E4 elapsed_us=39.2 ret=1 flag=1->1 state=2->2
+09:40:36.492   943 opcode=0x03E4 elapsed_us=39.8 ret=1 flag=1->1 state=2->2
+09:40:36.492   944 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+09:40:36.492   945 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+09:40:36.492   946 opcode=0x03E4 elapsed_us=38.6 ret=1 flag=1->1 state=2->2
+09:40:36.493   947 opcode=0x03E4 elapsed_us=35.1 ret=1 flag=1->1 state=2->2
+09:40:36.493   948 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:36.493   949 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:36.493   950 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:36.493   951 opcode=0x03E4 elapsed_us=33.7 ret=1 flag=1->1 state=2->2
+09:40:36.494   952 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:37.201 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:37.517   953 opcode=0x0453 elapsed_us=99.4 ret=1 flag=1->1 state=2->2
+09:40:37.566   954 opcode=0x03E4 elapsed_us=103.0 ret=1 flag=1->1 state=2->2
+09:40:37.567   955 opcode=0x03E4 elapsed_us=36.0 ret=1 flag=1->1 state=2->2
+09:40:37.567   956 opcode=0x03E4 elapsed_us=33.0 ret=1 flag=1->1 state=2->2
+09:40:37.567   957 opcode=0x03E4 elapsed_us=39.0 ret=1 flag=1->1 state=2->2
+09:40:37.568   958 opcode=0x03E4 elapsed_us=34.8 ret=1 flag=1->1 state=2->2
+09:40:37.568   959 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+09:40:37.568   960 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+09:40:37.568   961 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:37.569   962 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:37.569   963 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:37.569   964 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:37.569   965 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:37.569   966 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:37.570   967 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+09:40:37.570   968 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+09:40:37.570   969 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+09:40:37.570   970 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:37.570   971 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+09:40:37.571   972 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+09:40:37.571   973 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+09:40:37.571   974 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:37.571   975 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:37.572   976 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+09:40:37.572   977 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:37.572   978 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:37.572   979 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+09:40:37.572   980 opcode=0x03E4 elapsed_us=34.3 ret=1 flag=1->1 state=2->2
+09:40:37.573   981 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:37.573   982 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+09:40:37.573   983 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:38.647   984 opcode=0x03E4 elapsed_us=96.1 ret=1 flag=1->1 state=2->2
+09:40:38.647   985 opcode=0x03E4 elapsed_us=42.8 ret=1 flag=1->1 state=2->2
+09:40:38.648   986 opcode=0x03E4 elapsed_us=39.9 ret=1 flag=1->1 state=2->2
+09:40:38.648   987 opcode=0x03E4 elapsed_us=46.2 ret=1 flag=1->1 state=2->2
+09:40:38.648   988 opcode=0x03E4 elapsed_us=41.6 ret=1 flag=1->1 state=2->2
+09:40:38.649   989 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+09:40:38.649   990 opcode=0x03E4 elapsed_us=46.7 ret=1 flag=1->1 state=2->2
+09:40:38.649   991 opcode=0x03E4 elapsed_us=42.2 ret=1 flag=1->1 state=2->2
+09:40:38.649   992 opcode=0x03E4 elapsed_us=40.9 ret=1 flag=1->1 state=2->2
+09:40:38.650   993 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:38.650   994 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:38.650   995 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+09:40:38.650   996 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:38.651   997 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+09:40:38.651   998 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:38.651   999 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:38.651  1000 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+09:40:38.651  1001 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:38.652  1002 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:38.652  1003 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:38.652  1004 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:38.652  1005 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:38.653  1006 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+09:40:38.653  1007 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:38.653  1008 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:38.653  1009 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+09:40:38.654  1010 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:38.654  1011 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:38.654  1012 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:38.654  1013 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:39.727  1014 opcode=0x03E4 elapsed_us=105.2 ret=1 flag=1->1 state=2->2
+09:40:39.727  1015 opcode=0x03E4 elapsed_us=44.1 ret=1 flag=1->1 state=2->2
+09:40:39.727  1016 opcode=0x03E4 elapsed_us=54.3 ret=1 flag=1->1 state=2->2
+09:40:39.728  1017 opcode=0x03E4 elapsed_us=45.3 ret=1 flag=1->1 state=2->2
+09:40:39.728  1018 opcode=0x03E4 elapsed_us=43.4 ret=1 flag=1->1 state=2->2
+09:40:39.728  1019 opcode=0x03E4 elapsed_us=38.6 ret=1 flag=1->1 state=2->2
+09:40:39.729  1020 opcode=0x03E4 elapsed_us=46.7 ret=1 flag=1->1 state=2->2
+09:40:39.729  1021 opcode=0x03E4 elapsed_us=42.6 ret=1 flag=1->1 state=2->2
+09:40:39.729  1022 opcode=0x03E4 elapsed_us=40.0 ret=1 flag=1->1 state=2->2
+09:40:39.729  1023 opcode=0x03E4 elapsed_us=38.4 ret=1 flag=1->1 state=2->2
+09:40:39.730  1024 opcode=0x03E4 elapsed_us=38.6 ret=1 flag=1->1 state=2->2
+09:40:39.730  1025 opcode=0x03E4 elapsed_us=37.8 ret=1 flag=1->1 state=2->2
+09:40:39.730  1026 opcode=0x03E4 elapsed_us=38.4 ret=1 flag=1->1 state=2->2
+09:40:39.730  1027 opcode=0x03E4 elapsed_us=38.2 ret=1 flag=1->1 state=2->2
+09:40:39.731  1028 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+09:40:39.731  1029 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+09:40:39.731  1030 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+09:40:39.731  1031 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+09:40:39.732  1032 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:39.732  1033 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:39.732  1034 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+09:40:39.732  1035 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+09:40:39.733  1036 opcode=0x03E4 elapsed_us=35.9 ret=1 flag=1->1 state=2->2
+09:40:39.733  1037 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+09:40:39.733  1038 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:39.733  1039 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+09:40:39.733  1040 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+09:40:39.734  1041 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+09:40:39.734  1042 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+09:40:39.734  1043 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+09:40:40.208 ***** SESSION obj=0x642d1c8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+09:40:40.667 ***** WATCH #6: 0x1415db360 ENTERED on tid 693244 while dispatching opcode 0x03E4 rcx=0x9df5b03 [0x00000000] rdx=0x7530 (as i32 30000) r8=0x7581 r9=0xf063e725 (as i32 -261888219) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+09:40:40.737  1044 opcode=0x0453 elapsed_us=121.6 ret=1 flag=1->1 state=2->2
+09:40:40.809 ***** SOCKET conn=0x5c1ba78 +0x20=0xffffffffffffffff - closed and cleared by the client (FUN_1415e3b60 ran) *****
+09:40:41.410 session: object at 0x0 is now UNREADABLE - values below are stale

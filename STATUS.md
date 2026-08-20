@@ -162,7 +162,7 @@ request, which is the only coordinate pair this server currently reads from the 
 | # | do this | why it is here |
 |---|---|---|
 | 1 | **Run the client**, plan below | **Nine** wired things are unseen now: the shop the owner asked for, the drop they asked for, chat, and `!exp`. One run reads on all of them |
-| 2 | **Why our mobs have no body rectangle** | The rejecting gate is **named**: `141d327c6`, geometric, and never in the gate table. It fails *silently* - an all-zero rect is SKIPPED, not rejected. The chain reaches one field, `mob+0xa88`. `-SetFieldProbe -MobTargets` reads the cause beside the effect |
+| 2 | **Make `mob+0xa88` non-null** | **ANSWERED 2026-08-20 on a real client**: it is null on every mob, which is why zero targets are collected. Now a *spawn*-path question - what makes `FUN_141cd1620` run - not an attack-path one. See below |
 | 3 | **The EXP curve, off a running client** | 121 `u64`s at `0x143AC2400`, in the BSS tail of `.data` - **zero on disk**, so static analysis cannot ever read it. One `-Probe` peek. Without it, levelling has no thresholds |
 | 4 | **Parse `0x00D9`** | The client reporting its own position. It removes the "swing first" awkwardness from dropping, and every positional feature after it needs the same field |
 | 5 | **Amherst (map 1013) is intermittent** | It no longer hard-crashes, and run 2 still failed to enter it. Not fixed - intermittent |
@@ -186,6 +186,40 @@ is the thing `CLAUDE.md` warns about most. All three links now check out, in the
 What is still missing is something to walk over: the drop is currently refused, so nothing
 ever lies on the ground. The field-side drop table is being built now; until it is wired,
 this step cannot be attempted, however good the logging is.
+
+#### MEASURED: `mob+0xa88` is null on every mob - 2026-08-20, on a real client
+
+`research/fixtures/mob-a88-null-on-every-mob-{world,hook,exit}.log`. The client closed
+cleanly (exit 0); nothing crashed.
+
+| | |
+|---|---|
+| positive control `140304100` | **10 lines** - the hook armed, so the readings mean something |
+| distinct mobs the collector walked | **30**, all inside a single swing |
+| `mob+0xa88` | **`0` on all 40 readings**, every mob without exception |
+| `mob+0x42c` | `0xffffffee` / `0xffffffef` - **not** zero |
+| attacks sent | 11, **every one 127 bytes**, which is zero targets |
+| first collector hit -> first `0x00DF` | 16 ms, so the pairing holds as before |
+| `0x02FF` mob movement reports | 990 - the mobs were alive and moving, not a dead field |
+
+**The predicted root cause is confirmed.** The animation object is null on every mob, so
+`FUN_141c57120` bails at `141c57185` and writes an all-zero rectangle, so `141d326ae` skips
+every rect, so `141d327c6` rejects every mob - with all seventeen documented gates green.
+
+**One prediction was wrong and it does not change the answer.** The forecast was that a null
+`0xa88` would show up as an all-zero `mob+0x42c`; the measured left edge is **-18/-17**, a
+perfectly ordinary coordinate. That is consistent rather than contradictory: `mob+0x42c` is
+an *input* to `FUN_141c57120`, and the `0xa88` bail at `141c57185` happens **before** the
+input is ever consulted. A real value sitting in a field that is never read is exactly what
+a bail-out looks like from the outside. Worth writing down, because reading `0x42c` alone -
+which the superseded watch pair would have done - would have shown a healthy rectangle and
+pointed the next pass in precisely the wrong direction.
+
+**What this is now:** `mob+0xa88` has two writers in the mob code range, the constructor's
+null and `FUN_141cd1620`. So the question has moved off the attack path entirely and onto
+the **spawn** path: what makes `FUN_141cd1620` run, and whether anything our `0x03C6` sends
+can reach it. Nothing about the swing, the attack rectangle, or the gate chain needs more
+work.
 
 #### The gate that rejects our mobs is geometric, and it was never in the table
 
