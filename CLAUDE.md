@@ -122,6 +122,20 @@ count, and the person who sent that message did not re-run their own. The result
 packet shipping short a second time and killing the client a second time. The fixed tool's
 own output had already printed the missing read; it scrolled past unread.
 
+**A cargo run made while agents are working is not evidence.** Every agent shares one
+`target/`, and concurrent invocations race the fingerprints. On 2026-08-20 `cargo build -p
+store` succeeded, and the `cargo test --workspace` immediately after it failed with *"struct
+`Character` does not have a field named `exp`"* - naming a field that was on disk, in the
+right file, and had just compiled. The compiler was reporting a **stale sibling crate**:
+`available fields are: ... and 17 others` counted 22 where the source had 23. Re-running it,
+unchanged, passed.
+
+The failure direction is the harmless one. The same race can hand back a **clean pass against
+code that is no longer there**, which looks exactly like a green suite. So: when a build
+result is surprising, re-run it before believing it, and **re-run the whole suite once the
+agents have reported** - that run is the one that counts. A `cargo` result is an instrument
+like any other here, and this is the same rule as everywhere else in this file.
+
 ## The test summary that could not count failures
 
 `cargo test --workspace | awk -F'[ ;]' '{p+=$4; f+=$6}'` **always reports zero failures.**

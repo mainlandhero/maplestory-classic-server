@@ -788,6 +788,19 @@ pub struct Character {
     pub mp: u32,
     pub max_mp: u32,
     pub ap: u16,
+    /// Experience toward the next level.
+    ///
+    /// `u64` because that is the width the record reads - see the field list on
+    /// [`character_record`] - not because anything here counts that high.
+    ///
+    /// **There is no SP field beside this one, and that is deliberate.** The stat block
+    /// forks on the job: non-extended jobs send a plain `u16 sp`, but extended-SP jobs send
+    /// a *count followed by per-pool entries*, and job `0` - the default, and every
+    /// character this project has - takes the extended branch. See [`uses_extended_sp`].
+    /// A single `sp: u16` would therefore be unrepresentable for exactly the characters we
+    /// have, so the pool encoding gets read before SP gets a field. Nothing needs it until
+    /// job advancement.
+    pub exp: u64,
     pub map_id: u32,
     /// Which portal on [`Self::map_id`] the character stands at.
     ///
@@ -855,6 +868,7 @@ impl Default for Character {
             mp: 5,
             max_mp: 5,
             ap: 0,
+            exp: 0,
             map_id: START_MAP_ID,
             portal: 0, // the map's spawn point
             equips: Vec::new(),
@@ -1112,7 +1126,10 @@ pub fn character_stat_block(chr: &Character, world_id: u32) -> Vec<u8> {
     } else {
         out.extend_from_slice(&0u16.to_le_bytes()); // sp
     }
-    out.extend_from_slice(&0u64.to_le_bytes()); // exp
+    // Was a hardcoded zero until 2026-08-20. Persisting experience without sending it would
+    // have been the "built is not wired" failure exactly: the database would fill up and the
+    // bar would sit at zero, which on screen is indistinguishable from nothing working.
+    out.extend_from_slice(&chr.exp.to_le_bytes()); // exp
     out.extend_from_slice(&0u32.to_le_bytes()); // fame
     debug_assert_eq!(out.len(), stat_block_map_id_at(chr.job), "the map id moved");
     out.extend_from_slice(&chr.map_id.to_le_bytes()); // <- the field id
@@ -3508,6 +3525,40 @@ mod tests {
 
     /// The map id has to land on **the offset the client reads it from**.
     ///
+    /// Experience reaches the wire, at the offset the client reads it from.
+    ///
+    /// Anchored **relative to the map id** rather than to a constant of its own: the map id
+    /// already has a test that pins it against the client, and `exp` is a `u64` followed by
+    /// a `u32 fame` immediately before it, so `map_id_at - 12` is derived from something
+    /// checked rather than from a second hand-counted offset that could drift on its own.
+    ///
+    /// The discrimination half is the point. Until 2026-08-20 this field was a hardcoded
+    /// zero, and a test that only asserted "a zero is here" would have passed against the
+    /// hardcoded version, against the wired version, and against a version that wired it to
+    /// the wrong field.
+    #[test]
+    fn experience_lands_on_the_offset_the_client_reads() {
+        let base = Character { name: "Grinder".to_string(), ..Character::default() };
+        let at = stat_block_map_id_at(base.job) - 12;
+
+        let none = character_stat_block(&base, 0);
+        assert_eq!(u64::from_le_bytes(none[at..at + 8].try_into().unwrap()), 0);
+
+        let earned = Character { exp: 0x0102_0304_0506_0708, ..base.clone() };
+        let block = character_stat_block(&earned, 0);
+        assert_eq!(
+            u64::from_le_bytes(block[at..at + 8].try_into().unwrap()),
+            0x0102_0304_0506_0708,
+            "the experience is not at stat-block offset {at}"
+        );
+        assert_eq!(block.len(), none.len(), "experience must not change the block's length");
+        // Exactly those eight bytes moved. A field written into the wrong place would show
+        // up here as a second difference, or as none at all.
+        let differs: Vec<usize> =
+            (0..block.len()).filter(|&i| block[i] != none[i]).collect();
+        assert_eq!(differs, (at..at + 8).collect::<Vec<_>>());
+    }
+
     /// This test used to scan the whole record for any `u32 == START_MAP_ID` and pass if it
     /// found one. That could not fail: `START_MAP_ID` is 1, and a 1 appears in a record for
     /// a dozen unrelated reasons. It passed for months while the map id sat at offset 120,

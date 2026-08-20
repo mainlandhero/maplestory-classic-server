@@ -207,6 +207,7 @@ impl Store {
         )?;
         Self::add_inventory_slot_columns(&conn)?;
         Self::add_meso_column(&conn)?;
+        Self::add_experience_column(&conn)?;
         // Whole new tables, so a plain `CREATE TABLE IF NOT EXISTS` is enough - unlike the
         // slot columns above, which had to be ALTERed onto a table that already existed.
         crate::quest::create_tables(&conn)?;
@@ -247,6 +248,35 @@ impl Store {
                 "ALTER TABLE characters ADD COLUMN mesos INTEGER NOT NULL DEFAULT 0",
                 [],
             )?;
+        }
+        Ok(())
+    }
+
+    /// `characters.exp`, added to `characters` after the fact.
+    ///
+    /// Same shape and same reason as [`Self::add_meso_column`]: `CREATE TABLE IF NOT EXISTS`
+    /// does nothing to a table that already exists, and the owner's has characters in it, so a
+    /// column named in the schema above would exist only in a fresh database. `ALTER TABLE
+    /// ADD COLUMN` raises "duplicate column name" on the second open, hence the guard.
+    ///
+    /// Every existing character starts on 0, and that is a statement of fact rather than a
+    /// default being imposed: **nothing has ever awarded a single point of experience**, so
+    /// there is no value here that could be overwritten.
+    ///
+    /// There is no `sp` column beside it. The stat block's SP field forks on the job and the
+    /// branch every character here takes sends a pool list nobody has decoded - see the note
+    /// on `net::opcode::Character::exp`. Adding a column for a value that cannot be put on
+    /// the wire would be storage pretending to be a feature.
+    fn add_experience_column(conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(characters)")?;
+        let exists = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "exp");
+        drop(stmt);
+        if !exists {
+            conn.execute("ALTER TABLE characters ADD COLUMN exp INTEGER NOT NULL DEFAULT 0", [])?;
         }
         Ok(())
     }
@@ -713,6 +743,7 @@ mod tests {
             // on `equipment`, and no new tables at all.
             let conn = store.conn();
             conn.execute("ALTER TABLE characters DROP COLUMN mesos", []).unwrap();
+            conn.execute("ALTER TABLE characters DROP COLUMN exp", []).unwrap();
             for column in crate::inventory::EQUIP_STAT_COLUMNS {
                 conn.execute(&format!("ALTER TABLE equipment DROP COLUMN {column}"), []).unwrap();
             }
@@ -727,6 +758,7 @@ mod tests {
         assert_eq!(loaded.len(), 1, "the character survived");
         assert_eq!(loaded[0].equips, vec![(5, 1040002)]);
         assert_eq!(store.mesos(chr.id).unwrap(), 0, "the meso column arrived with a default");
+        assert_eq!(loaded[0].exp, 0, "the exp column arrived with a default");
         assert_eq!(
             store.equipped_items(chr.id).unwrap()[0].stats,
             None,

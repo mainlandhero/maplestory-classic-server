@@ -27,7 +27,8 @@ use crate::config::Config;
 ///
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
-const GM_COMMANDS: &str = "GM commands: !map <mapId>, !item <itemId> [count], !help";
+const GM_COMMANDS: &str =
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]

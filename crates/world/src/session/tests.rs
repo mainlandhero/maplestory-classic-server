@@ -350,6 +350,47 @@ fn the_item_command_adds_an_equip_and_announces_it() {
     );
 }
 
+/// `!exp` awards experience, persists it, and says so.
+///
+/// The persistence half is the point. Experience that is announced but not written down
+/// would look identical on the ack line and be gone at the next field entry, which is the
+/// exact shape of the unequip bug that goal I existed to fix.
+#[test]
+fn the_exp_command_awards_and_persists_experience() {
+    let (mut s, store, id) = gm_session();
+    let before = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!(before.exp, 0, "a fresh character has earned nothing");
+
+    let ack = notice_text(&s.handle(&gm_chat("!exp 250"))[0]);
+    assert!(ack.starts_with("TestCharD gains 250 experience: 0 -> 250"), "{ack}");
+    // The ack must not overstate what the player will see. The number reaches the client in
+    // the character record, which is built on a field entry and nowhere else.
+    assert!(ack.contains("Change maps"), "{ack}");
+
+    let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!(after.exp, 250, "the database, not the reply");
+
+    // It adds rather than sets, so a second award moves it again.
+    s.handle(&gm_chat("!exp 50"));
+    let twice = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!(twice.exp, 300);
+}
+
+/// A bad argument is refused with a reply, never with silence.
+///
+/// **Always answer.** An unanswered packet freezes the client's whole UI - every button,
+/// including the quit prompt - and reads on screen as a crash.
+#[test]
+fn the_exp_command_refuses_nonsense_but_still_answers() {
+    let (mut s, store, id) = gm_session();
+    let out = s.handle(&gm_chat("!exp lots"));
+    assert!(!out.is_empty(), "a refusal is still a reply");
+    assert!(notice_text(&out[0]).contains("is not an amount"), "{}", notice_text(&out[0]));
+
+    let unchanged = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    assert_eq!(unchanged.exp, 0, "and nothing was written");
+}
+
 /// A `2xxxxxx` id lands in the Use tab, because the tab comes from the id.
 #[test]
 fn the_item_command_picks_the_tab_from_the_id() {

@@ -1,5 +1,25 @@
 # Why the client collects zero targets - the gate chain, re-read
 
+> ## CORRECTION, 2026-08-20: §6 answers about a caller the client does not use
+>
+> Measured, off `research/fixtures/melee-collector-runs-once-per-swing-hook.log`: all six
+> entries to `FUN_141d31b20` carry **`called-from=0x141d2545a`** - that is `FUN_141d25360`,
+> calling at `141d25455`. **Not `0x1428c2c2d`.** [L]
+>
+> §6 rules out gates 3, 5, 11, 14, 15 and 16 because they are *"switched off by the arguments
+> at the only known call site"*, and that call site is `0x1428c2c2d` inside `FUN_1428c1fa0`.
+> A different arm passes different arguments, so **those six gates are not ruled out for the
+> path the client actually takes.** The rest of §6 - the gates that are WZ properties or
+> constructor values - is unaffected.
+>
+> §4.2 also needs re-reading: `141d31c96 cmp/jge` is the **loop header**, not a one-shot
+> precondition. Argument 4 is the loop's capacity and argument 17 is the output cursor,
+> incremented at `141d327de`/`141d32939` with `141d32a62` re-entering. On the six measured
+> entries `r9 = 0xf`, so the capacity is **15**, the cursor is 0, and **the loop ran**. [L]
+>
+> The call-site table is `research/mob-collector-callsites.md`; the arm-C gate analysis
+> replaces §4 and §6 for this question.
+
 Written 2026-08-19 to answer one question: **the client will not target our mobs. Why?**
 
 Markers as elsewhere in `research/`: **[L]** read out of the listing or a capture, **[D]**

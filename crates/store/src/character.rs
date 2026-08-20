@@ -97,6 +97,7 @@ impl Store {
             max_mp,
             ap,
             map_id,
+            exp,
             equips,
             // Not persisted HERE. The Equip tab's contents live in the `inventory` table,
             // written by `Store::unequip_to_bag` and friends and read back by `Store::bag`;
@@ -123,9 +124,10 @@ impl Store {
                 "INSERT INTO characters (
                      account_id, world_id, name, gender, skin, face, hair, level, job,
                      strength, dexterity, intelligence, luck,
-                     hp, max_hp, mp, max_mp, ap, map_id, created_at, {}
+                     hp, max_hp, mp, max_mp, ap, map_id, created_at, {}, exp
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                           ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                           ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26,
+                           ?27)",
                 INVENTORY_SLOT_COLUMNS.join(", ")
             ),
             rusqlite::params![
@@ -155,6 +157,13 @@ impl Store {
                 inventory_slots[3],
                 inventory_slots[4],
                 inventory_slots[5],
+                // Tacked on the end rather than slotted in beside `ap` and `map_id` where
+                // it belongs, because these placeholders are numbered by hand: putting it
+                // in the middle means renumbering seven of them, and a placeholder that
+                // ends up one out writes a real value into the wrong column. A new
+                // character's experience is 0 anyway, so nothing rides on it today - it is
+                // here so that a caller passing a non-zero one is not silently ignored.
+                exp,
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -183,7 +192,7 @@ impl Store {
         let mut stmt = conn.prepare(&format!(
             "SELECT id, name, gender, skin, face, hair, level, job,
                     strength, dexterity, intelligence, luck,
-                    hp, max_hp, mp, max_mp, ap, map_id, {}
+                    hp, max_hp, mp, max_mp, ap, map_id, exp, {}
                FROM characters
               WHERE account_id = ?1 AND world_id = ?2
               ORDER BY created_at, id",
@@ -210,19 +219,24 @@ impl Store {
                 max_mp: row.get(15)?,
                 ap: row.get(16)?,
                 map_id: row.get(17)?,
+                exp: row.get(18)?,
                 equips: Vec::new(),
                 // Filled by the caller that needs it, which is the world server on field
                 // entry - see Store::bag. The login server's character-select list does not
                 // send bag contents, so loading them here would be a query per character
                 // for bytes nobody puts on the wire.
                 equip_bag: Vec::new(),
+                // 19.. and not 18.., because `exp` was inserted before the interpolated
+                // slot columns on 2026-08-20. Positional `row.get` indices are the one
+                // place where adding a column silently reads the wrong field rather than
+                // failing: every slot would have come back holding the experience.
                 inventory_slots: [
-                    row.get(18)?,
                     row.get(19)?,
                     row.get(20)?,
                     row.get(21)?,
                     row.get(22)?,
                     row.get(23)?,
+                    row.get(24)?,
                 ],
             })
         })?;
@@ -251,11 +265,6 @@ impl Store {
         Ok(n as u32)
     }
 
-    /// Delete a character, but only if this account owns it.
-    ///
-    /// The ownership clause is in the statement rather than in a prior read: a check and
-    /// then a delete is two statements a concurrent request can slip between, and the
-    /// whole point of an ownership test is that it cannot be raced.
     /// Move a character to a map, so a portal walk survives a relog.
     ///
     /// Deliberately does **not** take an account id. The channel connection carries no
@@ -268,6 +277,54 @@ impl Store {
         Ok(())
     }
 
+    /// Write back everything a character can *earn*: level, experience, job, the four base
+    /// stats, the four HP/MP numbers and unspent AP.
+    ///
+    /// **Deliberately mechanical.** It applies whatever the caller decided and enforces no
+    /// rule of its own - no experience curve, no HP-per-level, no cap. Those numbers have to
+    /// match the ones the *client* already has baked in or the bar and the numbers disagree
+    /// on screen, and none of them has been read out of the client yet. Putting a guess in
+    /// the storage layer would make it look settled.
+    ///
+    /// Takes the whole character rather than a field, because a level-up moves seven of
+    /// these columns at once and seven setters is seven chances to forget one. `map_id` is
+    /// **not** here - it has [`Self::set_character_map`], which the portal walk already
+    /// calls - and neither are name, face or hair, which are not earned.
+    ///
+    /// Like every other write on this path it takes no account id. The channel connection
+    /// carries no credentials at all; it is identified only by the migration row it claimed.
+    /// **Nothing here authenticates anybody.**
+    pub fn save_character_progress(&self, chr: &Character) -> Result<()> {
+        self.conn().execute(
+            "UPDATE characters
+                SET level = ?2, exp = ?3, job = ?4,
+                    strength = ?5, dexterity = ?6, intelligence = ?7, luck = ?8,
+                    hp = ?9, max_hp = ?10, mp = ?11, max_mp = ?12, ap = ?13
+              WHERE id = ?1",
+            rusqlite::params![
+                chr.id,
+                chr.level,
+                chr.exp,
+                chr.job,
+                chr.strength,
+                chr.dexterity,
+                chr.intelligence,
+                chr.luck,
+                chr.hp,
+                chr.max_hp,
+                chr.mp,
+                chr.max_mp,
+                chr.ap,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a character, but only if this account owns it.
+    ///
+    /// The ownership clause is in the statement rather than in a prior read: a check and
+    /// then a delete is two statements a concurrent request can slip between, and the whole
+    /// point of an ownership test is that it cannot be raced.
     pub fn delete_character(&self, account_id: i64, character_id: u32) -> Result<bool> {
         let deleted = self.conn().execute(
             "DELETE FROM characters WHERE id = ?1 AND account_id = ?2",
@@ -319,6 +376,57 @@ mod tests {
             loaded[0].inventory_slots.iter().all(|&n| n > 0),
             "a zero-slot inventory is a bag that refuses everything"
         );
+    }
+
+    /// Experience survives a relog. Nothing awards any yet - this is the storage half of
+    /// goal D, built ahead of the half that is blocked.
+    #[test]
+    fn experience_survives_a_reload() {
+        let (store, account) = store_with_account();
+        let made = store.create_character(account, 0, &named("Grinder")).unwrap();
+        assert_eq!(made.exp, 0, "a new character has earned nothing");
+
+        let mut chr = made.clone();
+        chr.exp = 42;
+        store.save_character_progress(&chr).unwrap();
+
+        let loaded = store.characters_for(account, 0).unwrap();
+        assert_eq!(loaded[0].exp, 42);
+        // And the write did not disturb the neighbouring columns. `exp` was appended to the
+        // end of the INSERT's hand-numbered placeholder list, so "it went into the right
+        // column" is a claim worth checking rather than assuming.
+        assert_eq!(loaded[0].map_id, made.map_id);
+        assert_eq!(loaded[0].ap, made.ap);
+        assert_eq!(loaded[0].inventory_slots, made.inventory_slots);
+    }
+
+    /// A level-up moves seven columns at once, which is the reason the writer takes a whole
+    /// character rather than a field at a time.
+    #[test]
+    fn a_level_up_shaped_write_moves_every_column_together() {
+        let (store, account) = store_with_account();
+        let made = store.create_character(account, 0, &named("Riser")).unwrap();
+
+        let mut chr = made.clone();
+        chr.level = 2;
+        chr.exp = 3;
+        chr.max_hp = 65;
+        chr.hp = 65;
+        chr.max_mp = 12;
+        chr.mp = 12;
+        chr.ap = 5;
+        store.save_character_progress(&chr).unwrap();
+
+        let loaded = &store.characters_for(account, 0).unwrap()[0];
+        assert_eq!(
+            (loaded.level, loaded.exp, loaded.hp, loaded.max_hp, loaded.mp, loaded.max_mp, loaded.ap),
+            (2, 3, 65, 65, 12, 12, 5)
+        );
+        // Not a progression column, and it has its own setter. A writer that quietly moved
+        // the character back to the start map on every level-up would be a nasty one to
+        // find, because it would only show on the relog after the level.
+        assert_eq!(loaded.map_id, made.map_id);
+        assert_eq!(loaded.name, made.name, "and the identity columns are untouched");
     }
 
     /// A raised slot count persists. This is the whole reason the counts are columns rather

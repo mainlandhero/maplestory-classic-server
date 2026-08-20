@@ -45,6 +45,7 @@ impl Session {
         match name {
             "map" => self.gm_map(arg),
             "item" => self.gm_item(arg),
+            "exp" => self.gm_exp(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -75,6 +76,45 @@ impl Session {
         // Portal 0 is the map's spawn point, which is where a GM warp should land.
         out.extend(self.go_to_map(&mut chr, map, 0, format!("GM !map {map}")));
         out
+    }
+
+
+    /// `!exp <amount>` - award experience, and persist it.
+    ///
+    /// **This is the cheap half of goal D, and it exists to be measurable.** Levelling up
+    /// properly needs a mob to die, which is blocked on why the client collects zero targets;
+    /// this awards the same experience by hand, so the storage-and-wire half can be seen on a
+    /// screen without waiting for that. Until 2026-08-20 the record's `exp` field was a
+    /// hardcoded zero, so there was no chain here to test at all.
+    ///
+    /// **It will not move the bar until the next field entry**, and the ack says so. The
+    /// number reaches the client inside the character record, which is only built on a
+    /// `SetField`; the packet that updates a stat *in place* has not been decoded, so
+    /// `!exp 100` then `!map 40` is the whole test. Saying "it worked" and letting the owner
+    /// watch an unchanged bar would burn a launch.
+    ///
+    /// Adds rather than sets, because what is being checked is that a number *moves*.
+    /// Saturating, so a typo with twenty digits cannot wrap the total back to nearly zero.
+    pub(super) fn gm_exp(&mut self, arg: &str) -> Vec<Reply> {
+        let Ok(amount) = arg.parse::<u64>() else {
+            return self.gm_ack(format!("!exp: {arg:?} is not an amount. Try !exp 100."));
+        };
+        let Some(mut chr) = self.claimed_character() else {
+            return self
+                .gm_ack("!exp REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let before = chr.exp;
+        chr.exp = before.saturating_add(amount);
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            // Always answer, including a refusal. Silence here would freeze the client's
+            // whole UI, which reads on screen as a crash.
+            return self.gm_ack(format!("!exp FAILED: {e}"));
+        }
+        self.gm_ack(format!(
+            "{} gains {amount} experience: {before} -> {}. Change maps to see it - \
+             the bar only redraws on a field entry.",
+            chr.name, chr.exp
+        ))
     }
 
 

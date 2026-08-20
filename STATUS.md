@@ -146,7 +146,7 @@ while it was unwired, and "a unit test passes" is not "it works".
 | # | do this | why it is here |
 |---|---|---|
 | 1 | **Run the client**, plan below | Five wired things are unseen, one of them is the shop the owner asked for |
-| 2 | **Which gate rejects our mobs** | The collector is now *proven* to run - see below. Everything downstream is built |
+| 2 | **Which gate rejects our mobs, under arm C** | The collector runs, with capacity 15, and accepts nothing - measured, see below. The gate analysis was done against the wrong caller and is being redone. **Static work; no launch needed** |
 | 3 | **Name the pick-up opcode** | One walk over one drop. Then drops wire in an afternoon. The instrument is **checked**, not assumed - see below |
 | 4 | **Chat renders nothing** | The dispatcher may drop `0x0231` before the handler exists. Watch ready: `research/user-chat.md` section 4 |
 | 5 | **Amherst (map 1013) is intermittent** | It no longer hard-crashes, and run 2 still failed to enter it. Not fixed - intermittent |
@@ -170,6 +170,47 @@ is the thing `CLAUDE.md` warns about most. All three links now check out, in the
 What is still missing is something to walk over: the drop is currently refused, so nothing
 ever lies on the ground. The field-side drop table is being built now; until it is wired,
 this step cannot be attempted, however good the logging is.
+
+#### The loop RUNS, with room for fifteen - measured, 2026-08-20, and it moves the question
+
+**No client run was spent on this.** It came out of a fixture that had been sitting in
+`research/fixtures/` for a day with the answer already in it.
+
+The suspicion was that `FUN_141d31b20` returns at `141d31c96` before examining a single mob,
+when argument 17 is at least argument 4. Filtering
+`melee-collector-runs-once-per-swing-hook.log` to the collector's **own** watch lines - the
+file carries four watches and the attribution matters - all six entries read:
+
+```
+0x141d31b20 ENTERED ... rcx=0x37d74fa0 rdx=0x146530 r8=0x145de0 r9=0xf  called-from=0x141d2545a
+```
+
+| | | |
+|---|---|---|
+| `r9 = 0xf` | **argument 4 = 15** | the loop's capacity, hardcoded at the call site |
+| argument 17 | the output cursor, 0 on entry | so `0 >= 15` is **false** |
+| `called-from` | `0x141d2545a` | `FUN_141d25360`, and **not** `0x1428c2c32` |
+
+**So the loop ran, with room for fifteen targets, and accepted none.** The early-out is dead
+as an explanation. Two corrections come with that, and the second is the important one:
+
+* `141d31c96` is the **loop header**, not a one-shot precondition. Argument 4 is a capacity
+  and argument 17 is the output cursor, incremented at `141d327de`/`141d32939` with
+  `141d32a62` re-entering. `research/mob-target-gates.md` §4.2 reads it as a precondition.
+* **`research/mob-target-gates.md` §6 dismissed gates 3, 5, 11, 14, 15 and 16 as "switched
+  off by the arguments at the only known call site" - and that call site was the wrong one.**
+  It analysed `0x1428c2c2d` inside `FUN_1428c1fa0`. The client calls through
+  `FUN_141d25360`, a different arm with different arguments, which reaches the same collector
+  at `141d25455`. Those six gates were ruled out for a caller the client never uses, so the
+  clean "every gate passes" result was answering about the wrong path.
+
+`research/mob-collector-callsites.md` has all 86 call sites with their return addresses, so
+any future `called-from=` reads straight off a table. It also establishes that **every** entry
+is a 5-byte `call rel32` - no tail `jmp`, no vtable, no function pointer anywhere in the image
+- so a return address always names a real call site.
+
+The next pass re-runs the gate analysis against **arm C's** arguments. That is static work and
+it does not need a launch either.
 
 #### `FUN_141d31b20` IS the melee collector - measured, and it corrects a prediction
 
@@ -242,24 +283,18 @@ Two watches, each needing its own run, neither combinable with the above:
   slots and the positive control come out right without hand-typing them. Go to map 40 and
   swing at a snail six or eight times.
 
-The mob-targeting run now asks a question it could not ask before. `:args=<n>` dumps integer
-arguments **5..=n** off the stack; arguments 1-4 were always in the log, but argument 17 was
-not, and `stack_trace` filters to things that look like code addresses so it discards exactly
-the small integers this turns on. Read two numbers off each `141d31b20` line:
+**Do not spend a run re-asking whether the loop starts.** It does: argument 4 is 15 and the
+cursor is 0, measured off an existing fixture - see "The loop RUNS" below. `-MobTargets`
+survives as the frame to hang the *gate* watches on once the arm-C analysis names them; its
+`141d31b20:args=17` slot is worth keeping only because the cursor is the one number that says
+whether **any** mob was accepted mid-loop, and `called-from=` names the arm in one word.
 
-| | | |
-|---|---|---|
-| `r9` | argument 4 | a client-side maximum, nothing we send |
-| `a17` | argument 17, `[rsp+0x88]` | expected 0 |
-
-**`a17 >= r9` means the early-out at `141d31c96` fired and no mob was ever examined** - the
-question leaves the gate chain entirely and becomes "what sets argument 4". `a17 < r9` means
-the loop really did run and the rejection is per-mob, after every gate we can reach has been
-shown to pass. Slots 5..16 print too, on purpose: "argument 17" is a decompiler's numbering,
-and if it disagrees with the ABI by one the right value is still on the line.
-
-Also read `called-from=`. The collector has many call sites and only one of them is the known
-`0x00DF` builder; naming the caller settles which path a bare swing takes.
+`:args=<n>` dumps integer arguments **5..=n** off the stack (argument *n* at `[rsp + 8*n]`, so
+argument 17 is `[rsp+0x88]`). Arguments 1-4 were always in the log as rcx/rdx/r8/r9, and
+`stack_trace` filters to things that look like code addresses, so it discards exactly the
+small integers this turns on. Slots 5..16 print too, on purpose: "argument 17" is a
+decompiler's numbering, and if it disagrees with the ABI by one the right value is still on
+the line.
 
 **Nothing authenticates.** The game socket carries no credentials, and none of the above
 changes that.

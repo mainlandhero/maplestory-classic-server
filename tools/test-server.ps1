@@ -272,17 +272,22 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
     if ($MobTargets) {
         # 141d31b20:args=17 - the melee target collector. EXPECT ONE ENTRY PER SWING; the
         #   pairing against 0x00DF in world.log is already established, so a missing entry
-        #   here means the watch, not the client. Read TWO numbers off each line:
-        #     r9  (= argument 4)               the client-side maximum
-        #     a17 (= argument 17, [rsp+0x88])  the running index, expected 0
-        #   a17 >= r9 means the early-out at 141d31c96 fired and NO MOB WAS EVER EXAMINED,
-        #   which moves the question off the gates entirely. a17 < r9 means the loop ran and
-        #   the rejection really is per-mob, after every gate we can reach has passed.
-        #   Slots 5..16 are printed too, deliberately: "argument 17" is a decompiler's
-        #   numbering, and if it is off by one against the ABI the right value is still on
-        #   the line. Also read called-from= and look it up in
-        #   research/mob-collector-callsites.md - the collector has many call sites and only
-        #   one of them is the known 0x00DF builder.
+        #   here means the watch, not the client.
+        #
+        #   WHAT THIS NO LONGER ASKS: whether the loop starts. Settled 2026-08-20 off an
+        #   existing fixture, with no launch - r9 (argument 4, the capacity) is 0xf on all
+        #   six entries and the cursor is 0, so the loop runs with room for fifteen and
+        #   accepts nothing. called-from= was 0x141d2545a on all six, which is arm C
+        #   (FUN_141d25360) and NOT the 0x1428c2c32 the gate analysis was written against.
+        #
+        #   What it still buys: a17 is the output cursor, and it is the only number that
+        #   says whether ANY mob was accepted part-way through the loop. called-from= names
+        #   the arm in one word; look it up in research/mob-collector-callsites.md, which
+        #   tables all 86 call sites by return address.
+        #
+        #   The real question is now which gate rejects a snail under ARM C's arguments.
+        #   When that analysis names gate addresses, swap them into the third slot - there
+        #   is room for exactly one more watch beside the positive control.
         # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
         #   at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141d31b20:args=17:hits=8,140304100:hits=200'
