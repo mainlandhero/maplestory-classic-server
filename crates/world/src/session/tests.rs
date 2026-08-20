@@ -726,6 +726,74 @@ fn clicking_a_shopkeeper_opens_the_shop() {
     assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
 }
 
+/// **Killing a mob puts its drops on the floor** - the mob's own table, then the global one.
+///
+/// This is what the owner asked for: *"when a mob dies, it checks for its mob specific drop table
+/// and any global drop table"*. The global row is the event hook, and it fires for a mob
+/// that has no table of its own.
+#[test]
+fn a_kill_drops_the_mobs_own_table_and_the_global_one() {
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse(
+        "2 | 0       | 100 | 7 | 7 | 1 | mesos
+         2 | 4000001 | 100 | 1 | 1 | 9 | Snail Shell
+         * | 2022000 | 100 | 1 | 1 | 0 | Event Candy
+",
+    );
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    // A drop needs somewhere to land; without it the server declines rather than guessing.
+    s.last_position = Some((520, 395));
+
+    let out = s.drops_from_kill(2, 204, net::opcode::START_MAP_ID);
+
+    assert_eq!(out.len(), 3, "mesos, the shell, and the event item: {out:?}");
+    assert!(
+        out.iter().all(|r| r.opcode == net::drops::DROP_ENTER_FIELD),
+        "a mob drop sends ONLY 0x046E - a 0x0070 would refuse an inventory request the          player never made"
+    );
+    assert_eq!(s.drops.len(), 3, "and all three are on the floor");
+}
+
+/// A mob with no table of its own still rolls the **global** table. That is the whole point
+/// of an event drop.
+#[test]
+fn an_unknown_mob_still_rolls_the_global_table() {
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse("* | 2022000 | 100 | 1 | 1 | 0 | Candy
+");
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    s.last_position = Some((520, 395));
+
+    assert_eq!(s.drops_from_kill(999_999, 204, 1).len(), 1);
+}
+
+/// **With no known position a kill drops nothing, and says so.**
+///
+/// An item put where the player cannot reach is indistinguishable on screen from no drop at
+/// all, so guessing would make the next run unreadable. The reply is still a real reply -
+/// silence is what freezes the UI.
+#[test]
+fn a_kill_with_no_known_position_drops_nothing_but_still_answers() {
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse("2 | 4000001 | 100 | 1 | 1 | 9 | Shell
+");
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    s.last_position = None;
+
+    let out = s.drops_from_kill(2, 204, 1);
+    assert!(!out.is_empty(), "it must answer");
+    assert!(out.iter().all(|r| r.opcode != net::drops::DROP_ENTER_FIELD), "and drop nothing");
+    assert_eq!(s.drops.len(), 0);
+}
+
+/// With no drop table at all, a kill is silent - not a panic and not a notice.
+#[test]
+fn a_kill_with_no_table_drops_nothing_quietly() {
+    let (mut s, _, _) = gm_session();
+    s.last_position = Some((1, 1));
+    assert!(s.drops_from_kill(2, 204, 1).is_empty());
+}
+
 /// With the shop off, a shopkeeper **talks** instead of ending the session.
 ///
 /// `0x0560` kills this client: the window it builds loads `UI/UIWindow2.img/Shop2/backgrnd`

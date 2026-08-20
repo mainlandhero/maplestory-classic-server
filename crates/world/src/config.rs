@@ -147,6 +147,11 @@ pub struct Config {
     /// **Not abandoned.** The WZ ships `UIShop.img/Shop`, the classic-layout counter; which
     /// opcode builds *that* is the open question. `research/npc-shop-crash2.md`.
     pub send_shop: bool,
+    /// What each mob drops when it dies, plus the global event table. `data/drops.txt`.
+    ///
+    /// Empty is legal and means mobs drop nothing - see `crate::droptables::DropTables::load`
+    /// for why a missing file degrades rather than refusing to start.
+    pub drops: crate::droptables::DropTables,
     /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
     ///
     /// The character record carries an item's stats and upgrade slots per *instance*, and a
@@ -902,6 +907,7 @@ impl Default for Config {
             mob_limit: None,
             shop_rows: None,
             send_shop: false,
+            drops: crate::droptables::DropTables::default(),
             chatter_off: false,
             equips: HashMap::new(),
             npc_strings: HashMap::new(),

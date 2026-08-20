@@ -168,6 +168,12 @@ pub struct Session {
     /// Keyed by object id and rebuilt on every field entry, because object ids are minted
     /// per field and a dead mob's id must never be reused.
     mob_hp: std::collections::HashMap<u32, u64>,
+    /// Object id -> the mob's **template** id, filled beside `mob_hp` on every field entry.
+    ///
+    /// Kept separately rather than folded into `mob_hp` so the HP path stays exactly as it
+    /// was. It exists for one reason: when a mob dies, its drop table is keyed by template,
+    /// and by then the only thing the attack packet gives us is the object id.
+    mob_template: std::collections::HashMap<u32, u32>,
     /// The NPC whose shop is open, and the rows **exactly as they went on the wire**.
     ///
     /// The client hands back only a `row_key`, so the rows have to be kept to turn one back
@@ -312,6 +318,7 @@ impl Session {
             rng: Xorshift(seed),
             clock_ms: 0,
             mob_hp: std::collections::HashMap::new(),
+            mob_template: std::collections::HashMap::new(),
             open_shop: None,
             drops: crate::drops::DropTable::new(),
             last_position: None,

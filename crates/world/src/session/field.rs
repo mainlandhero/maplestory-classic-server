@@ -81,8 +81,10 @@ impl Session {
         // A new field means new object ids. Anything remembered from the last one is stale
         // and, worse, could collide - so it goes.
         self.mob_hp.clear();
+        self.mob_template.clear();
         for mob in chosen {
             self.mob_hp.insert(mob.object_id, mob.hp);
+            self.mob_template.insert(mob.object_id, mob.template_id);
             out.push(Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(mob),

@@ -62,12 +62,11 @@ impl Session {
     /// the numbers it intends to show, so nothing is sent back to make them appear - what the
     /// server owes is the *consequence*: the health bar, and the death.
     ///
-    /// Two things this deliberately does not do yet:
+    /// **Drops are rolled here**, on the death branch - see [`Session::drops_from_kill`].
     ///
-    /// * **No EXP.** `0x007C` bit 16 carries it and `net::combat::stat_changed` builds it, but
-    ///   `Character` has no `exp` field and nothing persists one, so crediting a kill would
-    ///   mean inventing a number that vanishes at the next login.
-    /// * **No drops.** Nothing decodes the drop pool yet - `STATUS.md` goal C.
+    /// Still missing: **no EXP for a kill.** `0x007C` bit 16 carries it and experience now
+    /// persists (`!exp` proves the whole chain), but the amount per kill is the EXP curve,
+    /// which lives in the BSS tail of `.data` and cannot be read statically. `STATUS.md`.
     ///
     /// **A miss is not an error.** An attack with no targets is exactly what the client sends
     /// when it swings at empty air, and on 2026-08-19 it was also - wrongly - reported as
@@ -84,6 +83,9 @@ impl Session {
         // where to land - see `Session::last_position`. Recording it here rather than in the
         // drop path means it survives the swing that produced it.
         self.last_position = Some((attack.x as i16, attack.y as i16));
+        // Read once rather than per target: it is a database round trip, and a swing can
+        // legitimately kill several mobs at once.
+        let killer = self.claimed_character().map(|c| (c.id, c.map_id));
         let mut out = Vec::new();
         for target in &attack.targets {
             let Some(hp_before) = self.mob_hp.get(&target.object_id).copied() else {
@@ -94,6 +96,10 @@ impl Session {
                 // The id must never come back. A later hit on a corpse finds nothing here
                 // and is ignored, which is what mob_hit_replies expects.
                 self.mob_hp.remove(&target.object_id);
+                let template = self.mob_template.remove(&target.object_id).unwrap_or(0);
+                if let Some((id, map)) = killer {
+                    out.extend(self.drops_from_kill(template, id, map));
+                }
             } else {
                 self.mob_hp.insert(target.object_id, hit.hp_after);
             }
@@ -111,6 +117,79 @@ impl Session {
                     ),
                 });
             }
+        }
+        out
+    }
+
+
+    /// Roll what a dead mob leaves on the floor, and put it there.
+    ///
+    /// **Two tables, in order: this mob's own, then the global one.** The owner asked for the
+    /// global table so an event item can drop from anything without touching code; it is
+    /// empty until there is an event. `crate::droptables` owns the rolling and the policy,
+    /// and this function owns only the consequences.
+    ///
+    /// # Where it lands, and why it can decline
+    ///
+    /// At the **player's** last known position, not the mob's. The server does not track
+    /// where a mob is - the client controls it and reports movement we only acknowledge - so
+    /// the mob's own coordinates are not available at the moment it dies. The player is
+    /// adjacent to whatever they just killed, and adjacent is what the client's pick-up
+    /// sweep tests, so this is right in practice and wrong in principle; when mob positions
+    /// are tracked, this should use them.
+    ///
+    /// With no known position it drops **nothing** and says so in the log rather than
+    /// guessing. An item placed where the player cannot reach looks identical to no drop at
+    /// all, and would make the next run unreadable.
+    ///
+    /// # Nothing can be picked up yet
+    ///
+    /// The player's pick-up request opcode is still unknown - see `crate::drops`. Items land
+    /// and are visible; collecting them needs one run to name the opcode.
+    pub(super) fn drops_from_kill(&mut self, template: u32, killer: u32, map: u32) -> Vec<Reply> {
+        if template == 0 {
+            return Vec::new(); // an object id we never spawned; nothing to look up
+        }
+        let Some((x, y)) = self.last_position else {
+            return self.notice(
+                "A mob died with drops to give, but the server does not know where you are                  standing, so it dropped nothing rather than putting it out of reach."
+                    .to_string(),
+            );
+        };
+        let rolled = {
+            let rng = &mut self.rng;
+            self.config.drops.roll(template, &mut || rng.next())
+        };
+        let mut out = Vec::new();
+        for r in rolled {
+            let (item, inv_type, meso) = if r.is_mesos() {
+                // A placeholder item: `LiveDrop::is_meso` gates every read of it.
+                (store::Item::bundle(0, 0), store::InventoryType::Etc, r.quantity)
+            } else {
+                // An id whose leading digit names no tab is not an item this game has. Skip
+                // it rather than guess a bag: the same rule `!item` follows, and for the same
+                // reason - the client has to render whatever arrives.
+                let Some(inv) = store::InventoryType::for_item(r.item_id) else {
+                    continue;
+                };
+                let item = if inv == store::InventoryType::Equip {
+                    store::Item::equip(r.item_id)
+                } else {
+                    store::Item::bundle(r.item_id, r.quantity.min(u32::from(u16::MAX)) as u16)
+                };
+                (item, inv, 0u32)
+            };
+            let reply = self.drops.drop_from_mob(crate::drops::DropFromMob {
+                map_id: map,
+                owner_id: killer,
+                item,
+                inv_type,
+                meso,
+                x,
+                y,
+                now_ms: self.clock_ms,
+            });
+            out.push(reply);
         }
         out
     }

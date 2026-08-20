@@ -241,6 +241,16 @@ pub struct FieldDrop {
 
 impl FieldDrop {
     /// An item dropped by a player at their own feet.
+    /// A **meso** drop - a bag of coins on the floor rather than an item.
+    ///
+    /// The wire difference is three fields: the leading type byte becomes [`DROP_TYPE_MESO`],
+    /// `is_money` is set, and the `u32` that carries an item id carries the **amount**
+    /// instead (see `wire_id`). Everything else is identical, which is why this shares a
+    /// struct with an item drop rather than getting one of its own.
+    pub fn money(object_id: u32, meso: u32, owner_id: u32, x: i16, y: i16) -> Self {
+        FieldDrop { meso, is_money: true, ..FieldDrop::item(object_id, 0, owner_id, x, y) }
+    }
+
     pub fn item(object_id: u32, item_id: u32, owner_id: u32, x: i16, y: i16) -> Self {
         FieldDrop {
             object_id,

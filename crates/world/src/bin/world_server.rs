@@ -57,6 +57,8 @@ fn main() -> ExitCode {
     let mut shops_path = PathBuf::from("data/shops.txt");
     let mut item_names_path = PathBuf::from("gm-handbook/items.txt");
     let mut item_data_path = PathBuf::from("gm-handbook/itemdata.txt");
+    // Authored source like data/shops.txt: it cannot be regenerated from the client.
+    let mut drops_path = PathBuf::from("data/drops.txt");
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -97,6 +99,7 @@ fn main() -> ExitCode {
             "--shops" => value().map(|v| shops_path = PathBuf::from(v)),
             "--item-names" => value().map(|v| item_names_path = PathBuf::from(v)),
             "--item-data" => value().map(|v| item_data_path = PathBuf::from(v)),
+            "--drops" => value().map(|v| drops_path = PathBuf::from(v)),
             "--inventory-slots" => value().and_then(|v| {
                 v.parse::<u16>()
                     .map_err(|e| format!("--inventory-slots {v}: {e}"))
@@ -232,6 +235,19 @@ fn main() -> ExitCode {
             quests_path.display()
         );
     }
+
+    // What mobs drop. Missing is legal and means nothing drops - see DropTables::load for
+    // why this degrades rather than refusing to start.
+    config.drops = world::droptables::DropTables::load(&drops_path);
+    for line in &config.drops.problems {
+        println!("maplecw-world: drops: {line}");
+    }
+    println!(
+        "maplecw-world: drops: {} rows over {} mobs, {} global (event) rows",
+        config.drops.total_entries(),
+        config.drops.mobs_with_drops(),
+        config.drops.global().len()
+    );
 
     config.shops =
         world::ShopTable::load(&shops_path, &item_names_path, &item_data_path);

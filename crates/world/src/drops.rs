@@ -287,6 +287,12 @@ pub struct LiveDrop {
     /// `tick`, precisely so that every exchange in the world server is a pure function of
     /// state and time and can be a unit test. A wall clock in here would make expiry the one
     /// thing that could not be tested without sleeping.
+    /// The amount, when this is a **meso** drop rather than an item. `0` means an item.
+    ///
+    /// A meso drop still carries an `item`, and that item is **never read** - every consumer
+    /// tests [`LiveDrop::is_meso`] first. It is a placeholder, not a claim that mesos are
+    /// item id 0.
+    pub meso: u32,
     pub dropped_at_ms: u64,
 }
 
@@ -328,8 +334,17 @@ impl LiveDrop {
     ///
     /// `source_object_id` is the owner's character id, which is what makes the item fly out of
     /// the player's feet on [`net::drops::ENTER_FLOATING`].
+    /// Is this a bag of coins rather than an item? See [`LiveDrop::meso`].
+    pub fn is_meso(&self) -> bool {
+        self.meso > 0
+    }
+
     pub fn field_drop(&self) -> net::drops::FieldDrop {
-        net::drops::FieldDrop::item(self.object_id, self.item_id(), self.owner_id, self.x, self.y)
+        if self.is_meso() {
+            net::drops::FieldDrop::money(self.object_id, self.meso, self.owner_id, self.x, self.y)
+        } else {
+            net::drops::FieldDrop::item(self.object_id, self.item_id(), self.owner_id, self.x, self.y)
+        }
     }
 
     /// `0x046E`, as the reply that puts it on screen.
@@ -358,6 +373,30 @@ impl LiveDrop {
             ),
         }
     }
+}
+
+/// What a dead mob left behind, already rolled.
+///
+/// `meso > 0` makes it a bag of coins and `item` is then a placeholder that nothing reads -
+/// see [`LiveDrop::meso`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DropFromMob {
+    /// The map the mob died on.
+    pub map_id: u32,
+    /// The character who killed it, and therefore who owns the drop while the lock lasts.
+    pub owner_id: u32,
+    /// The item, or a placeholder when `meso > 0`.
+    pub item: store::Item,
+    /// Which bag it goes into when picked up. Derived from the item id, not sent on the wire.
+    pub inv_type: store::InventoryType,
+    /// The amount when this is mesos; `0` for an item drop.
+    pub meso: u32,
+    /// Where it lands - the mob's own position, so it falls where it died.
+    pub x: i16,
+    /// See [`DropFromMob::x`].
+    pub y: i16,
+    /// Session milliseconds, for expiry.
+    pub now_ms: u64,
 }
 
 /// One accepted drop, as the caller describes it.
@@ -637,6 +676,36 @@ impl DropTable {
     /// Mode 3 Remove carries **no tail bytes**, and no `avatarChanged` byte is appended: for
     /// mode 3 that flag depends on client-side state the server cannot see
     /// (`research/msexe-setfield.md`), which is why the slot must be a positive bag slot.
+    /// A mob died and left something on the floor.
+    ///
+    /// **Not [`DropTable::drop_item`], and the difference is the inventory packet.** A bag
+    /// drop must send `0x0070` first, because that reply is what clears the client's
+    /// `+0x2330` latch; a mob drop never touched the bag, so sending one would refuse an
+    /// inventory request the player never made. This returns the `0x046E` alone.
+    ///
+    /// Takes an already-rolled result rather than a table, so the randomness stays in
+    /// `crate::droptables` and everything here remains deterministic and testable.
+    ///
+    /// `owner_id` is the character who landed the killing blow: it is who the drop belongs to
+    /// for [`OWNER_LOCK_MS`], which is the only reason a mob drop needs an owner at all.
+    pub fn drop_from_mob(&mut self, d: DropFromMob) -> Reply {
+        let object_id = self.mint_object_id();
+        let drop = LiveDrop {
+            object_id,
+            map_id: d.map_id,
+            item: d.item,
+            inv_type: d.inv_type,
+            owner_id: d.owner_id,
+            x: d.x,
+            y: d.y,
+            meso: d.meso,
+            dropped_at_ms: d.now_ms,
+        };
+        let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
+        self.live.insert(object_id, drop);
+        enter
+    }
+
     pub fn drop_item(&mut self, d: DropFromBag) -> Vec<Reply> {
         debug_assert!(
             d.slot >= 1,
@@ -651,6 +720,7 @@ impl DropTable {
             owner_id: d.character_id,
             x: d.x,
             y: d.y,
+            meso: 0, // a bag drop is always an item
             dropped_at_ms: d.now_ms,
         };
         let inv_type = d.inv_type.as_u8() as i8;
