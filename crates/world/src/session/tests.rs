@@ -673,6 +673,12 @@ fn shop_session() -> (Session, Arc<Store>, u32) {
 
     let config = Config {
         set_field_probe: true,
+        // The shop is OFF in `Config::default()` because `0x0560` kills the real client -
+        // its window needs a WZ image this client does not ship. These tests are about the
+        // packet's contents and the transaction rules, which stay correct and stay worth
+        // pinning; they turn it on explicitly so the default cannot silently gut them into
+        // passing against a server that sends nothing.
+        send_shop: true,
         shops: table,
         shop_by_template,
         npcs,
@@ -718,6 +724,33 @@ fn clicking_a_shopkeeper_opens_the_shop() {
         net::shop::OPEN_SHOP_FIXED_LEN + 3 * net::shop::SHOP_ROW_LEN
     );
     assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
+}
+
+/// With the shop off, a shopkeeper **talks** instead of ending the session.
+///
+/// `0x0560` kills this client: the window it builds loads `UI/UIWindow2.img/Shop2/backgrnd`
+/// and that image is not in this client's WZ, so the resource call throws and the unwinder
+/// faults - before a single row byte is read. Two of the owner's manual launches died on it.
+///
+/// So the default must be a click that does something harmless and useful. A shopkeeper who
+/// says a line is worth more than one who ends the session, and this pins that the fallback
+/// is a real reply rather than silence - an unanswered click freezes the whole UI.
+#[test]
+fn with_the_shop_off_a_shopkeeper_falls_through_to_dialogue() {
+    let (mut s, _, _) = shop_session();
+    s.config = Arc::new(Config { send_shop: false, ..(*s.config).clone() });
+
+    let out = s.handle(&npc_click(1000));
+    assert!(!out.is_empty(), "a click must always be answered");
+    assert!(
+        out.iter().all(|r| r.opcode != net::shop::OPEN_SHOP),
+        "the packet that kills the client must not go out"
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
+        "it should say a line instead: {:?}",
+        out.iter().map(|r| r.opcode).collect::<Vec<_>>()
+    );
 }
 
 /// `--shop-rows 1` sends exactly one row, and it is a **buy** row.

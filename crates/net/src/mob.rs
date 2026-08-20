@@ -96,6 +96,39 @@ pub const MOB_TEMP_STAT_MASK_LEN: usize = 20;
 /// Both branches compute `uVar6 == (uVar6 / 0xb2) * 0xb2`; a multiple ends up calling through
 /// slot 2 of a stack functor whose vtable is `PTR_LAB_143409208`. It reads no packet bytes, so
 /// it is not a desync - but it is unexplored, and avoiding it is free. **[L]**
+/// The mob's **size percentage**, body offset 91 -> `mob+0xd64`. 100 means "normal size".
+///
+/// # This one field made every mob unhittable, and it looked like nothing
+///
+/// We sent `0` here from the day mobs were implemented. `0` is not "unset" - it is *zero
+/// percent*, and `FUN_141c57120` reads it when it builds the mob's hit rectangle: **[L]**
+///
+/// ```text
+/// 141c571bc  cmp   ecx, 0x64          ; scale == 100?
+/// 141c571bf  je    0x141c573c8        ;   yes -> skip the adjustment entirely
+/// 141c571cb  sub   eax, r8d           ; width = right - left
+/// 141c571d4  sar   eax, 1             ; halfWidth
+/// 141c571da  lea   eax, [rcx - 0x64]  ; scale - 100
+/// 141c571f6  mulsd ...                ; delta = halfWidth * (scale - 100) / 100
+/// 141c571fe  add   [rdi + 8], eax     ; right += delta
+/// 141c57201  sub   r8d, eax           ; left  -= delta
+/// ```
+///
+/// At `0` the multiplier is `-1.0`, so `delta = -halfWidth`, both edges collapse onto the
+/// centre and `left >= right`. The target collector then **skips** that rectangle at
+/// `141d326ae` rather than rejecting it, `r14b` stays `0`, and `141d327c6` drops the mob -
+/// with all seventeen documented gates green. Measured on a real client: 30 mobs walked in
+/// one swing, every attack 127 bytes, zero targets.
+///
+/// **Why it stayed invisible for so long.** The rendering paths test this field for `<= 0`
+/// and read that as "no scale set, draw normally", while the hit-box path tests `!= 100`.
+/// So the snails drew, animated and walked around perfectly while having no hit box at all,
+/// which is exactly what the owner saw. It also explains why they took no touch damage.
+///
+/// Exactly `100` matters, not "non-zero": any other value takes the adjustment branch and
+/// resizes the box. There is a runtime counterpart, `0x041C`, if a mob ever needs resizing.
+pub const MOB_SCALE_UNSCALED: u32 = 100;
+
 pub const OBJECT_ID_MULTIPLE_TO_AVOID: u32 = 178;
 
 /// Three template ids for which `FUN_14045b1a0` returns 1, which makes the client read **one
@@ -395,7 +428,7 @@ pub fn mob_enter_field(mob: &FieldMob) -> Vec<u8> {
     b.extend_from_slice(&0u32.to_le_bytes()); //           82  u32 141c5068a
     b.push(0); //                                          86  u8  141c50694
     b.extend_from_slice(&0u32.to_le_bytes()); //           87  u32 141c506bd count = 0
-    b.extend_from_slice(&0u32.to_le_bytes()); //           91  u32 141c507bb -> mob+0xd64
+    b.extend_from_slice(&MOB_SCALE_UNSCALED.to_le_bytes()); // 91 u32 141c507bb -> mob+0xd64
     b.push(0); //                                          95  u8  141c507c9 gate: costs 8
     b.extend_from_slice(&0u32.to_le_bytes()); //           96  u32 141c50808 count = 0
     b.push(0); //                                         100  u8  141c509d2 gate: costs 120
@@ -468,7 +501,11 @@ mod tests {
         assert_eq!(&b[82..86], &0u32.to_le_bytes(), "141c5068a");
         assert_eq!(b[86], 0, "141c50694");
         assert_eq!(&b[87..91], &0u32.to_le_bytes(), "141c506bd count");
-        assert_eq!(&b[91..95], &0u32.to_le_bytes(), "141c507bb");
+        // **Not zero, and this line used to say zero.** `141c507bb` -> `mob+0xd64` is the
+        // mob's size percentage, and `0` means zero percent rather than "unset": it
+        // collapses the hit rectangle onto its own centre and makes the mob unhittable
+        // while still rendering and walking. See `MOB_SCALE_UNSCALED`.
+        assert_eq!(&b[91..95], &MOB_SCALE_UNSCALED.to_le_bytes(), "141c507bb mob+0xd64 scale");
         assert_eq!(b[95], 0, "141c507c9 gate");
         assert_eq!(&b[96..100], &0u32.to_le_bytes(), "141c50808 count");
         assert_eq!(b[100], 0, "141c509d2 gate over raw[120]");
@@ -670,5 +707,31 @@ mod tests {
         assert_eq!(&b[33..35], &[0xFF, 0xFF], "y = -1");
         assert_eq!(&b[36..38], &[0xFE, 0xFF], "fh = -2");
         assert_eq!(&b[38..40], &[0xFD, 0xFF], "homeFh = -3");
+    }
+
+    /// **The mob's size percentage must be exactly 100, and this is why mobs were
+    /// unhittable.** See [`MOB_SCALE_UNSCALED`] for the listing.
+    ///
+    /// Pinned against the *body* offset the client reads (`141c507bb`), not against a
+    /// field of `FieldMob`, because there is no field - it is a constant in the writer, and
+    /// a constant is exactly the kind of thing that gets typed as `0` and never revisited.
+    /// It was `0` for the entire life of mob support.
+    #[test]
+    fn the_mob_size_scale_is_exactly_one_hundred() {
+        let m = tutorial_mob();
+        let b = mob_enter_field(&m);
+        // `mob_enter_field` emits the BODY only - no opcode prefix - so the offsets quoted
+        // in the writer's comments are already the right index.
+        let at = 91;
+        let scale = u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+        assert_eq!(
+            scale, 100,
+            "mob+0xd64 must be 100. Anything else takes the resize branch at 141c571bf, and \
+             0 collapses the hit rectangle onto its own centre - the mob renders, walks, and \
+             cannot be hit or hit back"
+        );
+        assert_eq!(scale, MOB_SCALE_UNSCALED);
+        // And the fix must not have moved anything: same width, same packet.
+        assert_eq!(b.len(), m.body_len(), "the body length changed");
     }
 }

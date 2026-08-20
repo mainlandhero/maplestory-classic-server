@@ -131,6 +131,22 @@ pub struct Config {
     /// half. It can never take the list to zero: a zero-row shop is a different client arm
     /// that builds a dialog box instead of a counter.
     pub shop_rows: Option<usize>,
+    /// Send `0x0560` OpenShop at all. **Off by default, because it kills this client.**
+    ///
+    /// Not a protocol bug and not fixable from the server: the shop UI's constructor loads
+    /// `UI/UIWindow2.img/Shop2/backgrnd`, and that image is **not in this client's WZ**. The
+    /// resource call fails, `_com_issue_errorex` throws, and the unwinder faults. The client
+    /// never returns from the handler - neither crashing run has a numbered dispatch line
+    /// for `0x0560`, and both counters run without gaps, so the absence is measured rather
+    /// than assumed. It dies *before* reading a single row byte, which is why one row killed
+    /// it exactly as twelve did.
+    ///
+    /// With this off, a shopkeeper falls through to ordinary dialogue, which works. That is
+    /// a worse shop and a much better client. `--shop` re-enables it for a deliberate test.
+    ///
+    /// **Not abandoned.** The WZ ships `UIShop.img/Shop`, the classic-layout counter; which
+    /// opcode builds *that* is the open question. `research/npc-shop-crash2.md`.
+    pub send_shop: bool,
     /// Every equip's template values, keyed by item id, from `gm-handbook/equips.txt`.
     ///
     /// The character record carries an item's stats and upgrade slots per *instance*, and a
@@ -885,6 +901,7 @@ impl Default for Config {
             mobs: HashMap::new(),
             mob_limit: None,
             shop_rows: None,
+            send_shop: false,
             chatter_off: false,
             equips: HashMap::new(),
             npc_strings: HashMap::new(),

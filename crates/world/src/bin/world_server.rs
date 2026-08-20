@@ -117,9 +117,17 @@ fn main() -> ExitCode {
                     .map(|n: usize| config.mob_limit = Some(n))
                     .map_err(|e| format!("--mob-limit {v}: {e}"))
             }),
-            // The shop counter's blast-radius control. See Config::shop_rows: twelve rows
-            // went out and the client threw ten milliseconds later, and "a row is wrong" and
-            // "twelve rows at once" look identical on screen.
+            // Re-enable OpenShop. OFF by default: it kills this client, because the window
+            // it builds needs a WZ image this client does not ship. See Config::send_shop
+            // and research/npc-shop-crash2.md.
+            "--shop" => {
+                config.send_shop = true;
+                Ok(())
+            }
+            // The shop counter's blast-radius control, and it is now known NOT to be the
+            // variable: one correctly-formed row killed the client exactly as twelve did,
+            // because the client dies before reading any row byte. Kept for the next time
+            // rows are a suspect.
             "--shop-rows" => value().and_then(|v| {
                 v.parse()
                     .map(|n: usize| config.shop_rows = Some(n))

@@ -1,0 +1,56 @@
+; 0x140d22310 .. 0x140d22433  (291 bytes)
+ 000140d22310  mov      qword ptr [rsp + 0x10], rbx
+ 000140d22315  mov      qword ptr [rsp + 8], rcx
+ 000140d2231a  push     rdi
+ 000140d2231b  sub      rsp, 0x30
+ 000140d2231f  mov      rbx, rcx
+ 000140d22322  call     0x14177fe00
+ 000140d22327  nop      
+ 000140d22328  lea      rax, [rip + 0x264a3d1]
+ 000140d2232f  mov      qword ptr [rbx], rax
+ 000140d22332  lea      rax, [rip + 0x264a527]
+ 000140d22339  mov      qword ptr [rbx + 8], rax
+ 000140d2233d  lea      rax, [rip + 0x264a5f4]
+ 000140d22344  mov      qword ptr [rbx + 0x18], rax
+ 000140d22348  xor      edi, edi
+ 000140d2234a  mov      qword ptr [rbx + 0x2a0], rdi
+ 000140d22351  mov      qword ptr [rbx + 0x2b0], rdi
+ 000140d22358  mov      qword ptr [rbx + 0x2c0], rdi
+ 000140d2235f  mov      qword ptr [rbx + 0x2d0], rdi
+ 000140d22366  mov      qword ptr [rbx + 0x2e0], rdi
+ 000140d2236d  mov      qword ptr [rbx + 0x2f0], rdi
+ 000140d22374  mov      qword ptr [rbx + 0x300], rdi
+ 000140d2237b  mov      qword ptr [rbx + 0x310], rdi
+ 000140d22382  mov      qword ptr [rbx + 0x328], rdi
+ 000140d22389  mov      qword ptr [rbx + 0x330], rdi
+ 000140d22390  mov      qword ptr [rbx + 0x338], rdi
+ 000140d22397  mov      qword ptr [rbx + 0x340], rdi
+ 000140d2239e  mov      qword ptr [rbx + 0x348], rdi
+ 000140d223a5  mov      qword ptr [rbx + 0x350], rdi
+ 000140d223ac  mov      qword ptr [rbx + 0x358], rdi
+ 000140d223b3  mov      qword ptr [rbx + 0x360], rdi
+ 000140d223ba  mov      qword ptr [rbx + 0x368], rdi
+ 000140d223c1  mov      qword ptr [rbx + 0x370], rdi
+ 000140d223c8  mov      qword ptr [rbx + 0x378], rdi
+ 000140d223cf  lea      rcx, [rbx + 0x380]
+ 000140d223d6  call     0x142644810
+ 000140d223db  nop      
+ 000140d223dc  mov      qword ptr [rbx + 0x14a8], rdi
+ 000140d223e3  mov      qword ptr [rbx + 0x14b0], rdi
+ 000140d223ea  mov      qword ptr [rbx + 0x14b8], rdi
+ 000140d223f1  lea      rcx, [rbx + 0x14e0]
+ 000140d223f8  call     0x141aa3a20
+ 000140d223fd  nop      
+ 000140d223fe  mov      dword ptr [rsp + 0x28], 4
+ 000140d22406  mov      dword ptr [rsp + 0x20], 1
+ 000140d2240e  xor      r9d, r9d
+ 000140d22411  lea      r8d, [rdi + 1]
+ 000140d22415  lea      rdx, [rip + 0x264a524]
+ 000140d2241c  mov      rcx, rbx
+ 000140d2241f  call     0x14177f0e0
+ 000140d22424  nop      
+ 000140d22425  mov      rax, rbx
+ 000140d22428  mov      rbx, qword ptr [rsp + 0x48]
+ 000140d2242d  add      rsp, 0x30
+ 000140d22431  pop      rdi
+ 000140d22432  ret      

@@ -31,6 +31,25 @@ impl Session {
     /// entirely for `rowCount == 0` - a dialog box, and a `0x0104` back - so a shop that
     /// resolves to nothing falls through to the dialogue path instead.
     pub(super) fn open_shop_for(&mut self, template: u32, character_id: u32) -> Option<Vec<Reply>> {
+        // **`0x0560` kills this client, and the reason is its own data, not our bytes.**
+        //
+        // Two manual launches died on it - twelve rows and one correctly-formed row alike -
+        // and the client never returns from the handler: neither run has a numbered dispatch
+        // line for `0x0560`, and both counters run without gaps, so the absence is real. The
+        // shop UI's constructor loads `UI/UIWindow2.img/Shop2/backgrnd`, that image is
+        // **not in this client's WZ**, the ResMan COM call fails, `_com_issue_errorex`
+        // throws, and the unwinder faults. The crash happens *before* a single row byte is
+        // read, which is why `--shop-rows 1` changed nothing.
+        //
+        // So this is off by default until the **classic** counter is found - the WZ ships
+        // `UIShop.img/Shop` instead, and which opcode drives it is not yet established.
+        // Returning `None` falls through to the NPC's ordinary dialogue, which works; a
+        // shopkeeper who talks is worth more than one who ends the session.
+        //
+        // `--shop` turns it back on for a deliberate test. `research/npc-shop-crash2.md`.
+        if !self.config.send_shop {
+            return None;
+        }
         let index = *self.config.shop_by_template.get(&template)?;
         let shop = self.config.shops.shops.get(index)?;
 

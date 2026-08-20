@@ -1,0 +1,396 @@
+; 0x14308e3db .. 0x14308e8c1  (1254 bytes)  [49 contiguous .pdata entries merged]
+ 00014308e3db  push     rbp
+ 00014308e3dd  sub      rsp, 0x20
+ 00014308e3e1  mov      rbp, rdx
+ 00014308e3e4  lea      rcx, [rbp + 0x50]
+ 00014308e3e8  call     0x140ce89c0
+ 00014308e3ed  add      rsp, 0x20
+ 00014308e3f1  pop      rbp
+ 00014308e3f2  ret      
+ 00014308e3f3  push     rbp
+ 00014308e3f5  sub      rsp, 0x20
+ 00014308e3f9  mov      rbp, rdx
+ 00014308e3fc  lea      rcx, [rbp + 0x20]
+ 00014308e400  call     0x1406ed610
+ 00014308e405  add      rsp, 0x20
+ 00014308e409  pop      rbp
+ 00014308e40a  ret      
+ 00014308e40b  push     rbp
+ 00014308e40d  sub      rsp, 0x20
+ 00014308e411  mov      rbp, rdx
+ 00014308e414  lea      rcx, [rbp + 0x180]
+ 00014308e41b  call     0x1406ed610
+ 00014308e420  add      rsp, 0x20
+ 00014308e424  pop      rbp
+ 00014308e425  ret      
+ 00014308e426  push     rbp
+ 00014308e428  sub      rsp, 0x20
+ 00014308e42c  mov      rbp, rdx
+ 00014308e42f  lea      rcx, [rbp + 0x20]
+ 00014308e433  call     0x1406ed610
+ 00014308e438  add      rsp, 0x20
+ 00014308e43c  pop      rbp
+ 00014308e43d  ret      
+ 00014308e43e  push     rbp
+ 00014308e440  sub      rsp, 0x20
+ 00014308e444  mov      rbp, rdx
+ 00014308e447  mov      edx, 0x68
+ 00014308e44c  mov      rcx, qword ptr [rbp + 0x78]
+ 00014308e450  call     0x142ef3bb8
+ 00014308e455  add      rsp, 0x20
+ 00014308e459  pop      rbp
+ 00014308e45a  ret      
+ 00014308e45b  push     rbp
+ 00014308e45d  sub      rsp, 0x20
+ 00014308e461  mov      rbp, rdx
+ 00014308e464  lea      rcx, [rbp + 0x30]
+ 00014308e468  call     0x1406ed610
+ 00014308e46d  add      rsp, 0x20
+ 00014308e471  pop      rbp
+ 00014308e472  ret      
+ 00014308e473  push     rbp
+ 00014308e475  sub      rsp, 0x20
+ 00014308e479  mov      rbp, rdx
+ 00014308e47c  lea      rcx, [rbp + 0x20]
+ 00014308e480  call     0x1406ed610
+ 00014308e485  add      rsp, 0x20
+ 00014308e489  pop      rbp
+ 00014308e48a  ret      
+ 00014308e48b  push     rbp
+ 00014308e48d  sub      rsp, 0x20
+ 00014308e491  mov      rbp, rdx
+ 00014308e494  lea      rcx, [rbp + 0x20]
+ 00014308e498  call     0x1406ed610
+ 00014308e49d  add      rsp, 0x20
+ 00014308e4a1  pop      rbp
+ 00014308e4a2  ret      
+ 00014308e4a3  push     rbp
+ 00014308e4a5  sub      rsp, 0x20
+ 00014308e4a9  mov      rbp, rdx
+ 00014308e4ac  lea      rcx, [rbp + 0x28]
+ 00014308e4b0  call     0x1415e28a0
+ 00014308e4b5  add      rsp, 0x20
+ 00014308e4b9  pop      rbp
+ 00014308e4ba  ret      
+ 00014308e4bb  push     rbp
+ 00014308e4bd  sub      rsp, 0x20
+ 00014308e4c1  mov      rbp, rdx
+ 00014308e4c4  lea      rcx, [rbp + 0x70]
+ 00014308e4c8  call     0x14035a250
+ 00014308e4cd  add      rsp, 0x20
+ 00014308e4d1  pop      rbp
+ 00014308e4d2  ret      
+ 00014308e4d3  push     rbp
+ 00014308e4d5  sub      rsp, 0x20
+ 00014308e4d9  mov      rbp, rdx
+ 00014308e4dc  lea      rcx, [rbp + 0x30]
+ 00014308e4e0  call     0x1415e2620
+ 00014308e4e5  add      rsp, 0x20
+ 00014308e4e9  pop      rbp
+ 00014308e4ea  ret      
+ 00014308e4eb  push     rbp
+ 00014308e4ed  sub      rsp, 0x20
+ 00014308e4f1  mov      rbp, rdx
+ 00014308e4f4  lea      rcx, [rbp + 0x40]
+ 00014308e4f8  call     0x1406ed610
+ 00014308e4fd  add      rsp, 0x20
+ 00014308e501  pop      rbp
+ 00014308e502  ret      
+ 00014308e503  push     rbp
+ 00014308e505  sub      rsp, 0x20
+ 00014308e509  mov      rbp, rdx
+ 00014308e50c  lea      rcx, [rbp + 0x20]
+ 00014308e510  call     0x1406ed610
+ 00014308e515  add      rsp, 0x20
+ 00014308e519  pop      rbp
+ 00014308e51a  ret      
+ 00014308e51b  push     rbp
+ 00014308e51d  sub      rsp, 0x20
+ 00014308e521  mov      rbp, rdx
+ 00014308e524  lea      rcx, [rbp + 0x28]
+ 00014308e528  call     0x140199470
+ 00014308e52d  add      rsp, 0x20
+ 00014308e531  pop      rbp
+ 00014308e532  ret      
+ 00014308e533  push     rbp
+ 00014308e535  sub      rsp, 0x20
+ 00014308e539  mov      rbp, rdx
+ 00014308e53c  mov      edx, 0x30
+ 00014308e541  mov      rcx, qword ptr [rbp + 0xb0]
+ 00014308e548  call     0x142ef3bb8
+ 00014308e54d  add      rsp, 0x20
+ 00014308e551  pop      rbp
+ 00014308e552  ret      
+ 00014308e553  push     rbp
+ 00014308e555  sub      rsp, 0x20
+ 00014308e559  mov      rbp, rdx
+ 00014308e55c  lea      rcx, [rbp + 0x38]
+ 00014308e560  call     0x1415104c0
+ 00014308e565  add      rsp, 0x20
+ 00014308e569  pop      rbp
+ 00014308e56a  ret      
+ 00014308e56b  push     rbp
+ 00014308e56d  sub      rsp, 0x20
+ 00014308e571  mov      rbp, rdx
+ 00014308e574  lea      rcx, [rbp + 0xc8]
+ 00014308e57b  call     0x140199470
+ 00014308e580  add      rsp, 0x20
+ 00014308e584  pop      rbp
+ 00014308e585  ret      
+ 00014308e586  push     rbp
+ 00014308e588  sub      rsp, 0x20
+ 00014308e58c  mov      rbp, rdx
+ 00014308e58f  lea      rcx, [rbp + 0x30]
+ 00014308e593  call     0x140199470
+ 00014308e598  add      rsp, 0x20
+ 00014308e59c  pop      rbp
+ 00014308e59d  ret      
+ 00014308e59e  push     rbp
+ 00014308e5a0  sub      rsp, 0x20
+ 00014308e5a4  mov      rbp, rdx
+ 00014308e5a7  lea      rcx, [rbp + 0x130]
+ 00014308e5ae  call     0x140199470
+ 00014308e5b3  add      rsp, 0x20
+ 00014308e5b7  pop      rbp
+ 00014308e5b8  ret      
+ 00014308e5b9  push     rbp
+ 00014308e5bb  sub      rsp, 0x20
+ 00014308e5bf  mov      rbp, rdx
+ 00014308e5c2  lea      rcx, [rbp + 0x20]
+ 00014308e5c6  call     0x140199470
+ 00014308e5cb  add      rsp, 0x20
+ 00014308e5cf  pop      rbp
+ 00014308e5d0  ret      
+ 00014308e5d1  push     rbp
+ 00014308e5d3  sub      rsp, 0x20
+ 00014308e5d7  mov      rbp, rdx
+ 00014308e5da  lea      rcx, [rbp + 0x190]
+ 00014308e5e1  call     0x140199470
+ 00014308e5e6  add      rsp, 0x20
+ 00014308e5ea  pop      rbp
+ 00014308e5eb  ret      
+ 00014308e5ec  push     rbp
+ 00014308e5ee  sub      rsp, 0x20
+ 00014308e5f2  mov      rbp, rdx
+ 00014308e5f5  lea      rcx, [rbp + 0x188]
+ 00014308e5fc  call     0x140199470
+ 00014308e601  add      rsp, 0x20
+ 00014308e605  pop      rbp
+ 00014308e606  ret      
+ 00014308e607  push     rbp
+ 00014308e609  sub      rsp, 0x20
+ 00014308e60d  mov      rbp, rdx
+ 00014308e610  lea      rcx, [rbp + 0x180]
+ 00014308e617  call     0x140199470
+ 00014308e61c  add      rsp, 0x20
+ 00014308e620  pop      rbp
+ 00014308e621  ret      
+ 00014308e622  push     rbp
+ 00014308e624  sub      rsp, 0x20
+ 00014308e628  mov      rbp, rdx
+ 00014308e62b  lea      rcx, [rbp + 0x98]
+ 00014308e632  call     0x140199470
+ 00014308e637  add      rsp, 0x20
+ 00014308e63b  pop      rbp
+ 00014308e63c  ret      
+ 00014308e63d  push     rbp
+ 00014308e63f  sub      rsp, 0x20
+ 00014308e643  mov      rbp, rdx
+ 00014308e646  lea      rcx, [rbp + 0x90]
+ 00014308e64d  call     0x140199470
+ 00014308e652  add      rsp, 0x20
+ 00014308e656  pop      rbp
+ 00014308e657  ret      
+ 00014308e658  push     rbp
+ 00014308e65a  sub      rsp, 0x20
+ 00014308e65e  mov      rbp, rdx
+ 00014308e661  lea      rcx, [rbp + 0x88]
+ 00014308e668  call     0x140199470
+ 00014308e66d  add      rsp, 0x20
+ 00014308e671  pop      rbp
+ 00014308e672  ret      
+ 00014308e673  push     rbp
+ 00014308e675  sub      rsp, 0x20
+ 00014308e679  mov      rbp, rdx
+ 00014308e67c  lea      rcx, [rbp + 0x80]
+ 00014308e683  call     0x140199470
+ 00014308e688  add      rsp, 0x20
+ 00014308e68c  pop      rbp
+ 00014308e68d  ret      
+ 00014308e68e  push     rbp
+ 00014308e690  sub      rsp, 0x20
+ 00014308e694  mov      rbp, rdx
+ 00014308e697  lea      rcx, [rbp + 0x78]
+ 00014308e69b  call     0x140199470
+ 00014308e6a0  add      rsp, 0x20
+ 00014308e6a4  pop      rbp
+ 00014308e6a5  ret      
+ 00014308e6a6  push     rbp
+ 00014308e6a8  sub      rsp, 0x20
+ 00014308e6ac  mov      rbp, rdx
+ 00014308e6af  lea      rcx, [rbp + 0x70]
+ 00014308e6b3  call     0x140199470
+ 00014308e6b8  add      rsp, 0x20
+ 00014308e6bc  pop      rbp
+ 00014308e6bd  ret      
+ 00014308e6be  push     rbp
+ 00014308e6c0  sub      rsp, 0x20
+ 00014308e6c4  mov      rbp, rdx
+ 00014308e6c7  lea      rcx, [rbp + 0x68]
+ 00014308e6cb  call     0x140199470
+ 00014308e6d0  add      rsp, 0x20
+ 00014308e6d4  pop      rbp
+ 00014308e6d5  ret      
+ 00014308e6d6  push     rbp
+ 00014308e6d8  sub      rsp, 0x20
+ 00014308e6dc  mov      rbp, rdx
+ 00014308e6df  lea      rcx, [rbp + 0x60]
+ 00014308e6e3  call     0x140199470
+ 00014308e6e8  add      rsp, 0x20
+ 00014308e6ec  pop      rbp
+ 00014308e6ed  ret      
+ 00014308e6ee  push     rbp
+ 00014308e6f0  sub      rsp, 0x20
+ 00014308e6f4  mov      rbp, rdx
+ 00014308e6f7  lea      rcx, [rbp + 0x1e8]
+ 00014308e6fe  call     0x140199470
+ 00014308e703  add      rsp, 0x20
+ 00014308e707  pop      rbp
+ 00014308e708  ret      
+ 00014308e709  push     rbp
+ 00014308e70b  sub      rsp, 0x20
+ 00014308e70f  mov      rbp, rdx
+ 00014308e712  lea      rcx, [rbp + 0x1e0]
+ 00014308e719  call     0x140199470
+ 00014308e71e  add      rsp, 0x20
+ 00014308e722  pop      rbp
+ 00014308e723  ret      
+ 00014308e724  push     rbp
+ 00014308e726  sub      rsp, 0x20
+ 00014308e72a  mov      rbp, rdx
+ 00014308e72d  lea      rcx, [rbp + 0x220]
+ 00014308e734  call     0x140199470
+ 00014308e739  add      rsp, 0x20
+ 00014308e73d  pop      rbp
+ 00014308e73e  ret      
+ 00014308e73f  push     rbp
+ 00014308e741  sub      rsp, 0x20
+ 00014308e745  mov      rbp, rdx
+ 00014308e748  lea      rcx, [rbp + 0x218]
+ 00014308e74f  call     0x140199470
+ 00014308e754  add      rsp, 0x20
+ 00014308e758  pop      rbp
+ 00014308e759  ret      
+ 00014308e75a  push     rbp
+ 00014308e75c  sub      rsp, 0x20
+ 00014308e760  mov      rbp, rdx
+ 00014308e763  lea      rcx, [rbp + 0x48]
+ 00014308e767  call     0x1406f12e0
+ 00014308e76c  add      rsp, 0x20
+ 00014308e770  pop      rbp
+ 00014308e771  ret      
+ 00014308e772  push     rbp
+ 00014308e774  sub      rsp, 0x20
+ 00014308e778  mov      rbp, rdx
+ 00014308e77b  lea      rcx, [rbp + 0x20]
+ 00014308e77f  call     0x1406ed610
+ 00014308e784  add      rsp, 0x20
+ 00014308e788  pop      rbp
+ 00014308e789  ret      
+ 00014308e78a  push     rbp
+ 00014308e78c  sub      rsp, 0x20
+ 00014308e790  mov      rbp, rdx
+ 00014308e793  mov      rcx, qword ptr [rbp + 0x38]
+ 00014308e797  call     0x140199470
+ 00014308e79c  add      rsp, 0x20
+ 00014308e7a0  pop      rbp
+ 00014308e7a1  ret      
+ 00014308e7a2  push     rbp
+ 00014308e7a4  sub      rsp, 0x20
+ 00014308e7a8  mov      rbp, rdx
+ 00014308e7ab  lea      rcx, [rbp + 0x30]
+ 00014308e7af  call     0x140199470
+ 00014308e7b4  add      rsp, 0x20
+ 00014308e7b8  pop      rbp
+ 00014308e7b9  ret      
+ 00014308e7ba  push     rbp
+ 00014308e7bc  sub      rsp, 0x20
+ 00014308e7c0  mov      rbp, rdx
+ 00014308e7c3  lea      rcx, [rbp + 0x30]
+ 00014308e7c7  call     0x1406ed610
+ 00014308e7cc  add      rsp, 0x20
+ 00014308e7d0  pop      rbp
+ 00014308e7d1  ret      
+ 00014308e7d2  push     rbp
+ 00014308e7d4  sub      rsp, 0x20
+ 00014308e7d8  mov      rbp, rdx
+ 00014308e7db  lea      rcx, [rbp + 0x68]
+ 00014308e7df  call     0x140199470
+ 00014308e7e4  add      rsp, 0x20
+ 00014308e7e8  pop      rbp
+ 00014308e7e9  ret      
+ 00014308e7ea  push     rbp
+ 00014308e7ec  sub      rsp, 0x20
+ 00014308e7f0  mov      rbp, rdx
+ 00014308e7f3  lea      rcx, [rbp + 0x70]
+ 00014308e7f7  call     0x14035a250
+ 00014308e7fc  add      rsp, 0x20
+ 00014308e800  pop      rbp
+ 00014308e801  ret      
+ 00014308e802  push     rbp
+ 00014308e804  sub      rsp, 0x20
+ 00014308e808  mov      rbp, rdx
+ 00014308e80b  mov      edx, 0x150
+ 00014308e810  mov      rcx, qword ptr [rbp + 0xb8]
+ 00014308e817  call     0x142ef3bb8
+ 00014308e81c  add      rsp, 0x20
+ 00014308e820  pop      rbp
+ 00014308e821  ret      
+ 00014308e822  push     rbp
+ 00014308e824  sub      rsp, 0x20
+ 00014308e828  mov      rbp, rdx
+ 00014308e82b  lea      rcx, [rbp + 0xe0]
+ 00014308e832  call     0x140199470
+ 00014308e837  add      rsp, 0x20
+ 00014308e83b  pop      rbp
+ 00014308e83c  ret      
+ 00014308e83d  push     rbp
+ 00014308e83f  sub      rsp, 0x20
+ 00014308e843  mov      rbp, rdx
+ 00014308e846  lea      rcx, [rbp + 0x60]
+ 00014308e84a  call     0x140199470
+ 00014308e84f  add      rsp, 0x20
+ 00014308e853  pop      rbp
+ 00014308e854  ret      
+ 00014308e855  push     rbp
+ 00014308e857  sub      rsp, 0x20
+ 00014308e85b  mov      rbp, rdx
+ 00014308e85e  lea      rcx, [rbp + 0xa0]
+ 00014308e865  call     0x1408550e0
+ 00014308e86a  add      rsp, 0x20
+ 00014308e86e  pop      rbp
+ 00014308e86f  ret      
+ 00014308e870  push     rbp
+ 00014308e872  sub      rsp, 0x20
+ 00014308e876  mov      rbp, rdx
+ 00014308e879  lea      rcx, [rbp + 0x108]
+ 00014308e880  call     0x1401bc090
+ 00014308e885  add      rsp, 0x20
+ 00014308e889  pop      rbp
+ 00014308e88a  ret      
+ 00014308e88b  push     rbp
+ 00014308e88d  sub      rsp, 0x20
+ 00014308e891  mov      rbp, rdx
+ 00014308e894  lea      rcx, [rbp + 0x190]
+ 00014308e89b  call     0x140199470
+ 00014308e8a0  add      rsp, 0x20
+ 00014308e8a4  pop      rbp
+ 00014308e8a5  ret      
+ 00014308e8a6  push     rbp
+ 00014308e8a8  sub      rsp, 0x20
+ 00014308e8ac  mov      rbp, rdx
+ 00014308e8af  lea      rcx, [rbp + 0x180]
+ 00014308e8b6  call     0x140199470
+ 00014308e8bb  add      rsp, 0x20
+ 00014308e8bf  pop      rbp
+ 00014308e8c0  ret      
