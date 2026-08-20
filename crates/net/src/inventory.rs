@@ -179,6 +179,58 @@ pub fn inventory_move_result(inv_type: i8, old_pos: i16, new_pos: i16) -> Vec<u8
     w.into_vec()
 }
 
+/// Entry mode 0: **put a new item in a slot**, carrying the whole item body.
+///
+/// `research/msexe-setfield.md`'s mode table: mode 0's tail is the **item blob**, read at
+/// `142d51bd9` through `FUN_140303530` - the same factory the character record uses, so
+/// [`crate::opcode::equipped_item`] and [`crate::bag::bundle_item`] both produce a legal
+/// body for it. The blob's own leading `u8` selects the decode: 1 equip, 2 bundle, 3 pet,
+/// **anything else leaves the item null and reads nothing further**, which silently
+/// truncates the entry rather than throwing.
+pub const MODE_ADD: u8 = 0;
+
+/// Entry mode 3: **take the item out of a slot**. No tail bytes at all.
+///
+/// Named here because it is the other half of a drop and of a sale, and because a mode with
+/// no tail is exactly the kind of thing someone adds a phantom field to.
+pub const MODE_REMOVE: u8 = 3;
+
+/// Put an item into a bag slot, without a field re-entry.
+///
+/// This is what makes an item appear in the bag *now* - the alternative was to write the
+/// database and re-send `SetField`, which works but redraws the whole field to move one
+/// item.
+///
+/// `pos` is the **1-based** slot. `blob` is a complete item body **including its leading
+/// type byte**: `crate::opcode::equipped_item(id, &stats)` for an equip,
+/// `crate::bag::bundle_item(..)` for a stack.
+///
+/// # No trailing byte, and that is read rather than assumed
+///
+/// The conditional `addMovementInfo` byte is guarded by `avatarChanged`, and
+/// `research/msexe-setfield.md` establishes that `avatarChanged` is set in **exactly two
+/// places in the whole handler** - mode 2 with an equipped side, and mode 3 with an equipped
+/// side where the client already holds the item. Mode 0 sets it nowhere, so this body ends
+/// with the blob. Appending a byte here would leave one unread; the frame carries its own
+/// length so that is survivable, but this packet is one where being a byte out has cost two
+/// sessions and there is no reason to be sloppy in the direction of "probably harmless".
+pub fn inventory_added(inv_type: i8, pos: i16, blob: &[u8]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(1); // bExclRequestSent - clears the +0x2330 latch, same as every other reply here
+    w.u8(0);
+    w.u32(1); // nCount, i32
+    w.u8(0); // notRemoveAddInfo
+    w.u8(MODE_ADD);
+    w.u8(inv_type as u8);
+    w.i16(pos);
+    let mut out = w.into_vec();
+    out.extend_from_slice(blob);
+    out
+}
+
+/// The fixed cost of an [`inventory_added`] body, before the item blob.
+pub const INVENTORY_ADD_HEAD_LEN: usize = 7 + 4;
+
 /// Whether a mode-2 entry earns its trailing byte, **by the client's own rule**.
 ///
 /// `(invType == 1 || invType == 6) && (oldPos < 0 || newPos < 0)` - one side of the move is
@@ -231,6 +283,34 @@ mod tests {
         let m = InventoryMove { tick: 0, inv_type: INV_EQUIP, src: 1, dst: -5, count: -1 };
         assert!(!m.is_unequip());
         assert_eq!(m.equipped_slot(), None);
+    }
+
+    /// Mode 0 carries the item body and nothing after it.
+    #[test]
+    fn an_add_is_the_head_then_the_blob() {
+        let blob = [1u8, 2, 3, 4, 5];
+        let b = inventory_added(INV_EQUIP, 7, &blob);
+        assert_eq!(b.len(), INVENTORY_ADD_HEAD_LEN + blob.len());
+        assert_eq!(b[0], 1, "bExclRequestSent");
+        assert_eq!(u32::from_le_bytes([b[2], b[3], b[4], b[5]]), 1, "nCount");
+        assert_eq!(b[7], MODE_ADD);
+        assert_eq!(b[8] as i8, INV_EQUIP);
+        assert_eq!(i16::from_le_bytes([b[9], b[10]]), 7, "the 1-based slot");
+        assert_eq!(&b[INVENTORY_ADD_HEAD_LEN..], &blob, "the blob, ending the body");
+    }
+
+    /// An Add never sets avatarChanged, so it never earns the trailing byte - whatever the
+    /// inventory type and whatever the slot.
+    #[test]
+    fn an_add_never_earns_the_trailing_byte() {
+        for inv in [INV_EQUIP, INV_DECO, 2, 4] {
+            let b = inventory_added(inv, 1, &[1u8]);
+            assert_eq!(
+                b.len(),
+                INVENTORY_ADD_HEAD_LEN + 1,
+                "mode 0 sets avatarChanged nowhere - research/msexe-setfield.md"
+            );
+        }
     }
 
     /// A bag-to-bag move does NOT change the avatar, so it does not get the trailing byte.

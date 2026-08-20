@@ -149,6 +149,21 @@ pub struct Config {
     ///
     /// Empty means "unknown", not "nothing exists" - see [`Config::map_exists`].
     pub fields: std::collections::HashSet<u32>,
+
+    /// `mapId -> name`, from `gm-handbook/maps.txt`.
+    ///
+    /// **Only ever used to say something on screen.** Nothing routes on it, so a missing
+    /// file costs a GM acknowledgement that reads "map 40" instead of "map 40, Ant Tunnel
+    /// Park" and nothing else. That is why it is a plain map with no failure path: this is
+    /// the one table where degrading quietly is the right behaviour.
+    pub map_names: HashMap<u32, String>,
+
+    /// `itemId -> name`, from `gm-handbook/items.txt`.
+    ///
+    /// The reverse of the map `crate::shops::load_item_names` builds. That one is
+    /// `name -> ids` because `data/shops.txt` is authored with names and has to resolve
+    /// them; this one is for printing an id back to a person.
+    pub item_names: HashMap<u32, String>,
 }
 
 impl Config {
@@ -206,6 +221,28 @@ impl Config {
     }
 
     /// Load one map id per line, ignoring blanks and `#` comments.
+    /// Load an `id, name` table - `gm-handbook/maps.txt`, `gm-handbook/items.txt`.
+    ///
+    /// The name may itself contain commas, so the split is on the **first** one only. Two
+    /// of the map names in this client do.
+    pub fn load_id_names(path: &std::path::Path) -> HashMap<u32, String> {
+        let mut out = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((id, name)) = line.split_once(',') else { continue };
+            let Ok(id) = id.trim().parse::<u32>() else { continue };
+            let name = name.trim();
+            if !name.is_empty() {
+                out.insert(id, name.to_string());
+            }
+        }
+        out
+    }
+
     pub fn load_fields(path: &std::path::Path) -> std::collections::HashSet<u32> {
         let mut out = std::collections::HashSet::new();
         let Ok(text) = std::fs::read_to_string(path) else { return out };
@@ -813,6 +850,8 @@ impl Default for Config {
             npc_strings: HashMap::new(),
             quests: HashMap::new(),
             shops: crate::shops::ShopTable::default(),
+            map_names: HashMap::new(),
+            item_names: HashMap::new(),
             send_mobs: true,
             fields: std::collections::HashSet::new(),
         }

@@ -23,6 +23,12 @@ use store::{ClaimedMigration, Store};
 
 use crate::config::Config;
 
+/// What `!help` prints, and what an unknown command is told.
+///
+/// One string so the two cannot drift - a help text that lists a command the dispatcher
+/// does not have is worse than no help text.
+const GM_COMMANDS: &str = "GM commands: !map <mapId>, !item <itemId> [count], !help";
+
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {
@@ -627,7 +633,52 @@ impl Session {
             awaiting_yes_no: false,
             sent_with_next: false,
         });
-        self.say_line(0)
+        // **The acceptance is written down HERE**, and it took a run to find out why.
+        //
+        // `Session::accept_quest` was wired into `on_script_reply`'s yes/no branch, which
+        // is where a `Yes` on a *server-driven* prompt would land. The client's Accept
+        // button does not go there. The capture of 2026-08-20 is unambiguous:
+        //
+        //   <- 0x0151 CLIENT_QUEST_REQUEST  01 e8030000 01000000 43ffe501 00000000
+        //                                   ^ action 1  ^ quest 1000
+        //   -> 0x055B ScriptMessage Say ... for quest 1000 ... on path "0.yes"
+        //
+        // The server answered the `yes` branch - the dialogue was right, it always had
+        // been - and never touched `quest_state`. The owner: *"I have tried accepting Heena's
+        // quest, but unfortunately I do not see the quest as accepted in my quest book.
+        // Changing maps also does nothing to help that."*
+        //
+        // The lesson is the one CLAUDE.md keeps making: the branch we were watching was
+        // the one we had built, not the one the client uses.
+        let mut out = Vec::new();
+        if accepted {
+            out.extend(self.record_quest_start(req.quest_id, req.npc_template_id));
+        }
+        out.extend(self.say_line(0));
+        out
+    }
+
+    /// Write an accepted quest down, and tell the journal about it.
+    ///
+    /// Split from the handler so the *decision* to accept and the *recording* of it read
+    /// separately - the decision is a packet field, the recording is a database write, and
+    /// conflating them is how this ended up in the wrong handler in the first place.
+    fn record_quest_start(&mut self, quest_id: u32, npc_template: u32) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let what = match self.store.start_quest(chr.id, quest_id) {
+            Ok(true) => format!(
+                "quest {quest_id} accepted from NPC {npc_template} by character {} ({}) and stored",
+                chr.id, chr.name
+            ),
+            Ok(false) => format!(
+                "quest {quest_id} was already started for character {}; the record is re-sent so the journal agrees",
+                chr.id
+            ),
+            Err(e) => format!(
+                "quest {quest_id} accepted but NOT STORED ({e}) - the journal will show it until the next relog and then lose it"
+            ),
+        };
+        vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }]
     }
 
     /// Make an NPC with **no quest** speak. This is the other half of goal 2.
@@ -813,21 +864,7 @@ impl Session {
     /// conversation, which is long after that. `crates/net/src/quest.rs` carries the working.
     fn accept_quest(&mut self, convo: &Conversation) -> Vec<Reply> {
         let Some(quest_id) = convo.quest_id else { return Vec::new() };
-        let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let what = match self.store.start_quest(chr.id, quest_id) {
-            Ok(true) => format!(
-                "quest {quest_id} accepted from NPC {} by character {} ({}) and stored",
-                convo.npc_template, chr.id, chr.name
-            ),
-            Ok(false) => format!(
-                "quest {quest_id} was already started for character {}; the record is re-sent so the journal agrees",
-                chr.id
-            ),
-            Err(e) => format!(
-                "quest {quest_id} accepted but NOT STORED ({e}) - the journal will show it until the next relog and then lose it"
-            ),
-        };
-        vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }]
+        self.record_quest_start(quest_id, convo.npc_template)
     }
 
     /// What an NPC should actually say when talked to.
@@ -970,29 +1007,163 @@ impl Session {
         // "Hello2" and "Hello3" and saw nothing at all, because this function matched them
         // against `!map`, found nothing, and returned an empty reply. The balloon and the
         // chat-log line both come from `0x0231` coming back - see net::userchat.
-        if !text.starts_with('!') {
+        let Some(command) = text.strip_prefix('!') else {
             return self.say_out_loud(text);
+        };
+        let (name, arg) = match command.split_once(char::is_whitespace) {
+            Some((n, a)) => (n, a.trim()),
+            None => (command, ""),
+        };
+        match name {
+            "map" => self.gm_map(arg),
+            "item" => self.gm_item(arg),
+            "help" => self.gm_ack(GM_COMMANDS.to_string()),
+            "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
+            other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
         }
-        let Some(rest) = text.strip_prefix("!map ") else {
-            return self.notice(format!("{text}: not a command. Try !map <id>."));
-        };
-        let rest = rest.trim();
-        let Ok(map) = rest.parse::<u32>() else {
-            return self.notice(format!("!map: \"{rest}\" is not a map id."));
-        };
+    }
 
+    /// `!map <id>` - put the character on a map.
+    fn gm_map(&mut self, arg: &str) -> Vec<Reply> {
+        let Ok(map) = arg.parse::<u32>() else {
+            return self.gm_ack(format!("!map: {arg:?} is not a map id. Try !map 40."));
+        };
         // Refuse a map the client cannot load. A character sent to an id with no field image
-        // is stranded with no way back except another command. The owner asked for the refusal to
-        // say so on screen rather than only in the log, which needed the outbound chat line
-        // this now sends - see net::notice::CHAT_NOTICE.
+        // is stranded with no way back except another command.
         if !self.config.map_exists(map) {
-            return self.notice(format!(
-                "!map: {map} has no field image in this client, so it would strand you."
+            return self.gm_ack(format!(
+                "!map REFUSED: {map} has no field image in this client, so it would strand you."
             ));
         }
-        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let Some(mut chr) = self.claimed_character() else {
+            return self.gm_ack("!map REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let mut out = self.gm_ack(format!(
+            "Teleporting {} to map {map}, {}",
+            chr.name,
+            self.map_name(map)
+        ));
         // Portal 0 is the map's spawn point, which is where a GM warp should land.
-        self.go_to_map(&mut chr, map, 0, format!("GM !map {map}"))
+        out.extend(self.go_to_map(&mut chr, map, 0, format!("GM !map {map}")));
+        out
+    }
+
+    /// `!item <itemId> [count]` - put an item in the bag, in the tab its id belongs to.
+    ///
+    /// **The owner asked for this as a safety net**, in these words: *"since most likely my item
+    /// will disappear, I need to request a new GM command called `!item <itemID>` which will
+    /// add that item into my inventory in the proper tab."* Dropping is not built, so an item
+    /// dragged out of the window is currently refused rather than lost - but the moment
+    /// dropping *is* built, this is what puts a mistake right.
+    ///
+    /// The tab comes from the id's leading digit (`store::InventoryType::for_item`), which is
+    /// this game's own convention: 1 equip, 2 use, 3 setup, 4 etc, 5 cash.
+    ///
+    /// **An unknown id is refused rather than sent.** The client has to render whatever
+    /// arrives, and an item body for an id with no `Item.wz` entry is exactly the kind of
+    /// thing that has faulted it before.
+    fn gm_item(&mut self, arg: &str) -> Vec<Reply> {
+        let mut parts = arg.split_whitespace();
+        let Some(Ok(item_id)) = parts.next().map(str::parse::<u32>) else {
+            return self.gm_ack(format!("!item: {arg:?} is not an item id. Try !item 1302000."));
+        };
+        let count: u16 = parts.next().and_then(|c| c.parse().ok()).unwrap_or(1).max(1);
+
+        let Some(inv) = store::InventoryType::for_item(item_id) else {
+            return self.gm_ack(format!(
+                "!item REFUSED: {item_id} is not in any inventory tab - ids start 1..5."
+            ));
+        };
+        if !self.config.item_names.contains_key(&item_id)
+            && !self.config.shops.item_data.contains_key(&item_id)
+        {
+            return self.gm_ack(format!(
+                "!item REFUSED: {item_id} is not in this client's Item.wz, so it has nothing to draw."
+            ));
+        }
+        let Some(chr) = self.claimed_character() else {
+            return self.gm_ack("!item REFUSED: no character is claimed on this connection.".to_string());
+        };
+
+        let is_equip = inv == store::InventoryType::Equip;
+        let item = if is_equip {
+            store::Item::equip(item_id)
+        } else {
+            store::Item::bundle(item_id, count)
+        };
+        let max_stack = self
+            .config
+            .shops
+            .item_data
+            .get(&item_id)
+            .map(|d| d.slot_max.max(1))
+            .unwrap_or(1);
+
+        let placed = match self.store.add_item(chr.id, inv, &item, max_stack) {
+            Ok(rows) => rows,
+            Err(e) => return self.gm_ack(format!("!item REFUSED: {e}")),
+        };
+
+        let name = self.item_name(item_id);
+        let mut out = self.gm_ack(format!(
+            "Giving {} {count}x {name} ({item_id}) -> {inv:?} tab, slot {}",
+            chr.name,
+            placed.iter().map(|r| r.slot.to_string()).collect::<Vec<_>>().join(", ")
+        ));
+        // One 0x0070 Add per slot touched. A stack that overflows into a second slot is two
+        // entries, and the client draws what it is told rather than working it out.
+        for row in &placed {
+            let blob = match row.item.kind {
+                store::ItemKind::Equip(stored) => net::opcode::equipped_item(
+                    row.item.item_id,
+                    &stored.unwrap_or_else(|| self.template_stats(row.item.item_id)),
+                ),
+                store::ItemKind::Bundle { quantity: qty } => net::bag::bundle_item(
+                    row.item.item_id,
+                    qty,
+                    0,
+                    &[0u8; net::bag::BUNDLE_OWNER_LEN],
+                ),
+            };
+            out.push(Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_added(inv.as_u8() as i8, row.slot as i16, &blob),
+                what: format!(
+                    "InventoryOperation ADD: item {} into {inv:?} slot {} - {} byte blob. GM !item.",
+                    row.item.item_id,
+                    row.slot,
+                    blob.len()
+                ),
+            });
+        }
+        out
+    }
+
+    /// A map's name, for a line a person reads. The id alone if there is no table.
+    fn map_name(&self, map: u32) -> String {
+        self.config.map_names.get(&map).cloned().unwrap_or_else(|| "unnamed".to_string())
+    }
+
+    /// An item's name, for a line a person reads.
+    fn item_name(&self, item_id: u32) -> String {
+        self.config.item_names.get(&item_id).cloned().unwrap_or_else(|| "unnamed".to_string())
+    }
+
+    /// Acknowledge a GM command on screen.
+    ///
+    /// **The owner asked for every GM command to say what it is about to do**, rather than the
+    /// only feedback being a refusal. A command that silently works and a command that
+    /// silently does nothing look identical on screen, and telling them apart has cost
+    /// launches.
+    ///
+    /// It goes out as [`net::notice::CHAT_NOTICE`], the same `0x00BB` a refusal already
+    /// used. **What colour that renders is not established.** It reaches the chat window
+    /// through printer type 7, which is also how the client's own `[Welcome] Welcome to
+    /// MapleStory!!` line arrives - and that line is yellow on screen - so yellow is the
+    /// expectation. It is an expectation, not a measurement, and the run will settle it.
+    /// `net::notice` records that colour is not controllable through this packet.
+    fn gm_ack(&self, text: String) -> Vec<Reply> {
+        self.notice(text)
     }
 
     /// Say something as the player: a balloon over the head and a line in the chat log.
@@ -1140,6 +1311,26 @@ impl Session {
                 ),
                 Err(e) => self.inventory_refused(&m, &format!("equip refused: {e}")),
             };
+        }
+
+        // **`dst == 0` is a drop**, measured on 2026-08-20: the owner dragged a sword out of the
+        // inventory window and the client sent `01 0100 0000 0100` - invType 1, src 1,
+        // dst 0, count 1. It is not a move to slot zero; slots are 1-based and slot 0 is the
+        // hole that makes them so.
+        //
+        // Refusing is deliberate and temporary. The item stays in the bag, which is the safe
+        // direction: `Store::remove_item` would take it out and there is nowhere to put it -
+        // no drop pool, no `DropEnterField`, no pickup. Losing an item is worse than one
+        // that will not leave. `crates/net/src/drops.rs` is where that lands.
+        if m.dst == 0 {
+            let mut out = self.inventory_refused(
+                &m,
+                "dst 0 is a DROP, and dropping is not built yet - the item is still in your bag",
+            );
+            out.extend(self.notice(
+                "Dropping is not built yet - the item is still in your bag.".to_string(),
+            ));
+            return out;
         }
 
         // Bag to bag. The client sends -1 for `count` when the item is not a bundle.
@@ -1758,6 +1949,146 @@ mod tests {
         assert_eq!(out[0].body, net::inventory::inventory_rejected());
     }
 
+    /// A claimed session whose config knows two item names, which `!item` needs to accept an
+    /// id at all.
+    fn gm_session() -> (Session, Arc<Store>, u32) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut item_names = std::collections::HashMap::new();
+        item_names.insert(1302000u32, "Sword".to_string());
+        item_names.insert(2000000u32, "Red Potion".to_string());
+        // `set_field_probe` is the master switch: with it clear, `Session::handle` returns
+        // nothing for EVERY packet. It is off in `Config::default()` and it is the same trap
+        // that cost a client launch on 2026-08-20 - a bare launcher line without
+        // `-SetFieldProbe` left the character on the select screen.
+        let config = Config { item_names, set_field_probe: true, ..Config::default() };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        assert!(s.claim_for_character(id).contains("claimed the migration"));
+        (s, store, id)
+    }
+
+    /// The `0x00E7` body the client sends when a line is typed: u32 tick, the text, u8 tab.
+    fn gm_chat(text: &str) -> Vec<u8> {
+        let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+        b.extend_from_slice(&[0u8; 4]);
+        b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+        b.extend_from_slice(text.as_bytes());
+        b.push(3);
+        b
+    }
+
+    /// The text of a `0x00BB` chat notice.
+    fn notice_text(r: &Reply) -> String {
+        assert_eq!(r.opcode, net::notice::CHAT_NOTICE);
+        let len = u16::from_le_bytes([r.body[1], r.body[2]]) as usize;
+        String::from_utf8(r.body[3..3 + len].to_vec()).unwrap()
+    }
+
+    /// `!item` puts an equip in the Equip tab, says so, and tells the client to draw it.
+    #[test]
+    fn the_item_command_adds_an_equip_and_announces_it() {
+        let (mut s, store, id) = gm_session();
+        let out = s.handle(&gm_chat("!item 1302000"));
+
+        let ack = notice_text(&out[0]);
+        assert!(ack.starts_with("Giving TestCharD 1x Sword (1302000)"), "{ack}");
+        assert!(ack.contains("Equip tab"), "{ack}");
+
+        // The database, not the reply.
+        let bagged: Vec<(u16, u32)> = store
+            .bag(id)
+            .unwrap()
+            .items_in(store::InventoryType::Equip)
+            .map(|i| (i.slot, i.item.item_id))
+            .collect();
+        assert_eq!(bagged, vec![(1, 1302000)], "slot 1 of the Equip tab");
+
+        // And the wire: one mode-0 Add carrying a full type-1 item body.
+        let add = out.iter().find(|r| r.opcode == net::inventory::INVENTORY_OPERATION).unwrap();
+        assert_eq!(add.body[7], net::inventory::MODE_ADD);
+        assert_eq!(add.body[8] as i8, net::inventory::INV_EQUIP);
+        assert_eq!(i16::from_le_bytes([add.body[9], add.body[10]]), 1);
+        assert_eq!(
+            add.body[net::inventory::INVENTORY_ADD_HEAD_LEN],
+            net::opcode::EQUIPPED_ITEM_TYPE,
+            "the blob's own type byte"
+        );
+    }
+
+    /// A `2xxxxxx` id lands in the Use tab, because the tab comes from the id.
+    #[test]
+    fn the_item_command_picks_the_tab_from_the_id() {
+        let (mut s, store, id) = gm_session();
+        let out = s.handle(&gm_chat("!item 2000000 3"));
+        assert!(notice_text(&out[0]).contains("3x Red Potion"), "{}", notice_text(&out[0]));
+
+        let rows: Vec<_> =
+            store.bag(id).unwrap().items_in(store::InventoryType::Use).cloned().collect();
+        // **Three slots, not one stack of three**, and that is correct here: this config has
+        // no `item_data`, so `info/slotMax` is unknown, and an unknown stack size is treated
+        // as 1. That is the safe direction - a merge that does not happen, rather than one
+        // that silently destroys the overflow - and it is what a server with no
+        // `gm-handbook/itemdata.txt` will do on a real run.
+        assert_eq!(rows.len(), 3, "unknown slotMax means one per slot");
+        assert!(rows.iter().all(|r| r.item.kind.quantity() == 1));
+        assert!(store.bag(id).unwrap().items_in(store::InventoryType::Equip).next().is_none());
+    }
+
+    /// An id this client cannot draw is refused, and nothing is written.
+    ///
+    /// The client has to render whatever arrives; an item body for an id with no `Item.wz`
+    /// entry is the shape of thing that has faulted it before.
+    #[test]
+    fn the_item_command_refuses_an_id_the_client_does_not_have() {
+        let (mut s, store, id) = gm_session();
+        let out = s.handle(&gm_chat("!item 9999999"));
+        assert_eq!(out.len(), 1, "a refusal and nothing else");
+        assert!(notice_text(&out[0]).contains("REFUSED"), "{}", notice_text(&out[0]));
+        assert!(store.bag(id).unwrap().is_empty());
+    }
+
+    /// Every GM command acknowledges itself, including the ones that are not commands.
+    #[test]
+    fn an_unknown_command_lists_the_real_ones() {
+        let (mut s, _, _) = gm_session();
+        let out = s.handle(&gm_chat("!banana"));
+        let text = notice_text(&out[0]);
+        assert!(text.contains("!banana is not a command"), "{text}");
+        assert!(text.contains("!item"), "the list must name the commands: {text}");
+
+        assert!(notice_text(&s.handle(&gm_chat("!help"))[0]).contains("!map"));
+    }
+
+    /// **A drag out of the inventory window is a drop**, and dropping is not built.
+    ///
+    /// Measured 2026-08-20: `dst == 0`, which is not a move to slot zero - slots are 1-based
+    /// and 0 is the hole that makes them so. It must still be answered, and the item must
+    /// still be in the bag afterwards, because there is nowhere on the ground to put it.
+    #[test]
+    fn a_drop_is_answered_and_the_item_stays_in_the_bag() {
+        let (mut s, store, id) = gm_session();
+        s.handle(&gm_chat("!item 1302000"));
+
+        let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
+        let op = &out[0];
+        assert_eq!(op.opcode, net::inventory::INVENTORY_OPERATION);
+        assert_eq!(op.body, net::inventory::inventory_rejected());
+        assert_eq!(op.body[0], 1, "bExclRequestSent - the UI must not latch");
+        assert!(op.what.contains("DROP"), "{}", op.what);
+        assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "and it says so");
+
+        let bagged: Vec<u32> = store
+            .bag(id)
+            .unwrap()
+            .items_in(store::InventoryType::Equip)
+            .map(|i| i.item.item_id)
+            .collect();
+        assert_eq!(bagged, vec![1302000], "losing an item is worse than one that will not leave");
+    }
+
     /// The channel must not send the login server's startup gate. That packet is what a
     /// login connection needs and what a game connection almost certainly rejected.
     #[test]
@@ -1832,12 +2163,17 @@ mod tests {
         s.claim_for_character(id);
 
         let replies = s.on_quest_request(&body);
-        assert_eq!(replies.len(), 1, "an unanswered request freezes the client's whole UI");
-        assert_eq!(replies[0].opcode, net::script::SCRIPT_MESSAGE);
+        assert!(!replies.is_empty(), "an unanswered request freezes the client's whole UI");
+        // Action 1 is Accept, so this capture also records the quest - see
+        // `Session::record_quest_start`. The Say is selected by opcode, not by position.
+        assert!(
+            replies.iter().any(|r| r.opcode == net::quest::MESSAGE),
+            "an Accept must write the quest down as well as answer it"
+        );
 
         // The speaker must be the template the client named. It is by construction a real
         // Npc.wz id, which is what keeps this safe - 0 is not one.
-        let said = &replies[0].body;
+        let said = &script_message(&replies).body;
         assert_eq!(
             u32::from_le_bytes(said[5..9].try_into().unwrap()),
             req.npc_template_id
@@ -1943,8 +2279,19 @@ mod tests {
 
         // The real 0x0151 the owner's client sent on pressing Accept: action 1, quest 1000.
         let replies = s.on_quest_request(&hex("01e8030000010000000c046d0100000000"));
-        assert_eq!(replies.len(), 1);
-        let (message_type, text, _) = script_text(&replies[0].body);
+        // Two things now: the quest record, then the Say. The record is FIRST so the journal
+        // is right before the NPC's follow-up line is drawn.
+        assert_eq!(replies.len(), 2, "the quest record and the yes branch");
+        assert_eq!(replies[0].opcode, net::quest::MESSAGE, "the record leads");
+        assert_eq!(replies[0].body, net::quest::quest_accepted(1000));
+
+        // **And it is in the database**, which is the half that was missing until
+        // 2026-08-20: the dialogue was always right and nothing was written down.
+        let rows = s.store.quest_rows(id).unwrap();
+        assert_eq!(rows.len(), 1, "the accept reached quest_state");
+        assert_eq!(rows[0].quest_id, 1000);
+
+        let (message_type, text, _) = script_text(&script_message(&replies).body);
         assert_eq!(text, want, "Accept must answer with the yes branch");
 
         // And it must be a plain Say, NOT another Accept/Decline prompt - the user has
@@ -1983,12 +2330,13 @@ mod tests {
         body.extend_from_slice(&42u32.to_le_bytes());
         body.extend_from_slice(&1u32.to_le_bytes());
         let replies = s.on_quest_request(&body);
-        let (ty, text, after) = script_text(&replies[0].body);
+        let said = script_message(&replies);
+        let (ty, text, after) = script_text(&said.body);
         assert_eq!(text, "one");
-        assert_eq!(replies[0].body[after + 1], 1, "next must be set - there is a line 2");
+        assert_eq!(said.body[after + 1], 1, "next must be set - there is a line 2");
 
         let next = s.on_script_reply(&reply_bytes(&text, ty, 1));
-        assert_eq!(script_text(&next[0].body).1, "two");
+        assert_eq!(script_text(&script_message(&next).body).1, "two");
     }
 
 
@@ -2018,6 +2366,18 @@ mod tests {
         for n in 0..12 {
             let _ = s.on_script_reply(&vec![0u8; n]);
         }
+    }
+
+    /// The `0x055B` in a reply list, which is no longer always the first thing in it.
+    ///
+    /// Accepting a quest now sends the `0x0089` quest record **and** the Say, and the record
+    /// goes first so the journal is right before the NPC's follow-up line is drawn. Selecting
+    /// by opcode rather than by index keeps these tests about what they are about.
+    fn script_message(replies: &[Reply]) -> &Reply {
+        replies
+            .iter()
+            .find(|r| r.opcode == net::script::SCRIPT_MESSAGE)
+            .expect("a quest request is always answered with something to say")
     }
 
     /// Pull the text out of a script-message body. The shared head is 14 bytes; a Say then
@@ -2086,8 +2446,19 @@ mod tests {
         // So is a non-numeric one, rather than being swallowed.
         assert_eq!(s.handle(&chat("!map banana"))[0].opcode, net::notice::CHAT_NOTICE);
 
-        // A real map still warps and does NOT produce a notice.
-        assert_eq!(s.handle(&chat("!map 40"))[0].opcode, net::opcode::SET_FIELD);
+        // A real map still warps - and now says so first. The owner asked for every GM command to
+        // acknowledge itself, because a command that silently works and one that silently
+        // does nothing look identical on screen.
+        let warp = s.handle(&chat("!map 40"));
+        assert_eq!(warp[0].opcode, net::notice::CHAT_NOTICE, "the acknowledgement leads");
+        let len = u16::from_le_bytes([warp[0].body[1], warp[0].body[2]]) as usize;
+        let ack = String::from_utf8(warp[0].body[3..3 + len].to_vec()).unwrap();
+        assert!(ack.starts_with("Teleporting "), "{ack}");
+        assert!(ack.contains("map 40"), "{ack}");
+        assert!(
+            warp.iter().any(|r| r.opcode == net::opcode::SET_FIELD),
+            "the warp itself still happens"
+        );
 
         // **Anything that is not a command is said out loud.** The client draws nothing for
         // its own chat, so a server that answers nothing is a player typing into a void -

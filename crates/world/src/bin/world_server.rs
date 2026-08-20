@@ -137,6 +137,11 @@ fn main() -> ExitCode {
         );
     }
 
+    // Names for the GM acknowledgements. A missing file costs an id printed bare - see
+    // Config::map_names - so neither of these gets a startup warning.
+    config.map_names = world::config::Config::load_id_names(&PathBuf::from("gm-handbook/maps.txt"));
+    config.item_names =
+        world::config::Config::load_id_names(&PathBuf::from("gm-handbook/items.txt"));
     config.fields = world::config::Config::load_fields(&fields_path);
     if config.fields.is_empty() {
         eprintln!(
