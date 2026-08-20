@@ -122,6 +122,7 @@ one thing that still kills the client.
 | 4 | **Read what populates the Change Channel list** | **All three explanations are now retracted** (the four trailing bytes, the enable byte, the route through world select). Two client runs went on the first two. Nothing yet proposed populates that list, so the next step is to find what calls `FUN_142cb8e10` and when - upstream, not downstream | `research/channel-select.md` §0 |
 | 5 | **Quest state** | Goal A below. Everything else about quests works; nothing persists | §"NEW GOAL ... quest state" |
 | 6 | **Level up** | Goal D below, set by the owner once mobs rendered. Partly blocked on combat - EXP has no source until a mob can die - but the EXP curve, the AP/SP rules and the level-up effect are all independent of it | §D |
+| 7 | **First job advancement** | Goal E below. Blocked on D, and shares the script machinery with A. The job ids and the four instructor templates are already measured out of the client; the 35-stat gate is **not in the client at all** and is ours to enforce | §E |
 
 #### The evening run of 2026-08-19, and what it cost
 
@@ -250,6 +251,57 @@ decision rather than an accident.
 getting from the reference server and paying for later - the inventory bag was 24 for a
 commit because of it. Take it from this client's own WZ, and if it cannot be found there,
 say so and label the number **[I]** rather than shipping it as fact.
+
+#### E. First job advancement at level 10 - set by the owner, 2026-08-19
+
+> *"Once player levels up to 10, they should be able to job advance to one of the 4 primary
+> job IDs, either Thief/Magician/Bowman/Warrior by talking to the respective job advancement
+> instructors. Each job has a pre-requisite, which I assume is widely available on the
+> internet. Magician 35 INT, Warrior 35 STR, Thief 35 LUK, Bowman 35 DEX."*
+
+Blocked on **D (level up)** - there is no way to reach level 10 yet - and it shares the
+script machinery with **A (quest state)**.
+
+**The job ids are [L], from this client.** `net::opcode::uses_extended_sp` decodes the SP
+fork's three literal bit masks in `FUN_140302e30`, and they give exactly the explorer tree:
+`100/110/111/112/120/121/122/130/131/132` and the same shape at `200`, `300`, `400`, `500`.
+So the four first jobs are **Warrior 100, Magician 200, Bowman 300, Thief 400** (and Pirate
+500 exists in the masks whether or not we use it).
+
+**The instructors are [L], from the client's own `String.wz/Npc.img`** via
+`gm-handbook/npcstrings.txt`:
+
+| job | instructor | template |
+|---|---|---:|
+| Bowman | Athena Pierce | **221** |
+| Magician | Grendel the Really Old | **313** |
+| Thief | Dark Lord | **411** |
+| Warrior | Dances with Balrog | **511** |
+
+There are also four NPCs literally named `<Job> Job Instructor` - 227, 319, 424, 514 - and a
+second set at 800003/800004. Which set a real advancement uses is **not** established; the
+named four are the ones the game is known for.
+
+**The 35-stat prerequisite is [I], and the client will not help.** The owner flagged it as
+fan-site sourced themself. A scan of every `Check` node in all 322 quests
+(`gm-handbook/questlines.txt`) finds **no `int`, `str`, `dex` or `luk` requirement anywhere**
+- and that is a *verified* negative, not a failed search: the same scan enumerates 20 other
+Check keys including `lvmin` (406 uses), `job` (104), `skill` (48) and `item` (798). The
+requirement is not in `Quest.wz`.
+
+That is the expected answer rather than a surprise: in this game family the first job
+advancement is an **NPC script**, and NPC scripts are server-side. So:
+
+> **The client does not enforce this rule, which means the server is the only thing that
+> can.** There is nothing to verify it against and nothing that will catch it being wrong.
+> Ship the owner's numbers, label them **[I]**, and put them in one named table so they are one
+> edit to change - do not scatter `35` through the code.
+
+**What still has to be found:** the packet that actually changes a character's job, and
+whether the client needs anything beyond the stat block's `job` field at the next `SetField`.
+`research/charstat-layout.md` has the stat block; the job field is at `+0x33` and it is
+already sent on every `SetField`, so the cheapest first experiment is whether simply storing
+a new job and re-sending the record is enough to make the client show a first-job character.
 
 ### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
 
