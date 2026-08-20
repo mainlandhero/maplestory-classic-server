@@ -20,15 +20,19 @@
 //! assert_eq!(r.str().unwrap(), "Scania");
 //! ```
 
+pub mod channel;
 pub mod codec;
+pub mod combat;
 pub mod error;
 pub mod handshake;
 pub mod mob;
+pub mod mobmove;
 pub mod names;
 pub mod notice;
 pub mod npcchat;
 pub mod opcode;
 pub mod packet;
+pub mod quest;
 pub mod script;
 pub mod session;
 pub mod userchat;

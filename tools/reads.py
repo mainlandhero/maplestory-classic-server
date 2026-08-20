@@ -77,10 +77,42 @@ _data = _base = _sections = None
 _ent = {}
 
 
+_starts = []
+
+
 def _load(exe):
-    global _data, _base, _sections, _ent
+    global _data, _base, _sections, _ent, _starts
     _data, _base, _sections = load_pe(exe)
     _ent = {f[0]: f for f in parse_pdata(_data, _sections, _base)}
+    _starts = sorted(_ent)
+
+
+def extent(fn):
+    """A function's real extent, merging CONTIGUOUS `.pdata` entries.
+
+    **One function can own several `.pdata` entries.** They are unwind records, not function
+    boundaries: a big function with more than one prologue shape gets split across entries
+    that abut exactly. Bounding a read walk by the FIRST entry then truncates it silently -
+    `FUN_1402cbb50`'s first entry ends at `0x1402cbbb4` while the function runs to
+    `0x1402cbf70` across five entries, and bounded by the first it reports 3 fields where
+    there are 18.
+
+    Merging can over-reach if two genuinely separate functions happen to abut. That is the
+    safer direction of the two: over-reporting a field means sending a byte the client never
+    looks at, while under-reporting one means the client reads past the end of the body and
+    throws. When it matters, check the merged range in a disassembler.
+    """
+    import bisect
+    if fn not in _ent:
+        return None
+    start, end = _ent[fn][0], _ent[fn][1]
+    i = bisect.bisect_right(_starts, start)
+    merged = 0
+    while i < len(_starts) and _starts[i] == end:
+        end = _ent[_starts[i]][1]
+        merged += 1
+        i += 1
+    return start, end, merged
 
 
 def _foff(va):
@@ -96,9 +128,10 @@ def calls_of(fn):
 
     Linear sweep with a real decoder, so instruction boundaries are right.
     """
-    if fn not in _ent:
+    ext = extent(fn)
+    if ext is None:
         return []
-    start, end = _ent[fn][0], _ent[fn][1]
+    start, end, _merged = ext
     off = _foff(start)
     if off is None:
         return []
@@ -151,8 +184,10 @@ def main():
     if fn not in _ent:
         print("%#x has no .pdata entry - not a function start?" % fn)
         return 1
-    start, end = _ent[fn][0], _ent[fn][1]
-    print("FUN_%x  %#x..%#x (%d bytes)  depth %d" % (fn, start, end, end - start, depth))
+    start, end, merged = extent(fn)
+    note = ("  [%d contiguous .pdata entries merged - see extent()]" % (merged + 1)) if merged else ""
+    print("FUN_%x  %#x..%#x (%d bytes)  depth %d%s"
+          % (fn, start, end, end - start, depth, note))
     n = 0
     for va, tgt, cond in calls_of(fn):
         mark = "  gated?" if cond else ""

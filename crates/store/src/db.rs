@@ -206,6 +206,9 @@ impl Store {
             "#,
         )?;
         Self::add_inventory_slot_columns(&conn)?;
+        // A whole new table, so a plain `CREATE TABLE IF NOT EXISTS` is enough - unlike the
+        // slot columns above, which had to be ALTERed onto a table that already existed.
+        crate::quest::create_tables(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 

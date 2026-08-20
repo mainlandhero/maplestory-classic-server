@@ -1187,6 +1187,12 @@ pub const CHARACTER_SLOTS: u32 = 3;
 /// `worldId` and `channelId` are not filler: `FUN_141b2c7c0` looks the world up in the list
 /// built from [`WORLD_LIST`], so they have to name a world we actually sent.
 ///
+/// **They are also the only thing that fills the Change Channel dialog, and they are
+/// compared before they are used.** `141b32ee2`/`141b32eef` skip the rebuild entirely when
+/// *both* equal what the client already holds, and a fresh client holds `(0, 0)` - so
+/// `login_result(0, 0, ..)` leaves the dialog with no rows at all. Pick the channel with
+/// [`crate::channel::priming_channel`]; the working is `research/channel-select.md` §9.
+///
 /// **The three fields after the list are the create-a-character gate.** `FUN_141b282d0`
 /// refuses unless `stage+0xdc == 1` *and* `stage+0xe0 != 0` *and* the slot computed from
 /// `slotCount` is free. All three were inside the zero padding, which is why the button did
@@ -1800,6 +1806,134 @@ pub fn inventory_size_block(slots: &[u16; INVENTORY_COUNT]) -> Vec<u8> {
 
 /// What [`inventory_size_block`] adds to the record: six `u16`, unconditionally.
 pub const INVENTORY_SIZE_BLOCK_LEN: usize = INVENTORY_COUNT * 2;
+
+// ---------------------------------------------------------------------------------------
+// The quest blocks. Bodies live in `crate::quest`; the presence bytes and the record
+// assembly are here, beside the other two presence bytes. Full working, with the instrument
+// controls, is `research/quest-state.md`.
+// ---------------------------------------------------------------------------------------
+
+/// The presence byte that switches on the **started-quest list** - gate entry 19.
+///
+/// Read the way [`PRESENCE_INVENTORY_SIZE`] was, out of the key's own CRT initialiser rather
+/// than assumed. The gate at `0x1403074a3` carries key `0x143abf360`, and the initialiser at
+/// `0x140023690` is `memset(0x143abf360, 0, 100)` followed by
+/// `MOV byte ptr [0x143abf369],1` - `0x369 - 0x360` = byte **9**. **[L]**
+///
+/// **A second, independent measurement lands on the same index.** `FUN_1402e5a30` is the
+/// client's own *encoder* for this record - 38 calls to the same gate helper `FUN_1402fa9a0`
+/// - and it uses a **different key table**: its started-quest gate at `0x1402e719e` carries
+/// key `0x143abe0d0`, whose initialiser at `0x140022ba0` sets `[0x143abe0d9]`, byte **9**
+/// again. Two tables, two sets of initialisers, one byte index. **[L]**
+///
+/// **What it costs**: the region `[0x1403074c4, 0x14030756a)`, six reads - the same six
+/// `research/charrecord-loops.md` §5 row `#19` counted from a different direction. The three
+/// helpers it calls (`FUN_1402e0fe0` clear, `FUN_1402e0c30` insert, `FUN_1402e0ec0` erase)
+/// read **zero** packet bytes, checked transitively with `tools/reads.py` at depth 3.
+///
+/// **Why it is quests**: the helpers drive `charData+0x1273`, a hash map keyed by quest id;
+/// `+0x1273` is read by `FUN_14070fe30` / `FUN_140711b40` / `FUN_140711e50`, the three
+/// `.pdata` functions surrounding `FUN_140711d70` - the quest requirement checker
+/// `crate::script` already documents from the `0x0151` side - and by `FUN_141f0e110`, in the
+/// same block as the `0x0151` builder itself. **[D]**
+pub const PRESENCE_QUEST_STARTED: usize = 9;
+
+/// The presence byte that switches on the **completed-quest list** - gate entry 20.
+///
+/// Same method: gate `0x14030757b`, key `0x143abf3d0`, initialiser `0x140023670` writing
+/// `[0x143abf3de]` - byte **14**. The encoder agrees from its own table: gate `0x1402e7414`,
+/// key `0x143abe140`, initialiser `[0x143abe14e]`, byte **14**. **[L]**
+///
+/// Region `[0x140307596, 0x140307633)`, six reads, row `#20`. Its collection is
+/// `charData+0x1347`, read back by `FUN_1402e3390` - which has **31 call sites in 23
+/// functions**, i.e. the quest UI.
+pub const PRESENCE_QUEST_COMPLETED: usize = 14;
+
+/// The character record with the quest blocks in it.
+///
+/// **Why this is a separate function rather than a parameter on
+/// [`character_record_for_set_field_with`]**: that function's output is byte-for-byte what
+/// has been confirmed on screen, and this one is built by *appending* to it rather than by
+/// rebuilding it. The two quest blocks go between the equipped list and the final ungated
+/// `u8`, which is the record's last byte - so the whole edit is "pop the tail, add the
+/// blocks, put the tail back". Nothing that already works is re-derived.
+///
+/// ```text
+/// ...  ..  the equipped list                presence[2],  gate 0x1403061a0
+///  ..  ..  STARTED quests                   presence[9],  gate 0x1403074a3
+///  ..  ..  COMPLETED quests                 presence[14], gate 0x14030757b
+///  ..   1  the final ungated u8             0x140308b3f
+/// ```
+///
+/// The order is not a choice: `0x1403061a0 < 0x1403074a3 < 0x14030757b < 0x140308b3f`, and
+/// the decoder is one straight run of gates with no back edge between them. **[L]**
+///
+/// **Nothing lies between the equipped list and the started-quest block for this server**,
+/// and the easy version of that claim is wrong, so it is spelled out:
+///
+/// * The five *static* gates in `[0x140306632, 0x1403074a3)` key on presence bytes 44, 21,
+///   27, 8 and 15, all clear here. **[L]**
+/// * The two *dynamic* gates in that range select among entries 0-6, whose presence bytes
+///   are 0(none), 44, 6, 5, 4, 3 and **2** - and byte 2 is the equipped list's, so one of
+///   them **can** fire. It costs nothing anyway: `0x1403068fd`'s region reads nothing, and
+///   `0x1403069ef`'s only read (the `u32` at `0x140306a0d`, inside the fixed-3 loop #9) sits
+///   behind a per-turn switch selecting presence bytes 4, 5 and 6 - all clear - which also
+///   makes loop #10's count zero. **[L]**
+/// * And the decisive point is not static: `presence[2]` is already set and the record
+///   already decodes on screen, so those gates behave identically before and after this.
+///
+/// Neither 9 nor 14 is reachable through a dynamic gate, and each appears in exactly one row
+/// of the 40-row table in `research/charrecord-presence-map.md`. **[D]**
+///
+/// **An empty book still costs six bytes** - `01 00 00` twice - and that is deliberate: the
+/// bulk flag makes the client *clear* its collections, so a quest the server has dropped
+/// stops being shown. See [`crate::quest::QUEST_BLOCK_BULK`].
+///
+/// > **The record has no length prefix and no resync point.** If these six bytes are wrong
+/// > the symptom is an undressed character or no world entry at all - not a wrong quest
+/// > list.
+pub fn character_record_for_set_field_with_quests(
+    chr: &Character,
+    world_id: u32,
+    equips: &[(u8, u32, EquipStats)],
+    quests: &crate::quest::QuestBook,
+) -> Vec<u8> {
+    let mut out = character_record_for_set_field_with(chr, world_id, equips);
+    out[PRESENCE_QUEST_STARTED] = 1;
+    out[PRESENCE_QUEST_COMPLETED] = 1;
+    // The base record's last byte is the ungated read at 0x140308b3f, past every gate this
+    // server sets. Both quest gates come before it, so the blocks go in front of it.
+    let tail = out.pop().expect("the character record is never empty");
+    debug_assert_eq!(tail, 0, "the final ungated u8 at 0x140308b3f is the byte being moved");
+    out.extend_from_slice(&quests.started_block());
+    out.extend_from_slice(&quests.completed_block());
+    out.push(tail);
+    out
+}
+
+/// [`set_field_with_character_dressed`], plus the quest blocks.
+///
+/// Deliberately a parallel function rather than an extra argument: the existing one is the
+/// packet that has been confirmed on screen, and a signature change would touch every caller
+/// of a thing that currently works.
+pub fn set_field_with_character_dressed_quests(
+    chr: &Character,
+    world_id: u32,
+    clock: u64,
+    channel: u32,
+    equips: &[(u8, u32, EquipStats)],
+    quests: &crate::quest::QuestBook,
+) -> Vec<u8> {
+    let mut b = set_field_head(clock, channel, 0);
+    b[SET_FIELD_CHARACTER_DATA_AT] = SET_FIELD_WITH_CHARACTER_DATA;
+    b.extend_from_slice(&[0u8; 12]); // three u32s the caller reads before the record decoder
+    b.extend_from_slice(&character_record_for_set_field_with_quests(chr, world_id, equips, quests));
+    // 142098435, and the same 384-byte margin set_field_with_character_dressed carries: a
+    // zero u8 here jumps past the next seven reads, and surplus bytes are never looked at
+    // because the frame carries its own length.
+    b.extend_from_slice(&[0u8; 1 + 384]);
+    b
+}
 
 /// One equipped item on the wire, for item type 1, **with every bitmask zero**.
 ///

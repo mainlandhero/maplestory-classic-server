@@ -10,6 +10,15 @@ Labels: **[L]** read from the listing / a capture / the WZ. **[D]** derived from
 
 ---
 
+> **SETTLED 2026-08-19 (later). Read §9 first.** The list is empty because the client
+> **never rebuilds it**: the login result's `(worldId, channelId)` is compared against the
+> pair the client already holds, and `(0, 0)` == `(0, 0)` skips the only function in the
+> image that fills the row array. Sections 1-3 below describe a byte that only matters
+> *after* §9's fix lands, and §0's "next instrument" advice was aimed one link too far
+> downstream.
+
+---
+
 ## 0. RETRACTED 2026-08-19 by a client run
 
 **The conclusion below is wrong as stated, and the experiment it recommended made things
@@ -377,3 +386,220 @@ rather than that the predicate is wrong. In that order:
 3. **Runtime watch.** `crates/grap-stub`'s `-Probe watch@0x142cb9510` logs arguments and
    return address and does not care how any of this was encoded. That reads the array value
    directly and settles it in one launch.
+
+---
+
+# 9. SETTLED — the client never rebuilds the list, because we tell it nothing changed
+
+Written 2026-08-19 after §0's three retractions. **No Ghidra** (another session may hold the
+project lock): everything below is `capstone` over `client-patched/MapleStory.exe` through
+`tools/callers.py`, `tools/reads.py`, `tools/pdata_lookup.py`, `tools/dataref.py` and two
+scratch scanners (a displacement scan and a whole-image pointer scan), plus `wz-dump` and
+`tools/wz_png.py` over `UI_000.wz` / `_Canvas_000.wz`.
+
+## 9.1 The answer in one line
+
+**`FUN_142cb8e10` — the only function in the image that fills the channel-row array — is
+never called, because the login result tells the client it is already on the world and
+channel it already thinks it is on.** **[D]**
+
+## 9.2 The row count, closed end to end
+
+```text
+singleton+0x2cb8              the channel-NAME array   (null until FUN_142cb8e10 runs)
+  -> FUN_142cb92a0            mov rax,[rcx+0x2cb8] / test / mov eax,[rax-8]   -> 0 when null
+  -> dialog+0x2a0             set by OnCreate
+  -> 142a30c51  cmp dword [r15+0x2a0], edi / jle 142a3165b     the row loop is SKIPPED
+     142a3164e  cmp r12d, dword [r15+0x2a0] / jl 142a30c60     its back edge
+```
+
+**[L]** for every line. Inside that loop the geometry is `col = i % 6`,
+`x = 9 + 0x46*col`, `y = 0x43 + 0x15*(i/6)` — the same 68x20 grid §2's mouse hit test uses,
+which is what identifies it as the row loop. **[D]**
+
+So a null name array does not draw a grey row, or a disabled row. It draws **nothing**, and
+the dialog is left with only its frame, its buttons and its world logo. That is the owner's
+screenshot exactly.
+
+## 9.3 The world row is a WZ bitmap and proves nothing
+
+The single row the owner reads as **"WINDIA"** is `ChannelChange.img/Channel/world/0`, rendered
+out of `_Canvas_000.wz`. **[L]** — I rendered it. It is keyed on the world id in
+`singleton+0x2258` (`FUN_142cb9230` -> `dialog+0x2a4`), and that field is `0` whether or not
+anything ever wrote it.
+
+**This kills the inference the task brief offered as a lead** ("the world row rendering
+while channel rows do not is a clue about which data source is missing"). It is not a clue:
+the world logo would render identically if the packet had never arrived. **[D]**
+
+## 9.4 The only route into the filler, and the guard on it
+
+Enumerated, not filtered. `tools/callers.py` was run with its documented positive control
+first (`0x1402fa9a0` -> 96 sites, 43 in `0x140304b20`), and every step was cross-checked
+with a whole-image scan for the 8-byte little-endian VA, which finds vtable and
+function-pointer-table entries that `callers.py` cannot see.
+
+| function | direct callers | in any pointer table? |
+|---|---|---|
+| `FUN_142cb8e10` (fills `+0x2cb8`/`+0x2cc0`/`+0x2cc8`) | **1** — `FUN_141b2c7c0` @ `141b2caed` | no |
+| `FUN_141b2c7c0` | **2** — `FUN_141b307b0` @ `141b30f2f`, `FUN_141b32860` @ `141b32efc` | no |
+| `FUN_141b307b0` | **1** — `FUN_141b25f30` @ `141b25ff9` | no |
+| `FUN_141b32860` | **1** — `FUN_141b307b0` @ `141b307fd` | no |
+| `FUN_141b25f30` | **0** | **yes**, `.rdata 0x1433fd7a0` — a vtable slot |
+
+`FUN_141b25f30` is the **login stage's `OnPacket`**. Its jump table (byte index at
+`0x141b26668`, dword RVAs at `0x141b265dc`, base `0x140000000`) decodes to opcodes
+`0x00..0x5f`, and `case 0x0b` is `FUN_141b2fac0` — the world-list decoder §3.1 already
+named, which is the independent check that this table is read correctly. **`case 0x10` is
+`FUN_141b307b0`, and `0x0010` is `LOGIN_RESULT`.** **[L]**
+
+`FUN_141b307b0` forks on the mode in its first eight instructions:
+
+```text
+141b307e6  mov rcx,[rip+0x1f910ab]      the session at 0x143AB4898
+141b307ed  call FUN_142c4a810           = mov eax,[rcx+0x68]   the mode
+141b307f2  cmp eax,5
+141b307f5  jne 141b30807                the non-mode-5 body
+141b307fd  call FUN_141b32860           MODE 5 -> here, then jmp to the epilogue
+```
+
+That is the *same* `session+0x68` test `opcode.rs` already documents for the world list, and
+our client is mode 5 (`login.log`: `session identity: mode=5`). **So `FUN_141b32860` is the
+live handler and everything in `FUN_141b307b0` after `141b30807` is dead code here.** **[L]**
+
+The guard, at `141b32e8e`-`141b32efc`:
+
+```text
+141b32e8e  test r12d,r12d               r12d = the login RESULT byte, read at 141b328ad
+141b32e91  jne  141b33ea9               non-zero result -> nothing below runs
+141b32e9a  call 1406e8ee0               u8      (a THUNK to 1406e8ae0 - see 9.7)
+141b32eb2  call 1406e9170  r8d=8        raw 8   -> FUN_1408f67d0, a FILETIME
+141b32ec6  call 1406e8c20  -> esi       u32     worldId
+141b32ed0  call 1406e8c20  -> ebx       u32     channelId
+141b32edb  call 142cb9230              = mov eax,[rcx+0x2258]   the world it holds
+141b32ee0  cmp  esi,eax
+141b32ee2  jne  141b32ef1               differs -> rebuild
+141b32ee8  call 142cb9260              = mov eax,[rcx+0x2260]   the channel it holds
+141b32eed  cmp  ebx,eax
+141b32eef  je   141b32f01               BOTH equal -> SKIP THE REBUILD
+141b32efc  call FUN_141b2c7c0(this, esi, ebx, 0)
+```
+
+`rcx` at both getters is `[rbp+8]`, loaded at `141b3289f` from `[rip+0x1f75bfa]` =
+**`0x143AA84A0`** — the same singleton §2 found from the dialog side. **[L]**
+
+The **identical** guard sits at `141b30f0a`-`141b30f2f` in the non-mode-5 body, so it is
+protocol semantics rather than a mode-5 quirk. **[L]**
+
+## 9.5 What we send, and where it lands
+
+`crates/login/src/session.rs:229,239` calls `login_result(world.id, world.channel_id, ..)`,
+and both are `0` (`crates/login/src/config.rs:49`). `tools/reads.py 0x141b32860 2` gives the
+ordered reads, and they line up with `opcode.rs::login_result` field for field:
+
+| body offset | our builder | the client's read |
+|---|---|---|
+| 0 | `LOGIN_OK` | `141b328ad` u8 result |
+| 1 | `str ""` | `141b328c4` str message |
+| 3 | `0u8` | `141b32e9a` u8 (via the `1406e8ee0` thunk) |
+| 4 | `0u64` | `141b32eb2` raw 8 |
+| **12** | **`world_id`** | **`141b32ec6` u32 -> the world compare** |
+| **16** | **`channel_id`** | **`141b32ed0` u32 -> the channel compare** |
+
+The two `u32` at `141b32a41`/`141b32a4c` that `reads.py` lists earlier are behind
+`cmp r12d,0x83 / jne` at `141b32a31` and are not on our path. **[L]**
+
+## 9.6 Why `(0, 0)` is the pair the client already holds
+
+**[D], from the client's own routines — and deliberately *not* claimed as [L].**
+
+* `FUN_142ce9600` writes `0` to `+0x2258` and `+0x2260` and then nulls `+0x2cb8`, `+0x2cc0`
+  and `+0x2cc8`. That is the client's own "no world, no channel, no list" state.
+* The session teardown `FUN_142cad420` saves `+0x2258` into `+0x2264` and writes `0` over it
+  (`142cad956`), and sets `+0x225c` to `-1`. It leaves `+0x2260` alone.
+* The constructor `FUN_142ca5c50` nulls `+0x2c90`, `+0x2ca0`, `+0x2cb0`, `+0x2cb8`, `+0x2cc0`,
+  `+0x2cc8`, `+0x2cd0` (`142ca6c8b`-`142ca6cb5`) and writes the singleton global at
+  `142ca5c7d`. **It never writes `+0x2258` or `+0x2260`.**
+* The object is `FUN_14019b780(pool, 0x41a8)`, which for a size over `0x80` goes to
+  `FUN_14019d350` -> an imported allocator called with `edx = 0` — i.e. **no
+  `HEAP_ZERO_MEMORY`**.
+
+So on a fresh process those two ints are whatever the heap block held. Fresh pages are
+zeroed by the OS, so `(0, 0)` is overwhelmingly likely and is what the observed empty dialog
+requires — but it is **not guaranteed**, and that is the best available explanation for the
+one run in which CH.1 and CH.2 appeared and never came back:
+
+> **If the block is ever recycled memory, the compare fails and the list populates by
+> accident.** A nondeterministic populate fits the history better than any of the three
+> retracted stories: two "fixes" that each appeared to work once, and one that appeared to
+> break it, all measured one run apart with the variable uncontrolled.
+
+**And I could not reconstruct that run from the artefacts.**
+`research/fixtures/world-select-0076-login.log` contains **one** `0x0076`, not the two
+`STATUS.md` credits it with, and it contains **no `0x0078` at all** — that client never
+entered the world, so the in-game dialog cannot have been observed in that session. Its
+login-side counterpart for `channel-list-shows-two-but-unselectable-world.log` (17:21) was
+not preserved. I am recording that as a gap rather than filling it with a story.
+
+## 9.7 Instrument corrections
+
+* **There is a ninth packet-read primitive, and it is a `u8`.** `0x1406e8ee0` is
+  `jmp 0x1406e8ae0`. The list everyone works from carries the `u16` and `u32` thunks
+  (`0x1406e8ef0`, `0x1406e8f00`) but not this one, and `tools/reads.py` does not report the
+  read at `141b32e9a` because of it. It is the same failure as "five decoder addresses when
+  there are seven": a known list, filtered rather than enumerated. `reads.py` should add it.
+* **A displacement scan that decodes from a back-offset can name the wrong instruction.**
+  My scanner reported `142cad957: mov [rdi+0x2258], esp`; the real instruction starts one
+  byte earlier and is `142cad956: mov [rdi+0x2258], r12d`. It also reported the constructor's
+  `mov qword [rdi+0x2cb8], rbx` as a `dword` write. **Use it to locate, then disassemble to
+  read.**
+* **`callers.py` cannot see a virtual.** `FUN_141b25f30` has zero call sites and is the whole
+  login dispatcher. The pointer scan found it in one aligned `.rdata` qword. Any "0 callers"
+  from `callers.py` must be followed by a pointer scan before it means anything.
+
+## 9.8 ELIMINATED, with the evidence
+
+| claim | how it was tested | result |
+|---|---|---|
+| an in-game packet populates the list | **enumerated** every instruction in the image whose 32-bit displacement is `0x2cb8` or `0x2cc8` (positive control: the scan finds both `142cb8eda`, a known write, and `142cb9515`, a known *leaf* read that `.pdata` attribution misses) | the only filler is `FUN_142cb8e10`; the only other touchers are the constructor and `FUN_142ce9600`, both of which **null** them. No packet handler anywhere writes them |
+| the list is populated by a UI-owned packet dispatcher in the `0x226..0x276` family (`FUN_1429bafb0`), the way `0x0231` was found | the same enumeration — it covers the whole image, so it covers that family | no handler in any dispatcher can reach the array except through `FUN_142cb8e10`, which is called from one place. **Not walked opcode by opcode, because it does not need to be** |
+| the client *requests* the list when the dialog opens | `world.log`, a live in-game session, has 25 distinct inbound opcodes and logs every unanswered one with its full body | The owner has previously measured that opening the dialog sends **nothing at all**, and nothing in this capture is timed to a dialog open. Consistent with §9.4: the data is a login-time cache |
+| the world row proves the transfer ran | rendered `Channel/world/0` from `_Canvas_000.wz` | it is the **"WINDIA" bitmap**, drawn from world id `0`, which is also the value of an untouched field. Proves nothing either way |
+| `FUN_141b2c7c0` will accept any world id | read its lookup: it walks `stage+0x100` comparing `world->[0] == arg2`, leaves the index `-1` when not found, and `FUN_141b44860` then bails at `141b2c88b` | **the world id must be one we advertised.** A sentinel world id silently does nothing |
+| `FUN_141b2c7c0` will accept any channel index | read `FUN_141b20d80(world, channel)` at `141b2c8d4`: true only if `0 <= channel < len(world->[0x28])`, else `141b2c8e0: xor al,al; ret` | **the channel index must be valid for the world.** A sentinel channel silently does nothing either |
+
+## 9.9 The fix, and why it is safe
+
+Intersect §9.8's last two rows with "must not equal `(0, 0)`". With one world advertised as
+id `0`, exactly one move is left: **send a channel index of `1` in the login result**, which
+requires at least **two** channels advertised. `net::channel::priming_channel` is that rule,
+with the `None` case for a one-channel world spelled out — with a single channel the only
+valid index is `0`, which is the pair the client already holds, so a one-channel world
+**cannot** populate this dialog at all.
+
+**The wrong channel at login costs nothing**, because `SetField` corrects it: the `0x01A0`
+handler `FUN_142097f80` reads a `u32` at body offset 8 (`142098065`) and passes it straight
+to `FUN_142cb91e0`, the `+0x2260` setter, at `14209806f`. **[L]** That field is already the
+real channel in `opcode::set_field_head`, and it is re-sent on every field entry, so the
+dialog's "current channel" is right by the time it can be opened. The only window where
+`+0x2260` is wrong is the character-select screen, which shows no channel.
+
+## 9.10 What to watch on the run, and what each outcome means
+
+`FUN_142cb8e10` and the tail of `FUN_141b2c7c0` have — as far as anything here can tell —
+**never executed in this project**. Expect the unexpected from them, not just from the rows.
+
+| observation | meaning |
+|---|---|
+| the dialog shows **two rows**, CH.1 and CH.2 | settled. §9 is right |
+| CH.1 draws **blue** (it is `selection`, set to `current` by OnCreate) and CH.2 draws **grey** | expected, and §2/§4 explain it: CH.2 is grey because `singleton+0x2cc8[1]` is `0`. **That is the next variable, and it must be tested on its own run** |
+| still **one row** | the guard is not the gate. Then the singleton was **not** `(0,0)` — put a watch on `0x142cb8e10` and read its `edx`/`r8d` |
+| a fault or a freeze at the character-select screen | new code ran. `FUN_142cb8e10` also writes `[global+0x18c]`, `+0x31c4 = -1`, `+0x31cc = -1` and allocates a `0x58` object at `142cb8f15`; `FUN_141b2c7c0` ends with `FUN_1415e3cc0`/`FUN_14019a260`/`FUN_1415f3f10`. Read the `ELog` (`0x008F`/`0x0090`) first |
+
+**One correction that follows from all of this, and that nobody should read as re-opening a
+retraction.** §0 retracted the enable byte because setting it to `1` emptied a dialog that
+`0` had populated. Under §9 the dialog is empty by default and populated only by accident,
+so **both** of those observations are consistent with the byte having no effect at all. The
+byte is therefore **un-measured, not disproven** — and it becomes live the moment rows exist,
+because `FUN_142cb9510` returning `0` is what draws `channel3` and swallows the click. Do not
+change it in the same run as §9.9. One variable at a time; that is the whole lesson of §0.

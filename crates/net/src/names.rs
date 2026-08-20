@@ -100,8 +100,18 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x0238 => "CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField)",
         0x024D => "CLIENT_FIRST_FIELD_ENTRY_2 (empty; built by FUN_142caa4e0 alongside 0x0238)",
 
+        // The mob move report. Named from the client's own builder rather than from a
+        // capture: FUN_141cb6880 is mob primary-vtable slot 22 and contains exactly one
+        // COutPacket construction, `141cb7ea5 MOV EDX,0x2ff`. It carries the mob's object
+        // id, a local move counter, and a movement path built by FUN_141d57c60 - the same
+        // encoder the player's own 0x00D9 uses. **This arriving at all is the confirmation
+        // that MobChangeController works**; nothing in the client's mob pool acknowledges
+        // it. research/mob-behaviour.md.
+        0x02FF => "CLIENT_MOB_MOVE (u32 mobObjectId, u16 moveId, then a conditional tail and the path)",
+
         // Outbound, so that a run's log does not read as if the server were guessing.
         0x01A0 => "SET_FIELD",
+        0x03D2 => "MOB_CHANGE_CONTROLLER (u8 level - 0 DESPAWNS - then the mob body)",
         0x044F => "NPC_ENTER_FIELD",
         0x055B => "SCRIPT_MESSAGE",
 
@@ -129,7 +139,11 @@ fn never_truncate(opcode: u16) -> bool {
     // though its head is settled. 0x01A0 is the character record, which has no length prefix
     // and no resync point; if a run ever desynchronises, the whole packet is the only thing
     // that will say where.
-    matches!(opcode, 0x008F | 0x0090 | 0x0091 | 0x0151 | 0x01A0)
+    // 0x02FF is named but only its first six bytes are read. The rest is two count-prefixed
+    // u16 lists, a block gated on a mob field, and the movement path itself - all of it
+    // unread, and all of it the evidence that would settle how this client encodes a path.
+    // Truncating it would hide exactly the bytes the next question needs.
+    matches!(opcode, 0x008F | 0x0090 | 0x0091 | 0x0151 | 0x01A0 | 0x02FF)
 }
 
 /// One packet as a log line body: hex, truncated only when we both know the opcode and do

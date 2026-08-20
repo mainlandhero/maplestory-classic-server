@@ -18,9 +18,11 @@ pub mod db;
 pub mod migration;
 pub mod error;
 pub mod password;
+pub mod quest;
 pub mod session;
 
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
+pub use quest::{QuestRow, QuestState};
 pub use db::{Account, AuthOutcome, Store, FIRST_CHARACTER_ID, SESSION_TTL_SECS};
 pub use error::{Result, StoreError};
 pub use migration::{ClaimedMigration, MIGRATION_TTL_SECS};
