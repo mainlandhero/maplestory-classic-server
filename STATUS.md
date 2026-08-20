@@ -133,25 +133,41 @@ while it was unwired, and "a unit test passes" is not "it works".
 | **CH.2 clickable** | single-click CH.2 - it should turn cream, then blue. **Double-click and the Change button send `0x00D2`**, which is answered now but with a reply shape that is inference |
 | **`!item <itemId> [count]`** | `!item 1302000` puts a sword in the Equip tab without a relog |
 | **GM acknowledgements** | every `!` command says what it is about to do. Colour is expected to be yellow and has never been measured |
+| **chat renders** | **a one-byte fix.** The client shows a line only if bit 1 of the first `u8` after the speaker id is set (`142785722 test byte [rbp+0x168],2 / je` past *both* balloon sites); we sent `0`, and the client's own `0x00E7` builder hardcodes `3`. Type "Hello" - a balloon over the head and a line in the log. **Necessary, possibly not sufficient**: if the client's `GetUser` misses, the byte changes nothing, and that failure is a silent NULL rather than a fault |
+| **dropping an item** | drag the sword out of the window: it leaves the bag and lands on the floor. **Swing once first** - see the position note below |
+| **picking it up** | walk over it. Even if nothing happens on screen, `world.log` names the opcode - that is the point of the step |
+| **`!exp <amount>`** | `!exp 100` moves the EXP bar **immediately**, via `0x007C` bit 16, and the total survives a relog |
 
 #### BUILT, and deliberately NOT wired
 
 | | why not, and what unblocks it |
 |---|---|
-| **item drop / pickup** (`crates/net/src/drops.rs`) | the player's **pick-up request opcode cannot be found statically** - the chain runs into the Themida VM. It is narrowed to `0x0329..0x032E`, and **one walk over one drop names it in `world.log`**. Until then a drag out of the window is refused with a notice and the item stays in the bag |
+| **level up and job advancement** (`crates/net/src/stats.rs`) | the packets are decoded and tested - `0x007C` with its u32 mask, `0x02AF` for what other players see, and the level-up animation comes free because the `0x007C` handler plays it itself when the level goes up. What is missing is **the EXP curve**: it lives at `0x143AC2400`, 121 `u64`s, in the **BSS tail of `.data`** - zero on disk, so no static read can get it. One `-Probe` peek on a running client is the cheap way. Nothing in `crates/world` references `net::stats` except `!exp` |
 | **storage (goal G)** | the store API is done and enforces the owner's untradeable rule; no storage dialog is decoded in either direction |
+
+#### The drop position, and why a drop can be refused
+
+`0x0107` carries no coordinates and **nothing here parses `0x00D9`**, the packet in which the
+client reports its own movement. The client's pick-up sweep is a box of `x-0x19..x+0x19` by
+`y-0x32..y+0x0a` around the *player*, so an item put down more than about 25 pixels off is
+drawn and cannot be reached - and on screen that is the same picture as nothing happening.
+
+So a drop with no known position is **refused with a notice** rather than guessed: a guess
+would make a broken run look like a working one. The position comes from the last attack
+request, which is the only coordinate pair this server currently reads from the client.
+**Swing once before dropping**, or the drop will politely refuse and tell you so.
 
 #### What to do next, in order
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **Run the client**, plan below | Five wired things are unseen, one of them is the shop the owner asked for |
+| 1 | **Run the client**, plan below | **Nine** wired things are unseen now: the shop the owner asked for, the drop they asked for, chat, and `!exp`. One run reads on all of them |
 | 2 | **Which gate rejects our mobs, under arm C** | The collector runs, with capacity 15, and accepts nothing - measured, see below. The gate analysis was done against the wrong caller and is being redone. **Static work; no launch needed** |
-| 3 | **Name the pick-up opcode** | One walk over one drop. Then drops wire in an afternoon. The instrument is **checked**, not assumed - see below |
-| 4 | **Chat renders nothing** | The dispatcher may drop `0x0231` before the handler exists. Watch ready: `research/user-chat.md` section 4 |
+| 3 | **The EXP curve, off a running client** | 121 `u64`s at `0x143AC2400`, in the BSS tail of `.data` - **zero on disk**, so static analysis cannot ever read it. One `-Probe` peek. Without it, levelling has no thresholds |
+| 4 | **Parse `0x00D9`** | The client reporting its own position. It removes the "swing first" awkwardness from dropping, and every positional feature after it needs the same field |
 | 5 | **Amherst (map 1013) is intermittent** | It no longer hard-crashes, and run 2 still failed to enter it. Not fixed - intermittent |
 | 6 | **Touch damage** | Template 1 carries `bodyAttack = 1` and `PADamage = 1`, so a snail is meant to hurt for **1 point**. "No damage" and "1 damage" look alike on screen. Measure before assuming it is broken |
-| 7 | **Level up (goal D), job advancement (goal E)** | Both blocked on killing something, which is blocked on item 2 |
+| 7 | **Level up (goal D), job advancement (goal E)** | The packets are built. The *rules* need item 3, and awarding EXP for a kill needs item 2 |
 
 #### The pick-up walk will actually see the packet - checked, 2026-08-20
 
@@ -274,7 +290,18 @@ Passing `-Probe` by hand replaces all four slots and silently drops it.
 | 3 | `!map 1013`, click **Lucy** | the shop counter | rows in **both** tabs = goal F. Buy tab only = the sell rows are wrong. No counter at all = the click never resolved a shop; `world.log` says which |
 | 4 | buy something, then sell it back | mesos, and the bag | both directions, both prices. The **buy** price is authored; the **sell** price is the client's own |
 | 5 | accept a quest, then `!map 40` | the quest journal | still listed = the journal persists |
-| 6 | open Change Channel, **single-click** CH.2 | the row's colour | cream then blue = the enable byte is right. **Do the double-click last** - it sends `0x00D2` and either changes channel or ends the session |
+| 6 | type **Hello** in the chat box | a balloon and a log line | the flag byte was `0` and the client's own builder sends `3`. Nothing still = the handler is not running, and the next step is `0x0224`, **not** more chat bytes |
+| 7 | `!exp 100` | the EXP bar | it moves **at once** - `0x007C` bit 16 carries the new total. Relog and it is still 100 |
+| 8 | **swing once**, then drag the sword out of the window | the sword on the ground | a refusal saying "the server does not know where you are standing" means the swing did not register, not that dropping is broken. **This step can freeze the client** - see the warning below, so do it near the end |
+| 9 | walk over the sword | it goes back in the bag | **even if nothing visible happens, this step succeeded**: `grep UNKNOWN world.log` names the pick-up opcode, which is the whole reason for it |
+| 10 | open Change Channel, **single-click** CH.2 | the row's colour | cream then blue = the enable byte is right. **Do the double-click last of all** - it sends `0x00D2` and either changes channel or ends the session |
+
+**Step 8 is the one that can freeze the client, and it is not a bug in dropping.** The
+client builds `0x025F` **six times from inside `DropEnterField`**, so it will arrive the
+moment the sword lands, and this server has never seen that opcode. If the UI locks up right
+after the item appears - every button dead, including the quit prompt - that is the
+unanswered packet, not the drop. `world.log` will have it as `UNKNOWN`, which is exactly what
+is needed to fix it. Doing this step late means the first seven answers survive it.
 
 Two watches, each needing its own run, neither combinable with the above:
 
