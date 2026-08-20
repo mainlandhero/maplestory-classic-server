@@ -125,6 +125,7 @@ one thing that still kills the client.
 | 7 | **First job advancement** | Goal E below. Blocked on D, and shares the script machinery with A. The job ids and the four instructor templates are already measured out of the client; the 35-stat gate is **not in the client at all** and is ours to enforce | §E |
 | 8 | **NPC shops** | Goal F below. Blocked on there being an inventory to buy into. Prices and the quest-item flag are in the client's own `Item.wz`; **shop contents are not** and are ours to author | §F |
 | 9 | **Storage** | Goal G below. Same blocker, plus mesos, which nothing maintains yet. Per-account, so it needs its own table rather than a column on `characters` | §G |
+| 9a | **The bag has to persist** | Goal I below, and it is the blocker under 8 and 9 as well. The unequip works on screen and is not written down, so a `!map` re-equips the item. Needs an `inventory` table **and** the four `presence[2]` bag lists, which are sent empty and have never been decoded | §I |
 | 10 | **Citizenship** | Goal H below. All 88 quests are already in the client and its own data confirms the fan site field for field - including the contribution rule as a literal formula string. **It also settles the grade numbers behind `data/shops.txt`'s rank tags** | §H |
 
 #### The evening run of 2026-08-19, and what it cost
@@ -473,6 +474,64 @@ machinery with **A**. But the quest data is already extracted and the gates are 
 expressible: `crates/store` needs a per-character `(town, grade, contribution)` and
 `crates/world` needs to honour `Check.citizenshipTown`/`citizenshipGrade`, both of which are
 small next to what is already built.
+
+#### I. The bag has to persist - set by the owner, 2026-08-19
+
+The owner, after the first successful unequip: *"when I travel to map 40, the item I un-equipped
+re-equipped itself. This is not correct, items taken off should persist as is during
+transitions from map to map."*
+
+**Today the unequip works on screen and nowhere else.** `0x0107` is answered with a `0x0070`
+and the client moves the item, but the server writes nothing down: the equipped list in the
+character record is still built from `crates/store`'s `equipment` rows, so the next
+`SetField` - a portal, a `!map`, a relog - puts the item straight back on.
+
+That was a deliberate choice with the wrong ceiling on it. The alternative available at the
+time was to delete the `equipment` row, which would have left the item **nowhere at all**,
+because nothing stores bag contents. "Comes back" beat "is gone". The owner's answer is that
+neither is acceptable, and they are right - the move has to survive the transition.
+
+##### Two halves, and the second is the real work
+
+**1. Somewhere to put it.** An `inventory` table keyed by character - `(character_id,
+inv_type, slot, item_id, count)` - and `on_inventory_move` writing to it: delete the
+`equipment` row, insert the inventory row. Small, and it follows the idioms already in
+`crates/store/src/character.rs` and `quest.rs`.
+
+**2. Getting it back onto the wire, which is not decoded.** The character record's
+`presence[2]` region ends with four `u16` terminators that this server sends as zero:
+
+```rust
+b.extend_from_slice(&0u16.to_le_bytes()); // end of the equipped list
+b.extend_from_slice(&0u16.to_le_bytes()); // FUN_14030b6f0
+b.extend_from_slice(&[0u8; 6]);           // FUN_14030b9e0, three lists
+```
+
+Those four are **the bag inventories**, sent empty. `research/naked-character.md` established
+that setting `presence[2]` opens three list readers rather than one, and that omitting the
+terminators desynchronises everything after them - but nothing has read what a **non-empty**
+list looks like. Until that is decoded, an item can be stored in the database and still not
+appear in the bag after a field entry, which from the player's side is indistinguishable from
+losing it.
+
+Existing material to start from, not yet worked: `research/msexe-invlist-b6f0.txt`,
+`research/msexe-invlist-b9e0.txt`, `research/msexe-invkey-23d0.txt`, and the equipped-item
+blob decode in `research/msexe-setfield.md` §"The item blob", which gives the **bundle**
+(`FUN_140304450`), **pet** (`FUN_140304550`) and **equip** (`FUN_140304100`) shapes - the
+same blobs a bag list must carry.
+
+##### It is the same table three goals are waiting on
+
+**F (NPC shops)** cannot sell into a bag that does not exist, **G (storage)** is a second
+container needing the same item representation, and this is the first. Whoever does it should
+know they are unblocking all three, and should design the table for all three rather than for
+the unequip alone.
+
+##### The one thing already proven
+
+`0x0070` InventoryOperation mode 2 moves an item on screen, confirmed by the owner. So the
+*outbound* half of any inventory change is settled - `crates/net/src/inventory.rs`. What is
+missing is durability and the record block, not the ability to tell the client.
 
 ### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
 
