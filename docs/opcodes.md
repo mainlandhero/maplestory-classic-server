@@ -423,11 +423,19 @@ Read off the primitives themselves rather than inferred from use:
 | `FUN_1406e8ae0` | **u8** (`pos += 1`) |
 | `FUN_1406e8b80` | **u16** (`pos += 2`) |
 | `FUN_1406e8c20` | **u32** (`pos += 4`) |
-| `FUN_1406e8f00` | **u32** - a bare `JMP 0x1406e8c20`, invisible to a search for the target |
 | `FUN_1406e8f10` | **u64** (`pos += 8`) |
 | `FUN_1406e9050` | **string**: `u16 len`, then `len` bytes (`pos += len + 2`) |
 | `FUN_1406e9170(p, dst, n)` | **n raw bytes** |
+| `FUN_1406e8ee0` | **u8** - a bare `JMP`, invisible to a search for the target |
+| `FUN_1406e8ef0` | **u16** - a bare `JMP 0x1406e8b80` |
+| `FUN_1406e8f00` | **u32** - a bare `JMP 0x1406e8c20` |
+| `FUN_142d23ef0` | **u32** - a bare `JMP`, and **6 MB from the other nine** |
 | `FUN_1406e9b20` | **not a reader** — `mov eax,[rcx+0x24]; ret`, the current position |
+
+**Ten, and this table listed seven until 2026-08-20.** The count has been wrong three times
+and each fix came from enumerating rather than searching. `tools/reads.py` is the authority;
+if it and this table disagree, this table is stale. A tail `jmp` into any of them **is** a
+read - missing one shipped a chat packet four bytes short and killed the client.
 
 `FUN_1406e9b20` decompiles to an empty body because Ghidra has no function there; the four
 bytes are the answer.
