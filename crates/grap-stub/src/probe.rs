@@ -49,11 +49,20 @@
 //!   as well as what we substituted. This patches the client — describe results
 //!   accordingly.
 //!
-//! A watch target takes any number of `:key=value` options: `rdx=`, `peek=<off>`, and
-//! `hits=<n>`, the per-target log cap. Raise the cap on anything where the *last* call is
-//! the interesting one - a thread-exit function in a client that recycles threads would
-//! otherwise spend the default 32 early and disarm before the moment in question, which
-//! reads exactly like a function that never ran. Every hit records the calling thread id.
+//! A watch target takes any number of `:key=value` options: `rdx=`, `peek=<off>`,
+//! `args=<n>`, and `hits=<n>`, the per-target log cap. Raise the cap on anything where the
+//! *last* call is the interesting one - a thread-exit function in a client that recycles
+//! threads would otherwise spend the default 32 early and disarm before the moment in
+//! question, which reads exactly like a function that never ran. Every hit records the
+//! calling thread id.
+//!
+//! `args=<n>` dumps integer arguments **5..=n** off the stack, since arguments 1-4 arrive
+//! in RCX/RDX/R8/R9 and are logged already. It exists because a function can be entirely
+//! readable and still have its deciding argument out of reach: `FUN_141d31b20`, the melee
+//! target collector, returns before examining a single mob when its argument 17 is at
+//! least its argument 4, and neither the register dump nor `stack_trace` - which filters
+//! to values that look like code addresses, and so discards every small integer - could
+//! see it.
 //!
 //! `#N` starts the walk on the Nth dispatched packet.
 //!
@@ -133,6 +142,10 @@ static HIT: AtomicBool = AtomicBool::new(false);
 /// dialog blocks the button that gets us to character select, and every *other* question
 /// happens after that point. Rather than choose, watch several.
 const WATCH_SLOTS: usize = 4;
+/// The most stack arguments `:args=` will dump. Sized to cover the deepest argument list
+/// anyone has needed to read here - `FUN_141d31b20` takes seventeen - with room, but not so
+/// much that a typo walks somebody else's frame.
+const WATCH_ARGS_MAX: u32 = 32;
 
 #[allow(clippy::declare_interior_mutable_const)]
 const WATCH_ZERO: AtomicU64 = AtomicU64::new(0);
@@ -165,6 +178,11 @@ static WATCH_RET: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
 static FORCE_RDX: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
 /// `u64::MAX` means none; anything else is an offset to read from `rcx` and log.
 static PEEK_OFF: [AtomicU64; WATCH_SLOTS] = [WATCH_NONE; WATCH_SLOTS];
+/// Highest integer argument to dump off the stack, or 0 for none. See [`stack_arg_offset`].
+///
+/// Arguments 1-4 arrive in registers and are already logged, so this only ever means
+/// "and also slots 5 through N".
+static WATCH_ARGS: [AtomicU32; WATCH_SLOTS] = [WATCH_ZERO32; WATCH_SLOTS];
 /// Set once, however many slots are armed - the handler must not be registered twice.
 static VEH_REGISTERED: AtomicBool = AtomicBool::new(false);
 /// Faults reported to the log, capped so a repeating one cannot fill the disk.
@@ -476,6 +494,8 @@ struct WatchSpec<'a> {
     force: Option<&'a str>,
     peek: Option<&'a str>,
     hits: Option<&'a str>,
+    /// Highest integer argument to dump off the stack - see [`stack_args`].
+    args: Option<&'a str>,
     /// Return from the function immediately instead of running it.
     ret: bool,
 }
@@ -488,7 +508,9 @@ struct WatchSpec<'a> {
 ///     virtualised and unreadable;
 ///   * `peek=<hex>` logs the byte and dword at `rcx + off` - for reading the field a tiny
 ///     accessor exists to return, which is usually the actual question;
-///   * `hits=<dec>` raises or lowers this target's log cap.
+///   * `hits=<dec>` raises or lowers this target's log cap;
+///   * `args=<dec>` also dumps integer arguments 5..=N off the stack, for a function whose
+///     interesting argument is past the four the ABI puts in registers.
 ///
 /// An unrecognised option is an error rather than something to skip, for the same reason
 /// `-Session` rejects an unknown token: a run that looks fine and measures nothing costs
@@ -504,6 +526,7 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
         force: None,
         peek: None,
         hits: None,
+        args: None,
         ret: false,
     };
     for opt in fields {
@@ -514,6 +537,8 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
             parsed.peek = Some(v.trim());
         } else if let Some(v) = opt.strip_prefix("hits=") {
             parsed.hits = Some(v.trim());
+        } else if let Some(v) = opt.strip_prefix("args=") {
+            parsed.args = Some(v.trim());
         } else if opt == "ret" {
             parsed.ret = true;
         } else {
@@ -526,8 +551,8 @@ fn parse_watch_spec(spec: &str) -> Result<WatchSpec<'_>, String> {
 }
 
 unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
-    let (target_txt, force, peek, hits, want_ret) = match parse_watch_spec(spec) {
-        Ok(p) => (p.target, p.force, p.peek, p.hits, p.ret),
+    let (target_txt, force, peek, hits, args, want_ret) = match parse_watch_spec(spec) {
+        Ok(p) => (p.target, p.force, p.peek, p.hits, p.args, p.ret),
         Err(why) => {
             log(&format!("probe: {why}"));
             return;
@@ -552,6 +577,27 @@ unsafe fn arm_one(slot: usize, spec: &str, text: &str) {
         };
         WATCH_LIMIT[slot].store(v, Ordering::SeqCst);
         log(&format!("probe: watch on {va:#x} will log up to {v} hits"));
+    }
+    if let Some(a) = args {
+        let Ok(v) = a.trim().parse::<u32>() else {
+            log(&format!("probe: {spec:?} has an unparseable :args= count"));
+            return;
+        };
+        // Refuse rather than clamp, both ways. `args=4` would silently print the caller's
+        // shadow slots and read like arguments; `args=400` would walk three kilobytes of
+        // somebody else's frame on every hit. Either produces a log that looks like a
+        // measurement, which is worse than a run that will not start.
+        if !(5..=WATCH_ARGS_MAX).contains(&v) {
+            log(&format!(
+                "probe: {spec:?} asks for :args={v} - only 5..={WATCH_ARGS_MAX} means \
+                 anything (1-4 are in rcx/rdx/r8/r9 and are already logged). Not arming."
+            ));
+            return;
+        }
+        WATCH_ARGS[slot].store(v, Ordering::SeqCst);
+        log(&format!(
+            "probe: will dump stack arguments 5..={v} on every entry to {va:#x}"
+        ));
     }
     if let Some(p) = peek {
         match u64::from_str_radix(p.trim().trim_start_matches("0x"), 16) {
@@ -686,6 +732,53 @@ const THEMIDA: std::ops::Range<usize> = 0x03D8_7000..0x0517_3000;
 ///
 /// Every slot is checked with `VirtualQuery` first, and non-code values are skipped rather
 /// than reported, so a stack full of data does not produce noise.
+/// Where integer argument `n` sits, relative to RSP **at an entry breakpoint**.
+///
+/// Win64 passes arguments 1-4 in RCX/RDX/R8/R9 and the rest on the stack. At the point of
+/// the `call` the caller has already reserved 32 bytes of shadow space for those four, so
+/// argument 5 is at `[rsp + 0x20]` and argument *n* at `[rsp + 0x20 + 8*(n-5)]`. The `call`
+/// then pushes the return address, which moves everything down eight bytes - so inside the
+/// callee, before its prologue runs, that collapses to **`[rsp + 8*n]`**.
+///
+/// A free function with a test rather than a comment on a magic number, because the
+/// arithmetic is the whole measurement: read the wrong slot and the log prints a confident
+/// number for the wrong argument, which is the failure mode `CLAUDE.md` describes
+/// everywhere else. Off by one slot here would have reported argument 16 as argument 17.
+///
+/// Only meaningful for `n >= 5`; arguments 1-4 are in registers and never on the stack at
+/// entry, so the shadow slots this would name for them hold whatever the caller left there.
+fn stack_arg_offset(n: u32) -> usize {
+    8 * n as usize
+}
+
+/// Dump integer arguments 5..=`highest` off the stack at an entry breakpoint.
+///
+/// Deliberately a **range, not a single index**. The question that motivated this - "does
+/// `FUN_141d31b20` take the early-out at `141d31c96`, where argument 17 is compared against
+/// argument 4" - reaches us through a decompiler's argument numbering, and a decompiler
+/// numbering that disagrees with the ABI by one would be invisible in a single-slot read.
+/// Printing every slot up to the one asked for means the answer is in the log whichever
+/// index is right. Enumerate, then filter.
+///
+/// Rendered as i32 as well as raw, because these are read back with `movsxd ... dword` -
+/// the high half is not part of the value.
+unsafe fn stack_args(rsp: usize, highest: u32) -> String {
+    if highest < 5 {
+        return String::new();
+    }
+    let mut out = String::new();
+    for n in 5..=highest {
+        let at = rsp + stack_arg_offset(n);
+        if crate::session::can_read(at, 8) {
+            let v = *(at as *const u64);
+            out.push_str(&format!(" a{n}={v:#x}(i32 {})", v as u32 as i32));
+        } else {
+            out.push_str(&format!(" a{n}=<unreadable>"));
+        }
+    }
+    format!("\n      stack args (rsp+{:#x}..):{out}", stack_arg_offset(5))
+}
+
 pub(crate) unsafe fn stack_trace(rsp: usize) -> String {
     let base = crate::hook::base();
     if base == 0 {
@@ -827,12 +920,14 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
             log(&format!(
                 "***** WATCH #{n}: {watch:#x} ENTERED on tid {tid} while dispatching \
                  opcode 0x{op:04X} rcx={rcx:#x}{}{}{peek} rdx={rdx:#x} \
-                 (as i32 {}){}{} r8={r8:#x} r9={r9:#x}{ret}{} *****",
+                 (as i32 {}){}{} r8={r8:#x} r9={r9:#x} (as i32 {}){ret}{}{} *****",
                 deref(rcx),
                 deref_wstr(rcx),
                 rdx as u32 as i32,
                 deref(rdx),
                 deref_wstr(rdx),
+                r9 as u32 as i32,
+                stack_args(rsp, WATCH_ARGS[slot].load(Ordering::SeqCst)),
                 stack_trace(rsp),
             ));
             if n == cap {
@@ -1258,6 +1353,99 @@ mod tests {
         assert!(s.ret);
         assert_eq!(s.hits, Some("40"));
         assert!(!parse_watch_spec("1415db360").expect("valid").ret);
+    }
+
+    /// Every probe string `tools/test-server.ps1` can install, parsed the way `arm_watch`
+    /// parses it.
+    ///
+    /// Two failures this catches, both of which cost a whole manual launch and both of
+    /// which look like a normal run:
+    ///
+    /// * a spec that does not parse is logged and skipped, so the watch is simply absent
+    ///   and reports a clean zero;
+    /// * a **fifth** target is dropped with "ignoring the rest" - and in every one of these
+    ///   strings the last target is `140304100`, the positive control. Losing it turns
+    ///   "the client never called this" and "the hook never armed" back into the same
+    ///   observation, which is the distinction the control exists to make.
+    #[test]
+    fn every_launcher_probe_string_arms_all_four_slots() {
+        for text in [
+            // the bare default, no -SetFieldProbe
+            "watch@1415db360:ret,141b2a280:rdx=0,141b36f60,142ef3e44:hits=8",
+            // -SetFieldProbe, default pair: mob spawn
+            "watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200",
+            // -SetFieldProbe -InventorySlots N
+            "watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200",
+            // -SetFieldProbe -MobTargets
+            "watch@1415db360:ret,141b2a280:rdx=0,141d31b20:args=17:hits=8,140304100:hits=200",
+        ] {
+            let rest = text.strip_prefix("watch@").expect("every string is a watch");
+            let specs: Vec<&str> = rest.split(',').filter(|s| !s.trim().is_empty()).collect();
+            assert!(
+                specs.len() <= super::WATCH_SLOTS,
+                "{text:?} names {} targets; only {} are armed and the rest are \
+                 silently dropped",
+                specs.len(),
+                super::WATCH_SLOTS
+            );
+            for spec in specs {
+                assert!(parse_watch_spec(spec).is_ok(), "{spec:?} in {text:?} must parse");
+            }
+        }
+    }
+
+    /// The negative control for the test above: a string with the faults it looks for must
+    /// actually trip it.
+    ///
+    /// Without this, `every_launcher_probe_string_arms_all_four_slots` could pass because
+    /// the strings are fine or because the check is incapable of failing, and those two
+    /// look identical from the outside. That is the exact shape of the test summary in
+    /// `CLAUDE.md` that was structurally unable to report a failure.
+    #[test]
+    fn the_four_slot_check_can_fail() {
+        let five = "watch@1415db360:ret,141b2a280:rdx=0,141d31b20:args=17,140304100,141c532ab";
+        let rest = five.strip_prefix("watch@").expect("a watch");
+        let specs: Vec<&str> = rest.split(',').filter(|s| !s.trim().is_empty()).collect();
+        assert!(
+            specs.len() > super::WATCH_SLOTS,
+            "the over-full string must be over full, or the check above proves nothing"
+        );
+        // And an unparseable member is caught rather than skipped.
+        assert!(parse_watch_spec("141d31b20:args").is_err());
+        assert!(parse_watch_spec("141d31b20:rip=0").is_err());
+    }
+
+    #[test]
+    fn a_stack_argument_lands_where_the_abi_puts_it() {
+        // The whole value of `:args=` is this arithmetic, so it is pinned rather than
+        // commented. At an entry breakpoint the return address is at [rsp], the four
+        // shadow slots follow it, and argument 5 is the first real stack argument.
+        assert_eq!(super::stack_arg_offset(5), 0x28);
+        assert_eq!(super::stack_arg_offset(6), 0x30);
+        // The one this was built for: FUN_141d31b20's argument 17, compared against
+        // argument 4 at 141d31c96 to decide whether any mob is examined at all.
+        assert_eq!(super::stack_arg_offset(17), 0x88);
+        // Every slot is eight bytes and none is skipped.
+        for n in 5..super::WATCH_ARGS_MAX {
+            assert_eq!(
+                super::stack_arg_offset(n + 1) - super::stack_arg_offset(n),
+                8,
+                "argument {n} to {} must be one slot apart",
+                n + 1
+            );
+        }
+    }
+
+    #[test]
+    fn args_parses_and_mixes_with_the_others() {
+        let s = parse_watch_spec("141d31b20:args=17:hits=8").expect("valid");
+        assert_eq!(s.target, "141d31b20");
+        assert_eq!(s.args, Some("17"));
+        assert_eq!(s.hits, Some("8"));
+        // Order must not matter - a spec is written by hand at a launch prompt.
+        let s = parse_watch_spec("141d31b20:hits=8:args=17").expect("valid");
+        assert_eq!(s.args, Some("17"));
+        assert!(parse_watch_spec("141d31b20").expect("valid").args.is_none());
     }
 
     #[test]

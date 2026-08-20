@@ -147,11 +147,29 @@ while it was unwired, and "a unit test passes" is not "it works".
 |---|---|---|
 | 1 | **Run the client**, plan below | Five wired things are unseen, one of them is the shop the owner asked for |
 | 2 | **Which gate rejects our mobs** | The collector is now *proven* to run - see below. Everything downstream is built |
-| 3 | **Name the pick-up opcode** | One walk over one drop. Then drops wire in an afternoon |
+| 3 | **Name the pick-up opcode** | One walk over one drop. Then drops wire in an afternoon. The instrument is **checked**, not assumed - see below |
 | 4 | **Chat renders nothing** | The dispatcher may drop `0x0231` before the handler exists. Watch ready: `research/user-chat.md` section 4 |
 | 5 | **Amherst (map 1013) is intermittent** | It no longer hard-crashes, and run 2 still failed to enter it. Not fixed - intermittent |
 | 6 | **Touch damage** | Template 1 carries `bodyAttack = 1` and `PADamage = 1`, so a snail is meant to hurt for **1 point**. "No damage" and "1 damage" look alike on screen. Measure before assuming it is broken |
 | 7 | **Level up (goal D), job advancement (goal E)** | Both blocked on killing something, which is blocked on item 2 |
+
+#### The pick-up walk will actually see the packet - checked, 2026-08-20
+
+"One walk over one drop names it" was a claim about an instrument nobody had verified, which
+is the thing `CLAUDE.md` warns about most. All three links now check out, in the source:
+
+* **every** inbound packet is logged with its opcode and body before dispatch, handled or
+  not - `crates/world/src/server.rs`, the `<- {label}, {n} byte body {hex}` line;
+* an opcode with no handler additionally logs *"is not answered yet, and it is UNKNOWN, so
+  the full body is above"*, so `grep UNKNOWN world.log` finds it;
+* `body_hex` truncates to 96 bytes **only when the opcode has a name**, and **none of
+  `0x0329..0x032E` is named** - checked against `crates/net/src/names.rs`. A named candidate
+  would have been truncated *and* missing from a `grep UNKNOWN`, which is exactly the silent
+  negative that would have wasted the run.
+
+What is still missing is something to walk over: the drop is currently refused, so nothing
+ever lies on the ground. The field-side drop table is being built now; until it is wired,
+this step cannot be attempted, however good the logging is.
 
 #### `FUN_141d31b20` IS the melee collector - measured, and it corrects a prediction
 
@@ -220,7 +238,28 @@ Passing `-Probe` by hand replaces all four slots and silently drops it.
 Two watches, each needing its own run, neither combinable with the above:
 
 * chat: `-Probe "watch@1415db360:ret,141b2a280:rdx=0,14276df20:peek=10d0:hits=6,140304100:hits=200"`
-* mob targeting: `-Probe "watch@1415db360:ret,141b2a280:rdx=0,141d31b20:hits=8,140304100:hits=200"`
+* **mob targeting: `-SetFieldProbe -MobTargets`** - a switch since 2026-08-20, so the four
+  slots and the positive control come out right without hand-typing them. Go to map 40 and
+  swing at a snail six or eight times.
+
+The mob-targeting run now asks a question it could not ask before. `:args=<n>` dumps integer
+arguments **5..=n** off the stack; arguments 1-4 were always in the log, but argument 17 was
+not, and `stack_trace` filters to things that look like code addresses so it discards exactly
+the small integers this turns on. Read two numbers off each `141d31b20` line:
+
+| | | |
+|---|---|---|
+| `r9` | argument 4 | a client-side maximum, nothing we send |
+| `a17` | argument 17, `[rsp+0x88]` | expected 0 |
+
+**`a17 >= r9` means the early-out at `141d31c96` fired and no mob was ever examined** - the
+question leaves the gate chain entirely and becomes "what sets argument 4". `a17 < r9` means
+the loop really did run and the rejection is per-mob, after every gate we can reach has been
+shown to pass. Slots 5..16 print too, on purpose: "argument 17" is a decompiler's numbering,
+and if it disagrees with the ABI by one the right value is still on the line.
+
+Also read `called-from=`. The collector has many call sites and only one of them is the known
+`0x00DF` builder; naming the caller settles which path a bare swing takes.
 
 **Nothing authenticates.** The game socket carries no credentials, and none of the above
 changes that.

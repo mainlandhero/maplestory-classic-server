@@ -143,6 +143,25 @@ param(
     # same number on its own. A run at 125, the maximum, can: the bag either shows a
     # scrollbar or it does not. That is the run that settled it.
     [int]$InventorySlots = 0,
+    # Point the two free watch slots at the melee target collector, FUN_141d31b20.
+    #
+    # The collector is PROVEN to run once per swing - six swings, six entries, each 1-2 ms
+    # before its outbound 0x00DF, in research/fixtures/melee-collector-runs-once-per-swing-*.
+    # It runs, every per-mob gate our packets can touch passes (research/mob-target-gates.md
+    # section 4), and it still returns zero targets. The one path nobody has measured is the
+    # early-out at 141d31c96, which returns BEFORE EXAMINING A SINGLE MOB when argument 17
+    # is at least argument 4.
+    #
+    # Argument 4 arrives in R9 and was always in the log. Argument 17 is on the stack, and
+    # until 2026-08-20 nothing could read it: the register dump stops at four, and
+    # stack_trace filters to values that look like code addresses, so it discards exactly
+    # the small integers this question is about. :args=17 dumps slots 5..17.
+    #
+    # A switch rather than a hand-typed -Probe string on purpose. Passing -Probe by hand
+    # replaces ALL FOUR slots, which silently drops 140304100 - the positive control that
+    # is the only thing distinguishing "the collector did not run" from "the hook never
+    # armed". That mistake costs a whole launch, and launches are the scarcest thing here.
+    [switch]$MobTargets,
     [string]$ClientDir
 )
 
@@ -250,7 +269,24 @@ $ErrorActionPreference = 'Stop'
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($InventorySlots -gt 0) {
+    if ($MobTargets) {
+        # 141d31b20:args=17 - the melee target collector. EXPECT ONE ENTRY PER SWING; the
+        #   pairing against 0x00DF in world.log is already established, so a missing entry
+        #   here means the watch, not the client. Read TWO numbers off each line:
+        #     r9  (= argument 4)               the client-side maximum
+        #     a17 (= argument 17, [rsp+0x88])  the running index, expected 0
+        #   a17 >= r9 means the early-out at 141d31c96 fired and NO MOB WAS EVER EXAMINED,
+        #   which moves the question off the gates entirely. a17 < r9 means the loop ran and
+        #   the rejection really is per-mob, after every gate we can reach has passed.
+        #   Slots 5..16 are printed too, deliberately: "argument 17" is a decompiler's
+        #   numbering, and if it is off by one against the ABI the right value is still on
+        #   the line. Also read called-from= and look it up in
+        #   research/mob-collector-callsites.md - the collector has many call sites and only
+        #   one of them is the known 0x00DF builder.
+        # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL: no lines
+        #   at all means the hook never armed and the log proves nothing.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141d31b20:args=17:hits=8,140304100:hits=200'
+    } elseif ($InventorySlots -gt 0) {
         # 140305e48:peek=24 - the u16 that sizes ONE inventory, inside the record decoder's
         #   fixed six-turn loop. RCX is the CInPacket and +0x24 is its read cursor. EXPECT
         #   SIX HITS, EACH EXACTLY 2 APART. Origin-independent: it does not matter what the
@@ -267,7 +303,14 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200'
     }
-    Write-Host ("probe pair: " + $(if ($InventorySlots -gt 0) { "THE BAG (140305e48)" } else { "mobs (141c532ab)" })) -ForegroundColor Cyan
+    # Announce which pair actually got armed. The old line said "mobs" for 141c532ab, which
+    # is the mob SPAWN decoder - now that -MobTargets arms a mob TARGETING watch, one word
+    # would have covered two different runs. Same precedence as the if/elseif above, and
+    # written as three statements because 5.1 has no ternary.
+    $pair = "mob spawn (141c532ab)"
+    if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
+    if ($MobTargets) { $pair = "MOB TARGETING (141d31b20:args=17)" }
+    Write-Host ("probe pair: " + $pair) -ForegroundColor Cyan
 }
 
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
