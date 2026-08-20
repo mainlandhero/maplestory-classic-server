@@ -173,6 +173,41 @@ pub const OWNER_LOCK_MS: u64 = 15_000;
 ///
 /// The v214 reference's block layout puts it at `0x032C`. That is **[I]** from the instrument
 /// `CLAUDE.md` scores at **1 of 8**, and **nothing here picks a value**.
+/// **`0x032C` DropPickUpRequest - MEASURED 2026-08-20.**
+///
+/// The client walked over a drop and the server logged it. `research/item-drop.md` §1
+/// predicted `0x032C` from the v214 reference, a source this project scores at 1 of 8 - it
+/// was right, and it is now measured. One data point; not a reason to trust that source.
+pub const CLIENT_DROP_PICK_UP: u16 = 0x032C;
+
+/// Where the drop's object id sits in a [`CLIENT_DROP_PICK_UP`] body.
+///
+/// The whole body, from the measured capture cross-checked against the `0x00D9` and `0x00DF`
+/// of the same session:
+///
+/// ```text
+/// u8  0
+/// u32 tick            milliseconds - six samples against the wall clock agree to ~10 ms
+/// u32 0
+/// i16 x               byte-identical to the last 0x00D9 path point
+/// i16 y
+/// u32 dropObjectId    <- offset 13, the only field the server needs
+/// u32 0
+/// u8  1
+/// u32, u32, u32       one observed value each
+/// ```
+///
+/// **[D]/[I], and it can never be [L]**: the builder is inside `.themida`, whose
+/// `SizeOfRawData` is 0, so those bytes are not in the file at any offset. This is one of
+/// the few things in this repo that static analysis is permanently unable to settle.
+pub const PICK_UP_OBJECT_ID_AT: usize = 13;
+
+/// The drop's object id out of a pick-up body, if it is long enough.
+pub fn pick_up_object_id(body: &[u8]) -> Option<u32> {
+    let at = PICK_UP_OBJECT_ID_AT;
+    Some(u32::from_le_bytes(body.get(at..at + 4)?.try_into().ok()?))
+}
+
 pub const PICK_UP_CANDIDATE_FIRST: u16 = 0x0329;
 
 /// The highest candidate. See [`PICK_UP_CANDIDATE_FIRST`].

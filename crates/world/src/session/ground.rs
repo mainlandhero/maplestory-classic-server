@@ -134,26 +134,29 @@ impl Session {
         };
 
         let map = chr.map_id;
-        let found = (0..payload.len().saturating_sub(3)).find_map(|at| {
-            let id = u32::from_le_bytes([
-                payload[at],
-                payload[at + 1],
-                payload[at + 2],
-                payload[at + 3],
-            ]);
-            self.fields.with_drops(map, |d| d.get(id).map(|_| (at, id)))
-        });
+        // **Read the object id where it is.** It was searched for, across every byte offset,
+        // because the layout was unknown; one run measured it at offset 13 and the search can
+        // go. The body is `u8 0 | u32 tick | u32 0 | i16 x | i16 y | u32 dropObjectId | ...`,
+        // and the builder can never be read - it lives in `.themida`, whose `SizeOfRawData`
+        // is zero, so those bytes are not on disk at all. `research/pick-up-latch.md` §3.
+        let found = crate::drops::pick_up_object_id(payload)
+            .filter(|id| self.fields.with_drops(map, |d| d.get(*id).is_some()));
 
-        let Some((at, object_id)) = found else {
-            // Not the pick-up, or the pick-up for a drop that is already gone. Either way,
-            // answer: a silent reply to an unknown opcode is how the UI latches.
-            return self.notice(format!(
-                "0x{opcode:04X}: {} byte body, and none of it names a drop on this field \
-                 ({} live). If an item is lying here and you just walked over it, this IS \
-                 the pick-up request and the id is encoded some other way.",
-                payload.len(),
-                self.fields.with_drops(map, |d| d.len())
-            ));
+        let Some(object_id) = found else {
+            // No drop by that id on this field: it expired, someone else took it, or this is
+            // one of the five sibling opcodes that is not the pick-up. **Answer anyway** -
+            // the sweep tests the same exclusive-request gate the inventory does, so silence
+            // here risks closing every later pick-up.
+            let live = self.fields.with_drops(map, |d| d.len());
+            let mut out = vec![Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_rejected(),
+                what: format!("InventoryOperation: 0x{opcode:04X} named no live drop ({live} on this field); clearing the exclusive-request gate so later pick-ups still work."),
+            }];
+            out.extend(self.notice(format!(
+                "Nothing to pick up there ({live} on this field)."
+            )));
+            return out;
         };
 
         let now = self.clock_ms;
@@ -162,15 +165,8 @@ impl Session {
         // because the run that produces it is read by eye.
         let mut out = vec![Reply {
             opcode: net::notice::CHAT_NOTICE,
-            body: net::notice::chat_notice(&format!(
-                "PICK-UP: 0x{opcode:04X} carried drop {object_id} at body offset {at}."
-            )),
-            what: format!(
-                "*** THE PICK-UP REQUEST IS 0x{opcode:04X}, drop object id at body offset \
-                 {at} of {} *** - {}",
-                payload.len(),
-                outcome.what()
-            ),
+            body: net::notice::chat_notice(&format!("Picked up drop {object_id}.")),
+            what: format!("0x{opcode:04X} pick-up of drop {object_id} - {}", outcome.what()),
         }];
 
         if let Some(drop) = outcome.taken() {
@@ -182,7 +178,10 @@ impl Session {
             if drop.is_meso() {
                 let amount = drop.meso;
                 let credited = self.store.add_mesos(chr.id, i64::from(amount));
-                out.extend(outcome.replies());
+                // **The stat change goes FIRST, and it replaces the `0x0070` an item would
+                // send** - mesos are not an inventory slot. Then the leave. The order is
+                // from `research/pick-up-latch.md` §4; it was the other way round here, and
+                // the first real pick-up sent no stat change at all.
                 match credited {
                     Ok(total) => {
                         out.push(Reply {
@@ -199,6 +198,7 @@ impl Session {
                     }
                     Err(e) => out.extend(self.notice(format!("Could not credit mesos: {e}"))),
                 }
+                out.extend(outcome.replies());
                 return out;
             }
 
@@ -227,8 +227,26 @@ impl Session {
             return out;
         }
 
+        // **A refusal owes a `0x0070`, even though nothing left a bag.**
+        //
+        // The pick-up sweep tests the same exclusive-request gate the inventory does -
+        // `FUN_142cc42d0` on `[ctx+0x2330]`, checked in the sweep's own first basic block at
+        // `0x14179ca24` - so a refusal that sends only a chat line risks closing every LATER
+        // pick-up. `inventory_rejected()` is seven bytes whose whole job is to clear that
+        // gate. `research/pick-up-latch.md` §4.
+        //
+        // And **never a `0x046F` for a drop that is still on the floor**: telling the client
+        // to remove something it can still see is how an item disappears from the world.
+        // `outcome.replies()` is empty for the three refusals, which is what makes that safe.
         out.extend(outcome.replies());
         if let Some(line) = outcome.notice() {
+            out.push(Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_rejected(),
+                what: format!(
+                    "InventoryOperation: refusing the pick-up with nCount 0 - {line}. The                      bExclRequestSent byte is what keeps later pick-ups working."
+                ),
+            });
             out.extend(self.notice(line));
         }
         out

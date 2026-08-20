@@ -501,27 +501,31 @@ fn a_drop_leaves_the_bag_and_lands_on_the_floor() {
     assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 1, "and it is on the floor");
 }
 
-/// The pick-up handler finds the drop id anywhere in the body, because the body's layout is
-/// unknown - and it says where it found it, which is the whole point of the run.
+/// The pick-up reads the drop id at **offset 13**, the offset one run measured.
+///
+/// It used to search every byte offset, because the layout was unknown. It is known now,
+/// and the builder can never be read to confirm it further - it lives in `.themida`, whose
+/// `SizeOfRawData` is zero.
 #[test]
-fn the_pick_up_handler_finds_a_drop_id_at_an_unknown_offset() {
+fn the_pick_up_handler_reads_the_drop_id_at_the_measured_offset() {
     let (mut s, store, id) = gm_session();
+    let map = net::opcode::START_MAP_ID;
     s.handle(&gm_chat("!item 1302000"));
     s.last_position = Some((520, 395));
     s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, 1, 0, 1));
-    let object_id = s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.on_field(net::opcode::START_MAP_ID).cloned().collect::<Vec<_>>()).into_iter().next().unwrap().object_id;
+    let object_id =
+        s.fields.with_drops(map, |d| d.on_field(map).map(|x| x.object_id).next().unwrap());
 
-    // A plausible body: some header bytes, then the id, at an offset nobody has decoded.
-    let mut body = crate::drops::PICK_UP_CANDIDATE_FIRST.to_le_bytes().to_vec();
-    body.extend_from_slice(&[0u8; 5]);
+    // A body shaped like the real one: the id at offset 13, junk everywhere else.
+    let mut body = crate::drops::CLIENT_DROP_PICK_UP.to_le_bytes().to_vec();
+    body.extend_from_slice(&[0u8; crate::drops::PICK_UP_OBJECT_ID_AT]);
     body.extend_from_slice(&object_id.to_le_bytes());
+    body.extend_from_slice(&[0u8; 17]);
 
     let out = s.handle(&body);
     let told = out.iter().map(|r| r.what.clone()).collect::<Vec<_>>().join(" | ");
-    assert!(told.contains("THE PICK-UP REQUEST IS"), "{told}");
-    assert!(told.contains("body offset 5"), "it must say WHERE it found it: {told}");
+    assert!(told.contains("pick-up of drop"), "{told}");
 
-    // And it completed: back in the bag, off the floor.
     let bagged: Vec<u32> = store
         .bag(id)
         .unwrap()
@@ -529,22 +533,33 @@ fn the_pick_up_handler_finds_a_drop_id_at_an_unknown_offset() {
         .map(|i| i.item.item_id)
         .collect();
     assert_eq!(bagged, vec![1302000], "the sword came back");
-    assert_eq!(s.fields.with_drops(net::opcode::START_MAP_ID, |d| d.len()), 0, "and left the floor");
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "and left the floor");
 }
 
-/// One of the six candidates that is NOT the pick-up still gets an answer.
+/// A pick-up naming no live drop is still answered - **with the packet that clears the gate**.
 ///
-/// **Always answer.** These six opcodes are accepted on suspicion, so five of them will be
-/// something else - and returning nothing to a packet the client sent is how the UI latches.
+/// The client's pick-up sweep tests the same exclusive-request gate the inventory does
+/// (`research/pick-up-latch.md` §4), so a refusal that sends only a chat line risks closing
+/// every LATER pick-up. And it must never send a `0x046F` for a drop still on the floor:
+/// telling the client to remove something it can still see is how an item disappears.
 #[test]
-fn a_candidate_opcode_that_names_no_drop_is_still_answered() {
+fn a_pick_up_that_names_no_drop_clears_the_gate_and_removes_nothing() {
     let (mut s, _, _) = gm_session();
-    let mut body = crate::drops::PICK_UP_CANDIDATE_FIRST.to_le_bytes().to_vec();
-    body.extend_from_slice(&[0xAA; 8]);
+    let mut body = crate::drops::CLIENT_DROP_PICK_UP.to_le_bytes().to_vec();
+    body.extend_from_slice(&[0xAA; 34]);
 
     let out = s.handle(&body);
     assert!(!out.is_empty(), "a packet with no answer freezes the whole UI");
-    assert!(notice_text(&out[0]).contains("none of it names a drop"), "{}", notice_text(&out[0]));
+    assert_eq!(
+        out[0].opcode,
+        net::inventory::INVENTORY_OPERATION,
+        "the gate-clearing reply goes first"
+    );
+    assert_eq!(out[0].body, net::inventory::inventory_rejected());
+    assert!(
+        out.iter().all(|r| r.opcode != net::drops::DROP_LEAVE_FIELD),
+        "never remove a drop that is still on the floor"
+    );
 }
 
 /// A `0x00D2` body in the **preamble-first** shape: the 14-byte integrity block that

@@ -1,0 +1,250 @@
+//===========================================================
+// The gate the pick-up and the attack SHARE: FUN_142cc42d0.
+//
+// FUN_142cc42d0(CWvsContext* ctx, int minMs, int skipUiCheck) -> BOOL
+//   requires  [ctx+0x2338] == 0
+//   requires  [ctx+0x2330] == 0      <- the exclusive-request latch
+//   requires  (skipUiCheck != 0) || ([ctx+0x2358] != 0 && FUN_1401ba9d0(...) > 0)
+//   requires  now - [ctx+0x2334] >= minMs
+//
+// FUN_142cc5b00, the ONLY 0x0107 builder, sets [ctx+0x2330] = 1 at 142cc5f01
+// and restamps [ctx+0x2334] at 142cc5f10 - research/item-drop.md section 1.
+//
+// 264 call sites in 192 functions.  The three that matter here:
+//   14179ca24  FUN_14179c9d0  the PLAYER PICK-UP SWEEP, first branch, minMs = 0x1e
+//   1428af83e  FUN_1428af6d0  a key-action arm,                        minMs = 0xc8
+//   1428af931  FUN_1428af6d0  a second key-action arm,                 minMs = variable
+//   142cc6d84  FUN_142cc6770  the pick-up pre-check,                   minMs = 0x1e
+//===========================================================
+
+; 0x142cc42d0 .. 0x142cc433e  (110 bytes)
+ 000142cc42d0  mov      qword ptr [rsp + 8], rbx
+ 000142cc42d5  push     rdi
+ 000142cc42d6  sub      rsp, 0x20
+ 000142cc42da  cmp      dword ptr [rcx + 0x2338], 0
+ 000142cc42e1  mov      edi, edx
+ 000142cc42e3  mov      rbx, rcx
+ 000142cc42e6  jne      0x142cc4331   [branch]
+ 000142cc42e8  cmp      dword ptr [rcx + 0x2330], 0
+ 000142cc42ef  jne      0x142cc4331   [branch]
+ 000142cc42f1  test     r8d, r8d
+ 000142cc42f4  jne      0x142cc4312   [branch]
+ 000142cc42f6  mov      rax, qword ptr [rcx + 0x2358]
+ 000142cc42fd  test     rax, rax
+ 000142cc4300  je       0x142cc4331   [branch]
+ 000142cc4302  mov      edx, dword ptr [rax + 0x63]
+ 000142cc4305  lea      rcx, [rax + 0x5b]
+ 000142cc4309  call     0x1401ba9d0
+ 000142cc430e  test     eax, eax
+ 000142cc4310  jle      0x142cc4331   [branch]
+>000142cc4312  call     0x1429e3ef0
+ 000142cc4317  sub      eax, dword ptr [rbx + 0x2334]
+ 000142cc431d  cmp      eax, edi
+ 000142cc431f  jl       0x142cc4331   [branch]
+ 000142cc4321  mov      eax, 1
+ 000142cc4326  mov      rbx, qword ptr [rsp + 0x30]
+ 000142cc432b  add      rsp, 0x20
+ 000142cc432f  pop      rdi
+ 000142cc4330  ret      
+>000142cc4331  mov      rbx, qword ptr [rsp + 0x30]
+ 000142cc4336  xor      eax, eax
+ 000142cc4338  add      rsp, 0x20
+ 000142cc433c  pop      rdi
+ 000142cc433d  ret      
+
+// --- FUN_14179c9d0 prologue: the sweep gates ITSELF on the same latch, first ---
+; 0x14179c9d0 .. 0x14179dd70  (5024 bytes)
+ 00014179c9d0  mov      rax, rsp
+ 00014179c9d3  mov      qword ptr [rax + 8], rbx
+ 00014179c9d7  mov      qword ptr [rax + 0x18], rsi
+ 00014179c9db  mov      qword ptr [rax + 0x20], rdi
+ 00014179c9df  push     rbp
+ 00014179c9e0  push     r12
+ 00014179c9e2  push     r13
+ 00014179c9e4  push     r14
+ 00014179c9e6  push     r15
+ 00014179c9e8  lea      rbp, [rax - 0x78]
+ 00014179c9ec  sub      rsp, 0x150
+ 00014179c9f3  movaps   xmmword ptr [rax - 0x38], xmm6
+ 00014179c9f7  mov      rax, qword ptr [rip + 0x22eef0a]
+ 00014179c9fe  xor      rax, rsp
+ 00014179ca01  mov      qword ptr [rbp + 0x30], rax
+ 00014179ca05  mov      rsi, rdx
+ 00014179ca08  mov      qword ptr [rbp + 8], rdx
+ 00014179ca0c  mov      rbx, rcx
+ 00014179ca0f  mov      rdi, qword ptr [rip + 0x230ba8a]
+ 00014179ca16  mov      qword ptr [rbp + 0x10], rdi
+ 00014179ca1a  xor      r8d, r8d
+ 00014179ca1d  lea      edx, [r8 + 0x1e]
+ 00014179ca21  mov      rcx, rdi
+ 00014179ca24  call     0x142cc42d0
+ 00014179ca29  test     eax, eax
+ 00014179ca2b  je       0x14179dd3e   [branch]
+ 00014179ca31  call     0x141892840
+
+// --- FUN_1428af6d0: a key-action arm.  Three gates, then the action ---
+---- 0x1428af7f4
+ 1428af7f4  mov        ecx, dword ptr [rdx + rax*4 + 0x28b0ed4]
+ 1428af7fb  add        rcx, rdx
+ 1428af7fe  jmp        rcx
+ 1428af800  mov        rcx, qword ptr [rip + 0x122d849]
+ 1428af807  test       rcx, rcx
+ 1428af80a  je         0x1428b0ec9
+ 1428af810  call       0x142958d80
+ 1428af815  test       eax, eax
+ 1428af817  je         0x1428b00b6
+ 1428af81d  lea        rcx, [r13 + 0x100]
+ 1428af824  call       0x140f810b0
+ 1428af829  test       eax, eax
+ 1428af82b  jne        0x1428b00b6
+ 1428af831  xor        r8d, r8d
+ 1428af834  mov        edi, 0xc8
+ 1428af839  mov        edx, edi
+ 1428af83b  mov        rcx, rsi
+ 1428af83e  call       0x142cc42d0
+ 1428af843  test       eax, eax
+ 1428af845  je         0x1428b00b6
+ 1428af84b  mov        ecx, dword ptr [r15 + 1]
+ 1428af84f  call       0x140419040
+
+// --- FUN_1428af6d0: the PICK-UP arm of the same jump table (0x1428b0cec) ---
+---- 0x1428b0cec
+ 1428b0cec  mov        rbx, qword ptr [rip + 0x121d54d]
+ 1428b0cf3  mov        rax, qword ptr [r13 + 8]
+ 1428b0cf7  lea        rdx, [rbp - 0x48]
+ 1428b0cfb  lea        rcx, [r13 + 8]
+ 1428b0cff  call       qword ptr [rax + 0x30]
+ 1428b0d02  mov        rdx, rax
+ 1428b0d05  mov        rcx, rbx
+ 1428b0d08  call       0x14179c9d0
+
+// --- FUN_140f810b0(x) : (x[0x5e4] & ~1) == 0x12.  Called as (user+0x100), so
+//     it tests user+0x6e4 in {0x12, 0x13}.  Blocks the key action AND the
+//     drop-pool clear (142cb9e7c) AND the pick-up pre-check (142cc6f8d). ---
+---- 0x140f810b0
+ 140f810b0  mov        edx, dword ptr [rcx + 0x5e4]
+ 140f810b6  xor        eax, eax
+ 140f810b8  and        edx, 0xfffffffe
+ 140f810bb  cmp        edx, 0x12
+ 140f810be  sete       al
+ 140f810c1  ret        
+
+// --- FUN_142cb9df0: sweep and clear in ONE key press.  The clear is CONDITIONAL. ---
+; 0x142cb9df0 .. 0x142cb9ec5  (213 bytes)
+ 000142cb9df0  mov      qword ptr [rsp + 8], rbx
+ 000142cb9df5  mov      qword ptr [rsp + 0x10], rsi
+ 000142cb9dfa  push     rdi
+ 000142cb9dfb  sub      rsp, 0x20
+ 000142cb9dff  mov      rdi, qword ptr [rip + 0xdee712]
+ 000142cb9e06  mov      ebx, r8d
+ 000142cb9e09  mov      rsi, rcx
+ 000142cb9e0c  test     rdi, rdi
+ 000142cb9e0f  je       0x142cb9eb3   [branch]
+ 000142cb9e15  bt       ebx, 0x18
+ 000142cb9e19  jb       0x142cb9eb3   [branch]
+ 000142cb9e1f  mov      eax, ebx
+ 000142cb9e21  shr      eax, 0x10
+ 000142cb9e24  cmp      al, 0x52
+ 000142cb9e26  jne      0x142cb9eb3   [branch]
+ 000142cb9e2c  mov      rax, qword ptr [rip + 0xe1b985]
+ 000142cb9e33  mov      ecx, 0x90
+ 000142cb9e38  call     rax
+ 000142cb9e3a  test     al, 1
+ 000142cb9e3c  je       0x142cb9eb3   [branch]
+ 000142cb9e3e  shr      ebx, 0x1f
+ 000142cb9e41  not      bl
+ 000142cb9e43  test     bl, 1
+ 000142cb9e46  je       0x142cb9e9e   [branch]
+ 000142cb9e48  mov      rax, qword ptr [rdi + 8]
+ 000142cb9e4c  lea      rcx, [rdi + 8]
+ 000142cb9e50  lea      rdx, [rsp + 0x48]
+ 000142cb9e55  call     qword ptr [rax + 0x30]
+ 000142cb9e58  mov      rcx, rdi
+ 000142cb9e5b  call     0x1429071b0
+ 000142cb9e60  test     al, al
+ 000142cb9e62  je       0x142cb9e75   [branch]
+ 000142cb9e64  mov      rcx, qword ptr [rip + 0xe143d5]
+ 000142cb9e6b  lea      rdx, [rsp + 0x48]
+ 000142cb9e70  call     0x14179c9d0
+>000142cb9e75  lea      rcx, [rdi + 0x100]
+ 000142cb9e7c  call     0x140f810b0
+ 000142cb9e81  test     eax, eax
+ 000142cb9e83  jne      0x142cb9e9e   [branch]
+ 000142cb9e85  mov      rcx, rdi
+ 000142cb9e88  call     0x142889da0
+ 000142cb9e8d  test     eax, eax
+ 000142cb9e8f  jne      0x142cb9e9e   [branch]
+ 000142cb9e91  lea      rdx, [rsp + 0x48]
+ 000142cb9e96  mov      rcx, rsi
+ 000142cb9e99  call     0x142dd4da0
+>000142cb9e9e  mov      eax, 1
+ 000142cb9ea3  mov      rbx, qword ptr [rsp + 0x30]
+ 000142cb9ea8  mov      rsi, qword ptr [rsp + 0x38]
+ 000142cb9ead  add      rsp, 0x20
+ 000142cb9eb1  pop      rdi
+ 000142cb9eb2  ret      
+>000142cb9eb3  mov      rbx, qword ptr [rsp + 0x30]
+ 000142cb9eb8  xor      eax, eax
+ 000142cb9eba  mov      rsi, qword ptr [rsp + 0x38]
+ 000142cb9ebf  add      rsp, 0x20
+ 000142cb9ec3  pop      rdi
+ 000142cb9ec4  ret      
+
+//===========================================================
+// THE FIELD THAT ACTUALLY BLOCKS THE ATTACK: user+0x6e4.
+//
+// FUN_140f810b0(x) -> (x->[0x5e4] & ~1) == 0x12.   No .pdata entry, 17-byte leaf.
+// Every call site in the image passes (someUser + 0x100).
+// 199 callers.  Four of the SIX 0x00DF builders are among them:
+//   FUN_1428bc4d0  FUN_1428c01b0  FUN_1428c1fa0  FUN_1428c5aa0
+// (FUN_1428baa50 and FUN_1429a6590 are not.)
+//
+// The melee builder's gate, from research/msexe-attack-builder-1428c1fa0.txt:
+//   0001428c2045  lea   rax,[r14 + 0x100]
+//   0001428c2050  mov   rcx,rax
+//   0001428c2053  call  0x140f810b0
+//   0001428c2058  test  eax,eax
+//   0001428c205a  jne   0x1428c5a03      <- ABANDONS.  No 0x00DF is built.
+//
+// FUN_140f810e0(this, newState, force) is the ONLY writer of this field on this
+// class - a whole .text+.boot scan for [reg+0x5e4] stores returns 26 rows and the
+// other 25 are a different class at the same displacement (movsd of a double, a
+// mov byte, the constants 0x18 / 0x115 / 0x3f800000 / 0xffa5a198).
+// One direct caller: 0x14276eed1 in FUN_14276ecf0, itself slot 82 of the
+// 219-entry vtable at 0x14337f188.  The value it passes is computed, not immediate.
+//===========================================================
+
+// --- FUN_140f810b0: the predicate ---
+---- 0x140f810b0
+ 140f810b0  mov        edx, dword ptr [rcx + 0x5e4]
+ 140f810b6  xor        eax, eax
+ 140f810b8  and        edx, 0xfffffffe
+ 140f810bb  cmp        edx, 0x12
+ 140f810be  sete       al
+ 140f810c1  ret        
+
+// --- FUN_140f810e0: the setter.  0x12/0x13 fires its own virtual on entry ---
+---- 0x140f810e0
+ 140f810e0  mov        qword ptr [rsp + 0x10], rbx
+ 140f810e5  push       rdi
+ 140f810e6  sub        rsp, 0x40
+ 140f810ea  mov        edi, r9d
+ 140f810ed  mov        rbx, rcx
+ 140f810f0  test       r8d, r8d
+ 140f810f3  jne        0x140f81101
+ 140f810f5  cmp        edx, dword ptr [rcx + 0x5e4]
+ 140f810fb  je         0x140f8121f
+ 140f81101  mov        eax, edx
+ 140f81103  mov        qword ptr [rsp + 0x50], rsi
+ 140f81108  and        eax, 0xfffffffe
+ 140f8110b  mov        dword ptr [rcx + 0x5e4], edx
+ 140f81111  cmp        eax, 0x12
+
+// --- 0x14276eed1: the one caller of the setter ---
+---- 0x14276eec0
+ 14276eec0  mov        r9d, dword ptr [rbp + 0x7f]
+ 14276eec4  mov        r13d, dword ptr [rbp + 0x77]
+ 14276eec8  mov        r8d, r13d
+ 14276eecb  mov        edx, r15d
+ 14276eece  mov        rcx, rsi
+ 14276eed1  call       0x140f810e0

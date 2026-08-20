@@ -187,6 +187,20 @@ param(
     # replaces ALL FOUR slots, which silently drops 140304100 - the positive control that
     # is the only thing distinguishing "the collector did not run" from "the hook never
     # armed". That mistake costs a whole launch, and launches are the scarcest thing here.
+    # Watch the user state machine that stopped the owner attacking on 2026-08-20.
+    #
+    # FUN_140f810b0(x) is four instructions: (x->[0x5e4] & ~1) == 0x12. The melee builder
+    # FUN_1428c1fa0 calls it at 1428c2053 and jne 1428c5a03 - the epilogue, 3200 listing
+    # lines BEFORE its COutPacket(0x00DF). Four of the six attack builders check it. The
+    # same predicate skips the drop-pool clear and refuses the pick-up pre-check.
+    #
+    # One field stuck at 18/19 produces every measured fact of that run: zero attacks built,
+    # exactly one 0x032C, walking unaffected, and 44 more movement reports over the next six
+    # and a half minutes. What PUT the user in that state is [I], not [L].
+    #
+    # FUN_140f810e0 is the field's only setter on this class. Watching it prints the whole
+    # state machine in one ordinary session - rdx carries the value.
+    [switch]$UserState,
     [switch]$MobTargets,
     [string]$ClientDir
 )
@@ -295,7 +309,13 @@ $ErrorActionPreference = 'Stop'
 #
 # So: passing -InventorySlots means the bag is the variable, and the bag gets the watches.
 if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
-    if ($MobTargets) {
+    if ($UserState) {
+        # 140f810e0 - the only setter of the user state field. EXPECT several lines; read
+        #   rdx on each. A value whose (v & ~1) == 0x12 is the state that disables attacking,
+        #   the drop-pool clear and the pick-up pre-check all at once.
+        # 140304100:hits=200 - the equip decode at world entry. POSITIVE CONTROL.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140f810e0:hits=60,140304100:hits=200:dump=143AC2400/968'
+    } elseif ($MobTargets) {
         # 141d31b20:args=17 - the melee target collector. EXPECT ONE ENTRY PER SWING; the
         #   pairing against 0x00DF in world.log is already established, so a missing entry
         #   here means the watch, not the client.
@@ -361,6 +381,7 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
     $pair = "mob spawn (141c532ab)"
     if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
     if ($MobTargets) { $pair = "MOB TARGETING (mob+0xa88 and mob+0x42c in the collector loop)" }
+    if ($UserState) { $pair = "THE USER STATE FIELD (140f810e0, rdx is the value)" }
     Write-Host ("probe pair: " + $pair) -ForegroundColor Cyan
 }
 

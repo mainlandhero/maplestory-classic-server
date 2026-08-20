@@ -1486,6 +1486,8 @@ mod tests {
             "watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968",
             // -SetFieldProbe -InventorySlots N
             "watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968",
+            // -SetFieldProbe -UserState
+            "watch@1415db360:ret,141b2a280:rdx=0,140f810e0:hits=60,140304100:hits=200:dump=143AC2400/968",
             // -SetFieldProbe -MobTargets: five targets, which is why WATCH_SLOTS is six.
             // Kept on ONE line deliberately. Written with a `\` continuation it silently
             // retained the leading whitespace of the next line and produced a target that
