@@ -221,6 +221,47 @@ positive-control watch's first hit. `python tools/decode_dump.py --exp-curve` de
 comparing it against `data/exp-curve.txt` is a five-second job nobody has done. If they
 disagree, **the client wins**.
 
+#### Character create does not transition, 2026-08-21 - narrowed, not solved
+
+The owner created "Tester", the client said the name was available, and then **stayed on the
+creation screen**. Clicking OK again said the name was taken - because it was: the character
+exists.
+
+**Established from the captures, all [L]:**
+
+* The character **is created**. Id 206 is in the database with its equips.
+* The reply is **not** the problem. `0x0015` for "Tester" is **353 bytes**, and so is the
+  `0x0015` for "Engineer" on 2026-08-19 that **did** transition - same length, same head
+  structure field for field, differing only in the id, the name, the cosmetic ids and the
+  random stat roll (both totalling 25).
+* The **flow into it is identical** in both runs: `0x00A8` -> `0x05F4` -> `0x0081` name check
+  -> `0x008A` -> `0x0015`.
+* So this is a **regression in something other than the create reply**, and the reply is
+  ruled out rather than assumed innocent.
+* The static route is **blocked**: the `0x0015` handler `FUN_141b2cf30` decompiles to
+  `halt_baddata()` - 35 bytes of bad instruction data. `research/msexe-char-create.c`.
+
+**What actually differs between the working run and the failing one** is the account's
+character-list state. On 08-19 the client logged in holding **3** characters and had deleted
+one earlier in the same session; today it held **1** and had deleted two in a *previous*
+session.
+
+**The hypothesis, and it is a hypothesis:** the client keeps its own character-slot array and
+it is getting out of step with the server's list. That would explain **both** of the owner's
+symptoms - the Create button refusing outright after two deletes (no create packet reached
+the wire at all that time) and a create that succeeds server-side but cannot be placed into
+the list, so nothing transitions.
+
+**The experiment that discriminates, and it needs no code.** In one launch:
+
+1. Log in and create a character **without deleting anything first**. Does it transition?
+2. Then delete one and create another. Does *that* transition?
+
+If deleting first is what makes it work, the client needs the list re-sent after a delete and
+after a create, and both symptoms have one fix. If neither works, the create path broke for a
+reason the list state does not explain and the next step is the `0x00A8`/`0x05F4` exchange
+rather than the record.
+
 #### The heap corruption, and what the last run actually showed
 
 The owner, 2026-08-20: *"I tried to execute `!map 45`, which the command should guard me against,
