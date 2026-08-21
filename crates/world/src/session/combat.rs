@@ -112,11 +112,12 @@ impl Session {
             // asking afterwards returns nothing and every drop fell back to the player's
             // feet - which is exactly what the owner saw twice. Read it first, hand it down.
             let died_at = self.fields.mob_position(map, target.object_id);
-            let left = self.fields.hurt(map, target.object_id, damage, &self.config, self.clock_ms);
-            if left.is_none() {
+            let left =
+                self.fields.hurt(map, target.object_id, damage, chr_id, &self.config, self.clock_ms);
+            if let crate::fields::Hurt::Died(shares) = left {
                 out.extend(self.drops_from_kill(template, target.object_id, died_at, chr_id, map));
                 let (worth, why) = self.exp_for_kill(template);
-                out.extend(self.award_experience(worth, &why));
+                out.extend(self.award_kill_experience(worth, &why, chr_id, &shares));
                 out.extend(self.credit_kill_to_quests(template, chr_id));
             }
             // The template's real maxHP, because 0x03F0 carries a PERCENTAGE.
@@ -210,6 +211,9 @@ impl Session {
         // exactly the same pixel render as one. Centred on the mob so a single drop is
         // exactly where it died, and spread outward from there.
         let n = rolled.len() as i16;
+        // The corpse, bound before the loop shadows `x` with the staggered landing spot.
+        // Both ends of the arc have to exist at once or there is no arc.
+        let (mob_x, mob_y) = (x, y);
         for (i, r) in rolled.into_iter().enumerate() {
             let offset = (i as i16 - (n - 1) / 2) * crate::drops::DROP_STAGGER_PX;
             let x = x.saturating_add(offset);
@@ -246,6 +250,9 @@ impl Session {
                     meso,
                     x,
                     y,
+                    // The corpse, un-staggered: where the arc starts.
+                    source_x: mob_x,
+                    source_y: mob_y,
                     now_ms: now,
                 })
             });
@@ -324,7 +331,48 @@ impl Session {
     }
 
 
-    pub(super) fn award_experience(&mut self, gained: u64, why: &str) -> Vec<Reply> {
+    /// Award experience for a kill, splitting it by who actually did the damage.
+    ///
+    /// The owner, 2026-08-20, with a screenshot: *"if I was the person who dealt majority damage,
+    /// I should see a white line of EXP gained. If I was not the person who dealt majority
+    /// damage, I would only get a % portion of the EXP that belonged to the mob ... and that
+    /// line would be yellow."*
+    ///
+    /// **This connection only ever pays itself.** The share list names every contributor, but
+    /// there is no way to push a packet to another player's thread - a channel is a process
+    /// and each connection is its own thread with its own socket, `crates/world/src/server.rs`.
+    /// So each session finds *itself* in the list and pays its own cut. With one player that
+    /// is the whole list; with two, each pays itself the moment it kills something, and the
+    /// second player's share of a kill they helped with is **not yet delivered**. Said out
+    /// loud rather than left to look finished: `Fields::hurt` already returns the whole split
+    /// and it is only the delivery that is missing.
+    ///
+    /// **Parties do not exist**, so the 70/30 split and `You received party EXP` are not
+    /// implemented. `research/exp-sharing.md` records the rule so it does not have to be
+    /// asked for twice.
+    pub(super) fn award_kill_experience(
+        &mut self,
+        worth: u64,
+        why: &str,
+        chr_id: u32,
+        shares: &[crate::fields::DamageShare],
+    ) -> Vec<Reply> {
+        // Nothing credited means nothing landed - a mob that died without being hurt, which
+        // only a bug produces. Pay the killer in full rather than nothing.
+        let Some(mine) = shares.iter().find(|s| s.character == chr_id) else {
+            return self.award_experience(worth, why, true);
+        };
+        let cut = mine.cut_of(worth);
+        let why = if mine.majority {
+            why.to_string()
+        } else {
+            format!("{why}, {}/{} of the damage", mine.dealt, mine.total)
+        };
+        self.award_experience(cut, &why, mine.majority)
+    }
+
+
+    pub(super) fn award_experience(&mut self, gained: u64, why: &str, white: bool) -> Vec<Reply> {
         if gained == 0 {
             return Vec::new();
         }
@@ -386,8 +434,11 @@ impl Session {
         // the client holds. That is a "did not find", not a "there is none".
         out.push(Reply {
             opcode: net::message::MESSAGE,
-            body: net::message::exp_gained(gained),
-            what: format!("Message: +{gained} exp, in the screen message area, not the chat log"),
+            body: net::message::exp_gained(gained, white),
+            what: format!(
+                "Message: +{gained} exp, {} - the screen message area, not the chat log",
+                if white { "WHITE (majority damage)" } else { "yellow (a share)" }
+            ),
         });
         out
     }

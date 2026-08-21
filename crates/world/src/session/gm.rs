@@ -87,6 +87,17 @@ impl Session {
                 "!map REFUSED: {map} has no field image in this client, so it would strand you."
             ));
         }
+        // **Do not claim to have checked something that was not checked.** `map_exists` is
+        // fail-open on an empty table, so with no `gm-handbook/fields.txt` every id above
+        // gets through - and a map with no field image kills the client. The owner typed
+        // `!map 45` on 2026-08-20 and lost a session to it. Refusing instead would fail
+        // closed on a tool problem; saying so out loud costs one line and turns a silent
+        // hole into a visible one.
+        if self.config.fields.is_empty() {
+            return self.gm_ack(format!(
+                "!map REFUSED: the field table is empty, so {map} could not be checked and a                  bad id would kill the client. Regenerate gm-handbook/fields.txt with                  tools/dump_portals.py, or restart the server so it loads."
+            ));
+        }
         let Some(mut chr) = self.claimed_character() else {
             return self.gm_ack("!map REFUSED: no character is claimed on this connection.".to_string());
         };
@@ -125,7 +136,8 @@ impl Session {
         // used to add and persist on its own, which meant a GM award could never level
         // anyone while a kill could, and nothing would have said so.
         let before = chr.exp;
-        let mut out = self.award_experience(amount, "!exp");
+        // White: `!exp` is your own experience, not a share of somebody else's kill.
+        let mut out = self.award_experience(amount, "!exp", true);
         if out.is_empty() {
             return self.gm_ack(format!("!exp {amount}: nothing to award."));
         }

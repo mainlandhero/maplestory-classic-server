@@ -155,8 +155,16 @@ pub mod item_slot {
 ///
 /// `142d5f014 cmp dword [rbp+0xb0], ebx / je` picks `r8d = 4` when the byte is zero and
 /// `r8d = 0` when it is not, and `r8d` is `FUN_142572050`'s third argument. **[L]** for the
-/// branch; what it does on screen is **not established**, which is why [`exp_gained`] sends
-/// the zero the client's other senders would.
+/// branch.
+///
+/// **What it does on screen is now half established, from a screenshot.** The owner sent one on
+/// 2026-08-20 of `You received EXP (+2)` drawn in **yellow**, from a build that sent
+/// `white = 0`. So `0` -> `r8d = 4` -> yellow is **[L]**. That `1` gives white is **[I]** -
+/// it is the only other branch, and it is what the argument name in every related client
+/// predicts, but nobody has seen it yet. The next run settles it.
+///
+/// The colour is not decoration. The owner: *"if I was the person who dealt majority damage, I
+/// should see a white line ... If I was not ... that line would be yellow."*
 ///
 /// # No mask parameter, on purpose
 ///
@@ -288,6 +296,10 @@ pub fn experience_with_bonuses(
 
 /// `You received EXP (+n)`, in the message area, nothing else. **This is the one to use.**
 ///
+/// `white` is the colour, and it means *"you dealt the majority of the damage"*: white for
+/// your own kill, yellow for a share of somebody else's. See the `white` section above for
+/// which half of that is measured.
+///
 /// `in_chat = false` keeps it out of the chat log — which is the whole of the owner's request —
 /// and no bonuses keeps the body at its minimum, so no field the client reads is left
 /// unwritten.
@@ -295,8 +307,8 @@ pub fn experience_with_bonuses(
 /// It is **cosmetic and independent of the EXP itself**: the bar moves because of
 /// [`crate::combat::stat_changed`] (`0x007C`, bit `EXP`), which carries the new total.
 /// Send both; neither implies the other.
-pub fn exp_gained(exp: u64) -> Vec<u8> {
-    experience(exp, false, false)
+pub fn exp_gained(exp: u64, white: bool) -> Vec<u8> {
+    experience(exp, white, false)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -437,7 +449,7 @@ mod tests {
     /// Every byte of the message the owner asked for, in order, against `FUN_1408cfcf0`.
     #[test]
     fn the_experience_body_is_the_four_fields_the_reader_reads() {
-        let b = exp_gained(211);
+        let b = exp_gained(211, false);
         assert_eq!(b.len(), 1 + EXPERIENCE_BODY_LEN, "19 bytes with the kind byte");
         assert_eq!(b[0], kind::EXPERIENCE);
         assert_eq!(b[1], 0, "white   -> dst+0x00, 1408cfd0b");
@@ -459,7 +471,7 @@ mod tests {
     /// helper must never set it.
     #[test]
     fn exp_gained_keeps_the_line_out_of_the_chat_log() {
-        assert_eq!(exp_gained(1)[10], 0);
+        assert_eq!(exp_gained(1, false)[10], 0);
         assert_eq!(experience(1, false, true)[10], 1, "the other way round");
     }
 

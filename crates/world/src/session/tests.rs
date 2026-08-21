@@ -799,7 +799,7 @@ fn enough_experience_levels_the_character_and_says_so() {
 ");
     s.config = Arc::new(Config { exp_curve: curve, ..(*s.config).clone() });
 
-    let out = s.award_experience(15, "a test");
+    let out = s.award_experience(15, "a test", true);
 
     let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("a 0x007C");
     assert!(stat.what.contains("LEVEL 1 -> 2"), "{}", stat.what);
@@ -830,7 +830,7 @@ fn experience_short_of_a_level_is_just_banked() {
 ");
     s.config = Arc::new(Config { exp_curve: curve, ..(*s.config).clone() });
 
-    let out = s.award_experience(14, "a test");
+    let out = s.award_experience(14, "a test", true);
     assert!(!out
         .iter()
         .filter(|r| r.opcode == net::notice::CHAT_NOTICE)
@@ -846,7 +846,7 @@ fn experience_short_of_a_level_is_just_banked() {
 #[test]
 fn an_award_of_zero_sends_no_packet() {
     let (mut s, _, _) = gm_session();
-    assert!(s.award_experience(0, "a worthless mob").is_empty());
+    assert!(s.award_experience(0, "a worthless mob", true).is_empty());
 }
 
 /// **A kill counts toward a started quest.** The owner: *"I accepted Sam's suggestion which
@@ -2388,4 +2388,89 @@ fn a_zero_chance_row_stays_dead_at_every_rate() {
             "{per_cent} hundredths revived a disabled row"
         );
     }
+}
+
+
+/// **`!map 45` must be refused, not obeyed.** The owner tried it on 2026-08-20 and the client
+/// died; the guard is innocent, and this pins it so nobody has to re-establish that.
+///
+/// 45 has no field image in this client - `gm-handbook/fields.txt` lists 40 and jumps to the
+/// next real map - so `map_exists` is false and the command answers with a refusal.
+#[test]
+fn the_map_command_refuses_an_id_with_no_field_image() {
+    let (mut s, _, _) = gm_session();
+    // A loaded field table. Without one `map_exists` is fail-open by design, which is a
+    // different branch and has its own test below.
+    let fields = [1u32, 40, 104000000].into_iter().collect();
+    s.config = Arc::new(Config { fields, ..(*s.config).clone() });
+    let before = s.claimed_character().unwrap().map_id;
+    for missing in ["45", "999999", "4294967295"] {
+        let out = s.handle(&gm_chat(&format!("!map {missing}")));
+        let said = notice_text(&out[0]);
+        assert!(said.contains("REFUSED"), "!map {missing}: {said}");
+        assert_eq!(out.len(), 1, "a refusal is one notice and no field change: {out:?}");
+        assert_eq!(
+            s.claimed_character().unwrap().map_id,
+            before,
+            "!map {missing} moved the character"
+        );
+    }
+}
+
+/// **An empty field table refuses too, and says why.**
+///
+/// `map_exists` is fail-open on an empty table so that a missing generated file does not turn
+/// every warp into a refusal. That silently removes the guard, and `gm-handbook/` is generated
+/// and gitignored, so it can genuinely be missing. The command must not answer as though it
+/// checked something it could not check.
+#[test]
+fn an_empty_field_table_refuses_and_names_the_reason() {
+    let (mut s, _, _) = gm_session();
+    assert!(s.config.fields.is_empty(), "the default config has no field table");
+    let out = s.handle(&gm_chat("!map 40"));
+    let said = notice_text(&out[0]);
+    assert!(said.contains("REFUSED"), "{said}");
+    assert!(said.contains("field table is empty"), "{said}");
+    assert!(said.contains("dump_portals.py"), "it has to say how to fix it: {said}");
+}
+
+/// And the shapes that are not numbers at all still answer rather than going silent.
+#[test]
+fn the_map_command_answers_rubbish_rather_than_ignoring_it() {
+    let (mut s, _, _) = gm_session();
+    for rubbish in ["", "forty", "-1", "4.5", "40 40"] {
+        let out = s.handle(&gm_chat(&format!("!map {rubbish}")));
+        assert!(!out.is_empty(), "!map {rubbish:?} answered nothing at all");
+        assert_eq!(out[0].opcode, net::notice::CHAT_NOTICE, "!map {rubbish:?}");
+    }
+}
+
+/// The killer of a mob they did all the damage to gets a WHITE line.
+#[test]
+fn a_solo_kill_pays_in_full_and_in_white() {
+    let (mut s, _, _) = gm_session();
+    let shares = vec![crate::fields::DamageShare {
+        character: 204,
+        dealt: 45,
+        total: 45,
+        majority: true,
+    }];
+    let out = s.award_kill_experience(10, "a kill", 204, &shares);
+    let msg = out.iter().find(|r| r.opcode == net::message::MESSAGE).expect("an EXP line");
+    assert_eq!(msg.body[1], 1, "white = 1 for majority damage");
+    assert!(msg.what.contains("WHITE"), "{}", msg.what);
+}
+
+/// A player who did not deal the majority gets a fraction, and a YELLOW line.
+#[test]
+fn a_minority_share_is_a_fraction_and_yellow() {
+    let (mut s, _, _) = gm_session();
+    let shares = vec![
+        crate::fields::DamageShare { character: 999, dealt: 30, total: 45, majority: true },
+        crate::fields::DamageShare { character: 204, dealt: 15, total: 45, majority: false },
+    ];
+    let out = s.award_kill_experience(30, "a kill", 204, &shares);
+    let msg = out.iter().find(|r| r.opcode == net::message::MESSAGE).expect("an EXP line");
+    assert_eq!(msg.body[1], 0, "white = 0 for a share");
+    assert!(msg.what.contains("+10 exp"), "15 of 45 of 30 exp is 10: {}", msg.what);
 }

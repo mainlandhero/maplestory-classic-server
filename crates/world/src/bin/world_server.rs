@@ -263,6 +263,19 @@ fn main() -> ExitCode {
         config.exp_curve.levels(),
         config.mob_exp.values().filter(|e| **e > 0).count()
     );
+    // **Say whether the !map guard exists.** `map_exists` is fail-open on an empty table -
+    // deliberately, so a tool problem does not turn every warp into a refusal - which means a
+    // missing gm-handbook/fields.txt silently removes the guard entirely. That directory is
+    // generated and gitignored, so it CAN be missing, and on 2026-08-20 the owner typed `!map 45`
+    // and the client died. Nothing in this banner said whether the check was live.
+    if config.fields.is_empty() {
+        println!(
+            "maplecw-world: fields: NONE LOADED from {}. !map will accept ANY id, including              ones with no field image, and the client dies on those. Regenerate with              tools/dump_portals.py.",
+            fields_path.display()
+        );
+    } else {
+        println!("maplecw-world: fields: {} maps have a field image", config.fields.len());
+    }
     for line in &config.drops.problems {
         println!("maplecw-world: drops: {line}");
     }

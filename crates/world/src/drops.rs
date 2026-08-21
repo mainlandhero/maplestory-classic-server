@@ -343,7 +343,31 @@ pub struct LiveDrop {
     /// item id 0.
     pub meso: u32,
     pub dropped_at_ms: u64,
+    /// Where the drop's arc **starts** - the mob's own position for a kill, and the item's
+    /// resting place for anything a player put down by hand.
+    ///
+    /// The owner, 2026-08-20, watching a snail die: *"the item currently drop out too fast"*. It
+    /// did, because this used to be the resting place in every case, so the arc had zero
+    /// length and the icon simply appeared. See [`DROP_FLIGHT_MS`].
+    pub source_x: i16,
+    /// See [`LiveDrop::source_x`].
+    pub source_y: i16,
+    /// The `u32 delay` of `0x046E`'s source block, in milliseconds.
+    pub delay_ms: u32,
 }
+
+/// How long a mob's drop takes to arc from the corpse to where it lands.
+///
+/// The owner asked for *"like a 0.5 second delay from mob dying to item start to drop"*. This is
+/// the client's own field - `0x046E`'s `u32` after `srcX`/`srcY`, read only for enter types
+/// 0, 1 and 3 - rather than the server holding the packet back for half a second. The client
+/// already knows how to animate the arc, and a server-side delay would need the tick to
+/// release queued drops and would still leave the arc instantaneous.
+///
+/// **[I] that the field is a duration and not a start-delay.** Both readings are satisfied by
+/// this number, so the run does not have to distinguish them to look right; if the drop still
+/// snaps into place, this is the first thing to change.
+pub const DROP_FLIGHT_MS: u32 = 500;
 
 impl LiveDrop {
     /// The item template id.
@@ -389,10 +413,18 @@ impl LiveDrop {
     }
 
     pub fn field_drop(&self) -> net::drops::FieldDrop {
-        if self.is_meso() {
+        let base = if self.is_meso() {
             net::drops::FieldDrop::money(self.object_id, self.meso, self.owner_id, self.x, self.y)
         } else {
             net::drops::FieldDrop::item(self.object_id, self.item_id(), self.owner_id, self.x, self.y)
+        };
+        // The arc. Both constructors default the source to the resting place and the delay to
+        // zero, which is right for an item a player set down and wrong for one a mob dropped.
+        net::drops::FieldDrop {
+            source_x: self.source_x,
+            source_y: self.source_y,
+            delay: self.delay_ms,
+            ..base
         }
     }
 
@@ -440,10 +472,17 @@ pub struct DropFromMob {
     pub inv_type: store::InventoryType,
     /// The amount when this is mesos; `0` for an item drop.
     pub meso: u32,
-    /// Where it lands - the mob's own position, so it falls where it died.
+    /// Where it lands. Staggered outward from the corpse when several drop at once.
     pub x: i16,
     /// See [`DropFromMob::x`].
     pub y: i16,
+    /// The corpse itself - where the arc starts, **before** the stagger is applied.
+    ///
+    /// Separate from `x` on purpose: with both equal the arc has zero length and the icon
+    /// appears at rest, which is what the owner saw.
+    pub source_x: i16,
+    /// See [`DropFromMob::source_x`].
+    pub source_y: i16,
     /// Session milliseconds, for expiry.
     pub now_ms: u64,
 }
@@ -486,6 +525,11 @@ pub struct DropFromBag {
 /// request's own opcode is not decoded, so there is no "pick-up refused" packet to build. Use
 /// [`PickUp::replies`] for what *is* known and [`PickUp::notice`] for the rest, and read the
 /// module docs on why a pick-up that goes unanswered may or may not latch the UI.
+///
+/// `Taken` is much larger than the other variants because it carries a whole [`LiveDrop`],
+/// and boxing it would put an allocation on the one path that always succeeds. One of these
+/// exists at a time, on the stack, for the length of one pick-up.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickUp {
     /// It is theirs. Put `drop.item` into `drop.inv_type` and send `leave` to the field.
@@ -749,6 +793,12 @@ impl DropTable {
             y: d.y,
             meso: d.meso,
             dropped_at_ms: d.now_ms,
+            // The arc starts on the corpse and ends where the stagger put the item, over
+            // DROP_FLIGHT_MS. Before this both ends were the same point and the icon simply
+            // appeared - the owner: "the item currently drop out too fast".
+            source_x: d.source_x,
+            source_y: d.source_y,
+            delay_ms: DROP_FLIGHT_MS,
         };
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
         self.live.insert(object_id, drop);
@@ -771,6 +821,10 @@ impl DropTable {
             y: d.y,
             meso: 0, // a bag drop is always an item
             dropped_at_ms: d.now_ms,
+            // A player setting an item down has no arc: it lands where they are standing.
+            source_x: d.x,
+            source_y: d.y,
+            delay_ms: 0,
         };
         let inv_type = d.inv_type.as_u8() as i8;
         let removed = Reply {

@@ -185,10 +185,11 @@ then leaves everything above it already measured.
 
 | # | do | what to watch | what it means |
 |---|---|---|---|
+| 0 | check the banner in `world.log` for `fields:` | `N maps have a field image`, not `NONE LOADED` | **new.** With no field table `!map` cannot validate anything, and it now refuses rather than pretending it checked. The old warning went to stderr, which nothing reads |
 | 1 | `!map 40`, wait | snails appearing over a few seconds | the field seeds empty and refills from the WZ's `mobTime`. 40 spawn points, all `mobTime = 0` (the field's ordinary 7s, **not** "never"), 75% solo capacity, so about **30** snails |
 | 2 | hit one snail **once** | the HP bar over it | your damage over **45**. Hitting for 18 should leave it near three fifths; about a quarter means the percentage change did not land |
-| 3 | kill it | drops on the floor, **at the mob** | not at your feet, and several drops slightly apart rather than stacked. Every snail drops 2 mesos; about two in five drop a Snail Shell |
-| 4 | watch the bottom right | `You received EXP (+2)` | **not** in the chat log. Different wording from the live server - this build's string table says "received", not "gained" |
+| 3 | kill it | drops **arc out of the corpse over half a second** | fixed since the last run: the arc used to start and end on the same pixel, so the icon simply appeared. Also still: at the mob, not at your feet, and spread apart. Every snail drops 2 mesos; about two in five drop a Snail Shell |
+| 4 | watch the bottom right | `You received EXP (+2)` in **WHITE** | it was yellow last run, and yellow means "a share of someone else's kill". Solo, every kill is majority damage, so every line should now be white. **If it is still yellow the `white` byte does not mean what we think** - that half is `[I]`; `research/exp-sharing.md` |
 | 5 | walk over a drop | it goes in the bag, and a line bottom-right | `0x032C` is measured now, so this should simply work |
 | 6 | kill eight snails | the level-up animation, **+16 max HP, +12 max MP**, +5 AP | 15 EXP to level and 2 a snail. The 16/12 is new - it was 14/10. **This client cannot arbitrate it**: it has no per-level table and is simply told the new maxima, so wrong numbers mean the source is wrong. Goal K |
 | 7 | accept Sam's Suggestion, kill snails | the quest counter moving | ten snails. The count is a **string** in the packet - if it reads 0/10 forever, that is where to look |
@@ -217,6 +218,35 @@ Two watches, each needing its own run, neither combinable with the above:
 positive-control watch's first hit. `python tools/decode_dump.py --exp-curve` decodes it, and
 comparing it against `data/exp-curve.txt` is a five-second job nobody has done. If they
 disagree, **the client wins**.
+
+#### The heap corruption, and what the last run actually showed
+
+The owner, 2026-08-20: *"I tried to execute `!map 45`, which the command should guard me against,
+but the client crashed."* **The guard is innocent, and this is what the evidence says.**
+
+* **No chat packet reached the server at all.** Enumerating every inbound opcode in that
+  run's `world.log` gives no `0x00E7` of any kind. `!map 45` was never transmitted, so
+  `gm_map` never ran.
+* **The guard was live.** `world.log.err` is 0 bytes, and a missing field table writes to
+  stderr there, so `gm-handbook/fields.txt` loaded. 45 is not in it, and the command would
+  have refused.
+* **The fault is `0xC0000374`, heap corruption**, raised 325 ms after the last packet inside
+  `FUN_14019b4e0` - a heap helper beside the client's allocator and free. That is where it
+  was *detected*, not what corrupted it, and heap corruption is detected arbitrarily long
+  after the write that caused it.
+* **It is not new and not today's code.** It has now happened twice: this run and the Amherst
+  1013 run of 2026-08-19. Both captures are in `research/fixtures/` under
+  `heap-corruption-*`. Everything else on record is eleven access violations, four fail-fasts
+  and three clean exits.
+* **The new banner packet was never sent** - zero `0x00AC` in the run - so it is not that.
+
+**Two captures of the same fault is the lead**, and comparing them costs no client run.
+
+One real defect did come out of it: `map_exists` is fail-open on an empty field table, so a
+missing generated file silently removes the `!map` guard. There *was* a warning for that, on
+**stderr**, where nothing reads it - the banner that reaches `world.log` is stdout. The banner
+now reports the field count, and `!map` refuses outright rather than answering as though it
+had checked.
 
 #### Things that are NOT open, so nobody re-opens them
 
