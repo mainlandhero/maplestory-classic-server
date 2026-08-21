@@ -2552,3 +2552,125 @@ fn quest_request(action: u8, quest_id: u32, npc: u32) -> Vec<u8> {
     b.extend_from_slice(&[0u8; 8]);
     b
 }
+
+
+/// **A full Equip tab must not stop an Etc pick-up.** The owner, 2026-08-20: *"Even when my Equip
+/// tab is full, I should still be allowed to pick up items that belong to other tabs since
+/// they each have 30 slots and can be expanded independently."*
+///
+/// Every tab has its own slot column and its own capacity check, so this is a regression
+/// guard rather than a fix - if it ever fails, the per-tab accounting has been collapsed.
+#[test]
+fn a_full_equip_tab_does_not_block_the_other_bags() {
+    let (s, store, id) = gm_session();
+    let equip_slots = store.inventory_slots(id, store::InventoryType::Equip).unwrap();
+    for _ in 0..equip_slots {
+        store
+            .add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1)
+            .expect("filling the equip tab");
+    }
+    assert!(
+        store.free_slot(id, store::InventoryType::Equip).unwrap().is_none(),
+        "the equip tab must actually be full for this test to mean anything"
+    );
+
+    for (inv, item) in [
+        (store::InventoryType::Etc, store::Item::bundle(4000001, 1)),
+        (store::InventoryType::Use, store::Item::bundle(2000000, 1)),
+    ] {
+        let placed = store.add_item(id, inv, &item, 100);
+        assert!(placed.is_ok(), "a full Equip tab blocked {inv:?}: {placed:?}");
+    }
+    let _ = s;
+}
+
+/// **The bag and the meso balance are re-sent on field entry.** They were never lost - the
+/// client was simply never told, because the record cannot carry the non-equip bags and the
+/// stat block has no meso field.
+#[test]
+fn entering_a_field_restores_the_bag_and_the_mesos() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Etc, &store::Item::bundle(4000001, 3), 100).unwrap();
+    store.add_mesos(id, 1234).unwrap();
+
+    let out = s.on_field_entered();
+    let adds: Vec<&Reply> = out
+        .iter()
+        .filter(|r| r.opcode == net::inventory::INVENTORY_OPERATION && r.what.contains("restored"))
+        .collect();
+    assert_eq!(adds.len(), 1, "the Etc stack should be re-sent: {out:?}");
+
+    let meso = out
+        .iter()
+        .find(|r| r.what.contains("mesos restored"))
+        .expect("a meso balance should be sent");
+    assert_eq!(meso.opcode, net::stats::STAT_CHANGED);
+    assert!(meso.what.contains("1234"), "{}", meso.what);
+}
+
+/// Equips are NOT re-sent: they ride the character record, and a second copy would double
+/// every item in the tab.
+#[test]
+fn the_equip_tab_is_not_restored_twice() {
+    let (mut s, store, id) = gm_session();
+    store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1).unwrap();
+    let out = s.on_field_entered();
+    assert!(
+        !out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION
+            && r.what.contains("restored")),
+        "an equip was re-sent on top of the record: {out:?}"
+    );
+}
+
+
+/// **Accepting a quest hands over what `Act.0.item` promises.** The owner, 2026-08-20: Sera talked
+/// and gave nothing, and quest 1001 cannot be completed without the mirror it was supposed to
+/// hand over.
+#[test]
+fn accepting_a_quest_hands_over_its_act_items() {
+    let (mut s, store, id) = gm_session();
+    let mut q = crate::config::Quest {
+        name: "Bringing a Mirror to Heena".to_string(),
+        start_npc: Some(2),
+        start_items: vec![(4031000, 1)],
+        ..Default::default()
+    };
+    q.say.insert("0".to_string(), vec!["Fine, fine, here's the mirror.".to_string()]);
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(1001u32, q);
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+
+    s.handle(&quest_request(net::script::QUEST_ACTION_START, 1001, 2));
+
+    let etc = store.bag_items(id, store::InventoryType::Etc).unwrap();
+    assert_eq!(etc.len(), 1, "the mirror should be in the Etc bag: {etc:?}");
+    assert_eq!(etc[0].item.item_id, 4031000);
+}
+
+/// A negative count is a TAKE, and taking is not wired - it must not be mistaken for a give.
+#[test]
+fn a_negative_act_count_gives_nothing() {
+    let (mut s, store, id) = gm_session();
+    let mut q = crate::config::Quest { start_npc: Some(2), start_items: vec![(4031000, -1)], ..Default::default() };
+    q.say.insert("0".to_string(), vec!["...".to_string()]);
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(1001u32, q);
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+
+    s.handle(&quest_request(net::script::QUEST_ACTION_START, 1001, 2));
+    assert!(store.bag_items(id, store::InventoryType::Etc).unwrap().is_empty());
+}
+
+/// The real `questlines.txt` parses into the grant, so the fixture above is not the only
+/// thing being tested.
+#[test]
+fn the_real_quest_file_carries_seras_mirror() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // gm-handbook is generated and gitignored; skip rather than fail a fresh clone
+    }
+    let quests = crate::config::load_quests(path);
+    let q = quests.get(&1001).expect("quest 1001 is in this client");
+    assert_eq!(q.start_items, vec![(4031000, 1)], "Act.0.item.0 for quest 1001");
+    assert_eq!(quests.get(&1000).and_then(|q| q.next_quest), Some(1001));
+}

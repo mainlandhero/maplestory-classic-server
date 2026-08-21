@@ -196,7 +196,67 @@ impl Session {
                 "quest {quest_id} accepted but NOT STORED ({e}) - the journal will show it until the next relog and then lose it"
             ),
         };
-        vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }]
+        let mut out =
+            vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }];
+        out.extend(self.grant_quest_start_items(quest_id));
+        out
+    }
+
+
+    /// Hand over whatever `Act.0.item` says accepting this quest gives.
+    ///
+    /// The owner, 2026-08-20: *"when I talked to Sera, after their dialogue, they did not give me
+    /// Sera's Mirror to be able to complete the quest."* Quest 1001's `Act.0.item.0` is
+    /// `4031000` x1 and nothing read it, so the conversation happened and the bag stayed
+    /// empty - and quest 1001's completion `Check.1.item.0` wants exactly that item, so the
+    /// chain could not be finished by any route.
+    ///
+    /// **Only the giving direction.** A negative count in the WZ means "take it away" - quest
+    /// 1001's `Act.1.item.0.count` is `-1` - and taking an item on completion is not wired,
+    /// so finishing that quest leaves the mirror in the bag. Recorded rather than silently
+    /// half-done: `Act.<state>.item` is read for state 0 only.
+    fn grant_quest_start_items(&mut self, quest_id: u32) -> Vec<Reply> {
+        let Some(quest) = self.config.quests.get(&quest_id) else { return Vec::new() };
+        let items = quest.start_items.clone();
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let mut out = Vec::new();
+        for (item_id, count) in items {
+            if count <= 0 {
+                continue; // a take, which this does not do - see the doc comment
+            }
+            let Some(inv) = store::InventoryType::for_item(item_id) else {
+                out.extend(self.notice(format!(
+                    "Quest {quest_id} wanted to give you item {item_id}, whose id names no bag."
+                )));
+                continue;
+            };
+            let max_stack = self
+                .config
+                .shops
+                .item_data
+                .get(&item_id)
+                .map(|d| d.slot_max.max(1))
+                .unwrap_or(1);
+            let item = if inv == store::InventoryType::Equip {
+                store::Item::equip(item_id)
+            } else {
+                store::Item::bundle(item_id, count.min(u16::MAX as i32) as u16)
+            };
+            match self.store.add_item(chr.id, inv, &item, max_stack) {
+                Ok(placed) => {
+                    out.extend(self.inventory_added_replies(inv, &placed, "given by a quest"));
+                    out.push(Reply {
+                        opcode: net::message::MESSAGE,
+                        body: net::message::item_gained(item_id, count.max(1) as u32),
+                        what: format!("Message: quest {quest_id} gave {item_id} x{count}"),
+                    });
+                }
+                Err(e) => out.extend(self.notice(format!(
+                    "Quest {quest_id} could not give you item {item_id}: {e}"
+                ))),
+            }
+        }
+        out
     }
 
 

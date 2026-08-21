@@ -734,6 +734,16 @@ pub struct Quest {
     pub end_npc: Option<u32>,
     /// `Act.<state>.nextQuest` - the quest this one chains into.
     pub next_quest: Option<u32>,
+    /// `Act.0.item.N` - what accepting the quest hands over, as `(item id, count)`.
+    ///
+    /// Quest 1001's is `(4031000, 1)`: Sera's mirror. The owner, 2026-08-20: *"when I talked to
+    /// Sera, after their dialogue, they did not give me Sera's Mirror to be able to complete the
+    /// quest."* They did not because nothing read this.
+    ///
+    /// A **negative** count in the WZ means "take it away" - quest 1001's `Act.1.item.0.count`
+    /// is `-1`, the mirror going back when Heena is done with it. Only the giving direction is
+    /// wired; see [`Quest::start_items`]'s note.
+    pub start_items: Vec<(u32, i32)>,
     /// The conversation, keyed by the `Say` path with the line index removed.
     ///
     /// `"0"` is the opening conversation and `"1"` the completion one; `"0.yes"`,
@@ -741,6 +751,11 @@ pub struct Quest {
     /// numbered lines **in index order**, which is not the same as string order once a
     /// conversation reaches ten lines.
     pub say: HashMap<String, Vec<String>>,
+}
+
+/// The `<n>` out of `0.item.<n>.id`.
+fn act_item_index(dotted: &str) -> Option<usize> {
+    dotted.split('.').nth(2)?.parse().ok()
 }
 
 /// Every quest, from `tools/dump_quests.py`'s `questlines.txt`.
@@ -751,6 +766,9 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
     use std::collections::BTreeMap;
     let mut lines: HashMap<u32, HashMap<String, BTreeMap<usize, String>>> = HashMap::new();
     let mut out: HashMap<u32, Quest> = HashMap::new();
+    // quest -> item index -> (id, count), stitched after the read because the two halves are
+    // separate rows and the file does not promise an order.
+    let mut act_items: HashMap<u32, BTreeMap<usize, (Option<u32>, Option<i32>)>> = HashMap::new();
 
     let Ok(text) = std::fs::read_to_string(path) else { return out };
     for row in text.lines() {
@@ -770,6 +788,18 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
             "Check" if dotted == "0.npc" => quest.start_npc = value.parse().ok(),
             "Check" if dotted == "1.npc" => quest.end_npc = value.parse().ok(),
             "Act" if dotted.ends_with(".nextQuest") => quest.next_quest = value.parse().ok(),
+            // `Act.0.item.<n>.id` and `.count` arrive as separate rows in either order, so
+            // both sides are stitched together after the file is read - see below.
+            "Act" if dotted.starts_with("0.item.") && dotted.ends_with(".id") => {
+                if let (Some(n), Some(id)) = (act_item_index(dotted), value.parse::<u32>().ok()) {
+                    act_items.entry(qid).or_default().entry(n).or_default().0 = Some(id);
+                }
+            }
+            "Act" if dotted.starts_with("0.item.") && dotted.ends_with(".count") => {
+                if let (Some(n), Some(c)) = (act_item_index(dotted), value.parse::<i32>().ok()) {
+                    act_items.entry(qid).or_default().entry(n).or_default().1 = Some(c);
+                }
+            }
             "Say" => {
                 // The last path segment is the line index; everything before it is the
                 // node. Splitting on the index rather than assuming a depth is what lets
@@ -792,6 +822,16 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
                     .insert(index, value.to_string());
             }
             _ => {}
+        }
+    }
+
+    for (qid, indexed) in act_items {
+        let quest = out.entry(qid).or_default();
+        // BTreeMap: index order, so a two-item reward is handed over the same way twice.
+        for (_, (id, count)) in indexed {
+            if let (Some(id), Some(count)) = (id, count) {
+                quest.start_items.push((id, count));
+            }
         }
     }
 

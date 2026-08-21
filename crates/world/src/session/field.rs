@@ -107,6 +107,70 @@ impl Session {
         // request this feature is waiting to see.
         let (map, now) = (chr.map_id, self.clock_ms);
         out.extend(self.fields.with_drops(map, |d| d.field_entry(map, now)));
+        out.extend(self.restore_bag_and_mesos());
+        out
+    }
+
+
+    /// Tell the client about the bag and the meso balance it cannot read from the record.
+    ///
+    /// # This is why the owner's Etc items and mesos "did not persist"
+    ///
+    /// They persisted perfectly. `store::inventory` had every one of them and still does -
+    /// what was missing is that **nothing ever told the client**, so a relog showed an empty
+    /// Etc tab and 0 mesos over a database that held neither.
+    ///
+    /// Two separate reasons, both already written down elsewhere in this repo and neither
+    /// noticed to be a bug:
+    ///
+    /// * **The character record cannot carry them.** `crates/net/src/bag.rs`: the Equip tab
+    ///   rides `presence[2]` and is sent, but the Use / Set Up / Etc / Cash bags sit behind
+    ///   presence bytes 3, 4, 5 and 6, and bytes 3/4/5 each open a further **undecoded**
+    ///   block. Nobody has decoded them, so nobody could fill them.
+    /// * **The stat block has no meso field at all.** `session::ground` says so where it
+    ///   credits a meso drop: `0x007C` bit 18 is *"the ONLY way this client is ever told a
+    ///   meso balance"*.
+    ///
+    /// So this does not decode anything. It re-sends what already works: `0x0070` mode 0 -
+    /// the same packet `!item` and a shop purchase use to put a stack in a bag without a
+    /// field re-entry - and one `0x007C` for the balance.
+    ///
+    /// **Equips are deliberately skipped.** They come through the record, and sending them
+    /// twice would put a second copy of every item in the tab.
+    fn restore_bag_and_mesos(&mut self) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let mut out = Vec::new();
+        for inv in [
+            store::InventoryType::Use,
+            store::InventoryType::Setup,
+            store::InventoryType::Etc,
+            store::InventoryType::Cash,
+        ] {
+            let items = match self.store.bag_items(chr.id, inv) {
+                Ok(items) => items,
+                Err(e) => {
+                    out.extend(self.notice(format!("Could not read your {inv:?} bag: {e}")));
+                    continue;
+                }
+            };
+            for item in items {
+                out.extend(self.inventory_added_replies(inv, &[item], "restored on field entry"));
+            }
+        }
+        match self.store.mesos(chr.id) {
+            // Zero is worth sending: the client starts a session believing whatever it last
+            // held, and after a relog that is not necessarily zero.
+            Ok(mesos) => out.push(Reply {
+                opcode: net::stats::STAT_CHANGED,
+                body: net::stats::StatChange {
+                    meso: Some(u64::from(mesos)),
+                    ..Default::default()
+                }
+                .build(),
+                what: format!("StatChanged: {mesos} mesos restored on field entry - bit 18 is the only way this client is ever told a balance"),
+            }),
+            Err(e) => out.extend(self.notice(format!("Could not read your mesos: {e}"))),
+        }
         out
     }
 
