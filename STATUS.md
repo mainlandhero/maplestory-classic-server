@@ -221,6 +221,40 @@ positive-control watch's first hit. `python tools/decode_dump.py --exp-curve` de
 comparing it against `data/exp-curve.txt` is a five-second job nobody has done. If they
 disagree, **the client wins**.
 
+#### Change Channel: we answer with a LOGIN-stage opcode on a GAME connection - 2026-08-21
+
+The owner changed channels and nothing happened. The capture says the request arrived, we answered
+it, and the client ignored the answer:
+
+```text
+<- 0x00D2  19 byte body  01 2d2c010d 64000000 47580000 ...   (target channel 1, 0-based)
+-> 0x0011  MIGRATE_COMMAND ... to channel 1 at 127.0.0.1:8486
+   ...six seconds of ordinary mob traffic...
+   ch0 connection closed
+```
+
+**Channel 1 was listening on 8486 and received no connection at all** - `world-ch1.log` is 23
+lines of startup banner and nothing else.
+
+**The body is not the problem.** Compared byte for byte against the `0x0011` the *login*
+server sends, which demonstrably works, the two are structurally identical - same length,
+same fields, differing only in the port (`2521` = 8485 vs `2621` = 8486, both correct) and the
+single-use seed.
+
+**The opcode is the problem.** `0x0011` is a **login-stage** opcode. The channel stage
+dispatches through `FUN_142cbaa80`, whose labels are **`0x70..0x19f`** plus the outliers
+`0x275` and `0x39a` - `research/msexe-gamestage-opcodes.md`. `0x0011` is **below the bottom of
+that range**, so a channel connection cannot dispatch it at all. The client is not refusing
+the migration; it never sees one.
+
+That also explains the note this reply already carried: *"The reply SHAPE is inference; no
+capture."* The shape was inferred from the login migrate, and so, silently, was the opcode.
+
+**Next step:** find the channel stage's own migrate/change-channel reply. It is somewhere in
+`0x70..0x19f`, and the two request/response pairs already identified in that switch (`0x162`
+answering with `0x175`, `0x275` with `0x17e`) are the model for how to look - a case that
+*sends* something is rare enough to enumerate.
+
 #### The AP request is `0x0139`, and the body decodes - 2026-08-21
 
 The owner tried allocating ability points three times over two runs and nothing happened. It was
