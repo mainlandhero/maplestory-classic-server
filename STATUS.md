@@ -112,114 +112,65 @@ working, not its verdicts.
 
 | | |
 |---|---|
-| the world | a dressed character on a map, items carrying their real `Character.wz` stats |
-| the bag | six inventories sized by the server; 125 slots with a scrollbar |
-| NPCs | visible, clickable, speaking the game's own lines on both click paths |
-| movement | portals both ways, `!map <id>` |
-| session | world select, Log Out back to the login screen |
-| **inventory persistence (goal I)** | an item taken off *stays* off across a map change |
-| two channel rows | CH.1 and CH.2 both listed in the Change Channel dialog |
-| **combat, both directions** | The owner: *"The mob killings work, I'm taking damage, and the mob is also taking damage."* |
-| **drops** | items fall when a mob dies, and the pick-up works |
-
-#### The two fixes that made combat work, and what they cost to find
-
-**Every mob was sent a size of ZERO PERCENT.** Body offset 91 -> `mob+0xd64`. `0` is not
-"unset"; `FUN_141c57120` reads it and, when it is not exactly `100`, resizes the hit
-rectangle by `(scale - 100)%` of half its width. At `0` both edges collapse onto the centre,
-`141d326ae` **skips** the rect rather than rejecting it, and `141d327c6` drops the mob - with
-all seventeen documented gates green. Invisible because the render paths test `<= 0` ("no
-scale set, draw normally") while the hit-box path tests `!= 100`, so the mobs drew, animated
-and walked while having no hit box at all. One field, both directions of damage.
-
-**`0x00E5` is the client reporting that it took damage, and it does not apply it.** Three
-scans with different blind spots found zero writers of the player's HP field. The server is
-the authority and answers with `0x007C` bit 10 - the **new HP**, not a delta.
+| the world | a dressed character on a map, real `Character.wz` stats |
+| NPCs, movement, session | clickable and speaking, portals both ways, `!map`, Log Out |
+| **combat, both directions** | *"The mob killings work, I'm taking damage, and the mob is also taking damage."* |
+| **drops** | fall at the mob, staggered, **arc out over half a second**, and pick up into the right bag |
+| **the EXP line is WHITE** | majority damage. Which also *measured* the `white` byte - it was inferred |
+| **the scrolling banner** | `0x00AC` type 4 works, and `!exprate` drives it. Both were inferred; both are now seen |
+| **mobs appear instantly** | `appearType -1` on field entry, `-2` on respawn |
+| **the quest chain** | Heena -> Sera -> Heena: 1000 completes, 1001 starts, the mirror changes hands |
+| **character create** | creating with and without a prior delete both transition |
 
 #### WIRED, and NOT yet seen on a screen
 
-Everything here compiles, is tested, and is connected. **None of it has been seen by the
+Everything here compiles, is tested and is connected. **None of it has been seen by the
 client.** The heading exists separately because `STATUS.md` has twice called something done
 while it was unwired.
 
 | | what to look for |
 |---|---|
-| **drops land on the mob** | not at the player's feet. Fixed twice: the second time, `hurt()` removed the mob before the drop asked where it was |
-| **the mob HP bar** | `0x03F0` carries a **percentage**, not an absolute. We sent 27 of 45 and it drew 27% |
-| **EXP and pick-ups in the screen message area** | `0x0089` with a type byte, not `0x00BB`. The chat notices are gone |
-| **kill quests count** | Sam's Suggestion is quest 1006 - mob template 2, ten of them |
-| **skills** | `0x013B` answered with `0x0081`; levels persist and ride the character record as `presence[8]` |
-| **mob respawn** | from the WZ's own `mobTime`; a field starts **empty** and fills in |
-| **levelling** | EXP per kill from the client's own template data, curve in `data/exp-curve.txt`. **HP/MP per level is now per class** - a beginner gains +16/+12, not +14/+10 |
-| **`!exprate` / `!mesorate`** | a scrolling banner via **`0x00AC` type 4**, an opcode this client has never been sent. Rates are global across both channels because they live in the database |
+| **the Etc bag and mesos survive a relog** | they always persisted - nothing ever *sent* them. Field entry now re-sends `0x0070` per item plus `0x007C` for the balance |
+| **items stack** | Garnet Ore into one slot, not three. `slotMax 0` means unspecified, not one |
+| **idle regeneration** | +10 HP and MP every 10 s after 10 s of no movement, attack or damage |
+| **quest completion pays out** | `Act.1`: 2 EXP for quest 1001, and Heena keeps the mirror |
+| **the Tutorial Jr. Sentinel** | 100% Shellpiece, no mesos, no second drop |
+| **`!setrates <exp> <meso> <drop>`** | all three on one anchor, one banner. Every rate command now refuses below 1x |
+
+#### Solved today, and what each one cost to find
+
+* **Sera recited Heena's tutorial.** Quest 1000 has no `Say.1`, so the completion fell back to
+  `Say.0` - the opening of the quest being finished. A completion now chains via
+  `Act.1.nextQuest` instead.
+* **Sera handed over nothing.** `Act.0.item` was never read. Now it is, and `Act.1.item` too.
+* **Etc items and mesos "did not persist".** They persisted perfectly; the client was never
+  told. Both reasons were already written down in this repo and neither had been noticed.
+* **Garnet Ore would not stack.** `ShopTable::max_per_purchase` already had the right rule and
+  **three callers had each hand-rolled `slot_max.max(1)` instead of calling it.**
+* **A full Equip tab was blamed for blocking Etc pick-ups** and was innocent - a test proves
+  it. The symptom was the missing restore above.
 
 #### What to do next, in order
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **Run the client**, plan below | Seven wired things are unseen |
-| 2 | **The skill-window crash** | The cheapest discrimination costs no code and is step 8 of the plan. If the inventory window also crashes, the teardown is generic and skills are innocent |
-| 3 | **What puts the user in state 18/19** | `(user->[0x5e4] & ~1) == 0x12`, checked by four of the six attack builders, and the same predicate skips the drop-pool clear and refuses the pick-up pre-check. What SETS it is `[I]`. `-UserState` watches the only setter |
-| 4 | **The classic shop counter - the opcode is `0x055D`, found 2026-08-20** | `0x0560` opens **Shop2**, whose art this client does not have. `0x055D` opens the classic `UIShop.img/Shop`, whose art it does. What is left is decoding the body: its rows carry a **thirteen-field item structure**, not an id and a price. `research/classic-shop-opcode.md` names every remaining unknown. Static work, and the largest piece of it |
-| 5 | **Death** | `hp = 0` disables the player and does not hang the client, but nothing plays the death or revive sequence. `!heal` is the escape hatch until it exists |
-| 6 | **Job advancement (goal E)** | Needs SP, and the stat block's SP field forks into a pool list nobody has decoded |
-| 7 | **The combat formulas (goals J and L; K is done)** | The owner, 2026-08-20: *"an integral part of our server"*. Captured in `research/meowdb-combat-formulas.md`. **J** is the big one and the server is not the damage authority today; **L** has no table on the page and is the lowest priority of the three |
+| 1 | **Drops that land in walls** | The owner's rule: clip into terrain -> the platform above if a jump reaches it, else the next below. **The data is now dumped** - `gm-handbook/footholds.txt`, 94089 footholds across 426 maps - and nothing consumes it yet. Biggest ready-to-build item |
+| 2 | **AP allocation** | **`0x0139`**, `u32 tick, u32 count, u32 statMask, u32 amount`; `0x40` is STR. Handler, mask table and the `0x007C` confirm are all that is left |
+| 3 | **Change Channel** | We answer `0x00D2` with `0x0011`, a **login-stage** opcode, on a game socket - below the channel switch's `0x70` floor, so the client never sees it. Find the channel stage's own migrate reply |
+| 4 | **Quest scripts** | Roger's 1002 has `startscript q1002s` and **no `Say.0`**. A second kind of quest, unimplemented. First question: where the script bodies live, since they are not in `questlines.txt` |
+| 5 | **NPCs fade in on map entry** | The mob fix does not transfer: `0x044F` has no field named as an appear type, only an unexplained `u32` and a `raw[8]`. Needs the NPC pool's decoder read, not a guess |
+| 6 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
+| 7 | **The heap corruption** | Page heap changed it from `0xC0000374` to a verifier stop and WinDbg is installed. Take a dump, do not attach - `research/heap-corruption.md` |
+| 8 | **Quest forfeit** | `0x01ED` and `0x01A5` both carry the quest id and both go unanswered |
+| 9 | **Death, job advancement (E), the damage formula (J)** | unchanged; see the goal entries below |
 
-#### THE TEST PLAN for the next run
+#### THE TEST PLAN
 
-```
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
-```
+**It lives in `tools/test-server.ps1` now**, at the top of the file, so the steps and the thing
+that launches them cannot drift apart. Run the launcher and read them there.
 
-**The path is absolute on purpose** - the launch needs an elevated window, and an elevated
-window opens in `C:\Windows\System32`. **`-SetFieldProbe` is not optional**: without it
-`Session::handle` returns nothing for *every* packet and the client sits on "Connecting...".
-
-**The map will be EMPTY when you arrive and fill in over about seven seconds.** That is the
-model the owner asked for, not a bug. Map 40 has **40 spawn points**, all Blue Snail, every one of
-them `mobTime = 0` - which means "no node, use the field's ordinary rate", not "never" - and
-solo capacity is 75%, so about **30** snails.
-
-**The steps that can kill the client are 17-20. Do them last** - a crash at the skill window
-then leaves everything above it already measured.
-
-| # | do | what to watch | what it means |
-|---|---|---|---|
-| 0 | check the banner in `world.log` for `fields:` | `N maps have a field image`, not `NONE LOADED` | **new.** With no field table `!map` cannot validate anything, and it now refuses rather than pretending it checked. The old warning went to stderr, which nothing reads |
-| 1 | `!map 40`, wait | snails appearing over a few seconds | the field seeds empty and refills from the WZ's `mobTime`. 40 spawn points, all `mobTime = 0` (the field's ordinary 7s, **not** "never"), 75% solo capacity, so about **30** snails |
-| 2 | hit one snail **once** | the HP bar over it | your damage over **45**. Hitting for 18 should leave it near three fifths; about a quarter means the percentage change did not land |
-| 3 | kill it | drops **arc out of the corpse over half a second** | fixed since the last run: the arc used to start and end on the same pixel, so the icon simply appeared. Also still: at the mob, not at your feet, and spread apart. Every snail drops 2 mesos; about two in five drop a Snail Shell |
-| 3b | `!map 40` from another map | mobs **already standing there**, no fade-in | new: field entry sends `appearType -1`, a respawn keeps `-2`. Both stay on the safe side of the client's target gates, which is the only reason this was ever a one-byte choice |
-| 3c | stand still for 10 s, then 20 s | **+10 HP and +10 MP every 10 seconds**, and it stops when you are full | new. Moving, attacking or being hit restarts the countdown |
-| 4 | watch the bottom right | `You received EXP (+2)` in **WHITE** | it was yellow last run, and yellow means "a share of someone else's kill". Solo, every kill is majority damage, so every line should now be white. **If it is still yellow the `white` byte does not mean what we think** - that half is `[I]`; `research/exp-sharing.md` |
-| 5 | walk over a drop | it goes in the bag, and a line bottom-right | `0x032C` is measured now, so this should simply work |
-| 6 | kill eight snails | the level-up animation, **+16 max HP, +12 max MP**, +5 AP | 15 EXP to level and 2 a snail. The 16/12 is new - it was 14/10. **This client cannot arbitrate it**: it has no per-level table and is simply told the new maxima, so wrong numbers mean the source is wrong. Goal K |
-| 7 | accept Sam's Suggestion, kill snails | the quest counter moving | ten snails. The count is a **string** in the packet - if it reads 0/10 forever, that is where to look |
-| 8 | `!rates` | `Server rates: EXP 1x, Meso 1x, Drop 1x. No event is running.` | read-only. It is how to tell "the rate is applied" from "the rate was never stored" |
-| 9 | `!exprate 2` | **a banner across the top of the screen** | the first time `0x00AC` has ever been sent to this client. If nothing draws, check `world.log` for `BroadcastMsg type 4` **first** - the packet going out and nothing appearing is a different problem from the packet never going out, and only the log tells them apart |
-| 10 | kill four snails | you level in **four** kills, not eight, and `+4` a kill | the rate applying, not just being stored and announced |
-| 11 | `!mesorate 3`, `!droprate 5`, kill a snail | **one** banner with all three sentences; 6 mesos; far more items | the client has one banner object, so every running event shares one line |
-| 12 | `!map 40` with the banner up | **does the banner survive the map change?** | a question, not a check. If it vanishes, `world::session::rates` has to re-assert on field entry; if it survives, leave it alone. Either answer is worth having |
-| 13 | leave it alone five minutes | down at 2 minutes, back up at 5 | the 2-in-5 cycle. **The rate itself never expires** - only the banner cycles. Start it and do something else |
-| 14 | `!exprate 1` | `[Event] The EXP rate-up event has ended.` **immediately**, alongside the two still running | an ending is a message too. It shows for one 2-minute window and does not cycle back |
-| 15 | `!mesorate 1`, `!droprate 1`, then `!rates` | the last ending shows 2 minutes, then the banner goes down for good; `!rates` reads all 1x | `world.log` shows a two-byte body for the teardown - flag 0, no string |
-| 16 | open the **inventory** window, close it. Then the **stat** window | whether the client survives | **the skill-window crash test, and it needs no code.** If either also crashes the teardown is generic and skills are innocent. **This can end the run, so it is here and not earlier** |
-| 17 | open the skill window, click `+` on Three Snails **twice** | the level going up on both | the first click always went out; the second was swallowed by a latch only a server packet clears. One click proves nothing |
-| 18 | close the skill window | whether it survives | this is the step that has crashed. If it does, the run is over having lost nothing |
-| 19 | relog | level, EXP, quest count, skill level, items, **and the rate** | all of it persists; the rates are in the database, so a relog rejoins an event in progress |
-
-**Do not click Lucy.** `0x0560` is off by default and they will simply talk, but there is no
-point spending attention on it until the classic counter is found.
-
-Two watches, each needing its own run, neither combinable with the above:
-
-* the user state machine: `-SetFieldProbe -UserState`
-* mob targeting: `-SetFieldProbe -MobTargets` (kept, though the mob question is answered)
-
-**Every `-SetFieldProbe` run also dumps the client's own EXP curve for free**, on the
-positive-control watch's first hit. `python tools/decode_dump.py --exp-curve` decodes it, and
-comparing it against `data/exp-curve.txt` is a five-second job nobody has done. If they
-disagree, **the client wins**.
+Two watches still need their own runs, neither combinable with the plan:
+`-SetFieldProbe -UserState` for the user state machine, and `-SetFieldProbe -MobTargets`.
 
 #### Change Channel: we answer with a LOGIN-stage opcode on a GAME connection - 2026-08-21
 

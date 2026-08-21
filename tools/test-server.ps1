@@ -12,6 +12,67 @@
     client patches, the same launch mode, the same exit forensics - so that if a run goes
     wrong, the server is the only thing that changed.
 
+.NOTES
+    ================== THE TEST PLAN, as of 2026-08-21 ==================
+
+    It lives here rather than in STATUS.md so that the steps and the thing that launches
+    them cannot drift apart. Update it in the same commit that changes what it tests.
+
+    -SetFieldProbe is NOT optional. Without it Session::handle returns nothing for EVERY
+    packet and the client sits on "Connecting...", which looks exactly like a server that
+    is not running. It has cost a launch.
+
+    Run -Stop before relaunching. A running server holds the release binaries and the
+    rebuild fails with "Access is denied".
+
+    WHAT IS NEW AND UNSEEN - do these first, they are the point of the run
+    ---------------------------------------------------------------------
+     1. Kill snails until you have Etc items and mesos. Note both.
+     2. Log out and back in. THE ETC ITEMS AND THE MESO COUNT MUST STILL BE THERE.
+        They always persisted in the database; nothing ever sent them. If the tab is
+        empty, the restore did not fire and world.log is wanted.
+     3. Pick up several Garnet Ores. ONE slot with a count, not three slots.
+     4. Stand still 10s, then 20s. +10 HP and +10 MP every 10 seconds, stopping when full.
+        Moving, attacking or being hit restarts the countdown.
+     5. Heena -> accept -> Sera. They must say "How am I going to hang all these up?", NOT
+        the "new traveler" tutorial, and Sera's Mirror must appear in the Etc tab.
+     6. Take it to Heena. Quest 1001 completes, +2 EXP, and the mirror LEAVES your bag.
+     7. Kill the Tutorial Jr. Sentinel. Always a Shellpiece, never mesos, never anything
+        else. It is the only mob with that exception.
+     8. !setrates 2 3 5 -> one banner naming all three. !rates reads them back.
+        !setrates 1 1 1 -> three "rate-up event has ended" lines on one banner.
+        Every rate command now refuses below 1x.
+
+    REGRESSION GLANCES - seconds each, not exercises
+    -----------------------------------------------
+     9. Drops arc out of the corpse over about half a second, at the mob, spread apart.
+    10. The EXP line bottom-right is WHITE.
+    11. Mobs on !map 40 are already standing there - no fade-in.
+    12. A level-up gives +16 max HP and +12 max MP.
+
+    STILL OPEN - do not spend the run confirming these are broken
+    ------------------------------------------------------------
+      - AP allocation. Opcode identified (0x0139) but no handler.
+      - Change Channel. We answer with a login-stage opcode on a game socket.
+      - Roger's Apple. Needs a quest SCRIPT engine that does not exist.
+      - Quest forfeit. 0x01ED / 0x01A5 undecoded.
+      - NPCs fade in on map entry. No appear-type field identified in 0x044F.
+      - The blue HP/MP recovery number. Packet not found.
+      - Drops can still land in terrain. footholds.txt is dumped; nothing reads it yet.
+
+    IF THE CLIENT DIES
+    ------------------
+    Do not lose the logs. previous-runs/ is a rolling buffer; copy anything that settles a
+    question into research/fixtures/ under a name that says what it proves. Say roughly how
+    long you were in and what you were doing - for the heap corruption that is the variable
+    the logs cannot supply. Dumps land in dumps/ if WER LocalDumps is still configured.
+
+    THE FREE MEASUREMENT NOBODY HAS TAKEN
+    -------------------------------------
+    Every -SetFieldProbe run dumps the client's own EXP curve on the positive control's
+    first hit:  python tools/decode_dump.py --exp-curve
+    Compare it against data/exp-curve.txt. If they disagree, the client wins.
+
     THE CLIENT PATCHES ARE STILL PATCHES. Nothing here makes the session valid:
 
       1415db360:ret     skip the server-reachability check. NOT OPTIONAL: without it the
