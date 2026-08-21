@@ -64,6 +64,12 @@ impl Session {
                  wrong place cannot be picked up. Walk a step first",
             );
         };
+        // `last_position` is the last point of the movement path, which can be **mid-jump**.
+        // An item left hanging in the air where the player happened to be is exactly as
+        // uncollectable as one inside a wall, and it is the same 10-px pick-up box either
+        // way. The fallback is the player's own position, so a player already standing on
+        // the ground sees no change at all.
+        let (x, y) = self.config.footholds.rest_at(chr.map_id, x, y, (x, y));
 
         let in_slot = self
             .store

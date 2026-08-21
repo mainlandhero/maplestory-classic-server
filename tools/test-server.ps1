@@ -25,40 +25,82 @@
     Run -Stop before relaunching. A running server holds the release binaries and the
     rebuild fails with "Access is denied".
 
-    WHAT IS NEW AND UNSEEN - do these first, they are the point of the run
-    ---------------------------------------------------------------------
-     1. Kill snails until you have Etc items and mesos. Note both.
-     2. Log out and back in. THE ETC ITEMS AND THE MESO COUNT MUST STILL BE THERE.
-        They always persisted in the database; nothing ever sent them. If the tab is
-        empty, the restore did not fire and world.log is wanted.
-     3. Pick up several Garnet Ores. ONE slot with a count, not three slots.
-     4. Stand still 10s, then 20s. +10 HP and +10 MP every 10 seconds, stopping when full.
-        Moving, attacking or being hit restarts the countdown.
-     5. Heena -> accept -> Sera. They must say "How am I going to hang all these up?", NOT
-        the "new traveler" tutorial, and Sera's Mirror must appear in the Etc tab.
-     6. Take it to Heena. Quest 1001 completes, +2 EXP, and the mirror LEAVES your bag.
-     7. Kill the Tutorial Jr. Sentinel. Always a Shellpiece, never mesos, never anything
-        else. It is the only mob with that exception.
-     8. !setrates 2 3 5 -> one banner naming all three. !rates reads them back.
+    FIRST, BEFORE THE CLIENT: read the startup banner in the server window.
+    ----------------------------------------------------------------------
+    Two lines say whether anything below is even being tested:
+
+      maplecw-world: footholds: 94089 segments across 426 maps (...)
+      maplecw-world: quests: 322 loaded, 1 of them carrying an authored script overlay
+
+    "NONE LOADED" or "no script overlay" means steps 3 and 5 fail for a reason that has
+    nothing to do with the client. Regenerate with: python tools/dump_portals.py
+
+    THE ONE THAT MATTERS MOST - a crash with a repro, at last
+    --------------------------------------------------------
+     1. Your character is wearing a hat in worn slot 1. UNEQUIP IT into the bag, wait
+        about 20 seconds, then DRAG IT STRAIGHT BACK ON.
+        The 2026-08-21 death came 9 ms after exactly that packet, and the hook wrote no
+        dispatch line for it - it writes that line on handler RETURN, and all 20 sibling
+        0x0070s in the same file have one. So the client entered the handler and died
+        inside it.
+        If it dies again here, the heap corruption finally has a deterministic reproducer,
+        and page heap plus a WER dump becomes cheap. IF IT DOES NOT DIE, that is equally
+        useful and means the equip was a coincidence - five sessions have died at
+        193-482 s with no equipping at all, and 240.9 s is an ordinary lifetime here.
+        SAY WHICH HAPPENED, EITHER WAY.
+     2. While you are there: equip a SECOND hat over the first. The old one must land in
+        the bag slot the new one came from. The client performs that swap itself; the
+        server sends the same 14 bytes it always did.
+
+    THEN, WHAT IS NEW AND UNSEEN
+    ----------------------------
+     3. Talk to ROGER on Maple Island.
+          "You'll die when your HP reaches 0..." then Next    -> the overlay loaded
+          second box has ACCEPT / DECLINE, not OK             -> the 0x10 box is right
+          Roger's Apple appears in the USE tab after Accept   -> Act.0.item fired
+          "Hey, nice weather, isn't it?"                      -> the overlay did NOT load.
+                                                                 That exact sentence is
+                                                                 the fall-through signature
+     4. Turn in ANY quest and LISTEN. A fanfare should play with NOTHING DRAWN.
+        Sound and no picture is the EXPECTED result, not a failure:
+        Effect/BasicEff.img/QuestClear is the one referenced BasicEff node this client's
+        WZ does not contain. If something IS drawn, say so - the analysis needs
+        correcting. If the client faults a few seconds later, that packet is the cause:
+        say so and it gets abandoned, because there is no other route to this sound.
+     5. Kill a mob ON A SLOPE OR A STEP, not on flat ground - flat looks identical before
+        and after, which is why this went unnoticed. Every drop must be walkable-over.
+        world.log names the foothold for any drop that moved.
+     6. Kill snails until you have Etc items and mesos. Note both.
+     7. Log out and back in. THE ETC ITEMS AND THE MESO COUNT MUST STILL BE THERE.
+     8. Pick up several Garnet Ores. ONE slot with a count, not three slots.
+     9. Stand still 10s, then 20s. +10 HP and +10 MP every 10 seconds, stopping when full.
+    10. Heena -> accept -> Sera -> back to Heena. Quest 1001 completes, +2 EXP, and the
+        mirror LEAVES your bag.
+        NOTE: +2 is TWO. The EXP line IS sent, byte-for-byte the same shape as the +200
+        lines from kills; 1001's Act.1.exp is literally 2 in the client's own data. If it
+        looks like nothing happened, that is the number, not a missing packet.
+    11. Kill the Tutorial Jr. Sentinel. Always a Shellpiece, never mesos, never anything
+        else.
+    12. !setrates 2 3 5 -> one banner naming all three. !rates reads them back.
         !setrates 1 1 1 -> three "rate-up event has ended" lines on one banner.
-        Every rate command now refuses below 1x.
 
     REGRESSION GLANCES - seconds each, not exercises
     -----------------------------------------------
-     9. Drops arc out of the corpse over about half a second, at the mob, spread apart.
-    10. The EXP line bottom-right is WHITE.
-    11. Mobs on !map 40 are already standing there - no fade-in.
-    12. A level-up gives +16 max HP and +12 max MP.
+    13. Drops arc out of the corpse over about half a second, at the mob, spread apart.
+    14. The EXP line bottom-right is WHITE.
+    15. Mobs on !map 40 are already standing there - no fade-in.
+    16. A level-up gives +16 max HP and +12 max MP.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
       - AP allocation. Opcode identified (0x0139) but no handler.
       - Change Channel. We answer with a login-stage opcode on a game socket.
-      - Roger's Apple. Needs a quest SCRIPT engine that does not exist.
-      - Quest forfeit. 0x01ED / 0x01A5 undecoded.
+      - Quest forfeit. 0x01ED / 0x01A5 undecoded - four attempts each on 2026-08-21.
       - NPCs fade in on map entry. No appear-type field identified in 0x044F.
       - The blue HP/MP recovery number. Packet not found.
-      - Drops can still land in terrain. footholds.txt is dumped; nothing reads it yet.
+      - The other 11 script quests. Only 1002 is authored.
+      - There is NO EXP-gain sound in this client. IncEXP and questCount are in
+        Sound/Game.img and neither name appears anywhere in the executable.
 
     IF THE CLIENT DIES
     ------------------

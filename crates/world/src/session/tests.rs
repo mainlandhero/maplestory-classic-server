@@ -1461,6 +1461,68 @@ fn accepting_a_quest_answers_with_the_yes_branch() {
     assert!(done.is_empty(), "the conversation must end, not loop");
 }
 
+/// **Roger's quest opens**, from the authored script overlay rather than their idle line.
+///
+/// The owner, 2026-08-21: *"Roger's Apple quest doesn't start as expected. All I see is 'Hey,
+/// nice weather isn't it', which is just their normal text instead of the quest text."*
+///
+/// Quest 1002 opens with `Check.0.startscript q1002s` and has **no `Say."0"`** - and the
+/// script body is not in the client at all (all 205 archives and 10021 images enumerated;
+/// `research/quest-scripts.md`). So the opening is authored in `data/quest-scripts.txt` and
+/// merged over the generated table.
+///
+/// This drives the **exact 13-byte body from `world.log` at 06:10:04.854** - action 4,
+/// quest 1002, NPC 3 - and asserts the two things that were wrong on screen: that the reply
+/// is the quest's opening rather than the fall-through line, and that the last line of it
+/// carries an Accept/Decline box rather than a plain OK.
+#[test]
+fn rogers_script_quest_opens_from_the_authored_overlay() {
+    let generated = std::path::Path::new("../../gm-handbook/questlines.txt");
+    let authored = std::path::Path::new("../../data/quest-scripts.txt");
+    if !generated.exists() {
+        return; // generated data, gitignored
+    }
+    let mut quests = crate::config::load_quests(generated);
+    assert!(
+        !quests[&1002].say.contains_key("0"),
+        "the client ships no opening for 1002 - if it ever does, this overlay is redundant"
+    );
+    assert_eq!(crate::config::overlay_quests(&mut quests, authored), 1);
+
+    let config = Config { quests, ..Config::default() };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Roger".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    // The capture, byte for byte: 04 ea030000 03000000 44ff 1301
+    let replies = s.on_quest_request(&hex("04ea0300000300000044ff1301"));
+    let (ty, first, _) = script_text(&script_message(&replies).body);
+    assert!(
+        first.starts_with("You'll die when your HP reaches 0"),
+        "the overlay's opening, not the fall-through. got: {first}"
+    );
+    assert!(
+        !first.contains("nice weather"),
+        "'Hey, nice weather, isn't it?' is String.wz/Npc.img/3/d0 - the exact signature of          the overlay not having loaded"
+    );
+    assert_eq!(ty, net::script::SCRIPT_TYPE_SAY, "the first of two lines pages normally");
+
+    // Page to the last line. It must become the quest Accept/Decline box, because a plain
+    // Say draws OK and there is then nothing for the player to accept.
+    let next = s.on_script_reply(&reply_bytes(&first, ty, 1));
+    let (last_ty, last, _) = script_text(&script_message(&next).body);
+    assert_eq!(last, "Want to see how that works? I'll give you one of my apples to try it with. Shall we?");
+    assert_eq!(
+        last_ty,
+        net::script::SCRIPT_TYPE_QUEST_YES_NO,
+        "the last line of a branchable conversation is a 0x10 box, not a Say"
+    );
+}
+
 /// A multi-line branch still pages, so the machine is not special-cased to one line.
 #[test]
 fn a_multi_line_path_still_pages_in_order() {
@@ -1524,6 +1586,115 @@ fn closing_a_box_ends_the_conversation_silently() {
     for n in 0..12 {
         let _ = s.on_script_reply(&vec![0u8; n]);
     }
+}
+
+/// **Turning a quest in plays the fanfare**, and failing to turn one in does not.
+///
+/// The owner, 2026-08-21: *"Quest finish still does not trigger the SFX for quest finish (this is
+/// a different SFX than quest completion)."* Nothing sent one. `0x02D1` effect 15 is
+/// `QuestClear`, pinned to `Sound/Game.img/QuestClear` through its only two readers -
+/// `research/quest-complete-effect.md`.
+///
+/// The negative half is the point of the test: a "completion" of a quest the character never
+/// started must stay silent, or the sound stops meaning anything.
+#[test]
+fn completing_a_quest_plays_the_clear_fanfare_and_a_non_completion_does_not() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    let fanfares = |rs: &[Reply]| -> Vec<Vec<u8>> {
+        rs.iter()
+            .filter(|r| r.opcode == net::questeffect::USER_EFFECT_LOCAL)
+            .map(|r| r.body.clone())
+            .collect()
+    };
+
+    // Never started, so "completing" it records nothing. The client is still answered - the
+    // always-answer rule - but there must be no fanfare.
+    let unstarted = s.on_quest_request(&hex("02e80300000200000043ffe501ffffffff"));
+    assert!(!unstarted.is_empty(), "every 0x0151 is answered");
+    assert!(fanfares(&unstarted).is_empty(), "no row was completed, so no sound");
+
+    // Now start it and turn it in for real.
+    s.on_quest_request(&hex("01e8030000010000000c046d0100000000"));
+    let done = s.on_quest_request(&hex("02e80300000200000043ffe501ffffffff"));
+    let played = fanfares(&done);
+    assert_eq!(played.len(), 1, "exactly one fanfare per turn-in");
+    assert_eq!(played[0], vec![net::questeffect::EFFECT_QUEST_CLEAR], "one body byte, 0x0F");
+
+    // It lands AFTER the journal row and after the rewards, so the sound plays on a book
+    // that already reads complete.
+    let record = done.iter().position(|r| r.opcode == net::quest::MESSAGE).expect("the row");
+    let effect = done
+        .iter()
+        .position(|r| r.opcode == net::questeffect::USER_EFFECT_LOCAL)
+        .expect("the fanfare");
+    assert!(effect > record, "the fanfare must not precede the journal row");
+}
+
+/// Equipping over a worn item swaps, and the reply stays **one entry, 14 bytes**.
+///
+/// Mode 2 in `FUN_142d51930` is an unconditional two-way exchange - `142d52c13` writes the
+/// displaced item into `oldPos` on its own. So the swap needs no second entry, and adding
+/// one would move the item that had just arrived. `research/equip-crash.md`.
+///
+/// The byte-length assertion is the load-bearing half. This project has shipped a short
+/// packet twice and killed the client both times, and the fatal equip and a known-good one
+/// differ by exactly two bytes - `newPos` - so length is the thing worth pinning.
+#[test]
+fn equipping_over_a_worn_item_swaps_and_still_sends_one_entry() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character {
+        name: "Swapper".to_string(),
+        equips: vec![(5, 1040002)],
+        ..Default::default()
+    };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    store
+        .set_inventory_slot(id, store::InventoryType::Equip, 4, &store::Item::equip(1040001))
+        .unwrap();
+
+    let mut s = Session::new(store, Arc::new(Config::default()));
+    s.claim_for_character(id);
+
+    // invType 1, src 4, dst -5, count -1 - the shape of the real 0x0107.
+    let mut body = vec![0u8; 4];
+    body.push(1);
+    body.extend_from_slice(&4i16.to_le_bytes());
+    body.extend_from_slice(&(-5i16).to_le_bytes());
+    body.extend_from_slice(&(-1i16).to_le_bytes());
+    let replies = s.on_inventory_move(&body);
+
+    let op = replies
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+        .expect("every 0x0107 is answered with a 0x0070, including the refusals");
+    assert_eq!(
+        op.body.len(),
+        net::inventory::INVENTORY_MOVE_RESULT_LEN,
+        "one entry plus the avatarChanged tail - a swap adds no bytes"
+    );
+    assert_eq!(op.body, net::inventory::inventory_move_result(1, 4, -5));
+    assert!(op.what.contains("SWAPPING"), "the log line names both halves: {}", op.what);
+
+    // The database mirrors 142d52c13: the coat that came off is in the slot the new one
+    // vacated, and the new one is worn.
+    let worn = s.store.equipped_items(id).unwrap();
+    assert_eq!(worn.iter().find(|e| e.slot == 5).unwrap().item_id, 1040001);
+    let back = s.store.inventory_slot(id, store::InventoryType::Equip, 4).unwrap().unwrap();
+    assert_eq!(back.item_id, 1040002);
 }
 
 /// The `0x055B` in a reply list, which is no longer always the first thing in it.

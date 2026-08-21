@@ -38,6 +38,7 @@ pub mod npcchat;
 pub mod opcode;
 pub mod packet;
 pub mod quest;
+pub mod questeffect;
 pub mod script;
 pub mod session;
 pub mod shop;

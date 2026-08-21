@@ -218,6 +218,23 @@ impl Session {
         for (i, r) in rolled.into_iter().enumerate() {
             let offset = (i as i16 - (n - 1) / 2) * crate::drops::DROP_STAGGER_PX;
             let x = x.saturating_add(offset);
+            // **Put it on the floor.** The owner, 2026-08-21: *"item drops still go through the
+            // ground and are unable to be picked up."* The stagger above moves the item
+            // sideways and nothing ever moved it vertically, so on any ground that is not
+            // flat it ends up in mid-air or inside terrain - and the client's pick-up box
+            // reaches only 10 px below the player's feet, so such an item is drawn and
+            // uncollectable. A third of this client's 94089 floor segments are sloped.
+            //
+            // **Two different fallbacks, and the difference matters.** With no table loaded
+            // at all, keep the staggered position - that is exactly what shipped before this
+            // existed, and collapsing every drop onto the corpse would be a visible
+            // regression in the case where we simply have no data. With a table loaded, a
+            // `None` means the vertical through `x` meets no surface anywhere on the map, and
+            // there the corpse is strictly better: a mob was standing on it, so it is
+            // certainly a floor.
+            let fallback = if self.config.footholds.is_empty() { (x, y) } else { (mob_x, mob_y) };
+            let placed = self.config.footholds.landing(map, x, y);
+            let (x, y) = placed.map(|l| (l.x, l.y)).unwrap_or(fallback);
             let (item, inv_type, meso) = if r.is_mesos() {
                 // A placeholder item: `LiveDrop::is_meso` gates every read of it.
                 // **The meso rate multiplies the pile on the floor, not the credit on
@@ -257,6 +274,14 @@ impl Session {
                     now_ms: now,
                 })
             });
+            // The landing goes in the log line, so "did the placement do anything" is a
+            // `world.log` grep instead of a second manual launch. Only when it actually
+            // moved the item - an unmoved drop on flat ground is the common case and would
+            // bury the interesting ones.
+            let mut reply = reply;
+            if let Some(l) = placed.filter(|l| l.moved != 0) {
+                reply.what.push_str(&format!(" [{}]", l.what()));
+            }
             out.push(reply);
         }
         out

@@ -35,7 +35,12 @@ maplecw-world - one channel of the MapleCW game world
                       from one that never arrived, which the handler's two silent
                       early returns otherwise make identical. Arm a watch on
                       142097f80 or the run measures nothing.
+  --footholds PATH  map floor geometry, from tools/dump_portals.py
   --shops PATH     the authored NPC shop file      (default data/shops.txt)
+  --quest-scripts PATH  authored openings for the 12 quests whose bodies the
+                      client does NOT ship (default data/quest-scripts.txt).
+                      An overlay: it only fills nodes the WZ left empty, and a
+                      shipped row always wins. See research/quest-scripts.md.
   --item-names PATH  id -> name, from tools/dump_names.py
   --item-data PATH   id -> price/quest/tradeBlock/slotMax, from tools/dump_itemdata.py
   -h, --help       this
@@ -48,11 +53,14 @@ fn main() -> ExitCode {
     let mut portals_path = PathBuf::from("gm-handbook/portals.txt");
     let mut npcs_path = PathBuf::from("gm-handbook/npcs.txt");
     let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
+    let mut footholds_path = PathBuf::from("gm-handbook/footholds.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
     let mut quests_path = PathBuf::from("gm-handbook/questlines.txt");
+    // Authored source like data/shops.txt: the script bodies are not in the client at all.
+    let mut quest_scripts_path = PathBuf::from("data/quest-scripts.txt");
     // Authored source, not generated data - the only path here that is not gm-handbook/.
     let mut shops_path = PathBuf::from("data/shops.txt");
     let mut item_names_path = PathBuf::from("gm-handbook/items.txt");
@@ -93,11 +101,13 @@ fn main() -> ExitCode {
             "--portals" => value().map(|v| portals_path = PathBuf::from(v)),
             "--npcs" => value().map(|v| npcs_path = PathBuf::from(v)),
             "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
+            "--footholds" => value().map(|v| footholds_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
             "--quests" => value().map(|v| quests_path = PathBuf::from(v)),
+            "--quest-scripts" => value().map(|v| quest_scripts_path = PathBuf::from(v)),
             "--shops" => value().map(|v| shops_path = PathBuf::from(v)),
             "--item-names" => value().map(|v| item_names_path = PathBuf::from(v)),
             "--item-data" => value().map(|v| item_data_path = PathBuf::from(v)),
@@ -183,6 +193,18 @@ fn main() -> ExitCode {
         );
     }
 
+    // The floor. A missing file degrades to the behaviour that shipped before it existed -
+    // drops land at the height the mob died at - and the banner says which of the two states
+    // we are in, on STDOUT, in both cases. `map_exists` was fail-open on an empty table with
+    // its only warning on stderr, where nothing reads it, and that silently removed the
+    // `!map` guard for a day. A banner that is quiet when things are fine cannot be told
+    // apart from one that is not being printed, so this one is unconditional.
+    config.footholds = world::footholds::Footholds::load(&footholds_path);
+    println!("{}", config.footholds.banner());
+    for line in config.footholds.problems() {
+        println!("maplecw-world: footholds: {line}");
+    }
+
     config.npcs = world::config::Config::load_npcs(&npcs_path);
     if config.npcs.is_empty() {
         eprintln!(
@@ -239,6 +261,28 @@ fn main() -> ExitCode {
         eprintln!(
             "maplecw-world: no quest text from {} - NPCs will fall back to their generic line. Regenerate with: python tools/dump_quests.py",
             quests_path.display()
+        );
+    }
+    // The authored overlay, on top of what the client ships. Roger's quest 1002 opens with
+    // `startscript q1002s` and has no `Say."0"`; the body is not in the client's data - all
+    // 205 archives and 10021 images were enumerated to establish that, and the name occurs
+    // exactly twice, both times as a name. research/quest-scripts.md.
+    //
+    // Loud on STDOUT, not stderr. `map_exists` was fail-open on an empty field table with
+    // its only warning on stderr, where nothing reads it, and that silently removed the
+    // `!map` guard for a day.
+    let scripted = world::config::overlay_quests(&mut config.quests, &quest_scripts_path);
+    if scripted == 0 {
+        println!(
+            "maplecw-world: quests: no script overlay from {} - the 12 script quests (Roger's 1002 among them) will fall through to the NPC's idle line",
+            quest_scripts_path.display()
+        );
+    } else {
+        println!(
+            "maplecw-world: quests: {} loaded, {} of them carrying an authored script overlay from {}",
+            config.quests.len(),
+            scripted,
+            quest_scripts_path.display()
         );
     }
 

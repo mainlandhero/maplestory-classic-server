@@ -147,15 +147,21 @@ impl Session {
     pub(super) fn record_quest_complete(&mut self, finished: u32, chained_to: u32) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
         let mut out = Vec::new();
+        // Only a completion that was actually recorded earns a fanfare. Playing one for a
+        // quest the character never started would be a sound with nothing behind it.
+        let mut recorded = false;
         match self.store.complete_quest(chr.id, finished) {
             // `complete_quest` returns the FILETIME it stamped, which is the same value the
             // journal has to carry - re-deriving it here would put a different instant in the
             // packet from the one in the database.
-            Ok(Some(at)) => out.push(Reply {
-                opcode: net::quest::MESSAGE,
-                body: net::quest::quest_completed(finished, at as u64),
-                what: format!("quest {finished} completed for character {}", chr.id),
-            }),
+            Ok(Some(at)) => {
+                recorded = true;
+                out.push(Reply {
+                    opcode: net::quest::MESSAGE,
+                    body: net::quest::quest_completed(finished, at as u64),
+                    what: format!("quest {finished} completed for character {}", chr.id),
+                })
+            }
             Ok(None) => out.push(Reply {
                 opcode: net::notice::CHAT_NOTICE,
                 body: net::notice::chat_notice(&format!(
@@ -170,6 +176,30 @@ impl Session {
             }),
         }
         out.extend(self.apply_quest_completion_rewards(finished));
+        // **The turn-in fanfare.** The owner, 2026-08-21: *"Quest finish still does not trigger
+        // the SFX for quest finish."* It did not, because nothing sent one.
+        //
+        // `0x02D1` UserEffectLocal, one body byte, effect **15** = QuestClear. Pinned off
+        // this client: `Sound/Game.img/QuestClear` has exactly two readers, and the one that
+        // is not the pet-skill notice is the packet-driven effect handler `FUN_1427863f0`,
+        // whose second switch sends index 15 to an arm that plays the animation and then
+        // `FUN_1429f14c0(L"QuestClear", 100)`. `research/quest-complete-effect.md`.
+        //
+        // **Expect sound and no picture.** `Effect/BasicEff.img/QuestClear` is the one
+        // referenced BasicEff node this client's WZ does not contain. The sound call is
+        // unconditional after the animation call, so the fanfare still plays.
+        //
+        // Last, deliberately: it lands on a journal row that already says complete, on items
+        // already given and on an EXP line already posted.
+        if recorded {
+            out.push(Reply {
+                opcode: net::questeffect::USER_EFFECT_LOCAL,
+                body: net::questeffect::quest_clear_local(),
+                what: format!(
+                    "UserEffectLocal QuestClear for quest {finished} - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result."
+                ),
+            });
+        }
         if chained_to != finished {
             out.extend(self.record_quest_start(chained_to, 0));
         }

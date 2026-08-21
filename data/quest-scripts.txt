@@ -1,0 +1,93 @@
+# Quest opening / closing scripts - the bodies the client does NOT ship.
+#
+# AUTHORED DATA, NOT GENERATED. Committed on purpose, like `data/shops.txt`. Nothing
+# regenerates this file and `tools/dump_quests.py` must never write to it.
+#
+# ## Why this file exists
+#
+# Twelve of this client's 322 quests open with a *script* instead of a `Say` tree:
+# `Quest.wz/QuestData/<id>.img/Check/0/startscript` names one (`q1002s`), `Check/1/endscript`
+# names its closer (`q1002e`), and for all twelve the `Say."0"` node is **empty or absent**.
+# The names are in the client. The bodies are not.
+#
+# That was settled by enumeration, not by search: every one of the 205 `.wz` archives under
+# `client-patched/Data` was opened and all **10 021** images were decoded (0 errors), and the
+# strings `q1002s` / `q1002e` occur **exactly twice in the whole tree** - as the two *names*
+# inside `1002.img`. `Data/Etc/Script/Script.wz` exists and is a 63-byte header with **zero
+# entries**; `Etc.wz/ScriptInfo.img` is the empty image `{}`; there is no `.js`, `.lua` or
+# `.txt` anywhere under `client-patched/`. Full working and the named negatives:
+# `research/quest-scripts.md`.
+#
+# So the script bodies were server-side in the original game and this project has to author
+# them. The client's own GM command guide agrees: it ships `loadscript <file>`,
+# `scriptrun <name>`, `runlua` / `loadlua` and `loadquest` - commands whose whole purpose is
+# to make **the server** re-read script files.
+#
+# ## Format
+#
+# Deliberately the same four-column TSV as `gm-handbook/questlines.txt`:
+#
+#     questId <TAB> node <TAB> dotted.path <TAB> value
+#
+# because `world::config::load_quests` already parses exactly that, and a script quest needs
+# nothing the WZ schema cannot express. These rows are an **overlay**: they are applied on
+# top of the generated `questlines.txt`, and they only ever fill nodes the client left empty.
+# They must never contradict a row the client ships - if one does, the client's row wins and
+# this file has a bug.
+#
+#   Say  0.<n>       the opening conversation, in line order. The LAST line goes out as the
+#                    quest-flavoured yes/no box (message type 0x10) when a `0.yes` exists.
+#   Say  0.yes.<n>   what the NPC says after Accept. Sending this is what "the quest started".
+#   Say  0.no.<n>    after Decline.
+#   Say  1.<n>       the closing conversation, driven by the `endscript`.
+#   Act  0.item.<n>.id / .count     what accepting hands over. A script quest's `Act."0"` is
+#                                   EMPTY in the WZ - the apple came from the script.
+#   Act  1.exp                      what completing pays.
+#
+# ## Provenance of every line below
+#
+# Where a line is quoted from the client it is marked; where it is written by us it says so.
+# This matters because a line that came out of `String.wz` is evidence and a line we wrote is
+# a placeholder that the owner may want to replace. No attempt is made to reconstruct Nexon's
+# original wording - that is not recoverable from anything on this machine.
+
+# ---------------------------------------------------------------------------------------
+# 1002  "Roger's Apple"  -  startscript q1002s, endscript q1002e, NPC template 3 (Roger)
+# ---------------------------------------------------------------------------------------
+# The whole reason this file exists. The owner, 2026-08-21: *"Roger's Apple quest doesn't start as
+# expected. All I see is 'Hey, nice weather isn't it', which is just his normal text instead
+# of the quest text."* That sentence is `String.wz/Npc.img/3/d0`, and it is what the server
+# falls back to when a quest has no `Say."0"` - measured in `world.log` at 06:10:04.854.
+#
+# Lines marked [L] are Roger's own, verbatim from `String.wz/Npc.img/3`. Only the two that
+# have to ask a question and answer a refusal are ours.
+
+1002	Say	0.0	You'll die when your HP reaches 0, so it's for your own good to consume a potion or food before it's too late.
+1002	Say	0.1	Want to see how that works? I'll give you one of my apples to try it with. Shall we?
+1002	Say	0.yes.0	Open your Item Inventory to find your Equip, Use, Set Up, Etc, and Cash tabs.
+1002	Say	0.yes.1	Double-click on an item in your Item Inventory and you'll be able to use it
+1002	Say	0.no.0	Suit yourself. Come talk to me when you change your mind.
+1002	Act	0.item.0.id	2010000
+1002	Act	0.item.0.count	1
+1002	Say	1.0	Was my information helpful? Farewell, my dear Mapler!
+1002	Act	1.exp	3
+
+# `Say 0.0`   = Roger's `w0`.   [L] String.wz/Npc.img/3/w0
+# `Say 0.1`   = OURS. It has to be a question, because the last line of the opening is the
+#               one the server sends as the type-0x10 Accept / Decline box.
+# `Say 0.yes.0` = Roger's `n0`. [L] String.wz/Npc.img/3/n0
+# `Say 0.yes.1` = Roger's `n2`. [L] String.wz/Npc.img/3/n2  (no trailing full stop in the WZ;
+#                 kept exactly as shipped rather than tidied)
+# `Say 0.no.0`  = OURS.
+# `Act 0.item.0` = item 2010000, `String.wz/Consume.img/2010000/name` = **"Roger's Apple"**,
+#                 *"A ripe, red apple. Restores 30 HP."* [L] The quest is named after it and
+#                 `Check.1.item.0.id` wants exactly it, so the giver can only be the script:
+#                 the WZ's `Act."0"` for 1002 is `{}`. [L]
+# `Say 1.0`   = Roger's `d1`.   [L] String.wz/Npc.img/3/d1
+# `Act 1.exp` = **OURS, and unsourced.** Nothing in this client's data carries a reward for
+#               1002 - `Act."1"` is `{}` [L]. 3 is a guess at tutorial scale. One-line edit.
+#
+# NOT overridden here, deliberately: `Say 1.stop.item.0` ("Eat the #r#t2010000##k I gave
+# you...") is shipped by the client and `questlines.txt` already carries it. It is the line
+# for `0x0151` **action 6**, the requirement-failed request - see `research/quest-scripts.md`
+# §6, which also records that nothing currently routes action 6 to a `stop` node.

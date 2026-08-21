@@ -36,7 +36,7 @@ pub mod storage;
 
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
 pub use inventory::{
-    Bag, EquippedItem, InvItem, InventoryType, Item, ItemKind, ItemRules, MoveOutcome,
+    Bag, Equipped, EquippedItem, InvItem, InventoryType, Item, ItemKind, ItemRules, MoveOutcome,
 };
 pub use quest::{QuestRow, QuestState};
 pub use storage::{

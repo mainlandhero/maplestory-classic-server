@@ -1291,6 +1291,21 @@ pub struct EquippedItem {
     pub stats: Option<EquipStats>,
 }
 
+/// What an equip actually did: what went on, and what it pushed off.
+///
+/// The second field exists because the client has to be told about **both** movements. A
+/// swap that reports only the item going on leaves the client holding an item the server
+/// has moved underneath it, and this project has already learned once what a client and a
+/// server disagreeing about an inventory slot looks like on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Equipped {
+    /// The item now worn in the slot.
+    pub equipped: u32,
+    /// What was worn before, now sitting in the bag slot the new item came out of.
+    /// `None` when the worn slot was empty - the ordinary case.
+    pub displaced: Option<u32>,
+}
+
 impl Store {
     /// The worn slots, with their stats. `characters_for` returns the `(slot, item_id)` pairs
     /// the avatar look needs; this is the same rows with the stat tail.
@@ -1366,12 +1381,26 @@ impl Store {
         Ok(InvItem { inv_type, slot: dst, item })
     }
 
-    /// Put an item on. The reverse of [`Store::unequip_to_bag`], and it round-trips the stats.
+    /// Put an item on, **displacing whatever is already there into the slot it came from**.
     ///
-    /// Refuses if the worn slot is taken - swapping a worn item with a bagged one is a third
-    /// operation and it needs the free bag slot the swap frees up, which is the caller's
-    /// arithmetic, not this crate's.
-    pub fn equip_from_bag(&self, character_id: u32, src: u16, equip_slot: u8) -> Result<u32> {
+    /// The reverse of [`Store::unequip_to_bag`], and it round-trips the stats in both
+    /// directions.
+    ///
+    /// # This used to refuse, and refusing was the bug
+    ///
+    /// The owner, 2026-08-21: *"Equipping another equipment (while having a current equipment in
+    /// the same slot) should swap the current equipment with the one being replaced."*
+    ///
+    /// The doc that stood here said a swap "needs the free bag slot the swap frees up, which
+    /// is the caller's arithmetic, not this crate's" - and that is simply wrong. **A swap
+    /// needs no free slot at all**: the worn item goes into `src`, the very slot the incoming
+    /// item is vacating in the same transaction. There is no instant in which either item is
+    /// in two places or in neither, which is the whole reason this is one transaction and not
+    /// an unequip followed by an equip.
+    ///
+    /// [`Equipped::displaced`] is `None` when the worn slot was empty, which is the ordinary
+    /// case and the only one that existed before.
+    pub fn equip_from_bag(&self, character_id: u32, src: u16, equip_slot: u8) -> Result<Equipped> {
         let inv_type = InventoryType::Equip;
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -1382,15 +1411,26 @@ impl Store {
             return Err(StoreError::NotAnEquip { item_id: item.item_id });
         };
 
-        let taken: Option<i64> = tx
+        // Whatever is on that slot now, read WITH its stats rather than just its id: it is
+        // about to travel back into the bag and a scrolled item must not come back flattened.
+        // The old code selected `item_id` alone because all it did with the answer was
+        // refuse.
+        let worn = tx
             .query_row(
-                "SELECT item_id FROM equipment WHERE character_id = ?1 AND slot = ?2",
+                &format!(
+                    "SELECT item_id, {} FROM equipment WHERE character_id = ?1 AND slot = ?2",
+                    EQUIP_STAT_COLUMNS.join(", ")
+                ),
                 rusqlite::params![i64::from(character_id), equip_slot],
-                |row| row.get(0),
+                |row| Ok((row.get::<_, i64>(0)? as u32, equip_stats_from_row(row, 1)?)),
             )
             .optional()?;
-        if taken.is_some() {
-            return Err(StoreError::SlotOccupied { slot: u16::from(equip_slot) });
+        let displaced = worn.as_ref().map(|(item_id, _)| *item_id);
+        if worn.is_some() {
+            tx.execute(
+                "DELETE FROM equipment WHERE character_id = ?1 AND slot = ?2",
+                rusqlite::params![i64::from(character_id), equip_slot],
+            )?;
         }
         tx.execute(
             "DELETE FROM inventory WHERE character_id = ?1 AND inv_type = ?2 AND slot = ?3",
@@ -1420,8 +1460,19 @@ impl Store {
             ),
             params_from_iter(values),
         )?;
+        // The displaced item lands in `src`, which the DELETE above has just emptied. This
+        // is why a swap needs no free slot.
+        if let Some((item_id, stats)) = worn {
+            set_slot(
+                &tx,
+                character_id,
+                inv_type,
+                src,
+                &Item { item_id, kind: ItemKind::Equip(stats) },
+            )?;
+        }
         tx.commit()?;
-        Ok(item.item_id)
+        Ok(Equipped { equipped: item.item_id, displaced })
     }
 }
 
@@ -1660,6 +1711,81 @@ mod tests {
         // And back off again, still intact.
         let back = store.unequip_to_bag(chr.id, 5, None).unwrap();
         assert_eq!(back.item.kind, ItemKind::Equip(Some(scrolled)));
+    }
+
+    /// Equipping over a worn item **swaps** it into the slot the new one came from.
+    ///
+    /// The owner, 2026-08-21: *"Equipping another equipment (while having a current equipment in
+    /// the same slot) should swap the current equipment with the one being replaced."* This
+    /// call used to return `SlotOccupied`, on the reasoning that a swap needs a free bag slot
+    /// and that finding one was the caller's job. It needs no free slot: the outgoing item
+    /// takes the incoming one's place, inside the same transaction.
+    #[test]
+    fn equipping_over_a_worn_item_swaps_the_two() {
+        let store = Store::open_in_memory().unwrap();
+        let account = store.create_account("wisp", "correct horse battery").unwrap();
+        let chr = store.create_character(account, 0, &dressed()).unwrap();
+
+        // A second coat in bag slot 4, while 1040002 is worn in slot 5.
+        store
+            .set_inventory_slot(chr.id, InventoryType::Equip, 4, &Item::equip(1040001))
+            .unwrap();
+
+        let done = store.equip_from_bag(chr.id, 4, 5).unwrap();
+        assert_eq!(done.equipped, 1040001);
+        assert_eq!(done.displaced, Some(1040002), "the coat that came off");
+
+        let worn = store.equipped_items(chr.id).unwrap();
+        assert_eq!(worn.iter().find(|e| e.slot == 5).unwrap().item_id, 1040001);
+
+        // The old coat is in slot 4 - the one the new coat vacated - and nowhere else.
+        let bag = store.bag(chr.id).unwrap();
+        let equips: Vec<_> =
+            bag.items.iter().filter(|i| i.inv_type == InventoryType::Equip).collect();
+        assert_eq!(equips.len(), 1, "one item moved, one item arrived, none were cloned");
+        assert_eq!(equips[0].slot, 4);
+        assert_eq!(equips[0].item.item_id, 1040002);
+    }
+
+    /// The swap carries the displaced item's per-item stats back into the bag.
+    ///
+    /// The old code read `item_id` alone from `equipment`, because all it did with the answer
+    /// was refuse. Selecting the stat tail is the difference between a scrolled item
+    /// surviving a swap and coming back flattened - the same failure the unequip round trip
+    /// above exists to prevent.
+    #[test]
+    fn a_swap_does_not_flatten_the_item_it_displaces() {
+        let store = Store::open_in_memory().unwrap();
+        let account = store.create_account("wisp", "correct horse battery").unwrap();
+        let chr = store.create_character(account, 0, &dressed()).unwrap();
+
+        let scrolled = EquipStats {
+            options: EquipOptions {
+                remaining_enhancements: 5,
+                scissor_uses: net::opcode::NO_SCISSOR_RESTRICTION,
+                ..EquipOptions::default()
+            },
+            ..EquipStats::default()
+        };
+        // Put a scrolled coat ON, via the bag, then equip a plain one over it.
+        store.unequip_to_bag(chr.id, 5, Some(1)).unwrap();
+        store
+            .set_inventory_slot(
+                chr.id,
+                InventoryType::Equip,
+                1,
+                &Item { item_id: 1040002, kind: ItemKind::Equip(Some(scrolled)) },
+            )
+            .unwrap();
+        store.equip_from_bag(chr.id, 1, 5).unwrap();
+        store
+            .set_inventory_slot(chr.id, InventoryType::Equip, 2, &Item::equip(1040001))
+            .unwrap();
+
+        let done = store.equip_from_bag(chr.id, 2, 5).unwrap();
+        assert_eq!(done.displaced, Some(1040002));
+        let back = store.inventory_slot(chr.id, InventoryType::Equip, 2).unwrap().unwrap();
+        assert_eq!(back.kind, ItemKind::Equip(Some(scrolled)), "the scrolls survived the swap");
     }
 
     /// NULL stats are "derive from the template", not "an item with no stats".

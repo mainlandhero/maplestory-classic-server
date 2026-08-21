@@ -229,6 +229,14 @@ pub struct Config {
     /// Empty means "unknown", not "nothing exists" - see [`Config::map_exists`].
     pub fields: std::collections::HashSet<u32>,
 
+    /// Every map's floor, from `gm-handbook/footholds.txt`, so a drop lands somewhere a
+    /// player can actually reach it. See [`crate::footholds`].
+    ///
+    /// An empty table means every drop keeps the position the caller already had, which is
+    /// exactly the behaviour that shipped before this existed - so a missing file degrades to
+    /// something known rather than to something untested.
+    pub footholds: crate::footholds::Footholds,
+
     /// `mapId -> name`, from `gm-handbook/maps.txt`.
     ///
     /// **Only ever used to say something on screen.** Nothing routes on it, so a missing
@@ -789,14 +797,63 @@ fn act_state(dotted: &str) -> Option<u8> {
 /// TSV of `questId, node, dotted.path, value` - one row per scalar leaf, which is lossless
 /// and needs no JSON parser for a query that is a flat lookup either way.
 pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
+    let mut out = HashMap::new();
+    if let Ok(text) = std::fs::read_to_string(path) {
+        read_quest_rows(&text, &mut out, Overlay::No);
+    }
+    out
+}
+
+/// Apply an **authored** overlay - `data/quest-scripts.txt` - onto quests already loaded.
+///
+/// # Why an overlay exists at all
+///
+/// Twelve of this client's 322 quests open with a *script* rather than a `Say` tree, and
+/// **the script bodies are not in the client**. That is a verified negative, not a failed
+/// search: all 205 `.wz` archives under `client-patched/Data` were opened and all 10021
+/// images decoded, and `q1002s` occurs exactly twice in the whole tree - both times as a
+/// *name* inside `1002.img`. `Data/Etc/Script/Script.wz` is a 63-byte header with zero
+/// entries. `research/quest-scripts.md` has the full enumeration with every negative named.
+///
+/// So those quests' opening lines, their start items and their rewards have to be authored,
+/// and this is where they are merged in.
+///
+/// # The client always wins
+///
+/// An overlay row only ever **fills a hole**. A `Say` node the client ships is never
+/// replaced, `Act` items are skipped entirely if the WZ already gave that state any, and
+/// `Act.1.exp` is only taken when the loaded value is still 0. If an overlay row ever
+/// contradicts a shipped one the shipped one stands and the overlay has a bug - which is the
+/// same direction this project takes everywhere else: the client's own data outranks ours.
+///
+/// Returns how many quests the file touched, so the caller can say so on **stdout**. A
+/// missing file is 0 and is not an error - the same handling as `data/shops.txt`.
+pub fn overlay_quests(quests: &mut HashMap<u32, Quest>, path: &std::path::Path) -> usize {
+    let Ok(text) = std::fs::read_to_string(path) else { return 0 };
+    read_quest_rows(&text, quests, Overlay::Yes)
+}
+
+/// Whether [`read_quest_rows`] is building the table or filling holes in one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Overlay {
+    No,
+    Yes,
+}
+
+/// The TSV reader behind both [`load_quests`] and [`overlay_quests`].
+///
+/// **Factored rather than duplicated on purpose.** The `rsplit_once` / `BTreeMap<usize, _>`
+/// stitching below is what makes a ten-line `Say` node come out in index order instead of
+/// string order - re-implementing it for the overlay is how `0.10` ends up before `0.2`, and
+/// nothing would catch it.
+fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> usize {
     use std::collections::BTreeMap;
     let mut lines: HashMap<u32, HashMap<String, BTreeMap<usize, String>>> = HashMap::new();
-    let mut out: HashMap<u32, Quest> = HashMap::new();
     // quest -> item index -> a half-built (id, count), stitched after the read because the two
     // halves are separate rows and the file does not promise an order.
     let mut act_items: HashMap<(u32, u8), BTreeMap<usize, HalfItem>> = HashMap::new();
+    let mut touched: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
-    let Ok(text) = std::fs::read_to_string(path) else { return out };
     for row in text.lines() {
         if row.trim().is_empty() || row.starts_with('#') {
             continue;
@@ -808,12 +865,25 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
             continue;
         };
         let Ok(qid) = id.trim().parse::<u32>() else { continue };
+        touched.insert(qid);
         let quest = out.entry(qid).or_default();
+        // An overlay fills holes; it never overwrites what the client shipped.
+        let fill = mode == Overlay::No;
         match node {
-            "QuestInfo" if dotted == "name" => quest.name = value.to_string(),
-            "Check" if dotted == "0.npc" => quest.start_npc = value.parse().ok(),
-            "Check" if dotted == "1.npc" => quest.end_npc = value.parse().ok(),
-            "Act" if dotted.ends_with(".nextQuest") => quest.next_quest = value.parse().ok(),
+            "QuestInfo" if dotted == "name" && (fill || quest.name.is_empty()) => {
+                quest.name = value.to_string()
+            }
+            "Check" if dotted == "0.npc" && (fill || quest.start_npc.is_none()) => {
+                quest.start_npc = value.parse().ok()
+            }
+            "Check" if dotted == "1.npc" && (fill || quest.end_npc.is_none()) => {
+                quest.end_npc = value.parse().ok()
+            }
+            "Act"
+                if dotted.ends_with(".nextQuest") && (fill || quest.next_quest.is_none()) =>
+            {
+                quest.next_quest = value.parse().ok()
+            }
             // `Act.0.item.<n>.id` and `.count` arrive as separate rows in either order, so
             // both sides are stitched together after the file is read - see below.
             "Act" if dotted.ends_with(".id") && act_state(dotted).is_some() => {
@@ -830,7 +900,7 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
                     act_items.entry((qid, st)).or_default().entry(n).or_default().1 = Some(c);
                 }
             }
-            "Act" if dotted == "1.exp" => {
+            "Act" if dotted == "1.exp" && (fill || quest.complete_exp == 0) => {
                 quest.complete_exp = value.parse().unwrap_or(0);
             }
             "Say" => {
@@ -860,6 +930,16 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
 
     for ((qid, state), indexed) in act_items {
         let quest = out.entry(qid).or_default();
+        // Decided ONCE per state, before the loop: asking `is_empty()` inside it would let
+        // the first overlay item through and then reject its siblings, which is a half-given
+        // reward and worse than either whole answer.
+        let take = match state {
+            0 => mode == Overlay::No || quest.start_items.is_empty(),
+            _ => mode == Overlay::No || quest.complete_items.is_empty(),
+        };
+        if !take {
+            continue;
+        }
         // BTreeMap: index order, so a two-item reward is handed over the same way twice.
         for (_, (id, count)) in indexed {
             if let (Some(id), Some(count)) = (id, count) {
@@ -876,10 +956,20 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
         for (key, indexed) in nodes {
             // BTreeMap keyed on the parsed index, so line 10 follows line 9 rather than
             // line 1 - which a string sort would get wrong and nothing would catch.
-            quest.say.insert(key, indexed.into_values().collect());
+            let node: Vec<String> = indexed.into_values().collect();
+            match mode {
+                Overlay::No => {
+                    quest.say.insert(key, node);
+                }
+                // A shipped node is never replaced. Quest 1002's `Say."0"` is `{}` in the
+                // WZ, so there is nothing to lose - but 1002 is not the only script quest.
+                Overlay::Yes => {
+                    quest.say.entry(key).or_insert(node);
+                }
+            }
         }
     }
-    out
+    touched.len()
 }
 
 /// One NPC template's text, from `String.wz/Npc.img`.
@@ -1062,6 +1152,7 @@ impl Default for Config {
             item_names: HashMap::new(),
             send_mobs: true,
             fields: std::collections::HashSet::new(),
+            footholds: crate::footholds::Footholds::default(),
         }
     }
 }
@@ -1382,5 +1473,104 @@ mod spawn_tests {
         // The step is a step, not a ramp: nothing between the two percentages.
         assert_eq!(spawn_capacity(45, 5), 33);
         assert_eq!(spawn_capacity(45, 6), 45);
+    }
+
+    /// The overlay fills the holes a script quest leaves and never overwrites the client.
+    ///
+    /// Quest 1002's `Say."0"` and `Act."0"`/`Act."1"` are all `{}` in this client's WZ -
+    /// the opening, the apple and the reward all lived in `q1002s`, which the client does
+    /// not ship. `research/quest-scripts.md`.
+    #[test]
+    fn an_authored_overlay_fills_a_script_quests_holes() {
+        let shipped = "1002	QuestInfo	name	Roger's Apple
+                       1002	Check	0.npc	3
+                       1002	Say	1.stop.item.0	Eat the apple I gave you
+";
+        let authored = "1002	Say	0.0	You'll die when your HP reaches 0
+                        1002	Say	0.1	Shall we?
+                        1002	Say	0.yes.0	Open your Item Inventory
+                        1002	Act	0.item.0.id	2010000
+                        1002	Act	0.item.0.count	1
+                        1002	Act	1.exp	3
+";
+
+        let mut quests = HashMap::new();
+        read_quest_rows(shipped, &mut quests, Overlay::No);
+        assert!(!quests[&1002].say.contains_key("0"), "the client ships no opening");
+
+        assert_eq!(read_quest_rows(authored, &mut quests, Overlay::Yes), 1);
+        let q = &quests[&1002];
+        assert_eq!(q.say["0"], vec!["You'll die when your HP reaches 0", "Shall we?"]);
+        assert_eq!(q.say["0.yes"], vec!["Open your Item Inventory"]);
+        assert_eq!(q.start_items, vec![(2010000, 1)]);
+        assert_eq!(q.complete_exp, 3);
+
+        // Untouched: the name, the NPC and the shipped `stop` line are all still the
+        // client's.
+        assert_eq!(q.name, "Roger's Apple");
+        assert_eq!(q.start_npc, Some(3));
+        assert_eq!(q.say["1.stop.item"], vec!["Eat the apple I gave you"]);
+    }
+
+    /// A shipped row always wins, in every field the overlay can touch.
+    ///
+    /// This is the direction that matters: an overlay that quietly replaced a client `Say`
+    /// node would put words in an NPC's mouth that the client's own data contradicts, and
+    /// nothing on screen would say which source won.
+    #[test]
+    fn an_overlay_never_overwrites_what_the_client_shipped() {
+        let shipped = "1000	QuestInfo	name	Shipped name
+                       1000	Say	0.0	The client's own line
+                       1000	Act	0.item.0.id	4031000
+                       1000	Act	0.item.0.count	1
+                       1000	Act	1.exp	2
+";
+        let authored = "1000	QuestInfo	name	Ours
+                        1000	Say	0.0	Our line
+                        1000	Act	0.item.0.id	9999999
+                        1000	Act	0.item.0.count	7
+                        1000	Act	1.exp	500
+";
+
+        let mut quests = HashMap::new();
+        read_quest_rows(shipped, &mut quests, Overlay::No);
+        read_quest_rows(authored, &mut quests, Overlay::Yes);
+
+        let q = &quests[&1000];
+        assert_eq!(q.name, "Shipped name");
+        assert_eq!(q.say["0"], vec!["The client's own line"]);
+        assert_eq!(q.start_items, vec![(4031000, 1)], "not appended to, not replaced");
+        assert_eq!(q.complete_exp, 2);
+    }
+
+    /// A ten-line node comes out in index order, through the overlay path too.
+    ///
+    /// The whole reason `read_quest_rows` is factored rather than duplicated: a second
+    /// hand-written parser is how `0.10` ends up before `0.2`, and the screen would show it
+    /// as a conversation that jumps.
+    #[test]
+    fn overlay_lines_come_out_in_index_order_not_string_order() {
+        let mut rows = String::new();
+        for i in 0..12 {
+            rows.push_str(&format!("1002	Say	0.{i}	line {i}
+"));
+        }
+        let mut quests = HashMap::new();
+        read_quest_rows(&rows, &mut quests, Overlay::Yes);
+        let said = &quests[&1002].say["0"];
+        assert_eq!(said.len(), 12);
+        assert_eq!(said[9], "line 9");
+        assert_eq!(said[10], "line 10", "string order would put this second");
+    }
+
+    /// A missing overlay file is not an error, and it is not a silent one either.
+    #[test]
+    fn a_missing_overlay_file_touches_nothing_and_says_zero() {
+        let mut quests = HashMap::new();
+        read_quest_rows("1000	QuestInfo	name	Kept
+", &mut quests, Overlay::No);
+        let n = overlay_quests(&mut quests, std::path::Path::new("no/such/overlay.txt"));
+        assert_eq!(n, 0);
+        assert_eq!(quests[&1000].name, "Kept");
     }
 }

@@ -146,10 +146,38 @@ impl Session {
             let Ok(src) = u16::try_from(m.src) else {
                 return self.inventory_refused(&m, "the bag slot does not fit in a u16");
             };
+            // **Equipping over a worn item swaps, and the client does the swap itself.**
+            //
+            // The owner, 2026-08-21: *"Equipping another equipment (while having a current
+            // equipment in the same slot) should swap the current equipment with the one
+            // being replaced."* This used to refuse, because `Store::equip_from_bag`
+            // returned `SlotOccupied`.
+            //
+            // Mode 2 in `FUN_142d51930` is an **unconditional two-way exchange** - there is
+            // no `newPos < 0` arm and no `oldPos < 0` arm, it is one path: **[L]**
+            //
+            //   142d52566  GetItem(invType, newPos) -> DEST
+            //   142d5257b  GetItem(invType, oldPos) -> SRC
+            //   142d52c13  SetItem(invType, oldPos, DEST)   <- the displaced item, into the bag
+            //   142d52c65  SetItem(invType, newPos, SRC)
+            //
+            // So the reply is unchanged: **one entry, the same 14 bytes**, and a second entry
+            // would be wrong rather than merely redundant - it would move the item that had
+            // just arrived. `research/equip-crash.md`. The store mirrors `142d52c13` exactly:
+            // the displaced item goes into `src`, in the same transaction.
             return match self.store.equip_from_bag(chr.id, src, worn) {
-                Ok(item_id) => self.inventory_moved(
+                Ok(done) => self.inventory_moved(
                     &m,
-                    format!("equipped item {item_id} from Equip bag slot {src} into slot {worn}"),
+                    match done.displaced {
+                        Some(off) => format!(
+                            "equipped item {} from Equip bag slot {src} into slot {worn}, SWAPPING item {off} back into bag slot {src}",
+                            done.equipped
+                        ),
+                        None => format!(
+                            "equipped item {} from Equip bag slot {src} into slot {worn}",
+                            done.equipped
+                        ),
+                    },
                 ),
                 Err(e) => self.inventory_refused(&m, &format!("equip refused: {e}")),
             };

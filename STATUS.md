@@ -104,9 +104,9 @@ stand as written.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-20, after five client runs and a large day.** Read this section and
-nothing else to know where the project is. Everything under it is older and kept for its
-working, not its verdicts.
+**Last updated 2026-08-21, after a four-issue run and four parallel agents.** Read this
+section and nothing else to know where the project is. Everything under it is older and kept
+for its working, not its verdicts.
 
 #### CONFIRMED on a real client
 
@@ -136,8 +136,44 @@ while it was unwired.
 | **quest completion pays out** | `Act.1`: 2 EXP for quest 1001, and Heena keeps the mirror |
 | **the Tutorial Jr. Sentinel** | 100% Shellpiece, no mesos, no second drop |
 | **`!setrates <exp> <meso> <drop>`** | all three on one anchor, one banner. Every rate command now refuses below 1x |
+| **Roger's quest 1002 opens** | the authored overlay. Watch for *"You'll die when your HP reaches 0"* with a **Next**, then an **Accept/Decline** box. *"Hey, nice weather, isn't it?"* is the exact signature of the overlay NOT loading |
+| **drops land on the floor** | a mob killed **on a slope or a step**, not on flat ground - flat looks identical before and after, which is why this went unnoticed. `world.log` names the foothold for any drop that moved |
+| **the quest-finish fanfare** | `0x02D1` effect 15. **Expect sound and no picture** - `Effect/BasicEff.img/QuestClear` is not in this client's WZ, and that is the predicted result, not a failure |
+| **equipping over a worn item swaps** | drag a second hat onto a worn one: the old one lands in the bag slot the new one came from. **This is also the crash repro - see below** |
 
-#### Solved today, and what each one cost to find
+#### Solved 2026-08-21, and what each one cost to find
+
+* **Roger's quest could not start, and the reason was an absence.** `q1002s` is **not in the
+  client at all** - all 205 `.wz` archives and all 10021 images enumerated, 0 errors, and the
+  name occurs exactly twice, both times as a *name*. `Data/Etc/Script/Script.wz` is a 63-byte
+  header with **zero entries**. Corroborated by a second, non-overlapping instrument: the
+  **Spanish-only** `CommandGuide.img` documents `loadscript`, `scriptrun`, `runlua` and
+  `loadquest` - commands whose purpose is to let *the server* re-read script files. So the
+  bodies are ours to author: `data/quest-scripts.txt`, an overlay in `questlines.txt`'s own
+  format. Five of Roger's six lines are their own words from `String.wz`.
+* **Drops fell through the floor.** The stagger in `drops_from_kill` moved each item sideways
+  and **nothing ever moved it vertically**. Replaying today's placement over every mob spawn
+  point: **29% land on no surface at all**, 8.2% by more than the 10 px the client's pick-up
+  box forgives. A third of the 94089 floor segments are **sloped**, so reading `y1` instead of
+  interpolating would have been wrong 27577 times - usually by less than an icon's height,
+  which is the shape of a bug that reads as bad luck.
+* **The jump height is [L], not a fan site.** `Map_000.wz` ships `Physics.img`:
+  `jumpSpeed 555.0`, `gravityAcc 2000.0`, so `v^2/2a` = **77 px**. Only the closed-form apex
+  is [I] - the client integrates per frame.
+* **The quest-finish fanfare is `0x02D1` effect 15.** Pinned through the *only two* readers of
+  `Sound/Game.img/QuestClear`; the one that is not the pet-skill notice is the packet-driven
+  effect handler. `research/level-up.md` had documented only **one** of that handler's two
+  switches on the effect byte, which is why the arm had never been seen.
+* **The missing quest EXP line was never missing.** The run's own log has it -
+  `03 01 0200000000000000 00 0000...` - **byte-for-byte the same shape** as the `+200` lines
+  from kills in the same session. Quest 1001's `Act.1.exp` is literally **2**. Two independent
+  passes reached that separately. *Nothing was built for this*, which is the right outcome.
+* **Equipping over a worn item now swaps** - and the client does the swap **itself**. Mode 2
+  of `FUN_142d51930` is an unconditional two-way exchange (`142d52c13` writes the displaced
+  item into `oldPos`), so the reply stays **one entry, 14 bytes**. A second entry would not be
+  redundant, it would be *wrong*: it would move the item that had just arrived.
+
+#### Solved 2026-08-20, and what each one cost to find
 
 * **Sera recited Heena's tutorial.** Quest 1000 has no `Say.1`, so the completion fell back to
   `Say.0` - the opening of the quest being finished. A completion now chains via
@@ -154,15 +190,30 @@ while it was unwired.
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **Drops that land in walls** | The owner's rule: clip into terrain -> the platform above if a jump reaches it, else the next below. **The data is now dumped** - `gm-handbook/footholds.txt`, 94089 footholds across 426 maps - and nothing consumes it yet. Biggest ready-to-build item |
+| 1 | **The heap corruption, which finally has a REPRO** | The 2026-08-21 death came 9 ms after an equip `0x0070` and there is **no dispatch line for it** - the hook writes that line on handler *return*, and all 20 sibling `0x0070`s in the same file have one. The hat is now worn in slot 1, so the repro is two drags ~20 s apart: unequip it, drag it back on. `research/equip-crash.md` §6.4 has the four-address probe bracket. **This is the cheapest it will ever be to catch** |
 | 2 | **AP allocation** | **`0x0139`**, `u32 tick, u32 count, u32 statMask, u32 amount`; `0x40` is STR. Handler, mask table and the `0x007C` confirm are all that is left |
 | 3 | **Change Channel** | We answer `0x00D2` with `0x0011`, a **login-stage** opcode, on a game socket - below the channel switch's `0x70` floor, so the client never sees it. Find the channel stage's own migrate reply |
-| 4 | **Quest scripts** | Roger's 1002 has `startscript q1002s` and **no `Say.0`**. A second kind of quest, unimplemented. First question: where the script bodies live, since they are not in `questlines.txt` |
+| 4 | **Quest forfeit** | `0x01ED` and `0x01A5` both carry the quest id and both go unanswered - **four attempts each** in the 2026-08-21 run. This is what blocks re-testing a quest chain, so it is worth more than its size |
 | 5 | **NPCs fade in on map entry** | The mob fix does not transfer: `0x044F` has no field named as an appear type, only an unexplained `u32` and a `raw[8]`. Needs the NPC pool's decoder read, not a guess |
 | 6 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
-| 7 | **The heap corruption** | Page heap changed it from `0xC0000374` to a verifier stop and WinDbg is installed. Take a dump, do not attach - `research/heap-corruption.md` |
-| 8 | **Quest forfeit** | `0x01ED` and `0x01A5` both carry the quest id and both go unanswered |
+| 7 | **The other 11 script quests** | The machinery exists now; only 1002 is authored. The four `Proof of Qualification` quests (20003/20103/20203/20303) are cheapest - they have a client-side opening and need only a `Say."1"` |
+| 8 | **`0x0151` action 6 replays the opening** | The `_ => "0"` arm. For 1002 the right answer is the shipped `Say."1".stop.item.0`. **[D] from the builder table, not measured** - no capture contains a tag-6 request. Deliberately not fixed: deciding whether `Check.0` or `Check.1` failed needs stored quest state, and guessing wrong is how the completion fell back to the opening the first time |
 | 9 | **Death, job advancement (E), the damage formula (J)** | unchanged; see the goal entries below |
+
+**Two contradictions in this repo, both found 2026-08-21 and neither adjudicated:**
+
+* **The `white` EXP byte.** `STATUS.md` above says `white = 1` was *confirmed on screen*;
+  `research/exp-sharing.md` marks it **[I]**. Only `white = 0` -> yellow is [L] (from the owner's
+  screenshot). The server sends 1 and the screen has looked right, so this is a labelling
+  fault rather than a behavioural one - but one of the two files is wrong.
+* **The `0x0070` read count.** `research/msexe-setfield.md` says 18 read sites;
+  `tools/reads.py`, which is the authority, finds **17**. The mode-2 path is unaffected either
+  way, but this project has shipped a short packet twice by trusting the wrong count.
+
+**Dead assets, so nobody hunts for them:** `Sound/Game.img` contains `IncEXP` and `questCount`
+and **neither name appears anywhere in the 76 MB executable, in either encoding** - while the
+same scan finds `PickUpItem`, `Portal`, `QuestAlert`, `LevelUp` and `JobChanged`. There is no
+EXP-gain sound in this client to send.
 
 #### THE TEST PLAN
 
