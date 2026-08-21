@@ -221,6 +221,29 @@ positive-control watch's first hit. `python tools/decode_dump.py --exp-curve` de
 comparing it against `data/exp-curve.txt` is a five-second job nobody has done. If they
 disagree, **the client wins**.
 
+#### The AP request is `0x0139`, and the body decodes - 2026-08-21
+
+The owner tried allocating ability points three times over two runs and nothing happened. It was
+not identified until they did a **bulk** assign, which put a distinctive payload on the wire:
+
+```text
+<- 0x0139  16 byte body  dfbdfe0c 01000000 40000000 1e000000
+                         ^tick    ^count   ^0x40    ^30
+```
+
+`0x40` is the **STR** bit and `30` is the amount they typed. So the shape is
+`u32 tick, u32 count, u32 statMask, u32 amount`, and it sits one slot below `0x013B`, the
+skill-up request - which is exactly where a stat-up request belongs.
+
+**Why it took three attempts to find.** The earlier hunts looked at the *unanswered* census
+and `0x0139` never rose above one occurrence, because a single-point click and a bulk assign
+do not produce the same traffic. What found it was searching the bodies for the **number they
+typed** rather than ranking opcodes by count. Enumerating by frequency hid it; searching for
+the payload did not.
+
+**Not implemented.** The handler, the stat mask table and the `0x007C` reply that confirms the
+new value are all still to write. This is now a small job rather than an open question.
+
 #### Roger's quest needs a SCRIPT engine, which does not exist - 2026-08-21
 
 The owner: *"Roger's Apple quest doesn't start as expected. All I see is 'Hey, nice weather isn't
