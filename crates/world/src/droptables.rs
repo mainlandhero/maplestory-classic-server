@@ -69,13 +69,29 @@ impl DropEntry {
     /// without consuming the roll's meaning - a table with a typo'd 0 is silent rather than
     /// surprising.
     pub fn hits(&self, roll: u64) -> bool {
+        self.hits_at(roll, store::rates::Rate::NORMAL)
+    }
+
+    /// Did this entry drop, with the server's drop rate applied?
+    ///
+    /// **The rate scales the chance, not the quantity.** A 2x drop event means twice as
+    /// likely, which is what the phrase means everywhere in this game family; doubling the
+    /// stack size instead would be a different feature wearing the same name.
+    ///
+    /// The scaled chance is **capped at certainty**. Without the cap a 40% row at 3x would be
+    /// 120%, and `chance_bp >= BASIS_POINTS` already means "always" - so the cap is what the
+    /// comparison would do anyway, written down where it can be read.
+    pub fn hits_at(&self, roll: u64, rate: store::rates::Rate) -> bool {
         if self.chance_bp == 0 {
+            // A typo'd 0 stays silent at every rate. Multiplying nothing is still nothing,
+            // and `Rate::apply`'s floor-at-1 must not turn a disabled row into a live one.
             return false;
         }
-        if self.chance_bp >= BASIS_POINTS {
+        let chance = rate.apply(u64::from(self.chance_bp)).min(u64::from(BASIS_POINTS));
+        if chance >= u64::from(BASIS_POINTS) {
             return true;
         }
-        (roll % u64::from(BASIS_POINTS)) < u64::from(self.chance_bp)
+        (roll % u64::from(BASIS_POINTS)) < chance
     }
 
     /// How many, given a second roll. Inclusive of both ends.
@@ -174,10 +190,25 @@ impl DropTables {
     ///
     /// Every entry is rolled independently. A mob can drop nothing at all, and often will.
     pub fn roll(&self, template_id: u32, next: &mut dyn FnMut() -> u64) -> Vec<Rolled> {
+        self.roll_at(template_id, store::rates::Rate::NORMAL, next)
+    }
+
+    /// Roll this mob's table with the server's drop rate applied to every chance.
+    ///
+    /// **Both rolls are consumed whether or not the entry hits**, exactly as before - the
+    /// quantity roll is only taken on a hit. Changing which rolls are drawn would make the
+    /// same seed produce different drops at 1x, and the tests that pin the sequence would
+    /// start failing for a reason unrelated to the rate.
+    pub fn roll_at(
+        &self,
+        template_id: u32,
+        rate: store::rates::Rate,
+        next: &mut dyn FnMut() -> u64,
+    ) -> Vec<Rolled> {
         let mine = self.per_mob.get(&template_id).map(Vec::as_slice).unwrap_or(&[]);
         let mut out = Vec::new();
         for entry in mine.iter().chain(self.global.iter()) {
-            if entry.hits(next()) {
+            if entry.hits_at(next(), rate) {
                 out.push(Rolled { item_id: entry.item_id, quantity: entry.quantity(next()) });
             }
         }

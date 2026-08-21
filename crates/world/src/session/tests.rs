@@ -2098,7 +2098,7 @@ fn the_exp_rate_command_sets_the_rate_and_announces_it() {
     let (mut s, store, _) = gm_session();
     let out = s.handle(&gm_chat("!exprate 2"));
 
-    assert_eq!(store.rates().unwrap().exp.per_cent(), 200, "stored as hundredths");
+    assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 200, "stored as hundredths");
     assert_eq!(
         banners(&out),
         vec![Some("[Event] The Server's EXP rate has been set to 2x".to_string())],
@@ -2123,21 +2123,39 @@ fn two_rates_produce_one_banner_carrying_both() {
     );
 }
 
-/// Back to 1x on both, and the banner comes down.
+/// Back to 1x, and the END is announced rather than the banner simply vanishing.
+///
+/// The owner, 2026-08-20: *"When either EXP or Meso is set back to 1x again, you should also
+/// immediately display a scrolling notice."*
 #[test]
-fn returning_to_normal_takes_the_banner_down() {
+fn returning_to_normal_announces_the_end() {
     let (mut s, store, _) = gm_session();
     s.handle(&gm_chat("!exprate 2"));
     let out = s.handle(&gm_chat("!exprate 1"));
 
-    assert_eq!(store.rates().unwrap().exp, store::rates::Rate::NORMAL);
-    assert_eq!(banners(&out), vec![None], "a teardown, not an empty string");
+    assert_eq!(store.rates().unwrap().exp.rate, store::rates::Rate::NORMAL);
+    assert_eq!(
+        banners(&out),
+        vec![Some("[Event] The EXP rate-up event has ended.".to_string())]
+    );
 }
 
-/// One rate going back to normal while the other is still running leaves the banner up,
-/// saying only the half that is still true.
+/// `!exprate 1` on a server that was never running an event announces nothing.
+///
+/// The failure this guards against is noisy rather than broken: three "event has ended"
+/// banners on a fresh server, for events nobody ran.
 #[test]
-fn the_banner_keeps_the_half_that_is_still_running() {
+fn ending_an_event_that_never_started_says_nothing() {
+    let (mut s, _, _) = gm_session();
+    let out = s.handle(&gm_chat("!exprate 1"));
+    assert!(banners(&out).is_empty(), "{out:?}");
+    assert!(notice_text(&out[0]).contains("already"), "{out:?}");
+}
+
+/// One rate ending while another is still running puts BOTH on the banner: the ending and
+/// the survivor.
+#[test]
+fn an_ending_and_a_survivor_share_the_banner() {
     let (mut s, _, _) = gm_session();
     s.handle(&gm_chat("!exprate 2"));
     s.handle(&gm_chat("!mesorate 3"));
@@ -2145,7 +2163,9 @@ fn the_banner_keeps_the_half_that_is_still_running() {
 
     assert_eq!(
         banners(&out),
-        vec![Some("[Event] The Server's Meso rate has been set to 3x".to_string())]
+        vec![Some(
+            "[Event] The EXP rate-up event has ended. [Event] The Server's Meso rate has been set to 3x".to_string()
+        )]
     );
 }
 
@@ -2169,9 +2189,9 @@ fn a_tick_with_nothing_new_sends_no_banner() {
 fn the_two_word_spellings_work() {
     let (mut s, store, _) = gm_session();
     s.handle(&gm_chat("!meso rate 2"));
-    assert_eq!(store.rates().unwrap().meso.per_cent(), 200);
+    assert_eq!(store.rates().unwrap().meso.rate.per_cent(), 200);
     s.handle(&gm_chat("!exp rate 1.5"));
-    assert_eq!(store.rates().unwrap().exp.per_cent(), 150);
+    assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 150);
 }
 
 /// A bad argument is refused **and changes nothing**. The dangerous failure here is a
@@ -2183,20 +2203,22 @@ fn a_bad_multiplier_changes_nothing() {
     for bad in ["fast", "0", "1000", "1.234", "-2"] {
         let out = s.handle(&gm_chat(&format!("!exprate {bad}")));
         assert!(banners(&out).is_empty(), "{bad} moved the banner: {out:?}");
-        assert_eq!(store.rates().unwrap().exp.per_cent(), 200, "{bad} changed the rate");
+        assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 200, "{bad} changed the rate");
     }
 }
 
-/// With no argument the command reports, because "the multiplier is applied" and "the
-/// multiplier was never stored" look identical from inside the game.
+/// With no argument a setter reports, because "the multiplier is applied" and "the
+/// multiplier was never stored" look identical from inside the game. It reports through the
+/// same path as `!rates`, so the two can never disagree.
 #[test]
 fn the_rate_commands_report_when_given_nothing() {
     let (mut s, _, _) = gm_session();
     s.handle(&gm_chat("!exprate 2"));
     let out = s.handle(&gm_chat("!exprate"));
     let said = notice_text(&out[0]);
-    assert!(said.contains("EXP is 2x"), "{said}");
-    assert!(said.contains("mesos are 1x"), "{said}");
+    assert!(said.contains("EXP 2x"), "{said}");
+    assert!(said.contains("Meso 1x"), "{said}");
+    assert!(said.contains("Drop 1x"), "{said}");
     assert!(banners(&out).is_empty(), "reporting is not a change");
 }
 
@@ -2258,4 +2280,112 @@ fn the_meso_rate_multiplies_a_drop() {
     let mesos: Vec<u32> =
         s.fields.with_drops(map, |d| d.on_field(map).map(|x| x.meso).collect::<Vec<_>>());
     assert_eq!(mesos, vec![30], "10 mesos at 3x, on the floor rather than at pick-up time");
+}
+
+
+/// `!rates` lists all three and says so plainly when nothing is running.
+#[test]
+fn the_rates_command_lists_all_three() {
+    let (mut s, _, _) = gm_session();
+    let quiet = notice_text(&s.handle(&gm_chat("!rates"))[0]);
+    assert!(quiet.contains("EXP 1x"), "{quiet}");
+    assert!(quiet.contains("Meso 1x"), "{quiet}");
+    assert!(quiet.contains("Drop 1x"), "{quiet}");
+    assert!(quiet.contains("No event is running"), "{quiet}");
+
+    s.handle(&gm_chat("!droprate 2.5"));
+    let loud = notice_text(&s.handle(&gm_chat("!rates"))[0]);
+    assert!(loud.contains("Drop 2.5x"), "{loud}");
+    assert!(!loud.contains("No event is running"), "{loud}");
+}
+
+/// `!rates` changes nothing - no banner, no stored rate.
+#[test]
+fn the_rates_command_is_read_only() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    let before = store.rates().unwrap();
+    let out = s.handle(&gm_chat("!rates"));
+    assert!(banners(&out).is_empty(), "reporting is not a change: {out:?}");
+    assert_eq!(
+        store.rates().unwrap(),
+        before,
+        "!rates must not touch set_at either - that would restart the banner cycle"
+    );
+}
+
+/// `!droprate` announces itself like the other two, and `!drop rate` is the same command.
+#[test]
+fn the_drop_rate_command_sets_and_announces() {
+    let (mut s, store, _) = gm_session();
+    let out = s.handle(&gm_chat("!droprate 4"));
+    assert_eq!(store.rates().unwrap().drop.rate.per_cent(), 400);
+    assert_eq!(
+        banners(&out),
+        vec![Some("[Event] The Server's Drop rate has been set to 4x".to_string())]
+    );
+
+    s.handle(&gm_chat("!drop rate 2"));
+    assert_eq!(store.rates().unwrap().drop.rate.per_cent(), 200, "the two-word spelling");
+}
+
+/// All three at once share one banner, in a fixed order.
+#[test]
+fn three_events_share_one_banner() {
+    let (mut s, _, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    s.handle(&gm_chat("!mesorate 3"));
+    let out = s.handle(&gm_chat("!droprate 4"));
+    assert_eq!(
+        banners(&out),
+        vec![Some(
+            "[Event] The Server's EXP rate has been set to 2x [Event] The Server's Meso rate has been set to 3x [Event] The Server's Drop rate has been set to 4x".to_string()
+        )]
+    );
+}
+
+/// The drop rate scales the CHANCE, and a rate high enough makes an unlikely row certain.
+#[test]
+fn the_drop_rate_multiplies_the_chance() {
+    let (mut s, _, _) = gm_session();
+    // A 10% row. At 1x the sample roll below misses it; at 10x it cannot miss.
+    let drops = crate::droptables::DropTables::parse("2 | 4000001 | 10 | 1 | 1 | 9 | Shell
+");
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    s.last_position = Some((520, 395));
+    let map = net::opcode::START_MAP_ID;
+
+    // 5000 % 10000 = 5000, which is above 10% (1000 bp) and below 100%.
+    let entry = &s.config.drops.for_mob(2)[0];
+    assert!(!entry.hits_at(5_000, store::rates::Rate::NORMAL), "1x must miss this roll");
+    assert!(
+        entry.hits_at(5_000, store::rates::Rate::from_per_cent(1_000)),
+        "10x makes a 10% row certain"
+    );
+
+    s.handle(&gm_chat("!droprate 10"));
+    s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
+    assert_eq!(
+        s.fields.with_drops(map, |d| d.len()),
+        1,
+        "at 10x a 10% row drops every time"
+    );
+}
+
+/// A row disabled with a chance of 0 stays disabled at every rate.
+///
+/// `Rate::apply` floors at 1 so that a 0.5x event cannot zero a 1-exp mob. Applied to a
+/// chance that would turn "never" into "1 in 10000", which is a disabled row coming back to
+/// life quietly.
+#[test]
+fn a_zero_chance_row_stays_dead_at_every_rate() {
+    let drops = crate::droptables::DropTables::parse("2 | 4000001 | 0 | 1 | 1 | 9 | Shell
+");
+    let entry = &drops.for_mob(2)[0];
+    for per_cent in [100u32, 1_000, 10_000] {
+        assert!(
+            !entry.hits_at(0, store::rates::Rate::from_per_cent(per_cent)),
+            "{per_cent} hundredths revived a disabled row"
+        );
+    }
 }

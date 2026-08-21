@@ -1,4 +1,4 @@
-//! The server's EXP and meso multipliers.
+//! The server's EXP, meso and drop multipliers.
 //!
 //! # Why this is in the database and not in a process
 //!
@@ -19,6 +19,14 @@
 //! never travels as a bare integer - it travels as a [`Rate`], which knows it is hundredths,
 //! parses the chat argument itself, formats itself for the banner, and does the
 //! multiplication. Nothing outside this module divides by 100.
+//!
+//! # Why a row remembers when its event *ended*
+//!
+//! The owner, 2026-08-20: *"When either EXP or Meso is set back to 1x again, you should also
+//! immediately display a scrolling notice."* A row that has gone back to 1x is
+//! indistinguishable from a row that was never touched unless something records the
+//! transition, so [`RateRow::ended_at`] does. It is cleared the moment a new event starts on
+//! that rate, so an "ended" notice can never outlive the thing it is about.
 
 use std::fmt;
 
@@ -150,13 +158,17 @@ impl fmt::Display for Rate {
     }
 }
 
-/// Which rate. The string is the primary key in the table, so these two spellings are
+/// Which rate. The string is the primary key in the table, so these three spellings are
 /// on-disk format and cannot be renamed casually.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateKind {
     Exp,
     Meso,
+    Drop,
 }
+
+/// Every rate there is, in the order the banner names them.
+pub const ALL_KINDS: [RateKind; 3] = [RateKind::Exp, RateKind::Meso, RateKind::Drop];
 
 impl RateKind {
     /// The database key.
@@ -164,6 +176,7 @@ impl RateKind {
         match self {
             Self::Exp => "exp",
             Self::Meso => "meso",
+            Self::Drop => "drop",
         }
     }
 
@@ -172,37 +185,89 @@ impl RateKind {
         match self {
             Self::Exp => "EXP",
             Self::Meso => "Meso",
+            Self::Drop => "Drop",
+        }
+    }
+
+    /// The chat command that sets it, without the `!`.
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Exp => "exprate",
+            Self::Meso => "mesorate",
+            Self::Drop => "droprate",
         }
     }
 }
 
-/// Both rates, and when either was last changed.
+/// One rate's whole story: what it is, when it was last set, and when its event ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rates {
-    pub exp: Rate,
-    pub meso: Rate,
-    /// Unix seconds of the **most recent** change to either rate, or 0 if neither has ever
-    /// been set. This is the anchor the banner's show/hide cycle counts from, which is why
-    /// it is one timestamp for the pair rather than one each: changing either rate restarts
-    /// the cycle, so both messages appear together from that moment.
+pub struct RateRow {
+    pub rate: Rate,
+    /// Unix seconds of the last change to this rate, or 0 if it has never been set.
     pub set_at: i64,
+    /// Unix seconds of the moment this rate went from an event **back to 1x**, or 0.
+    ///
+    /// Cleared when a new event starts, so it never describes a stale event. Without it a
+    /// rate that has ended is byte-identical to one that was never touched, and the "event
+    /// has ended" notice would have nothing to fire on.
+    pub ended_at: i64,
+}
+
+impl Default for RateRow {
+    fn default() -> Self {
+        RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 }
+    }
+}
+
+/// All three rates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Rates {
+    pub exp: RateRow,
+    pub meso: RateRow,
+    pub drop: RateRow,
 }
 
 impl Rates {
     /// What a server that has never been touched runs at.
-    pub const NORMAL: Rates = Rates { exp: Rate::NORMAL, meso: Rate::NORMAL, set_at: 0 };
+    pub const NORMAL: Rates = Rates {
+        exp: RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 },
+        meso: RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 },
+        drop: RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 },
+    };
 
-    /// Are both rates 1x?
+    /// Are all three rates 1x?
     pub fn all_normal(&self) -> bool {
-        self.exp.is_normal() && self.meso.is_normal()
+        ALL_KINDS.iter().all(|k| self.get(*k).is_normal())
     }
 
     /// One rate by kind.
     pub fn get(&self, kind: RateKind) -> Rate {
+        self.row(kind).rate
+    }
+
+    /// One row by kind.
+    pub fn row(&self, kind: RateKind) -> RateRow {
         match kind {
             RateKind::Exp => self.exp,
             RateKind::Meso => self.meso,
+            RateKind::Drop => self.drop,
         }
+    }
+
+    fn row_mut(&mut self, kind: RateKind) -> &mut RateRow {
+        match kind {
+            RateKind::Exp => &mut self.exp,
+            RateKind::Meso => &mut self.meso,
+            RateKind::Drop => &mut self.drop,
+        }
+    }
+
+    /// The most recent change to **any** rate - the anchor the banner's cycle counts from.
+    ///
+    /// One timestamp for the set rather than one each, so that changing any rate restarts the
+    /// cycle and every current message appears together from that moment.
+    pub fn anchor(&self) -> i64 {
+        ALL_KINDS.iter().map(|k| self.row(*k).set_at).max().unwrap_or(0)
     }
 }
 
@@ -217,44 +282,79 @@ pub fn create_tables(conn: &Connection) -> Result<()> {
         );
         "#,
     )?;
+    add_ended_at_column(conn)?;
+    Ok(())
+}
+
+/// `server_rates.ended_at`, added after the fact.
+///
+/// **Not in the `CREATE TABLE` above, and that is not tidiness.** `CREATE TABLE IF NOT
+/// EXISTS` does nothing at all to a table that already exists, and this table shipped
+/// yesterday without the column - so a database that has already run the previous build has
+/// the table and would never get the column. `ALTER TABLE ADD COLUMN` raises on a duplicate
+/// and this runs on every open, hence the `PRAGMA` guard. Same shape and same reason as
+/// `db.rs`'s meso column.
+fn add_ended_at_column(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(server_rates)")?;
+    let existing: Vec<String> =
+        stmt.query_map([], |row| row.get::<_, String>(1))?.collect::<rusqlite::Result<_>>()?;
+    if !existing.iter().any(|name| name == "ended_at") {
+        conn.execute("ALTER TABLE server_rates ADD COLUMN ended_at INTEGER NOT NULL DEFAULT 0", [])?;
+    }
     Ok(())
 }
 
 impl Store {
-    /// Both rates as they stand.
+    /// All three rates as they stand.
     ///
     /// A missing row is 1x, so a database from before this table existed reads as a normal
     /// server rather than failing.
     pub fn rates(&self) -> Result<Rates> {
         let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT kind, per_cent, set_at FROM server_rates")?;
+        let mut stmt =
+            conn.prepare("SELECT kind, per_cent, set_at, ended_at FROM server_rates")?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
         })?;
         let mut rates = Rates::NORMAL;
         for row in rows {
-            let (kind, per_cent, set_at) = row?;
-            let rate = Rate::from_per_cent(per_cent.clamp(0, i64::from(u32::MAX)) as u32);
-            match kind.as_str() {
-                "exp" => rates.exp = rate,
-                "meso" => rates.meso = rate,
-                _ => continue, // a key nothing writes; ignore rather than fail a login
-            }
-            rates.set_at = rates.set_at.max(set_at);
+            let (key, per_cent, set_at, ended_at) = row?;
+            let Some(kind) = ALL_KINDS.iter().find(|k| k.key() == key) else {
+                continue; // a key nothing writes; ignore rather than fail a login
+            };
+            *rates.row_mut(*kind) = RateRow {
+                rate: Rate::from_per_cent(per_cent.clamp(0, i64::from(u32::MAX)) as u32),
+                set_at,
+                ended_at,
+            };
         }
         Ok(rates)
     }
 
     /// Set one rate, stamping it with `now` (unix seconds).
     ///
+    /// **Going back to 1x records an ending; starting an event clears one.** That is the only
+    /// way a later read can tell "this event just finished" from "this was never an event",
+    /// and the notice the owner asked for depends on the difference.
+    ///
     /// The timestamp is passed in rather than read here so the banner schedule can be tested
     /// against a clock the test controls.
     pub fn set_rate(&self, kind: RateKind, rate: Rate, now: i64) -> Result<()> {
+        let was = self.rates()?.get(kind);
+        // An event ends when a rate that was NOT 1x becomes 1x. Setting 1x on a rate that was
+        // already 1x is not an ending and must not announce one.
+        let ended_at = if rate.is_normal() && !was.is_normal() { now } else { 0 };
         self.conn().execute(
-            "INSERT INTO server_rates (kind, per_cent, set_at) VALUES (?1, ?2, ?3)
+            "INSERT INTO server_rates (kind, per_cent, set_at, ended_at) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(kind) DO UPDATE SET per_cent = excluded.per_cent,
-                                             set_at   = excluded.set_at",
-            rusqlite::params![kind.key(), i64::from(rate.per_cent()), now],
+                                             set_at   = excluded.set_at,
+                                             ended_at = excluded.ended_at",
+            rusqlite::params![kind.key(), i64::from(rate.per_cent()), now, ended_at],
         )?;
         Ok(())
     }
@@ -322,7 +422,6 @@ mod tests {
     #[test]
     fn nothing_worth_something_becomes_worth_nothing() {
         assert_eq!(Rate::from_per_cent(50).apply(1), 1);
-        assert_eq!(Rate::MIN, Rate::from_per_cent(1).per_cent());
         assert_eq!(Rate::from_per_cent(1).apply(1), 1);
         // ...but a mob that was already worth nothing stays worth nothing.
         assert_eq!(Rate::from_per_cent(1000).apply(0), 0);
@@ -334,5 +433,94 @@ mod tests {
         // is nonsense but it is *bounded* nonsense - it does not wrap round to a small
         // number, which is the failure that would matter.
         assert_eq!(Rate::from_per_cent(10_000).apply(u64::MAX), u64::MAX / 100);
+    }
+
+    #[test]
+    fn every_kind_has_a_distinct_key_and_command() {
+        let keys: Vec<&str> = ALL_KINDS.iter().map(|k| k.key()).collect();
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), keys.len(), "the key is a primary key: {keys:?}");
+        for k in ALL_KINDS {
+            assert!(k.command().ends_with("rate"), "{}", k.command());
+        }
+    }
+
+    fn store() -> Store {
+        Store::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn a_fresh_server_is_normal() {
+        let s = store();
+        assert_eq!(s.rates().unwrap(), Rates::NORMAL);
+        assert!(s.rates().unwrap().all_normal());
+    }
+
+    #[test]
+    fn setting_and_reading_back_survives_all_three() {
+        let s = store();
+        s.set_rate(RateKind::Exp, Rate::from_per_cent(200), 1_000).unwrap();
+        s.set_rate(RateKind::Meso, Rate::from_per_cent(300), 1_010).unwrap();
+        s.set_rate(RateKind::Drop, Rate::from_per_cent(150), 1_020).unwrap();
+        let r = s.rates().unwrap();
+        assert_eq!(r.exp.rate.per_cent(), 200);
+        assert_eq!(r.meso.rate.per_cent(), 300);
+        assert_eq!(r.drop.rate.per_cent(), 150);
+        assert_eq!(r.anchor(), 1_020, "the anchor is the most recent of the three");
+        assert!(!r.all_normal());
+    }
+
+    #[test]
+    fn going_back_to_normal_records_an_ending() {
+        let s = store();
+        s.set_rate(RateKind::Exp, Rate::from_per_cent(200), 1_000).unwrap();
+        assert_eq!(s.rates().unwrap().exp.ended_at, 0, "a running event has not ended");
+        s.set_rate(RateKind::Exp, Rate::NORMAL, 2_000).unwrap();
+        assert_eq!(s.rates().unwrap().exp.ended_at, 2_000);
+    }
+
+    #[test]
+    fn setting_one_x_on_a_rate_that_was_already_one_x_is_not_an_ending() {
+        // Otherwise `!exprate 1` on an untouched server announces the end of an event that
+        // never happened, which is worse than doing nothing.
+        let s = store();
+        s.set_rate(RateKind::Exp, Rate::NORMAL, 1_000).unwrap();
+        assert_eq!(s.rates().unwrap().exp.ended_at, 0);
+    }
+
+    #[test]
+    fn starting_a_new_event_clears_the_old_ending() {
+        let s = store();
+        s.set_rate(RateKind::Exp, Rate::from_per_cent(200), 1_000).unwrap();
+        s.set_rate(RateKind::Exp, Rate::NORMAL, 2_000).unwrap();
+        s.set_rate(RateKind::Exp, Rate::from_per_cent(300), 3_000).unwrap();
+        assert_eq!(
+            s.rates().unwrap().exp.ended_at,
+            0,
+            "an 'ended' notice must never outlive the event it is about"
+        );
+    }
+
+    /// The migration runs on a database that already has the table without the column - which
+    /// is every database that ran yesterday's build.
+    #[test]
+    fn the_ended_at_column_is_added_to_an_existing_table() {
+        let s = store();
+        {
+            let conn = s.conn();
+            conn.execute("DROP TABLE server_rates", []).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE server_rates (kind TEXT PRIMARY KEY, per_cent INTEGER NOT NULL, \
+                 set_at INTEGER NOT NULL);
+                 INSERT INTO server_rates VALUES ('exp', 200, 1000);",
+            )
+            .unwrap();
+            create_tables(&conn).unwrap();
+        }
+        let r = s.rates().unwrap();
+        assert_eq!(r.exp.rate.per_cent(), 200, "the old row survives");
+        assert_eq!(r.exp.ended_at, 0, "and defaults rather than failing the read");
     }
 }

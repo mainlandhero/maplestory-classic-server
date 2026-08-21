@@ -194,14 +194,17 @@ impl Session {
                     .to_string(),
             );
         };
+        // The server's drop rate scales every chance in the table. Read before the borrow
+        // below, because it is a database query and `roll_at` holds `self.rng`.
+        let drop_rate = self.rate(store::rates::RateKind::Drop);
         let rolled = {
             let rng = &mut self.rng;
-            self.config.drops.roll(template, &mut || rng.next())
+            self.config.drops.roll_at(template, drop_rate, &mut || rng.next())
         };
         let mut out = Vec::new();
         // Read the meso rate ONCE, not once per drop: it is a database query, and it cannot
         // change between two items falling off the same mob.
-        let meso_rate = self.meso_rate();
+        let meso_rate = self.rate(store::rates::RateKind::Meso);
         // **Stagger them.** The owner, with a screenshot of the live server: *"the items that
         // drop should also be slightly staggered from each other"*. Three items landing on
         // exactly the same pixel render as one. Centred on the mob so a single drop is
@@ -310,7 +313,7 @@ impl Session {
     /// useless for checking the curve.
     pub(super) fn exp_for_kill(&self, template: u32) -> (u64, String) {
         let base = self.config.mob_exp.get(&template).copied().unwrap_or(0);
-        let rate = self.exp_rate();
+        let rate = self.rate(store::rates::RateKind::Exp);
         let worth = rate.apply(u64::from(base));
         let why = if rate.is_normal() {
             "a kill".to_string()

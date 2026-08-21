@@ -180,29 +180,30 @@ model the owner asked for, not a bug. Map 40 has **40 spawn points**, all Blue S
 them `mobTime = 0` - which means "no node, use the field's ordinary rate", not "never" - and
 solo capacity is 75%, so about **30** snails.
 
-**The table below is the index. `docs/test-plan.md` is the procedure**, with what to expect at
-each step and what each outcome would mean. It is ordered differently on purpose: the steps
-that can kill the client are last there, so a crash still leaves everything before it
-measured.
+**The steps that can kill the client are 17-20. Do them last** - a crash at the skill window
+then leaves everything above it already measured.
 
 | # | do | what to watch | what it means |
 |---|---|---|---|
-| 1 | `!map 40`, wait | snails appearing over a few seconds | the field seeds empty and refills from the WZ's `mobTime` |
-| 2 | hit one snail **once** | the HP bar over it | 18 damage on a 45 HP snail should leave it near **three fifths**. About a quarter means the percentage change did not land |
-| 3 | kill it | drops on the floor, **at the mob** | not at your feet, and several drops slightly apart rather than stacked |
+| 1 | `!map 40`, wait | snails appearing over a few seconds | the field seeds empty and refills from the WZ's `mobTime`. 40 spawn points, all `mobTime = 0` (the field's ordinary 7s, **not** "never"), 75% solo capacity, so about **30** snails |
+| 2 | hit one snail **once** | the HP bar over it | your damage over **45**. Hitting for 18 should leave it near three fifths; about a quarter means the percentage change did not land |
+| 3 | kill it | drops on the floor, **at the mob** | not at your feet, and several drops slightly apart rather than stacked. Every snail drops 2 mesos; about two in five drop a Snail Shell |
 | 4 | watch the bottom right | `You received EXP (+2)` | **not** in the chat log. Different wording from the live server - this build's string table says "received", not "gained" |
 | 5 | walk over a drop | it goes in the bag, and a line bottom-right | `0x032C` is measured now, so this should simply work |
-| 6 | kill snails until you level | the level-up animation, +5 AP | the client plays the animation itself from `0x007C` |
+| 6 | kill eight snails | the level-up animation, **+16 max HP, +12 max MP**, +5 AP | 15 EXP to level and 2 a snail. The 16/12 is new - it was 14/10. **This client cannot arbitrate it**: it has no per-level table and is simply told the new maxima, so wrong numbers mean the source is wrong. Goal K |
 | 7 | accept Sam's Suggestion, kill snails | the quest counter moving | ten snails. The count is a **string** in the packet - if it reads 0/10 forever, that is where to look |
-| 8 | open the **inventory** window, close it. Then the **stat** window | whether the client survives | **this is the skill-window crash test and it needs no code.** If either also crashes, the teardown is generic and unrelated to skills |
-| 9 | open the skill window, click `+` on Three Snails | the level going up, **twice** | the first click always went out; the second was swallowed by a latch only a server packet clears |
-| 10 | relog | the skill level, the EXP, the quest count | all three persist now |
-| 11 | `!exprate 2` | **a banner across the top of the screen** | the first time `0x00AC` has ever been sent to this client. If nothing draws, check `world.log` for `BroadcastMsg type 4` first - the packet going out and nothing appearing is a different problem from the packet never going out, and only the log tells them apart |
-| 12 | `!mesorate 3`, kill a snail | one banner naming **both** rates; EXP and meso drops scaled | the client has one banner object, so two events share one line |
-| 13 | `!map 40` with the banner up | **does the banner survive the map change?** | a real open question, not a check. If it vanishes, `world::session::rates` has to re-assert on field entry; if it survives, leave it alone. Either answer is worth having |
-| 14 | leave it running two minutes | it disappears, and comes back three minutes after that | the 2-in-5 cycle. The slowest step: start it and do something else |
-| 15 | `!exprate 1`, `!mesorate 1` | the banner comes down immediately | and `world.log` shows the two-byte teardown |
-| 16 | on any level-up, watch max HP and MP | **+16 HP and +12 MP**, not +14/+10 | goal K. If the numbers are wrong the fan site is wrong, because this client has no table to check them against - see K |
+| 8 | `!rates` | `Server rates: EXP 1x, Meso 1x, Drop 1x. No event is running.` | read-only. It is how to tell "the rate is applied" from "the rate was never stored" |
+| 9 | `!exprate 2` | **a banner across the top of the screen** | the first time `0x00AC` has ever been sent to this client. If nothing draws, check `world.log` for `BroadcastMsg type 4` **first** - the packet going out and nothing appearing is a different problem from the packet never going out, and only the log tells them apart |
+| 10 | kill four snails | you level in **four** kills, not eight, and `+4` a kill | the rate applying, not just being stored and announced |
+| 11 | `!mesorate 3`, `!droprate 5`, kill a snail | **one** banner with all three sentences; 6 mesos; far more items | the client has one banner object, so every running event shares one line |
+| 12 | `!map 40` with the banner up | **does the banner survive the map change?** | a question, not a check. If it vanishes, `world::session::rates` has to re-assert on field entry; if it survives, leave it alone. Either answer is worth having |
+| 13 | leave it alone five minutes | down at 2 minutes, back up at 5 | the 2-in-5 cycle. **The rate itself never expires** - only the banner cycles. Start it and do something else |
+| 14 | `!exprate 1` | `[Event] The EXP rate-up event has ended.` **immediately**, alongside the two still running | an ending is a message too. It shows for one 2-minute window and does not cycle back |
+| 15 | `!mesorate 1`, `!droprate 1`, then `!rates` | the last ending shows 2 minutes, then the banner goes down for good; `!rates` reads all 1x | `world.log` shows a two-byte body for the teardown - flag 0, no string |
+| 16 | open the **inventory** window, close it. Then the **stat** window | whether the client survives | **the skill-window crash test, and it needs no code.** If either also crashes the teardown is generic and skills are innocent. **This can end the run, so it is here and not earlier** |
+| 17 | open the skill window, click `+` on Three Snails **twice** | the level going up on both | the first click always went out; the second was swallowed by a latch only a server packet clears. One click proves nothing |
+| 18 | close the skill window | whether it survives | this is the step that has crashed. If it does, the run is over having lost nothing |
+| 19 | relog | level, EXP, quest count, skill level, items, **and the rate** | all of it persists; the rates are in the database, so a relog rejoins an event in progress |
 
 **Do not click Lucy.** `0x0560` is off by default and they will simply talk, but there is no
 point spending attention on it until the classic counter is found.

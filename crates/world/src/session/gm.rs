@@ -47,10 +47,14 @@ impl Session {
         // rather than answering `!exp rate 2` with a complaint that "rate 2" is not a number,
         // which is a true statement about the wrong question.
         let (name, arg) = match name {
-            "exp" | "meso" if arg == "rate" || arg.starts_with("rate ") => (
-                if name == "exp" { "exprate" } else { "mesorate" },
-                arg["rate".len()..].trim(),
-            ),
+            "exp" | "meso" | "drop" if arg == "rate" || arg.starts_with("rate ") => {
+                let one_word = match name {
+                    "exp" => "exprate",
+                    "meso" => "mesorate",
+                    _ => "droprate",
+                };
+                (one_word, arg["rate".len()..].trim())
+            }
             _ => (name, arg),
         };
         match name {
@@ -60,6 +64,10 @@ impl Session {
             "heal" => self.gm_heal(),
             "exprate" => self.gm_exp_rate(arg),
             "mesorate" => self.gm_meso_rate(arg),
+            "droprate" => self.gm_drop_rate(arg),
+            // Reads and changes nothing, which is why it is the one command here that would
+            // survive a permission check if this server ever grew one.
+            "rates" => self.gm_rates(),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
