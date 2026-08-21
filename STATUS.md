@@ -160,7 +160,7 @@ while it was unwired.
 | 1 | **Run the client**, plan below | Seven wired things are unseen |
 | 2 | **The skill-window crash** | The cheapest discrimination costs no code and is step 8 of the plan. If the inventory window also crashes, the teardown is generic and skills are innocent |
 | 3 | **What puts the user in state 18/19** | `(user->[0x5e4] & ~1) == 0x12`, checked by four of the six attack builders, and the same predicate skips the drop-pool clear and refuses the pick-up pre-check. What SETS it is `[I]`. `-UserState` watches the only setter |
-| 4 | **The classic shop counter** | `0x0560` cannot work: its window needs `UI/UIWindow2.img`, absent from this client's WZ. The WZ ships `UIShop.img/Shop` instead and **which opcode builds that is the open question**. Static work |
+| 4 | **The classic shop counter - the opcode is `0x055D`, found 2026-08-20** | `0x0560` opens **Shop2**, whose art this client does not have. `0x055D` opens the classic `UIShop.img/Shop`, whose art it does. What is left is decoding the body: its rows carry a **thirteen-field item structure**, not an id and a price. `research/classic-shop-opcode.md` names every remaining unknown. Static work, and the largest piece of it |
 | 5 | **Death** | `hp = 0` disables the player and does not hang the client, but nothing plays the death or revive sequence. `!heal` is the escape hatch until it exists |
 | 6 | **Job advancement (goal E)** | Needs SP, and the stat block's SP field forks into a pool list nobody has decoded |
 | 7 | **The combat formulas (goals J, K, L)** | The owner, 2026-08-20: *"an integral part of our server"*. Damage, HP/MP-per-level and attack speed, captured in `research/meowdb-combat-formulas.md`. **K is the one to do first** - it is five constants and it contradicts what we ship today |
@@ -219,6 +219,14 @@ disagree, **the client wins**.
 * **Item quests need no running count.** The client counts the bag live.
 * **The shop is not a row problem and not a map problem.** One correctly-formed row killed
   the client exactly as twelve did, and the map loads fine without a shop.
+* **There are TWO shop windows and we were sending the wrong one.** `0x055D`/`0x055E` are the
+  classic `UIShop.img/Shop`; `0x0560`/`0x055F` are Shop2, whose art is missing. Both are arms
+  of the same range chain in `CField::OnPacket`, and that chain is validated by `0x01A0`
+  landing on the SetField handler two entries away. `research/classic-shop-opcode.md`.
+* **The client cannot settle goal K.** The EXP curve at `0x143AC2400` has no sibling table:
+  a `lea` scan of the whole neighbourhood that fills it finds exactly one `.data` target and
+  it is the EXP curve itself. HP/MP per level is a server-side rule and the client never
+  computes it - it is told new maxima. See goal K.
 * **The bag is not the unequip blocker**, `0x02FF` must be answered, `0x0107` must always be
   answered including refusals, and the client computes its own damage.
 * **`0x0301` is a MOB picking up a drop**, not the player's request.
@@ -728,7 +736,7 @@ whether the client needs anything beyond the stat block's `job` field at the nex
 already sent on every `SetField`, so the cheapest first experiment is whether simply storing
 a new job and re-sending the record is enough to make the client show a first-job character.
 
-#### F. NPC shops - **BLOCKED on client data, 2026-08-20**
+#### F. NPC shops - **UNBLOCKED 2026-08-20: the opcode is `0x055D`**
 
 **`0x0560` cannot work on this client and no server byte can change that.** The shop window's
 constructor loads `UI/UIWindow2.img/Shop2/backgrnd`; that image is **not in this client's
@@ -737,9 +745,32 @@ client never returns from the handler - neither crashing run has a numbered disp
 `0x0560` - and it dies **before reading a single row byte**, which is why one correctly-formed
 row killed it exactly as twelve did. Two of the owner's manual launches went on this.
 
-It is **off by default** and a shopkeeper falls through to ordinary dialogue. Not abandoned:
-the WZ ships `UIShop.img/Shop`, the classic-layout counter, and **which opcode builds that is
-the open question**. `research/npc-shop-crash2.md`.
+It is **off by default** and a shopkeeper falls through to ordinary dialogue.
+
+**That question is answered.** There are two shop windows on two adjacent opcode pairs, and
+we were sending the wrong one:
+
+| | window | art | open | result |
+|---|---|---|---|---|
+| classic | `UI/UIShop.img/Shop` | **present** | **`0x055D`** | `0x055E` |
+| Shop2 | `UI/UIWindow2.img/Shop2` | **absent** | `0x0560` | `0x055F` |
+
+Both are arms of the same range chain in `CField::OnPacket`, and the chain is validated two
+entries away by `0x01A0..0x01A3` landing on the SetField handler. Full working, including how
+the strings were found and what the instrument was checked against, in
+`research/classic-shop-opcode.md`.
+
+**What is left is the body, and it is not small.** The head is decoded and confirmed by two
+instruments - `u32`, `u8`, a conditional `u32`, then `u32`, `u32`, a 31-character string, a
+`u32` and a `u16` row count. But **each row carries a thirteen-field item structure**
+(`FUN_1404ba100`, one caller, bespoke to this shop) with an undecoded conditional tail, and
+**nothing yet says which of those fields is the price**.
+
+**Nothing was implemented, deliberately.** `crates/net/src/shop.rs` still builds `0x0560`.
+Pointing it at `0x055D` without decoding the body would send a short body to a handler that
+reads a longer one - the same mistake as the truncated chat packet, with the same
+consequence. `research/npc-shop.md` is the template for finishing it; most of its method
+transfers.
 
 Everything else about the shop is built and tested - the row layout, both tabs, the
 transaction, the untradeable rule - and is waiting on that one answer.
@@ -1016,13 +1047,23 @@ Max HP / Max MP skills. Full table and the job split in `research/meowdb-combat-
 `LevelGains { ap: 5, max_hp: 14, max_mp: 10 }` at every level. A Beginner should be getting
 **+16 / +12**.
 
-**Neither number is measured.** Ours was a placeholder; the site's is a fan site. So changing
-it is swapping one unverified constant for another - worth doing, but only if it is *recorded*
-as unverified, because the current value at least looks provisional and the new one would look
-authoritative. The client can settle it: `-SetFieldProbe` already dumps the client's own EXP
-curve for free on the positive control's first hit, and the level-up tables are the same
-family. **Check the listing before writing either number down as fact** - that is this file's
-oldest rule and this is exactly the shape it is about.
+**Neither number is measured.** Ours was a placeholder; the site's is a fan site.
+
+**And the client will not settle it, which this entry claimed yesterday that it would.** That
+claim was an inference and it is now checked: the EXP curve at `0x143AC2400` has **no sibling
+table**. A `lea reg,[rip+disp32]` scan of the whole 0x500-byte neighbourhood that fills it
+finds exactly one `.data` target, and it is the EXP curve itself. That fits what the client is
+for - it draws the EXP bar, so it needs the EXP table; it is *told* new maxima on level up and
+never computes them, so it has no reason to carry HP/MP per level at all.
+
+The blind spot, named rather than left implicit: that scan cannot see a table reached through
+a register, through `mov reg, imm64`, or from `.themida`. So this is "no evidence of one in
+the obvious place", not "provably absent".
+
+Which leaves the fan site's behavioural measurement as the best evidence available, and it
+should be written down **as that** - a measurement of the live COT2 service, not a listing.
+Changing `LevelGains` to `+16 / +12` for a Beginner is the right move; labelling it `[L]`
+would not be.
 
 Five constants and a job split. It is the smallest of the three and the only one that changes
 something a player would notice today.

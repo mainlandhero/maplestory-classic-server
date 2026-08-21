@@ -113,6 +113,23 @@ use crate::packet::{PacketReader, PacketWriter};
 /// (`140d227a2`). So an empty shop is a dialog box, not a shop window.
 pub const OPEN_SHOP: u16 = 0x0560;
 
+/// **This is the WRONG window, and `0x055D` is the right one.** Found 2026-08-20.
+///
+/// `CField::OnPacket` dispatches four shop opcodes as two adjacent range tests:
+/// `0x055D`/`0x055E` open and answer the **classic** counter, built from
+/// `UI/UIShop.img/Shop` - art this client **has** - and `0x055F`/`0x0560` do the same for
+/// **Shop2**, built from `UI/UIWindow2.img/Shop2`, which is **absent from this client's WZ**.
+/// That absence is what kills the client, before it reads a single row byte, which is why one
+/// correctly-formed row killed it exactly as twelve did.
+///
+/// Everything below still builds `0x0560`, on purpose. The classic body is longer and its
+/// rows carry a **thirteen-field item structure** rather than an id and a price; sending a
+/// `0x0560`-shaped body to `0x055D` would be a short packet to a handler expecting a long
+/// one, which is the mistake that killed the client twice already for a different reason.
+///
+/// `research/classic-shop-opcode.md` has the decoded head, the two instruments that agree on
+/// it, and every field still unnamed.
+
 /// **`ShopTransactionResult`** - server -> client. The answer to every
 /// [`SHOP_REQ_TRANSACTION`].
 ///
