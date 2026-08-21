@@ -753,6 +753,12 @@ pub struct Quest {
     pub say: HashMap<String, Vec<String>>,
 }
 
+/// One `Act.<state>.item.<n>` while it is still being read.
+///
+/// The id and the count are separate rows in `questlines.txt` and nothing promises which
+/// arrives first, so both sides are optional until the file is exhausted.
+type HalfItem = (Option<u32>, Option<i32>);
+
 /// The `<n>` out of `0.item.<n>.id`.
 fn act_item_index(dotted: &str) -> Option<usize> {
     dotted.split('.').nth(2)?.parse().ok()
@@ -766,9 +772,9 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
     use std::collections::BTreeMap;
     let mut lines: HashMap<u32, HashMap<String, BTreeMap<usize, String>>> = HashMap::new();
     let mut out: HashMap<u32, Quest> = HashMap::new();
-    // quest -> item index -> (id, count), stitched after the read because the two halves are
-    // separate rows and the file does not promise an order.
-    let mut act_items: HashMap<u32, BTreeMap<usize, (Option<u32>, Option<i32>)>> = HashMap::new();
+    // quest -> item index -> a half-built (id, count), stitched after the read because the two
+    // halves are separate rows and the file does not promise an order.
+    let mut act_items: HashMap<u32, BTreeMap<usize, HalfItem>> = HashMap::new();
 
     let Ok(text) = std::fs::read_to_string(path) else { return out };
     for row in text.lines() {
