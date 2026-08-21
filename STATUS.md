@@ -176,7 +176,14 @@ window opens in `C:\Windows\System32`. **`-SetFieldProbe` is not optional**: wit
 `Session::handle` returns nothing for *every* packet and the client sits on "Connecting...".
 
 **The map will be EMPTY when you arrive and fill in over about seven seconds.** That is the
-model the owner asked for, not a bug.
+model the owner asked for, not a bug. Map 40 has **40 spawn points**, all Blue Snail, every one of
+them `mobTime = 0` - which means "no node, use the field's ordinary rate", not "never" - and
+solo capacity is 75%, so about **30** snails.
+
+**The table below is the index. `docs/test-plan.md` is the procedure**, with what to expect at
+each step and what each outcome would mean. It is ordered differently on purpose: the steps
+that can kill the client are last there, so a crash still leaves everything before it
+measured.
 
 | # | do | what to watch | what it means |
 |---|---|---|---|
