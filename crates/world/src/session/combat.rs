@@ -115,8 +115,8 @@ impl Session {
             let left = self.fields.hurt(map, target.object_id, damage, &self.config, self.clock_ms);
             if left.is_none() {
                 out.extend(self.drops_from_kill(template, target.object_id, died_at, chr_id, map));
-                let worth = self.config.mob_exp.get(&template).copied().unwrap_or(0);
-                out.extend(self.award_experience(u64::from(worth), "a kill"));
+                let (worth, why) = self.exp_for_kill(template);
+                out.extend(self.award_experience(worth, &why));
                 out.extend(self.credit_kill_to_quests(template, chr_id));
             }
             // The template's real maxHP, because 0x03F0 carries a PERCENTAGE.
@@ -199,6 +199,9 @@ impl Session {
             self.config.drops.roll(template, &mut || rng.next())
         };
         let mut out = Vec::new();
+        // Read the meso rate ONCE, not once per drop: it is a database query, and it cannot
+        // change between two items falling off the same mob.
+        let meso_rate = self.meso_rate();
         // **Stagger them.** The owner, with a screenshot of the live server: *"the items that
         // drop should also be slightly staggered from each other"*. Three items landing on
         // exactly the same pixel render as one. Centred on the mob so a single drop is
@@ -209,7 +212,13 @@ impl Session {
             let x = x.saturating_add(offset);
             let (item, inv_type, meso) = if r.is_mesos() {
                 // A placeholder item: `LiveDrop::is_meso` gates every read of it.
-                (store::Item::bundle(0, 0), store::InventoryType::Etc, r.quantity)
+                // **The meso rate multiplies the pile on the floor, not the credit on
+                // pick-up.** Either would show the right number in the end, but this way the
+                // amount in the drop, the amount in the message and the amount added to the
+                // balance are all the same number, and a run that disagrees with itself is
+                // the kind of evidence this project keeps having to re-gather.
+                let amount = meso_rate.apply(u64::from(r.quantity)).min(u64::from(u32::MAX)) as u32;
+                (store::Item::bundle(0, 0), store::InventoryType::Etc, amount)
             } else {
                 // An id whose leading digit names no tab is not an item this game has. Skip
                 // it rather than guess a bag: the same rule `!item` follows, and for the same
@@ -288,6 +297,30 @@ impl Session {
     /// Returns nothing at all for an award of zero, which is the ordinary case for a mob
     /// with no EXP value: a `0x007C` that changes nothing is a packet the client has to
     /// parse for no reason.
+    /// What a kill of `template` is worth after the server's EXP rate, and the phrase that
+    /// goes in the log beside it.
+    ///
+    /// **A seam, not a convenience.** The multiplication used to be two lines at the call
+    /// site inside the attack handler, where the only way to test it was to build a
+    /// 147-byte attack packet. Here a test can ask directly.
+    ///
+    /// The rate is global and lives in the database, because a channel is a process -
+    /// `store::rates`. **`!exp` deliberately does not come through here**: it is a debugging
+    /// command that means "give me exactly this much", and one that quietly doubled would be
+    /// useless for checking the curve.
+    pub(super) fn exp_for_kill(&self, template: u32) -> (u64, String) {
+        let base = self.config.mob_exp.get(&template).copied().unwrap_or(0);
+        let rate = self.exp_rate();
+        let worth = rate.apply(u64::from(base));
+        let why = if rate.is_normal() {
+            "a kill".to_string()
+        } else {
+            format!("a kill ({base} at {rate}x)")
+        };
+        (worth, why)
+    }
+
+
     pub(super) fn award_experience(&mut self, gained: u64, why: &str) -> Vec<Reply> {
         if gained == 0 {
             return Vec::new();

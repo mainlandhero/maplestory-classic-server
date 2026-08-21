@@ -151,6 +151,7 @@ while it was unwired.
 | **skills** | `0x013B` answered with `0x0081`; levels persist and ride the character record as `presence[8]` |
 | **mob respawn** | from the WZ's own `mobTime`; a field starts **empty** and fills in |
 | **levelling** | EXP per kill from the client's own template data, curve in `data/exp-curve.txt` |
+| **`!exprate` / `!mesorate`** | a scrolling banner via **`0x00AC` type 4**, an opcode this client has never been sent. Rates are global across both channels because they live in the database |
 
 #### What to do next, in order
 
@@ -162,6 +163,7 @@ while it was unwired.
 | 4 | **The classic shop counter** | `0x0560` cannot work: its window needs `UI/UIWindow2.img`, absent from this client's WZ. The WZ ships `UIShop.img/Shop` instead and **which opcode builds that is the open question**. Static work |
 | 5 | **Death** | `hp = 0` disables the player and does not hang the client, but nothing plays the death or revive sequence. `!heal` is the escape hatch until it exists |
 | 6 | **Job advancement (goal E)** | Needs SP, and the stat block's SP field forks into a pool list nobody has decoded |
+| 7 | **The combat formulas (goals J, K, L)** | The owner, 2026-08-20: *"an integral part of our server"*. Damage, HP/MP-per-level and attack speed, captured in `research/meowdb-combat-formulas.md`. **K is the one to do first** - it is five constants and it contradicts what we ship today |
 
 #### THE TEST PLAN for the next run
 
@@ -188,6 +190,11 @@ model the owner asked for, not a bug.
 | 8 | open the **inventory** window, close it. Then the **stat** window | whether the client survives | **this is the skill-window crash test and it needs no code.** If either also crashes, the teardown is generic and unrelated to skills |
 | 9 | open the skill window, click `+` on Three Snails | the level going up, **twice** | the first click always went out; the second was swallowed by a latch only a server packet clears |
 | 10 | relog | the skill level, the EXP, the quest count | all three persist now |
+| 11 | `!exprate 2` | **a banner across the top of the screen** | the first time `0x00AC` has ever been sent to this client. If nothing draws, check `world.log` for `BroadcastMsg type 4` first - the packet going out and nothing appearing is a different problem from the packet never going out, and only the log tells them apart |
+| 12 | `!mesorate 3`, kill a snail | one banner naming **both** rates; EXP and meso drops scaled | the client has one banner object, so two events share one line |
+| 13 | `!map 40` with the banner up | **does the banner survive the map change?** | a real open question, not a check. If it vanishes, `world::session::rates` has to re-assert on field entry; if it survives, leave it alone. Either answer is worth having |
+| 14 | leave it running two minutes | it disappears, and comes back three minutes after that | the 2-in-5 cycle. The slowest step: start it and do something else |
+| 15 | `!exprate 1`, `!mesorate 1` | the banner comes down immediately | and `world.log` shows the two-byte teardown |
 
 **Do not click Lucy.** `0x0560` is off by default and they will simply talk, but there is no
 point spending attention on it until the classic counter is found.
@@ -215,6 +222,9 @@ disagree, **the client wins**.
 * **The bag is not the unequip blocker**, `0x02FF` must be answered, `0x0107` must always be
   answered including refusals, and the client computes its own damage.
 * **`0x0301` is a MOB picking up a drop**, not the player's request.
+* **`0x00AC` is BroadcastMsg and type 4 is the banner**, `0x00AB` is TownPortal, and the
+  candidate table's two `BroadcastMsg` entries are both wrong. `research/broadcast-banner.md`
+  has the working, including the bit mask that says which types carry no string.
 
 #### Instruments that have lied, and are now fixed
 
@@ -967,6 +977,68 @@ the unequip alone.
 `0x0070` InventoryOperation mode 2 moves an item on screen, confirmed by the owner. So the
 *outbound* half of any inventory change is settled - `crates/net/src/inventory.rs`. What is
 missing is durability and the record block, not the ability to tell the client.
+
+#### J. The damage formula - set by the owner, 2026-08-20
+
+The owner: *"an integral part of our server"*, with three links. All three are captured in
+**`research/meowdb-combat-formulas.md`** - the formulas, the weapon multiplier table, the
+accuracy and avoidability model, the defence order, the crit rule and the site's own list of
+what it could not resolve.
+
+**Today the client computes its own damage and the server accepts it.** That is measured, not
+assumed: `research/mob-combat.md`. So this goal is not "make damage work" - damage works. It
+is **making the server the authority**, which matters the moment anything is meant to be
+balanced or resisted.
+
+The one thing to know before starting: the formula needs `TotalWATK`, mastery, the weapon's
+type and the four stats, and **the server already has all of them** - equipment carries real
+`Character.wz` stats (`research/equip-stats.md`) and the stat block is decoded. What it does
+not have is a notion of *which attack* was used, which is in the attack packet nobody parses
+past its damage numbers.
+
+Do the **[I]** labelling honestly here. The site is a fan site with a good prior on this
+client - see the note at the top of that file - not a listing.
+
+#### K. HP and MP per level - set by the owner, 2026-08-20, and the cheapest of the three
+
+| class | HP / level | MP / level |
+|---|---|---|
+| Beginner | +16 | +12 |
+| Warrior | +28 | +12 |
+| Bowman | +22 | +17 |
+| Thief | +22 | +17 |
+| Magician | +16 | +22 |
+
+Plus a fixed 500 points split at job advancement, and +25% of base from the maxed Improving
+Max HP / Max MP skills. Full table and the job split in `research/meowdb-combat-formulas.md`.
+
+**This contradicts what MapleCW ships.** `crates/world/src/expcurve.rs` gives every character
+`LevelGains { ap: 5, max_hp: 14, max_mp: 10 }` at every level. A Beginner should be getting
+**+16 / +12**.
+
+**Neither number is measured.** Ours was a placeholder; the site's is a fan site. So changing
+it is swapping one unverified constant for another - worth doing, but only if it is *recorded*
+as unverified, because the current value at least looks provisional and the new one would look
+authoritative. The client can settle it: `-SetFieldProbe` already dumps the client's own EXP
+curve for free on the positive control's first hit, and the level-up tables are the same
+family. **Check the listing before writing either number down as fact** - that is this file's
+oldest rule and this is exactly the shape it is about.
+
+Five constants and a job split. It is the smallest of the three and the only one that changes
+something a player would notice today.
+
+#### L. Attack speed and animation timing - set by the owner, 2026-08-20
+
+Captured in `research/meowdb-combat-formulas.md`, and the honest summary is that **the page
+does not carry the table**. It gives the model - timing quantised to **30 ms steps**, four
+labels (base animation, animation time, weapon speed, timing range), Weapon Boosters worth two
+speed stages at every level, Spell Booster worth one at Lv1-10 and two at Lv11+ and not
+available to Clerics or Priests - and then points at per-skill pages for the numbers.
+
+**The server does not check attack intervals at all today**, and on a single-player local
+server it does not need to. This goal is here because the owner asked for it and because the
+numbers have to come from the client's own WZ rather than that page if they are ever wanted.
+Lowest priority of the three, and say so rather than quietly leaving it out.
 
 ### RUN OF 2026-08-19: the equipped list DECODED, and the mob body kills the client
 

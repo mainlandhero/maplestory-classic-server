@@ -29,6 +29,7 @@ pub mod migration;
 pub mod error;
 pub mod password;
 pub mod quest;
+pub mod rates;
 pub mod session;
 pub mod skills;
 pub mod storage;

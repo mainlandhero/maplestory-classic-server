@@ -2067,3 +2067,195 @@ fn hex(s: &str) -> Vec<u8> {
         .map(|i| u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).unwrap())
         .collect()
 }
+
+
+// ---------------------------------------------------------------------------------------
+// The server's EXP and meso rates, and the banner that announces them.
+// ---------------------------------------------------------------------------------------
+
+/// The text inside a `0x00AC` type-4 banner, or `None` if the packet is a teardown.
+fn banner_of(r: &Reply) -> Option<String> {
+    assert_eq!(r.opcode, net::broadcast::BROADCAST_MSG);
+    assert_eq!(r.body[0], net::broadcast::BANNER, "type 4 is the banner");
+    if r.body[1] == 0 {
+        assert_eq!(r.body.len(), 2, "a teardown carries NO string - the client reads none");
+        return None;
+    }
+    let len = u16::from_le_bytes([r.body[2], r.body[3]]) as usize;
+    Some(String::from_utf8(r.body[4..4 + len].to_vec()).unwrap())
+}
+
+fn banners(out: &[Reply]) -> Vec<Option<String>> {
+    out.iter()
+        .filter(|r| r.opcode == net::broadcast::BROADCAST_MSG)
+        .map(banner_of)
+        .collect()
+}
+
+/// `!exprate 2` stores the rate and puts the banner up **immediately**, with the owner's wording.
+#[test]
+fn the_exp_rate_command_sets_the_rate_and_announces_it() {
+    let (mut s, store, _) = gm_session();
+    let out = s.handle(&gm_chat("!exprate 2"));
+
+    assert_eq!(store.rates().unwrap().exp.per_cent(), 200, "stored as hundredths");
+    assert_eq!(
+        banners(&out),
+        vec![Some("[Event] The Server's EXP rate has been set to 2x".to_string())],
+        "the change announces itself rather than waiting for the next tick"
+    );
+    assert!(notice_text(&out[0]).contains("2x"), "and the GM who typed it is told: {out:?}");
+}
+
+/// Both rates share one banner, because one banner is all the client has.
+#[test]
+fn two_rates_produce_one_banner_carrying_both() {
+    let (mut s, _, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    let out = s.handle(&gm_chat("!mesorate 3"));
+
+    assert_eq!(
+        banners(&out),
+        vec![Some(
+            "[Event] The Server's EXP rate has been set to 2x [Event] The Server's Meso rate has been set to 3x"
+                .to_string()
+        )]
+    );
+}
+
+/// Back to 1x on both, and the banner comes down.
+#[test]
+fn returning_to_normal_takes_the_banner_down() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    let out = s.handle(&gm_chat("!exprate 1"));
+
+    assert_eq!(store.rates().unwrap().exp, store::rates::Rate::NORMAL);
+    assert_eq!(banners(&out), vec![None], "a teardown, not an empty string");
+}
+
+/// One rate going back to normal while the other is still running leaves the banner up,
+/// saying only the half that is still true.
+#[test]
+fn the_banner_keeps_the_half_that_is_still_running() {
+    let (mut s, _, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    s.handle(&gm_chat("!mesorate 3"));
+    let out = s.handle(&gm_chat("!exprate 1"));
+
+    assert_eq!(
+        banners(&out),
+        vec![Some("[Event] The Server's Meso rate has been set to 3x".to_string())]
+    );
+}
+
+/// The banner is sent when the answer CHANGES and not otherwise. Re-sending it restarts the
+/// scroll on screen, so a tick that has nothing new to say must say nothing.
+#[test]
+fn a_tick_with_nothing_new_sends_no_banner() {
+    let (mut s, _, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    for tick in 1..=6u64 {
+        let out = s.tick(tick * 500);
+        assert!(
+            banners(&out).is_empty(),
+            "tick {tick} re-sent a banner that was already on screen: {out:?}"
+        );
+    }
+}
+
+/// `!meso rate 2` - the two-word spelling the owner used - is the same command.
+#[test]
+fn the_two_word_spellings_work() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!meso rate 2"));
+    assert_eq!(store.rates().unwrap().meso.per_cent(), 200);
+    s.handle(&gm_chat("!exp rate 1.5"));
+    assert_eq!(store.rates().unwrap().exp.per_cent(), 150);
+}
+
+/// A bad argument is refused **and changes nothing**. The dangerous failure here is a
+/// command that says something plausible and leaves the rate half-set.
+#[test]
+fn a_bad_multiplier_changes_nothing() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    for bad in ["fast", "0", "1000", "1.234", "-2"] {
+        let out = s.handle(&gm_chat(&format!("!exprate {bad}")));
+        assert!(banners(&out).is_empty(), "{bad} moved the banner: {out:?}");
+        assert_eq!(store.rates().unwrap().exp.per_cent(), 200, "{bad} changed the rate");
+    }
+}
+
+/// With no argument the command reports, because "the multiplier is applied" and "the
+/// multiplier was never stored" look identical from inside the game.
+#[test]
+fn the_rate_commands_report_when_given_nothing() {
+    let (mut s, _, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    let out = s.handle(&gm_chat("!exprate"));
+    let said = notice_text(&out[0]);
+    assert!(said.contains("EXP is 2x"), "{said}");
+    assert!(said.contains("mesos are 1x"), "{said}");
+    assert!(banners(&out).is_empty(), "reporting is not a change");
+}
+
+/// Setting a rate to what it already is does not restart the five-minute cycle.
+#[test]
+fn setting_the_same_rate_again_is_a_no_op() {
+    let (mut s, _, _) = gm_session();
+    s.handle(&gm_chat("!exprate 2"));
+    let out = s.handle(&gm_chat("!exprate 2"));
+    assert!(banners(&out).is_empty(), "it would have restarted the scroll: {out:?}");
+    assert!(notice_text(&out[0]).contains("already"), "{out:?}");
+}
+
+/// The EXP rate multiplies what a kill is worth.
+#[test]
+fn the_exp_rate_multiplies_a_kill() {
+    let (mut s, _, _) = gm_session();
+    let mut mob_exp = std::collections::HashMap::new();
+    mob_exp.insert(2u32, 15u32);
+    s.config = Arc::new(Config { mob_exp, ..(*s.config).clone() });
+
+    assert_eq!(s.exp_for_kill(2).0, 15, "1x by default");
+    s.handle(&gm_chat("!exprate 2"));
+    assert_eq!(s.exp_for_kill(2).0, 30);
+    s.handle(&gm_chat("!exprate 1.5"));
+    assert_eq!(s.exp_for_kill(2).0, 22, "truncated, not rounded");
+    assert!(s.exp_for_kill(2).1.contains("1.5x"), "and the log says why");
+}
+
+/// `!exp` is NOT multiplied. It means "give me exactly this much".
+#[test]
+fn the_exp_command_is_not_multiplied() {
+    let (mut s, store, id) = gm_session();
+    s.handle(&gm_chat("!exprate 10"));
+    let exp_now = |store: &Arc<Store>| {
+        store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp
+    };
+    let before = exp_now(&store);
+    s.handle(&gm_chat("!exp 100"));
+    let after = exp_now(&store);
+    assert_eq!(after - before, 100, "a 10x rate must not touch a debugging command");
+}
+
+/// The meso rate multiplies the pile that lands on the floor.
+#[test]
+fn the_meso_rate_multiplies_a_drop() {
+    let (mut s, _, _) = gm_session();
+    let drops = crate::droptables::DropTables::parse(
+        "2 | 0 | 100 | 10 | 10 | 1 | mesos
+",
+    );
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    s.last_position = Some((520, 395));
+    let map = net::opcode::START_MAP_ID;
+
+    s.handle(&gm_chat("!mesorate 3"));
+    s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
+
+    let mesos: Vec<u32> =
+        s.fields.with_drops(map, |d| d.on_field(map).map(|x| x.meso).collect::<Vec<_>>());
+    assert_eq!(mesos, vec![30], "10 mesos at 3x, on the floor rather than at pick-up time");
+}

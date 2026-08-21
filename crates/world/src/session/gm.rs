@@ -42,11 +42,24 @@ impl Session {
             Some((n, a)) => (n, a.trim()),
             None => (command, ""),
         };
+        // `!meso rate 2` is how the owner wrote it, and it splits into a name of "meso" with
+        // "rate 2" left in the argument. Fold the two-word spellings onto the one-word ones
+        // rather than answering `!exp rate 2` with a complaint that "rate 2" is not a number,
+        // which is a true statement about the wrong question.
+        let (name, arg) = match name {
+            "exp" | "meso" if arg == "rate" || arg.starts_with("rate ") => (
+                if name == "exp" { "exprate" } else { "mesorate" },
+                arg["rate".len()..].trim(),
+            ),
+            _ => (name, arg),
+        };
         match name {
             "map" => self.gm_map(arg),
             "item" => self.gm_item(arg),
             "exp" => self.gm_exp(arg),
             "heal" => self.gm_heal(),
+            "exprate" => self.gm_exp_rate(arg),
+            "mesorate" => self.gm_meso_rate(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),

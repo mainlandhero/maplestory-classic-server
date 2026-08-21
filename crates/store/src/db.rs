@@ -216,6 +216,7 @@ impl Store {
         crate::inventory::create_tables(&conn)?;
         crate::storage::create_tables(&conn)?;
         crate::skills::create_tables(&conn)?;
+        crate::rates::create_tables(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 

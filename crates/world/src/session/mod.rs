@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +194,15 @@ pub struct Session {
     /// A drop with no position at all is refused rather than guessed, because a guessed one
     /// loses the item to a spot the player cannot reach.
     last_position: Option<(i16, i16)>,
+
+    /// What this connection last put in the client's scrolling banner, `None` for "nothing".
+    ///
+    /// The banner is not pushed to anyone - every session works out what should be on screen
+    /// from the shared `server_rates` table and sends only when its own answer changes. This
+    /// is that answer. Re-sending an identical string is not a no-op on screen: the client
+    /// resets the banner object before it looks at the flag, so it would restart the scroll
+    /// twice a second. See `crate::session::rates`.
+    banner_shown: Option<String>,
 }
 
 /// One NPC's place in its idle-chatter cycle.
@@ -285,6 +294,7 @@ mod gm;
 mod ground;
 mod inventory;
 mod npc;
+mod rates;
 mod shop;
 mod skills;
 #[cfg(test)]
@@ -317,6 +327,7 @@ impl Session {
             fields,
             open_shop: None,
             last_position: None,
+            banner_shown: None,
         }
     }
 
@@ -363,6 +374,8 @@ impl Session {
         // same reason the sweep is: `chatter_off` turns off NPC idle lines and nothing else,
         // and a run with it set should not also stop the world respawning.
         out.extend(self.spawn_due_mobs(here, now_ms));
+        // The event banner. Wall-clock, not `now_ms` - see `crate::session::rates`.
+        out.extend(self.banner_tick());
         if self.config.chatter_off {
             return out;
         }
