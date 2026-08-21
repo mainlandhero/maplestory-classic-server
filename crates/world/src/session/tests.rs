@@ -2690,3 +2690,78 @@ fn an_absent_slot_max_is_unspecified_not_one() {
     assert_eq!(shops.max_stack(2000000), 100, "so does a Use item");
     assert_eq!(shops.max_stack(1302000), 1, "an equip does NOT - the one case 0 really is 1");
 }
+
+
+/// `!setrates` sets all three, on one anchor, with one banner naming all of them.
+#[test]
+fn setrates_sets_all_three_on_one_timestamp() {
+    let (mut s, store, _) = gm_session();
+    let out = s.handle(&gm_chat("!setrates 2 3 5"));
+    let r = store.rates().unwrap();
+    assert_eq!(r.exp.rate.per_cent(), 200);
+    assert_eq!(r.meso.rate.per_cent(), 300);
+    assert_eq!(r.drop.rate.per_cent(), 500);
+    assert_eq!(
+        r.exp.set_at, r.drop.set_at,
+        "one timestamp, or the banner cycle is re-anchored per rate"
+    );
+    let banner = banners(&out);
+    assert_eq!(banner.len(), 1, "one banner, not three: {out:?}");
+    let text = banner[0].clone().unwrap();
+    for want in ["EXP rate has been set to 2x", "Meso rate has been set to 3x", "Drop rate has been set to 5x"] {
+        assert!(text.contains(want), "{want} missing from {text}");
+    }
+}
+
+/// `!setrates 1 1 1` is the one-command way to end everything.
+#[test]
+fn setrates_all_ones_ends_every_event() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!setrates 2 3 5"));
+    let out = s.handle(&gm_chat("!setrates 1 1 1"));
+    assert!(store.rates().unwrap().all_normal());
+    let text = banners(&out)[0].clone().unwrap();
+    for want in ["The EXP rate-up event has ended.", "The Meso rate-up event has ended.", "The Drop rate-up event has ended."] {
+        assert!(text.contains(want), "{want} missing from {text}");
+    }
+}
+
+/// Below 1x is refused, and **nothing is written** - not even the values that were valid.
+#[test]
+fn setrates_refuses_below_one_and_writes_nothing() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!setrates 2 2 2"));
+    for bad in ["0.5 3 5", "2 0.99 5", "2 3 0"] {
+        let out = s.handle(&gm_chat(&format!("!setrates {bad}")));
+        assert!(banners(&out).is_empty(), "{bad} moved the banner: {out:?}");
+        let r = store.rates().unwrap();
+        assert_eq!(
+            (r.exp.rate.per_cent(), r.meso.rate.per_cent(), r.drop.rate.per_cent()),
+            (200, 200, 200),
+            "{bad} applied part of itself"
+        );
+    }
+}
+
+/// Exactly 1 is fine; it is only *below* 1 that this command refuses.
+#[test]
+fn setrates_accepts_one_and_fractions_above_it() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!setrates 1 1.5 2"));
+    let r = store.rates().unwrap();
+    assert_eq!(
+        (r.exp.rate.per_cent(), r.meso.rate.per_cent(), r.drop.rate.per_cent()),
+        (100, 150, 200)
+    );
+}
+
+/// The wrong number of arguments says what it wanted rather than guessing.
+#[test]
+fn setrates_wants_exactly_three() {
+    let (mut s, store, _) = gm_session();
+    for bad in ["", "2", "2 3", "2 3 5 7"] {
+        let out = s.handle(&gm_chat(&format!("!setrates {bad}")));
+        assert!(notice_text(&out[0]).contains("multipliers - EXP, then Meso, then Drop"), "{}", notice_text(&out[0]));
+        assert!(store.rates().unwrap().all_normal(), "{bad:?} changed something");
+    }
+}

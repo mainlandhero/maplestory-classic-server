@@ -65,6 +65,7 @@ impl Session {
             "exprate" => self.gm_exp_rate(arg),
             "mesorate" => self.gm_meso_rate(arg),
             "droprate" => self.gm_drop_rate(arg),
+            "setrates" => self.gm_set_rates(arg),
             // Reads and changes nothing, which is why it is the one command here that would
             // survive a permission check if this server ever grew one.
             "rates" => self.gm_rates(),

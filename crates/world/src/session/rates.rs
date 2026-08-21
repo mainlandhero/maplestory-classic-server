@@ -107,6 +107,64 @@ impl Session {
         self.gm_ack(said)
     }
 
+    /// `!setrates <exp> <meso> <drop>` - all three at once, on one timestamp.
+    ///
+    /// The owner asked for it to avoid running three commands, and **the single timestamp is the
+    /// substantive part**, not the typing saved. Three separate commands re-anchor the
+    /// banner's cycle three times, so the first two events are announced and then immediately
+    /// replaced; one call anchors once and the banner names all three together from the
+    /// start.
+    ///
+    /// **Every value must be at least 1x.** The owner: *"Make sure that the number/decimal has to
+    /// be greater than 1"*, then *"it should accept 1 as well"*. So `!setrates 1 1 1` is the
+    /// way to end everything in one command - which is the natural counterpart to a command
+    /// whose whole point is not typing three - and `!setrates 0.5 1 1` is refused.
+    ///
+    /// The **individual** setters are deliberately left alone: `!exprate 0.5` still works.
+    /// This floor is a property of this command, not of the rate system.
+    pub(super) fn gm_set_rates(&mut self, arg: &str) -> Vec<Reply> {
+        let words: Vec<&str> = arg.split_whitespace().collect();
+        if words.len() != ALL_KINDS.len() {
+            return self.gm_ack(format!(
+                "!setrates wants {} multipliers - EXP, then Meso, then Drop. Try !setrates 2 3 5, or !setrates 1 1 1 to end everything.",
+                ALL_KINDS.len()
+            ));
+        }
+        // Parse and validate ALL of them before writing ANY of them. A partial application
+        // would leave the server on a combination nobody asked for, and the player would have
+        // to work out which of the three had taken.
+        let mut wanted = Vec::new();
+        for (kind, word) in ALL_KINDS.iter().zip(&words) {
+            let rate = match Rate::parse(word) {
+                Ok(r) => r,
+                Err(e) => return self.gm_ack(format!("!setrates: the {} rate: {e}", kind.label())),
+            };
+            if rate < Rate::NORMAL {
+                return self.gm_ack(format!(
+                    "!setrates: the {} rate of {rate}x is below 1x, and this command only starts events. Use !{} {rate} on its own if a penalty rate is really what you want.",
+                    kind.label(),
+                    kind.command()
+                ));
+            }
+            wanted.push((*kind, rate));
+        }
+
+        // One timestamp for all three, so `Rates::anchor` is a single moment and the banner
+        // shows the whole event rather than the last third of it.
+        let now = now_unix();
+        for (kind, rate) in &wanted {
+            if let Err(e) = self.store.set_rate(*kind, *rate, now) {
+                return self.gm_ack(format!("!setrates: could not save the {} rate: {e}", kind.label()));
+            }
+        }
+        let listed: Vec<String> =
+            wanted.iter().map(|(k, r)| format!("{} {r}x", k.label())).collect();
+        let mut out = self.gm_ack(format!("!setrates: {}.", listed.join(", ")));
+        out.extend(self.banner_replies(now));
+        out
+    }
+
+
     /// All three setters. They differ only in which row they write.
     fn gm_rate(&mut self, kind: RateKind, arg: &str) -> Vec<Reply> {
         let command = kind.command();
