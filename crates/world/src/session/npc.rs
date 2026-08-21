@@ -176,18 +176,51 @@ impl Session {
                     what: format!("quest {finished} completed for character {}", chr.id),
                 })
             }
-            Ok(None) => out.push(Reply {
-                opcode: net::notice::CHAT_NOTICE,
-                body: net::notice::chat_notice(&format!(
-                    "The server was asked to complete quest {finished}, which this character                      has not started."
-                )),
-                what: format!("quest {finished} completed but no row existed"),
-            }),
+            // **A repeat turn-in is silent, and it is NOT an error.** Clicking an NPC again
+            // after finishing its quest is an ordinary thing for a player to do; the
+            // conversation that follows is the whole answer. What must not happen is a
+            // payout, which is what used to happen - see below.
+            //
+            // Being asked to complete a quest that was never *started* is different: the two
+            // books disagree, and that is worth a line on screen.
+            Ok(None) => {
+                let started = self
+                    .store
+                    .quest_row(chr.id, finished)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if !started {
+                    out.push(Reply {
+                        opcode: net::notice::CHAT_NOTICE,
+                        body: net::notice::chat_notice(&format!(
+                            "The server was asked to complete quest {finished}, which this character has not started."
+                        )),
+                        what: format!("quest {finished} completed but no row existed"),
+                    });
+                }
+            }
             Err(e) => out.push(Reply {
                 opcode: net::notice::CHAT_NOTICE,
                 body: net::notice::chat_notice("Could not record that quest."),
                 what: format!("quest {finished} completion NOT STORED: {e}"),
             }),
+        }
+        // **Everything below hangs off `recorded`, and that is the whole fix.** The owner,
+        // 2026-08-21: *"I was able to complete the Heena quest multiple times, this is not
+        // okay."*
+        //
+        // `store::complete_quest` guards on `state = InProgress` and had always refused a
+        // second turn-in correctly. The refusal was then ignored: this payout sat *outside*
+        // the match, so a repeat click re-paid `Act.1` - two experience per click on quest
+        // 1001, for as many clicks as the player liked - while the journal row and the
+        // fanfare, which were gated, stayed right.
+        //
+        // That asymmetry is why the existing turn-in test never caught it: it counted
+        // fanfares, and the fanfare was the one effect that was correct. The store was the
+        // authority all along and three call sites out of four were asking it.
+        if !recorded {
+            return out;
         }
         out.extend(self.apply_quest_completion_rewards(finished));
         // **The turn-in fanfare.** The owner, 2026-08-21: *"Quest finish still does not trigger
@@ -205,15 +238,16 @@ impl Session {
         //
         // Last, deliberately: it lands on a journal row that already says complete, on items
         // already given and on an EXP line already posted.
-        if recorded {
-            out.push(Reply {
-                opcode: net::questeffect::USER_EFFECT_LOCAL,
-                body: net::questeffect::quest_clear_local(),
-                what: format!(
-                    "UserEffectLocal QuestClear for quest {finished} - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result."
-                ),
-            });
-        }
+        //
+        // No `if recorded` here any more - the early return above already guarantees it, and
+        // a condition that can never be false reads like a guard while protecting nothing.
+        out.push(Reply {
+            opcode: net::questeffect::USER_EFFECT_LOCAL,
+            body: net::questeffect::quest_clear_local(),
+            what: format!(
+                "UserEffectLocal QuestClear for quest {finished} - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result."
+            ),
+        });
         if chained_to != finished {
             out.extend(self.record_quest_start(chained_to, 0));
         }
@@ -249,10 +283,20 @@ impl Session {
                 "quest {} given up by character {} ({}) and the row is gone",
                 req.quest_id, chr.id, chr.name
             ),
-            Ok(false) => format!(
-                "quest {} given up but we had no row for character {}; the record is sent anyway so the client's journal agrees with ours",
-                req.quest_id, chr.id
-            ),
+            // `forget_quest` returns false for two different situations and they must not
+            // be reported as one. "No row" is the books disagreeing; "already complete" is
+            // the store refusing on purpose, and reporting that as a missing row would send
+            // the next reader looking for a persistence bug that is not there.
+            Ok(false) => match self.store.quest_row(chr.id, req.quest_id) {
+                Ok(Some(row)) if row.state == store::QuestState::Complete => format!(
+                    "quest {} give-up REFUSED for character {}: it is already complete, and a forfeit undoes an acceptance rather than a completion. The record is still sent so the journal agrees",
+                    req.quest_id, chr.id
+                ),
+                _ => format!(
+                    "quest {} given up but we had no row for character {}; the record is sent anyway so the client's journal agrees with ours",
+                    req.quest_id, chr.id
+                ),
+            },
             Err(e) => format!(
                 "quest {} given up but NOT REMOVED ({e}) - the journal clears now and the quest comes back on the next SetField",
                 req.quest_id
@@ -389,15 +433,36 @@ impl Session {
     /// Split from the handler so the *decision* to accept and the *recording* of it read
     /// separately - the decision is a packet field, the recording is a database write, and
     /// conflating them is how this ended up in the wrong handler in the first place.
+    /// **Only a quest that was actually written down earns its `Act.0`.** The owner,
+    /// 2026-08-21: *"I was able to complete the Heena quest multiple times, this is not
+    /// okay."*
+    ///
+    /// `store::start_quest` is `INSERT OR IGNORE` and has always refused a second accept
+    /// correctly. What ignored the refusal was this function: `grant_quest_start_items` and
+    /// `apply_quest_hp` were called *outside* the match, so clicking Accept again handed the
+    /// items over again. Quest 1001's `Act.0` is Sera's Mirror, so the mirror was farmable a
+    /// click at a time; 1002's also sets HP, so Roger's apple was too.
+    ///
+    /// A **completed** quest gets no reply at all. Re-sending `quest_accepted` for one would
+    /// put it back in the client's *started* list - which is the exact behaviour
+    /// `start_quest`'s own doc warns about, and the loop this whole feature exists to end.
+    /// An in-progress one still gets the record re-sent, because there the two books agree
+    /// and the resend only restates it.
     pub(super) fn record_quest_start(&mut self, quest_id: u32, npc_template: u32) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
+        // Read before writing, so "already complete" can be told from "already started".
+        // `start_quest` collapses both into `false` and the two need different answers.
+        let before = self.store.quest_row(chr.id, quest_id).ok().flatten().map(|r| r.state);
+        if before == Some(store::QuestState::Complete) {
+            return Vec::new();
+        }
         let what = match self.store.start_quest(chr.id, quest_id) {
             Ok(true) => format!(
                 "quest {quest_id} accepted from NPC {npc_template} by character {} ({}) and stored",
                 chr.id, chr.name
             ),
             Ok(false) => format!(
-                "quest {quest_id} was already started for character {}; the record is re-sent so the journal agrees",
+                "quest {quest_id} was already started for character {}; the record is re-sent so the journal agrees, and Act.0 is NOT paid again",
                 chr.id
             ),
             Err(e) => format!(
@@ -406,8 +471,11 @@ impl Session {
         };
         let mut out =
             vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }];
-        out.extend(self.grant_quest_start_items(quest_id));
-        out.extend(self.apply_quest_hp(quest_id, 0));
+        // Only on the transition. A row that already existed has already been paid.
+        if before.is_none() {
+            out.extend(self.grant_quest_start_items(quest_id));
+            out.extend(self.apply_quest_hp(quest_id, 0));
+        }
         out
     }
 

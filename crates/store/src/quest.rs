@@ -264,12 +264,37 @@ impl Store {
         Ok(if changed > 0 { Some(now) } else { None })
     }
 
-    /// Forget a quest entirely - the row goes, so the character is back to never having
-    /// touched it. `false` if there was nothing to forget.
+    /// Forget a quest that is **in progress** - the row goes, so the character is back to
+    /// never having accepted it. `false` if there was nothing to forget, *including* when
+    /// the quest is already complete.
+    ///
+    /// **A completion is never deleted, and this used to delete it.** The forfeit handler's
+    /// own documentation already said so - *"A forfeit undoes an acceptance. It must not
+    /// silently wipe a completion the player earned"* - but that sentence was describing the
+    /// wire flag it passes to `forfeit_reply`, and nothing enforced it here. The `DELETE` had
+    /// no state predicate, so pressing give up on a finished quest removed the row, which put
+    /// the character back to never having touched it: accept it again, take its `Act.0` items
+    /// again, turn it in again for the experience. A full repeatable loop out of one missing
+    /// `AND`.
+    ///
+    /// That is the shape `CLAUDE.md` keeps naming - a comment confidently describing
+    /// behaviour the code does not have - and it is why the guard lives in the **store**
+    /// rather than in the caller. Three separate call sites reached into quest state and only
+    /// some of them checked it; the row is the authority, so the row refuses.
+    ///
+    /// The client is believed not to send a forfeit for a completed quest at all: its builder
+    /// walks its own started map and returns without building anything if the id is not there.
+    /// That is **[L]**, read off the listing, and it is exactly the kind of claim this server
+    /// must not depend on.
     pub fn forget_quest(&self, character_id: u32, quest_id: u32) -> Result<bool> {
         let changed = self.conn().execute(
-            "DELETE FROM quest_state WHERE character_id = ?1 AND quest_id = ?2",
-            rusqlite::params![i64::from(character_id), i64::from(quest_id)],
+            "DELETE FROM quest_state
+              WHERE character_id = ?1 AND quest_id = ?2 AND state = ?3",
+            rusqlite::params![
+                i64::from(character_id),
+                i64::from(quest_id),
+                QuestState::InProgress.as_u8(),
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -401,6 +426,42 @@ mod tests {
         assert_eq!(store.quest_row(chr, 1000).unwrap(), None);
         assert!(store.quest_book(chr).unwrap().is_empty());
         assert!(!store.forget_quest(chr, 1000).unwrap(), "and there is nothing left to forget");
+    }
+
+    /// **A completed quest survives a forfeit**, which is the whole difference between
+    /// giving up and undoing.
+    ///
+    /// The owner, 2026-08-21: *"I was able to complete the Heena quest multiple times, this is not
+    /// okay."* The `DELETE` had no state predicate, so give-up on a finished quest removed the
+    /// row and put the character back to never having touched it - accept, take `Act.0`, turn
+    /// in for the experience, repeat. The handler above it already documented that this must
+    /// not happen; the sentence was about a wire flag and nothing enforced the database half.
+    #[test]
+    fn forgetting_never_removes_a_completed_quest() {
+        let (store, chr) = store_with_character();
+        store.start_quest(chr, 1000).unwrap();
+        store.complete_quest(chr, 1000).unwrap();
+
+        assert!(
+            !store.forget_quest(chr, 1000).unwrap(),
+            "a completed quest is not a thing that can be given up"
+        );
+        assert_eq!(
+            store.quest_row(chr, 1000).unwrap().unwrap().state,
+            QuestState::Complete,
+            "and the row is untouched"
+        );
+        assert_eq!(
+            store.quest_book(chr).unwrap().completed.len(),
+            1,
+            "so the journal still shows it finished"
+        );
+
+        // The positive control, because a DELETE that refuses everything would pass the
+        // assertions above while breaking the feature. Give-up must still work.
+        store.start_quest(chr, 1001).unwrap();
+        assert!(store.forget_quest(chr, 1001).unwrap(), "an in-progress quest still forfeits");
+        assert_eq!(store.quest_row(chr, 1001).unwrap(), None);
     }
 
     /// Two characters do not share a journal.

@@ -166,6 +166,39 @@ Two things generalise:
 The self-test in `crates/grap-stub/src/minidump.rs` exists for the same reason. A dump writer
 that has never written a dump is exactly the kind of instrument this file keeps warning about.
 
+## A guard whose answer is ignored is not a guard
+
+The owner, 2026-08-21: *"I was able to complete the Heena quest multiple times, this is not okay."*
+
+`store::complete_quest` guards on `state = InProgress`. `store::start_quest` is
+`INSERT OR IGNORE`. Both had been correct since the day they were written, and both were
+being **asked and then ignored**: the payout and the item grant sat *outside* the match on
+the return value, so a repeat click re-paid `Act.1` and re-handed `Act.0`. The journal row
+never changed - the database was right the whole time - and the screen still gave out two
+experience per click, for as many clicks as anyone liked.
+
+Three things generalise, and the third is the one that cost the most:
+
+* **Every effect hangs off the transition, not off the request.** If the store says "nothing
+  changed", nothing may follow. Return early on the refusal rather than gating each effect
+  separately, because separately is how one gets missed.
+* **A refusal that is reported to no one will be ignored eventually.** All three call sites
+  captured the store's answer into a *log string* and then carried on. The answer looked
+  handled.
+* **A test that checks one of several effects gives false confidence about the rest.** The
+  turn-in test counted **fanfares** - and the fanfare was the single effect that *was*
+  correctly gated, so it passed on every run while the experience doubled beside it. When a
+  handler produces N effects, the test has to say something about N of them, or name the ones
+  it is not covering.
+
+And a fourth, which is this file's oldest rule wearing new clothes: `record_quest_forfeit`'s
+doc block said *"A forfeit undoes an acceptance. It must not silently wipe a completion the
+player earned."* That sentence was about a flag on the wire. The `DELETE` underneath it had
+no state predicate at all, so give-up on a finished quest removed the row and put the
+character back to never having touched it - a complete farming loop out of one missing `AND`.
+**A comment describing a guarantee is not the guarantee.** Put it where it is enforced, and
+in this case that is the row, not the caller.
+
 ## A test that pins what the code already does is not a check
 
 Writing that dump writer, `MiniDumpWriteDump` returned `ERROR_NOACCESS` on **every** call

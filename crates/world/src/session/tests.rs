@@ -3609,3 +3609,189 @@ fn the_tutorial_sentinel_always_drops_its_shellpiece() {
         assert!(rows[0].hits(roll), "missed at roll {roll}");
     }
 }
+
+/// **A quest can be turned in twice, and the second time pays out again.**
+///
+/// The owner, 2026-08-21: *"I was able to complete the Heena quest multiple times, this is not
+/// okay."*
+///
+/// `store::complete_quest` was never the problem - it guards on `state = InProgress` and
+/// correctly refuses. What ignored the refusal was the caller: `apply_quest_completion_rewards`
+/// sat *outside* the match, so a repeat turn-in re-paid the EXP and re-ran the item rows,
+/// while the journal row and the fanfare - which ARE gated - stayed correct. That is why the
+/// existing turn-in test passed throughout: it counted fanfares, and the fanfare was the one
+/// effect that was right.
+///
+/// Quest 1001's `Act.1` is `exp 2` and `item 4031000 count -1`, so the visible symptom is
+/// two experience per click, for as many clicks as the player likes.
+#[test]
+fn turning_a_quest_in_twice_pays_out_only_once() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+    // The reward this test is about, read from the data rather than hard-coded - if the
+    // dump changes, the test should follow it or fail loudly, not quietly measure nothing.
+    assert_eq!(config.quests[&1001].complete_exp, 2, "quest 1001 Act.1.exp");
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "TwiceOver".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    let exp_now = |s: &Session| {
+        s.store.characters_for(account_id, 0).unwrap().into_iter()
+            .find(|c| c.id == id).unwrap().exp
+    };
+    let before = exp_now(&s);
+
+    // Accept 1001 from Heena, then turn it in. Action 1 = accept, action 2 = complete.
+    s.on_quest_request(&hex("01e9030000010000000c046d0100000000"));
+    let first = s.on_quest_request(&hex("02e90300000200000043ffe501ffffffff"));
+    assert!(!first.is_empty(), "every 0x0151 is answered");
+    let after_first = exp_now(&s);
+    assert_eq!(after_first, before + 2, "the real turn-in pays Act.1.exp");
+
+    // Click the NPC again with the exact same packet. The journal already says complete.
+    let second = s.on_quest_request(&hex("02e90300000200000043ffe501ffffffff"));
+    assert!(!second.is_empty(), "still answered - an unanswered packet freezes the UI");
+    assert_eq!(
+        exp_now(&s),
+        after_first,
+        "a second turn-in must pay NOTHING - complete_quest already refused it"
+    );
+
+    // And nothing on the wire should claim otherwise. No journal record, no fanfare, and
+    // no experience line: a repeat click is a conversation, not an event.
+    assert!(
+        !second.iter().any(|r| r.opcode == net::quest::MESSAGE),
+        "no journal record for a quest that did not change state"
+    );
+    assert!(
+        !second
+            .iter()
+            .any(|r| r.opcode == net::questeffect::USER_EFFECT_LOCAL
+                && r.body.first() == Some(&net::questeffect::EFFECT_QUEST_CLEAR)),
+        "no fanfare"
+    );
+}
+
+/// **The same hole on the accept side, which is how the mirror was farmable.**
+///
+/// `record_quest_start` called `grant_quest_start_items` and `apply_quest_hp` outside the
+/// match on `start_quest`, so clicking Accept on a quest already held - or already finished -
+/// handed the items over again and re-applied the HP.
+///
+/// Quest 1001's `Act.0` gives Sera's Mirror. Roger's 1002 gives an apple *and* sets HP to 25,
+/// so the same bug lets a player refill on apples and re-cripple themselves at will.
+#[test]
+fn accepting_a_quest_twice_grants_its_items_only_once() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+    assert_eq!(
+        config.quests[&1001].start_items.iter().find(|(i, _)| *i == 4031000).map(|(_, c)| *c),
+        Some(1),
+        "quest 1001 Act.0 gives Sera's Mirror"
+    );
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "TwoMirrors".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    let mirrors = |s: &Session| -> i64 {
+        s.store
+            .bag(id)
+            .unwrap()
+            .items_in(store::InventoryType::Etc)
+            .filter(|i| i.item.item_id == 4031000)
+            .map(|i| i64::from(i.item.kind.quantity()))
+            .sum()
+    };
+
+    s.on_quest_request(&hex("01e9030000010000000c046d0100000000"));
+    assert_eq!(mirrors(&s), 1, "the accept hands the mirror over");
+
+    s.on_quest_request(&hex("01e9030000010000000c046d0100000000"));
+    assert_eq!(mirrors(&s), 1, "accepting again must NOT hand over a second one");
+}
+
+/// **The whole loop, end to end: finish it, give it up, take it again.**
+///
+/// The owner, 2026-08-21: *"I was able to complete the Heena quest multiple times, this is not
+/// okay."* Three separate holes made that possible and any one of them is enough on its own,
+/// which is why this test exercises the sequence rather than the pieces:
+///
+/// 1. `record_quest_complete` paid `Act.1` outside the match on `complete_quest`, so a repeat
+///    turn-in re-paid the experience.
+/// 2. `record_quest_start` granted `Act.0` outside the match on `start_quest`, so a repeat
+///    accept re-handed the items.
+/// 3. `forget_quest` deleted a row of any state, so give-up on a *finished* quest put the
+///    character back to never having touched it - and then 1 and 2 were not even needed.
+///
+/// The store was the authority for all three and was answering correctly the whole time. What
+/// was wrong is that the callers asked and then did the work anyway.
+#[test]
+fn a_finished_quest_cannot_be_farmed_by_giving_it_up_and_taking_it_again() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "NoFarming".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    let exp_now = |s: &Session| {
+        s.store.characters_for(account_id, 0).unwrap().into_iter()
+            .find(|c| c.id == id).unwrap().exp
+    };
+    let mirrors = |s: &Session| -> i64 {
+        s.store.bag(id).unwrap()
+            .items_in(store::InventoryType::Etc)
+            .filter(|i| i.item.item_id == 4031000)
+            .map(|i| i64::from(i.item.kind.quantity()))
+            .sum()
+    };
+
+    // Accept 1001, which hands over Sera's Mirror, then turn it in: +2 EXP, mirror taken.
+    s.on_quest_request(&hex("01e9030000010000000c046d0100000000"));
+    assert_eq!(mirrors(&s), 1, "Act.0 hands the mirror over");
+    s.on_quest_request(&hex("02e90300000200000043ffe501ffffffff"));
+    assert_eq!(exp_now(&s), 2, "Act.1 pays two experience");
+    assert_eq!(mirrors(&s), 0, "and Heena keeps the mirror");
+
+    // Now the loop. Give it up - action 3, a five-byte body - and take it again.
+    for round in 0..3 {
+        s.on_quest_request(&hex("03e9030000"));
+        assert_eq!(
+            s.store.quest_row(id, 1001).unwrap().map(|r| r.state),
+            Some(store::QuestState::Complete),
+            "round {round}: a completed quest is not given up"
+        );
+        s.on_quest_request(&hex("01e9030000010000000c046d0100000000"));
+        s.on_quest_request(&hex("02e90300000200000043ffe501ffffffff"));
+        assert_eq!(exp_now(&s), 2, "round {round}: still two experience, never four");
+        assert_eq!(mirrors(&s), 0, "round {round}: and no second mirror");
+    }
+
+    // The journal must still read finished, not started - which is the other half of why
+    // re-sending `quest_accepted` for a completed quest is wrong.
+    let book = s.store.quest_book(id).unwrap();
+    assert_eq!(book.completed.len(), 1, "one completion");
+    assert!(book.started.is_empty(), "and nothing back in the started list");
+}

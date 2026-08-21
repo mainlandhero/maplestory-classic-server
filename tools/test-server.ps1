@@ -93,8 +93,8 @@
                                               is ours and is wrong
 
      2. ROGER'S QUEST AGAIN - but this time WATCH THE SCREEN, not the outcome.
-        Every packet in this sequence is known to be correct. Three questions, all about
-        what is drawn:
+        Every packet in this sequence is known to be correct. Four things - the first
+        three are about what is DRAWN, the last is about what is PAID:
           a. When the apple is handed over, is there a GREY line in the CHAT LOG reading
              "Roger's Apple x1 earned. (Use)"?   -> 0x02D1 effect 8, chat category 6
              in another colour  -> the route is right and the category is a separate
@@ -109,6 +109,17 @@
              EXPECTED result - that art was cut from this client's WZ. If something IS
              drawn, the analysis needs correcting.
         Also worth one word: does the HP bar visibly drop to 25 on Accept?
+        d. THEN CLICK ROGER AGAIN, AND CLICK HEENA AGAIN AFTER HER QUEST.
+           The owner, 2026-08-21: *"I was able to complete the Heena quest multiple times, this
+           is not okay."* THREE holes did that, any one of them enough on its own: the
+           turn-in paid Act.1 outside the check that a quest was still in progress, the
+           accept handed Act.0 over outside the same check, and GIVE-UP DELETED A COMPLETED
+           ROW - which put the character back to never having touched the quest. The store
+           had been refusing all three correctly the whole time and the callers carried on
+           regardless.
+             no experience, no second item, no fanfare   -> fixed
+             anything is paid a second time             -> say WHICH: EXP, item, or both
+           Also press GIVE UP on a quest you have already FINISHED. It must stay finished.
 
      3. RED POTION, TWICE. !item 2000000 5 if you have none. Get hurt first.
         The apple already proved this path works, so this is about the CAP and the LATCH:
@@ -903,7 +914,8 @@ if ($SetFieldProbe) {
     Write-Host '                                 create-character flag"'
     Write-Host ''
     Write-Host '  2. ROGER AGAIN - WATCH THE SCREEN, not the outcome.' -ForegroundColor Cyan
-    Write-Host '     Every packet here is known correct. Three questions about drawing:'
+    Write-Host '     Every packet here is known correct. Four things: a-c are about'
+    Write-Host '     what is DRAWN, d is about what is PAID.'
     Write-Host '     a. on Accept, a GREY line in the CHAT LOG: "Roger''s Apple x1'
     Write-Host '        earned. (Use)"?  Another colour = route right, colour separate.'
     Write-Host '     b. after eating it, WHERE does the EXP line appear - chat log or'
@@ -912,6 +924,14 @@ if ($SetFieldProbe) {
     Write-Host '     c. does the fanfare play with NOTHING DRAWN? That is EXPECTED -'
     Write-Host '        the art was cut from this client. Something drawn = tell us.'
     Write-Host '     And: does the HP bar visibly drop to 25 on Accept?'
+    Write-Host '     d. THEN CLICK HIM AGAIN. Nothing may be paid twice.' -ForegroundColor Yellow
+    Write-Host '        You could complete Heena''s quest repeatedly. THREE holes did'
+    Write-Host '        that: the turn-in paid out without checking the quest was still'
+    Write-Host '        in progress, the accept re-handed its items, and GIVE-UP DELETED'
+    Write-Host '        A COMPLETED ROW - putting you back to never having touched it.'
+    Write-Host '          no EXP, no second item, no fanfare -> fixed'
+    Write-Host '          anything paid again                -> say WHICH'
+    Write-Host '        Also press GIVE UP on a FINISHED quest. It must stay finished.'
     Write-Host ''
     Write-Host '  3. RED POTION, TWICE. !item 2000000 5, get hurt first.' -ForegroundColor Cyan
     Write-Host '     The apple already proved the path. This is the CAP and the LATCH:'

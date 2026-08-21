@@ -183,6 +183,41 @@ AP handler works at all - measured, not feared: in `world-20260821-001440.log` a
 **two clicks inside ~3 s with no map change**, and `grep 0x007C world.log` between the two
 `<- 0x0138` lines is the free cross-check.
 
+#### Solved 2026-08-21, late: a finished quest could be farmed
+
+The owner: *"I was able to complete the Heena quest multiple times, this is not okay."* **Three
+independent holes**, any one of which is enough on its own. All three are the same shape - the
+store was the authority, answered correctly every time, and the caller asked and then did the
+work anyway.
+
+* **The turn-in paid out twice.** `apply_quest_completion_rewards` sat *outside* the match on
+  `store::complete_quest`, which correctly returns `None` for a quest that is already
+  complete. Quest 1001's `Act.1` is `exp 2`, so it was two experience per click, indefinitely.
+* **The accept handed the items over twice.** Same shape: `grant_quest_start_items` and
+  `apply_quest_hp` were outside the match on `start_quest`. Quest 1001's `Act.0` is Sera's
+  Mirror and 1002's is Roger's apple plus an HP change, so both were farmable a click at a
+  time.
+* **Give-up deleted a completed row.** `forget_quest`'s `DELETE` had no state predicate, so
+  forfeiting a *finished* quest put the character back to never having touched it - after
+  which the other two were not even needed. The forfeit handler's own doc block already said
+  this must not happen; that sentence was describing a wire flag, and nothing enforced the
+  database half. **A comment describing a guarantee is not the guarantee.**
+
+**Why it survived a test suite.** The turn-in test counted **fanfares**, and the fanfare was
+the one effect that *was* correctly gated on `recorded`. It passed on every run while the
+experience doubled beside it. The three new tests fail without the fixes - checked by
+reverting each one rather than assumed.
+
+Fixed by making every effect hang off the transition: `record_quest_complete` returns early
+when nothing changed, `record_quest_start` pays `Act.0` only when the row is new and sends
+nothing at all for a completed quest (re-sending `quest_accepted` would put it back in the
+client's *started* list), and the completed-row guard now lives in `forget_quest` itself.
+
+**Still worth watching on the next run:** the server is now authoritative, but nothing here
+explains why the *client* offered the turn-in again. Either its journal is not being updated
+in-session, or it simply lets you re-click and the server has always been the only guard. The
+new log lines say which - a repeat is now silent where a genuine inconsistency still prints.
+
 #### Solved 2026-08-21, and what each one cost to find
 
 * **Roger's quest could not start, and the reason was an absence.** `q1002s` is **not in the
