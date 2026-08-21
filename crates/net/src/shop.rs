@@ -111,9 +111,8 @@ use crate::packet::{PacketReader, PacketWriter};
 /// puts a `CUIScriptMsg` on screen instead (`FUN_142a61900` at `140d2273d`, spoken by the
 /// npc template it just read), and **sends `0x0104` sub-op [`SHOP_REQ_CLOSE`] back**
 /// (`140d227a2`). So an empty shop is a dialog box, not a shop window.
-pub const OPEN_SHOP: u16 = 0x0560;
-
-/// **This is the WRONG window, and `0x055D` is the right one.** Found 2026-08-20.
+///
+/// # This is the WRONG window, and `0x055D` is the right one - found 2026-08-20
 ///
 /// `CField::OnPacket` dispatches four shop opcodes as two adjacent range tests:
 /// `0x055D`/`0x055E` open and answer the **classic** counter, built from
@@ -122,13 +121,15 @@ pub const OPEN_SHOP: u16 = 0x0560;
 /// That absence is what kills the client, before it reads a single row byte, which is why one
 /// correctly-formed row killed it exactly as twelve did.
 ///
-/// Everything below still builds `0x0560`, on purpose. The classic body is longer and its
-/// rows carry a **thirteen-field item structure** rather than an id and a price; sending a
-/// `0x0560`-shaped body to `0x055D` would be a short packet to a handler expecting a long
-/// one, which is the mistake that killed the client twice already for a different reason.
+/// This constant and everything below it still build `0x0560`, on purpose. The classic body
+/// is longer and its rows carry a **thirteen-field item structure** rather than an id and a
+/// price; sending a `0x0560`-shaped body to `0x055D` would be a short packet to a handler
+/// expecting a long one, which is the mistake that killed the client twice already for a
+/// different reason.
 ///
 /// `research/classic-shop-opcode.md` has the decoded head, the two instruments that agree on
 /// it, and every field still unnamed.
+pub const OPEN_SHOP: u16 = 0x0560;
 
 /// **`ShopTransactionResult`** - server -> client. The answer to every
 /// [`SHOP_REQ_TRANSACTION`].

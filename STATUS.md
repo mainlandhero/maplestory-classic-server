@@ -150,7 +150,7 @@ while it was unwired.
 | **kill quests count** | Sam's Suggestion is quest 1006 - mob template 2, ten of them |
 | **skills** | `0x013B` answered with `0x0081`; levels persist and ride the character record as `presence[8]` |
 | **mob respawn** | from the WZ's own `mobTime`; a field starts **empty** and fills in |
-| **levelling** | EXP per kill from the client's own template data, curve in `data/exp-curve.txt` |
+| **levelling** | EXP per kill from the client's own template data, curve in `data/exp-curve.txt`. **HP/MP per level is now per class** - a beginner gains +16/+12, not +14/+10 |
 | **`!exprate` / `!mesorate`** | a scrolling banner via **`0x00AC` type 4**, an opcode this client has never been sent. Rates are global across both channels because they live in the database |
 
 #### What to do next, in order
@@ -163,7 +163,7 @@ while it was unwired.
 | 4 | **The classic shop counter - the opcode is `0x055D`, found 2026-08-20** | `0x0560` opens **Shop2**, whose art this client does not have. `0x055D` opens the classic `UIShop.img/Shop`, whose art it does. What is left is decoding the body: its rows carry a **thirteen-field item structure**, not an id and a price. `research/classic-shop-opcode.md` names every remaining unknown. Static work, and the largest piece of it |
 | 5 | **Death** | `hp = 0` disables the player and does not hang the client, but nothing plays the death or revive sequence. `!heal` is the escape hatch until it exists |
 | 6 | **Job advancement (goal E)** | Needs SP, and the stat block's SP field forks into a pool list nobody has decoded |
-| 7 | **The combat formulas (goals J, K, L)** | The owner, 2026-08-20: *"an integral part of our server"*. Damage, HP/MP-per-level and attack speed, captured in `research/meowdb-combat-formulas.md`. **K is the one to do first** - it is five constants and it contradicts what we ship today |
+| 7 | **The combat formulas (goals J and L; K is done)** | The owner, 2026-08-20: *"an integral part of our server"*. Captured in `research/meowdb-combat-formulas.md`. **J** is the big one and the server is not the damage authority today; **L** has no table on the page and is the lowest priority of the three |
 
 #### THE TEST PLAN for the next run
 
@@ -195,6 +195,7 @@ model the owner asked for, not a bug.
 | 13 | `!map 40` with the banner up | **does the banner survive the map change?** | a real open question, not a check. If it vanishes, `world::session::rates` has to re-assert on field entry; if it survives, leave it alone. Either answer is worth having |
 | 14 | leave it running two minutes | it disappears, and comes back three minutes after that | the 2-in-5 cycle. The slowest step: start it and do something else |
 | 15 | `!exprate 1`, `!mesorate 1` | the banner comes down immediately | and `world.log` shows the two-byte teardown |
+| 16 | on any level-up, watch max HP and MP | **+16 HP and +12 MP**, not +14/+10 | goal K. If the numbers are wrong the fan site is wrong, because this client has no table to check them against - see K |
 
 **Do not click Lucy.** `0x0560` is off by default and they will simply talk, but there is no
 point spending attention on it until the classic counter is found.
@@ -1030,7 +1031,7 @@ past its damage numbers.
 Do the **[I]** labelling honestly here. The site is a fan site with a good prior on this
 client - see the note at the top of that file - not a listing.
 
-#### K. HP and MP per level - set by the owner, 2026-08-20, and the cheapest of the three
+#### K. HP and MP per level - **DONE 2026-08-20**, and the client cannot check it
 
 | class | HP / level | MP / level |
 |---|---|---|
@@ -1061,9 +1062,21 @@ a register, through `mov reg, imm64`, or from `.themida`. So this is "no evidenc
 the obvious place", not "provably absent".
 
 Which leaves the fan site's behavioural measurement as the best evidence available, and it
-should be written down **as that** - a measurement of the live COT2 service, not a listing.
-Changing `LevelGains` to `+16 / +12` for a Beginner is the right move; labelling it `[L]`
-would not be.
+is written down **as that** - a measurement of the live COT2 service, not a listing.
+
+**Implemented.** `LevelGains::for_class` carries all five lines and `ClassLine::of_job` keys
+them on the hundreds digit of the job id, which is `[L]` from this client's own SP fork
+masks. A beginner now gains **+16 HP / +12 MP** instead of +14 / +10, and since job
+advancement is goal E, that is what every character on this server gets. AP stays at five and
+is ours, not theirs.
+
+Two things deliberately left out, because neither has anything to hang off yet: the 500-point
+**job-advancement bonus** and the **+25% from maxed Improving Max HP/MP**. Both are in
+`research/meowdb-combat-formulas.md`. Adding an unwired table for them is the failure mode
+`CLAUDE.md` calls "built is not wired".
+
+Pirate (`500`) has no row in the source and falls back to the beginner line. That is a
+placeholder and is labelled one - nothing can reach it today.
 
 Five constants and a job split. It is the smallest of the three and the only one that changes
 something a player would notice today.

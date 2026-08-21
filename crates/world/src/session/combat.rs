@@ -327,7 +327,10 @@ impl Session {
         }
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         let before_level = chr.level;
-        let a = self.config.exp_curve.award(chr.level, chr.exp, gained);
+        // The job picks the HP/MP line. Every character is a beginner today - job
+        // advancement is goal E - so this is +16/+12 in practice, and the other four lines
+        // are there so levelling does not have to be revisited when E lands.
+        let a = self.config.exp_curve.award(chr.job, chr.level, chr.exp, gained);
         chr.level = a.level;
         chr.exp = a.exp;
         if a.levels > 0 {

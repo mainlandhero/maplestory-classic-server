@@ -24,16 +24,77 @@ use std::path::Path;
 /// The highest level this table describes. A character there stops gaining.
 pub const MAX_LEVEL: u32 = 100;
 
-/// What one level awards. **Policy, not measured - `[I]`.**
+/// Which of the five gain lines a character is on.
 ///
-/// Ability points at five a level is this game family's long-standing rule and the one
-/// number here worth any confidence. The HP and MP gains are a beginner's, flat rather than
-/// rolled: a range would make two runs of the same actions produce different characters,
-/// which is a bad property for something nobody has verified.
+/// Keyed on the hundreds digit of the job id, which is the explorer tree this client's own
+/// SP fork masks describe: `net::opcode::uses_extended_sp` decodes them as `100`/`110`/...
+/// for warriors and the same shape at `200`, `300`, `400` and `500`. **[L]** for the job
+/// numbering; the gains themselves are not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassLine {
+    Beginner,
+    Warrior,
+    Magician,
+    Bowman,
+    Thief,
+}
+
+impl ClassLine {
+    /// The line a job id is on.
+    ///
+    /// **Pirate (`500`) falls back to the beginner line and that is a placeholder, not a
+    /// finding.** The source below has no pirate row - Classic World may not have the class
+    /// at all - and inventing numbers for it would be the sort of confident guess this
+    /// project keeps paying for. Nothing can reach it today: job advancement is goal E and
+    /// does not exist, so every character is a beginner.
+    pub fn of_job(job: u16) -> ClassLine {
+        match job / 100 {
+            1 => ClassLine::Warrior,
+            2 => ClassLine::Magician,
+            3 => ClassLine::Bowman,
+            4 => ClassLine::Thief,
+            _ => ClassLine::Beginner,
+        }
+    }
+}
+
+/// What one level awards.
 ///
-/// SP is deliberately **not** awarded. A beginner has no skills to spend it on, and the
-/// stat block's SP field forks on the job - the branch every character here takes sends a
-/// pool list nobody has decoded. Job advancement is where that gets read.
+/// # Where these numbers come from, and how much to trust them
+///
+/// The HP and MP figures are **measured behaviour of the live COT2 service**, reported by
+/// the same fan site whose citizenship quest list and drop tables have both been checked
+/// against this client's own WZ and agreed - `research/meowdb-combat-formulas.md`. That
+/// makes them **`[I]` with a good prior**, and specifically *not* `[L]`: they are not read
+/// off a listing and this client cannot be made to say them.
+///
+/// **That last part was checked rather than assumed.** The EXP curve at `0x143AC2400` has no
+/// sibling table - a `lea` scan of the whole neighbourhood that fills it finds one `.data`
+/// target and it is the curve itself. Which fits: the client draws the EXP bar so it needs
+/// the curve, and it is *told* new maxima on level up rather than computing them. The scan
+/// cannot see a table reached through a register or from `.themida`, so that is "no evidence
+/// in the obvious place", not "proved absent".
+///
+/// The site reports **zero variance** across every level-up it sampled, so these are flat
+/// rather than rolled. That also happens to be the right property for a server nobody has
+/// verified: a range would make two runs of the same actions produce different characters.
+///
+/// # What is ours rather than theirs
+///
+/// **Ability points at five a level.** The site says nothing about AP; five is this game
+/// family's long-standing rule and it is what this server has always given.
+///
+/// **SP is deliberately not awarded.** A beginner has no skills to spend it on, and the stat
+/// block's SP field forks on the job - the branch every character here takes sends a pool
+/// list nobody has decoded. Job advancement is where that gets read.
+///
+/// # What is NOT here
+///
+/// The **500-point job-advancement bonus** and the **+25% from maxed Improving Max HP/MP**
+/// are both in `research/meowdb-combat-formulas.md` and neither is implemented, because
+/// neither has anything to hang off yet: job advancement is goal E and the skills are second
+/// job. Saying so here rather than adding an unwired table is the point - `CLAUDE.md`'s
+/// "built is not wired".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LevelGains {
     pub ap: u16,
@@ -41,18 +102,37 @@ pub struct LevelGains {
     pub max_mp: u32,
 }
 
-impl Default for LevelGains {
-    fn default() -> Self {
-        LevelGains { ap: 5, max_hp: 14, max_mp: 10 }
+impl LevelGains {
+    /// The gains for one class line.
+    pub fn for_class(class: ClassLine) -> LevelGains {
+        let (max_hp, max_mp) = match class {
+            ClassLine::Beginner => (16, 12),
+            ClassLine::Warrior => (28, 12),
+            ClassLine::Magician => (16, 22),
+            ClassLine::Bowman => (22, 17),
+            ClassLine::Thief => (22, 17),
+        };
+        LevelGains { ap: 5, max_hp, max_mp }
     }
 }
 
-/// How much experience each level costs, and what levelling awards.
+impl Default for LevelGains {
+    /// A beginner, which is what every character on this server is.
+    fn default() -> Self {
+        LevelGains::for_class(ClassLine::Beginner)
+    }
+}
+
+/// How much experience each level costs.
+///
+/// **It no longer carries the gains.** There used to be a `pub gains: LevelGains` here, from
+/// when every character gained the same amount. Now that the gains depend on the job, that
+/// field would be a public knob that looks like it sets the level-up award and is ignored -
+/// which is worse than not having one. [`LevelGains::for_class`] is the only source.
 #[derive(Debug, Clone, Default)]
 pub struct ExpCurve {
     /// level -> experience needed to reach `level + 1`.
     to_next: HashMap<u32, u64>,
-    pub gains: LevelGains,
     /// Lines that would not parse, surfaced in the startup banner.
     pub problems: Vec<String>,
 }
@@ -127,7 +207,8 @@ impl ExpCurve {
     /// At [`MAX_LEVEL`], or with no entry for the current level, experience simply
     /// accumulates and no level is granted. That is deliberately not an error: an unknown
     /// level should stop levelling, not panic and not level infinitely.
-    pub fn award(&self, level: u32, exp: u64, gained: u64) -> Awarded {
+    pub fn award(&self, job: u16, level: u32, exp: u64, gained: u64) -> Awarded {
+        let gains = LevelGains::for_class(ClassLine::of_job(job));
         let mut out = Awarded { level, exp: exp.saturating_add(gained), ..Default::default() };
         // A bounded loop. `to_next` is positive by construction (the parser rejects 0), so
         // this terminates, but the cap makes that true by inspection rather than by argument.
@@ -142,9 +223,9 @@ impl ExpCurve {
             out.exp -= need;
             out.level += 1;
             out.levels += 1;
-            out.ap += self.gains.ap;
-            out.max_hp += self.gains.max_hp;
-            out.max_mp += self.gains.max_mp;
+            out.ap += gains.ap;
+            out.max_hp += gains.max_hp;
+            out.max_mp += gains.max_mp;
         }
         out
     }
@@ -153,6 +234,9 @@ impl ExpCurve {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Job 0. Every character on this server is one, so it is the case that matters.
+    const BEGINNER: u16 = 0;
 
     fn curve() -> ExpCurve {
         ExpCurve::parse("1 | 15\n2 | 34\n3 | 57\n")
@@ -178,14 +262,14 @@ mod tests {
 
     #[test]
     fn not_enough_experience_is_not_a_level() {
-        let a = curve().award(1, 0, 14);
+        let a = curve().award(BEGINNER, 1, 0, 14);
         assert_eq!((a.level, a.exp, a.levels), (1, 14, 0));
         assert_eq!(a.ap, 0, "and nothing is awarded");
     }
 
     #[test]
     fn exactly_enough_levels_once_and_leaves_nothing_over() {
-        let a = curve().award(1, 0, 15);
+        let a = curve().award(BEGINNER, 1, 0, 15);
         assert_eq!((a.level, a.exp, a.levels), (2, 0, 1));
         assert_eq!(a.ap, LevelGains::default().ap);
     }
@@ -193,7 +277,7 @@ mod tests {
     /// **Experience carries over.** A single award worth several levels grants several.
     #[test]
     fn a_large_award_levels_more_than_once_and_keeps_the_remainder() {
-        let a = curve().award(1, 0, 15 + 34 + 10);
+        let a = curve().award(BEGINNER, 1, 0, 15 + 34 + 10);
         assert_eq!((a.level, a.exp, a.levels), (3, 10, 2));
         assert_eq!(a.ap, LevelGains::default().ap * 2, "two levels, two awards");
     }
@@ -201,7 +285,7 @@ mod tests {
     /// A level with no entry stops levelling rather than looping or panicking.
     #[test]
     fn running_off_the_end_of_the_table_stops() {
-        let a = curve().award(3, 0, 1_000_000);
+        let a = curve().award(BEGINNER, 3, 0, 1_000_000);
         assert_eq!(a.level, 4, "level 3 has an entry, level 4 does not");
         assert_eq!(a.exp, 1_000_000 - 57);
     }
@@ -209,7 +293,7 @@ mod tests {
     #[test]
     fn the_maximum_level_stops_gaining_levels_but_still_banks_experience() {
         let c = ExpCurve::parse("99 | 10\n100 | 10\n");
-        let a = c.award(MAX_LEVEL, 0, 1_000);
+        let a = c.award(BEGINNER, MAX_LEVEL, 0, 1_000);
         assert_eq!((a.level, a.levels), (MAX_LEVEL, 0));
         assert_eq!(a.exp, 1_000, "the experience is still banked");
     }
@@ -217,15 +301,58 @@ mod tests {
     #[test]
     fn an_empty_curve_never_levels_anything() {
         let c = ExpCurve::default();
-        let a = c.award(1, 0, u64::MAX / 2);
+        let a = c.award(BEGINNER, 1, 0, u64::MAX / 2);
         assert_eq!(a.levels, 0);
         assert!(c.is_empty());
+    }
+
+    /// The five gain lines, as `research/meowdb-combat-formulas.md` reports them.
+    #[test]
+    fn each_class_has_its_own_hp_and_mp_line() {
+        for (job, hp, mp) in [
+            (0u16, 16u32, 12u32),   // beginner
+            (100, 28, 12),          // warrior
+            (200, 16, 22),          // magician
+            (300, 22, 17),          // bowman
+            (400, 22, 17),          // thief
+        ] {
+            let g = LevelGains::for_class(ClassLine::of_job(job));
+            assert_eq!((g.max_hp, g.max_mp), (hp, mp), "job {job}");
+            assert_eq!(g.ap, 5, "AP is ours and is five for everyone");
+        }
+    }
+
+    /// Second-job ids are on the same line as their first job: 110 is still a warrior.
+    #[test]
+    fn the_line_is_the_hundreds_digit() {
+        for job in [100u16, 110, 111, 112, 120, 130, 132] {
+            assert_eq!(ClassLine::of_job(job), ClassLine::Warrior, "job {job}");
+        }
+        assert_eq!(ClassLine::of_job(422), ClassLine::Thief);
+    }
+
+    /// Pirate has no row in the source, so it falls back rather than inventing numbers.
+    #[test]
+    fn an_unknown_job_falls_back_to_the_beginner_line() {
+        assert_eq!(ClassLine::of_job(500), ClassLine::Beginner);
+        assert_eq!(ClassLine::of_job(9999), ClassLine::Beginner);
+        assert_eq!(LevelGains::default(), LevelGains::for_class(ClassLine::Beginner));
+    }
+
+    /// The job actually reaches the award, rather than being accepted and ignored.
+    #[test]
+    fn the_job_changes_what_a_level_gives() {
+        let beginner = curve().award(0, 1, 0, 15);
+        let warrior = curve().award(100, 1, 0, 15);
+        assert_eq!((beginner.max_hp, beginner.max_mp), (16, 12));
+        assert_eq!((warrior.max_hp, warrior.max_mp), (28, 12));
+        assert_eq!(beginner.ap, warrior.ap, "AP does not depend on the class");
     }
 
     #[test]
     fn a_zero_cost_level_is_rejected_rather_than_looping_forever() {
         let c = ExpCurve::parse("1 | 0\n");
         assert_eq!(c.problems.len(), 1, "{:?}", c.problems);
-        assert_eq!(c.award(1, 0, 100).levels, 0);
+        assert_eq!(c.award(BEGINNER, 1, 0, 100).levels, 0);
     }
 }
