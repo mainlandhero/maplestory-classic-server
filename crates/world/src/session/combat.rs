@@ -94,6 +94,7 @@ impl Session {
         // where to land - see `Session::last_position`. Recording it here rather than in the
         // drop path means it survives the swing that produced it.
         self.last_position = Some((attack.x as i16, attack.y as i16));
+        self.note_activity();
         // Read once rather than per target: it is a database round trip, and a swing can
         // legitimately kill several mobs at once.
         let killer = self.claimed_character().map(|c| (c.id, c.map_id));
@@ -275,7 +276,11 @@ impl Session {
         let arrived = self.fields.due_respawns(map, &self.config, now_ms);
         let mut out = Vec::new();
         for live in arrived {
-            let mob = live.as_seen();
+            let mut mob = live.as_seen();
+            // This one really is arriving while the player watches, so it keeps the spawn
+            // effect. The pair of these two lines IS the feature - one value for "was already
+            // here", another for "just turned up".
+            mob.appear_type = net::mob::APPEAR_SPAWNING;
             out.push(Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(&mob),
@@ -461,6 +466,8 @@ impl Session {
             return Vec::new();
         };
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        // Being hit counts as activity: standing in a mob's path is not resting.
+        self.note_activity();
         if hit.damage == 0 {
             return Vec::new();
         }

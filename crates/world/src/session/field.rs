@@ -65,7 +65,11 @@ impl Session {
         // spawn points. `crate::fields`.
         self.fields.seed(chr.map_id, &self.config, self.clock_ms);
         for live in self.fields.mobs_on(chr.map_id) {
-            let mob = live.as_seen();
+            let mut mob = live.as_seen();
+            // Already on the field when you walked in - no spawn effect. The owner: *"if the
+            // destination map has mobs, they should show up instantly. Currently I see those
+            // mobs fade in."*
+            mob.appear_type = net::mob::APPEAR_ALREADY_THERE;
             out.push(Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(&mob),

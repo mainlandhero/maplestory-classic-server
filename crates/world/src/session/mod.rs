@@ -195,6 +195,17 @@ pub struct Session {
     /// loses the item to a spot the player cannot reach.
     last_position: Option<(i16, i16)>,
 
+    /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
+    ///
+    /// Idleness is the absence of packets rather than a packet of its own - the client never
+    /// says "I am idle". See `crate::session::regen`.
+    last_activity_ms: u64,
+
+    /// When the next regeneration tick is due, or `None` when the timer is not armed.
+    ///
+    /// `None` is both "they are busy" and "they are already full", and neither needs a timer.
+    next_regen_ms: Option<u64>,
+
     /// What this connection last put in the client's scrolling banner, `None` for "nothing".
     ///
     /// The banner is not pushed to anyone - every session works out what should be on screen
@@ -295,6 +306,7 @@ mod ground;
 mod inventory;
 mod npc;
 mod rates;
+mod regen;
 mod shop;
 mod skills;
 #[cfg(test)]
@@ -328,6 +340,8 @@ impl Session {
             open_shop: None,
             last_position: None,
             banner_shown: None,
+            last_activity_ms: 0,
+            next_regen_ms: None,
         }
     }
 
@@ -376,6 +390,9 @@ impl Session {
         out.extend(self.spawn_due_mobs(here, now_ms));
         // The event banner. Wall-clock, not `now_ms` - see `crate::session::rates`.
         out.extend(self.banner_tick());
+        // Idle regeneration, which uses `now_ms` rather than the wall clock - it is a
+        // property of one player rather than of the server. `crate::session::regen`.
+        out.extend(self.regen_tick(now_ms));
         if self.config.chatter_off {
             return out;
         }
@@ -498,6 +515,7 @@ impl Session {
             net::usermove::CLIENT_USER_MOVE => {
                 if let Some(m) = net::usermove::parse_user_move(body.get(2..).unwrap_or(&[])) {
                     self.last_position = Some((m.x, m.y));
+                    self.note_activity();
                 }
                 return Vec::new();
             }

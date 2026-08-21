@@ -279,6 +279,7 @@ pub struct FieldMob {
     /// **`-2` is on the safe side of that and `-1` is the only other one-byte alternative
     /// that stays there.**
     pub appear_type: i8,
+    // See APPEAR_ALREADY_THERE and APPEAR_SPAWNING for the two values to use.
     /// Only emitted when [`FieldMob::appear_type`] is `-3`, `-6` or `>= 0` (`141c504d0`).
     pub appear_option: u32,
     /// `141c504db` -> `mob+0x8c0`. `FUN_141c8a730` multiplies the template's max HP by it and
@@ -303,10 +304,41 @@ pub struct FieldMob {
     pub target_from_server: Option<u32>,
 }
 
+/// `appear_type` for a mob that is **already standing on the field** when you arrive.
+///
+/// The owner, 2026-08-20: *"When a player transitions from map to map, if the destination map has
+/// mobs, they should show up instantly. Currently I see those mobs fade in."* They did,
+/// because every mob was sent [`APPEAR_SPAWNING`], including the ones a `SetField` was
+/// describing.
+///
+/// **[L]** that this value is safe: `research/mob-target-gates.md` walks the switch at
+/// `141c51a84` per arm, and `-2`, `-1` and `-6` write neither `mob+0x504` nor `mob+0x300`, so
+/// both of the client's target gates pass. `-3`..`-5` write `+0x504` and `>= 0` writes the
+/// literal `1` that gate 2 rejects on - either would make every mob permanently unhittable.
+/// So the choice was only ever between `-1` and `-2`, and this module already said so:
+/// *"if mobs pop in wrong, `-1` is the one-byte alternative"*.
+///
+/// **[I]** that `-1` is the instant one rather than the fading one. What is measured is that
+/// `-2` fades, because the owner watched it. The reference tree annotates the field
+/// `// init -> -2, -1 else`, which reads the other way round - and that tree scored 1 of 8 on
+/// a held-out control, while the screen is a measurement. `CLAUDE.md`: when a report
+/// contradicts something already seen on screen, the screen wins.
+pub const APPEAR_ALREADY_THERE: i8 = -1;
+
+/// `appear_type` for a mob **arriving while the player watches** - a respawn.
+///
+/// The fade is correct here and wrong on field entry; that is the whole distinction. Same
+/// safety argument as [`APPEAR_ALREADY_THERE`]: `-2` writes neither gate field.
+pub const APPEAR_SPAWNING: i8 = -2;
+
 impl FieldMob {
-    /// An ordinary field mob: full HP, no scaling, no optional template blocks, `appear_type`
-    /// `-2`, and `move_action` [`MOVE_ACTION_MIN_SAFE`]. `object_id` is nudged to the next
-    /// usable value rather than trusted.
+    /// An ordinary field mob: full HP, no scaling, no optional template blocks,
+    /// `appear_type` [`APPEAR_ALREADY_THERE`], and `move_action` [`MOVE_ACTION_MIN_SAFE`].
+    /// `object_id` is nudged to the next usable value rather than trusted.
+    ///
+    /// **The default is "already standing there", not "just spawned".** Field entry is by far
+    /// the commonest use, and a mob that fades in on arrival is what the owner reported on
+    /// 2026-08-20. A respawn should set [`APPEAR_SPAWNING`] explicitly.
     ///
     /// `move_action` is **2, not 0**. Zero is the value that crashed the client on
     /// 2026-08-19; the constant's docs carry the eight-step chain from that byte to
@@ -321,7 +353,7 @@ impl FieldMob {
             home_fh: fh,
             hp,
             move_action: MOVE_ACTION_MIN_SAFE,
-            appear_type: -2,
+            appear_type: APPEAR_ALREADY_THERE,
             appear_option: 0,
             hp_scale_percent: 100,
             patrol: None,
@@ -504,7 +536,7 @@ mod tests {
         assert_eq!(&b[36..38], &12i16.to_le_bytes(), "141c50456 fh");
         assert_eq!(&b[38..40], &12i16.to_le_bytes(), "141c50465 homeFh");
         assert_eq!(b[40], 0, "141c50474");
-        assert_eq!(b[41] as i8, -2, "141c50485 appearType");
+        assert_eq!(b[41] as i8, APPEAR_ALREADY_THERE, "141c50485 appearType");
         assert_eq!(&b[42..44], &0i16.to_le_bytes(), "141c50499");
         assert_eq!(&b[44..46], &0i16.to_le_bytes(), "141c504aa");
         assert_eq!(&b[46..50], &100u32.to_le_bytes(), "141c504db hp scale %");
@@ -574,6 +606,31 @@ mod tests {
 
     /// `141c504c2`-`141c504cb`: `-3`, `-6` and every non-negative value make the client read a
     /// further `u32`. Everything else must not carry one.
+    /// Both appear types must stay on the safe side of the client's two target gates.
+    ///
+    /// `research/mob-target-gates.md`: `-1`, `-2` and `-6` write neither `mob+0x504` nor
+    /// `mob+0x300`; `-3`..`-5` write `+0x504` and `>= 0` writes the literal `1` that gate 2
+    /// rejects on. Either of those would make every mob permanently unhittable - the exact
+    /// bug the size-scale fix took a day to find - and neither would look wrong on screen.
+    #[test]
+    fn both_appear_types_keep_mobs_hittable() {
+        for t in [APPEAR_ALREADY_THERE, APPEAR_SPAWNING] {
+            assert!(t < 0, "a non-negative appearType makes the mob unhittable: {t}");
+            assert!(t != -3 && t != -4 && t != -5, "{t} writes mob+0x504");
+        }
+        assert_ne!(APPEAR_ALREADY_THERE, APPEAR_SPAWNING, "they have to differ to mean anything");
+    }
+
+    /// Neither value makes the body longer, so swapping them cannot shift a later field.
+    #[test]
+    fn neither_appear_type_costs_an_option_word() {
+        for t in [APPEAR_ALREADY_THERE, APPEAR_SPAWNING] {
+            let mut m = FieldMob::new(2000, 1, 0, 0, 12, 100);
+            m.appear_type = t;
+            assert!(!m.has_appear_option(), "{t} would add a u32 nobody wrote");
+        }
+    }
+
     #[test]
     fn the_appear_option_word_appears_exactly_when_the_client_reads_it() {
         for (appear, extra) in [
@@ -706,7 +763,7 @@ mod tests {
         let d = FieldMob::new(3000, 1, 0, 0, 0, 999);
         assert_eq!(d.hp, 999);
         assert_eq!(d.hp_scale_percent, 100);
-        assert_eq!(d.appear_type, -2);
+        assert_eq!(d.appear_type, APPEAR_ALREADY_THERE, "the DEFAULT is 'was already here'");
         assert_eq!(d.home_fh, d.fh);
     }
 

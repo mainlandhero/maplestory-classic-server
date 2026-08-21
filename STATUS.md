@@ -189,6 +189,8 @@ then leaves everything above it already measured.
 | 1 | `!map 40`, wait | snails appearing over a few seconds | the field seeds empty and refills from the WZ's `mobTime`. 40 spawn points, all `mobTime = 0` (the field's ordinary 7s, **not** "never"), 75% solo capacity, so about **30** snails |
 | 2 | hit one snail **once** | the HP bar over it | your damage over **45**. Hitting for 18 should leave it near three fifths; about a quarter means the percentage change did not land |
 | 3 | kill it | drops **arc out of the corpse over half a second** | fixed since the last run: the arc used to start and end on the same pixel, so the icon simply appeared. Also still: at the mob, not at your feet, and spread apart. Every snail drops 2 mesos; about two in five drop a Snail Shell |
+| 3b | `!map 40` from another map | mobs **already standing there**, no fade-in | new: field entry sends `appearType -1`, a respawn keeps `-2`. Both stay on the safe side of the client's target gates, which is the only reason this was ever a one-byte choice |
+| 3c | stand still for 10 s, then 20 s | **+10 HP and +10 MP every 10 seconds**, and it stops when you are full | new. Moving, attacking or being hit restarts the countdown |
 | 4 | watch the bottom right | `You received EXP (+2)` in **WHITE** | it was yellow last run, and yellow means "a share of someone else's kill". Solo, every kill is majority damage, so every line should now be white. **If it is still yellow the `white` byte does not mean what we think** - that half is `[I]`; `research/exp-sharing.md` |
 | 5 | walk over a drop | it goes in the bag, and a line bottom-right | `0x032C` is measured now, so this should simply work |
 | 6 | kill eight snails | the level-up animation, **+16 max HP, +12 max MP**, +5 AP | 15 EXP to level and 2 a snail. The 16/12 is new - it was 14/10. **This client cannot arbitrate it**: it has no per-level table and is simply told the new maxima, so wrong numbers mean the source is wrong. Goal K |
@@ -234,13 +236,17 @@ but the client crashed."* **The guard is innocent, and this is what the evidence
   `FUN_14019b4e0` - a heap helper beside the client's allocator and free. That is where it
   was *detected*, not what corrupted it, and heap corruption is detected arbitrarily long
   after the write that caused it.
-* **It is not new and not today's code.** It has now happened twice: this run and the Amherst
-  1013 run of 2026-08-19. Both captures are in `research/fixtures/` under
-  `heap-corruption-*`. Everything else on record is eleven access violations, four fail-fasts
-  and three clean exits.
-* **The new banner packet was never sent** - zero `0x00AC` in the run - so it is not that.
+* **It is not new and not today's code.** Four sightings now, the earliest on 2026-08-19,
+  before any of today's packets existed. Full write-up and the three captures:
+  **`research/heap-corruption.md`**.
+* **The new banner packet has never been sent in any of them** - zero `0x00AC` - so it is
+  not that, and neither are the rate multipliers or the level gains.
 
-**Two captures of the same fault is the lead**, and comparing them costs no client run.
+**The next step is page heap, and the owner has to run it** because it writes a system key. The
+exact command is in `research/heap-corruption.md`. It makes the client fault at the
+instruction that corrupts rather than at the next free, which is the difference between a
+diagnosable crash and this one. **The two full captures have also never been diffed**, and
+that costs no client run at all.
 
 One real defect did come out of it: `map_exists` is fail-open on an empty field table, so a
 missing generated file silently removes the `!map` guard. There *was* a warning for that, on
