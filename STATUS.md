@@ -221,6 +221,33 @@ positive-control watch's first hit. `python tools/decode_dump.py --exp-curve` de
 comparing it against `data/exp-curve.txt` is a five-second job nobody has done. If they
 disagree, **the client wins**.
 
+#### Roger's quest needs a SCRIPT engine, which does not exist - 2026-08-21
+
+The owner: *"Roger's Apple quest doesn't start as expected. All I see is 'Hey, nice weather isn't
+it', which is just their normal text."*
+
+**Quests in this client come in two kinds and only one is implemented.** [L], from the WZ:
+
+```text
+1002  Check  0.npc          3
+1002  Check  0.startscript  q1002s
+1002  Check  1.endscript    q1002e
+1002  Say    1.stop.item.0  Eat the #r#t2010000##k I gave you...
+```
+
+Quest 1002 has **no `Say.0` at all**. Its opening is a *script*, `q1002s`, and the client
+asks for it with `0x0151` **action 4** - `QUEST_ACTION_OPENING_SCRIPT`, which
+`crates/net/src/script.rs` already names. The capture shows exactly that, three times over as
+The owner retried: `04 ea030000 03000000`.
+
+With no `Say.0` to play, the conversation falls through to the NPC's own idle line - which is
+what was on screen. **Nothing is broken; a whole feature is missing.** The Say-tree quests
+(1000, 1001) work because they *have* Say trees.
+
+What a script engine needs, and it is not small: the scripts are named but their bodies are
+not in `questlines.txt` at all, so the first question is where `q1002s` lives - a WZ node this
+project has not dumped, or something compiled into the client.
+
 #### Character create does not transition, 2026-08-21 - narrowed, not solved
 
 The owner created "Tester", the client said the name was available, and then **stayed on the
@@ -246,21 +273,24 @@ character-list state. On 08-19 the client logged in holding **3** characters and
 one earlier in the same session; today it held **1** and had deleted two in a *previous*
 session.
 
-**The hypothesis, and it is a hypothesis:** the client keeps its own character-slot array and
-it is getting out of step with the server's list. That would explain **both** of the owner's
-symptoms - the Create button refusing outright after two deletes (no create packet reached
-the wire at all that time) and a create that succeeds server-side but cannot be placed into
-the list, so nothing transitions.
+**The list-state hypothesis is FALSIFIED.** The owner ran both halves of the experiment on
+2026-08-21: creating without deleting first **transitions**, and delete-then-create
+**transitions**. Four mechanisms are now eliminated:
 
-**The experiment that discriminates, and it needs no code.** In one launch:
+* **not the reply** - byte-compatible and the same 353 bytes as a create that worked;
+* **not the list state** - both orders work;
+* **not the cosmetics** - the face and hair in the reply match the request and the stored row
+  exactly, for the failing character and the working ones alike;
+* **not a live channel connection** - `world.log` for that run begins six minutes *after* the
+  failed create, so no channel socket existed.
 
-1. Log in and create a character **without deleting anything first**. Does it transition?
-2. Then delete one and create another. Does *that* transition?
+So it happened **once**, and nothing reproduces it. That is where it rests. The capture is
+`research/fixtures/create-did-not-transition-tester-login.log`, and the static route is closed
+- `FUN_141b2cf30`, the `0x0015` handler, is 35 bytes of `halt_baddata()`.
 
-If deleting first is what makes it work, the client needs the list re-sent after a delete and
-after a create, and both symptoms have one fix. If neither works, the create path broke for a
-reason the list state does not explain and the next step is the `0x00A8`/`0x05F4` exchange
-rather than the record.
+**If it recurs, the thing worth writing down is what came before it** - how long the client
+had been up, what screen it came from, and whether a channel session had been entered and left
+in the same launch. The packet is not the variable, so the state is.
 
 #### The heap corruption, and what the last run actually showed
 

@@ -15,8 +15,22 @@
 # ---- the global table: event items, rolled for every mob -----------------------
 # (empty - no events yet. One line here and every mob in the game can drop it.)
 
+# ---- HAND-AUTHORED EXCEPTIONS ---------------------------------------------------
+# Rows below this marker were set by hand and are NOT what chance_percent() would
+# produce. tools/scrape_drops.py must preserve them; if it ever overwrites one, the
+# symptom is a tutorial that stops working rather than anything obviously broken.
+#
+# Template 1, the Tutorial Jr. Sentinel. The owner, 2026-08-21: "should have a 100% drop
+# chance for Jr. Sentinel Shellpiece. It does not drop mesos or anything else. It's
+# the only mob that has this exception."
+#
+# The scrape gave it 40%, from a vote score of 2. It is a tutorial kill that hands you
+# the item the tutorial then asks you to have, so anything under 100% is a tutorial
+# that sometimes cannot be finished. It has no meso row and no second item row, and
+# that is deliberate - do not add one.
+1 | 4000000 | 100 | 1 | 1 | 2 | Jr. Sentinel Shellpiece
+
 # ---- per-monster ---------------------------------------------------------------
-1 | 4000000 | 40 | 1 | 1 | 2 | Jr. Sentinel Shellpiece
 2 | 0 | 100 | 2 | 2 | 1 | mesos
 2 | 4010000 | 6 | 1 | 1 | 12 | Bronze Ore
 2 | 4000001 | 40 | 1 | 1 | 9 | Snail Shell

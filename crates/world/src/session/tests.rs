@@ -2808,3 +2808,29 @@ fn the_rate_type_still_represents_fractions() {
     assert_eq!(half.apply(100), 50);
     assert!(half < store::rates::Rate::NORMAL);
 }
+
+
+/// **The Tutorial Jr. Sentinel always drops its Shellpiece and nothing else.** The owner,
+/// 2026-08-21: *"It's the only mob that has this exception."*
+///
+/// A tutorial kill that hands you the item the tutorial then asks you to have. Anything under
+/// 100% is a tutorial that sometimes cannot be finished, and a meso row would be one more
+/// thing on the floor during the step that teaches picking things up.
+#[test]
+fn the_tutorial_sentinel_always_drops_its_shellpiece() {
+    let path = std::path::Path::new("../../data/drops.txt");
+    let table = crate::droptables::DropTables::load(path);
+    if table.total_entries() == 0 {
+        return; // no data file in this checkout
+    }
+    let rows = table.for_mob(1);
+    assert_eq!(rows.len(), 1, "template 1 drops exactly one thing: {rows:?}");
+    assert_eq!(rows[0].item_id, 4000000, "Jr. Sentinel Shellpiece");
+    assert_eq!(rows[0].chance_bp, crate::droptables::BASIS_POINTS, "100%, not the scraped 40%");
+    assert!(table.global().is_empty(), "a global event row would drop from it too");
+
+    // And it really does hit on every roll, not just at a value that looks like 100.
+    for roll in [0u64, 1, 4_999, 9_999, u64::MAX] {
+        assert!(rows[0].hits(roll), "missed at roll {roll}");
+    }
+}

@@ -169,10 +169,110 @@ impl Session {
                 what: format!("quest {finished} completion NOT STORED: {e}"),
             }),
         }
+        out.extend(self.apply_quest_completion_rewards(finished));
         if chained_to != finished {
             out.extend(self.record_quest_start(chained_to, 0));
         }
         out
+    }
+
+
+    /// Pay out `Act.1` - the experience, and whatever the quest gives or takes back.
+    ///
+    /// The owner, 2026-08-21: *"Completing the quest 'Sera's Mirror' did not award me the quest
+    /// reward as indicated."* It did not, because completion recorded the row and stopped.
+    /// Quest 1001's `Act.1` is `exp 2` and `item 4031000 count -1` - two experience, and
+    /// Heena keeps the mirror.
+    ///
+    /// **A negative count is a take and is now honoured**, which it was not when the giving
+    /// direction went in. Taking what the player does not have is not an error: the quest is
+    /// already being completed and refusing here would leave it half finished, so a missing
+    /// item is reported and the completion stands.
+    fn apply_quest_completion_rewards(&mut self, quest_id: u32) -> Vec<Reply> {
+        let Some(quest) = self.config.quests.get(&quest_id) else { return Vec::new() };
+        let items = quest.complete_items.clone();
+        let exp = quest.complete_exp;
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let mut out = Vec::new();
+
+        for (item_id, count) in items {
+            let Some(inv) = store::InventoryType::for_item(item_id) else { continue };
+            if count > 0 {
+                let max_stack = self.config.shops.max_stack(item_id);
+                let item = if inv == store::InventoryType::Equip {
+                    store::Item::equip(item_id)
+                } else {
+                    store::Item::bundle(item_id, count.min(u16::MAX as i32) as u16)
+                };
+                match self.store.add_item(chr.id, inv, &item, max_stack) {
+                    Ok(placed) => {
+                        out.extend(self.inventory_added_replies(inv, &placed, "a quest reward"));
+                        out.push(Reply {
+                            opcode: net::message::MESSAGE,
+                            body: net::message::item_gained(item_id, count as u32),
+                            what: format!("Message: quest {quest_id} rewarded {item_id} x{count}"),
+                        });
+                    }
+                    Err(e) => out.extend(self.notice(format!(
+                        "Quest {quest_id} could not give you item {item_id}: {e}"
+                    ))),
+                }
+                continue;
+            }
+            // A take. `count` is negative, so the amount is its magnitude.
+            let want = count.unsigned_abs().min(u16::MAX as u32) as u16;
+            match self.take_quest_item(chr.id, inv, item_id, want) {
+                Ok(replies) => out.extend(replies),
+                Err(e) => out.extend(self.notice(format!(
+                    "Quest {quest_id} wanted to take back {item_id} and could not: {e}"
+                ))),
+            }
+        }
+
+        // Last, so the experience line lands under the item lines the way a turn-in reads.
+        // White: a quest reward is yours, not a share of somebody else's kill.
+        out.extend(self.award_experience(exp, &format!("quest {quest_id}"), true));
+        out
+    }
+
+
+    /// Remove `count` of `item_id` from a bag, across as many slots as it takes.
+    fn take_quest_item(
+        &mut self,
+        character_id: u32,
+        inv: store::InventoryType,
+        item_id: u32,
+        count: u16,
+    ) -> Result<Vec<Reply>, store::StoreError> {
+        let mut left = count;
+        let mut out = Vec::new();
+        for row in self.store.bag_items(character_id, inv)? {
+            if left == 0 {
+                break;
+            }
+            if row.item.item_id != item_id {
+                continue;
+            }
+            let take = row.item.kind.quantity().min(left);
+            self.store.remove_item(character_id, inv, row.slot, Some(take))?;
+            left -= take;
+            out.push(Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_removed(inv.as_u8() as i8, row.slot as i16),
+                what: format!(
+                    "InventoryOperation REMOVE: {take} x {item_id} from {inv:?} slot {} - taken back by a quest",
+                    row.slot
+                ),
+            });
+        }
+        if left > 0 {
+            // Not an error. The quest is completing either way; say so and carry on.
+            out.extend(self.notice(format!(
+                "A quest wanted {count} x {item_id} back and you only had {}.",
+                count - left
+            )));
+        }
+        Ok(out)
     }
 
 

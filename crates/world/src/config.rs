@@ -744,6 +744,13 @@ pub struct Quest {
     /// is `-1`, the mirror going back when Heena is done with it. Only the giving direction is
     /// wired; see [`Quest::start_items`]'s note.
     pub start_items: Vec<(u32, i32)>,
+    /// `Act.1.item.N` - what **completing** the quest does to the bag.
+    ///
+    /// A positive count is a reward and a negative one is the quest taking its item back.
+    /// Quest 1001's is `(4031000, -1)`: Heena keeps the mirror.
+    pub complete_items: Vec<(u32, i32)>,
+    /// `Act.1.exp` - experience for turning it in. Quest 1001's is 2.
+    pub complete_exp: u64,
     /// The conversation, keyed by the `Say` path with the line index removed.
     ///
     /// `"0"` is the opening conversation and `"1"` the completion one; `"0.yes"`,
@@ -759,9 +766,22 @@ pub struct Quest {
 /// arrives first, so both sides are optional until the file is exhausted.
 type HalfItem = (Option<u32>, Option<i32>);
 
-/// The `<n>` out of `0.item.<n>.id`.
+/// The `<n>` out of `<state>.item.<n>.id`.
 fn act_item_index(dotted: &str) -> Option<usize> {
     dotted.split('.').nth(2)?.parse().ok()
+}
+
+/// The `<state>` out of `<state>.item.<n>.id`, for the two states this server reads.
+///
+/// `0` is what accepting does and `1` is what completing does. Anything else is a state the
+/// client has and this server does not model, and is ignored rather than guessed at.
+fn act_state(dotted: &str) -> Option<u8> {
+    let mut parts = dotted.split('.');
+    let state: u8 = parts.next()?.parse().ok()?;
+    if parts.next()? != "item" || !(state == 0 || state == 1) {
+        return None;
+    }
+    Some(state)
 }
 
 /// Every quest, from `tools/dump_quests.py`'s `questlines.txt`.
@@ -774,7 +794,7 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
     let mut out: HashMap<u32, Quest> = HashMap::new();
     // quest -> item index -> a half-built (id, count), stitched after the read because the two
     // halves are separate rows and the file does not promise an order.
-    let mut act_items: HashMap<u32, BTreeMap<usize, HalfItem>> = HashMap::new();
+    let mut act_items: HashMap<(u32, u8), BTreeMap<usize, HalfItem>> = HashMap::new();
 
     let Ok(text) = std::fs::read_to_string(path) else { return out };
     for row in text.lines() {
@@ -796,15 +816,22 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
             "Act" if dotted.ends_with(".nextQuest") => quest.next_quest = value.parse().ok(),
             // `Act.0.item.<n>.id` and `.count` arrive as separate rows in either order, so
             // both sides are stitched together after the file is read - see below.
-            "Act" if dotted.starts_with("0.item.") && dotted.ends_with(".id") => {
-                if let (Some(n), Some(id)) = (act_item_index(dotted), value.parse::<u32>().ok()) {
-                    act_items.entry(qid).or_default().entry(n).or_default().0 = Some(id);
+            "Act" if dotted.ends_with(".id") && act_state(dotted).is_some() => {
+                if let (Some(st), Some(n), Some(id)) =
+                    (act_state(dotted), act_item_index(dotted), value.parse::<u32>().ok())
+                {
+                    act_items.entry((qid, st)).or_default().entry(n).or_default().0 = Some(id);
                 }
             }
-            "Act" if dotted.starts_with("0.item.") && dotted.ends_with(".count") => {
-                if let (Some(n), Some(c)) = (act_item_index(dotted), value.parse::<i32>().ok()) {
-                    act_items.entry(qid).or_default().entry(n).or_default().1 = Some(c);
+            "Act" if dotted.ends_with(".count") && act_state(dotted).is_some() => {
+                if let (Some(st), Some(n), Some(c)) =
+                    (act_state(dotted), act_item_index(dotted), value.parse::<i32>().ok())
+                {
+                    act_items.entry((qid, st)).or_default().entry(n).or_default().1 = Some(c);
                 }
+            }
+            "Act" if dotted == "1.exp" => {
+                quest.complete_exp = value.parse().unwrap_or(0);
             }
             "Say" => {
                 // The last path segment is the line index; everything before it is the
@@ -831,12 +858,15 @@ pub fn load_quests(path: &std::path::Path) -> HashMap<u32, Quest> {
         }
     }
 
-    for (qid, indexed) in act_items {
+    for ((qid, state), indexed) in act_items {
         let quest = out.entry(qid).or_default();
         // BTreeMap: index order, so a two-item reward is handed over the same way twice.
         for (_, (id, count)) in indexed {
             if let (Some(id), Some(count)) = (id, count) {
-                quest.start_items.push((id, count));
+                match state {
+                    0 => quest.start_items.push((id, count)),
+                    _ => quest.complete_items.push((id, count)),
+                }
             }
         }
     }
