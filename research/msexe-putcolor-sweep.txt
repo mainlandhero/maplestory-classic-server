@@ -1,0 +1,144 @@
+# Whole-image sweep: every 'call qword ptr [reg+0x200]' (put_color) and the nearest
+# preceding write to edx. 2026-08-21. .pdata-bounded, capstone with resync.
+
+pdata funcs 120981
+byte-pattern call [reg+0x200] hits: 838
+classified: immediate 710, computed 122, unresolved 6
+immediate value histogram (top 20):
+   0xffffffff     585
+   0xffffff       68
+   0x0            23
+   0x80ffffff     18
+   0xd2ffffff     5
+   0x1ffffff      2
+   0x4dffffff     2
+   0xb2ffffff     2
+   0xa0ffffff     1
+   0xadffffff     1
+   0xff808080     1
+   0xd0808080     1
+   0xeeffffff     1
+
+COMPUTED edx feeding [reg+0x200] (122):
+  call 00014038cf4f  func 00014038cf10   edx<- 00014038cf3b  mov edx, eax
+  call 00014076ae97  func 00014076a6b0   edx<- 00014076ae6d  or edx, eax
+  call 000140dc2c42  func 000140dc17f0   edx<- 000140dc2c39  or edx, 0xffffff
+  call 000140dc4f13  func 000140dc3fa0   edx<- 000140dc4f0a  or edx, 0xffffff
+  call 000140dc6b1c  func 000140dc62e0   edx<- 000140dc6b13  or edx, 0xffffff
+  call 000140dc9043  func 000140dc8a30   edx<- 000140dc903a  or edx, 0xffffff
+  call 000140dce2e1  func 000140dcdd40   edx<- 000140dce2d8  or edx, 0xffffff
+  call 000140df4e43  func 000140df3e20   edx<- 000140df4e3d  mov edx, r13d
+  call 000140e17fc5  func 000140e17550   edx<- 000140e17fbc  or edx, 0xffffff
+  call 000140e8dcc9  func 000140e8ccb0   edx<- 000140e8dcc1  or edx, eax
+  call 000140e90e6a  func 000140e90d20   edx<- 000140e90e65  mov edx, edi
+  call 000140e90e96  func 000140e90d20   edx<- 000140e90e91  mov edx, edi
+  call 000140e9872d  func 000140e96c00   edx<- 000140e98725  or edx, eax
+  call 000140ee278a  func 000140ee1120   edx<- 000140ee277e  or edx, 0xffffff
+  call 000140ee27ca  func 000140ee1120   edx<- 000140ee27c2  or edx, eax
+  call 000140ef305b  func 000140ef1ec0   edx<- 000140ef3054  mov edx, dword ptr [rsp + 0x60]
+  call 000140f8146a  func 000140f813b0   edx<- 000140f81465  mov edx, esi
+  call 000140f814c2  func 000140f813b0   edx<- 000140f814bd  mov edx, esi
+  call 000140f8ac4b  func 000140f8abf0   edx<- 000140f8ac46  mov edx, esi
+  call 000140f8acab  func 000140f8abf0   edx<- 000140f8aca6  mov edx, esi
+  call 000140f8ad0b  func 000140f8abf0   edx<- 000140f8ad06  mov edx, esi
+  call 000140f8ad7c  func 000140f8abf0   edx<- 000140f8ad77  mov edx, esi
+  call 000140f8ae26  func 000140f8abf0   edx<- 000140f8ae21  mov edx, esi
+  call 000140f8af1c  func 000140f8aee0   edx<- 000140f8af17  mov edx, esi
+  call 000140f8af4b  func 000140f8aee0   edx<- 000140f8af46  mov edx, esi
+  call 000140fa43ed  func 000140fa2e50   edx<- 000140fa43e8  mov edx, edi
+  call 000140fa4420  func 000140fa2e50   edx<- 000140fa441b  mov edx, edi
+  call 000140fb3117  func 000140fb2ac0   edx<- 000140fb3111  mov edx, r14d
+  call 000140fb3151  func 000140fb2ac0   edx<- 000140fb314a  mov edx, dword ptr [rsp + 0x48]
+  call 000140fb318b  func 000140fb2ac0   edx<- 000140fb3184  mov edx, dword ptr [rsp + 0x4c]
+  call 000140fb31cc  func 000140fb2ac0   edx<- 000140fb31c5  mov edx, dword ptr [rsp + 0x50]
+  call 000140fb3206  func 000140fb2ac0   edx<- 000140fb31ff  mov edx, dword ptr [rsp + 0x54]
+  call 000140fba87e  func 000140fb9d30   edx<- 000140fba878  mov edx, r12d
+  call 0001410103fb  func 00014100f850   edx<- 0001410103ef  or edx, 0xffffff
+  call 0001412a6154  func 0001412a2830   edx<- 0001412a614e  mov edx, r13d
+  call 0001413d72a9  func 0001413d6dd0   edx<- 0001413d7291  mov rdx, qword ptr [rdx]
+  call 0001413ddbc6  func 0001413ddb70   edx<- 0001413ddb87  test edx, edx
+  call 0001413e0889  func 0001413e03b0   edx<- 0001413e0871  mov rdx, qword ptr [rdx]
+  call 0001413e0b9e  func 0001413e0ae0   edx<- 0001413e0b8a  mov edx, r15d
+  call 0001413e1281  func 0001413e1220   edx<- 0001413e125d  lea rdx, [rsp + 0x20]
+  call 0001413e1372  func 0001413e12a0   edx<- 0001413e135c  mov edx, ebp
+  call 0001413e1468  func 0001413e1400   edx<- 0001413e144d  dec edx
+  call 0001413e182e  func 0001413e17d0   edx<- 0001413e17e7  test edx, edx
+  call 0001413e37cf  func 0001413e33d0   edx<- 0001413e37b6  mov rdx, rax
+  call 0001413e5619  func 0001413e5140   edx<- 0001413e5601  mov rdx, qword ptr [rdx]
+  call 00014144e708  func 00014144e6a0   edx<- 00014144e6ed  dec edx
+  call 0001414518be  func 000141451800   edx<- 0001414518aa  mov edx, r15d
+  call 000141451f91  func 000141451f30   edx<- 000141451f6d  lea rdx, [rsp + 0x20]
+  call 000141452082  func 000141451fb0   edx<- 00014145206c  mov edx, ebp
+  call 000141452178  func 000141452110   edx<- 00014145215d  dec edx
+  call 0001414524ee  func 000141452490   edx<- 0001414524a7  test edx, edx
+  call 0001414d0fc0  func 0001414d0d50   edx<- 0001414d0fa5  lea rdx, [rsp + 0x50]
+  call 0001414d1238  func 0001414d11d0   edx<- 0001414d121d  dec edx
+  call 0001414d24b6  func 0001414d22f0   edx<- 0001414d24b0  mov rdx, qword ptr [rbx]
+  call 0001414d9605  func 0001414d9470   edx<- 0001414d95f1  mov edx, dword ptr [rbx + 0x14a8]
+  call 0001414da4b5  func 0001414da030   edx<- 0001414da4a3  lea rdx, [rbp - 0x29]
+  call 0001414da74d  func 0001414da510   edx<- 0001414da73c  mov edx, dword ptr [rcx + 0x14a8]
+  call 0001414daf56  func 0001414daee0   edx<- 0001414daf3e  mov edx, dword ptr [rcx + 0x80]
+  call 0001414eba02  func 0001414eaaf0   edx<- 0001414eb9b9  mov edx, 1
+  call 0001414ed192  func 0001414ed0c0   edx<- 0001414ed182  lea rdx, [rsp + 0x20]
+  call 0001414ee4bf  func 0001414ee3a0   edx<- 0001414ee4af  lea rdx, [rbp - 0x28]
+  call 00014151c6ee  func 00014151c630   edx<- 00014151c6da  mov edx, r15d
+  call 00014151c7de  func 00014151c720   edx<- 00014151c7ca  mov edx, r15d
+  call 00014151c8ce  func 00014151c810   edx<- 00014151c8ba  mov edx, r15d
+  call 00014151c9be  func 00014151c900   edx<- 00014151c9aa  mov edx, r15d
+  call 00014151f9db  func 00014151f960   edx<- 00014151f9be  lea rdx, [rsp + 0x20]
+  call 00014151fa6b  func 00014151f9f0   edx<- 00014151fa4e  lea rdx, [rsp + 0x20]
+  call 00014151fafb  func 00014151fa80   edx<- 00014151fade  lea rdx, [rsp + 0x20]
+  call 00014151fb8b  func 00014151fb10   edx<- 00014151fb6e  lea rdx, [rsp + 0x20]
+  call 00014151fc72  func 00014151fba0   edx<- 00014151fc5c  mov edx, ebp
+  call 00014151fdd2  func 00014151fd00   edx<- 00014151fdbc  mov edx, ebp
+  call 00014151ff32  func 00014151fe60   edx<- 00014151ff1c  mov edx, ebp
+  call 000141520092  func 00014151ffc0   edx<- 00014152007c  mov edx, ebp
+  call 000141520188  func 000141520120   edx<- 00014152016d  dec edx
+  call 000141520238  func 0001415201d0   edx<- 00014152021d  dec edx
+  call 0001415202e8  func 000141520280   edx<- 0001415202cd  dec edx
+  call 00014152198e  func 000141521930   edx<- 000141521947  test edx, edx
+  call 000141521a2e  func 0001415219d0   edx<- 0001415219e7  test edx, edx
+  call 000141521ace  func 000141521a70   edx<- 000141521a87  test edx, edx
+  call 0001415ccbf8  func 0001415cca70   edx<- 0001415ccbef  mov edx, dword ptr [rbp + 0x160]
+  call 0001417dd1c3  func 0001417da2a0   edx<- 0001417dd1ab  mov edx, esi
+  call 0001417de09b  func 0001417dd7e0   edx<- 0001417de086  mov edx, eax
+  call 0001419e9641  func 0001419e90b0   edx<- 0001419e9638  or edx, 0xffffff
+  call 0001419ea82f  func 0001419ea200   edx<- 0001419ea826  or edx, 0xffffff
+  call 000141a3837b  func 000141a38350   edx<- 000141a38375  cmovne edx, ecx
+  call 000141adb606  func 000141adb500   edx<- 000141adb601  mov edx, ebp
+  call 000141b085cb  func 000141b054f0   edx<- 000141b085c5  cmovne edx, edi
+  call 000141b09751  func 000141b096a0   edx<- 000141b0974c  sbb edx, edx
+  call 000141b097cf  func 000141b096a0   edx<- 000141b097ca  sbb edx, edx
+  call 000141b09856  func 000141b096a0   edx<- 000141b09851  sbb edx, edx
+  call 000141b098d4  func 000141b096a0   edx<- 000141b098cf  sbb edx, edx
+  call 000141b099b2  func 000141b096a0   edx<- 000141b099ad  sbb edx, edx
+  call 000141b0e3ff  func 000141b0e3d0   edx<- 000141b0e3fa  sbb edx, edx
+  call 000141bad054  func 000141bacfb0   edx<- 000141bad04f  mov edx, esi
+  call 000141cfb948  func 000141cfb3b0   edx<- 000141cfb93f  or edx, 0xffffff
+  call 0001420ef1cb  func 0001420edaa0   edx<- 0001420ef1c5  mov edx, r12d
+  call 0001421a066a  func 00014219dce0   edx<- 0001421a065a  or edx, 0xffffff
+  call 0001421a1b89  func 00014219dce0   edx<- 0001421a1b79  or edx, 0xffffff
+  call 0001423b126b  func 0001423b1140   edx<- 0001423b1265  mov rdx, qword ptr [rdi]
+  call 00014242ea19  func 00014242e910   edx<- 00014242ea15  cmovne edx, r13d
+  call 00014242f29b  func 00014242efc0   edx<- 00014242f292  cmovne edx, eax
+  call 000142526bbc  func 000142526610   edx<- 000142526bb6  mov edx, r14d
+  call 00014252c6c7  func 00014252bd30   edx<- 00014252c6be  mov edx, dword ptr [rbp + 0x98]
+  call 00014259c82a  func 00014259a650   edx<- 00014259c824  mov edx, r13d
+  call 00014259d3c2  func 00014259a650   edx<- 00014259d3bc  mov edx, r13d
+  call 00014259dad7  func 00014259a650   edx<- 00014259dad1  mov edx, r13d
+  call 00014259e1ed  func 00014259a650   edx<- 00014259e1e7  mov edx, r13d
+  call 00014259e85a  func 00014259a650   edx<- 00014259e854  mov edx, r13d
+  call 00014259eec0  func 00014259a650   edx<- 00014259eeba  mov edx, r13d
+  call 000142651584  func 00014264f750   edx<- 00014265157d  mov rdx, qword ptr [r12]
+  call 00014279edb9  func 00014279c480   edx<- 00014279edb3  mov edx, r15d
+  call 0001427a43ab  func 0001427a42d0   edx<- 0001427a43a2  mov edx, dword ptr [rbp + 0x148]
+  call 0001427a497c  func 0001427a42d0   edx<- 0001427a4973  mov edx, dword ptr [rbp + 0x148]
+  call 0001427a54c8  func 0001427a4fe0   edx<- 0001427a54c3  mov edx, esi
+  call 0001427a54f7  func 0001427a4fe0   edx<- 0001427a54f2  mov edx, esi
+  call 0001427a5825  func 0001427a57e0   edx<- 0001427a5820  mov edx, ebp
+  call 0001427ca72e  func 0001427ca060   edx<- 0001427ca725  or edx, 0xffffff
+  call 000142a97b16  func 000142a97ac0   edx<- 000142a97b10  mov edx, dword ptr [rbx + 0x9c]
+  call 000142c13cc7  func 000142c13bfd   edx<- 000142c13cc5  or edx, edi
+  call 000142c13d2e  func 000142c13bfd   edx<- 000142c13d2c  or edx, edi
+  call 000142c13d91  func 000142c13bfd   edx<- 000142c13d8f  or edx, edi
+  call 000142d3c3b6  func 000142d3c310   edx<- 000142d3c393  mov edx, dword ptr [rax + 0x1ce]

@@ -33,6 +33,38 @@ pasted: full path, or say explicitly which directory to be in first.
 which becomes a backspace and silently breaks a regex or a Rust doc comment. Use the Write
 tool for anything containing backslashes, or avoid them entirely.
 
+## The test plan lives in `tools/test-server.ps1`, and it is in TWO places
+
+Not in `STATUS.md`. It is in the launcher, so the steps and the thing that launches them
+cannot drift apart, and **the owner reads it off their console at launch** rather than opening a
+file.
+
+**There are two copies in that one script and both must be updated together:**
+
+| where | how it is read |
+|---|---|
+| the `.NOTES` block at the top | `Get-Help`, and by anyone opening the file |
+| the `Write-Host` blocks in the body | **printed on screen at every launch** - this is the one the owner actually sees |
+
+On 2026-08-21 the `.NOTES` block was maintained for days while the `Write-Host` block still
+told the owner to test the **inventory bag sizing**, to pass `-InventorySlots 10`, that mobs were
+opt-in and unconfirmed, that typing in chat might kill the client, and **not to click Change
+Channel**. All of that was from 2026-08-19 and every word of it was wrong. They pasted it back
+with "I still see a whole bunch of bloat", which is how it was found.
+
+So: **update both, then render the dialogue and read it.** A parse check is not enough - it
+does not catch a quoting bug that mangles the text, and it certainly does not catch a plan
+that is simply out of date. Extract the `Write-Host` block into a scratch `.ps1` with `$root`
+and `$SetFieldProbe` defined and run it.
+
+Two habits that fall out:
+
+* **Strike finished items off.** A plan that still lists what was confirmed two runs ago
+  spends the owner's launch re-testing things nobody is asking about.
+* **Say what each outcome MEANS, not just what to do.** "Does it pop or fade?" with the two
+  readings written down turns a run into a measurement. Every step should be a claim that
+  can come back false.
+
 ## Client runs cost the owner a manual launch
 
 Measure first. `python tools/channel_smoke.py` and `tools/login_smoke.py` exercise the real
@@ -115,6 +147,25 @@ not strong enough to retract anything.
 The same day, an agent swept for an immediate `0x12` near a state setter, found nothing, and
 **refused to report it**: the setter's one call site passes a computed register, so an empty
 result was the only possible outcome. That is the standard.
+
+## Count the same event in two logs
+
+Three of this session's answers came from a **count mismatch between two files**, not from
+reading either one closely:
+
+* the **equip crash** - the hook writes one dispatch line per packet *on handler return*, and
+  20 sibling `0x0070`s had one while the fatal one did not. The client died inside the
+  handler.
+* the **create button dead after Log Out** - `login.log` had **two** `0x0010`s and the hook
+  log had **one** `called FUN_140c9e230`. Our `create=on` patch latched once per launch while
+  the client's handshake zeroed the flag on every login.
+* the **channel migrate opcode** - ten candidates went out, and the dispatch line for
+  `0x001A` took **354 ms** where its neighbour took 64 µs. The long one is a socket teardown.
+
+None of these is visible in a single log. `world.log` and `login.log` say what the *server*
+sent; `client-patched\maplecw-hook.log` says what the *client* did with it. When something
+"did nothing", count the event in both and compare - and remember the dispatch line is
+written on **return**, so a missing one means the handler was entered and never came back.
 
 ## The unit, not the arithmetic
 

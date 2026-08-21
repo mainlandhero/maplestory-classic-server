@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -716,10 +716,39 @@ impl Session {
                     note
                 }
             }
-            Ok(None) => format!(
-                "character {character_id} has no unconsumed migration - it was never \
-                 minted, or already claimed, or it expired"
-            ),
+            // **A channel migration cannot be claimed by character id**, so falling through
+            // here is the ordinary case for a channel change rather than an error.
+            //
+            // Measured 2026-08-21: the channel-migrate reply is `0x001A` and its body is
+            // `u8 ok, u32 ip, u16 port` - seven bytes, no character id. The client's `0x007D`
+            // on the new channel then reported id **32513**, which is `01 7f 00 00` read back
+            // out of our own body. Channel 1 refused it, answered with the MINIMAL SetField,
+            // and the client faulted three seconds later.
+            //
+            // So: if this world and channel has exactly one migration pending, it is this
+            // connection's. Ambiguity returns `None` and we fall through to the old message.
+            Ok(None) => match self
+                .store
+                .claim_sole_migration_for_channel(self.config.world_id, self.config.channel_id)
+            {
+                Ok(Some(claimed)) => {
+                    let note = format!(
+                        "claimed the migration for character {} of account {} by CHANNEL, not by \
+                         character id - the hello said {character_id}, which a channel migrate \
+                         cannot carry (world {} channel {})",
+                        claimed.character_id, claimed.account_id, claimed.world_id,
+                        claimed.channel_id
+                    );
+                    self.claimed = Some(claimed);
+                    note
+                }
+                Ok(None) => format!(
+                    "character {character_id} has no unconsumed migration, and this world and \
+                     channel has no single pending one to fall back on - it was never minted, \
+                     or already claimed, or it expired"
+                ),
+                Err(e) => format!("character {character_id} could not be checked: {e}"),
+            },
             Err(e) => format!("character {character_id} could not be checked: {e}"),
         }
     }

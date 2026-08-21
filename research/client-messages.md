@@ -387,13 +387,67 @@ With `mask = 0` and `inChat = 0` the whole handler produces **exactly one post**
 main EXP line, on screen — because every bonus string stays empty and `142d5f488`'s
 `test rcx,rcx / je` skips the only other output. **[L]**
 
-### The item pick-up posts to both, and we do not control it
+### The item pick-up posts to the screen only — the chat-log copy is unreachable
 
 Sub-mode 0 posts to `FUN_142572050` unconditionally (given the singleton exists) and
 *additionally* to `FUN_1415eca30` type 6 when `FUN_141829fd0(FUN_141892840()) == 0x56` —
-a field property, written obliquely as `lea edx,[rax-0x50]`. **[L]** There is no `inChat`
-byte in this sub-mode. So an item pick-up may appear in both places and that is the
-client's own behaviour, not something the server chooses.
+written obliquely as `lea edx,[rax-0x50]`. **[L]** There is no `inChat` byte in this
+sub-mode.
+
+**And that condition can never be true in this client.** `FUN_141892840()` is the current
+field and `FUN_141829fd0` is its **type** — the same pair is compared against `0x35`/`0x48`
+in `msexe-droppool.c` and `0x55`/`0x58`/`0xad`/`0xcd` in `msexe-invop-00ac.c`, i.e. a small
+set of special map kinds. Enumerating `info/fieldType` across **all 426 map images**
+(2026-08-21):
+
+| fieldType | maps |
+|---:|---:|
+| 0 | 366 |
+| 2 | 4 |
+| 4 | 4 |
+| 6 | 3 |
+| 218 | 1 |
+| 500 | 1 |
+| absent | 47 |
+
+**`0x56` (86) appears on none of them.** So an item pick-up in this client posts to the
+bottom-right area and **not** to the chat log, always, and the server neither chooses that
+nor can change it.
+
+That is what the owner wants — *"when you pick up an item, it should only go to the bottom right
+white text, it should not be in the chat log"* — so there is nothing to build. The earlier
+wording here said a pick-up "may appear in both places", which was true of the code and
+false of this client, and it read as a live hazard.
+
+### The consequence for quest ITEM rewards, which is not what was hoped
+
+The owner also asked for quest rewards to read `<Item> x<quantity> earned. (<Tab>)` **in the chat
+log**. The wording is already right — sub-mode 0 draws string `0x00EC`, `'%s x%d earned.
+(%s)'`, with `0x00ED`/`0x00EE` for the two bag variants — but the **destination is not
+reachable**:
+
+* sub-mode 0's only chat-log call is the `fieldType == 0x56` site above, which no map
+  satisfies;
+* `0x00BB` hard-codes `FUN_1415eca30(&s, 7)` and `crates/net/src/notice.rs` records that its
+  colour and tab are not controllable;
+* type 3's `inChat` byte routes **EXP** and nothing else.
+
+So there is no decoded route today. **It may still exist**: `§2` of this document records
+that **28 of the 36 `0x0089` sub-cases are unread**, and an item-in-chat sub-case among them
+would not be surprising. Saying it exists would be a guess; saying it does not would be the
+"searched a known list" mistake `CLAUDE.md` warns about. It is open, and it is a small,
+well-shaped question: enumerate the 28.
+
+> **Answered, 2026-08-21 — `research/message-subcases.md`.** All 36 were enumerated. The
+> negative holds and is now *verified*: string `0x00EC` is loaded by exactly two functions in
+> the whole image, and the `0x0089` one is the type-0 handler above. **But the second
+> function is `FUN_1427863f0`, the `0x02D1` / `0x02AF` user-effect handler, and its effect
+> `8` reads `u8 count, count × (u32 itemId, i32 quantity, u8 inBag)` and posts
+> `'%s x%d earned. (%s)'` to chat category 6.** The enumeration also found `0x0089` sub-case
+> **12** — `u32 chatType, str text` — which posts server text at a **server-chosen**
+> category, so §5's "not controllable" applies to `0x00BB` and not to this packet. Chat
+> category 6 is `0xFFBBBBBB`, grey; category 7, which `0x00BB` uses, is `0xFFFFFF00`,
+> yellow. Both builders are in `crates/net/src/message.rs`; **neither is wired.**
 
 ---
 

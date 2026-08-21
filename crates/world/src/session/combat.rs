@@ -390,7 +390,7 @@ impl Session {
         // Nothing credited means nothing landed - a mob that died without being hurt, which
         // only a bug produces. Pay the killer in full rather than nothing.
         let Some(mine) = shares.iter().find(|s| s.character == chr_id) else {
-            return self.award_experience(worth, why, true);
+            return self.award_experience(worth, why, true, false);
         };
         let cut = mine.cut_of(worth);
         let why = if mine.majority {
@@ -398,11 +398,17 @@ impl Session {
         } else {
             format!("{why}, {}/{} of the damage", mine.dealt, mine.total)
         };
-        self.award_experience(cut, &why, mine.majority)
+        self.award_experience(cut, &why, mine.majority, false)
     }
 
 
-    pub(super) fn award_experience(&mut self, gained: u64, why: &str, white: bool) -> Vec<Reply> {
+    pub(super) fn award_experience(
+        &mut self,
+        gained: u64,
+        why: &str,
+        white: bool,
+        to_chat: bool,
+    ) -> Vec<Reply> {
         if gained == 0 {
             return Vec::new();
         }
@@ -462,12 +468,23 @@ impl Session {
         // The level-up itself gets no message: there is no level-up type in the table, and
         // `0x007C` already plays the animation when the level in it is higher than the one
         // the client holds. That is a "did not find", not a "there is none".
+        // **Where the line lands is not the same for a kill and a quest.** The owner, 2026-08-21:
+        // *"the quest completion EXP should not show up the same way as mob EXP. Quest EXP
+        // and items should show up in the chat log as a gray text."*
+        //
+        // Same packet, one flag: `in_chat` non-zero posts to `FUN_1415eca30(text, 6)`, the
+        // chat log, instead of the on-screen singleton. **[L]** for both destinations.
         out.push(Reply {
             opcode: net::message::MESSAGE,
-            body: net::message::exp_gained(gained, white),
+            body: if to_chat {
+                net::message::exp_gained_in_chat(gained, white)
+            } else {
+                net::message::exp_gained(gained, white)
+            },
             what: format!(
-                "Message: +{gained} exp, {} - the screen message area, not the chat log",
-                if white { "WHITE (majority damage)" } else { "yellow (a share)" }
+                "Message: +{gained} exp, {}, to the {}",
+                if white { "WHITE (majority damage)" } else { "yellow (a share)" },
+                if to_chat { "CHAT LOG (type 6)" } else { "screen message area" }
             ),
         });
         out
@@ -497,8 +514,30 @@ impl Session {
             return Vec::new();
         }
 
+        // **The server decides how much this hurt, and it did not used to.**
+        //
+        // The owner, 2026-08-21: *"all mobs should not only just deal 1 damage to the player."*
+        // Every one of the twelve snail hits in that capture carried `damage = 1` - and this
+        // handler applied the client's number verbatim, so the server had no opinion at all.
+        //
+        // The client's own data says a snail should hurt more than that. Template 2's
+        // `PADamage` is **3**, and `damage::incoming_damage` over that character's real
+        // numbers (level 7, 18 points of `incPDD`) gives **3 or 4**. `damage.rs` carries
+        // that as a pinned test.
+        //
+        // So the two disagree, and the server's number is the one that moves the HP bar.
+        // **Both go in the log line**, because that disagreement is the measurement the next
+        // run is for: if the floating number over the player's head says one thing and the
+        // bar drops by another, that is worth seeing rather than guessing about.
+        //
+        // Falls back to the client's number when the template is unknown or carries no
+        // attack column - a mob we have no data for should still hurt.
+        let claimed = hit.damage;
+        let computed = self.incoming_damage_for(hit.mob_template_id, &chr);
+        let applied = computed.unwrap_or(claimed);
+
         let before = chr.hp;
-        chr.hp = chr.hp.saturating_sub(hit.damage);
+        chr.hp = chr.hp.saturating_sub(applied);
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.notice(format!("Could not save your health: {e}"));
         }
@@ -507,9 +546,16 @@ impl Session {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange::hp_only(chr.hp).build(),
             what: format!(
-                "StatChanged: hit by mob {} (template {}, attack index {}) for {} - hp {} -> {}.                  Bit 10 carries the NEW HP, not a delta; the client computes damage and does                  not apply it.",
-                hit.mob_object_id, hit.mob_template_id, hit.attack_index, hit.damage, before,
-                chr.hp
+                "StatChanged: hit by mob {} (template {}, attack index {}) for {applied} - hp {before} -> {}. The CLIENT claimed {claimed}{}. Bit 10 carries the NEW HP, not a delta.",
+                hit.mob_object_id,
+                hit.mob_template_id,
+                hit.attack_index,
+                chr.hp,
+                match computed {
+                    Some(_) if claimed != applied => " and the server overrode it",
+                    Some(_) => " and the server agreed",
+                    None => " and the server had no template to check it against",
+                }
             ),
         }];
 
@@ -525,6 +571,46 @@ impl Session {
             ));
         }
         out
+    }
+
+
+    /// What a hit from `template` should actually take off, or `None` if we cannot say.
+    ///
+    /// `None` means the template is not in `gm-handbook/mobtemplates.txt` or carries no
+    /// attack column, and the caller then keeps the client's number. That is the safe
+    /// direction: a mob we have no data for should still hurt.
+    ///
+    /// # The defence is the player's worn `incPDD`, summed
+    ///
+    /// It is read off the equipped items rather than stored on the character, for the same
+    /// reason [`Session::dressed`] resolves stats from the template: `crates/store` keeps
+    /// `(slot, itemId)` and a defence column would be a second source of truth for a number
+    /// the client already has its own copy of.
+    ///
+    /// At this scale defence barely matters and that is worth knowing before reading a run:
+    /// 18 points of `incPDD` against a denominator of `5 * (level + 40)` is noise, so a
+    /// naked character and a dressed one take the same from a snail. The term earns its keep
+    /// later, not now.
+    fn incoming_damage_for(
+        &mut self,
+        template: u32,
+        chr: &net::opcode::Character,
+    ) -> Option<u32> {
+        let pa_damage = self.config.mob_attack.get(&template).copied().unwrap_or(0);
+        if pa_damage == 0 {
+            return None;
+        }
+        let wdef: u32 = self
+            .dressed(chr)
+            .iter()
+            .map(|(_, _, stats)| u32::from(stats.stats.inc_pdd))
+            .sum();
+        // A roll in [1.1, 1.5), the half-open span `damage::incoming_window` pins both ends
+        // of. Taken from the session rng so a run is varied and a test can seed it.
+        let span = crate::damage::INCOMING_ROLL_SPAN;
+        let roll = crate::damage::INCOMING_ROLL_LO
+            + (self.rng.next() % 10_000) as f64 * span / 10_000.0;
+        Some(crate::damage::incoming_damage(pa_damage, chr.level, wdef, roll))
     }
 
 

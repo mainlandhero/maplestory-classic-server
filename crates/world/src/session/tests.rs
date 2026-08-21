@@ -614,17 +614,76 @@ fn a_channel_change_is_answered_with_a_migration_for_the_target() {
     let (mut s, store, id) = two_channel_session();
     let out = s.handle(&change_channel(1));
 
-    assert_eq!(out.len(), 1, "exactly one reply, and never zero");
-    assert_eq!(out[0].opcode, net::opcode::MIGRATE_COMMAND);
-    // The address must be the TARGET channel's, not this one's. Getting that backwards
-    // sends the client to the channel it is already on.
-    assert_eq!(&out[0].body[4..8], &[127, 0, 0, 1]);
-    assert_eq!(&out[0].body[8..10], &8486u16.to_le_bytes(), "channel 1's port");
-    assert!(out[0].what.contains("NOT authentication"), "{}", out[0].what);
+    // **This used to assert exactly one `0x0011`, and that reply never arrived.**
+    // `0x0011` is a login-stage opcode, below the channel switch's `0x70` floor, so a
+    // channel connection cannot dispatch it. The owner, 2026-08-21: *"the transfer did not go
+    // through, but I lost all ability to attack"* - `0x00D2` latches on send and only an
+    // inbound handler clears it, so an undispatchable reply strands the player mid-migration.
+    //
+    // The body is measured; the opcode is the one field that cannot be read statically. So
+    // the button sends every candidate, and the hook log names the one that dispatched.
+    // ONE packet, and 0x001A is measured, not guessed: the sweep of 2026-08-21 found it.
+    // The hook log writes a dispatch line per opcode on handler RETURN, and 0x001A took
+    // 354 ms where 0x0019 took 64 us - the long one is the socket teardown and reconnect.
+    assert_eq!(out.len(), 1, "one migrate reply, and never zero");
+    assert_eq!(out[0].opcode, 0x001A);
+
+    for r in &out {
+        // 1 + 4 + 2 + 64. The padding is load-bearing: an over-read throws in the client,
+        // so a wrong guess has to be inert rather than fatal.
+        assert_eq!(r.body.len(), 71, "{:#06x}", r.opcode);
+        assert_eq!(r.body[0], 1, "ok");
+        // The address must be the TARGET channel's, not this one's. Getting that backwards
+        // sends the client to the channel it is already on.
+        assert_eq!(&r.body[1..5], &[127, 0, 0, 1], "network order, straight into sin_addr");
+        assert_eq!(&r.body[5..7], &8486u16.to_le_bytes(), "channel 1's port, LITTLE endian");
+        assert!(r.body[7..].iter().all(|b| *b == 0), "the tail is padding");
+        assert!(r.what.contains("NOT authentication"), "{}", r.what);
+    }
 
     // And a migration was minted for the target, so the other channel can claim it.
     let mut other = Session::new(store, Arc::new(Config { channel_id: 1, ..Config::default() }));
     assert!(other.claim_for_character(id).contains("claimed the migration"));
+}
+
+/// **A channel migration is claimed by CHANNEL, because the packet carries no character.**
+///
+/// Measured 2026-08-21: `0x001A`'s body is `u8 ok, u32 ip, u16 port` - seven bytes, no
+/// character id. The client's `0x007D` on the new channel then reported id **32513**, which
+/// is `01 7f 00 00` read straight back out of our own body. Channel 1 refused it, answered
+/// with the MINIMAL SetField, and the client faulted three seconds later.
+///
+/// A login migration is different - `0x0011` carries the id and the hello echoes it - so the
+/// by-id path stays first and this only runs when it fails.
+#[test]
+fn a_channel_migration_is_claimed_by_channel_when_the_hello_names_nobody() {
+    let (mut s, store, id) = two_channel_session();
+    s.handle(&change_channel(1));
+
+    // Channel 1, and the hello reports the bogus id the real client actually sent.
+    let mut other = Session::new(store, Arc::new(Config { channel_id: 1, ..Config::default() }));
+    let note = other.claim_for_character(32513);
+    assert!(note.contains("by CHANNEL"), "{note}");
+    assert!(note.contains("32513"), "the note must name the id it did not believe: {note}");
+    assert_eq!(other.claimed().expect("claimed").character_id, id, "the real character");
+}
+
+/// Ambiguity is refused rather than guessed, and a claimed migration is not claimable twice.
+#[test]
+fn two_pending_migrations_to_one_channel_are_refused_rather_than_guessed() {
+    let (mut s, store, _) = two_channel_session();
+    s.handle(&change_channel(1));
+
+    // A second, independent migration to the same channel.
+    let other_account = store.create_account("second", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Second".to_string(), ..Default::default() };
+    let second = store.create_character(other_account, 0, &chr).unwrap().id;
+    store.create_migration(other_account, second, 0, 1).unwrap();
+
+    let mut ch1 = Session::new(store.clone(), Arc::new(Config { channel_id: 1, ..Config::default() }));
+    let note = ch1.claim_for_character(32513);
+    assert!(note.contains("no single pending one"), "ambiguity must refuse: {note}");
+    assert!(ch1.claimed().is_none());
 }
 
 /// A channel with no address is one nobody can enter, so it is refused **with a packet**.
@@ -803,7 +862,7 @@ fn enough_experience_levels_the_character_and_says_so() {
 ");
     s.config = Arc::new(Config { exp_curve: curve, ..(*s.config).clone() });
 
-    let out = s.award_experience(15, "a test", true);
+    let out = s.award_experience(15, "a test", true, false);
 
     let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("a 0x007C");
     assert!(stat.what.contains("LEVEL 1 -> 2"), "{}", stat.what);
@@ -834,7 +893,7 @@ fn experience_short_of_a_level_is_just_banked() {
 ");
     s.config = Arc::new(Config { exp_curve: curve, ..(*s.config).clone() });
 
-    let out = s.award_experience(14, "a test", true);
+    let out = s.award_experience(14, "a test", true, false);
     assert!(!out
         .iter()
         .filter(|r| r.opcode == net::notice::CHAT_NOTICE)
@@ -850,7 +909,7 @@ fn experience_short_of_a_level_is_just_banked() {
 #[test]
 fn an_award_of_zero_sends_no_packet() {
     let (mut s, _, _) = gm_session();
-    assert!(s.award_experience(0, "a worthless mob", true).is_empty());
+    assert!(s.award_experience(0, "a worthless mob", true, false).is_empty());
 }
 
 /// **A kill counts toward a started quest.** The owner: *"I accepted Sam's suggestion which
@@ -1621,9 +1680,15 @@ fn completing_a_quest_plays_the_clear_fanfare_and_a_non_completion_does_not() {
     let mut s = Session::new(store, Arc::new(config));
     s.claim_for_character(id);
 
+    // **Filter on the EFFECT byte, not the opcode.** `0x02D1` used to carry only the
+    // QuestClear fanfare; since 2026-08-21 it also carries effect 8, the item line that puts
+    // a quest reward in the chat log. Counting by opcode made this test fail the moment a
+    // second effect started sharing it - which is the test doing its job, and the fix is to
+    // ask the question the test is actually about.
     let fanfares = |rs: &[Reply]| -> Vec<Vec<u8>> {
         rs.iter()
             .filter(|r| r.opcode == net::questeffect::USER_EFFECT_LOCAL)
+            .filter(|r| r.body.first() == Some(&net::questeffect::EFFECT_QUEST_CLEAR))
             .map(|r| r.body.clone())
             .collect()
     };
@@ -1646,7 +1711,10 @@ fn completing_a_quest_plays_the_clear_fanfare_and_a_non_completion_does_not() {
     let record = done.iter().position(|r| r.opcode == net::quest::MESSAGE).expect("the row");
     let effect = done
         .iter()
-        .position(|r| r.opcode == net::questeffect::USER_EFFECT_LOCAL)
+        .position(|r| {
+            r.opcode == net::questeffect::USER_EFFECT_LOCAL
+                && r.body.first() == Some(&net::questeffect::EFFECT_QUEST_CLEAR)
+        })
         .expect("the fanfare");
     assert!(effect > record, "the fanfare must not precede the journal row");
 }
@@ -2048,6 +2116,189 @@ fn an_item_that_restores_nothing_is_not_consumed() {
         s.store.inventory_slot(id, store::InventoryType::Use, 2).unwrap().is_some(),
         "a scroll is not drunk"
     );
+}
+
+/// **A snail hits for more than 1 now, and the server is the one deciding.**
+///
+/// The owner, 2026-08-21: *"all mobs should not only just deal 1 damage to the player."*
+///
+/// `on_user_hit` used to apply the client's own number verbatim, and every one of the twelve
+/// `0x00E5` captures in that run said `1`. The snail's `PADamage` is **3** in the client's
+/// own `Mob.wz`, and `damage::incoming_damage` over that character gives 3 or 4 - so the two
+/// disagree and the server's number is the one that moves the bar.
+///
+/// **The value 3 appears at no offset in any of the twelve bodies**, checked as a u32 across
+/// all 144 offsets. So this is not the server misreading a field that holds the real number
+/// somewhere else - the client is not sending a 3 at all. That mattered, because
+/// `net::userhit::UserHit::damage`'s own doc says its offset is undiscriminated: every
+/// capture carries 1 and 1 also sits at six other offsets.
+#[test]
+fn a_mob_with_an_attack_column_overrides_the_damage_the_client_claimed() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Bitten".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.level = 7;
+    made.max_hp = 146;
+    made.hp = 146;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+
+    // Template 2 is the snail, PADamage 3 - the row from the client's own data.
+    let config = Config {
+        mob_attack: [(2u32, 3u32)].into_iter().collect(),
+        ..Config::default()
+    };
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(made.id);
+
+    // The captured body, verbatim: attack index -1, template 2, and the client's damage of 1.
+    let body = hex(
+        "00000000ffffffff0100000002002100431e140f0000000000000000000001000000010000000100000001000000d3070000d307000001000000000000000000000000000000000000de0100008b010000000000000000000000000000ffffffff00000000ffffffff000000000000000002000000000000000000000000000000000000000100000000000000000000000000",
+    );
+    let replies = s.on_user_hit(&body);
+    assert!(!replies.is_empty(), "being hit is answered with the new HP");
+
+    let after = reload(&s, account_id, made.id);
+    let lost = 146 - after.hp;
+    let (lo, hi) = crate::damage::incoming_window(3, 7, 0);
+    assert!(
+        (lo..=hi).contains(&lost),
+        "the snail should take {lo}..={hi}, not the 1 the client claimed - took {lost}"
+    );
+    assert!(lost > 1, "and above all, more than 1");
+
+    // The log line carries BOTH numbers, because the disagreement is the measurement.
+    let what = &replies[0].what;
+    assert!(what.contains("CLIENT claimed 1"), "{what}");
+    assert!(what.contains("overrode"), "{what}");
+}
+
+/// A mob with no attack column keeps the client's number rather than healing to zero.
+///
+/// The safe direction: a template we have no data for should still hurt.
+#[test]
+fn a_mob_we_have_no_attack_data_for_keeps_the_clients_number() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Bitten2".to_string(), ..Default::default() };
+    let made = store.create_character(account_id, 0, &chr).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    // Config::default() has an empty mob_attack map.
+    let mut s = Session::new(store, Arc::new(Config::default()));
+    s.claim_for_character(made.id);
+
+    let before = reload(&s, account_id, made.id).hp;
+    let body = hex(
+        "00000000ffffffff0100000002002100431e140f0000000000000000000001000000010000000100000001000000d3070000d307000001000000000000000000000000000000000000de0100008b010000000000000000000000000000ffffffff00000000ffffffff000000000000000002000000000000000000000000000000000000000100000000000000000000000000",
+    );
+    let replies = s.on_user_hit(&body);
+    assert_eq!(reload(&s, account_id, made.id).hp, before - 1, "the client's 1 stands");
+    assert!(replies[0].what.contains("no template to check it against"), "{}", replies[0].what);
+}
+
+/// **Roger's whole quest, end to end**, over the real generated data plus the overlay.
+///
+/// The owner, 2026-08-21: *"When accepting their quest, it should automatically lower the user's
+/// health to 25/50, and give users a Roger's Apple to recover their HP with."* and *"Once
+/// the user consumes the apple, the quest would be completed."*
+///
+/// Both halves are authored keys - the WZ has no `Act.<state>.hp` anywhere in its 17 Act
+/// shapes, and `Check.1.item.0` for 1002 carries an id with no count, which is the shape
+/// `research/quest-scripts.md` marked [I] and left open. The owner's two sentences settle it.
+#[test]
+fn rogers_apple_drops_your_health_on_accept_and_completes_when_you_eat_it() {
+    let generated = std::path::Path::new("../../gm-handbook/questlines.txt");
+    let authored = std::path::Path::new("../../data/quest-scripts.txt");
+    if !generated.exists() {
+        return; // generated data, gitignored
+    }
+    let mut quests = crate::config::load_quests(generated);
+    crate::config::overlay_quests(&mut quests, authored);
+    assert_eq!(quests[&1002].set_hp.get(&0), Some(&25), "Act.0.hp came out of the overlay");
+    assert_eq!(quests[&1002].complete_on_consume, Some(2_010_000), "Check.1.consumeitem");
+
+    let config = Config {
+        quests,
+        consumables: crate::consumables::Consumables::parse("2010000, 30, 0, 0, 0\n"),
+        ..Config::default()
+    };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Apple".to_string(), ..Default::default() };
+    let made = store.create_character(account_id, 0, &chr).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(made.id);
+
+    let full = reload(&s, account_id, made.id);
+    assert_eq!(full.hp, full.max_hp, "starts at full health");
+    assert_eq!(full.max_hp, 50, "a fresh character, so 25 really is 25/50");
+
+    // Accept.
+    let accept = s.on_quest_request(&hex("01ea0300000300000044ff130100000000"));
+    assert!(!accept.is_empty());
+    let hurt = reload(&s, account_id, made.id);
+    assert_eq!(hurt.hp, 25, "25/50, which is what the apple is for");
+    let apple = s
+        .store
+        .bag_items(made.id, store::InventoryType::Use)
+        .unwrap()
+        .into_iter()
+        .find(|i| i.item.item_id == 2_010_000)
+        .expect("Roger hands over the apple");
+    assert_eq!(s.store.quest_rows(made.id).unwrap().len(), 1, "and the quest is started");
+
+    // Eat it. The quest finishes because the apple is gone, not because an NPC was clicked.
+    let eaten = s.on_use_item(&net::useitem::use_item(0, apple.slot as i16, 2_010_000, 1));
+    // The apple restores 30 from 25/50, which is 55 - so it caps at 50. That IS the
+    // behaviour the owner asked for in the same breath as the potion: *"or less if it will fill
+    // my HP bar up to full"*. A fresh character cannot show the uncapped 30.
+    assert_eq!(reload(&s, account_id, made.id).hp, 50, "healed to full, not to 55");
+    assert!(
+        eaten.iter().any(|r| r.opcode == net::questeffect::USER_EFFECT_LOCAL),
+        "and the turn-in plays the QuestClear fanfare"
+    );
+    let book = s.store.quest_book(made.id).unwrap();
+    assert!(book.started.is_empty(), "no longer in progress");
+    assert!(book.completed.iter().any(|q| q.quest_id == 1002), "1002 is recorded complete");
+}
+
+/// Eating something no started quest asked for finishes nothing.
+#[test]
+fn eating_an_apple_you_were_never_asked_for_completes_no_quest() {
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(
+        1002u32,
+        crate::config::Quest { complete_on_consume: Some(2_010_000), ..Default::default() },
+    );
+    let config = Config {
+        quests,
+        consumables: crate::consumables::Consumables::parse("2010000, 30, 0, 0, 0\n"),
+        ..Config::default()
+    };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Greedy".to_string(), ..Default::default() };
+    let made = store.create_character(account_id, 0, &chr).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    store
+        .set_inventory_slot(
+            made.id,
+            store::InventoryType::Use,
+            1,
+            &store::Item::bundle(2_010_000, 1),
+        )
+        .unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(made.id);
+
+    let eaten = s.on_use_item(&net::useitem::use_item(0, 1, 2_010_000, 1));
+    assert!(
+        !eaten.iter().any(|r| r.opcode == net::questeffect::USER_EFFECT_LOCAL),
+        "no fanfare for a quest that was never started"
+    );
+    assert!(s.store.quest_book(made.id).unwrap().completed.is_empty());
 }
 
 /// The `0x055B` in a reply list, which is no longer always the first thing in it.

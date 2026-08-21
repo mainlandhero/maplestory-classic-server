@@ -165,6 +165,13 @@ pub struct Config {
     /// Unlike the curve and the drop tables, this **is** the client's data - `tools/dump_mobs.py`
     /// reads it out of `Mob.wz` - so it is generated, gitignored, and not a guess.
     pub mob_exp: HashMap<u32, u32>,
+
+    /// `templateId -> PADamage`, from the same `mobtemplates.txt` as [`Config::mob_exp`].
+    ///
+    /// What a mob hits for, before the player's defence. Empty means the server keeps
+    /// whatever damage the client reported, which is the behaviour that shipped before this
+    /// existed - and which had every snail hitting for 1.
+    pub mob_attack: HashMap<u32, u32>,
     /// What each quest requires: mobs to kill and items to hold. `gm-handbook/questreq.txt`.
     ///
     /// Generated from the client's own `Quest.wz`, so this is the client's data rather than
@@ -772,6 +779,30 @@ pub struct Quest {
     /// numbered lines **in index order**, which is not the same as string order once a
     /// conversation reaches ten lines.
     pub say: HashMap<String, Vec<String>>,
+
+    /// `Act.<state>.hp` - **an AUTHORED key, not a WZ one.**
+    ///
+    /// Set the character's HP to this the moment the quest reaches that state. Roger's quest
+    /// takes you down to 25/50 so the apple has something to heal, and enumerating the whole
+    /// `Act` key space across all 322 quests finds **17 shapes and no `hp` among them** - so
+    /// this behaviour lived in `q1002s`, the script the client does not ship, and it is ours
+    /// to author. `data/quest-scripts.txt`.
+    ///
+    /// Absolute, matching `Act.1.exp`'s convention. Capped at the character's maximum by the
+    /// caller.
+    pub set_hp: HashMap<u8, u32>,
+
+    /// `Check.<state>.consumeitem` - **also AUTHORED.**
+    ///
+    /// The owner, 2026-08-21: *"Once the user consumes the apple, the quest would be completed."*
+    ///
+    /// This is the reading of a shape the WZ *does* ship and nobody could settle: quest
+    /// 1002's `Check.1.item.0` has an **`id` and no `count`**, while 214 other quests carry
+    /// one. `research/quest-scripts.md` called "no count means must-not-hold" **[I]** and
+    /// left it open. The owner's sentence settles it - the quest finishes when the item is gone -
+    /// and this key is that rule made explicit rather than inferred from an absence at
+    /// runtime.
+    pub complete_on_consume: Option<u32>,
 }
 
 /// One `Act.<state>.item.<n>` while it is still being read.
@@ -908,6 +939,20 @@ fn read_quest_rows(text: &str, out: &mut HashMap<u32, Quest>, mode: Overlay) -> 
             }
             "Act" if dotted == "1.exp" && (fill || quest.complete_exp == 0) => {
                 quest.complete_exp = value.parse().unwrap_or(0);
+            }
+            // Authored keys. Neither exists in the WZ - see the fields they set.
+            "Act" if dotted.ends_with(".hp") => {
+                if let (Some(state), Some(hp)) = (
+                    dotted.split('.').next().and_then(|s| s.parse::<u8>().ok()),
+                    value.parse::<u32>().ok(),
+                ) {
+                    quest.set_hp.entry(state).or_insert(hp);
+                }
+            }
+            "Check" if dotted.ends_with(".consumeitem") => {
+                if quest.complete_on_consume.is_none() {
+                    quest.complete_on_consume = value.parse().ok();
+                }
             }
             "Say" => {
                 // The last path segment is the line index; everything before it is the
@@ -1048,6 +1093,13 @@ pub struct MobTemplate {
     pub max_mp: u32,
     pub level: u32,
     pub exp: u32,
+    /// `PADamage` - what the mob hits for before the player's defence.
+    ///
+    /// Column 6 of `mobtemplates.txt`, straight out of this client's own `Mob.wz`. The
+    /// snail (template 2) is **3**. Loaded since 2026-08-21, when it turned out the client
+    /// was reporting **1** for every snail hit and nothing server-side had a number to
+    /// disagree with it.
+    pub pa_damage: u32,
 }
 
 /// Every mob template's stats, from `tools/dump_mobs.py`'s `mobtemplates.txt`.
@@ -1063,12 +1115,16 @@ pub fn load_mob_templates(path: &std::path::Path) -> HashMap<u32, MobTemplate> {
         if f.len() < 5 {
             continue;
         }
-        let n = |i: usize| f[i].parse::<i64>().ok();
+        let n = |i: usize| f.get(i).and_then(|v| v.parse::<i64>().ok());
         let (Some(id), Some(hp), Some(mp), Some(level), Some(exp)) =
             (n(0), n(1), n(2), n(3), n(4))
         else {
             continue;
         };
+        // Column 6. Optional on purpose: the `f.len() < 5` guard above admits a row without
+        // it, and a mob with no attack column should hit for its own nothing rather than
+        // drop out of the table entirely.
+        let pa_damage = n(5).unwrap_or(0).max(0) as u32;
         // A template with no HP would make the client divide by zero. All 193 in this
         // client have one, so a row without is a generator fault and is dropped rather
         // than sent.
@@ -1082,6 +1138,7 @@ pub fn load_mob_templates(path: &std::path::Path) -> HashMap<u32, MobTemplate> {
                 max_mp: mp.max(0) as u32,
                 level: level.max(0) as u32,
                 exp: exp.max(0) as u32,
+                pa_damage,
             },
         );
     }
@@ -1146,6 +1203,7 @@ impl Default for Config {
             drops: crate::droptables::DropTables::default(),
             exp_curve: crate::expcurve::ExpCurve::default(),
             mob_exp: HashMap::new(),
+            mob_attack: HashMap::new(),
             quest_reqs: net::quest::QuestRequirementTable::default(),
             chatter_off: false,
             equips: HashMap::new(),

@@ -1,0 +1,38 @@
+maplecw-world: footholds: 94089 segments across 426 maps (62869 floors, 31220 walls which are never landed on)
+maplecw-world: consumables: 44 items restore something, from gm-handbook/consumables.txt
+maplecw-world: quests: 322 loaded, 5 of them carrying an authored script overlay from data/quest-scripts.txt
+maplecw-world: exp curve: 119 levels; 180 mob templates carry an EXP value
+maplecw-world: fields: 426 maps have a field image
+maplecw-world: drops: 993 rows over 170 mobs, 0 global (event) rows
+maplecw-world: shops: shop "Sam": 2 templates share that name (211, 9) - all of them get it
+maplecw-world: shops: shop "Harry": 2 templates share that name (900016, 508) - all of them get it
+maplecw-world: 39 NPC shops, 932 item rows, 0 unresolved
+17:48:45.554 world 0 channel 1 listening on 127.0.0.1:8486
+17:48:45.554 database C:\MapleCW\maplecw.db
+17:48:45.554 NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending
+17:48:45.554   migration rather than proving who is on the far end. It is single-use.
+17:48:45.554 SET-FIELD PROBE IS ON - which by now means 'the channel answers at all'. The
+17:48:45.554   flag is a misnomer kept for the launch line: without it Session::handle
+17:48:45.554   returns nothing for every packet, so the migration hello goes unanswered and
+17:48:45.554   the client freezes on 'Connecting...'.
+17:48:45.554   With it on, this channel answers: the migration hello with a SetField
+17:48:45.554   carrying the character's real record (presence[0] the stat block, presence[2]
+17:48:45.554   the equipped list), 0x00DC with that field's NPCs and mobs, 0x00D1 with the
+17:48:45.555   portal's destination, 0x00E7 with the !map GM command, and 0x0151 with a
+17:48:45.555   script Say, 0x0104 with the NPC shop, and 0x00D2 with a channel migration.
+17:48:45.555   CONFIRMED on a real client: the dressed character, the bag and its 125 slots,
+17:48:45.555   NPC dialogue, mobs spawning and moving, an unequip that survives a map change.
+17:48:45.555   NOT yet seen on screen: the shop counter, the quest journal, the channel
+17:48:45.555   switch. Dropping an item is refused on purpose - there is nowhere to put it.
+17:49:53.354 connection from ch1 #1 127.0.0.1:60342
+17:49:53.354 -> channel greeting, 22 bytes (no A..F, no version block)
+17:49:53.354 cipher: ASYMMETRIC - the client SENDS AES-256-OFB and RECEIVES a byte subtract,
+17:49:53.354   so we decrypt with AES and encrypt by adding iv[0]. Measured 2026-08-19.
+17:49:53.354 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 45 byte body 0264000000000000000000000002000000abde0952e06ea8ed0883d52fde574f22413f6d4d0000000000000000
+17:49:53.354    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session/
+17:49:53.356 <- 0x007D CLIENT_MIGRATION_HELLO (character id at offset 8, then MAC and machine id), 99 byte body 0000000000000000017f0000aabbccddeeffdeadbeef00000000764d000023000000010000006f30d0a06b30d0a0540784c51e00000028947d75402c352840462c2c32522899b5857d64704954524757544a5470016400000008b90000000000...(+3 bytes, known opcode so capped)
+17:49:53.356    MIGRATION HELLO: character id 32513
+17:49:53.356    character 32513 has no unconsumed migration - it was never minted, or already claimed, or it expired
+17:49:53.356 -> 0x01A0 SET_FIELD SetField, characterData=1, MINIMAL record - the character could not be loaded, so this falls back to the all-flags-clear form. It is answered rather than dropped because an unanswered packet freezes the client's whole UI. It will NOT put the character on a map: with every presence flag clear the stat block never decodes, so there is no map id at all.
+17:49:53.356    body 807659789531dd01010000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+17:49:59.159 ch1 #1 127.0.0.1:60342 ended: An existing connection was forcibly closed by the remote host. (os error 10054)

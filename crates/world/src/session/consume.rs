@@ -91,6 +91,52 @@ impl Session {
             ),
         }];
         out.extend(self.stack_change_replies(inv, slot, left));
+        // **Eating the thing can be the turn-in.** The owner, 2026-08-21: *"Once the user
+        // consumes the apple, the quest would be completed."*
+        out.extend(self.quests_completed_by_consuming(req.item_id));
+        out
+    }
+
+
+    /// Finish any started quest whose completion is *consuming* this item.
+    ///
+    /// `Check.<state>.consumeitem` is an authored key, and it states a rule the WZ only
+    /// implies: quest 1002's `Check.1.item.0` carries an **id and no count** while 214 other
+    /// quests carry one, and `research/quest-scripts.md` marked "no count means must-not-hold"
+    /// **[I]** and left it open. The owner's sentence settles it.
+    ///
+    /// **Only a quest that is actually started counts.** Eating an apple you were never asked
+    /// for finishes nothing, and eating one twice cannot finish it twice - `complete_quest`
+    /// returns `Ok(None)` for a quest with no in-progress row and
+    /// [`Session::record_quest_complete`] already declines to play a fanfare for that.
+    fn quests_completed_by_consuming(&mut self, item_id: u32) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Ok(rows) = self.store.quest_rows(chr.id) else { return Vec::new() };
+        let finished: Vec<u32> = rows
+            .iter()
+            // **In progress only.** `quest_rows` returns completed rows too, so without this
+            // a second apple would re-complete a quest that is already finished - and play
+            // its fanfare again.
+            .filter(|r| r.state == store::QuestState::InProgress)
+            .map(|r| r.quest_id)
+            .filter(|id| {
+                self.config
+                    .quests
+                    .get(id)
+                    .and_then(|q| q.complete_on_consume)
+                    .is_some_and(|want| want == item_id)
+            })
+            .collect();
+        let mut out = Vec::new();
+        for quest_id in finished {
+            let next = self
+                .config
+                .quests
+                .get(&quest_id)
+                .and_then(|q| q.next_quest)
+                .unwrap_or(quest_id);
+            out.extend(self.record_quest_complete(quest_id, next));
+        }
         out
     }
 

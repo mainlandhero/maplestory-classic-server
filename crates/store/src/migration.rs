@@ -133,6 +133,56 @@ impl Store {
         .map_err(Into::into)
     }
 
+    /// Claim the **one** migration pending for this world and channel, whoever it is for.
+    ///
+    /// `None` when there is no pending migration, and - deliberately - also when there is
+    /// more than one. Ambiguity is refused rather than guessed.
+    ///
+    /// # Why this exists, and it is not a shortcut
+    ///
+    /// A **channel** migration cannot be claimed by character id, because the packet that
+    /// causes it does not carry one. Measured 2026-08-21: the channel-migrate reply
+    /// (`0x001A`) is `u8 ok, u32 ip, u16 port` and nothing else - seven bytes, no character.
+    /// The client's `0x007D` hello on the new channel then reported character id **32513**,
+    /// which is `01 7f 00 00` read straight back out of our own body. So the id in the hello
+    /// is not the character's; there is nothing in that flow that is.
+    ///
+    /// The **login** migration is different: `0x0011` carries the character id, the hello
+    /// echoes it, and [`Store::claim_migration_for_character`] works. This is the fallback
+    /// for the other case, and the caller only reaches it after that one has failed.
+    ///
+    /// **Single-player is what makes it sound.** This server has one account and one player;
+    /// two simultaneous pending migrations to the same channel cannot happen without a second
+    /// person, and if they ever do this returns `None` rather than handing one player's
+    /// character to another's connection. The caller says loudly in the log which route
+    /// claimed the session.
+    pub fn claim_sole_migration_for_channel(
+        &self,
+        world_id: u32,
+        channel_id: u32,
+    ) -> Result<Option<ClaimedMigration>> {
+        let now = Store::now();
+        let seeds: Vec<u32> = {
+            let conn = self.conn();
+            // LIMIT 2: enough to tell "exactly one" from "more than one", and no more.
+            let mut stmt = conn.prepare(
+                "SELECT seed FROM migrations
+                  WHERE world_id = ?1 AND channel_id = ?2
+                    AND consumed_at IS NULL AND created_at >= ?3
+                  ORDER BY created_at DESC, rowid DESC LIMIT 2",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![world_id, channel_id, now - MIGRATION_TTL_SECS],
+                |row| row.get::<_, u32>(0),
+            )?;
+            rows.collect::<std::result::Result<Vec<u32>, _>>()?
+        };
+        match seeds.as_slice() {
+            [seed] => self.claim_migration(*seed),
+            _ => Ok(None),
+        }
+    }
+
     /// Drop consumed and expired migrations. Returns how many went.
     pub fn purge_migrations(&self) -> Result<usize> {
         let conn = self.conn();

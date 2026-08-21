@@ -1353,6 +1353,77 @@ mod tests {
         assert!(armoured <= bare);
     }
 
+    /// **Adding STR does raise damage - but almost none of it at the bottom.**
+    ///
+    /// The owner, 2026-08-21: *"by adding stats to my character, my damage isn't
+    /// changing/increasing."* This is character 206 as the database actually held it after
+    /// that run: level 7, DEX 10, the `1312000` axe whose `incWAT` is 17, no mastery skill.
+    /// The only thing that changed was STR, 5 before the ability points and 30 after.
+    ///
+    /// The mastery term is what makes the bottom look frozen. `M = (mastery/10 + 0.1) * 0.8`
+    /// is **0.08** with no mastery skill, so the primary stat contributes a *twelfth* of its
+    /// weight to the minimum and its full weight to the maximum. Six times the STR moves the
+    /// floor by under a point and the ceiling by nearly eight.
+    ///
+    /// Every number below is computed, not asserted from a hand calculation.
+    #[test]
+    fn six_times_the_str_moves_the_ceiling_and_barely_moves_the_floor() {
+        let kit = |strength: u32| Attacker {
+            total_watk: 17,
+            stats: Stats { strength, dexterity: 10, intelligence: 5, luck: 5 },
+            mastery: 0,
+            attack_power: 0,
+            skill_damage_percent: 100,
+        };
+        let class = WeaponClass::from_item_id(1_312_000).expect("a one-handed axe");
+        let action = inherited_action(class);
+
+        let (lo5, hi5) = physical_window(&kit(5), class, action, 0).expect("a real multiplier");
+        let (lo30, hi30) = physical_window(&kit(30), class, action, 0).unwrap();
+
+        assert!(hi30 > hi5 + 5.0, "the ceiling must move: {hi5} -> {hi30}");
+        assert!(lo30 - lo5 < 1.0, "and the floor must NOT: {lo5} -> {lo30}");
+
+        // The measured hits from that run, after the ability points were spent. The two
+        // smallest (6 and 7) are final blows capped at the snail's remaining HP, so they are
+        // not damage rolls and are excluded.
+        let observed = [18u64, 19, 19, 19, 21, 21, 24, 26];
+        let (top5, top30) = (finish(hi5), finish(hi30));
+        assert!(
+            observed.iter().any(|d| *d > top5),
+            "if STR did nothing, nothing could exceed {top5}; observed {observed:?}"
+        );
+        assert!(
+            observed.iter().all(|d| *d <= top30),
+            "and everything must fit under the STR-30 ceiling {top30}"
+        );
+    }
+
+    /// **A snail should hit this character for 3 or 4, and the client says 1.**
+    ///
+    /// The owner: *"all mobs should not only just deal 1 damage to the player."* Character 206 at
+    /// level 7 wearing 18 points of `incPDD`, against template 2 whose `PADamage` is 3 - both
+    /// numbers out of the client's own data.
+    ///
+    /// This is a **disagreement with the client, not a server bug**: `Session::on_user_hit`
+    /// takes the damage straight out of the client's `0x00E5`, and every one of the twelve
+    /// hits in that capture said `1`. So either this formula is wrong for the body-touch
+    /// path (`attack index -1`, which is what all twelve were) or the client is not using
+    /// `PADamage` there. Recorded as a pinned expectation so the next measurement has
+    /// something to contradict.
+    #[test]
+    fn a_snail_is_predicted_to_hit_for_more_than_the_one_the_client_reports() {
+        // template 2: PADamage 3. Character 206: level 7, 6+6+4+2 = 18 incPDD.
+        let (lo, hi) = incoming_window(3, 7, 18);
+        assert!(lo >= 3, "the floor is {lo}, not 1");
+        assert!(hi <= 5, "and the ceiling is {hi}");
+        // Defence barely matters at this scale, which is the point: 18 DEF against a
+        // denominator of 5 * (7 + 40) is noise. Naked, the same snail hits for the same.
+        let (naked_lo, naked_hi) = incoming_window(3, 7, 0);
+        assert_eq!((naked_lo, naked_hi), (3, 4));
+        assert!(lo >= naked_lo - 1 && hi >= naked_hi - 1);
+    }
+
     #[test]
     fn the_incoming_window_is_ordered_and_the_roll_is_a_multiplier() {
         let (lo, hi) = incoming_window(300, 20, 10);

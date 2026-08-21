@@ -8,6 +8,15 @@ repo's own `wz-dump`, and the text already in `research/`.
 Markers: **[L]** read out of the image or a file on disk, **[D]** derived from those,
 **[I]** inferred / candidate.
 
+> **Superseded in two places by `research/npc-fade.md` (2026-08-21, with Ghidra).**
+> That pass decompiled `FUN_141e4a5d0` and layer `vtable+0x198` — the blocker §4 names below —
+> and found they are the **z-order setter**, with a byte-for-byte twin in `CMob`
+> (`FUN_141cb9fd0`) that runs unconditionally on every mob, including the instant
+> `appearType = -1` ones. **Not a fade.** It also corrects §3.1 twice: the `0xC0000000` write
+> is *gated on a template-id whitelist*, not unconditional, and bytes 12..19 do **not** write
+> "the same epoch" — they override the computed z. Everything else below stands, and §4's
+> negative was independently reproduced with a whole-image inverted sweep.
+
 ---
 
 ## 0. Answer up front
@@ -357,6 +366,13 @@ If the coordinator wants that closed, **the function to decompile is `FUN_141e4a
 — it is the only unconditional, time-computing call on the NPC creation path, and it is
 where an "animation starts now" versus "animation started an eon ago" difference would live.
 I am naming it rather than guessing at it, per the brief.
+
+> **Done, 2026-08-21 — `research/npc-fade.md`.** It is not a time and not a fade: it is z.
+> `+0x190`/`+0x198` are a `get`/`put` int pair on Gr2D layer interface
+> `{6DC8C7CE-8E81-4420-B4F6-4B60B7D5FCDF}`, the value is
+> `((layer*3000) + within)*10 - 2^30 - k`, and `CMob::FUN_141cb9fd0` computes the identical
+> thing with the identical helper on every mob. The remaining hole is narrower and named
+> there: the layer implementation inside `Gr2D_DX11.dll`, which is not in the Ghidra project.
 
 ---
 

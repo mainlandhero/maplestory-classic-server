@@ -104,9 +104,13 @@ stand as written.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-21, after a four-issue run and four parallel agents.** Read this
-section and nothing else to know where the project is. Everything under it is older and kept
-for its working, not its verdicts.
+**Last updated 2026-08-21, end of day: seven parallel agents and five client runs.** Read
+this section and nothing else to know where the project is. Everything under it is older and
+kept for its working, not its verdicts.
+
+**The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
+`.NOTES` block and the `Write-Host` dialogue the launcher prints on screen - and both must be
+kept current. `CLAUDE.md` has the section on why.
 
 #### CONFIRMED on a real client
 
@@ -124,6 +128,9 @@ for its working, not its verdicts.
 | **equipping, including a swap** | *"Wearing an item no longer crashes."* And this **kills the heap-corruption repro** - see below |
 | **ability points** | *"Assigning AP is fine now, in bulk and in singles."* Both `0x0138` and `0x0139` |
 | **the job change** | *"the job sound is fine now"* - `0x007C` bit 5, and the client plays the effect and sound itself |
+| **the quest-finish fanfare** | *"the quest completion SFX is now working"* - `0x02D1` effect 15, sound and no picture as predicted |
+| **Roger's quest opens** | the authored overlay: their real opening, a **Next**, then an Accept/Decline box |
+| **THE CHANNEL MIGRATE OPCODE IS `0x001A`** | measured 2026-08-21. The client tore down, connected to **127.0.0.1:8486** and sent a migration hello - so `u32 ip` network-order and `u16 port` little-endian are confirmed too |
 
 #### WIRED, and NOT yet seen on a screen
 
@@ -181,6 +188,75 @@ AP handler works at all - measured, not feared: in `world-20260821-001440.log` a
   `03 01 0200000000000000 00 0000...` - **byte-for-byte the same shape** as the `+200` lines
   from kills in the same session. Quest 1001's `Act.1.exp` is literally **2**. Two independent
   passes reached that separately. *Nothing was built for this*, which is the right outcome.
+* **"Adding stats doesn't change my damage" - it does, and the floor is what stands still.**
+  Character 206's real kit (level 7, DEX 10, the `1312000` axe, `incWAT` **17**, no mastery)
+  gives **15..20 at STR 5** and **16..27 at STR 30**. Six times the STR moves the ceiling by
+  7.7 points and the floor by **0.6**, because `M = (mastery/10 + 0.1) * 0.8` is **0.08**
+  without a mastery skill - the primary stat contributes a twelfth of its weight to the
+  minimum and its full weight to the maximum. Pinned as a test in `damage.rs`.
+  **And the measurement agrees**: four of the eight real hits in that run (21, 21, 24, 26)
+  are **above the STR-5 ceiling of 20**, so the client is scaling with STR. What is not
+  scaling is the bottom of the range, which is what a player watching small numbers sees.
+  **`incWAT` multiplies the entire expression**, so a better weapon moves damage far more
+  than stats do at this level.
+* **Mobs hit for 1 because the CLIENT said 1, and the server had no opinion.**
+  `on_user_hit` applied `hit.damage` verbatim. Template 2's `PADamage` is **3** and
+  `damage::incoming_damage` over that character gives **3 or 4**.
+  **The value 3 appears at no offset in any of the twelve `0x00E5` bodies** - checked as a
+  `u32` across all 144 offsets - so this is not the server misreading a field that holds the
+  real number elsewhere. That check mattered: `UserHit::damage`'s own doc says its offset is
+  **undiscriminated**, because every capture carries 1 and 1 also sits at six other offsets.
+  The server now computes its own from the client's own `Mob.wz` data and **logs both
+  numbers**, so the next run says whether the floating number and the health bar disagree on
+  screen.
+* **The channel migrate is `0x001A`, and a sweep found it in one run.** `research/change-
+  channel-reply.md` had everything about that packet except its opcode, which no scan could
+  reach - `FUN_1415d8c00` has zero callers of every kind, zero 4-byte RVA references, and
+  `.themida` has `SizeOfRawData = 0`. Ten candidates went out and the **hook log named the
+  winner**, because it writes one dispatch line per inbound opcode on handler *return*:
+  `0x0019` took 64 us and did nothing, `0x001A` took **354 ms** and the socket closed.
+* **And the same run showed why the migration still failed.** A channel migrate carries **no
+  character id** - seven bytes, `ok`/`ip`/`port` - so the client's `0x007D` on the new channel
+  reported id **32513**, which is `01 7f 00 00` read straight back out of our own body.
+  Channel 1 refused it, answered with the **MINIMAL SetField** (whose own doc says it will not
+  put a character on a map), and the client faulted 3.2 s later. A channel migration is now
+  claimed **by channel** when the hello names nobody, and refuses when more than one is
+  pending rather than guessing.
+* **Answering `0x00D2` with `0x0011` was worse than not answering.** `0x0011` is a
+  login-stage opcode below the channel switch's `0x70` floor, so it could never dispatch -
+  and `0x00D2` **latches on send**, like `0x0107`, `0x010E` and both AP requests. The owner: *"the
+  transfer did not go through, but I lost all ability to attack once the attempt was made."*
+  Both halves are that one fact.
+* **Roger's Accept was being dropped by the parser.** The dialogue was right all along - the
+  overlay loaded, the Accept box drew - and `parse_script_reply` read a `u32 echo` and a
+  string unconditionally. **A yes/no box replies with SIX bytes** (`handle, type, action`) and
+  echoes nothing, so the reader errored, `on_script_reply` saw `None`, and the accept vanished.
+  No HP drop, no apple, and clicking Roger again replayed the opening. The module already
+  documented the *outbound* half of that rule and the inbound parser did not mirror it.
+* **"Create a character" was dead after any Log Out, and the delete was a red herring.** The
+  client's handshake calls `FUN_140c9e8a0`, which stores plaintext **0** into the flag gating
+  the button, on **every** success - and our `create=on` patch latched on a static bool and
+  set it once per *launch*. `login.log` had two `0x0010`s; the hook log had one
+  `called FUN_140c9e230`. So creation worked on the first login of a launch and nowhere else.
+  Now re-armed per login result, and a re-arm prints.
+* **`0x009E` is the client's "I could not handle this packet" report** - a gift, like
+  `0x025F` for drops. Its body carries the offending **opcode and body verbatim**. It appears
+  in no other run in this repo, which is what made it a discriminator rather than noise.
+* **The crash-dump instrument was configured and switched off**, and is now on - but **still
+  has not produced a dump**, including for a clean `0xC0000005`. `dumps/` is empty.
+  Until a `.dmp` actually appears there, no run should be spent on the heap corruption.
+* **"The server cannot fix the NPC fade" was my over-generalisation, and the owner caught it.** Two agents proved a real negative - no field of `0x044F` controls it - and I restated that as *the server has no lever*, which does not follow. The owner: *"You shouldn't need to patch the client. Are there no way for the server to send the NPC data to the client so that it appears instantly?"* There is a second creation packet, `0x0451`, it sets a different state byte, and it is the one mobs get. Both agents were enumerating the wrong list; so was I when I accepted the conclusion.
+* **The dump instrument was configured and switched off at the master switch.** The owner,
+  reasonably, believed crash dumps were enabled - `HKLM\...\Windows Error Reporting\
+  LocalDumps\MapleStory.exe` points `DumpFolder` at the repo's `dumps\`, `DumpType` 2 (full),
+  `DumpCount` 2. All correct. But
+  **`HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\Disabled = 1`** - WER is off
+  machine-wide, so `WerFault` never runs and never honours LocalDumps. **Five crashes since
+  the folder was pointed at the repo on 2026-08-20 23:24 have produced zero dumps**, and the
+  newest file anywhere on the machine is from 2026-08-19.
+  This is `CLAUDE.md`'s own rule biting: an instrument that *looks* armed and is not. Page
+  heap is separately absent from IFEO, which the 418 MB peak working set independently
+  confirms - a page-heap run peaks near 990 MB.
 * **A byte I swapped killed the client, and the comparison is the cleanest this project has
   produced.** A static pass read `0x044F` byte 20 as the facing bool and byte 21 as the
   animation action, both **[L]** off the listing, so they were swapped and byte 21 given the
@@ -277,20 +353,27 @@ AP handler works at all - measured, not feared: in `world-20260821-001440.log` a
 
 #### What to do next, in order
 
-**Nine of these were done on 2026-08-21 by six agents in parallel. Everything below is what
-is left, and the top three all need a client run rather than more analysis.**
+**Everything here is one client run away from an answer, and the top two are the same run.**
+The test plan is in `tools/test-server.ps1` - both the `.NOTES` block and the on-screen
+`Write-Host` dialogue.
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **The heap corruption - and the repro is DEAD** | The owner, 2026-08-21 second run: *"Wearing an item no longer crashes."* So the equip was a **coincidence**, exactly as the agent's own honest verdict allowed for, and `research/equip-crash.md`'s "candidate trigger, not a demonstrated cause" was right to hedge. Five sessions have now died at 193-482 s with no equipping at all. **There is no reproducer again**, and the next step is back to a WER dump under page heap - never attach |
-| 2 | **`!migsweep`, and then delete it** | The channel migrate reply is `FUN_1415d8c00`, a **socket-level** handler; its body is fully measured but **its opcode cannot be read statically** - zero callers, zero RVA references, `.themida` `SizeOfRawData = 0`. The sweep sends ten candidates and the hook log names the winner. Once it does, `on_change_channel` is a two-line change |
-| 3 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without them: validation needs the **action** and the **skill id**, and neither is parsed out of the attack header. Without them the ceiling maximises over every action and only catches a client claiming 500. `research/damage-formula.md`. Highest-value next step for goal J |
-| 4 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
-| 5 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it. What is left is the NPC path: `research/job-advancement.md` §8.1 has the seven-step exchange. The instructors are **not in the towns** - 511 is on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, and a test in `jobs.rs` pins that |
-| 6 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. Re-enumerating all 1760 equip images finds **`attackSpeed` and `attack` on 203 weapons each**, neither carried into `equips.txt` - so no caller can supply a real weapon speed today |
-| 7 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 and need `Check.0.job` satisfied first |
-| 8 | **NPCs fading in - PARKED, with a named blocker** | `0x044F` carries **no** appear-type field: all 20 reads are attributed and none reaches an alpha, a visibility timer or an animation mode. If it is to be closed rather than parked, the function to decompile is **`FUN_141e4a5d0`** with **layer `vtable+0x198`** - the only unconditional, time-computing call on the NPC creation path. Named rather than guessed |
-| 9 | **Death, and mob->player damage** | `damage::incoming_damage` is written and deliberately **not** wired: it replaces a flat 3 with a rolled 3-4 on confirmed-working code, so it is a behaviour change that deserves its own run |
+| 1 | **Finish the channel change** | The opcode is **`0x001A`, measured**, and the body is confirmed - the client connected to 8486. What failed was identification: a channel migrate carries **no character id**, the hello reported `32513` (our own `01 7f 00 00`), channel 1 refused, sent the **MINIMAL SetField**, and the client faulted 3.2 s later. Claim-by-channel is wired. **If the fault goes away with it, the minimal SetField is a loaded gun** and needs rethinking rather than being the documented safe fallback |
+| 2 | **Whether the crash instrument works at all** | WER is now `Disabled = 0` and LocalDumps points at `dumps\`, and a clean `0xC0000005` still produced **nothing**. Check `dumps\` after the next death before spending anything else on the heap corruption. An instrument that looks armed and is not has now cost this project twice |
+| 3 | **NPCs fading in - `!npcecho`** | Two passes said the server had no lever; both enumerated the **fields of `0x044F`** rather than the **packets the pool accepts**. There are two that create an NPC: `0x044F` (`or [obj+0x38],1`) and **`0x0451`** (`mov byte [obj+0x38],2`, then the identical body). **The case that works uses the second**: mobs get `0x03C6` *and* `0x03D2`. `!npcecho` compares both routes in one run |
+| 4 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither of which is parsed out of the attack header. `research/damage-formula.md`. Highest-value next step for goal J |
+| 5 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
+| 6 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; what is left is the NPC path. `research/job-advancement.md` 8.1 has the seven-step exchange. The instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
+| 7 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry **`attackSpeed` and `attack` on 203 weapons each**, neither in `equips.txt` - so no caller can supply a real weapon speed |
+| 8 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
+| 9 | **Quest ITEM rewards, if the chat line lands** | Wired to `0x02D1` effect 8, category 6, which the colour table says is grey. If it does not appear, the fallback question is whether category 6 is a tab that window shows - send `chat_line(11, ...)` to tell those apart |
+| 10 | **Death, and mob->player damage tuning** | `damage::incoming_damage` is now authoritative for mob hits. Death itself is still unbuilt |
+
+**Two refusal paths still send a packet the client cannot dispatch.** `change_channel_refused`
+answers with `0x0011`, and so does the no-such-channel case - both undispatchable on a channel
+socket, so neither clears the `0x00D2` latch. Nothing decoded can. Said out loud rather than
+left to be rediscovered.
 
 **Two contradictions in this repo, both found 2026-08-21 and neither adjudicated:**
 

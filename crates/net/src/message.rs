@@ -30,6 +30,27 @@
 //! The owner's screenshot says `You have gained experience (+211)`. That wording is **not** in
 //! this client — it is a different build. Ours will read `You received EXP (+211)`.
 //!
+//! # The other half of the request, added 2026-08-21
+//!
+//! > *"Quest EXP and items should show up in the chat log as a gray text."*
+//!
+//! All 36 sub-cases have now been enumerated — **`research/message-subcases.md`** — and the
+//! answer is in two parts:
+//!
+//! * **No `0x0089` sub-case draws `<Item> x<n> earned. (<Tab>)` in the chat log.** Verified
+//!   negative: string `0x00EC` is loaded by exactly two functions in the whole image, and
+//!   the `0x0089` one is type 0 sub-mode 0, whose chat-log site is gated on a `fieldType`
+//!   no map in this client has.
+//! * **The other function is the `0x02D1` user-effect handler, and its effect `8` does
+//!   exactly that** — see [`item_gained_in_chat`], which is in this file but is **not this
+//!   opcode**.
+//!
+//! The enumeration also turned up [`chat_line`] (sub-case 12), which posts arbitrary server
+//! text at a **server-chosen chat category** — so the colour and tab that
+//! [`crate::notice::CHAT_NOTICE`] hard-codes are controllable after all. Chat category 6 is
+//! `0xFFBBBBBB`, grey; category 7, which `0x00BB` uses, is `0xFFFFFF00`, yellow.
+//! See [`chat_category`].
+//!
 //! # Nothing here authenticates
 //!
 //! As everywhere in this project, the channel socket carries no credentials.
@@ -73,6 +94,73 @@ pub mod kind {
     /// Mesos, as a *stat change* rather than a pick-up. `FUN_142d5f990`, `u64, u32, str`,
     /// string `0xE1`. **Not built here** — the trailing string is unread. **[L]**
     pub const MESO: u8 = 6;
+
+    // The rest of the table was enumerated on 2026-08-21 — every arm, not just the
+    // promising ones. `research/message-subcases.md` has all 36 rows with the body each
+    // one reads and where each one posts. Only the two that this module builds are named
+    // here; naming the others would invite sending them without the widths.
+
+    /// **A chat-log line whose words *and* category the server chooses.** Inline at
+    /// `0x142d4437f`. Body after this byte is `u32 chatType, str text`, both read
+    /// unconditionally (`142d44382`, `142d4439d`), then
+    /// `FUN_1415eca30(&text, chatType)`. **[L]**
+    ///
+    /// `142d4438f cmp eax,0x24 / cmova ebx,r14d` clamps anything above `0x24` to `11`, and
+    /// `142d443a7`/`142d443ac` drop a null or empty string in silence.
+    ///
+    /// This is the arm that makes [`crate::notice::CHAT_NOTICE`]'s *"colour and tab are not
+    /// controllable"* obsolete: same printer, category off the wire.
+    pub const CHAT_LINE: u8 = 12;
+
+    /// A chat-log line at the fixed generic category `11`. Inline at `0x142d4433b`: one
+    /// `str` at `142d44342`, then `mov edx,0xb / call 0x1415eca30`. **[L]**
+    ///
+    /// Strictly less capable than [`CHAT_LINE`] and four bytes shorter. Kept because it is
+    /// the smaller body if category 11 is what is wanted anyway.
+    pub const CHAT_LINE_SYSTEM: u8 = 11;
+}
+
+/// The `type` argument of `FUN_1415eca30(text, type)` — a chat **category**, which picks
+/// both the list the line lands in (`FUN_1415a3010` indexes `this + 0x20 + type*24`, 36 of
+/// them, each trimmed from 500 lines back to 100) and its colour.
+///
+/// The colours are literal ARGB constants in `FUN_1415b6c00`'s jump table at
+/// `0x1415b6d60`, indexed by `type - 1` and bounded at `0x23`. Read out of the PE on
+/// 2026-08-21. **[L]**
+///
+/// ```text
+/// 1..5   dynamic - from a config object at +0x174/+0x178/+0x17c/+0x180
+/// 6      0xFFBBBBBB   grey, RGB(187,187,187)
+/// 7      0xFFFFFF00   yellow                    <- what 0x00BB uses
+/// 8      0xFFFFF080
+/// 9      0xFF60CEFF
+/// 10     0xFF000000
+/// 11     0xFFFFAFAF                             <- 723 of the client's 1133 posts
+/// 12     0xFF003F7F
+/// 13     0xFF770042
+/// 14     0xFFFFFFFF   white (also every out-of-range type)
+/// ```
+///
+/// **The named blind spot**, because a colour claim without one is worth nothing here: the
+/// colour table is consulted on the `else` of `0x1415a31bc test rdi,rdi / je`, where
+/// `rdi = *(arg8)`. A non-null pointer there sends `0x1415a31c9`'s virtual call to supply
+/// the colour instead. arg8 traces back to `&[rbp-0x69]` in `FUN_1415a87a0`
+/// (`0x1415a8891`); what [`crate::notice::CHAT_NOTICE`]'s empty-object arguments leave in
+/// it was **not** established. So the constants are **[L]** and "the line renders grey" is
+/// **[D]**.
+pub mod chat_category {
+    /// **Grey, `0xFFBBBBBB`.** Where kind 3's `in_chat` EXP line goes, and where `0x02D1`
+    /// effect 8 puts an item line. **[L]** for the constant.
+    pub const GREY: u32 = 6;
+    /// **Yellow, `0xFFFFFF00`.** What `0x00BB` hard-codes. **[L]**
+    pub const YELLOW: u32 = 7;
+    /// The generic system category, `0xFFFFAFAF`. 723 of the client's 1133
+    /// `FUN_1415eca30` call sites use it, so it is the one most likely to be visible in
+    /// whatever chat tab the player has open. **[L]** for the count and the colour.
+    pub const SYSTEM: u32 = 11;
+    /// The highest category `142d4438f cmp eax,0x24` lets through unchanged. Above it the
+    /// client silently substitutes [`SYSTEM`]. **[L]**
+    pub const MAX: u32 = 0x24;
 }
 
 /// The second body byte of [`kind::DROP_PICKUP`], read **signed** at `0x142d59393`.
@@ -311,6 +399,30 @@ pub fn exp_gained(exp: u64, white: bool) -> Vec<u8> {
     experience(exp, white, false)
 }
 
+/// `You received EXP (+n)` **in the chat log**, as a grey type-6 line.
+///
+/// The owner, 2026-08-21, having seen quest EXP drawn the same way as a kill:
+/// *"Quest EXP and items should show up in the chat log as a gray text, 'You have received
+/// EXP'."*
+///
+/// This is the same packet with `in_chat` set. `dst+0x10` is the switch and both
+/// destinations are **[L]**: `0` posts to `FUN_142572050` on the on-screen singleton, and
+/// non-zero posts to `FUN_1415eca30(text, 6)` - the chat log, one of 36 categories, each
+/// with its own colour table and a 500-line scrollback.
+///
+/// The string the client composes is `0x00C1`, `'You received EXP (+%lld)'`, which is the
+/// wording in the owner's reference screenshot.
+///
+/// **`in_chat` costs a byte of its own**, and that is the trap in this packet: a non-zero
+/// value makes `1408cfd75` read one more `u8`. [`experience_with_bonuses`] writes it, and a
+/// `0` there makes the client skip the conditional after it. Both or neither.
+///
+/// `white` still picks the colour of the on-screen post and is passed through unchanged, so
+/// the two forms differ in destination and nothing else.
+pub fn exp_gained_in_chat(exp: u64, white: bool) -> Vec<u8> {
+    experience(exp, white, true)
+}
+
 // ---------------------------------------------------------------------------------------
 // Pick-ups
 // ---------------------------------------------------------------------------------------
@@ -425,6 +537,212 @@ pub fn fame(delta: i32) -> Vec<u8> {
     w.u8(kind::FAME);
     w.i32(delta);
     w.into_vec()
+}
+
+// ---------------------------------------------------------------------------------------
+// Chat-log lines the server writes itself — sub-cases 12 and 11
+// ---------------------------------------------------------------------------------------
+
+/// A chat-log line at a category the server picks. Sub-case [`kind::CHAT_LINE`].
+///
+/// ```text
+/// u8   12
+/// u32  category      142d44382    0..=0x24; above that the client substitutes 11
+/// str  text          142d4439d    u16 length then bytes
+/// ```
+///
+/// Both reads are **unconditional** and the arm reads nothing else, so this body cannot be
+/// short. **[L]** `tools/reads.py 0x142d43ee0 1` lists exactly `142d44382` and `142d4439d`
+/// inside it, at the same addresses `tools/listing.py` marks; cross-checked 2026-08-21.
+///
+/// # Two silent no-ops
+///
+/// * **Empty text.** `142d443a7 test rcx,rcx / je` and `142d443ac cmp byte [rcx],0 / je`
+///   both jump past the post. Nothing is drawn and nothing breaks.
+/// * **A category above `0x24`.** Not an error — the client just uses
+///   [`chat_category::SYSTEM`] instead.
+///
+/// Use [`chat_category::GREY`] for the grey the owner asked for. See [`chat_category`] for the
+/// full colour table and for the one thing about it that is **[D]** rather than **[L]**.
+pub fn chat_line(category: u32, text: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(kind::CHAT_LINE);
+    w.u32(category);
+    w.str(text);
+    w.into_vec()
+}
+
+/// A chat-log line at the fixed category 11. Sub-case [`kind::CHAT_LINE_SYSTEM`].
+///
+/// ```text
+/// u8   11
+/// str  text          142d44342
+/// ```
+///
+/// One `str` and nothing else. Empty text is dropped at `142d4434f`/`142d44354`. **[L]**
+///
+/// [`chat_line`] with [`chat_category::SYSTEM`] produces the same line on screen for four
+/// more bytes; this exists because it is the smaller body and because it is the arm that
+/// proves category 11 is reachable without trusting the clamp.
+pub fn chat_line_system(text: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(kind::CHAT_LINE_SYSTEM);
+    w.str(text);
+    w.into_vec()
+}
+
+// ---------------------------------------------------------------------------------------
+// `<Item> x<n> earned. (<Tab>)` IN THE CHAT LOG — and this is a DIFFERENT OPCODE
+// ---------------------------------------------------------------------------------------
+
+/// **This is not `0x0089`.** Send [`item_gained_in_chat`] with
+/// [`crate::stats::USER_EFFECT_LOCAL`] (`0x02D1`), not with [`MESSAGE`].
+///
+/// It lives in this file because this file is where the question was answered, and moving
+/// it later is a rename. `crates/net/src/questeffect.rs` is the module that owns `0x02D1`
+/// and is the natural home once someone integrates.
+///
+/// A test below pins the two opcodes apart so a copy-paste cannot send it as `0x0089`.
+pub fn item_gained_in_chat_is_not_the_message_opcode() {}
+
+/// The `0x02D1` effect id that draws `'%s x%d earned. (%s)'` **into the chat log**.
+///
+/// `FUN_1427863f0` reads one `u8` at `0x14278644e` and runs it through a **first** switch
+/// on `effect - 8`, bounded at `0x45`, via a two-level MSVC table: **[L]**
+///
+/// ```text
+/// 142786482  lea   ecx, [rbx - 8]
+/// 1427864a8  cmp   ecx, 0x45 / ja 0x14278bd20
+/// 1427864b4  movzx eax, byte [0x142791300 + idx]      byte[0] = 0
+/// 1427864bc  mov   ecx, dword [0x14279129c + eax*4]   dword[0] = 0x14278b474
+/// 1427864c6  jmp   rcx
+/// ```
+///
+/// The arm at `0x14278b474` composes string `0x00EC` `'%s x%d earned. (%s)'` and posts it
+/// with `edx = 6` at `0x14278b85e`. That call is to `FUN_1415a87a0` — what
+/// `FUN_1415eca30(text, type)` itself tail-calls, with the same four registers and the same
+/// `byte [rsp+0x28] = 0xff`. So it is a chat post at [`chat_category::GREY`]. **[L]**
+///
+/// # It is not gated
+///
+/// The field and user-state gates in `FUN_1427863f0` (`0x14278bd29`, `0x14278bd4a`) run
+/// **after** this arm has posted — it ends `14278b943 jmp 0x14278bd29` — and they only
+/// decide whether the *second* switch runs. Second-switch entry `[8]` is `0x0279102e`, the
+/// common exit, so effect 8 plays no animation and no sound. **[L]**
+///
+/// Contrast [`crate::questeffect::EFFECT_QUEST_CLEAR`], which takes the first switch's
+/// default arm and therefore *is* subject to both gates.
+pub const EFFECT_ITEM_GAINED: u8 = 8;
+
+/// One line of an [`EFFECT_ITEM_GAINED`] body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemLine {
+    /// Read at `0x14278b494`. The client resolves the name itself and **skips the item in
+    /// silence** when it resolves null or empty (`14278b4e6`, `14278b4ef`), so an id
+    /// outside the client's `itemdata` draws nothing rather than a broken line.
+    ///
+    /// Item id **4001271** is skipped by name: `14278b65e cmp dword [rbp+0x28],0x3d0df7`.
+    pub item_id: u32,
+    /// `0x14278b4a1`, and it is **signed**. **[L]**
+    ///
+    /// ```text
+    /// > 0   '%s x%d earned. (%s)'        0x00EC   (or 0x00ED with `in_bag`)
+    /// < 0   '%s x%d has been lost. (%s)' 0x00EF   (or 0x00F0), with the sign removed
+    /// == 0  14278b5ae jns - the item is skipped and nothing is drawn
+    /// ```
+    pub quantity: i32,
+    /// `0x14278b4ab`, and it is a **boolean**, not [`item_slot`]'s three-value enum.
+    ///
+    /// `14278b4b0 test al,al / setne` — anything non-zero picks `0x00ED`
+    /// `'%s x%d earned. (%s / Bag)'`. **There is no "and Bag" form in this arm**, so
+    /// copying [`item_slot::INVENTORY_AND_BAG`] (`1`) across gives the `/ Bag` wording and
+    /// [`item_slot::BAG`] (`2`) gives it too. Different packet, different unit.
+    pub in_bag: bool,
+}
+
+/// The body of a [`EFFECT_ITEM_GAINED`] message — **send it with
+/// [`crate::stats::USER_EFFECT_LOCAL`], `0x02D1`**.
+///
+/// ```text
+/// u8   8                    14278644e   the effect
+/// u8   count                14278b47e   ** MUST BE >= 1 - see below **
+///   count times:
+///     u32  itemId           14278b494
+///     i32  quantity         14278b4a1
+///     u8   inBag            14278b4ab
+/// ```
+///
+/// `2 + 9n` bytes. The loop back-edge is `14278b90f sub r15,1 / jne 0x14278b491` and
+/// `0x14278b491` is the `itemId` read, so one iteration is exactly nine bytes.
+/// `tools/reads.py 0x1427863f0 3` lists these four addresses and no others inside the arm,
+/// at the same addresses `tools/listing.py` marks — cross-checked 2026-08-21, and that
+/// cross-check is the reason this is a builder and not a note.
+///
+/// # `count == 0` is a different packet, not an empty one
+///
+/// `14278b488 test eax,eax / je 0x14278b948` leaves the item loop entirely and reads a
+/// **`str`** (`14278b952`) and a **`u32`** (`14278b9c4`) instead, posting them to the
+/// on-screen area. A body that stops after a zero count leaves the client reading a length
+/// prefix and four more bytes off the end of the packet — the underrun `CLAUDE.md` records
+/// killing this client twice. **[L]**
+///
+/// # Panics
+///
+/// On an empty `lines`, for the reason above.
+///
+/// # Send one item per packet for now
+///
+/// The composed string buffer at `[rbp+0xd8]` is nulled **once**, at `0x14278b474`, outside
+/// the loop, and `FUN_14019ba10` writes into it on every iteration with the post inside the
+/// loop. Every other arm in this family nulls its buffer immediately before a single
+/// `FUN_14019ba10` call — the construct-then-assign pattern — so assignment is the likely
+/// reading and a multi-item body should produce one line per item. **That is [I], not [L].**
+/// [`item_gained_in_chat`] sends one, which cannot be wrong either way.
+pub fn item_effect_in_chat(lines: &[ItemLine]) -> Vec<u8> {
+    assert!(
+        !lines.is_empty(),
+        "count 0 sends the client to 14278b948, which reads a str and a u32 that are not there"
+    );
+    assert!(
+        lines.len() <= u8::MAX as usize,
+        "the count is one u8 at 14278b47e"
+    );
+    let mut w = PacketWriter::new();
+    w.u8(EFFECT_ITEM_GAINED);
+    w.u8(lines.len() as u8);
+    for line in lines {
+        w.u32(line.item_id);
+        w.i32(line.quantity);
+        w.bool(line.in_bag);
+    }
+    w.into_vec()
+}
+
+/// **`<Item> x<n> earned. (<Tab>)` in the chat log, in grey. This is the one to use.**
+///
+/// The owner, 2026-08-21: *"Quest EXP and items should show up in the chat log as a gray
+/// text."* The wording is the client's own string `0x00EC`, the item name and the tab name
+/// are looked up by the client, and the category is 6 — grey.
+///
+/// **Send with [`crate::stats::USER_EFFECT_LOCAL`] (`0x02D1`), not with [`MESSAGE`].**
+///
+/// Eleven bytes: `08 01 <u32 itemId> <i32 count> 00`.
+///
+/// A pick-up is unaffected: `research/client-messages.md` §5 established that `0x0089`
+/// type 0 sub-mode 0's chat-log copy is gated on a `fieldType` no map in this client has,
+/// so [`item_gained`] stays on the bottom-right area only. The two are independent.
+///
+/// # Panics
+///
+/// On `count == 0`, which the client reads as *"a negative or zero delta"* and skips
+/// (`14278b5ae jns`), and on a `count` that does not fit an `i32`.
+pub fn item_gained_in_chat(item_id: u32, count: u32) -> Vec<u8> {
+    assert!(
+        count >= 1,
+        "quantity 0 is skipped at 14278b5ae jns; nothing would be drawn"
+    );
+    let quantity = i32::try_from(count).expect("the quantity field is one signed i32");
+    item_effect_in_chat(&[ItemLine { item_id, quantity, in_bag: false }])
 }
 
 // ---------------------------------------------------------------------------------------
@@ -631,5 +949,195 @@ mod tests {
     #[test]
     fn this_is_not_the_chat_notice() {
         assert_ne!(MESSAGE, crate::notice::CHAT_NOTICE);
+    }
+
+    // -----------------------------------------------------------------------------------
+    // Sub-cases 12 and 11 — the chat-log lines the server writes itself
+    // -----------------------------------------------------------------------------------
+
+    /// The two chat-line kinds are the jump-table entries they were read from.
+    #[test]
+    fn the_chat_line_kinds_are_the_jump_table_entries() {
+        assert_eq!(kind::CHAT_LINE, 12); // table[12] = 142d4437f
+        assert_eq!(kind::CHAT_LINE_SYSTEM, 11); // table[11] = 142d4433b
+    }
+
+    /// Sub-case 12, byte for byte: `u8 12, u32 category, str text`.
+    #[test]
+    fn the_chat_line_body_is_a_category_then_a_string() {
+        let b = chat_line(chat_category::GREY, "hi");
+        assert_eq!(b[0], kind::CHAT_LINE);
+        assert_eq!(
+            u32::from_le_bytes(b[1..5].try_into().unwrap()),
+            6,
+            "142d44382, the u32 that becomes FUN_1415eca30's type"
+        );
+        assert_eq!(u16::from_le_bytes(b[5..7].try_into().unwrap()), 2, "142d4439d, u16 len");
+        assert_eq!(&b[7..9], b"hi");
+        assert_eq!(b.len(), 1 + 4 + 2 + 2, "both reads are unconditional; no other field");
+    }
+
+    /// Sub-case 11 is the same line with the category baked in, four bytes shorter.
+    #[test]
+    fn the_system_chat_line_is_one_string_and_nothing_else() {
+        let b = chat_line_system("hi");
+        assert_eq!(b[0], kind::CHAT_LINE_SYSTEM);
+        assert_eq!(u16::from_le_bytes(b[1..3].try_into().unwrap()), 2);
+        assert_eq!(&b[3..5], b"hi");
+        assert_eq!(b.len(), 1 + 2 + 2);
+        assert_eq!(
+            b.len() + 4,
+            chat_line(chat_category::SYSTEM, "hi").len(),
+            "same line on screen; sub-case 12 costs the category"
+        );
+    }
+
+    /// **The colour question the owner asked, pinned as numbers.** Category 6 is grey and
+    /// category 7 — what `0x00BB` sends — is yellow. `FUN_1415b6c00`'s table at
+    /// `0x1415b6d60`, index `type - 1`.
+    #[test]
+    fn grey_is_six_and_the_notice_packets_yellow_is_seven() {
+        assert_eq!(chat_category::GREY, 6, "1415b6cbf mov edx,0xFFBBBBBB");
+        assert_eq!(chat_category::YELLOW, 7, "1415b6cc6 mov edx,0xFFFFFF00");
+        assert_eq!(chat_category::SYSTEM, 11, "1415b6d36 mov edx,0xFFFFAFAF");
+        assert_ne!(chat_category::GREY, chat_category::YELLOW);
+    }
+
+    /// `142d4438f cmp eax,0x24 / cmova ebx,r14d` — above `MAX` the client uses 11 instead.
+    /// Not an error, but a caller that meant a specific colour would get the wrong one.
+    #[test]
+    fn a_category_above_the_clamp_is_silently_turned_into_eleven() {
+        assert_eq!(chat_category::MAX, 0x24);
+        const { assert!(chat_category::GREY <= chat_category::MAX) };
+        const { assert!(chat_category::YELLOW <= chat_category::MAX) };
+        const { assert!(chat_category::SYSTEM <= chat_category::MAX) };
+        // The builder writes whatever it is given; this test exists so the clamp is
+        // recorded next to the constant rather than only in the doc comment.
+        let b = chat_line(0x25, "x");
+        assert_eq!(u32::from_le_bytes(b[1..5].try_into().unwrap()), 0x25);
+    }
+
+    // -----------------------------------------------------------------------------------
+    // `0x02D1` effect 8 — the item line that DOES reach the chat log
+    // -----------------------------------------------------------------------------------
+
+    /// **The number this half of the file exists for.** First switch on `effect - 8`,
+    /// byte-table index `0` -> dword-table entry `0` -> `0x14278b474`.
+    #[test]
+    fn the_item_chat_effect_is_eight() {
+        assert_eq!(EFFECT_ITEM_GAINED, 8);
+        // 142786482 lea ecx,[rbx-8] makes 8 the first effect the first switch sees.
+        assert_eq!(EFFECT_ITEM_GAINED - 8, 0, "byte[0] of the table at 0x142791300");
+        // 1427864a8 cmp ecx,0x45 / ja - the first switch's bound.
+        // The first switch is `lea ecx,[rbx-8]` bounded at 0x45, so the arm exists for
+        // effect ids 8..=0x4D. Written on the raw value rather than on `id - 8`: that
+        // subtraction makes the low end u8::MIN, which can never fail the bound, and the
+        // assertion looked like a check while being one.
+        const { assert!(EFFECT_ITEM_GAINED >= 8 && EFFECT_ITEM_GAINED <= 0x4D) };
+        // It is NOT the quest-clear fanfare, which takes the first switch's default arm.
+        assert_ne!(EFFECT_ITEM_GAINED, crate::questeffect::EFFECT_QUEST_CLEAR);
+        assert_ne!(EFFECT_ITEM_GAINED, crate::stats::EFFECT_LEVEL_UP);
+    }
+
+    /// **This body goes out on `0x02D1`, not on `0x0089`.** A copy-paste that sent it as a
+    /// message would be a kind byte of `8` — `FUN_142d60230`, contribution points, three
+    /// `u32`s — reading nine bytes where two were written.
+    #[test]
+    fn the_item_chat_effect_is_not_a_message_sub_case() {
+        item_gained_in_chat_is_not_the_message_opcode();
+        assert_ne!(MESSAGE, crate::stats::USER_EFFECT_LOCAL);
+        assert_eq!(crate::stats::USER_EFFECT_LOCAL, 0x02D1);
+        assert_eq!(MESSAGE, 0x0089);
+    }
+
+    /// Every byte of the eleven, against `FUN_1427863f0`'s arm at `0x14278b474`.
+    #[test]
+    fn the_item_chat_body_is_the_four_reads_the_arm_makes() {
+        let b = item_gained_in_chat(4000019, 3);
+        assert_eq!(b.len(), 2 + 9, "u8 effect, u8 count, then one 9-byte item");
+        assert_eq!(b[0], EFFECT_ITEM_GAINED, "14278644e");
+        assert_eq!(b[1], 1, "count, 14278b47e");
+        assert_eq!(
+            u32::from_le_bytes(b[2..6].try_into().unwrap()),
+            4000019,
+            "itemId, 14278b494"
+        );
+        assert_eq!(
+            i32::from_le_bytes(b[6..10].try_into().unwrap()),
+            3,
+            "quantity, 14278b4a1 - SIGNED"
+        );
+        assert_eq!(b[10], 0, "inBag, 14278b4ab - a boolean, not item_slot's enum");
+    }
+
+    /// The loop is nine bytes an iteration (`14278b90f sub r15,1 / jne 0x14278b491`, and
+    /// `0x14278b491` is the itemId read). Two items is `2 + 18`, in order.
+    #[test]
+    fn each_extra_item_costs_exactly_nine_bytes() {
+        let b = item_effect_in_chat(&[
+            ItemLine { item_id: 2000000, quantity: 5, in_bag: false },
+            ItemLine { item_id: 1302000, quantity: 1, in_bag: true },
+        ]);
+        assert_eq!(b.len(), 2 + 9 + 9);
+        assert_eq!(b[1], 2);
+        assert_eq!(u32::from_le_bytes(b[2..6].try_into().unwrap()), 2000000);
+        assert_eq!(i32::from_le_bytes(b[6..10].try_into().unwrap()), 5);
+        assert_eq!(b[10], 0);
+        assert_eq!(u32::from_le_bytes(b[11..15].try_into().unwrap()), 1302000);
+        assert_eq!(i32::from_le_bytes(b[15..19].try_into().unwrap()), 1);
+        assert_eq!(b[19], 1, "in_bag -> string 0xED, '(%s / Bag)'");
+    }
+
+    /// **The byte that would kill the client.** `14278b488 test eax,eax / je 0x14278b948`
+    /// takes a zero count to a completely different body — a `str` then a `u32` — so an
+    /// "empty" packet is two bytes where the client reads at least eight.
+    #[test]
+    #[should_panic(expected = "count 0")]
+    fn a_zero_count_is_refused_because_it_is_a_different_packet() {
+        let _ = item_effect_in_chat(&[]);
+    }
+
+    /// A zero quantity is skipped at `14278b5ae jns`, so it draws nothing at all. Refused
+    /// rather than sent, the same way [`item_gained`] refuses its own zero.
+    #[test]
+    #[should_panic(expected = "quantity 0")]
+    fn a_zero_quantity_is_refused() {
+        let _ = item_gained_in_chat(1302000, 0);
+    }
+
+    /// The count is one `u8` at `14278b47e`; 256 lines would truncate to zero, which is the
+    /// crash above.
+    #[test]
+    #[should_panic(expected = "one u8")]
+    fn more_than_255_lines_is_refused() {
+        let many = vec![ItemLine { item_id: 1, quantity: 1, in_bag: false }; 256];
+        let _ = item_effect_in_chat(&many);
+    }
+
+    /// **The unit trap.** `0x0089`'s pick-up takes a three-value enum; this arm takes a
+    /// boolean. `item_slot::BAG` is `2`, and `2` here is just "non-zero" -> `/ Bag`.
+    #[test]
+    fn the_in_bag_flag_is_a_boolean_not_the_item_slot_enum() {
+        assert_eq!(item_slot::INVENTORY_AND_BAG, 1);
+        assert_eq!(item_slot::BAG, 2);
+        // Nothing in this arm can produce the "and Bag" wording, so there is no constant
+        // for it here; the field is written by `w.bool`, which can only be 0 or 1.
+        let plain = item_effect_in_chat(&[ItemLine { item_id: 1, quantity: 1, in_bag: false }]);
+        let bagged = item_effect_in_chat(&[ItemLine { item_id: 1, quantity: 1, in_bag: true }]);
+        assert_eq!(plain[10], 0);
+        assert_eq!(bagged[10], 1);
+        assert!(bagged[10] <= 1, "14278b4b0 test al,al / setne - never a 2");
+    }
+
+    /// A negative quantity is the `'has been lost'` wording, and it must survive as a
+    /// negative on the wire — the client does the `neg` itself at `14278b5bb`.
+    #[test]
+    fn a_negative_quantity_goes_out_negative() {
+        let b = item_effect_in_chat(&[ItemLine { item_id: 2000000, quantity: -4, in_bag: false }]);
+        assert_eq!(
+            i32::from_le_bytes(b[6..10].try_into().unwrap()),
+            -4,
+            "0x00EF '%s x%d has been lost. (%s)'"
+        );
     }
 }

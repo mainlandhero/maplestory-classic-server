@@ -296,10 +296,29 @@ impl Session {
                 match self.store.add_item(chr.id, inv, &item, max_stack) {
                     Ok(placed) => {
                         out.extend(self.inventory_added_replies(inv, &placed, "a quest reward"));
+                        // **A quest's item line goes to the CHAT LOG, and it is a different
+                        // opcode from the pick-up line.** The owner, 2026-08-21: *"Quest EXP and
+                        // items should show up in the chat log as a gray text ... '<Item>
+                        // x<quantity> earned. (<Tab>)'"*.
+                        //
+                        // `0x0089`'s item sub-case cannot do it: its only chat-log call is
+                        // gated on the map's `fieldType == 0x56`, and none of this client's
+                        // 426 maps has that type. All 36 sub-cases were enumerated and none
+                        // draws that string into the chat - a verified negative, with the
+                        // string resolver's 6994 call sites back-resolved and its 46
+                        // unresolvable ones reported rather than dropped.
+                        //
+                        // The route is **`0x02D1` effect 8**, which posts at chat category
+                        // **6** with the item name as a link - and category 6's colour
+                        // constant is `0xFFBBBBBB`, grey. (Category 7, which `0x00BB` sends,
+                        // is `0xFFFFFF00` - yellow. So the chat notice was never going to be
+                        // the grey the owner asked for.) `research/message-subcases.md`.
                         out.push(Reply {
-                            opcode: net::message::MESSAGE,
-                            body: net::message::item_gained(item_id, count as u32),
-                            what: format!("Message: quest {quest_id} rewarded {item_id} x{count}"),
+                            opcode: net::stats::USER_EFFECT_LOCAL,
+                            body: net::message::item_gained_in_chat(item_id, count as u32),
+                            what: format!(
+                                "UserEffectLocal item line: quest {quest_id} rewarded {item_id} x{count} - chat category 6, which is grey. NOT the 0x0089 pick-up line, whose chat route is gated on a fieldType no map has"
+                            ),
                         });
                     }
                     Err(e) => out.extend(self.notice(format!(
@@ -320,7 +339,7 @@ impl Session {
 
         // Last, so the experience line lands under the item lines the way a turn-in reads.
         // White: a quest reward is yours, not a share of somebody else's kill.
-        out.extend(self.award_experience(exp, &format!("quest {quest_id}"), true));
+        out.extend(self.award_experience(exp, &format!("quest {quest_id}"), true, true));
         out
     }
 
@@ -388,7 +407,45 @@ impl Session {
         let mut out =
             vec![Reply { opcode: net::quest::MESSAGE, body: net::quest::quest_accepted(quest_id), what }];
         out.extend(self.grant_quest_start_items(quest_id));
+        out.extend(self.apply_quest_hp(quest_id, 0));
         out
+    }
+
+
+    /// Set the character's HP because a quest said so - `Act.<state>.hp`, an authored key.
+    ///
+    /// The owner, 2026-08-21: *"When accepting their quest, it should automatically lower the
+    /// user's health to 25/50, and give users a Roger's Apple to recover their HP with."*
+    /// Without the first half the apple has nothing to do, which is why the quest reads as
+    /// broken even once the item is handed over.
+    ///
+    /// **Capped at the maximum**, so a value larger than the character's max HP is a heal to
+    /// full rather than a bar drawn past its own end - the same rule the potion path
+    /// follows.
+    ///
+    /// Sends nothing when the quest names no HP for that state, which is every quest but
+    /// 1002. The WZ has no `Act.<state>.hp` key at all; this behaviour lived in the script
+    /// the client does not ship.
+    pub(super) fn apply_quest_hp(&mut self, quest_id: u32, state: u8) -> Vec<Reply> {
+        let Some(quest) = self.config.quests.get(&quest_id) else { return Vec::new() };
+        let Some(&want) = quest.set_hp.get(&state) else { return Vec::new() };
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let was = chr.hp;
+        chr.hp = want.min(chr.max_hp);
+        if chr.hp == was {
+            return Vec::new();
+        }
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.notice(format!("Could not set your health for quest {quest_id}: {e}"));
+        }
+        vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange::hp_only(chr.hp).build(),
+            what: format!(
+                "StatChanged: quest {quest_id} state {state} set hp {was} -> {}/{} (Act.{state}.hp is an AUTHORED key - the WZ has none)",
+                chr.hp, chr.max_hp
+            ),
+        }]
     }
 
 
@@ -428,10 +485,14 @@ impl Session {
             match self.store.add_item(chr.id, inv, &item, max_stack) {
                 Ok(placed) => {
                     out.extend(self.inventory_added_replies(inv, &placed, "given by a quest"));
+                    // The chat-log line, same as the completion reward above - a quest
+                    // handing an item over reads the same way whichever end it happens at.
                     out.push(Reply {
-                        opcode: net::message::MESSAGE,
-                        body: net::message::item_gained(item_id, count.max(1) as u32),
-                        what: format!("Message: quest {quest_id} gave {item_id} x{count}"),
+                        opcode: net::stats::USER_EFFECT_LOCAL,
+                        body: net::message::item_gained_in_chat(item_id, count.max(1) as u32),
+                        what: format!(
+                            "UserEffectLocal item line: quest {quest_id} gave {item_id} x{count} - chat category 6, grey"
+                        ),
                     });
                 }
                 Err(e) => out.extend(self.notice(format!(

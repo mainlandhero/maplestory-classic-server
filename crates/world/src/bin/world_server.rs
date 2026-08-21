@@ -306,6 +306,7 @@ fn main() -> ExitCode {
         }
     };
     config.mob_exp = mob_templates.iter().map(|(id, t)| (*id, t.exp)).collect();
+    config.mob_attack = mob_templates.iter().map(|(id, t)| (*id, t.pa_damage)).collect();
     for line in &config.exp_curve.problems {
         println!("maplecw-world: exp curve: {line}");
     }

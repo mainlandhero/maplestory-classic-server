@@ -488,6 +488,32 @@ pub fn parse_script_reply(body: &[u8]) -> Option<ScriptReply> {
     let mut r = PacketReader::new(body);
     let handle = r.u32().ok()?;
     let message_type = r.u8().ok()?;
+
+    // **A yes/no box echoes NOTHING, and reading an echo here cost Roger's quest.**
+    //
+    // The owner, 2026-08-21: *"Roger's Apple quest does not subtract the player's HP, and does
+    // not grant the player a Roger's Apple."* Both are effects of accepting, and the accept
+    // never landed - because this function returned `None` for it and
+    // `Session::on_script_reply` turns `None` into silence.
+    //
+    // The two shapes, both measured in one capture:
+    //
+    // ```text
+    // Say     122 bytes  00000000 00 00000000 6e00 <110 chars> 01
+    //                    handle   ^type=Say   ^echo ^the box's own text   ^action
+    // yes/no    6 bytes  00000000 10 01
+    //                    handle   ^type=0x10  ^action
+    // ```
+    //
+    // So a yes/no reply carries handle, type and action and stops. Reading an `echo` there
+    // needs four bytes that do not exist, `PacketReader` errors, and the whole packet is
+    // dropped. The mirror of the outbound rule already recorded in this module: a Say body
+    // has a `u32 echo` before its string and a yes/no box does not.
+    if message_type == SCRIPT_TYPE_YES_NO || message_type == SCRIPT_TYPE_QUEST_YES_NO {
+        let action = r.u8().ok()? as i8;
+        return Some(ScriptReply { handle, message_type, echo: 0, text: String::new(), action });
+    }
+
     let echo = r.u32().ok()?;
     let text = r.str().ok()?;
     let action = r.u8().ok()? as i8;
@@ -500,6 +526,69 @@ pub const SCRIPT_ACTION_YES: i8 = 1;
 pub const SCRIPT_ACTION_NO: i8 = 0;
 /// The user closed the box. **Send nothing more** - the conversation is over.
 pub const SCRIPT_ACTION_CLOSED: i8 = -1;
+
+#[cfg(test)]
+mod yes_no_reply_tests {
+    use super::*;
+
+    /// **The six bytes that broke Roger's quest**, verbatim from `world.log` 17:39:24.904.
+    ///
+    /// A yes/no box replies with `handle, type, action` and nothing else. Reading an `echo`
+    /// after the type needs four bytes that are not there, so the packet was dropped and the
+    /// Accept never reached `Session::on_script_reply` - which is why the quest granted no
+    /// apple and took no HP.
+    #[test]
+    fn a_yes_no_reply_is_six_bytes_with_no_echo_and_no_text() {
+        let body = [0x00, 0x00, 0x00, 0x00, 0x10, 0x01];
+        let r = parse_script_reply(&body).expect("six bytes is a whole yes/no reply");
+        assert_eq!(r.message_type, SCRIPT_TYPE_QUEST_YES_NO);
+        assert_eq!(r.action, SCRIPT_ACTION_YES);
+        assert!(r.text.is_empty(), "a yes/no box echoes nothing back");
+
+        // No, on the same shape.
+        let no = parse_script_reply(&[0x00, 0x00, 0x00, 0x00, 0x10, 0x00]).unwrap();
+        assert_eq!(no.action, SCRIPT_ACTION_NO);
+        // And the plain yes/no type behaves the same way.
+        let plain = parse_script_reply(&[0x00, 0x00, 0x00, 0x00, 0x03, 0x01]).unwrap();
+        assert_eq!(plain.action, SCRIPT_ACTION_YES);
+    }
+
+    /// The long form still parses - the fix must not cost the Say path.
+    ///
+    /// This is the other real body from the same capture, trimmed: handle, type Say, echo,
+    /// a counted string, then the action.
+    #[test]
+    fn a_say_reply_still_carries_its_echo_and_its_text() {
+        let mut body = vec![0u8; 4]; // handle
+        body.push(SCRIPT_TYPE_SAY);
+        body.extend_from_slice(&0u32.to_le_bytes()); // echo
+        body.extend_from_slice(&5u16.to_le_bytes()); // str len
+        body.extend_from_slice(b"Hello");
+        body.push(SCRIPT_ACTION_YES as u8);
+        let r = parse_script_reply(&body).expect("the long form is unchanged");
+        assert_eq!(r.message_type, SCRIPT_TYPE_SAY);
+        assert_eq!(r.text, "Hello");
+        assert_eq!(r.action, SCRIPT_ACTION_YES);
+    }
+
+    /// Short bodies come off a socket, and neither shape may panic.
+    #[test]
+    fn every_truncation_of_both_shapes_is_refused_rather_than_panicked_on() {
+        let yes_no = [0x00, 0x00, 0x00, 0x00, 0x10, 0x01];
+        for n in 0..yes_no.len() {
+            assert!(parse_script_reply(&yes_no[..n]).is_none(), "yes/no len {n}");
+        }
+        let mut say = vec![0u8; 4];
+        say.push(SCRIPT_TYPE_SAY);
+        say.extend_from_slice(&0u32.to_le_bytes());
+        say.extend_from_slice(&2u16.to_le_bytes());
+        say.extend_from_slice(b"hi");
+        say.push(1);
+        for n in 0..say.len() {
+            assert!(parse_script_reply(&say[..n]).is_none(), "say len {n}");
+        }
+    }
+}
 
 pub const CLIENT_QUEST_REQUEST: u16 = 0x0151;
 

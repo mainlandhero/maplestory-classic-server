@@ -1529,8 +1529,23 @@ pub fn npc_enter_field(npc: &FieldNpc) -> Vec<u8> {
     b.extend_from_slice(&npc.template_id.to_le_bytes()); //    Npc/%07d.img
     b.extend_from_slice(&npc.x.to_le_bytes()); //          1   u16 -> +0x3f0
     b.extend_from_slice(&npc.cy.to_le_bytes()); //         2   u16 -> +0x3f4
-    b.extend_from_slice(&(-1i32).to_le_bytes()); //        3   u32 -> +0x5a8
-    b.extend_from_slice(&(-1i32).to_le_bytes()); //        4   u32 -> +0x5ac
+    // **These two are DRAW ORDER, and `-1` means "let the client decide". Do not touch
+    // them.** `research/npc-fade.md`, 2026-08-21.
+    //
+    // They were previously written up as a per-NPC override of an animation-clock pair,
+    // which made them look like a candidate for the fade-in. They are not: they feed
+    // `FUN_141e4a5d0`, which writes `((A*3000 - B) * 10) - 0x3FFF8AD5` into Gr2D layer
+    // `vtable+0x198` - a `get`/`put` int pair on the layer interface - and stamps it onto
+    // every other layer the NPC owns. **[L]** for the arithmetic and the interface; **[D]**
+    // that it is a z, from the constant family: every member is `-2^30 + 30000 - k` with k
+    // 5..13 (NPCs 5, mobs 9, boss parts 11-13), and one CNpc block uses a constant where
+    // `2^30 - it` is exactly `7 * 3000 * 10` - so `A` is a Map.wz object layer index 0..7.
+    //
+    // **Sending `0`/`0` puts the NPC at layer 0, offset 0 - behind the map's background
+    // tiles on most maps.** That is the same shape as the `isEnabled = 0` incident that made
+    // every NPC invisible for days, and it is why this carries a warning rather than a value.
+    b.extend_from_slice(&(-1i32).to_le_bytes()); //        3   u32 -> +0x5a8  z layer
+    b.extend_from_slice(&(-1i32).to_le_bytes()); //        4   u32 -> +0x5ac  z within layer
     // **REVERTED 2026-08-21, on screen evidence, and do not "fix" this again without one.**
     //
     // A static pass established - carefully, and marked **[L]** - that byte 20 is the facing
@@ -1588,6 +1603,54 @@ pub fn npc_enter_field(npc: &FieldNpc) -> Vec<u8> {
 
 /// Length of an [`npc_enter_field`] body.
 pub const NPC_ENTER_FIELD_LEN: usize = 64;
+
+/// **`0x0451` NpcChangeController** - the other way to put an NPC on the field.
+///
+/// The NPC pool has two creation routes and this project has only ever used one. From
+/// `research/npc-spawn.md` §3.1, read off `FUN_141e75800`'s 20-entry jump table **[L]**:
+///
+/// | opcode | what it does to the new object |
+/// |---|---|
+/// | `0x044F` NpcEnterField | `or [obj+0x38], 1`, then the 20-field body |
+/// | **`0x0451`** | `u8 flag; u32 id;` - when `flag != 0` and the id is **new**: allocate, read `u32 templateId`, load the template, **`mov byte [obj+0x38], 2`**, insert, then **the identical body** |
+///
+/// So the two differ in exactly one thing: the state byte the object is created with, `1`
+/// against `2`. Everything after it is the same decoder, `FUN_141e36b20`.
+///
+/// # Why this is worth sending
+///
+/// **Mobs get both halves and NPCs never have.** `on_field_entered` sends `0x03C6`
+/// MobEnterField *and* `0x03D2` MobChangeController for every mob, and mobs are confirmed
+/// instant on screen. NPCs have only ever been sent `0x044F`, and they fade.
+///
+/// Two static passes went looking for a fade *field inside `0x044F`* and correctly found
+/// none - all 20 reads attributed, no alpha, no visibility timer. Neither asked what **other
+/// packets** the pool accepts. That is `CLAUDE.md`'s "enumerate before you filter" exactly:
+/// the right list was the pool's opcode table, not the body's field list.
+///
+/// **This is a hypothesis, not a finding.** Nothing establishes that `obj+0x38` reaches the
+/// renderer; what is established is that it is the only difference between the two routes,
+/// and that the route we do not use is the one the working case (mobs) uses.
+///
+/// # The id must be NEW
+///
+/// `flag != 0` on an id the pool already holds does **not** take the allocate path, and what
+/// it does instead is not decoded. Send this for an object id the client has not seen, or
+/// send it *instead of* `0x044F` - never after one for the same id.
+pub fn npc_change_controller(npc: &FieldNpc, flag: u8) -> Vec<u8> {
+    debug_assert_ne!(flag, 0, "flag 0 detaches an NPC instead of creating one");
+    let mut b = Vec::with_capacity(NPC_CHANGE_CONTROLLER_LEN);
+    b.push(flag);
+    b.extend_from_slice(&npc_enter_field(npc));
+    debug_assert_eq!(b.len(), NPC_CHANGE_CONTROLLER_LEN);
+    b
+}
+
+/// `0x0451`. See [`npc_change_controller`].
+pub const NPC_CHANGE_CONTROLLER: u16 = 0x0451;
+
+/// One leading flag byte plus the whole [`npc_enter_field`] body.
+pub const NPC_CHANGE_CONTROLLER_LEN: usize = 1 + NPC_ENTER_FIELD_LEN;
 
 pub const SET_FIELD: u16 = 0x01A0;
 
@@ -2906,6 +2969,28 @@ mod set_field_tests {
         let sera_body = npc_enter_field(&sera);
         assert_eq!(sera_body[20], 0, "read 5 stays 0 - measured good");
         assert_eq!(sera_body[21], 1, "read 6 carries !flip, and Sera has f = 0");
+    }
+
+    /// `0x0451` is the same body behind one flag byte, and the length is the hazard.
+    ///
+    /// The pool's other creation route. `research/npc-spawn.md` §3.1: `u8 flag; u32 id;` and
+    /// then, when the flag is non-zero and the id is new, `u32 templateId` followed by the
+    /// **identical** 20-field body - 65 bytes against 64.
+    ///
+    /// Pinning byte-for-byte equality with [`npc_enter_field`] is the point: if the two ever
+    /// diverge, one of them is a short packet, and this client has been killed twice by one.
+    #[test]
+    fn the_controller_packet_is_the_enter_field_body_behind_one_flag_byte() {
+        let heena = FieldNpc {
+            object_id: 6000, template_id: 1, x: -46, cy: 305, fh: 66, rx0: -64, rx1: -26, f: 1,
+        };
+        let enter = npc_enter_field(&heena);
+        let ctrl = npc_change_controller(&heena, 1);
+
+        assert_eq!(ctrl.len(), NPC_CHANGE_CONTROLLER_LEN);
+        assert_eq!(ctrl.len(), enter.len() + 1, "exactly one byte of difference");
+        assert_eq!(ctrl[0], 1, "the flag - 0 would DETACH an NPC instead of creating one");
+        assert_eq!(&ctrl[1..], &enter[..], "and the rest is the same decoder's body");
     }
 
     /// Two NPCs on one field must not share an object id: the pool keys on it, and a repeat

@@ -69,6 +69,8 @@
 1002	Say	0.no.0	Suit yourself. Come talk to me when you change your mind.
 1002	Act	0.item.0.id	2010000
 1002	Act	0.item.0.count	1
+1002	Act	0.hp	25
+1002	Check	1.consumeitem	2010000
 1002	Say	1.0	Was my information helpful? Farewell, my dear Mapler!
 1002	Act	1.exp	3
 
@@ -79,6 +81,21 @@
 # `Say 0.yes.1` = Roger's `n2`. [L] String.wz/Npc.img/3/n2  (no trailing full stop in the WZ;
 #                 kept exactly as shipped rather than tidied)
 # `Say 0.no.0`  = OURS.
+# `Act 0.hp`  = **OURS**, and an AUTHORED KEY - the WZ has no `Act.<state>.hp` anywhere in
+#               its 17 Act shapes across all 322 quests, so this lived in the script.
+#               The owner, 2026-08-21: *"When accepting his quest, it should automatically lower
+#               the user's health to 25/50, and give users a Roger's Apple to recover their
+#               HP with."* 25 is absolute, matching `Act.1.exp`'s convention, and is capped
+#               at the character's maximum. A level-1 beginner has 50 max HP, so 25 is half
+#               for the character this quest is gated to (`Check.0.lvmin` 1) - whether the
+#               original was "set 25" or "halve" is not recoverable and it does not matter
+#               at that level.
+# `Check 1.consumeitem` = **OURS**, and the reading of a shape the WZ does ship. 1002's
+#               `Check.1.item.0` has an id and NO count while 214 other quests carry one;
+#               `research/quest-scripts.md` marked "no count means must-not-hold" as [I] and
+#               left it open. The owner: *"Once the user consumes the apple, the quest would be
+#               completed."* That settles it, and this key states the rule rather than
+#               inferring it from an absence at runtime.
 # `Act 0.item.0` = item 2010000, `String.wz/Consume.img/2010000/name` = **"Roger's Apple"**,
 #                 *"A ripe, red apple. Restores 30 HP."* [L] The quest is named after it and
 #                 `Check.1.item.0.id` wants exactly it, so the giver can only be the script:

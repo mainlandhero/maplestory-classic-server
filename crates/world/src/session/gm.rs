@@ -71,6 +71,7 @@ impl Session {
             "rates" => self.gm_rates(),
             "job" => self.gm_job(arg),
             "migsweep" => self.gm_mig_sweep(arg),
+            "npcecho" => self.gm_npc_echo(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -197,32 +198,96 @@ impl Session {
         // Mint a real migration, so a channel that DOES accept the packet can be entered
         // rather than bouncing on arrival. `on_change_channel` was always right about this
         // half - only the opcode and the body were wrong.
-        if let Err(e) = self.store.create_migration(
+        let seed = match self.store.create_migration(
             claimed.account_id,
             claimed.character_id,
             self.config.world_id,
             target,
         ) {
-            return self.gm_ack(format!("!migsweep FAILED to mint a migration: {e}"));
-        }
+            Ok(seed) => seed,
+            Err(e) => return self.gm_ack(format!("!migsweep FAILED to mint a migration: {e}")),
+        };
 
         // `SocketAddrV4`, so there is no IPv6 case to refuse - which is right, because the
         // client's `sin_addr` is a 4-byte IPv4 field and nothing else would fit.
-        let ip = addr.ip().octets();
-        let mut body = vec![1u8]; // ok
-        body.extend_from_slice(&ip); // NETWORK order - straight into sin_addr, no swap
-        body.extend_from_slice(&addr.port().to_le_bytes()); // the client htons()es this itself
-        body.extend_from_slice(&[0u8; 64]); // padding, so a wrong guess is inert, not fatal
-
         let mut out = self.gm_ack(format!(
-            "!migsweep: sending {first:#06x}..{last:#06x} to channel {target} at {addr}. Read the hook log: the LAST dispatch line before the socket closes names the opcode."
+            "!migsweep: sending {first:#06x}..{last:#06x} to channel {target} at {addr}. Read the hook log: the LAST dispatch line before the socket closes names the opcode. The Change Channel button now sends the same sweep on its own."
         ));
-        for opcode in first..=last {
+        out.extend(self.migrate_candidates(target, addr, seed, first, last));
+        out
+    }
+
+
+    /// `!npcecho [dx]` - spawn a second copy of every NPC on this map, the OTHER way.
+    ///
+    /// **An experiment, and it costs no relaunch.** The owner: *"You shouldn't need to patch the
+    /// client. Are there no way for the server to send the NPC data to the client so that it
+    /// appears instantly on map transition?"*
+    ///
+    /// Two static passes had concluded the server could not, and both were answering a
+    /// narrower question than the one asked: they enumerated the **fields of `0x044F`** and
+    /// correctly found no alpha, no visibility timer and no appear type. Neither enumerated
+    /// the **packets the NPC pool accepts**, and there are two that create an NPC:
+    ///
+    /// ```text
+    /// 0x044F  NpcEnterField        or  [obj+0x38], 1   then the 20-field body
+    /// 0x0451  NpcChangeController  mov byte [obj+0x38], 2   then the IDENTICAL body
+    /// ```
+    ///
+    /// **[L]**, `research/npc-spawn.md` §3.1. And the case that works uses the second one:
+    /// every mob is sent `0x03C6` **and** `0x03D2`, and mobs are instant. NPCs have only ever
+    /// been sent `0x044F`.
+    ///
+    /// # Why a GM command rather than changing field entry
+    ///
+    /// This way the comparison happens **in one run, on one map, against NPCs the owner has just
+    /// watched fade in** - and it costs no manual launch to undo if it does nothing. Changing
+    /// field entry would make the whole map one variant and need a relaunch to compare.
+    ///
+    /// The echoes get **fresh object ids** (`+ ECHO_ID_BASE`) because `flag != 0` on an id
+    /// the pool already holds does not take the allocate path, and what it does instead is
+    /// not decoded.
+    ///
+    /// # What each outcome means
+    ///
+    /// | on screen | what it says |
+    /// |---|---|
+    /// | the copies **pop in solid** | `0x0451` is the fix. Field entry switches to it |
+    /// | the copies **fade in too** | the creation route is not the difference. It also kills the timing theory, because these arrive long after field entry |
+    /// | **nothing appears** | the body or the flag is wrong, not the theory. `world.log` names every packet sent |
+    /// | the copies are **see-through and stay so** | it was never a fade-in; something else is drawing them wrong |
+    pub(super) fn gm_npc_echo(&mut self, arg: &str) -> Vec<Reply> {
+        /// Added to each NPC's object id so the echo is a new key to the pool.
+        const ECHO_ID_BASE: u32 = 5000;
+        let dx: i16 = arg.parse().unwrap_or(70);
+        let Some(chr) = self.claimed_character() else {
+            return self.gm_ack("!npcecho REFUSED: no character is claimed.".to_string());
+        };
+        let empty: Vec<net::opcode::FieldNpc> = Vec::new();
+        let npcs: Vec<net::opcode::FieldNpc> =
+            self.config.npcs.get(&chr.map_id).unwrap_or(&empty).clone();
+        if npcs.is_empty() {
+            return self.gm_ack(format!(
+                "!npcecho: map {} has no NPCs to copy. Try !map 1 first.",
+                chr.map_id
+            ));
+        }
+        let mut out = self.gm_ack(format!(
+            "!npcecho: sending {} NPC(s) again as 0x0451 NpcChangeController, {dx} px to the side. Do they POP or FADE? The ones already on this map arrived as 0x044F.",
+            npcs.len()
+        ));
+        for npc in npcs {
+            let echo = net::opcode::FieldNpc {
+                object_id: npc.object_id + ECHO_ID_BASE,
+                x: npc.x.saturating_add(dx),
+                ..npc
+            };
             out.push(Reply {
-                opcode,
-                body: body.clone(),
+                opcode: net::opcode::NPC_CHANGE_CONTROLLER,
+                body: net::opcode::npc_change_controller(&echo, 1),
                 what: format!(
-                    "migsweep candidate {opcode:#06x}: the 7-byte migrate body (ok=1, {addr}) plus 64 bytes of padding so a wrong guess cannot over-read. The OPCODE is [I]; every other byte here is measured"
+                    "NpcChangeController ECHO: template {} at ({}, {}) as object {} - the 0x0451 creation route, which sets obj+0x38 to 2 where 0x044F sets bit 0. This is the packet mobs get and NPCs never have",
+                    echo.template_id, echo.x, echo.cy, echo.object_id
                 ),
             });
         }
@@ -292,7 +357,7 @@ impl Session {
         // anyone while a kill could, and nothing would have said so.
         let before = chr.exp;
         // White: `!exp` is your own experience, not a share of somebody else's kill.
-        let mut out = self.award_experience(amount, "!exp", true);
+        let mut out = self.award_experience(amount, "!exp", true, false);
         if out.is_empty() {
             return self.gm_ack(format!("!exp {amount}: nothing to award."));
         }

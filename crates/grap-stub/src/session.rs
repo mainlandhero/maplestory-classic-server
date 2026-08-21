@@ -298,21 +298,45 @@ static CREATE_ENABLED: AtomicBool = AtomicBool::new(false);
 /// first dispatch that is certainly after it, and it is also the packet that builds the
 /// screen the button lives on.
 pub unsafe fn enable_character_creation_after_dispatch(opcode: u16) {
-    if opcode != LOGIN_RESULT_OPCODE
-        || CREATE_ENABLED.load(Ordering::SeqCst)
-        || marker_token("create=").as_deref() != Some("on")
-    {
+    if opcode != LOGIN_RESULT_OPCODE || marker_token("create=").as_deref() != Some("on") {
         return;
     }
-    CREATE_ENABLED.store(true, Ordering::SeqCst);
+    // **Every login result, not just the first.** This used to latch on `CREATE_ENABLED`
+    // and fire once per launch, which made "Create a character" work on the first login of
+    // a launch and silently stop working on every later one.
+    //
+    // The owner, 2026-08-21: *"when I log in, I have full character slots, if I delete one, I
+    // cannot immediately create another to replace it."* The delete was incidental. What
+    // that session actually did was **log in twice** - enter the world on connection #1,
+    // come back to character select on connection #2 - and the handshake calls
+    // `FUN_140c9e8a0`, which stores plaintext **0** into this same flag, on every success.
+    // So connection #2 zeroed it and the latch stopped us putting it back.
+    //
+    // Measured: `login.log` shows two connections and two `0x0010`s; the hook log shows
+    // **one** "called FUN_140c9e230" line, at the first. And the symptom is exactly what a
+    // cleared flag predicts - the button draws enabled, because that is separate state, and
+    // `FUN_141177a10` never calls `FUN_141b282d0`, so **no packet is sent at all**. Not a
+    // refusal notice, not an `0x00A8`: silence.
+    //
+    // The setter stores a plaintext 1 with a rolling checksum and takes no arguments, so
+    // calling it again is idempotent. Only the log line is rationed.
+    let first = !CREATE_ENABLED.swap(true, Ordering::SeqCst);
     let at = crate::hook::base() + CREATE_FLAG_ENABLE_RVA;
     let enable: extern "system" fn() = std::mem::transmute(at);
     enable();
-    log(&format!(
-        "***** SESSION called FUN_140c9e230 at {at:#x} - the create-character flag should \
-         now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised \
-         code, so this proves the button's gate, not the protocol *****"
-    ));
+    if first {
+        log(&format!(
+            "***** SESSION called FUN_140c9e230 at {at:#x} - the create-character flag should \
+             now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised \
+             code, so this proves the button's gate, not the protocol *****"
+        ));
+    } else {
+        // Kept, and deliberately not silent: a second login is exactly the case that used
+        // to break, so a run that reaches character select twice should say so in the log.
+        log("***** SESSION re-armed the create-character flag on a later login result - the \
+             handshake zeroes it on every success, so this has to run per login, not once \
+             per launch *****");
+    }
 }
 
 /// Poll the session object and report the two bytes that decide the prompt.

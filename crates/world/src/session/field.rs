@@ -249,6 +249,25 @@ impl Session {
     ///
     /// **The migration is minted here, and it is still not authentication.** A `u32` seed
     /// identifies a pending migration; it does not prove who is on the far end. Single use.
+    /// **The channel stage's migrate reply. `0x001A`, and it is MEASURED.**
+    ///
+    /// `research/change-channel-reply.md` established everything about this packet except
+    /// its opcode, which no scan could reach: `FUN_1415d8c00` has zero callers of every
+    /// kind, zero 4-byte RVA references, and `.themida` has `SizeOfRawData = 0`. So ten
+    /// candidates went out on 2026-08-21 and the hook log named the winner - it writes one
+    /// dispatch line per inbound opcode, on handler return:
+    ///
+    /// ```text
+    /// 100 opcode=0x0019 elapsed_us=64.0       ret=1            <- dispatched, no-op
+    /// 101 opcode=0x001A elapsed_us=354121.0   ret=1036749576   <- 354 ms, then the socket
+    ///                                                              closed. This is it.
+    /// ```
+    ///
+    /// **The body decode is confirmed by the same run**: the client tore its connection
+    /// down and connected to **127.0.0.1:8486**, which is `u32 ip` in network order and
+    /// `u16 port` little-endian read exactly as decoded.
+    pub(super) const MIGRATE_COMMAND_CHANNEL: u16 = 0x001A;
+
     pub(super) fn on_change_channel(&mut self, payload: &[u8]) -> Vec<Reply> {
         let request = net::channel::ChangeChannelRequest::parse(payload);
         let Some(req) = request else {
@@ -281,14 +300,73 @@ impl Session {
             Ok(seed) => seed,
             Err(e) => return self.change_channel_refused(format!("could not mint a migration: {e}")),
         };
-        vec![Reply {
-            opcode: net::opcode::MIGRATE_COMMAND,
-            body: net::opcode::migrate(addr, claimed.character_id, seed),
-            what: format!(
-                "Change Channel: character {} to channel {target} at {addr}, seed {seed:#010x} - single use, NOT authentication. The reply SHAPE is inference; no capture of a channel change exists.",
-                claimed.character_id
-            ),
-        }]
+        // **We used to answer this with `0x0011`, and that is worse than useless.**
+        //
+        // The owner, 2026-08-21: *"I tried swapping to channel 2, the transfer did not go
+        // through, but I lost all ability to attack on my character once the attempt was
+        // made."* Both halves follow from one fact: `0x0011` is a **login-stage** opcode,
+        // below the channel switch's `0x70` floor, so a channel connection cannot dispatch
+        // it at all. The client never saw a reply.
+        //
+        // And `0x00D2` latches on send, the way `0x0107`, `0x010E` and both ability-point
+        // requests do. Only an inbound handler clears it, so an undispatchable reply leaves
+        // the player stuck mid-migration - which on screen is a character that cannot
+        // attack.
+        //
+        // The real reply is `FUN_1415d8c00`, a **socket-level** handler whose body is fully
+        // measured (`u8 ok`, `u32 ip` in network order, `u16 port` little-endian) but whose
+        // **opcode cannot be read statically**: zero callers, zero RVA references, and
+        // `.themida` has `SizeOfRawData = 0`. `research/change-channel-reply.md`.
+        //
+        // So the button sends the sweep. It is no worse than what it replaced - that reply
+        // was known not to arrive - and if one candidate is right the migration simply
+        // happens. The hook log names which, because it writes a dispatch line per opcode on
+        // handler return.
+        // One packet now, not ten: the sweep found it on 2026-08-21 and there is nothing
+        // left to search. `!migsweep` keeps the ranged form for the next unknown opcode.
+        self.migrate_candidates(
+            target,
+            addr,
+            seed,
+            Self::MIGRATE_COMMAND_CHANNEL,
+            Self::MIGRATE_COMMAND_CHANNEL,
+        )
+    }
+
+
+    /// The migrate reply, sent once per candidate opcode.
+    ///
+    /// Shared with `!migsweep` so the button and the command cannot drift: the command is
+    /// the same packets with a caller-chosen range.
+    ///
+    /// **The 64 bytes of padding are load-bearing.** An over-read in the client throws
+    /// (`1406e8b51` -> `_CxxThrowException` -> `int3`), so a wrong guess landing on a handler
+    /// that wants a longer body would kill the client rather than be ignored.
+    ///
+    /// **The server must not close the socket.** `FUN_142caa360`'s first act is to tear the
+    /// connection down client-side. Measured: after the login `0x0011` the client closed 8 ms
+    /// later; after the failed channel `0x0011` it stayed open six seconds.
+    pub(super) fn migrate_candidates(
+        &self,
+        target: u32,
+        addr: std::net::SocketAddrV4,
+        seed: u32,
+        first: u16,
+        last: u16,
+    ) -> Vec<Reply> {
+        let mut body = vec![1u8]; // ok
+        body.extend_from_slice(&addr.ip().octets()); // NETWORK order, straight into sin_addr
+        body.extend_from_slice(&addr.port().to_le_bytes()); // the client htons()es this itself
+        body.extend_from_slice(&[0u8; 64]); // padding, so a wrong guess is inert, not fatal
+        (first..=last)
+            .map(|opcode| Reply {
+                opcode,
+                body: body.clone(),
+                what: format!(
+                    "migrate candidate {opcode:#06x}: character to channel {target} at {addr}, seed {seed:#010x} - the 7-byte body is MEASURED, the opcode is [I]. Single use, NOT authentication"
+                ),
+            })
+            .collect()
     }
 
 
