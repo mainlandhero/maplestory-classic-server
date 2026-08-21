@@ -140,6 +140,18 @@ while it was unwired.
 | **drops land on the floor** | a mob killed **on a slope or a step**, not on flat ground - flat looks identical before and after, which is why this went unnoticed. `world.log` names the foothold for any drop that moved |
 | **the quest-finish fanfare** | `0x02D1` effect 15. **Expect sound and no picture** - `Effect/BasicEff.img/QuestClear` is not in this client's WZ, and that is the predicted result, not a failure |
 | **equipping over a worn item swaps** | drag a second hat onto a worn one: the old one lands in the bag slot the new one came from. **This is also the crash repro - see below** |
+| **ability points allocate** | click `+` beside STR **twice within about three seconds**. See the warning under it - a slower test passes whether or not this works |
+| **`!job <jobId>`** | `!job 100`. Expect the JobChanged effect **and** its sound; the client plays both itself from the `0x007C`. `!job 0` must be **silent** |
+| **`!migsweep [first] [last]`** | an experiment, not a feature: sends ten candidate opcodes and the hook log names which one migrated |
+| **giving up a quest works** | start 1001, press give up in the quest window, then click Sera again. Test on **1001, not 1000** - 1000 is completed by then and its give-up button can never send anything |
+
+**One warning about testing the AP fix, because it would otherwise produce a false pass.**
+Every `0x007C` clears the client's one-request latch, and **idle regeneration sends one every
+ten seconds**. Field entry clears it too. So *click, wait, click* succeeds whether or not the
+AP handler works at all - measured, not feared: in `world-20260821-001440.log` a regen
+`0x007C` landed 11 s after an AP request and re-opened the window. The discriminating test is
+**two clicks inside ~3 s with no map change**, and `grep 0x007C world.log` between the two
+`<- 0x0138` lines is the free cross-check.
 
 #### Solved 2026-08-21, and what each one cost to find
 
@@ -168,6 +180,54 @@ while it was unwired.
   `03 01 0200000000000000 00 0000...` - **byte-for-byte the same shape** as the `+200` lines
   from kills in the same session. Quest 1001's `Act.1.exp` is literally **2**. Two independent
   passes reached that separately. *Nothing was built for this*, which is the right outcome.
+* **AP: the roadmap named half the opcode.** `0x0139` is the **bulk** request; a plain `+`
+  click sends **`0x0138`**, a different opcode with a different body - the stat window's
+  handler is a flat chain of twelve name comparisons, `"strup"` against `"strupall"`, calling
+  two different builders. Answering only `0x0139` still looks broken to anyone using the
+  button. The six mask bits are now **[L] by name** from this client's own string ids
+  (`SID_MSCW_STAT_STR` and its five siblings), which upgrades six constants in
+  `crates/net/src/stats.rs` that were `[I]` from the reference version. Two traps in that
+  table: the button says "HP" but the bit is **max** HP, and the widths differ *inside one
+  reply* - u16 for the four stats, u32 for max HP/MP, in a body with no resync point.
+* **Job advancement: the packet was found before goal E was written.** It is `0x007C` mask
+  bit 5, already decoded and already in `stats.rs`; nobody had joined the two up. **The
+  client plays the fanfare itself** from that packet, and `JobChanged` *is* one of
+  `BasicEff.img`'s 40 nodes - so unlike the quest-clear case, expect sound **and** picture.
+  **Do not also send `0x02D1`:** effect 14 reads two `u16`s where effect 15 reads none, so
+  reaching for `user_effect_local(14)` by analogy would have shipped a 1-byte body to a
+  5-byte read - the short-packet mistake that has killed this client twice.
+* **And the first job advancement has no quest at all.** Enumerated rather than searched: the
+  whole key space of `Act` and `Check` across all 322 quests is 17 and 32 shapes, and **there
+  is no `Act.<n>.job` key anywhere**. `Act.<n>.item.<n>.job` exists 57 times and is a *reward
+  filter* - a search for "job" would have matched it and returned a confident wrong yes. The
+  `Test`/`Proof of Qualification` quests are the **second** advancement at level 30
+  (`Check.0.job` requires 100/400 already, `Check.0.lvmin` is 30, and quest 20001 says "2nd
+  job advancement" in words).
+* **Change Channel is not a stage case at all.** The migrate reply is `FUN_1415d8c00`, a
+  **socket-level** handler dispatched from the Themida VM - established by a fully enumerated
+  funnel, not an absence: the connect has exactly one caller, which has exactly two, one of
+  which is the login-stage `0x0011` we already send. The body is measured - `u8 ok`,
+  `u32 ip` in **network** order, `u16 port` **little-endian** because the client `htons`es it
+  - with the read count cross-checked by two instruments that agree exactly. **The opcode is
+  the one thing that cannot be read statically** (zero callers, zero RVA references,
+  `.themida` `SizeOfRawData = 0`), so `!migsweep` exists to settle it in one run.
+* **The quest forfeit was in an opcode we already parse.** `0x0151` **action 3**, a **5-byte**
+  body - and `parse_quest_request` needs a 9-byte head, so it returned `None`, and `None` was
+  silence. Two captures show the packet arriving and nothing coming back. `0x01ED` and
+  `0x01A5` both went unanswered four times in the same run and both looked like better
+  candidates; `0x01ED` was ruled out by finding **its two bodies byte-for-byte in a capture
+  from 2026-08-19 that contains no quest traffic at all**.
+* **The AP latch has a confound, and finding it saved a run.** Every `0x007C` clears
+  `ctx+0x2330`, and idle regeneration sends one every ten seconds - so *click, wait, click*
+  would have passed even against a completely broken AP handler. The agent that found it also
+  **weakened its own earlier claim**: the latch explains some of the three missing clicks,
+  not provably all three, because one of the two captures had its latch cleared by regen
+  11 s in.
+* **The EXP curve was checked against the client at last, and it agrees** - 99 of 99 levels,
+  zero disagreements, and the file now runs to 119 because the client's table has 100..119
+  and the guide stopped at 100. It cost **no client run**: the dump was already sitting in a
+  fixture. What it did cost was fixing `tools/decode_dump.py`, whose off-by-one label made the
+  first comparison say all 98 levels disagreed. See "Instruments that have lied".
 * **Equipping over a worn item now swaps** - and the client does the swap **itself**. Mode 2
   of `FUN_142d51930` is an unconditional two-way exchange (`142d52c13` writes the displaced
   item into `oldPos`), so the reply stays **one entry, 14 bytes**. A second entry would not be
@@ -188,17 +248,20 @@ while it was unwired.
 
 #### What to do next, in order
 
+**Nine of these were done on 2026-08-21 by six agents in parallel. Everything below is what
+is left, and the top three all need a client run rather than more analysis.**
+
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **The heap corruption, which finally has a REPRO** | The 2026-08-21 death came 9 ms after an equip `0x0070` and there is **no dispatch line for it** - the hook writes that line on handler *return*, and all 20 sibling `0x0070`s in the same file have one. The hat is now worn in slot 1, so the repro is two drags ~20 s apart: unequip it, drag it back on. `research/equip-crash.md` §6.4 has the four-address probe bracket. **This is the cheapest it will ever be to catch** |
-| 2 | **AP allocation** | **`0x0139`**, `u32 tick, u32 count, u32 statMask, u32 amount`; `0x40` is STR. Handler, mask table and the `0x007C` confirm are all that is left |
-| 3 | **Change Channel** | We answer `0x00D2` with `0x0011`, a **login-stage** opcode, on a game socket - below the channel switch's `0x70` floor, so the client never sees it. Find the channel stage's own migrate reply |
-| 4 | **Quest forfeit** | `0x01ED` and `0x01A5` both carry the quest id and both go unanswered - **four attempts each** in the 2026-08-21 run. This is what blocks re-testing a quest chain, so it is worth more than its size |
-| 5 | **NPCs fade in on map entry** | The mob fix does not transfer: `0x044F` has no field named as an appear type, only an unexplained `u32` and a `raw[8]`. Needs the NPC pool's decoder read, not a guess |
-| 6 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
-| 7 | **The other 11 script quests** | The machinery exists now; only 1002 is authored. The four `Proof of Qualification` quests (20003/20103/20203/20303) are cheapest - they have a client-side opening and need only a `Say."1"` |
-| 8 | **`0x0151` action 6 replays the opening** | The `_ => "0"` arm. For 1002 the right answer is the shipped `Say."1".stop.item.0`. **[D] from the builder table, not measured** - no capture contains a tag-6 request. Deliberately not fixed: deciding whether `Check.0` or `Check.1` failed needs stored quest state, and guessing wrong is how the completion fell back to the opening the first time |
-| 9 | **Death, job advancement (E), the damage formula (J)** | unchanged; see the goal entries below |
+| 1 | **The heap corruption, which finally has a REPRO** | The death came 9 ms after an equip `0x0070` with **no dispatch line for it** - the hook writes that line on handler *return*, and all 20 sibling `0x0070`s in the same capture have one. Unequip the worn hat, wait ~20 s, drag it back on. A run where it does **not** die is equally useful. `research/equip-crash.md` §6.4 has the probe bracket |
+| 2 | **`!migsweep`, and then delete it** | The channel migrate reply is `FUN_1415d8c00`, a **socket-level** handler; its body is fully measured but **its opcode cannot be read statically** - zero callers, zero RVA references, `.themida` `SizeOfRawData = 0`. The sweep sends ten candidates and the hook log names the winner. Once it does, `on_change_channel` is a two-line change |
+| 3 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without them: validation needs the **action** and the **skill id**, and neither is parsed out of the attack header. Without them the ceiling maximises over every action and only catches a client claiming 500. `research/damage-formula.md`. Highest-value next step for goal J |
+| 4 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
+| 5 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it. What is left is the NPC path: `research/job-advancement.md` §8.1 has the seven-step exchange. The instructors are **not in the towns** - 511 is on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, and a test in `jobs.rs` pins that |
+| 6 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. Re-enumerating all 1760 equip images finds **`attackSpeed` and `attack` on 203 weapons each**, neither carried into `equips.txt` - so no caller can supply a real weapon speed today |
+| 7 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 and need `Check.0.job` satisfied first |
+| 8 | **NPCs fading in - PARKED, with a named blocker** | `0x044F` carries **no** appear-type field: all 20 reads are attributed and none reaches an alpha, a visibility timer or an animation mode. If it is to be closed rather than parked, the function to decompile is **`FUN_141e4a5d0`** with **layer `vtable+0x198`** - the only unconditional, time-computing call on the NPC creation path. Named rather than guessed |
+| 9 | **Death, and mob->player damage** | `damage::incoming_damage` is written and deliberately **not** wired: it replaces a flat 3 with a rolled 3-4 on confirmed-working code, so it is a behaviour change that deserves its own run |
 
 **Two contradictions in this repo, both found 2026-08-21 and neither adjudicated:**
 
@@ -206,6 +269,12 @@ while it was unwired.
   `research/exp-sharing.md` marks it **[I]**. Only `white = 0` -> yellow is [L] (from the owner's
   screenshot). The server sends 1 and the screen has looked right, so this is a labelling
   fault rather than a behavioural one - but one of the two files is wrong.
+* **`research/npc-chatter.md` §8.2 retracted `[npc+0x270]` on a bad scan**, and the retraction
+  was the mistake. The decoder does write it - `141e36df4 41 89 84 24 70 02 00 00` is
+  `mov [r12+0x270], eax`. That scan's positive control used `rsi` as a base, which needs no
+  SIB byte, while `r12` always does, **so the control could not exercise the encoding that was
+  actually there**. `opcode.rs`'s `ENABLED` label was right all along. This is the third time a
+  carefully-hedged negative has been used to withdraw something correct.
 * **The `0x0070` read count.** `research/msexe-setfield.md` says 18 read sites;
   `tools/reads.py`, which is the authority, finds **17**. The mode-2 path is unaffected either
   way, but this project has shipped a short packet twice by trusting the wrong count.
@@ -421,6 +490,7 @@ next wrong answer will come from an instrument nobody has checked yet.
 | `tools/fieldrefs.py`, `tools/rangescan.py` | **silently drop `rbp`-based operands.** A scan for a field's writers came back without the one writer everybody already knew about. **Not fixed** - work around it and say you did |
 | `tools/encodes.py` | misses fields written by a **loop**, so a body length from it alone is short and confident. **Not fixed** |
 | the probe's throw log | logged throws only 25 s after arming, so a client that died at 23 s recorded **zero throws** and read as "it did not throw". Now logs the first eight always, and every fault line reports throws *seen* against *logged* |
+| `tools/decode_dump.py --exp-curve` | labelled entry `i` as level **`i+1`**, so the first-ever comparison against `data/exp-curve.txt` reported **all 98 levels disagreeing when all 99 agree**. Its own comment asserted the wrong indexing, so reading the code confirmed the bug rather than catching it. It also printed a **permanent** false `monotonic: NO - suspect` - the trailing cap zero compared against the last real level. **Fixed 2026-08-21**, and the fix is checkable without trusting either table: 1 hole + levels 1..120 = 121 entries with exactly 2 zeros, which is the 119 non-zero it reports |
 
 ---
 
@@ -825,9 +895,21 @@ without scraping again.
 
 A kill awards the mob's own EXP from `gm-handbook/mobtemplates.txt`, levels carry over, and
 the client plays its own level-up animation from the `0x007C`. The curve is
-`data/exp-curve.txt`, levels 1..99, from a community guide - **the client keeps its own copy
-and the client wins if they disagree**. Every `-SetFieldProbe` run now dumps it;
-`python tools/decode_dump.py --exp-curve` compares them in five seconds, and nobody has.
+`data/exp-curve.txt` - **and it is no longer a community guide's word. The comparison was
+finally made on 2026-08-21 and levels 1..99 agree EXACTLY, 99 of 99**, against the dump in
+`research/fixtures/equip-into-empty-hat-slot-kills-client-hook.log`. The file now runs to
+**119**, because the client's table carries 100..119 and the guide stopped at 100. Level 120
+is the cap; the client's own entry for it is `0`.
+
+**It took fixing the instrument first, and that is the point.** `tools/decode_dump.py
+--exp-curve` labelled entry `i` as level `i+1` - its comment said *"Entry 0 is level 1's
+requirement"* - so the first comparison reported **all 98 levels disagreeing when none of them
+do**. Entry `i` is level `i`'s requirement: `[0] = 0` is the hole that makes the index
+1-based, `[1] = 15` is level 1, `[119] = 28171993`, `[120] = 0`. One hole plus levels 1..120
+is 121 entries with exactly two zeros, which is the 119 non-zero the dump reports - the counts
+settle it without needing either table to be trusted. The same fix cleared a **permanent**
+false `monotonic: NO - suspect`, which was the trailing cap zero being compared against the
+last real level.
 
 What a level *awards* is policy, tagged `[I]`, in one place: five AP, flat HP/MP, no SP.
 

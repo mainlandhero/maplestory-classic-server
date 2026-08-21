@@ -68,16 +68,32 @@ def main():
         values = decode(raw, args.width)
 
         if args.exp_curve:
-            # The table is indexed by level. Entry 0 is level 1's requirement.
-            rising = all(b >= a for a, b in zip(values, values[1:]))
+            # **Entry i is level i's requirement, and entry 0 is a hole.** The comment that
+            # stood here said "Entry 0 is level 1's requirement" and the loop below labelled
+            # accordingly with `enumerate(values, 1)` - so every level printed one too high,
+            # and comparing the output against data/exp-curve.txt showed all 98 levels
+            # disagreeing when in fact all 99 agree exactly. An instrument that answers
+            # confidently and wrongly, which is the failure CLAUDE.md is mostly about.
+            #
+            # The measured shape settles it, 2026-08-21: 121 entries, [0] = 0, [1] = 15,
+            # [119] = 28171993, [120] = 0. Level 0 does not exist (the hole that makes the
+            # index 1-based, the same arrangement as inventory slot 0), and level 120 is the
+            # cap, so it has no next level. 1 hole + levels 1..120 = 121, and 2 zeros leaves
+            # exactly the 119 non-zero entries the file reports. data/exp-curve.txt's level 1
+            # is 15, independently sourced, and it lands on index 1.
             nonzero = sum(1 for v in values if v)
-            print("  %d entries, %d non-zero, monotonic: %s"
+            # Check the rise over the POPULATED range only. Including the trailing cap zero
+            # made this print "monotonic: NO - suspect" on a table that is strictly rising -
+            # a false alarm on every dump this tool has ever taken.
+            body = [v for v in values if v]
+            rising = all(b > a for a, b in zip(body, body[1:]))
+            print("  %d entries, %d non-zero, rising across the populated range: %s"
                   % (len(values), nonzero, "yes" if rising else "NO - suspect"))
             if not nonzero:
                 print("  EVERY ENTRY IS ZERO. The table was not populated when the dump ran,\n"
                       "  or the address is wrong. This is the failure the dump exists to make\n"
                       "  visible rather than to paper over.")
-            for lvl, v in enumerate(values, 1):
+            for lvl, v in enumerate(values):
                 if v:
                     print("  level %3d -> %d" % (lvl, v))
         else:

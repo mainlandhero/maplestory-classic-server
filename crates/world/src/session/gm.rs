@@ -69,10 +69,164 @@ impl Session {
             // Reads and changes nothing, which is why it is the one command here that would
             // survive a permission check if this server ever grew one.
             "rates" => self.gm_rates(),
+            "job" => self.gm_job(arg),
+            "migsweep" => self.gm_mig_sweep(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
         }
+    }
+
+
+    /// `!job <id>` - set the character's job, and nothing else.
+    ///
+    /// **This is goal E's cheapest first experiment, and it is a measurement, not a
+    /// feature.** `STATUS.md` goal E said the job-change packet was "still to be found"; it
+    /// was already decoded and nobody had joined the two up. It is **`0x007C` mask bit 5**
+    /// (`net::stats::bits::JOB`), `u16 job, u16 subJob`.
+    ///
+    /// And the client does the rest itself. The `0x007C` handler ends with **[L]**:
+    ///
+    /// ```text
+    /// 142d55bce  test r12b, 0x20            ; the JOB bit
+    /// 142d55beb  test ax, ax / je           ; job read back from +0x33; 0 -> NO fanfare
+    /// 142d55bf1  [0x143A46F50] -> L"Effect/BasicEff.img/JobChanged"
+    /// 142d55d52  [0x143A48498] -> L"JobChanged"     ; sound, volume 100
+    /// ```
+    ///
+    /// `JobChanged` **is** one of `BasicEff.img`'s 40 nodes - unlike `QuestClear`, which was
+    /// cut - so this one should be sound *and* picture. **Do not also send `0x02D1`**: the
+    /// `0x007C` already fires the effect and two would stack. That was a real near-miss -
+    /// reaching for `user_effect_local(14)` by analogy with the quest fanfare would have sent
+    /// a **1-byte body where effect 14 reads two `u16`s**, which is the short-packet mistake
+    /// this project has already paid for twice.
+    ///
+    /// `!job 0` must be **silent**: that is the `test ax,ax` gate above, and it confirms the
+    /// gate that was read is the gate that runs. That check is free, and it is why the
+    /// argument is not validated against the job table here.
+    pub(super) fn gm_job(&mut self, arg: &str) -> Vec<Reply> {
+        let Ok(job) = arg.parse::<u16>() else {
+            return self.gm_ack(format!(
+                "!job: {arg:?} is not a job id. Try !job 100 (Warrior), 200 (Magician), 300 (Bowman), 400 (Thief), or !job 0 to check the no-fanfare gate."
+            ));
+        };
+        let Some(mut chr) = self.claimed_character() else {
+            return self
+                .gm_ack("!job REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let was = chr.job;
+        chr.job = job;
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.gm_ack(format!("!job FAILED: {e}"));
+        }
+        let mut out = self.gm_ack(format!(
+            "{} is now job {job} (was {was}). Expect the JobChanged effect AND its sound - unless job is 0, which the client's own gate suppresses.",
+            chr.name
+        ));
+        out.push(Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange { job: Some((job, 0)), ..Default::default() }.build(),
+            what: format!(
+                "StatChanged: job {was} -> {job}, mask bit 5. The client plays Effect/BasicEff.img/JobChanged and the JobChanged sound ITSELF from this packet - no 0x02D1 is sent, deliberately"
+            ),
+        });
+        out
+    }
+
+
+    /// `!migsweep [first] [last]` - find the channel stage's migrate opcode, in one run.
+    ///
+    /// **The one thing about Change Channel that cannot be read statically.** The reply is
+    /// not a case of the stage switch at all: it is `FUN_1415d8c00`, a *socket-level*
+    /// handler dispatched from the Themida VM, and `.themida` has `SizeOfRawData = 0`. It has
+    /// zero callers of every kind and zero 4-byte RVA references, so no scan can name its
+    /// opcode. `research/change-channel-reply.md`.
+    ///
+    /// Everything else about it *is* measured. The body is **seven bytes** - `u8 ok`,
+    /// `u32 ip` in **network** order straight into `sin_addr`, and `u16 port`
+    /// **little-endian**, because the client `htons`es it itself. The read count was
+    /// cross-checked two ways, by `tools/listing.py` and `tools/reads.py --depth 2`, and they
+    /// agree exactly.
+    ///
+    /// So the opcode is swept. `0x0019..0x0022` are the ten slots the login switch has no
+    /// case for, and they line up against the reference's socket opcodes at a constant
+    /// `+0x0A`. **[I]** - which is precisely why this is an experiment and not a fix.
+    ///
+    /// # Why one batch is enough, and how the winner is identified
+    ///
+    /// The hook writes one dispatch line per inbound packet **naming the opcode**, on handler
+    /// return. So the hook log shows exactly which of these the client dispatched, and the
+    /// migrate one is the last line before the socket closes. That is the same instrument
+    /// that settled the equip crash, and it means the owner has to time nothing.
+    ///
+    /// **The 64 zero bytes of padding are not decoration.** An over-read in the client throws
+    /// (`1406e8b51` -> `_CxxThrowException` -> `int3`), so a wrong guess landing on a handler
+    /// that wants a longer body would kill the client rather than be ignored. Padding makes a
+    /// wrong guess *inert*.
+    ///
+    /// **The server must not close the socket.** `FUN_142caa360`'s first act is to tear the
+    /// connection down client-side. Measured corroboration: after the login `0x0011` the
+    /// client closed 8 ms later; after the failed channel `0x0011` it stayed open six seconds.
+    pub(super) fn gm_mig_sweep(&mut self, arg: &str) -> Vec<Reply> {
+        let mut parts = arg.split_whitespace();
+        let parse_one = |t: Option<&str>, fallback: u16| -> u16 {
+            t.and_then(|t| {
+                let t = t.trim_start_matches("0x").trim_start_matches("0X");
+                u16::from_str_radix(t, 16).ok()
+            })
+            .unwrap_or(fallback)
+        };
+        let first = parse_one(parts.next(), 0x0019);
+        let last = parse_one(parts.next(), 0x0022);
+        if last < first || usize::from(last - first) >= 32 {
+            return self.gm_ack(format!(
+                "!migsweep: {first:#06x}..{last:#06x} is not a sensible range. Try !migsweep (defaults to 19 22) or !migsweep 24 33."
+            ));
+        }
+
+        // The channel we are NOT on. With the usual two channels that is the other one.
+        let target = if self.config.channel_id == 0 { 1 } else { 0 };
+        let Some(addr) = self.config.channels.get(target as usize).copied() else {
+            return self.gm_ack(format!(
+                "!migsweep REFUSED: this world has no address for channel {target} - pass --channels to the world server."
+            ));
+        };
+        let Some(claimed) = self.claimed.clone() else {
+            return self.gm_ack("!migsweep REFUSED: no character is claimed.".to_string());
+        };
+        // Mint a real migration, so a channel that DOES accept the packet can be entered
+        // rather than bouncing on arrival. `on_change_channel` was always right about this
+        // half - only the opcode and the body were wrong.
+        if let Err(e) = self.store.create_migration(
+            claimed.account_id,
+            claimed.character_id,
+            self.config.world_id,
+            target,
+        ) {
+            return self.gm_ack(format!("!migsweep FAILED to mint a migration: {e}"));
+        }
+
+        // `SocketAddrV4`, so there is no IPv6 case to refuse - which is right, because the
+        // client's `sin_addr` is a 4-byte IPv4 field and nothing else would fit.
+        let ip = addr.ip().octets();
+        let mut body = vec![1u8]; // ok
+        body.extend_from_slice(&ip); // NETWORK order - straight into sin_addr, no swap
+        body.extend_from_slice(&addr.port().to_le_bytes()); // the client htons()es this itself
+        body.extend_from_slice(&[0u8; 64]); // padding, so a wrong guess is inert, not fatal
+
+        let mut out = self.gm_ack(format!(
+            "!migsweep: sending {first:#06x}..{last:#06x} to channel {target} at {addr}. Read the hook log: the LAST dispatch line before the socket closes names the opcode."
+        ));
+        for opcode in first..=last {
+            out.push(Reply {
+                opcode,
+                body: body.clone(),
+                what: format!(
+                    "migsweep candidate {opcode:#06x}: the 7-byte migrate body (ok=1, {addr}) plus 64 bytes of padding so a wrong guess cannot over-read. The OPCODE is [I]; every other byte here is measured"
+                ),
+            });
+        }
+        out
     }
 
 

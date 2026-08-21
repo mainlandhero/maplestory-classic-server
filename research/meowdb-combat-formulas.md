@@ -1,5 +1,25 @@
 # Damage, HP/MP gain and attack speed — the three meowdb guides
 
+> ## READ `research/damage-formula.md` FIRST
+>
+> **This file is the capture of what the three guides say. It is not the answer.** On
+> 2026-08-21 every number in it was cross-checked against this client, and
+> `research/damage-formula.md` is where the result lives — including the parts of the client
+> that carry these numbers as literals, and the places where the guides are **wrong about this
+> client**:
+>
+> * the whole weapon-multiplier table is in `FUN_14025e000` and matches **exactly** — **[L]**;
+> * **a wand/staff physical attack is a STR attack here, not INT**, contradicting §1's table;
+> * `mastery` in this client is **1..=10, not a percentage** — assuming the usual unit is a
+>   5.5x error;
+> * Lucky Seven's multiplier is **3.0**, and a bow used as a club divides by **300/150**;
+> * `AttackHit::flag_b` is the **critical** flag, measured on a real capture;
+> * §3's animation model is incomplete — the *damage* page carries the scaling arithmetic that
+>   the attack-speed page omits, and both of its inputs are **[L]** in `Character.wz`.
+>
+> Where the two files disagree, `research/damage-formula.md` is right. Nothing below has been
+> edited, so the original capture stays comparable.
+
 **Captured 2026-08-20**, at the owner's request: *"I also need you to take a look at the following
 which is an integral part of our server ... Make sure that these make it onto the to-do
 list."*

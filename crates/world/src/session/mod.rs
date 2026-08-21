@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,6 +299,7 @@ struct Conversation {
     sent_with_next: bool,
 }
 
+mod ability;
 mod combat;
 mod field;
 mod gm;
@@ -508,6 +509,16 @@ impl Session {
             // which is the case a drag out of the inventory window is.
             net::skills::CLIENT_USER_SKILL_UP_REQUEST => {
                 return self.on_skill_up(body.get(2..).unwrap_or(&[]))
+            }
+            // **Two AP opcodes, not one.** 0x0138 is a single + click and 0x0139 is the
+            // bulk dialog; answering only the second still looks broken to anyone using the
+            // button, which is what happened. Both latch ctx+0x2330 on send and only a
+            // 0x007C clears it, so both are answered on every path - see session/ability.rs.
+            net::abilityup::CLIENT_ABILITY_UP => {
+                return self.on_ability_up(body.get(2..).unwrap_or(&[]))
+            }
+            net::abilityup::CLIENT_ABILITY_MASS_UP => {
+                return self.on_ability_mass_up(body.get(2..).unwrap_or(&[]))
             }
             net::userhit::CLIENT_USER_HIT => {
                 return self.on_user_hit(body.get(2..).unwrap_or(&[]))

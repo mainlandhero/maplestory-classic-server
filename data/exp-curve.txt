@@ -16,7 +16,23 @@
 # client draws the EXP bar from its own copy, so a server that disagrees shows a bar that
 # does not fill when it should.
 #
-# Levels 1..99. A character at 100 has no next level here and stops gaining.
+# VERIFIED AGAINST THE CLIENT'S OWN TABLE, 2026-08-21. The comparison above had never been
+# run. It has now been, against the dump in
+# research/fixtures/equip-into-empty-hat-slot-kills-client-hook.log, and levels 1..99 agree
+# EXACTLY - 99 of 99, zero disagreements. So these rows are no longer fan-sourced [I]; they
+# are confirmed against the running client [L].
+#
+# Getting there needed a tool fix. `tools/decode_dump.py --exp-curve` labelled entry i as
+# level i+1 - its comment claimed "Entry 0 is level 1's requirement" - so the first
+# comparison reported all 98 levels disagreeing when none of them do. Entry **i** is level
+# **i**'s requirement: [0] = 0 is the hole that makes the index 1-based, [1] = 15 is level 1,
+# [119] = 28171993, and [120] = 0 because 120 is the cap and has no next level. 1 hole plus
+# levels 1..120 is 121 entries with exactly 2 zeros, which is the 119 non-zero the dump
+# reports. The same fix cleared a permanent false "monotonic: NO - suspect", which was the
+# trailing cap zero being compared against the last real level.
+#
+# Levels 100..119 below come STRAIGHT FROM THAT DUMP rather than from the guide, which only
+# went to 100. Level 120 is the cap: the client's own entry for it is 0.
 1 | 15
 2 | 34
 3 | 57
@@ -116,3 +132,23 @@
 97 | 8711144
 98 | 9188514
 99 | 9692044
+100 | 10223168
+101 | 10783397
+102 | 11374327
+103 | 11997640
+104 | 12655110
+105 | 13348610
+106 | 14080113
+107 | 14851703
+108 | 15665576
+109 | 16524049
+110 | 17429566
+111 | 18384706
+112 | 19392187
+113 | 20454878
+114 | 21575805
+115 | 22758159
+116 | 24005306
+117 | 25320796
+118 | 26708375
+119 | 28171993

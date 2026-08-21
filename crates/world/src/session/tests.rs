@@ -1487,7 +1487,16 @@ fn rogers_script_quest_opens_from_the_authored_overlay() {
         !quests[&1002].say.contains_key("0"),
         "the client ships no opening for 1002 - if it ever does, this overlay is redundant"
     );
-    assert_eq!(crate::config::overlay_quests(&mut quests, authored), 1);
+    // **Assert what this test is about, not how many quests the file happens to hold.**
+    // The first version pinned the return at 1 and broke the moment the job-advancement
+    // quests were authored into the same file - a test failing on someone else's correct
+    // work. The overlay's size is content and will keep growing; what must hold is that
+    // 1002 got an opening out of it.
+    assert!(crate::config::overlay_quests(&mut quests, authored) >= 1, "{authored:?} loaded");
+    assert!(
+        quests[&1002].say.contains_key("0"),
+        "the overlay did not reach quest 1002 - check {authored:?} and its TAB characters"
+    );
 
     let config = Config { quests, ..Config::default() };
     let store = Arc::new(Store::open_in_memory().unwrap());
@@ -1695,6 +1704,203 @@ fn equipping_over_a_worn_item_swaps_and_still_sends_one_entry() {
     assert_eq!(worn.iter().find(|e| e.slot == 5).unwrap().item_id, 1040001);
     let back = s.store.inventory_slot(id, store::InventoryType::Equip, 4).unwrap().unwrap();
     assert_eq!(back.item_id, 1040002);
+}
+
+/// A claimed session whose character has `ap` unspent ability points.
+///
+/// The starter stats are 4/4/4/4, so a single point into STR must read back as 5.
+fn session_with_ap(ap: u16) -> (Session, i64, u32) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Spender".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.ap = ap;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(Config::default()));
+    s.claim_for_character(made.id);
+    (s, account_id, made.id)
+}
+
+/// Read a character back out of the store, so a test asserts on what was persisted rather
+/// than on what the handler happened to hold.
+fn reload(s: &Session, account: i64, id: u32) -> net::opcode::Character {
+    s.store
+        .characters_for(account, 0)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == id)
+        .expect("the character is still there")
+}
+
+/// Ability points: a single `+` click is `0x0138`, and every path answers.
+///
+/// The owner tried allocating AP three times across two runs and nothing happened. The opcode
+/// was written up as `0x0139`, which is only the **bulk** request - a plain `+` click sends
+/// `0x0138`, a different opcode with a different body. `research/ap-allocation.md`.
+///
+/// The load-bearing assertion is **byte 0 of every reply**. Both builders latch
+/// `ctx+0x2330` on send and only a `0x007C` clears it, so an unanswered - or wrongly
+/// answered - AP request does not lose one point, it kills the stat window for the whole
+/// session. Same failure class as `0x0107`.
+#[test]
+fn a_single_ability_point_click_raises_the_stat_and_always_answers() {
+    let (mut s, acct, id) = session_with_ap(7);
+    // Read the roll rather than assuming it: character creation rolls the four stats to a
+    // total of 25, so the starter STR is not a constant this test gets to know.
+    let before = reload(&s, acct, id);
+
+    // 0x0138: u32 tick, u32 statMask. 0x40 is STR.
+    let mut body = 0u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&net::abilityup::stat_bits::STR.to_le_bytes());
+    let replies = s.on_ability_up(&body);
+
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0].opcode, net::stats::STAT_CHANGED);
+    assert_eq!(replies[0].body[0], 1, "byte 0 is what clears the ctx+0x2330 latch");
+
+    let chr = reload(&s, acct, id);
+    assert_eq!(chr.strength, before.strength + 1, "one point of STR");
+    assert_eq!(chr.ap, 6, "and one point is gone");
+}
+
+/// The client does **not** stop an over-spend, so the server must - and still answer.
+///
+/// The gate at `142d4bc94` looks like a "do you have the points" check and is not: both
+/// positive tests jump *to* the send, so the final comparison is only reachable when both
+/// operands are non-positive.
+#[test]
+fn an_overspend_is_refused_and_the_refusal_is_still_a_stat_change() {
+    let (mut s, acct, id) = session_with_ap(2);
+    let before = reload(&s, acct, id);
+
+    // 0x0139 bulk: tick, count, then (mask, amount). Ask for 30 with 2 available - the
+    // exact shape of the capture that identified this opcode.
+    let mut body = 0u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&1u32.to_le_bytes());
+    body.extend_from_slice(&net::abilityup::stat_bits::STR.to_le_bytes());
+    body.extend_from_slice(&30u32.to_le_bytes());
+    let replies = s.on_ability_mass_up(&body);
+
+    assert_eq!(replies.len(), 1, "a refusal is still exactly one 0x007C");
+    assert_eq!(replies[0].opcode, net::stats::STAT_CHANGED);
+    assert_eq!(replies[0].body[0], 1, "the latch is cleared even when refusing");
+    assert!(replies[0].what.contains("REFUSED"), "{}", replies[0].what);
+
+    let chr = reload(&s, acct, id);
+    assert_eq!((chr.strength, chr.ap), (before.strength, 2), "nothing moved");
+}
+
+/// A body that does not parse still gets answered, and short bodies come off a socket.
+#[test]
+fn an_unreadable_ability_request_still_clears_the_latch() {
+    let (mut s, _, _) = session_with_ap(5);
+    for n in 0..16 {
+        let short = vec![0u8; n];
+        for replies in [s.on_ability_up(&short), s.on_ability_mass_up(&short)] {
+            assert_eq!(replies.len(), 1, "len {n} must still be answered");
+            assert_eq!(replies[0].opcode, net::stats::STAT_CHANGED);
+            assert_eq!(replies[0].body[0], 1, "len {n}: byte 0 clears the latch");
+        }
+    }
+
+    // A mask this client's switch refuses is a refusal, not a silent drop.
+    let mut bogus = 0u32.to_le_bytes().to_vec();
+    bogus.extend_from_slice(&0x0000_0001u32.to_le_bytes()); // not one of the six
+    let replies = s.on_ability_up(&bogus);
+    assert!(replies[0].what.contains("REFUSED"), "{}", replies[0].what);
+}
+
+/// `0x800` and `0x2000` are **MAX** hp and mp, and current hp/mp must not move.
+///
+/// The button says "HP". The bit is not current HP, and the request cannot name current HP
+/// at all - `0x400` is that, and no arm of the switch accepts it. `CLAUDE.md`'s "the unit,
+/// not the arithmetic": three bugs this month were a correct number in the wrong field.
+#[test]
+fn ability_points_into_hp_raise_the_maximum_not_the_current_value() {
+    let (mut s, acct, id) = session_with_ap(3);
+    let before = reload(&s, acct, id);
+
+    let mut body = 0u32.to_le_bytes().to_vec();
+    body.extend_from_slice(&net::abilityup::stat_bits::MAX_HP.to_le_bytes());
+    s.on_ability_up(&body);
+
+    let after = reload(&s, acct, id);
+    assert_eq!(
+        after.max_hp,
+        before.max_hp + net::abilityup::policy::MAX_HP_PER_AP,
+        "the MAXIMUM went up"
+    );
+    assert_eq!(after.hp, before.hp, "and the current value did not");
+    assert_eq!(after.ap, before.ap - 1);
+}
+
+/// **Giving up a quest removes the row and answers**, driven by the real captured packet.
+///
+/// The owner: *"I tried to forfeit the quest to start that portion over, but I cannot talk to
+/// Sera again."* The forfeit is `0x0151` **action 3** with a **5-byte** body, and
+/// `parse_quest_request` needs a 9-byte head - so it returned `None`, and `None` meant
+/// silence. Both `0x01ED` and `0x01A5` went unanswered in the same runs and looked like far
+/// better candidates; neither is the forfeit. `research/quest-forfeit.md`.
+///
+/// The client cannot clear its own journal - the started-map erase has exactly two callers
+/// and the forfeit path reaches neither - so the row only ever disappears when the server
+/// answers. That is why the reply is asserted here and not just the database.
+#[test]
+fn giving_up_a_quest_forgets_the_row_and_still_answers() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Quitter".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(id);
+
+    s.on_quest_request(&hex("01e8030000010000000c046d0100000000"));
+    assert_eq!(s.store.quest_rows(id).unwrap().len(), 1, "accepted first");
+
+    // The exact 5 bytes from research/fixtures/quest-forfeit-0151-action3-on-the-wire:
+    // action 3, quest 1000.
+    let replies = s.on_quest_request(&hex("03e8030000"));
+    assert_eq!(replies.len(), 1, "a forfeit is answered - silence is what broke it");
+    assert_eq!(replies[0].opcode, net::quest::MESSAGE);
+    assert_eq!(replies[0].body, net::questforfeit::forfeit_reply(1000, false));
+    assert!(s.store.quest_rows(id).unwrap().is_empty(), "and the row is gone");
+
+    // Forfeiting something never started still answers, because the thing being repaired is
+    // the client's journal and a disagreement is exactly the case that matters.
+    let again = s.on_quest_request(&hex("03e8030000"));
+    assert_eq!(again.len(), 1, "still answered with no row to remove");
+}
+
+/// A forfeit must not be mistaken for a start, or a start for a forfeit.
+///
+/// Five bytes beginning `03` is a forfeit; anything else with a 9-byte head is an ordinary
+/// request. The lengths are what separate them, so short bodies off a socket are checked
+/// here too - `on_quest_request` is reachable from the wire.
+#[test]
+fn only_a_five_byte_action_three_is_read_as_a_forfeit() {
+    assert!(net::questforfeit::is_forfeit(&hex("03e8030000")));
+    // Action 3 was never a documented tag: the census listed six actions and there are nine
+    // builder sites across four functions, carrying tags 0, 3 and 7 as well.
+    assert!(!net::questforfeit::is_forfeit(&hex("01e8030000010000000c046d0100000000")));
+    assert!(!net::questforfeit::is_forfeit(&hex("02e90300000100000043ffe501ffffffff")));
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Shorty".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store, Arc::new(Config::default()));
+    s.claim_for_character(id);
+    for n in 0..18 {
+        let _ = s.on_quest_request(&vec![3u8; n]);
+    }
 }
 
 /// The `0x055B` in a reply list, which is no longer always the first thing in it.

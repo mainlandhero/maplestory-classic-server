@@ -32,6 +32,20 @@ impl Session {
     /// down silently. This path is a reply to a click, which is long after field entry, so
     /// it is clear - but the constraint is why this does not simply fire on arrival.
     pub(super) fn on_quest_request(&mut self, body: &[u8]) -> Vec<Reply> {
+        // **Giving up a quest is action 3, and its body is FIVE bytes.** It has to be split
+        // off before `parse_quest_request`, which needs a 9-byte head and returns `None` for
+        // a forfeit - and `None` here is silence on the wire. That is exactly what two
+        // captures show: the owner pressed give up, the packet arrived, and nothing came back, so
+        // they pressed it again after a relog. `research/quest-forfeit.md`.
+        //
+        // Neither `0x01ED` nor `0x01A5` was the forfeit, though both went unanswered four
+        // times in the same run and both looked like obvious candidates. `0x01ED` is the
+        // client's own usage/log channel - the same two bodies appear byte-for-byte in a
+        // capture from 2026-08-19 that contains **no quest traffic at all**, because the
+        // subsystem did not exist yet.
+        if net::questforfeit::is_forfeit(body) {
+            return self.record_quest_forfeit(body);
+        }
         // Always answer. An unanswered request freezes the client's whole UI, so a body
         // that does not parse still gets a reply - parse_quest_request only returns None
         // when the fixed 9-byte head does not fit, and then there is no template to speak
@@ -204,6 +218,51 @@ impl Session {
             out.extend(self.record_quest_start(chained_to, 0));
         }
         out
+    }
+
+
+    /// `0x0151` action 3 - the player pressed **give up** in the quest window.
+    ///
+    /// **The client cannot clear its own journal.** `tools/callers.py` on the started-map
+    /// erase reports two functions, zero tail jmps and zero data pointers: the record decoder
+    /// and the `0x0089` sub-1 handler. The forfeit path reaches neither, so the row only ever
+    /// disappears when the server answers. **[L]**
+    ///
+    /// Two decisions, not details:
+    ///
+    /// * **`forget_completion = false`.** A forfeit undoes an *acceptance*. It must not
+    ///   silently wipe a completion the player earned.
+    /// * **The reply goes out even when the store had no row.** The thing being fixed is the
+    ///   client's journal, and the case where the two books disagree is precisely the case
+    ///   that matters.
+    ///
+    /// A forfeit can never reset a **completed** quest: the client's builder walks its own
+    /// started map and returns without building anything if the id is not there. Re-running a
+    /// finished chain is a server-side job, not a client request.
+    pub(super) fn record_quest_forfeit(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(req) = net::questforfeit::parse_forfeit_request(body) else {
+            return Vec::new();
+        };
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let what = match self.store.forget_quest(chr.id, req.quest_id) {
+            Ok(true) => format!(
+                "quest {} given up by character {} ({}) and the row is gone",
+                req.quest_id, chr.id, chr.name
+            ),
+            Ok(false) => format!(
+                "quest {} given up but we had no row for character {}; the record is sent anyway so the client's journal agrees with ours",
+                req.quest_id, chr.id
+            ),
+            Err(e) => format!(
+                "quest {} given up but NOT REMOVED ({e}) - the journal clears now and the quest comes back on the next SetField",
+                req.quest_id
+            ),
+        };
+        vec![Reply {
+            opcode: net::quest::MESSAGE,
+            body: net::questforfeit::forfeit_reply(req.quest_id, false),
+            what,
+        }]
     }
 
 

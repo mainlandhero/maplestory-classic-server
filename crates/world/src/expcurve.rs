@@ -21,8 +21,17 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-/// The highest level this table describes. A character there stops gaining.
-pub const MAX_LEVEL: u32 = 100;
+/// The highest level a character can reach. A character there stops gaining.
+///
+/// **120, from the client's own table, since 2026-08-21.** It was 100 while `data/exp-curve.txt`
+/// stopped at 99, and both moved together: the dumped table has 121 entries, `[0] = 0` as the
+/// hole that makes the index 1-based, `[119] = 28171993`, and `[120] = 0` because 120 is the
+/// cap and has no next level.
+///
+/// Leaving this at 100 after extending the file would have made levels 101..119 unreachable
+/// while the client funded them - a cap that silently disagrees with the data beside it,
+/// which is exactly the kind of quiet wrongness the module header warns about.
+pub const MAX_LEVEL: u32 = 120;
 
 /// Which of the five gain lines a character is on.
 ///
@@ -246,12 +255,20 @@ mod tests {
     fn the_real_file_parses_and_rises() {
         let c = ExpCurve::load(Path::new("../../data/exp-curve.txt"));
         assert!(c.problems.is_empty(), "{:?}", c.problems);
-        assert_eq!(c.levels(), 99, "levels 1..99");
+        // **119, not 99, since 2026-08-21.** The client's own table was finally dumped and
+        // compared: levels 1..99 agree EXACTLY, 99 of 99, so the fan-sourced rows are now
+        // confirmed rather than assumed - and the dump also carries 100..119, which the
+        // guide did not. Those rows come straight from the running client.
+        //
+        // The client's entry for level **120** is `0`: 120 is the cap and has nowhere to go,
+        // which is the same shape this assertion always made, one level higher up.
+        assert_eq!(c.levels(), 119, "levels 1..119, from the client's own table");
         assert_eq!(c.to_next(1), Some(15), "the classic first level");
         assert_eq!(c.to_next(99), Some(9_692_044));
-        assert_eq!(c.to_next(100), None, "and 100 has nowhere to go");
+        assert_eq!(c.to_next(119), Some(28_171_993), "the last level the client funds");
+        assert_eq!(c.to_next(120), None, "and 120 is the cap - the client's own entry is 0");
         // Monotonic: a later level must never be cheaper than an earlier one.
-        for l in 1..99 {
+        for l in 1..119 {
             assert!(
                 c.to_next(l).unwrap() <= c.to_next(l + 1).unwrap(),
                 "level {l} costs more than level {}",

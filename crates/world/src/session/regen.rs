@@ -23,6 +23,20 @@
 //! With thirty mobs on screen the channel is already sending several hundred packets a second
 //! and the last thing it needs is a heartbeat that says nothing. So a tick that would heal
 //! nothing sends nothing, and the timer does not even start until something is missing.
+//!
+//! # This heartbeat clears the client's request latch, and that is a side effect
+//!
+//! Every `0x007C` carries `excl_request_sent = 1` in byte 0, which clears
+//! `CWvsContext+0x2330` - the one-request-outstanding latch that gates ability-point and
+//! several other requests. So **idle regeneration silently re-opens the stat window every
+//! ten seconds**, whether or not anything answered the request that latched it.
+//!
+//! Nothing here needs changing - clearing a latch nobody set is harmless, and that is why
+//! `excl_request_sent` defaults to `true` in the first place. It is written down because it
+//! is a **confound for testing**: a run that clicks `+`, waits, and clicks again will see the
+//! second click work even if [`super::ability`] is completely broken. Measured, not feared -
+//! in `world-20260821-001440.log` a regen `0x007C` landed 11 s after an AP request and did
+//! exactly that. See `session::ability`'s module docs for the test that does discriminate.
 
 use super::*;
 

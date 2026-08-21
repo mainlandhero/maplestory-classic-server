@@ -91,3 +91,64 @@
 # you...") is shipped by the client and `questlines.txt` already carries it. It is the line
 # for `0x0151` **action 6**, the requirement-failed request - see `research/quest-scripts.md`
 # §6, which also records that nothing currently routes action 6 to a `stop` node.
+
+# ---------------------------------------------------------------------------------------
+# 20003 / 20103 / 20203 / 20303  "Proof of Qualification"  -  endscript q<id>e
+#
+#   *** THESE ARE THE **SECOND** JOB ADVANCEMENT, AT LEVEL 30. NOT THE FIRST. ***
+#
+# ---------------------------------------------------------------------------------------
+# `STATUS.md` goal E and `research/quest-scripts.md` §4 both list these four as the cheapest
+# next script quests, and they are - but neither says which advancement they are, and the
+# assumption that they were the level-10 one is wrong. The client settles it, in its own
+# words and its own data. [L], `gm-handbook/questlines.txt`:
+#
+#     20003  Check  0.job.0   100      <- you must ALREADY be a Warrior to start it
+#     20003  Check  0.lvmin   30
+#     20003  QuestInfo 1  "...I should return to #b#p511##k in #b#m10004000##k now."
+#     20001  Say    1.0  "...you came all the way here to take the test and make the
+#                         2nd job advancement as a Warrior?"
+#
+# **The first job advancement has no quest at all.** All 322 quests were enumerated and
+# there is no `Act.<n>.job` key anywhere in the tree, so no quest in this client can change
+# a job even in principle. It is an NPC script, and NPC scripts are server-side - the same
+# finding as `q1002s`, one level up. `research/job-advancement.md` has the enumeration, its
+# positive controls, and what to build instead.
+#
+# ## What these four rows are, and what they are NOT
+#
+# Each of these quests has a **client-side opening** (`Say."0"` is shipped, so the client
+# sends action 1) and a **scripted close** (`Check.1.endscript = q<id>e`, so the client sends
+# action 5). Only the `Say."1"` half is missing, which is why they are cheap.
+#
+# **No job change is attached to them, deliberately.** `Act."1"` for all four carries
+# `exp 3150` and nothing else [L], there is no `Act.<n>.job` key in the schema to hang one
+# on, and the second-job table (110/111/112, 120/121/122, ...) does not exist in this server.
+# Adding a line of dialogue is honest; making these rows silently promote a character would
+# be a job change with no table behind it. So on completing one of these today the player
+# gets the line, the EXP and the journal row, and stays whatever job they were.
+#
+# ## Provenance: all four lines are OURS
+#
+# Stated plainly rather than hedged. `String.wz/Npc.img` gives 511 / 313 / 221 / 411 four to
+# six lines each and every one of them is an idle line - Dances with Balrog's complete
+# repertoire is `d0`, `d1`, `idle0`, `idle1`, `info0`, `info1`, and `d0` = `d1` = *"Those who
+# want to become a warrior, come see me..."*. [L] There is **no closing dialogue for these
+# quests anywhere in the client**, in either the English tree or the Spanish overlay.
+#
+# The client does carry `QuestInfo.2` for each - *"#b#p511##k in #b#m10004000##k welcomed me
+# warmly, and I gained a new job..."* [L] - but that is the **player's journal voice**, not
+# the NPC's, and re-using it as dialogue would put a shipped sentence in a mouth it was never
+# written for. It is quoted here as the sense the line has to carry, not copied into it.
+#
+# One sentence per quest, identical across all four because the four instructors are
+# interchangeable at this point in the chain and inventing four different personalities
+# would be inventing dialogue at scale. Replace freely; each is one row.
+
+20003	Say	1.0	So you have passed the test, and the proof is in your hand. Then it is settled -- from this day you walk a harder road, and a greater one. Go, and do not disgrace it.
+20103	Say	1.0	So you have passed the test, and the proof is in your hand. Then it is settled -- from this day you walk a harder road, and a greater one. Go, and do not disgrace it.
+20203	Say	1.0	So you have passed the test, and the proof is in your hand. Then it is settled -- from this day you walk a harder road, and a greater one. Go, and do not disgrace it.
+20303	Say	1.0	So you have passed the test, and the proof is in your hand. Then it is settled -- from this day you walk a harder road, and a greater one. Go, and do not disgrace it.
+
+# `Say 1.0` x4 = **OURS**, unsourced. The NPC has no words for this in the client.
+# NOT added: any `Act` row. See the header - there is no second-job table to promote into.

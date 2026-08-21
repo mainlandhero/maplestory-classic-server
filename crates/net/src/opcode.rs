@@ -1531,8 +1531,17 @@ pub fn npc_enter_field(npc: &FieldNpc) -> Vec<u8> {
     b.extend_from_slice(&npc.cy.to_le_bytes()); //         2   u16 -> +0x3f4
     b.extend_from_slice(&(-1i32).to_le_bytes()); //        3   u32 -> +0x5a8
     b.extend_from_slice(&(-1i32).to_le_bytes()); //        4   u32 -> +0x5ac
-    b.push(0); //                                          5   u8  move
-    b.push(u8::from(npc.f == 0)); //                       6   u8  !flip
+    // **These two were the wrong way round, and it cost Sera an animation.** Byte 20 is the
+    // facing bool - `[npc+0x1ac]`, five reads and every one a `cmp` against zero. Byte 21 is
+    // `[npc+0x1a0]`, which has a setter with change detection and is passed as the *action*
+    // argument to the displayer's `vtable[0x118]` - the same field `0x0453`'s `nAction`
+    // addresses. **[L]**, `research/npc-appear.md`.
+    //
+    // So sending the flip flag in byte 21 told Sera to play animation index 1, which in them
+    // WZ order (`stand, move, blink, ...`) is `move`. Byte 21 is read `movzx`, so `-1` is not
+    // expressible here and `0` is the right default.
+    b.push(u8::from(npc.f == 0)); //                       5   u8  facing (bool, +0x1ac)
+    b.push(0); //                                          6   u8  animation action (+0x1a0)
     b.extend_from_slice(&npc.fh.to_le_bytes()); //         7   u16 foothold
     b.extend_from_slice(&npc.rx0.to_le_bytes()); //        8   u16 walk range low
     b.extend_from_slice(&npc.rx1.to_le_bytes()); //        9   u16 walk range high
@@ -1545,7 +1554,13 @@ pub fn npc_enter_field(npc: &FieldNpc) -> Vec<u8> {
     b.extend_from_slice(&(-1i32).to_le_bytes()); //       16   u32 present item time
     b.extend_from_slice(&[0u8; 8]); //                    17   raw[8]
     b.extend_from_slice(&0u32.to_le_bytes()); //          18   u32 notice board type
-    b.extend_from_slice(&255u32.to_le_bytes()); //        19   u32 ALPHA
+    // **Not ALPHA**, which is what this said and what made it a suspect every time an NPC
+    // failed to appear. `FUN_141e57510` *adds* the value to the current clock
+    // (`lea esi,[r14+rax]`, `rax` a clock read) and never calls `put_color`. So this reads as
+    // "255 ms from now". The value is left alone deliberately - NPCs render correctly with
+    // it, and re-guessing a field on the strength of a corrected label is how the last three
+    // unit bugs happened. **[L]** that it is not alpha; the meaning is still open.
+    b.extend_from_slice(&255u32.to_le_bytes()); //        19   u32 a clock offset, NOT alpha
     b.extend_from_slice(&0u16.to_le_bytes()); //          20   str, empty
     debug_assert_eq!(b.len(), NPC_ENTER_FIELD_LEN);
     b
@@ -2831,8 +2846,17 @@ mod set_field_tests {
         assert_eq!(&b[10..12], &305i16.to_le_bytes(), "cy");
         assert_eq!(&b[12..16], &(-1i32).to_le_bytes(), "read 3");
         assert_eq!(&b[16..20], &(-1i32).to_le_bytes(), "read 4");
-        assert_eq!(b[20], 0, "read 5, move");
-        assert_eq!(b[21], 0, "read 6 is !flip, and this NPC has f = 1");
+        // **These two were the wrong way round until 2026-08-21**, and the old version of
+        // this test pinned the mistake. Byte 20 is the facing bool (`[npc+0x1ac]`, five
+        // reads, every one a `cmp` against zero); byte 21 is `[npc+0x1a0]`, the animation
+        // **action** index, passed to the displayer's `vtable[0x118]` - the same field
+        // `0x0453`'s `nAction` addresses. `research/npc-appear.md`.
+        //
+        // Heena has `f = 1`, so `!flip` is 0 and it belongs in byte 20. Sending it in byte
+        // 21 instead told an NPC with `f = 0` to play animation index 1 - `move`, in the
+        // WZ's own order of `stand, move, blink, ...`.
+        assert_eq!(b[20], 0, "read 5 is the facing bool, and this NPC has f = 1");
+        assert_eq!(b[21], 0, "read 6 is the animation action - always 0, never the flip");
         assert_eq!(&b[22..24], &66u16.to_le_bytes(), "fh, the foothold");
         assert_eq!(&b[24..26], &[0xC0, 0xFF], "rx0 = -64");
         assert_eq!(&b[26..28], &[0xE6, 0xFF], "rx1 = -26");
@@ -2843,15 +2867,27 @@ mod set_field_tests {
         // The two that made every NPC invisible. Both were zero in the first version: the
         // packet was dispatched, nothing appeared, and nothing was logged anywhere.
         assert_eq!(b[32], 1, "read 12 is ENABLED - zero means the NPC is disabled");
+        // Read 19 is **not** alpha, though it was labelled so here and in the builder, and
+        // that made it a suspect every time an NPC failed to appear. `FUN_141e57510` adds it
+        // to the current clock and never calls `put_color`. The value is unchanged because
+        // NPCs render correctly with it; only the claim about what it means is withdrawn.
         assert_eq!(
             &b[58..62],
             &255u32.to_le_bytes(),
-            "read 19 is ALPHA - zero means the NPC is fully transparent"
+            "read 19 is a clock offset, NOT alpha - the value stands, the label did not"
         );
 
-        // And an unflipped NPC gets the opposite byte, so the field is really wired up.
+        // And an unflipped NPC gets the opposite byte, so the field is really wired up -
+        // in byte **20**, the facing bool. Byte 21 stays 0 whatever `f` is, because it is
+        // the animation action and an NPC standing still plays index 0.
+        //
+        // **This assertion is the one that mattered.** It proved the flip flag reached the
+        // packet, and it proved it about the wrong byte, so it passed for as long as the bug
+        // existed. An NPC with `f = 0` was being told to play animation 1.
         let sera = FieldNpc { f: 0, ..heena };
-        assert_eq!(npc_enter_field(&sera)[21], 1, "read 6 is !flip");
+        let sera_body = npc_enter_field(&sera);
+        assert_eq!(sera_body[20], 1, "read 5 is the facing bool, and Sera has f = 0");
+        assert_eq!(sera_body[21], 0, "read 6 is the action index - never the flip");
     }
 
     /// Two NPCs on one field must not share an object id: the pool keys on it, and a repeat

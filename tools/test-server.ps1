@@ -30,10 +30,22 @@
     Two lines say whether anything below is even being tested:
 
       maplecw-world: footholds: 94089 segments across 426 maps (...)
-      maplecw-world: quests: 322 loaded, 1 of them carrying an authored script overlay
+      maplecw-world: quests: 322 loaded, 5 of them carrying an authored script overlay
 
     "NONE LOADED" or "no script overlay" means steps 3 and 5 fail for a reason that has
     nothing to do with the client. Regenerate with: python tools/dump_portals.py
+
+    THESE ARE SEPARATE CLAIMS. TEST THEM ONE AT A TIME.
+    ---------------------------------------------------
+    Everything in the two lists below is WIRED AND UNSEEN - written on 2026-08-21 by six
+    agents working in parallel, and none of it has been in front of the client. Each numbered
+    step is an independent claim with its own failure signature, so a run that does three
+    steps and crashes tells you less than a run that does one and reports it.
+
+    Suggested order if you only have one run: step 1 (the crash repro), then 13, then 3.
+    Those three answer the most open questions per minute.
+
+    NEW COMMANDS THIS ROUND: !job <id>, !migsweep [first] [last]. !help lists them all.
 
     THE ONE THAT MATTERS MOST - a crash with a repro, at last
     --------------------------------------------------------
@@ -84,23 +96,84 @@
     12. !setrates 2 3 5 -> one banner naming all three. !rates reads them back.
         !setrates 1 1 1 -> three "rate-up event has ended" lines on one banner.
 
+    NEW THIS ROUND - six agents, six separate claims
+    -----------------------------------------------
+    13. ABILITY POINTS. Open the stat window and click + beside STR TWICE, WITHIN ABOUT
+        THREE SECONDS. The speed is the whole test and here is why: every 0x007C clears
+        the client's one-request latch, and IDLE REGENERATION SENDS ONE EVERY TEN SECONDS
+        (so does walking through a portal). A slow "click, wait, click" therefore passes
+        whether or not any of this works. Measured, not feared - a regen 0x007C landed
+        11 s after an AP request on 2026-08-21 and re-opened the window by itself.
+          both clicks raise STR and drop AP  -> the whole chain works
+          first works, second does nothing   -> the reply is not clearing the latch
+          nothing, and NO "<- 0x0138" in world.log
+                                             -> the client thinks AP is 0 and never sent
+          nothing, but 0x0138 WAS answered   -> reopen the stat window. If the new STR is
+                                                there it is a repaint problem, and that
+                                                distinction is free
+        Free cross-check: grep 0x007C world.log and confirm the only one between the two
+        "<- 0x0138" lines is ours. If a regen slipped in, the run did not discriminate.
+        NOTE: a plain + click is 0x0138. 0x0139 is the BULK dialog and a different packet -
+        do not test both in the same run.
+    14. !job 100. Expect the JobChanged effect AND its sound - unlike the quest fanfare,
+        this one's art IS in the WZ. The client plays both itself from the 0x007C; no
+        effect packet is sent, deliberately.
+        Then !job 0, which must be SILENT. That is a gate read off the client
+        (142d55beb, "job is 0 -> no fanfare") and it confirms the gate that was read is
+        the gate that runs. Free, and it makes the positive result mean something.
+    15. QUEST FORFEIT. Accept 1000 from Heena, take the mirror to Sera so 1001 STARTS, then
+        open the quest window and press give up on Sera's Mirror. Then click Sera again.
+        TEST 1001, NOT 1000. By then 1000 is completed, and the client will not even build
+        a forfeit packet for a completed quest - so 1000 can only ever look broken.
+          row vanishes, Sera offers 1001 again  -> works
+          row vanishes, comes back after a map change
+                                                -> forget_quest errored; world.log says
+                                                   "NOT REMOVED"
+          nothing, and world.log has a 5-byte 0x0151 starting 03
+                                                -> the handler did not run
+          nothing, and NO such packet           -> the client refused to build it. Not ours
+    16. !migsweep. This is an EXPERIMENT, not a feature: it sends ten candidate opcodes for
+        the channel-migrate reply, because that one field cannot be read out of the binary.
+        Everything else about the packet is measured.
+          the channel changes                   -> found it. The winner is the LAST opcode
+                                                   in client-patched\maplecw-hook.log before
+                                                   the socket closes
+          nothing at all                        -> the opcode is outside 0x19..0x22. Next
+                                                   sweep: !migsweep 24 33
+          the client dies                       -> say so. The 64 bytes of padding are there
+                                                   to prevent exactly that
+        DO THIS LAST. It either changes channel or ends the session.
+
     REGRESSION GLANCES - seconds each, not exercises
     -----------------------------------------------
-    13. Drops arc out of the corpse over about half a second, at the mob, spread apart.
-    14. The EXP line bottom-right is WHITE.
-    15. Mobs on !map 40 are already standing there - no fade-in.
-    16. A level-up gives +16 max HP and +12 max MP.
+    17. Drops arc out of the corpse over about half a second, at the mob, spread apart.
+    18. The EXP line bottom-right is WHITE.
+    19. Mobs on !map 40 are already standing there - no fade-in.
+    20. A level-up gives +16 max HP and +12 max MP.
+    21. NPCs: Sera should be STANDING STILL, not walking on the spot. Their facing flag was
+        going into the animation-action byte, so they were being told to play index 1 = move.
+        (They will still FADE IN. That is step 22's territory, not a regression.)
+
+    FREE, IF YOU ARE ON MAP 40 ANYWAY
+    ---------------------------------
+    22. Swing at snails until about 40 hits land, then say the lowest and highest numbers.
+        The damage formula is decoded from the client's own multiplier table; the predicted
+        window for a level-7 character with the 1312000 axe is 14..21. Fourteen hits are
+        already captured at 16..19, which is containment rather than a fit - 40 hits makes
+        the ends measurable. Anything outside 14..21 falsifies the model and the direction
+        says which term is wrong. Costs no server change.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
-      - AP allocation. Opcode identified (0x0139) but no handler.
-      - Change Channel. We answer with a login-stage opcode on a game socket.
-      - Quest forfeit. 0x01ED / 0x01A5 undecoded - four attempts each on 2026-08-21.
-      - NPCs fade in on map entry. No appear-type field identified in 0x044F.
+      - NPCs fade in on map entry. 0x044F carries NO appear-type field - that is now a
+        verified negative, not a missing search. Parked with a named blocker.
+      - The classic shop counter. 0x055D is the opcode; the row structure is not decoded.
       - The blue HP/MP recovery number. Packet not found.
-      - The other 11 script quests. Only 1002 is authored.
+      - The other script quests. 1002 and four closes are authored; the rest are not.
       - There is NO EXP-gain sound in this client. IncEXP and questCount are in
         Sound/Game.img and neither name appears anywhere in the executable.
+      - Outgoing damage validation. The formula is decoded but the 0x00DF header does not
+        carry the action or the skill id, so nothing can be checked against it yet.
 
     IF THE CLIENT DIES
     ------------------
