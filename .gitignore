@@ -56,3 +56,6 @@ gm-handbook/
 # The launcher now archives the previous run here instead of deleting it. Generated
 # per-run output, not source - runs worth keeping are copied into research/fixtures/.
 previous-runs/
+
+# Crash dumps from WER LocalDumps. Full dumps under page heap are ~1 GB each.
+/dumps/
