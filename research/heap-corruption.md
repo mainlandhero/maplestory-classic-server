@@ -106,6 +106,38 @@ rejects at the `/`. A native executable with spaces in its path needs the call o
 `& "C:\path\app.exe" args`. That is already in `CLAUDE.md`'s shell notes and it still got
 written down wrong here.
 
+## Page heap was run, 2026-08-20, and the fault code CHANGED
+
+The owner enabled full page heap by the registry route and played twice.
+
+| run | seconds | outcome |
+|---|---:|---|
+| first | 364 | **no crash**, closed by hand |
+| second | 450 | **`0xC0000421`** - `STATUS_ASSERTION_FAILURE` |
+
+**Page heap was definitely active**: the client's working set went from ~380 MB to ~990 MB,
+which is the signature of every allocation getting its own page.
+
+**The code changed from `0xC0000374` to `0xC0000421`, and that matters.** The first is the
+heap noticing damage at some later walk; the second is a verifier stop, raised where the rule
+was broken. Page heap bit. Fixtures: `research/fixtures/pageheap-c0000421-*`.
+
+**What we did not get is the message.** There is no `CLIENT FAULT` line for it - the last
+thing in the hook log is an ordinary `0x03E4` dispatch 240 ms before the exit - because a
+verifier stop does not travel through SEH the way an access violation does, so
+`crates/grap-stub`'s handler never sees it. The verifier's diagnosis goes to the debugger
+port, and with no debugger attached it is discarded.
+
+So the next step is **a debugger, not another page-heap run**. The Debugging Tools for Windows
+are not installed (that is why `gflags.exe` was missing); installing them gives `windbg`, and
+running the client under it would print the verifier's own sentence - which names the block,
+the operation and the stack. That is a bigger ask than a registry key and it is the honest
+next step rather than a cheaper one that will not work.
+
+**Do not leave page heap on** while doing anything else: it costs ~600 MB and a lot of CPU,
+and it changes the failure mode, so any other crash seen while it is enabled is not comparable
+with the runs before it.
+
 ## The capture diff, done 2026-08-20 - and it eliminated six things
 
 The comparison to make is **crashing runs against surviving ones**, not crash against crash.

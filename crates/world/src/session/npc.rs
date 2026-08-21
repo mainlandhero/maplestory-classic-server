@@ -60,18 +60,46 @@ impl Session {
         // it locally, the way it shows the opening - but no capture contains a decline, so
         // that is **[I]** and this does not act on it.
         let accepted = req.action == net::script::QUEST_ACTION_START;
+        let completing = state == "1";
         let branch = format!("{state}.yes");
         // An unknown quest falls back to the NPC's own line - a one-line conversation
         // rather than silence.
+        //
+        // **The `"0"` fallback must not apply to a completion**, and that cost a run.
+        // The owner clicked Sera holding quest 1000 and they recited Heena's tutorial: *"You must
+        // be the new traveler..."*. The capture says exactly why -
+        //
+        //   <- 0x0151  02 e8030000 02000000     action 2, quest 1000, npc 2
+        //   -> 0x055B  ... quest 1000, line 1 of 4 on path "0"
+        //
+        // - because quest 1000 has **no `Say.1`**. Its only `1.*` node is `1.stop.npc`, so
+        // `contains_key("1")` is false and the old chain fell through to `"0"`, the opening.
+        // Falling back to the *start* of a quest when asked to *finish* it is never right:
+        // it is a conversation the player has already had, from the wrong NPC.
+        //
+        // What quest 1000 has instead is `Act.1.nextQuest = 1001`, and 1001's `Say.0` is the
+        // line the owner expected - *"How am I going to hang all these up?"*. So a completion with
+        // no completion dialogue **chains**, which is what the data is describing.
+        let mut speaking_quest = req.quest_id;
         let path = match quest {
             Some(q) if accepted && q.say.contains_key(&branch) => Some(branch),
             Some(q) if q.say.contains_key(state) => Some(state.to_string()),
+            // A completion whose quest has nothing to say hands over to the next quest in
+            // the chain, and the conversation belongs to THAT quest from here on - the
+            // client is told a quest id and it has to be the one whose lines these are.
+            Some(q) if completing => match q.next_quest {
+                Some(next) if self.config.quests.get(&next).is_some_and(|n| n.say.contains_key("0")) => {
+                    speaking_quest = next;
+                    Some("0".to_string())
+                }
+                _ => None,
+            },
             Some(q) if q.say.contains_key("0") => Some("0".to_string()),
             _ => None,
         };
         self.conversation = Some(Conversation {
             npc_template: req.npc_template_id,
-            quest_id: path.as_ref().map(|_| req.quest_id),
+            quest_id: path.as_ref().map(|_| speaking_quest),
             path: path.unwrap_or_default(),
             sent: 0,
             awaiting_yes_no: false,
@@ -98,7 +126,52 @@ impl Session {
         if accepted {
             out.extend(self.record_quest_start(req.quest_id, req.npc_template_id));
         }
+        if completing {
+            out.extend(self.record_quest_complete(req.quest_id, speaking_quest));
+        }
         out.extend(self.say_line(0));
+        out
+    }
+
+
+    /// Write a completion down, and start the quest it chains into.
+    ///
+    /// `chained_to` is the quest whose dialogue is about to be spoken - the same id as
+    /// `finished` when the quest has its own completion lines, and the next one in the chain
+    /// when it does not.
+    ///
+    /// **The chained quest is started here rather than waiting for the client to ask.** The
+    /// client is already mid-conversation with the NPC that starts it, and the capture shows
+    /// it sends no second `0x0151`; if the server does not write the row, the player finishes
+    /// the conversation holding neither quest.
+    pub(super) fn record_quest_complete(&mut self, finished: u32, chained_to: u32) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let mut out = Vec::new();
+        match self.store.complete_quest(chr.id, finished) {
+            // `complete_quest` returns the FILETIME it stamped, which is the same value the
+            // journal has to carry - re-deriving it here would put a different instant in the
+            // packet from the one in the database.
+            Ok(Some(at)) => out.push(Reply {
+                opcode: net::quest::MESSAGE,
+                body: net::quest::quest_completed(finished, at as u64),
+                what: format!("quest {finished} completed for character {}", chr.id),
+            }),
+            Ok(None) => out.push(Reply {
+                opcode: net::notice::CHAT_NOTICE,
+                body: net::notice::chat_notice(&format!(
+                    "The server was asked to complete quest {finished}, which this character                      has not started."
+                )),
+                what: format!("quest {finished} completed but no row existed"),
+            }),
+            Err(e) => out.push(Reply {
+                opcode: net::notice::CHAT_NOTICE,
+                body: net::notice::chat_notice("Could not record that quest."),
+                what: format!("quest {finished} completion NOT STORED: {e}"),
+            }),
+        }
+        if chained_to != finished {
+            out.extend(self.record_quest_start(chained_to, 0));
+        }
         out
     }
 

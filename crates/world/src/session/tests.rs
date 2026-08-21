@@ -2474,3 +2474,81 @@ fn a_minority_share_is_a_fraction_and_yellow() {
     assert_eq!(msg.body[1], 0, "white = 0 for a share");
     assert!(msg.what.contains("+10 exp"), "15 of 45 of 30 exp is 10: {}", msg.what);
 }
+
+
+/// **A completion must never replay the quest's opening.** The regression the owner hit on
+/// 2026-08-20: they clicked Sera holding quest 1000 and they recited Heena's tutorial.
+///
+/// Quest 1000 has no `Say.1` - only `1.stop.npc` - so the old fallback chain reached `"0"`.
+#[test]
+fn completing_a_quest_never_replays_its_opening() {
+    let (mut s, _, _) = gm_session();
+    let mut q1000 = crate::config::Quest {
+        name: "Borrowing Sera's Mirror".to_string(),
+        start_npc: Some(1),
+        end_npc: Some(2),
+        next_quest: Some(1001),
+        ..Default::default()
+    };
+    q1000.say.insert("0".to_string(), vec!["You must be the new traveler.".to_string()]);
+    q1000.say.insert("1.stop.npc".to_string(), vec!["Haven't met up with Sera yet?".to_string()]);
+    let mut q1001 = crate::config::Quest {
+        name: "Bringing a Mirror to Heena".to_string(),
+        start_npc: Some(2),
+        ..Default::default()
+    };
+    q1001.say.insert("0".to_string(), vec!["How am I going to hang all these up?".to_string()]);
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(1000u32, q1000);
+    quests.insert(1001u32, q1001);
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+    s.handle(&quest_request(net::script::QUEST_ACTION_START, 1000, 1));
+
+    let out = s.handle(&quest_request(net::script::QUEST_ACTION_COMPLETE, 1000, 2));
+    let said: Vec<String> = out.iter().map(|r| r.what.clone()).collect();
+    assert!(
+        !said.iter().any(|w| w.contains("new traveler")),
+        "Sera replayed Heena's opening: {said:?}"
+    );
+    assert!(
+        said.iter().any(|w| w.contains("quest 1001")),
+        "completing 1000 must chain into 1001: {said:?}"
+    );
+    assert!(
+        said.iter().any(|w| w.contains("quest 1000 completed")),
+        "and 1000 must be recorded complete: {said:?}"
+    );
+}
+
+/// A quest that DOES have completion lines speaks them, and chains nothing.
+#[test]
+fn a_quest_with_its_own_completion_lines_uses_them() {
+    let (mut s, _, _) = gm_session();
+    let mut q = crate::config::Quest {
+        name: "Bringing a Mirror to Heena".to_string(),
+        start_npc: Some(2),
+        next_quest: None,
+        ..Default::default()
+    };
+    q.say.insert("0".to_string(), vec!["How am I going to hang all these up?".to_string()]);
+    q.say.insert("1".to_string(), vec!["Oh wow! You brought Sera's mirror!".to_string()]);
+    let mut quests = std::collections::HashMap::new();
+    quests.insert(1001u32, q);
+    s.config = Arc::new(Config { quests, ..(*s.config).clone() });
+    s.handle(&quest_request(net::script::QUEST_ACTION_START, 1001, 2));
+
+    let out = s.handle(&quest_request(net::script::QUEST_ACTION_COMPLETE, 1001, 1));
+    let said: Vec<String> = out.iter().map(|r| r.what.clone()).collect();
+    assert!(said.iter().any(|w| w.contains("on path \"1\"")), "{said:?}");
+    assert!(said.iter().any(|w| w.contains("quest 1001 completed")), "{said:?}");
+}
+
+/// `0x0151` body: u8 action, u32 questId, u32 npcTemplateId, then a tail we do not read.
+fn quest_request(action: u8, quest_id: u32, npc: u32) -> Vec<u8> {
+    let mut b = net::script::CLIENT_QUEST_REQUEST.to_le_bytes().to_vec();
+    b.push(action);
+    b.extend_from_slice(&quest_id.to_le_bytes());
+    b.extend_from_slice(&npc.to_le_bytes());
+    b.extend_from_slice(&[0u8; 8]);
+    b
+}
