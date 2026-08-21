@@ -88,9 +88,46 @@ If gflags is not installed, the same key can be set by hand under
 `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MapleStory.exe`
 with `GlobalFlag` = `0x02000000`, but gflags is the supported route.
 
-## What would narrow it without any of that
+## The capture diff, done 2026-08-20 - and it eliminated six things
 
-**The two full captures have not been diffed.** Both are on disk. The 22:24 run was 389 s on
-one map with ~30 mobs; the 22:46 run was 211.9 s with five field entries. Field entry is the
-obvious difference and `0x01A0` count is in both logs. That comparison costs no client run and
-nobody has done it.
+The comparison to make is **crashing runs against surviving ones**, not crash against crash.
+`previous-runs/` archives every channel log, so session length and packet counts are an
+unbiased sample - unlike the exit logs, which only exist for runs somebody chose to keep as a
+fixture, and are therefore biased towards interesting deaths. That bias nearly produced a
+confident wrong answer here: on the fixtures alone it looks as though no session has ever
+survived past 190 s, and the archive says otherwise immediately.
+
+| run | seconds | mob spawns | ctrl acks | field entries | drops | died |
+|---|---:|---:|---:|---:|---:|---|
+| 2026-08-20 01:26 | 476 | 60 | 3120 | 6 | 0 | no |
+| 2026-08-20 14:42 | 429 | 30 | **10499** | 1 | 7 | no |
+| 2026-08-19 22:27 | 257 | 34 | 1362 | 9 | 0 | no |
+| 2026-08-19 22:08 | 237 | 30 | 0 | - | 0 | no |
+| 2026-08-19 22:31 | 194 | 52 | 955 | 8 | 0 | **yes** |
+| 2026-08-20 18:18 | 482 | 53 | 12723 | 1 | 38 | **yes** |
+| 2026-08-20 22:24 | 390 | 38 | 10317 | 1 | 14 | **yes** |
+| 2026-08-20 22:46 | 213 | 133 | 5316 | 5 | 19 | **yes** |
+
+**Nothing separates the two groups.**
+
+* **Not session length.** 476 s and 429 s survived; a 30 s run elsewhere in the archive died.
+* **Not control-ack volume.** The *survivor* at 429 s sent 10 499 of them, more than a run
+  that died at 390 s.
+* **Not mob count.** 60 spawns survived, 38 died.
+* **Not field entries.** 9 survived, 1 died.
+* **Not drops or combat at all.** The Amherst death had zero drops and no combat packets of
+  any kind, and two survivors had none either.
+* **Not any packet added on 2026-08-20.** `0x00AC` has never been sent in any run, crashing
+  or not.
+
+So the cause is not visible in packet aggregates, which is what a lifetime bug - a use after
+free, a double free, an overrun into a neighbour - looks like from the outside: it depends on
+what happened to be next to what, not on how much of it there was.
+
+**That is the argument for page heap.** It is not the cheapest instrument, it is the only one
+left that discriminates.
+
+There is one loose thread: the 482 s death of 2026-08-20 18:18 has no exit log, because the
+launcher archives the channel logs and not `client-exit.log`. Whether that one was heap
+corruption or something else is unknown, and archiving the exit log alongside the others would
+close the gap for free.
