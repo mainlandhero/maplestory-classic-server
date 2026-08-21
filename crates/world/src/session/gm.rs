@@ -218,13 +218,7 @@ impl Session {
         } else {
             store::Item::bundle(item_id, count)
         };
-        let max_stack = self
-            .config
-            .shops
-            .item_data
-            .get(&item_id)
-            .map(|d| d.slot_max.max(1))
-            .unwrap_or(1);
+        let max_stack = self.config.shops.max_stack(item_id);
 
         let placed = match self.store.add_item(chr.id, inv, &item, max_stack) {
             Ok(rows) => rows,

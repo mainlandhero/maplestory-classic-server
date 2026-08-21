@@ -405,13 +405,17 @@ fn the_item_command_picks_the_tab_from_the_id() {
 
     let rows: Vec<_> =
         store.bag(id).unwrap().items_in(store::InventoryType::Use).cloned().collect();
-    // **Three slots, not one stack of three**, and that is correct here: this config has
-    // no `item_data`, so `info/slotMax` is unknown, and an unknown stack size is treated
-    // as 1. That is the safe direction - a merge that does not happen, rather than one
-    // that silently destroys the overflow - and it is what a server with no
-    // `gm-handbook/itemdata.txt` will do on a real run.
-    assert_eq!(rows.len(), 3, "unknown slotMax means one per slot");
-    assert!(rows.iter().all(|r| r.item.kind.quantity() == 1));
+    // **One stack of three.** This test used to assert three slots, on the reasoning that an
+    // unknown `info/slotMax` should be treated as 1 because that is "the safe direction".
+    // It is not safe, it is just wrong: `slotMax` is *absent* on 2495 of this client's 2785
+    // items, and while 1760 of those are equips - which really do not stack - 187 Etc, 285
+    // Use and 263 Cash items are not. The owner, 2026-08-20: *"The items that I get such as Garnet
+    // Ore should stack in my Etc inventory."*
+    //
+    // `ShopTable::max_stack` is the one place that decides, and it already said `100` for a
+    // non-equip. Three callers had each written `slot_max.max(1)` instead of calling it.
+    assert_eq!(rows.len(), 1, "an absent slotMax stacks: it means unspecified, not one");
+    assert_eq!(rows[0].item.kind.quantity(), 3);
     assert!(store.bag(id).unwrap().items_in(store::InventoryType::Equip).next().is_none());
 }
 
@@ -2673,4 +2677,16 @@ fn the_real_quest_file_carries_seras_mirror() {
     let q = quests.get(&1001).expect("quest 1001 is in this client");
     assert_eq!(q.start_items, vec![(4031000, 1)], "Act.0.item.0 for quest 1001");
     assert_eq!(quests.get(&1000).and_then(|q| q.next_quest), Some(1001));
+}
+
+
+/// **`slotMax` of 0 means "unspecified", not "one per slot".** The rule that decides whether
+/// Garnet Ore stacks, pinned in the one place it lives.
+#[test]
+fn an_absent_slot_max_is_unspecified_not_one() {
+    let shops = crate::ShopTable::default();
+    // Nothing in item_data at all - the state a server with no gm-handbook/ is in.
+    assert_eq!(shops.max_stack(4020000), 100, "an Etc item with no slotMax stacks");
+    assert_eq!(shops.max_stack(2000000), 100, "so does a Use item");
+    assert_eq!(shops.max_stack(1302000), 1, "an equip does NOT - the one case 0 really is 1");
 }

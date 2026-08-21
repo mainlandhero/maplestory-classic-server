@@ -230,13 +230,7 @@ impl Session {
                 )));
                 continue;
             };
-            let max_stack = self
-                .config
-                .shops
-                .item_data
-                .get(&item_id)
-                .map(|d| d.slot_max.max(1))
-                .unwrap_or(1);
+            let max_stack = self.config.shops.max_stack(item_id);
             let item = if inv == store::InventoryType::Equip {
                 store::Item::equip(item_id)
             } else {

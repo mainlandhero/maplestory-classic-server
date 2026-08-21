@@ -519,6 +519,25 @@ impl ShopTable {
     /// So the fallbacks are a **server policy, [I]**, not a client fact, and they live in
     /// one place so there is one thing to change when a run disagrees.
     pub fn max_per_purchase(&self, item_id: u32) -> u16 {
+        self.max_stack(item_id)
+    }
+
+    /// **How many of this item fit in one bag slot.**
+    ///
+    /// The same rule as [`Self::max_per_purchase`] and the same numbers - a purchase is
+    /// limited by the stack it has to land in - but named for the question a pick-up asks, so
+    /// that a caller stacking an item has something to reach for that is not about shops.
+    ///
+    /// **This is the answer to "why do Garnet Ores not stack".** The owner, 2026-08-20. Two
+    /// callers - the drop pick-up and `!item` - wrote their own version of this as
+    /// `slot_max.max(1)`, which turns the **2495 items with no `info/slotMax`** into
+    /// one-per-slot. That is right for the 1760 of them that are equips and wrong for the
+    /// **187 Etc, 285 Use and 263 Cash** items that are not: Garnet Ore is `slotMax 0` and
+    /// stacks perfectly well in the real game.
+    ///
+    /// The policy was already here and already correct; what was wrong is that two places did
+    /// not call it. Hence one function with two names rather than three copies of a rule.
+    pub fn max_stack(&self, item_id: u32) -> u16 {
         match self.item_data.get(&item_id).map(|d| d.slot_max) {
             Some(n) if n > 0 => n,              // [L] from info/slotMax
             _ if item_id / 1_000_000 == 1 => 1, // an equip: one at a time

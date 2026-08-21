@@ -202,13 +202,10 @@ impl Session {
                 return out;
             }
 
-            let max_stack = self
-                .config
-                .shops
-                .item_data
-                .get(&drop.item.item_id)
-                .map(|d| d.slot_max.max(1))
-                .unwrap_or(1);
+            // NOT `slot_max.max(1)`: `info/slotMax` is absent - and therefore 0 - on 187 Etc
+            // items including Garnet Ore, and reading that as one-per-slot is why they would
+            // not stack. `max_stack` is the one place that rule lives.
+            let max_stack = self.config.shops.max_stack(drop.item.item_id);
             let inv = drop.inv_type;
             match self.store.add_item(chr.id, inv, &drop.item, max_stack) {
                 Ok(placed) => {
