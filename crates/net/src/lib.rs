@@ -41,6 +41,7 @@ pub mod quest;
 pub mod abilityup;
 pub mod questeffect;
 pub mod questforfeit;
+pub mod useitem;
 pub mod script;
 pub mod session;
 pub mod shop;

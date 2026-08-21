@@ -121,6 +121,9 @@ for its working, not its verdicts.
 | **mobs appear instantly** | `appearType -1` on field entry, `-2` on respawn |
 | **the quest chain** | Heena -> Sera -> Heena: 1000 completes, 1001 starts, the mirror changes hands |
 | **character create** | creating with and without a prior delete both transition |
+| **equipping, including a swap** | *"Wearing an item no longer crashes."* And this **kills the heap-corruption repro** - see below |
+| **ability points** | *"Assigning AP is fine now, in bulk and in singles."* Both `0x0138` and `0x0139` |
+| **the job change** | *"the job sound is fine now"* - `0x007C` bit 5, and the client plays the effect and sound itself |
 
 #### WIRED, and NOT yet seen on a screen
 
@@ -139,9 +142,7 @@ while it was unwired.
 | **Roger's quest 1002 opens** | the authored overlay. Watch for *"You'll die when your HP reaches 0"* with a **Next**, then an **Accept/Decline** box. *"Hey, nice weather, isn't it?"* is the exact signature of the overlay NOT loading |
 | **drops land on the floor** | a mob killed **on a slope or a step**, not on flat ground - flat looks identical before and after, which is why this went unnoticed. `world.log` names the foothold for any drop that moved |
 | **the quest-finish fanfare** | `0x02D1` effect 15. **Expect sound and no picture** - `Effect/BasicEff.img/QuestClear` is not in this client's WZ, and that is the predicted result, not a failure |
-| **equipping over a worn item swaps** | drag a second hat onto a worn one: the old one lands in the bag slot the new one came from. **This is also the crash repro - see below** |
-| **ability points allocate** | click `+` beside STR **twice within about three seconds**. See the warning under it - a slower test passes whether or not this works |
-| **`!job <jobId>`** | `!job 100`. Expect the JobChanged effect **and** its sound; the client plays both itself from the `0x007C`. `!job 0` must be **silent** |
+| **potions and food heal** | drink a Red Potion. **100 HP**, or less if that would overfill the bar, and the stack drops by one without the slot emptying. `gm-handbook/consumables.txt`, from the client's own `spec` nodes |
 | **`!migsweep [first] [last]`** | an experiment, not a feature: sends ten candidate opcodes and the hook log names which one migrated |
 | **giving up a quest works** | start 1001, press give up in the quest window, then click Sera again. Test on **1001, not 1000** - 1000 is completed by then and its give-up button can never send anything |
 
@@ -180,6 +181,34 @@ AP handler works at all - measured, not feared: in `world-20260821-001440.log` a
   `03 01 0200000000000000 00 0000...` - **byte-for-byte the same shape** as the `+200` lines
   from kills in the same session. Quest 1001's `Act.1.exp` is literally **2**. Two independent
   passes reached that separately. *Nothing was built for this*, which is the right outcome.
+* **A byte I swapped killed the client, and the comparison is the cleanest this project has
+  produced.** A static pass read `0x044F` byte 20 as the facing bool and byte 21 as the
+  animation action, both **[L]** off the listing, so they were swapped and byte 21 given the
+  constructor's default of `0`. The next run died on Sera's first idle line. Two `0x044F`
+  bodies for them on map 1, **differing in exactly those two bytes and identical everywhere
+  else**: `...00 01 0800...` chattered lines 1, 2 and 3 over 23 s; `...01 00 0800...` produced
+  `0x009E`, two C++ throws, `0xC0000005`, and **no dispatch line for the `0x0453` at all**.
+  The chat packet is innocent - `e9030000ff0000000000` is byte-for-byte one that had worked
+  11 s earlier on map 40. **Reverted to the bytes that are measured to work.** The attribution
+  may still be right; the conclusion drawn from it was not.
+* **`0x009E` is the client's "I could not handle this packet" report** - a gift, like
+  `0x025F` for drops. Its body carries the offending **opcode and body verbatim**
+  (`...5304 e9030000ff0000000000 5304`). It appears in **no other run in this repo**, which is
+  what made it a discriminator rather than noise.
+* **Consumables did nothing because nothing answered `0x010E`.** The owner: *"I tried to consume
+  Red Potion, but it did not recover 100 HP."* The request was on the wire and logged
+  `UNKNOWN`: `f7e1140f 0100 80841e00 01000000` - tick, slot 1, item **2000000**, and both the
+  id and the slot check out against state this server had written. There was exactly **one**
+  in the run despite the owner using more than one item, which is the request-latch signature
+  again.
+* **What a potion restores is in `spec`, not `info`** - which is why it had never been dumped.
+  Every earlier pass read the `info` child. Red Potion `spec/hp` is 100 and Roger's Apple is
+  30, matching its own tooltip. `hp`/`mp` are flat and `hpR`/`mpR` are **percentages of the
+  maximum**; both units exist in this client's data and some items carry both.
+* **Mode 1 of `0x0070` is `UpdateQuantity`.** Drinking one of two potions cannot use mode 3,
+  which removes the **whole slot** - the client would empty it while the server still held
+  one. `take_quest_item` sends mode 3 for a partial take too, and is correct there only by
+  accident: quest 1001 takes one out of a stack of one.
 * **AP: the roadmap named half the opcode.** `0x0139` is the **bulk** request; a plain `+`
   click sends **`0x0138`**, a different opcode with a different body - the stat window's
   handler is a flat chain of twelve name comparisons, `"strup"` against `"strupall"`, calling
@@ -253,7 +282,7 @@ is left, and the top three all need a client run rather than more analysis.**
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **The heap corruption, which finally has a REPRO** | The death came 9 ms after an equip `0x0070` with **no dispatch line for it** - the hook writes that line on handler *return*, and all 20 sibling `0x0070`s in the same capture have one. Unequip the worn hat, wait ~20 s, drag it back on. A run where it does **not** die is equally useful. `research/equip-crash.md` §6.4 has the probe bracket |
+| 1 | **The heap corruption - and the repro is DEAD** | The owner, 2026-08-21 second run: *"Wearing an item no longer crashes."* So the equip was a **coincidence**, exactly as the agent's own honest verdict allowed for, and `research/equip-crash.md`'s "candidate trigger, not a demonstrated cause" was right to hedge. Five sessions have now died at 193-482 s with no equipping at all. **There is no reproducer again**, and the next step is back to a WER dump under page heap - never attach |
 | 2 | **`!migsweep`, and then delete it** | The channel migrate reply is `FUN_1415d8c00`, a **socket-level** handler; its body is fully measured but **its opcode cannot be read statically** - zero callers, zero RVA references, `.themida` `SizeOfRawData = 0`. The sweep sends ten candidates and the hook log names the winner. Once it does, `on_change_channel` is a two-line change |
 | 3 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without them: validation needs the **action** and the **skill id**, and neither is parsed out of the attack header. Without them the ceiling maximises over every action and only catches a client claiming 500. `research/damage-formula.md`. Highest-value next step for goal J |
 | 4 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |

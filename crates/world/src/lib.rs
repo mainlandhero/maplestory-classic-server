@@ -32,6 +32,7 @@ pub mod drops;
 pub mod droptables;
 pub mod expcurve;
 pub mod fields;
+pub mod consumables;
 pub mod damage;
 pub mod footholds;
 pub mod jobs;

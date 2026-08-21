@@ -1531,17 +1531,37 @@ pub fn npc_enter_field(npc: &FieldNpc) -> Vec<u8> {
     b.extend_from_slice(&npc.cy.to_le_bytes()); //         2   u16 -> +0x3f4
     b.extend_from_slice(&(-1i32).to_le_bytes()); //        3   u32 -> +0x5a8
     b.extend_from_slice(&(-1i32).to_le_bytes()); //        4   u32 -> +0x5ac
-    // **These two were the wrong way round, and it cost Sera an animation.** Byte 20 is the
-    // facing bool - `[npc+0x1ac]`, five reads and every one a `cmp` against zero. Byte 21 is
-    // `[npc+0x1a0]`, which has a setter with change detection and is passed as the *action*
-    // argument to the displayer's `vtable[0x118]` - the same field `0x0453`'s `nAction`
-    // addresses. **[L]**, `research/npc-appear.md`.
+    // **REVERTED 2026-08-21, on screen evidence, and do not "fix" this again without one.**
     //
-    // So sending the flip flag in byte 21 told Sera to play animation index 1, which in them
-    // WZ order (`stand, move, blink, ...`) is `move`. Byte 21 is read `movzx`, so `-1` is not
-    // expressible here and `0` is the right default.
-    b.push(u8::from(npc.f == 0)); //                       5   u8  facing (bool, +0x1ac)
-    b.push(0); //                                          6   u8  animation action (+0x1a0)
+    // A static pass established - carefully, and marked **[L]** - that byte 20 is the facing
+    // bool (`[npc+0x1ac]`, five reads and every one a `cmp` against zero) and byte 21 is
+    // `[npc+0x1a0]`, the animation **action** passed to the displayer's `vtable[0x118]`, the
+    // same field `0x0453`'s `nAction` addresses. On that reading the two below were the wrong
+    // way round, so they were swapped and byte 21 was given the `0` the constructor defaults
+    // to. `research/npc-appear.md`.
+    //
+    // **The next run killed the client**, and the comparison is as clean as this project
+    // ever gets. Two `0x044F` bodies for Sera (template 2) on map 1, differing in exactly
+    // these two bytes and identical everywhere else:
+    //
+    //   ...ffffffff ffffffff 00 01 0800...   they chattered lines 1, 2 and 3 over 23 s
+    //   ...ffffffff ffffffff 01 00 0800...   their FIRST chat line -> 0x009E, two C++ throws,
+    //                                        CLIENT FAULT 0xC0000005, and no dispatch line
+    //                                        for the 0x0453 at all
+    //
+    // The chat packet itself is innocent: `e9030000ff0000000000` is byte-for-byte the body
+    // that had worked 11 seconds earlier on map 40. Only the spawn changed.
+    //
+    // So the *attribution* may well be right and the conclusion drawn from it was not: `0` is
+    // evidently not a safe action for an NPC with a full animation set - Sera has nine nodes
+    // including `move`, while Heena (byte 21 = 0 in both runs, fine in both) has no `move`
+    // and template 9 on map 40 has no animation nodes at all. That is a hypothesis, marked
+    // **[I]**, and it is not what is being shipped. What is shipped is the byte pair that is
+    // **measured to work**.
+    //
+    // `CLAUDE.md`: when a static report contradicts what the screen did, the screen wins.
+    b.push(0); //                                          5   u8  -> +0x1ac
+    b.push(u8::from(npc.f == 0)); //                       6   u8  -> +0x1a0, see above
     b.extend_from_slice(&npc.fh.to_le_bytes()); //         7   u16 foothold
     b.extend_from_slice(&npc.rx0.to_le_bytes()); //        8   u16 walk range low
     b.extend_from_slice(&npc.rx1.to_le_bytes()); //        9   u16 walk range high
@@ -2846,17 +2866,14 @@ mod set_field_tests {
         assert_eq!(&b[10..12], &305i16.to_le_bytes(), "cy");
         assert_eq!(&b[12..16], &(-1i32).to_le_bytes(), "read 3");
         assert_eq!(&b[16..20], &(-1i32).to_le_bytes(), "read 4");
-        // **These two were the wrong way round until 2026-08-21**, and the old version of
-        // this test pinned the mistake. Byte 20 is the facing bool (`[npc+0x1ac]`, five
-        // reads, every one a `cmp` against zero); byte 21 is `[npc+0x1a0]`, the animation
-        // **action** index, passed to the displayer's `vtable[0x118]` - the same field
-        // `0x0453`'s `nAction` addresses. `research/npc-appear.md`.
-        //
-        // Heena has `f = 1`, so `!flip` is 0 and it belongs in byte 20. Sending it in byte
-        // 21 instead told an NPC with `f = 0` to play animation index 1 - `move`, in the
-        // WZ's own order of `stand, move, blink, ...`.
-        assert_eq!(b[20], 0, "read 5 is the facing bool, and this NPC has f = 1");
-        assert_eq!(b[21], 0, "read 6 is the animation action - always 0, never the flip");
+        // **These two were swapped on 2026-08-21 and swapped straight back the same day.**
+        // A static pass read byte 20 as the facing bool and byte 21 as the animation action;
+        // acting on it killed the client on Sera's first idle line, with two `0x044F` bodies
+        // differing in exactly these bytes and nothing else. The builder carries the whole
+        // comparison. Heena has `f = 1`, so both bytes are 0 for their either way - which is
+        // why they were fine in both runs and could not discriminate.
+        assert_eq!(b[20], 0, "read 5, and Heena cannot tell the two layouts apart");
+        assert_eq!(b[21], 0, "read 6 carries !flip, and this NPC has f = 1");
         assert_eq!(&b[22..24], &66u16.to_le_bytes(), "fh, the foothold");
         assert_eq!(&b[24..26], &[0xC0, 0xFF], "rx0 = -64");
         assert_eq!(&b[26..28], &[0xE6, 0xFF], "rx1 = -26");
@@ -2877,17 +2894,18 @@ mod set_field_tests {
             "read 19 is a clock offset, NOT alpha - the value stands, the label did not"
         );
 
-        // And an unflipped NPC gets the opposite byte, so the field is really wired up -
-        // in byte **20**, the facing bool. Byte 21 stays 0 whatever `f` is, because it is
-        // the animation action and an NPC standing still plays index 0.
+        // **Sera is the NPC that discriminates, and this pins the layout they survived.**
+        // `f = 0`, so `!flip` is 1, and it must go in byte **21**. The other arrangement -
+        // `[20] = 1, [21] = 0` - is the one that made their first idle line kill the client on
+        // 2026-08-21: `0x009E`, two C++ throws and an access violation, with no dispatch
+        // line for the `0x0453` at all.
         //
-        // **This assertion is the one that mattered.** It proved the flip flag reached the
-        // packet, and it proved it about the wrong byte, so it passed for as long as the bug
-        // existed. An NPC with `f = 0` was being told to play animation 1.
+        // If this assertion is ever flipped again it needs a client run behind it, not a
+        // listing.
         let sera = FieldNpc { f: 0, ..heena };
         let sera_body = npc_enter_field(&sera);
-        assert_eq!(sera_body[20], 1, "read 5 is the facing bool, and Sera has f = 0");
-        assert_eq!(sera_body[21], 0, "read 6 is the action index - never the flip");
+        assert_eq!(sera_body[20], 0, "read 5 stays 0 - measured good");
+        assert_eq!(sera_body[21], 1, "read 6 carries !flip, and Sera has f = 0");
     }
 
     /// Two NPCs on one field must not share an object id: the pool keys on it, and a repeat

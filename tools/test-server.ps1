@@ -47,25 +47,40 @@
 
     NEW COMMANDS THIS ROUND: !job <id>, !migsweep [first] [last]. !help lists them all.
 
-    THE ONE THAT MATTERS MOST - a crash with a repro, at last
-    --------------------------------------------------------
-     1. Your character is wearing a hat in worn slot 1. UNEQUIP IT into the bag, wait
-        about 20 seconds, then DRAG IT STRAIGHT BACK ON.
-        The 2026-08-21 death came 9 ms after exactly that packet, and the hook wrote no
-        dispatch line for it - it writes that line on handler RETURN, and all 20 sibling
-        0x0070s in the same file have one. So the client entered the handler and died
-        inside it.
-        If it dies again here, the heap corruption finally has a deterministic reproducer,
-        and page heap plus a WER dump becomes cheap. IF IT DOES NOT DIE, that is equally
-        useful and means the equip was a coincidence - five sessions have died at
-        193-482 s with no equipping at all, and 240.9 s is an ordinary lifetime here.
-        SAY WHICH HAPPENED, EITHER WAY.
-     2. While you are there: equip a SECOND hat over the first. The old one must land in
-        the bag slot the new one came from. The client performs that swap itself; the
-        server sends the same 14 bytes it always did.
+    CONFIRMED ON 2026-08-21 - do not re-test these, they are done
+    -------------------------------------------------------------
+    Equipping and swapping (no crash), ability points in singles AND in bulk, the job
+    change with its sound. Those three are off this list for good.
 
-    THEN, WHAT IS NEW AND UNSEEN
-    ----------------------------
+    NEW SINCE THAT RUN - the point of this one
+    -----------------------------------------
+     1. DRINK A RED POTION. Get hurt first, then double-click it in the Use tab.
+          HP goes up by 100, or to full if 100 would overshoot   -> works
+          the stack drops 2 -> 1 and the slot does NOT empty     -> mode 1 is right
+          a chat line saying it could not be used                -> read it, it says why
+          nothing at all                                         -> world.log will have a
+                                                                    "<- 0x010E" with no reply
+        Then drink the last one: the slot should empty. Then try Roger's Apple (30 HP) if
+        you have one.
+        NOTE: this was never "the potion did nothing" - the request was arriving and going
+        unanswered, and there was exactly ONE of them in the whole run because the client
+        latches until the server replies. So test it TWICE: the second drink is the one that
+        proves the latch is being cleared.
+
+     2. SERA MUST NOT CRASH THE CLIENT. Go to !map 1, stand there, and wait about 30
+        seconds without doing anything.
+        Last run the client died 9 seconds after !map 1, on Sera's first idle chat line.
+        Cause found and reverted: two bytes of their spawn packet had been swapped on the
+        strength of a static read. The bytes are back to the pair that is measured to work.
+          they say something and the client lives     -> the revert is right
+          the client dies again                       -> the revert was NOT the fix. Say how
+                                                         long you were on map 1. world.log
+                                                         will end with a 0x0453 and a 0x009E
+        This costs nothing but standing still, and it is the highest-value 30 seconds in
+        the run.
+
+    STILL UNSEEN FROM THE PREVIOUS ROUND - these never got tested
+    ------------------------------------------------------------
      3. Talk to ROGER on Maple Island.
           "You'll die when your HP reaches 0..." then Next    -> the overlay loaded
           second box has ACCEPT / DECLINE, not OK             -> the 0x10 box is right
@@ -73,95 +88,48 @@
           "Hey, nice weather, isn't it?"                      -> the overlay did NOT load.
                                                                  That exact sentence is
                                                                  the fall-through signature
-     4. Turn in ANY quest and LISTEN. A fanfare should play with NOTHING DRAWN.
-        Sound and no picture is the EXPECTED result, not a failure:
-        Effect/BasicEff.img/QuestClear is the one referenced BasicEff node this client's
-        WZ does not contain. If something IS drawn, say so - the analysis needs
-        correcting. If the client faults a few seconds later, that packet is the cause:
-        say so and it gets abandoned, because there is no other route to this sound.
-     5. Kill a mob ON A SLOPE OR A STEP, not on flat ground - flat looks identical before
+     4. QUEST FORFEIT. Accept 1000 from Heena, take the mirror to Sera so 1001 STARTS, then
+        open the quest window and press give up on Sera's Mirror. Then click Sera again.
+        TEST 1001, NOT 1000 - 1000 is completed by then and the client will not even build
+        a forfeit packet for a completed quest, so it can only ever look broken.
+     5. Turn in ANY quest and LISTEN. A fanfare should play with NOTHING DRAWN - that node
+        was cut from this client's WZ, so sound-and-no-picture is the EXPECTED result. If
+        something IS drawn, say so; the analysis needs correcting.
+     6. Kill a mob ON A SLOPE OR A STEP, not on flat ground - flat looks identical before
         and after, which is why this went unnoticed. Every drop must be walkable-over.
-        world.log names the foothold for any drop that moved.
-     6. Kill snails until you have Etc items and mesos. Note both.
-     7. Log out and back in. THE ETC ITEMS AND THE MESO COUNT MUST STILL BE THERE.
+     7. Kill snails until you have Etc items and mesos, then log out and back in. THE ETC
+        ITEMS AND THE MESO COUNT MUST STILL BE THERE.
      8. Pick up several Garnet Ores. ONE slot with a count, not three slots.
      9. Stand still 10s, then 20s. +10 HP and +10 MP every 10 seconds, stopping when full.
-    10. Heena -> accept -> Sera -> back to Heena. Quest 1001 completes, +2 EXP, and the
-        mirror LEAVES your bag.
-        NOTE: +2 is TWO. The EXP line IS sent, byte-for-byte the same shape as the +200
-        lines from kills; 1001's Act.1.exp is literally 2 in the client's own data. If it
-        looks like nothing happened, that is the number, not a missing packet.
-    11. Kill the Tutorial Jr. Sentinel. Always a Shellpiece, never mesos, never anything
+    10. Kill the Tutorial Jr. Sentinel. Always a Shellpiece, never mesos, never anything
         else.
-    12. !setrates 2 3 5 -> one banner naming all three. !rates reads them back.
+    11. !setrates 2 3 5 -> one banner naming all three. !rates reads them back.
         !setrates 1 1 1 -> three "rate-up event has ended" lines on one banner.
-
-    NEW THIS ROUND - six agents, six separate claims
-    -----------------------------------------------
-    13. ABILITY POINTS. Open the stat window and click + beside STR TWICE, WITHIN ABOUT
-        THREE SECONDS. The speed is the whole test and here is why: every 0x007C clears
-        the client's one-request latch, and IDLE REGENERATION SENDS ONE EVERY TEN SECONDS
-        (so does walking through a portal). A slow "click, wait, click" therefore passes
-        whether or not any of this works. Measured, not feared - a regen 0x007C landed
-        11 s after an AP request on 2026-08-21 and re-opened the window by itself.
-          both clicks raise STR and drop AP  -> the whole chain works
-          first works, second does nothing   -> the reply is not clearing the latch
-          nothing, and NO "<- 0x0138" in world.log
-                                             -> the client thinks AP is 0 and never sent
-          nothing, but 0x0138 WAS answered   -> reopen the stat window. If the new STR is
-                                                there it is a repaint problem, and that
-                                                distinction is free
-        Free cross-check: grep 0x007C world.log and confirm the only one between the two
-        "<- 0x0138" lines is ours. If a regen slipped in, the run did not discriminate.
-        NOTE: a plain + click is 0x0138. 0x0139 is the BULK dialog and a different packet -
-        do not test both in the same run.
-    14. !job 100. Expect the JobChanged effect AND its sound - unlike the quest fanfare,
-        this one's art IS in the WZ. The client plays both itself from the 0x007C; no
-        effect packet is sent, deliberately.
-        Then !job 0, which must be SILENT. That is a gate read off the client
-        (142d55beb, "job is 0 -> no fanfare") and it confirms the gate that was read is
-        the gate that runs. Free, and it makes the positive result mean something.
-    15. QUEST FORFEIT. Accept 1000 from Heena, take the mirror to Sera so 1001 STARTS, then
-        open the quest window and press give up on Sera's Mirror. Then click Sera again.
-        TEST 1001, NOT 1000. By then 1000 is completed, and the client will not even build
-        a forfeit packet for a completed quest - so 1000 can only ever look broken.
-          row vanishes, Sera offers 1001 again  -> works
-          row vanishes, comes back after a map change
-                                                -> forget_quest errored; world.log says
-                                                   "NOT REMOVED"
-          nothing, and world.log has a 5-byte 0x0151 starting 03
-                                                -> the handler did not run
-          nothing, and NO such packet           -> the client refused to build it. Not ours
-    16. !migsweep. This is an EXPERIMENT, not a feature: it sends ten candidate opcodes for
-        the channel-migrate reply, because that one field cannot be read out of the binary.
-        Everything else about the packet is measured.
-          the channel changes                   -> found it. The winner is the LAST opcode
-                                                   in client-patched\maplecw-hook.log before
-                                                   the socket closes
-          nothing at all                        -> the opcode is outside 0x19..0x22. Next
-                                                   sweep: !migsweep 24 33
-          the client dies                       -> say so. The 64 bytes of padding are there
-                                                   to prevent exactly that
-        DO THIS LAST. It either changes channel or ends the session.
 
     REGRESSION GLANCES - seconds each, not exercises
     -----------------------------------------------
-    17. Drops arc out of the corpse over about half a second, at the mob, spread apart.
-    18. The EXP line bottom-right is WHITE.
-    19. Mobs on !map 40 are already standing there - no fade-in.
-    20. A level-up gives +16 max HP and +12 max MP.
-    21. NPCs: Sera should be STANDING STILL, not walking on the spot. Their facing flag was
-        going into the animation-action byte, so they were being told to play index 1 = move.
-        (They will still FADE IN. That is step 22's territory, not a regression.)
+    12. Drops arc out of the corpse over about half a second, at the mob, spread apart.
+    13. The EXP line bottom-right is WHITE.
+    14. Mobs on !map 40 are already standing there - no fade-in.
+    15. A level-up gives +16 max HP and +12 max MP.
+        (NPCs still FADE IN. That is parked, not a regression - 0x044F carries no
+        appear-type field and that is now a verified negative.)
 
     FREE, IF YOU ARE ON MAP 40 ANYWAY
     ---------------------------------
-    22. Swing at snails until about 40 hits land, then say the lowest and highest numbers.
+    16. Swing at snails until about 40 hits land, then say the lowest and highest numbers.
         The damage formula is decoded from the client's own multiplier table; the predicted
         window for a level-7 character with the 1312000 axe is 14..21. Fourteen hits are
         already captured at 16..19, which is containment rather than a fit - 40 hits makes
         the ends measurable. Anything outside 14..21 falsifies the model and the direction
         says which term is wrong. Costs no server change.
+
+    LAST, OR NOT AT ALL
+    -------------------
+    17. !migsweep. It either changes channel or ends the session, so nothing else can follow
+        it. Ten candidate opcodes for the channel-migrate reply; the winner is the LAST
+        opcode in the hook log before the socket closes. Nothing at all -> !migsweep 24 33
+        next time.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------

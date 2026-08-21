@@ -237,6 +237,12 @@ pub struct Config {
     /// something known rather than to something untested.
     pub footholds: crate::footholds::Footholds,
 
+    /// What each consumable restores, from `gm-handbook/consumables.txt`.
+    ///
+    /// Empty means every potion is refused with a notice rather than silently doing nothing
+    /// - see [`crate::consumables`] for why that direction was chosen.
+    pub consumables: crate::consumables::Consumables,
+
     /// `mapId -> name`, from `gm-handbook/maps.txt`.
     ///
     /// **Only ever used to say something on screen.** Nothing routes on it, so a missing
@@ -1153,6 +1159,7 @@ impl Default for Config {
             send_mobs: true,
             fields: std::collections::HashSet::new(),
             footholds: crate::footholds::Footholds::default(),
+            consumables: crate::consumables::Consumables::default(),
         }
     }
 }

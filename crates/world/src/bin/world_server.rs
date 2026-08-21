@@ -36,6 +36,7 @@ maplecw-world - one channel of the MapleCW game world
                       early returns otherwise make identical. Arm a watch on
                       142097f80 or the run measures nothing.
   --footholds PATH  map floor geometry, from tools/dump_portals.py
+  --consumables PATH  what potions restore, from tools/dump_itemdata.py
   --shops PATH     the authored NPC shop file      (default data/shops.txt)
   --quest-scripts PATH  authored openings for the 12 quests whose bodies the
                       client does NOT ship (default data/quest-scripts.txt).
@@ -54,6 +55,7 @@ fn main() -> ExitCode {
     let mut npcs_path = PathBuf::from("gm-handbook/npcs.txt");
     let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
     let mut footholds_path = PathBuf::from("gm-handbook/footholds.txt");
+    let mut consumables_path = PathBuf::from("gm-handbook/consumables.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
@@ -102,6 +104,7 @@ fn main() -> ExitCode {
             "--npcs" => value().map(|v| npcs_path = PathBuf::from(v)),
             "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
             "--footholds" => value().map(|v| footholds_path = PathBuf::from(v)),
+            "--consumables" => value().map(|v| consumables_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
@@ -204,6 +207,10 @@ fn main() -> ExitCode {
     for line in config.footholds.problems() {
         println!("maplecw-world: footholds: {line}");
     }
+
+    // What a potion does. Loud in both directions on stdout, same reasoning as the floor.
+    config.consumables = world::consumables::Consumables::load(&consumables_path);
+    println!("{}", config.consumables.banner());
 
     config.npcs = world::config::Config::load_npcs(&npcs_path);
     if config.npcs.is_empty() {

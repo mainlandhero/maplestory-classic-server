@@ -1903,6 +1903,153 @@ fn only_a_five_byte_action_three_is_read_as_a_forfeit() {
     }
 }
 
+/// A session holding `count` Red Potions in Use slot 1, hurt down to `hp`.
+fn session_with_potions(count: u16, hp: u32) -> (Session, i64, u32) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Drinker".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    // **A fresh character has 50 max HP**, so a 100-point potion would always cap and the
+    // flat amount could never be measured. Raised deliberately, and the test that DOES
+    // measure the cap sets its own hp relative to whatever this is.
+    made.max_hp = 500;
+    made.hp = hp;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    store
+        .set_inventory_slot(
+            made.id,
+            store::InventoryType::Use,
+            1,
+            &store::Item::bundle(2_000_000, count),
+        )
+        .unwrap();
+    // The real table's numbers: Red Potion 100 flat, Roger's Apple 30.
+    let config = Config {
+        consumables: crate::consumables::Consumables::parse(
+            "2000000, 100, 0, 0, 0\n2010000, 30, 0, 0, 0\n",
+        ),
+        ..Config::default()
+    };
+    let mut s = Session::new(store, Arc::new(config));
+    s.claim_for_character(made.id);
+    (s, account_id, made.id)
+}
+
+/// The captured packet heals, and takes one out of the stack.
+///
+/// The owner, 2026-08-21: *"I tried to consume Red Potion, but it did not recover 100 HP."* It
+/// did not, because `0x010E` went unanswered - there is exactly one in the whole capture,
+/// which is the request-latch signature.
+#[test]
+fn drinking_a_red_potion_heals_a_hundred_and_takes_one_from_the_stack() {
+    let (mut s, acct, id) = session_with_potions(2, 1);
+    let before = reload(&s, acct, id);
+    assert!(before.max_hp >= 101, "the cap must not be what this test measures");
+
+    // The real body: tick, slot 1, item 2000000, tail 1.
+    let replies = s.on_use_item(&net::useitem::use_item(0x0f14_e1f7, 1, 2_000_000, 1));
+
+    let stat = replies
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("every 0x010E is answered");
+    assert_eq!(stat.body[0], 1, "byte 0 clears the client's request latch");
+
+    let after = reload(&s, acct, id);
+    assert_eq!(after.hp, 101, "1 + 100");
+
+    // And the Use tab says one left, WITHOUT emptying the slot.
+    let op = replies
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+        .expect("the client is told the stack shrank");
+    assert_eq!(
+        op.body,
+        net::inventory::inventory_quantity(store::InventoryType::Use.as_u8() as i8, 1, 1),
+        "mode 1 UpdateQuantity - mode 3 would empty the slot on screen while the server kept one"
+    );
+    let left = s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().unwrap();
+    assert_eq!(left.kind.quantity(), 1);
+}
+
+/// *"(Or less if it will fill my HP bar up to full)"* - the owner asked for the cap in the same
+/// sentence, and it is also the only reading that cannot put a number above the maximum into
+/// the HP field.
+#[test]
+fn a_potion_never_heals_past_the_maximum() {
+    let (mut s, acct, id) = session_with_potions(1, 1);
+    let max = reload(&s, acct, id).max_hp;
+    // Hurt to three below full, then drink a 100-point potion.
+    let mut chr = reload(&s, acct, id);
+    chr.hp = max - 3;
+    s.store.save_character_progress(&chr).unwrap();
+
+    s.on_use_item(&net::useitem::use_item(0, 1, 2_000_000, 1));
+    assert_eq!(reload(&s, acct, id).hp, max, "capped at full, not max + 97");
+
+    // The potion is gone even though it only healed 3: drinking it still drinks it.
+    assert!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().is_none());
+}
+
+/// The last one out of a stack empties the slot, and that is a different packet.
+#[test]
+fn the_last_potion_empties_the_slot_with_a_remove_not_a_quantity() {
+    let (mut s, _, id) = session_with_potions(1, 1);
+    let replies = s.on_use_item(&net::useitem::use_item(0, 1, 2_000_000, 1));
+    let op = replies
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+        .expect("the slot change is reported");
+    assert_eq!(
+        op.body,
+        net::inventory::inventory_removed(store::InventoryType::Use.as_u8() as i8, 1)
+    );
+    assert!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().is_none());
+}
+
+/// **Every refusal still answers**, or the next use never leaves the client.
+#[test]
+fn every_refused_use_still_sends_a_stat_change() {
+    let (mut s, acct, id) = session_with_potions(1, 1);
+    let hp_before = reload(&s, acct, id).hp;
+
+    let answered = |rs: &[Reply]| rs.iter().any(|r| r.opcode == net::stats::STAT_CHANGED);
+
+    // A slot that holds something else than the client claims.
+    let wrong = s.on_use_item(&net::useitem::use_item(0, 1, 2_010_000, 1));
+    assert!(answered(&wrong), "id mismatch must still be answered");
+
+    // An empty slot.
+    let empty = s.on_use_item(&net::useitem::use_item(0, 7, 2_000_000, 1));
+    assert!(answered(&empty), "empty slot must still be answered");
+
+    // Every truncation, straight off a socket.
+    let body = net::useitem::use_item(0, 1, 2_000_000, 1);
+    for n in 0..body.len() {
+        assert!(answered(&s.on_use_item(&body[..n])), "len {n} must still be answered");
+    }
+
+    // And none of that healed anything or took an item.
+    assert_eq!(reload(&s, acct, id).hp, hp_before);
+    assert!(s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().is_some());
+}
+
+/// An item the table does not know is refused rather than silently eaten.
+#[test]
+fn an_item_that_restores_nothing_is_not_consumed() {
+    let (mut s, _, id) = session_with_potions(1, 1);
+    s.store
+        .set_inventory_slot(id, store::InventoryType::Use, 2, &store::Item::bundle(2_040_000, 1))
+        .unwrap();
+    let replies = s.on_use_item(&net::useitem::use_item(0, 2, 2_040_000, 1));
+    assert!(replies.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "still answered");
+    assert!(
+        s.store.inventory_slot(id, store::InventoryType::Use, 2).unwrap().is_some(),
+        "a scroll is not drunk"
+    );
+}
+
 /// The `0x055B` in a reply list, which is no longer always the first thing in it.
 ///
 /// Accepting a quest now sends the `0x0089` quest record **and** the Say, and the record

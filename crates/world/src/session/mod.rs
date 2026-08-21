@@ -301,6 +301,7 @@ struct Conversation {
 
 mod ability;
 mod combat;
+mod consume;
 mod field;
 mod gm;
 mod ground;
@@ -519,6 +520,12 @@ impl Session {
             }
             net::abilityup::CLIENT_ABILITY_MASS_UP => {
                 return self.on_ability_mass_up(body.get(2..).unwrap_or(&[]))
+            }
+            // Double-clicking a potion. Answered on every path, including refusals: there
+            // was exactly ONE 0x010E in a run where the owner used more than one item, which is
+            // the same request-latch signature 0x0107 and the AP requests have.
+            net::useitem::CLIENT_USE_ITEM => {
+                return self.on_use_item(body.get(2..).unwrap_or(&[]))
             }
             net::userhit::CLIENT_USER_HIT => {
                 return self.on_user_hit(body.get(2..).unwrap_or(&[]))

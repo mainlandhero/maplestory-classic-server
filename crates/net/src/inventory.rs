@@ -259,6 +259,42 @@ pub fn inventory_removed(inv_type: i8, pos: i16) -> Vec<u8> {
 /// Length of an [`inventory_removed`] body: header 7, one entry 4, no tail.
 pub const INVENTORY_REMOVE_LEN: usize = 7 + 4;
 
+/// Entry mode 1: **the stack in this slot is now `quantity`**. Tail is one `i16`.
+///
+/// `research/msexe-setfield.md`'s mode table, read at `142d521fe`. **[L]**
+pub const MODE_QUANTITY: u8 = 1;
+
+/// Say that a slot's stack changed size, without emptying it.
+///
+/// # Why this is not [`inventory_removed`]
+///
+/// Mode 3 removes the **whole slot**. Using one potion out of a stack of two and sending
+/// mode 3 would empty the slot on screen while the server still held one - the two ends then
+/// disagree about a slot, which is the failure this module's header is entirely about.
+///
+/// `take_quest_item` in `session/npc.rs` sends mode 3 for a partial take too. It is correct
+/// there only by accident: quest 1001 takes one item out of a stack of one, so "the rest of
+/// the stack" is empty either way. It is worth fixing the day a quest takes 2 of 5.
+///
+/// **No trailing byte.** `avatarChanged` is set only by modes 2 and 3 on `invType` 1 or 6
+/// with a negative position, so mode 1 never earns one.
+pub fn inventory_quantity(inv_type: i8, pos: i16, quantity: u16) -> Vec<u8> {
+    debug_assert!(pos > 0, "a stack lives in a bag slot, and bag slots are 1-based");
+    let mut w = PacketWriter::new();
+    w.u8(1); // bExclRequestSent - clears the +0x2330 latch
+    w.u8(0);
+    w.u32(1); // nCount, i32
+    w.u8(0); // notRemoveAddInfo
+    w.u8(MODE_QUANTITY);
+    w.u8(inv_type as u8);
+    w.i16(pos);
+    w.i16(quantity as i16);
+    w.into_vec()
+}
+
+/// Length of an [`inventory_quantity`] body: header 7, one entry 4, an `i16` tail.
+pub const INVENTORY_QUANTITY_LEN: usize = 7 + 4 + 2;
+
 /// The fixed cost of an [`inventory_added`] body, before the item blob.
 pub const INVENTORY_ADD_HEAD_LEN: usize = 7 + 4;
 
