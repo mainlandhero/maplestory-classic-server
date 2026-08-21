@@ -59,3 +59,7 @@ previous-runs/
 
 # Crash dumps from WER LocalDumps. Full dumps under page heap are ~1 GB each.
 /dumps/
+
+# The hook logs unconditionally, so `cargo test -p grap-stub` leaves one of these in
+# the crate directory. The real one lives in client-patched/ and is gitignored with it.
+maplecw-hook.log

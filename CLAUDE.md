@@ -127,6 +127,68 @@ functions, **27 909** would have come back "zero callers" while being reached by
 (6 927) or a pointer in data (21 889) - and one of them had already been written up as
 "zero direct callers, therefore virtual", which was wrong twice over.
 
+## A correctly-armed instrument can still be blind to its subject
+
+Everything else in this file is about instruments that were *wrong*: stale, mis-scoped,
+searching the wrong shape. On 2026-08-21 one was **right, and still could not see the
+client**, and the difference matters because the two look identical from the outside - an
+empty result.
+
+Crash dumps had never been captured, across six heap-corruption deaths. The standing
+explanation was that WER LocalDumps was misconfigured, and it had in fact been misconfigured
+once. The way that got settled cost **no client run at all**:
+
+> Build a decoy that does nothing but dereference null. **Name it `MapleStory.exe`**, because
+> LocalDumps keys match on the executable's base name. Run it.
+
+It wrote a 9.4 MB dump into `dumps\`. Meanwhile the real client had raised the *same*
+exception code, `0xC0000005`, at 13:49:56 - **88 minutes after WER was switched on**, which
+the registry key's own last-write time proves - and produced nothing.
+
+Same machine, same hour, same executable name, same exception code. Every variable held but
+one. The configuration was never the problem: **the client ships its own crash reporting, and
+a process that handles its own faults never reaches `WerFault`.** No amount of configuring
+would have fixed that, and "check `dumps\` after the next death" - which is what the test
+plan said - was a step that could only ever come back empty.
+
+Two things generalise:
+
+* **A positive control has to be close to the subject to be worth anything.** "WER works on
+  this machine" was already known and was useless. "WER works *for a process named
+  `MapleStory.exe` writing to that folder on this machine at this hour*" is the control that
+  localises the failure, and it is only one `rustc` invocation away from the useless one.
+* **When the instrument is armed and still silent, move the vantage point rather than
+  widening the instrument.** The hook's vectored exception handler was *already catching this
+  exact fault* - it is what writes the `CLIENT FAULT` line - and was only logging it. The dump
+  now comes from there. This is the same rule as the `mob+0x42c` write-scan: re-running the
+  tool is not a second opinion, **changing the question is.**
+
+The self-test in `crates/grap-stub/src/minidump.rs` exists for the same reason. A dump writer
+that has never written a dump is exactly the kind of instrument this file keeps warning about.
+
+## A test that pins what the code already does is not a check
+
+Writing that dump writer, `MiniDumpWriteDump` returned `ERROR_NOACCESS` on **every** call
+that carried exception information - synthetic pointers or a live handler's, stack or heap,
+pseudo process handle or a real one, from the faulting thread or another, at every dump type.
+All measured, all identical.
+
+There was a test beside it asserting the exception-info struct was **24 bytes, aligned 8**.
+It passed. It had been written by reading the field list - `DWORD`, pointer, `BOOL` - and
+`repr(C)` duly produced 24/8, so the test agreed with the code and neither agreed with
+Windows. `minidumpapiset.h` wraps every `MINIDUMP_*` structure in `<pshpack4.h>`, so the real
+layout is **16 bytes with the pointer at offset 4**. Packing it and changing nothing else
+turned the same call into a 22 MB dump.
+
+Two habits:
+
+* **A constant that came from reading a header is a claim, not a fact** - the same rule this
+  file already applies to field offsets and units. Assert it against something that can
+  disagree: here, a call that fails.
+* **The result that does not vary is the clue.** Six variables were changed and the error
+  never moved, which is what finally pointed at layout rather than data. A failure that
+  ignores its inputs is not being caused by them.
+
 ## "Not found" is not "not there", and the retraction can be the mistake
 
 On 2026-08-20 a static pass reported that a mob's body rectangle could not be involved in

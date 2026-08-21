@@ -1173,6 +1173,20 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
                     stack_trace(rsp)
                 ));
             }
+            // And take a full-memory dump, which is the only way any of this becomes
+            // diagnosable.
+            //
+            // We are already standing on the exception - this handler is what wrote the
+            // line above - and Windows Error Reporting demonstrably will not write one for
+            // this client even with LocalDumps correctly armed. See `crate::minidump` for
+            // the decoy experiment that established that without spending a client run.
+            //
+            // First-chance, so the dump is taken at the faulting instruction rather than
+            // after the client has unwound. For `0xC000_0374` that is the difference
+            // between a usable heap and none: the allocator raises it at the next walk, so
+            // by the time anything else could look, the evidence is what is *in* the heap
+            // rather than where the code is.
+            crate::minidump::write_crash_dump(info.cast::<c_void>(), code);
         }
         return EXCEPTION_CONTINUE_SEARCH;
     }

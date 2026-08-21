@@ -104,8 +104,9 @@ stand as written.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-21, end of day: seven parallel agents and five client runs.** Read
-this section and nothing else to know where the project is. Everything under it is older and
+**Last updated 2026-08-21, late: the crash-dump instrument was replaced, and the last run
+turned out to have answered more than was reported.** Read this section and nothing else to
+know where the project is. Everything under it is older and
 kept for its working, not its verdicts.
 
 **The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
@@ -132,26 +133,47 @@ kept current. `CLAUDE.md` has the section on why.
 | **Roger's quest opens** | the authored overlay: their real opening, a **Next**, then an Accept/Decline box |
 | **THE CHANNEL MIGRATE OPCODE IS `0x001A`** | measured 2026-08-21. The client tore down, connected to **127.0.0.1:8486** and sent a migration hello - so `u32 ip` network-order and `u16 port` little-endian are confirmed too |
 
+#### PROVEN ON THE WIRE by the 13:48 run of 2026-08-21, but never reported
+
+That run was read properly afterwards and it contains far more than the one thing that was
+said about it at the time. **These all worked**, and `world.log` has the whole exchange:
+
+* **Roger's quest, the entire chain.** The 6-byte yes/no accept parsed (`000000001001`),
+  quest 1002 was stored, the apple went into Use slot 1, `0x007C` set HP to **25/130**, and
+  the grey item line went out as `0x02D1` effect 8. Then the apple was eaten - `0x010E`
+  arrived - and the server answered with +30 HP, an `0x0070` that emptied the slot, the quest
+  completed, and +3 EXP.
+* **Consumables.** That apple *is* the consumable path, answered correctly end to end.
+* **Quest completion and its EXP payout.**
+
+The chain is stronger than a log usually is, because the client had to have **drawn** the
+apple for the owner to double-click it: the `0x010E` names item 2010000 in Use slot 1, which
+existed only because the accept was granted. So the accept, the grant and the HP change all
+reached the screen.
+
+**What is still unknown is what any of it LOOKED like** - the grey chat line, where the quest
+EXP appeared, whether the fanfare drew anything. Those are questions about the screen and
+they are what step 2 of the plan asks.
+
 #### WIRED, and NOT yet seen on a screen
 
 Everything here compiles, is tested and is connected. **None of it has been seen by the
 client.** The heading exists separately because `STATUS.md` has twice called something done
-while it was unwired.
+while it was unwired. Five rows came off this table on 2026-08-21 once the 13:48 run was read
+properly - Roger's quest, the fanfare, consumables, the quest payout and `!migsweep` - because
+leaving them here would have spent a launch re-testing what a log already answered.
 
 | | what to look for |
 |---|---|
 | **the Etc bag and mesos survive a relog** | they always persisted - nothing ever *sent* them. Field entry now re-sends `0x0070` per item plus `0x007C` for the balance |
 | **items stack** | Garnet Ore into one slot, not three. `slotMax 0` means unspecified, not one |
 | **idle regeneration** | +10 HP and MP every 10 s after 10 s of no movement, attack or damage |
-| **quest completion pays out** | `Act.1`: 2 EXP for quest 1001, and Heena keeps the mirror |
 | **the Tutorial Jr. Sentinel** | 100% Shellpiece, no mesos, no second drop |
 | **`!setrates <exp> <meso> <drop>`** | all three on one anchor, one banner. Every rate command now refuses below 1x |
-| **Roger's quest 1002 opens** | the authored overlay. Watch for *"You'll die when your HP reaches 0"* with a **Next**, then an **Accept/Decline** box. *"Hey, nice weather, isn't it?"* is the exact signature of the overlay NOT loading |
 | **drops land on the floor** | a mob killed **on a slope or a step**, not on flat ground - flat looks identical before and after, which is why this went unnoticed. `world.log` names the foothold for any drop that moved |
-| **the quest-finish fanfare** | `0x02D1` effect 15. **Expect sound and no picture** - `Effect/BasicEff.img/QuestClear` is not in this client's WZ, and that is the predicted result, not a failure |
-| **potions and food heal** | drink a Red Potion. **100 HP**, or less if that would overfill the bar, and the stack drops by one without the slot emptying. `gm-handbook/consumables.txt`, from the client's own `spec` nodes |
-| **`!migsweep [first] [last]`** | an experiment, not a feature: sends ten candidate opcodes and the hook log names which one migrated |
 | **giving up a quest works** | start 1001, press give up in the quest window, then click Sera again. Test on **1001, not 1000** - 1000 is completed by then and its give-up button can never send anything |
+| **the channel migrate, end to end** | `0x001A` alone now, and the far end claims **by channel** when the hello names nobody. Only the opcode has been seen working; the arrival has not |
+| **the hook writes its own crash dump** | any fault should now leave `dumps\maplecw-crash-<pid>-<code>-1.dmp` and two `CRASH DUMP:` lines in the hook log. Tested in-process, never yet against the client |
 
 **One warning about testing the AP fix, because it would otherwise produce a false pass.**
 Every `0x007C` clears the client's one-request latch, and **idle regeneration sends one every
@@ -242,9 +264,33 @@ AP handler works at all - measured, not feared: in `world-20260821-001440.log` a
 * **`0x009E` is the client's "I could not handle this packet" report** - a gift, like
   `0x025F` for drops. Its body carries the offending **opcode and body verbatim**. It appears
   in no other run in this repo, which is what made it a discriminator rather than noise.
-* **The crash-dump instrument was configured and switched off**, and is now on - but **still
-  has not produced a dump**, including for a clean `0xC0000005`. `dumps/` is empty.
-  Until a `.dmp` actually appears there, no run should be spent on the heap corruption.
+* **The crash-dump instrument could never have worked, and it is now replaced.** WER was
+  misconfigured once and was fixed; that was not the reason. Settled at **no cost in client
+  runs** by a decoy: a program that does nothing but dereference null, **named
+  `MapleStory.exe`** because LocalDumps keys match on the base name. It wrote a **9.4 MB dump
+  into `dumps\`**. The real client raised the *same* code, `0xC0000005`, at **13:49:56 - 88
+  minutes after WER was switched on**, which the registry key's own last-write time
+  (`12:21:01`) proves - and produced nothing. Same machine, same hour, same executable name,
+  same exception; every variable held but one. **The client ships its own crash reporting and
+  never reaches `WerFault`.** `CrashReportClient.exe` sits beside it and it already uploads
+  its own call stack in `0x008F`/`0x0090`.
+  So the dump now comes from **the hook's vectored handler, which was already catching that
+  exact fault and only logging it** - it is what writes the `CLIENT FAULT` line. First-chance,
+  so the dump is taken at the faulting instruction rather than after the client has unwound,
+  which for `0xC000_0374` is the difference between a usable heap and none.
+  `crates/grap-stub/src/minidump.rs`, tested end to end - the test writes a real `MDMP` and
+  reads it back, because a dump writer that has never written a dump is exactly the
+  instrument this repo keeps getting caught by.
+  **And the struct it needed is `packed(4)`, not naturally aligned.** `minidumpapiset.h`
+  wraps every `MINIDUMP_*` in `<pshpack4.h>`, so `MINIDUMP_EXCEPTION_INFORMATION` is 16 bytes
+  with the pointer at offset 4. With `repr(C)` it is 24 with the pointer at 8, and
+  `MiniDumpWriteDump` returns `ERROR_NOACCESS` **whatever the contents are** - which is what
+  eventually pointed at layout rather than data. A test asserting 24/8 sat beside it, passing.
+* **The hook log is archived now instead of deleted.** `world.log` was being moved into
+  `previous-runs/` while `client-patched\maplecw-hook.log` was deleted at the same moment.
+  That is precisely the asymmetry that makes `CLAUDE.md`'s "count the same event in two logs"
+  impossible for any run but the current one - and three of this project's answers came from
+  exactly that comparison. Both halves now land in the repo's `previous-runs/`.
 * **"The server cannot fix the NPC fade" was my over-generalisation, and the owner caught it.** Two agents proved a real negative - no field of `0x044F` controls it - and I restated that as *the server has no lever*, which does not follow. The owner: *"You shouldn't need to patch the client. Are there no way for the server to send the NPC data to the client so that it appears instantly?"* There is a second creation packet, `0x0451`, it sets a different state byte, and it is the one mobs get. Both agents were enumerating the wrong list; so was I when I accepted the conclusion.
 * **The dump instrument was configured and switched off at the master switch.** The owner,
   reasonably, believed crash dumps were enabled - `HKLM\...\Windows Error Reporting\
@@ -353,21 +399,21 @@ AP handler works at all - measured, not feared: in `world-20260821-001440.log` a
 
 #### What to do next, in order
 
-**Everything here is one client run away from an answer, and the top two are the same run.**
-The test plan is in `tools/test-server.ps1` - both the `.NOTES` block and the on-screen
-`Write-Host` dialogue.
+**The test plan is in `tools/test-server.ps1`** - both the `.NOTES` block and the on-screen
+`Write-Host` dialogue, and both were rewritten on 2026-08-21 to 7 steps. Item 2 of the old
+list is struck off: it has been answered without a run.
 
 | # | do this | why it is here |
 |---|---|---|
-| 1 | **Finish the channel change** | The opcode is **`0x001A`, measured**, and the body is confirmed - the client connected to 8486. What failed was identification: a channel migrate carries **no character id**, the hello reported `32513` (our own `01 7f 00 00`), channel 1 refused, sent the **MINIMAL SetField**, and the client faulted 3.2 s later. Claim-by-channel is wired. **If the fault goes away with it, the minimal SetField is a loaded gun** and needs rethinking rather than being the documented safe fallback |
-| 2 | **Whether the crash instrument works at all** | WER is now `Disabled = 0` and LocalDumps points at `dumps\`, and a clean `0xC0000005` still produced **nothing**. Check `dumps\` after the next death before spending anything else on the heap corruption. An instrument that looks armed and is not has now cost this project twice |
-| 3 | **NPCs fading in - `!npcecho`** | Two passes said the server had no lever; both enumerated the **fields of `0x044F`** rather than the **packets the pool accepts**. There are two that create an NPC: `0x044F` (`or [obj+0x38],1`) and **`0x0451`** (`mov byte [obj+0x38],2`, then the identical body). **The case that works uses the second**: mobs get `0x03C6` *and* `0x03D2`. `!npcecho` compares both routes in one run |
+| 1 | **Finish the channel change** | The opcode is **`0x001A`, measured**, and the body is confirmed - the client tore down and connected to 8486. What failed was identification: a migrate carries **no character id**, the hello reported `32513` (our own `01 7f 00 00`), channel 1 refused, sent the **MINIMAL SetField**, and the client faulted 3.2 s later. Claim-by-channel is wired and prints a distinct line. **If the fault goes away with it, the minimal SetField is a loaded gun** and needs rethinking rather than being the documented safe fallback |
+| 2 | **What Roger's quest LOOKS like** | Every packet is proven on the wire (see above). Three open questions, all about drawing: is the item line **grey, in the chat log**; does quest EXP land in the **chat log** rather than bottom-right; does the fanfare play with **nothing drawn**, which is the predicted result |
+| 3 | **NPCs fading in - `!npcecho`** | Two passes said the server had no lever; both enumerated the **fields of `0x044F`** rather than the **packets the pool accepts**. There are two that create an NPC: `0x044F` (`or [obj+0x38],1`) and **`0x0451`** (`mov byte [obj+0x38],2`, then the identical body). **The case that works uses the second**: mobs get `0x03C6` *and* `0x03D2`. One command, one run |
 | 4 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither of which is parsed out of the attack header. `research/damage-formula.md`. Highest-value next step for goal J |
-| 5 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
-| 6 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; what is left is the NPC path. `research/job-advancement.md` 8.1 has the seven-step exchange. The instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
-| 7 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry **`attackSpeed` and `attack` on 203 weapons each**, neither in `equips.txt` - so no caller can supply a real weapon speed |
-| 8 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
-| 9 | **Quest ITEM rewards, if the chat line lands** | Wired to `0x02D1` effect 8, category 6, which the colour table says is grey. If it does not appear, the fallback question is whether category 6 is a tab that window shows - send `chat_line(11, ...)` to tell those apart |
+| 5 | **The heap corruption, but only once a `.dmp` exists** | The instrument is finally real. `!analyze -v` and `!heap -p -a` are the two commands that matter. Do not spend a run *hunting* it - take the dump the next death produces on its own |
+| 6 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
+| 7 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; what is left is the NPC path. `research/job-advancement.md` 8.1 has the seven-step exchange. The instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
+| 8 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry **`attackSpeed` and `attack` on 203 weapons each**, neither in `equips.txt` - so no caller can supply a real weapon speed |
+| 9 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
 | 10 | **Death, and mob->player damage tuning** | `damage::incoming_damage` is now authoritative for mob hits. Death itself is still unbuilt |
 
 **Two refusal paths still send a packet the client cannot dispatch.** `change_channel_refused`

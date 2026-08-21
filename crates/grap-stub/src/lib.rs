@@ -22,6 +22,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod hook;
+pub mod minidump;
 pub mod netwatch;
 pub mod probe;
 pub mod session;

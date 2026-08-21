@@ -138,7 +138,7 @@ extern "system" {
 /// Logging used to be gated on `HOOK_ENV` too, which made a run that produced *no* file
 /// ambiguous: our code never ran, or the variable never arrived? Logging unconditionally
 /// separates those. Installing is still gated.
-fn log_path() -> String {
+pub(crate) fn log_path() -> String {
     std::env::var(HOOK_ENV).unwrap_or_else(|_| "maplecw-hook.log".to_string())
 }
 
