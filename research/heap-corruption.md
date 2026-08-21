@@ -65,28 +65,46 @@ an overrun faults **at the instruction that writes**, not at the next free. That
 from an undiagnosable post-mortem into a precise stack.
 
 The owner runs this, not an agent — it writes an Image File Execution Options key, which is a
-system setting. From an **elevated** prompt:
+system setting.
 
+**`gflags.exe` is NOT installed on this machine.** A recursive search of both Windows Kits
+trees and the Debugging Tools directory finds nothing, so the usual `gflags /p /enable` line
+cannot be pasted anywhere; it needs the SDK's Debugging Tools feature installed first. That
+key is the whole of what gflags does, so write it directly. From an **elevated PowerShell**:
+
+```powershell
+$k = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MapleStory.exe"
+New-Item -Path $k -Force | Out-Null
+Set-ItemProperty -Path $k -Name GlobalFlag -Value 0x02000000 -Type DWord
+Set-ItemProperty -Path $k -Name PageHeapFlags -Value 0x3 -Type DWord
 ```
-"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\gflags.exe" /p /enable MapleStory.exe /full
+
+and afterwards, to put it back — remove the two values rather than the key, so anything else
+under it survives:
+
+```powershell
+$k = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MapleStory.exe"
+Remove-ItemProperty -Path $k -Name GlobalFlag,PageHeapFlags -ErrorAction SilentlyContinue
 ```
 
-and afterwards, to put it back:
+`PageHeapFlags = 0x3` is full page heap and `0x1` is the light variant, which is far cheaper
+and still catches some of it. The key matches on **file name**, so it picks up
+`client-patched/MapleStory.exe` without the path being named anywhere.
 
-```
-"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\gflags.exe" /p /disable MapleStory.exe
-```
+Three things to expect. Full page heap makes the client **noticeably slower and much hungrier
+for memory**, which on a map holding thirty mobs may itself be a problem. It may move the
+crash rather than reproduce it, because changing allocation layout changes what an overrun
+lands on — a run that does *not* crash under page heap is still evidence, pointing at a
+use-after-free or a double free rather than an overrun. And this client is Themida-packed with
+anti-cheat modules loaded (`mssecure`, `nexoncm`): page heap changes process behaviour enough
+that it may refuse to start for reasons unrelated to the bug. If it does, that is worth a line
+in `STATUS.md` rather than a second attempt.
 
-Two things to expect. Full page heap makes the client **noticeably slower and much hungrier
-for memory**, which on a map holding thirty mobs may itself be a problem — `/p /enable
-MapleStory.exe` without `/full` is the lighter variant if it is. And it may move the crash
-rather than reproduce it, because changing allocation layout changes what an overrun lands on.
-A run that does *not* crash under page heap is still evidence: it points at a use-after-free
-or a double free rather than an overrun.
-
-If gflags is not installed, the same key can be set by hand under
-`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\MapleStory.exe`
-with `GlobalFlag` = `0x02000000`, but gflags is the supported route.
+**A quoted path is not a command in PowerShell.** The first version of this section opened
+with `"C:\...\gflags.exe" /p /enable`, which PowerShell parses as a string expression and
+rejects at the `/`. A native executable with spaces in its path needs the call operator:
+`& "C:\path\app.exe" args`. That is already in `CLAUDE.md`'s shell notes and it still got
+written down wrong here.
 
 ## The capture diff, done 2026-08-20 - and it eliminated six things
 
