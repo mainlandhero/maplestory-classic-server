@@ -128,11 +128,51 @@ verifier stop does not travel through SEH the way an access violation does, so
 `crates/grap-stub`'s handler never sees it. The verifier's diagnosis goes to the debugger
 port, and with no debugger attached it is discarded.
 
-So the next step is **a debugger, not another page-heap run**. The Debugging Tools for Windows
-are not installed (that is why `gflags.exe` was missing); installing them gives `windbg`, and
-running the client under it would print the verifier's own sentence - which names the block,
-the operation and the stack. That is a bigger ask than a registry key and it is the honest
-next step rather than a cheaper one that will not work.
+### Getting the message: a dump, NOT an attach
+
+WinDbg was installed on 2026-08-20 — the **Store build** (`WinDbgX`). There is still no
+`cdb.exe`, which only the SDK build provides.
+
+**Do not attach it to a running client.** `research/protection-surface.md` is explicit:
+*"Runtime anti-debug. Expect debugger detection; attaching to a running client is a fight,
+independent of GameGuard."* This client is Themida-packed with anti-cheat modules loaded, so
+an attach is as likely to produce a fight over the debugger as an answer about the heap.
+
+**Take a crash dump and open it offline instead.** Windows Error Reporting writes the dump
+after the process is already dying, and nothing is attached while it runs — so there is
+nothing for the anti-debug to detect. Same information, none of the fight.
+
+The owner enables it, because it is a system setting. Elevated PowerShell:
+
+```powershell
+$w = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\MapleStory.exe"
+New-Item -Path $w -Force | Out-Null
+Set-ItemProperty -Path $w -Name DumpFolder -Value "C:\MapleCW\dumps" -Type ExpandString
+Set-ItemProperty -Path $w -Name DumpType -Value 2 -Type DWord
+Set-ItemProperty -Path $w -Name DumpCount -Value 2 -Type DWord
+```
+
+`DumpType 2` is a full dump — with page heap on that is roughly a gigabyte each, hence
+`DumpCount 2`. `dumps/` is gitignored. To undo:
+
+```powershell
+Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\MapleStory.exe" -Recurse
+```
+
+Then `tools/analyse-dump.ps1` opens the newest dump. It drives `cdb.exe` when the SDK build is
+present and otherwise prints the commands to paste into the Store WinDbg by hand, because the
+Store build has no scriptable console mode worth relying on.
+
+The command that matters is **`!heap -p -a <faulting address>`**. For a page-heap block it
+prints the **allocation stack and the free stack** — exactly what a post-mortem `0xC0000374`
+can never give, and the whole reason page heap was turned on.
+
+**Page heap must stay on for this run**, since the dump is only worth taking of a verifier
+stop.
+
+**If no dump appears, that is a finding rather than a failure of the method**: it means WER is
+not handling the exit, so something else is terminating the process — which would point at the
+anti-cheat rather than at the heap.
 
 **Do not leave page heap on** while doing anything else: it costs ~600 MB and a lot of CPU,
 and it changes the failure mode, so any other crash seen while it is enabled is not comparable
