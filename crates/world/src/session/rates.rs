@@ -68,6 +68,27 @@ pub(super) const BANNER_CYCLE_SECS: i64 = 300;
 /// How long it stays up each time, and how long an ending is worth announcing: two minutes.
 pub(super) const BANNER_VISIBLE_SECS: i64 = 120;
 
+/// Why a rate the player typed cannot be used, worded to be shown as-is.
+///
+/// **Every rate command refuses below 1x.** The owner, 2026-08-20: *"Make sure that the
+/// number/decimal has to be greater than 1"*, then *"it should accept 1 as well"*, then
+/// *"The individual rate setters should also behave the same way"*. So the floor is
+/// inclusive and it belongs to the commands, not to `!setrates` alone.
+///
+/// **The floor is NOT in [`Rate`].** The type still represents 0.01x upwards, because the
+/// drop rate multiplies a chance and the arithmetic has no business caring what a chat
+/// command will accept. This is a policy about what a person is allowed to type, and it lives
+/// at that boundary - one function, so the three setters and the combined one cannot drift.
+fn below_normal(kind: RateKind, rate: Rate) -> Option<String> {
+    if rate >= Rate::NORMAL {
+        return None;
+    }
+    Some(format!(
+        "the {} rate of {rate}x is below 1x, and a rate below 1x makes the game worse rather than better. 1 is the lowest these commands take, and it means normal.",
+        kind.label()
+    ))
+}
+
 impl Session {
     /// `!exprate <multiplier>`.
     pub(super) fn gm_exp_rate(&mut self, arg: &str) -> Vec<Reply> {
@@ -115,13 +136,10 @@ impl Session {
     /// replaced; one call anchors once and the banner names all three together from the
     /// start.
     ///
-    /// **Every value must be at least 1x.** The owner: *"Make sure that the number/decimal has to
-    /// be greater than 1"*, then *"it should accept 1 as well"*. So `!setrates 1 1 1` is the
-    /// way to end everything in one command - which is the natural counterpart to a command
-    /// whose whole point is not typing three - and `!setrates 0.5 1 1` is refused.
-    ///
-    /// The **individual** setters are deliberately left alone: `!exprate 0.5` still works.
-    /// This floor is a property of this command, not of the rate system.
+    /// **Every value must be at least 1x**, the same rule the individual setters follow -
+    /// see [`below_normal`]. So `!setrates 1 1 1` is the way to end everything in one command,
+    /// which is the natural counterpart to a command whose whole point is not typing three,
+    /// and `!setrates 0.5 1 1` is refused.
     pub(super) fn gm_set_rates(&mut self, arg: &str) -> Vec<Reply> {
         let words: Vec<&str> = arg.split_whitespace().collect();
         if words.len() != ALL_KINDS.len() {
@@ -139,12 +157,8 @@ impl Session {
                 Ok(r) => r,
                 Err(e) => return self.gm_ack(format!("!setrates: the {} rate: {e}", kind.label())),
             };
-            if rate < Rate::NORMAL {
-                return self.gm_ack(format!(
-                    "!setrates: the {} rate of {rate}x is below 1x, and this command only starts events. Use !{} {rate} on its own if a penalty rate is really what you want.",
-                    kind.label(),
-                    kind.command()
-                ));
+            if let Some(why) = below_normal(*kind, rate) {
+                return self.gm_ack(format!("!setrates: {why}"));
             }
             wanted.push((*kind, rate));
         }
@@ -182,6 +196,9 @@ impl Session {
             Ok(r) => r,
             Err(e) => return self.gm_ack(format!("!{command}: {e}")),
         };
+        if let Some(why) = below_normal(kind, rate) {
+            return self.gm_ack(format!("!{command}: {why}"));
+        }
         if rate == current.get(kind) {
             // Storing it anyway would restart the five-minute cycle and re-show a banner
             // that is already saying the right thing.

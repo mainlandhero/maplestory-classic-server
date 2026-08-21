@@ -2765,3 +2765,46 @@ fn setrates_wants_exactly_three() {
         assert!(store.rates().unwrap().all_normal(), "{bad:?} changed something");
     }
 }
+
+
+/// **Every rate command refuses below 1x, not just `!setrates`.** The owner, 2026-08-20: *"The
+/// individual rate setters should also behave the same way and only accept 1 or above"*.
+#[test]
+fn every_rate_setter_refuses_below_one() {
+    let (mut s, store, _) = gm_session();
+    for cmd in ["exprate", "mesorate", "droprate"] {
+        for bad in ["0.5", "0.99", "0.01"] {
+            let out = s.handle(&gm_chat(&format!("!{cmd} {bad}")));
+            let said = notice_text(&out[0]);
+            assert!(said.contains("below 1x"), "!{cmd} {bad}: {said}");
+            assert!(banners(&out).is_empty(), "!{cmd} {bad} moved the banner");
+        }
+    }
+    assert!(store.rates().unwrap().all_normal(), "a refused rate must write nothing");
+}
+
+/// 1 and above still work on every setter - the floor is inclusive.
+#[test]
+fn every_rate_setter_accepts_one_and_above() {
+    let (mut s, store, _) = gm_session();
+    s.handle(&gm_chat("!exprate 1.5"));
+    s.handle(&gm_chat("!mesorate 2"));
+    s.handle(&gm_chat("!droprate 1"));
+    let r = store.rates().unwrap();
+    assert_eq!(
+        (r.exp.rate.per_cent(), r.meso.rate.per_cent(), r.drop.rate.per_cent()),
+        (150, 200, 100)
+    );
+}
+
+/// The floor is a rule about what may be TYPED, not about what a rate can be.
+///
+/// `store::rates::Rate` still represents fractions, because the drop rate multiplies a chance
+/// and that arithmetic has no business knowing what a chat command accepts. If this ever
+/// fails, the policy has leaked into the type.
+#[test]
+fn the_rate_type_still_represents_fractions() {
+    let half = store::rates::Rate::from_per_cent(50);
+    assert_eq!(half.apply(100), 50);
+    assert!(half < store::rates::Rate::NORMAL);
+}
