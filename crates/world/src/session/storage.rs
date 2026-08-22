@@ -21,6 +21,15 @@
 //! the player closes it by hand - so every path out of [`Session::on_storage_request`] emits
 //! a `0x0572`, including the ones that change nothing.
 //!
+//! # Items move now, and the fee is real
+//!
+//! The owner, 2026-08-22, after the first run that ever opened the window: *"I tried to store an
+//! item with Mr. Kim. The item did not move to storage, and it did not charge the 100 meso
+//! fee that it said it was going to charge."* Both sentences were the same missing arm -
+//! `PutIn` and `TakeOut` fell through to "not implemented yet, here is the unchanged box".
+//! The **fee text is the client's own**, read out of `Npc.wz` before anything is sent, so an
+//! unbuilt deposit reads on screen as a fee that was promised and then not taken.
+//!
 //! # The box is per ACCOUNT, and that is the one thing the client cannot confirm
 //!
 //! Nothing on the wire in either direction carries an owner - not the open packet, not any
@@ -50,6 +59,9 @@ impl Session {
         };
         let (slots, mesos, count) = (boxx.slots, boxx.mesos, boxx.items.len());
         let per_type = self.storage_blobs(&boxx);
+        // The fee is the keeper's, and a put-in request does not name them. Remember it here
+        // or the deposit has to guess.
+        self.open_storage = Some(template);
         Some(vec![Reply {
             opcode: net::storage::STORAGE_RESULT,
             body: net::storage::open_storage(
@@ -80,7 +92,10 @@ impl Session {
             );
         };
         match req {
-            net::storage::StorageRequest::Close => Vec::new(),
+            net::storage::StorageRequest::Close => {
+                self.open_storage = None;
+                Vec::new()
+            }
             net::storage::StorageRequest::Sort => self.storage_refusal(
                 net::storage::RESULT_TRUNK_REFRESH,
                 account_id,
@@ -89,14 +104,309 @@ impl Session {
             net::storage::StorageRequest::Mesos { amount } => {
                 self.storage_mesos(account_id, amount)
             }
-            // Item movement is not built yet, and it says so rather than silently doing
-            // nothing: the window stays usable and the log names the request.
-            other => self.storage_refusal(
-                net::storage::RESULT_TRUNK_REFRESH,
-                account_id,
-                format!("{other:?} is not implemented yet - the box is re-sent unchanged"),
-            ),
+            net::storage::StorageRequest::PutIn { bag_slot, item_id, count } => {
+                self.storage_put_in(account_id, bag_slot, item_id, count)
+            }
+            net::storage::StorageRequest::TakeOut { inv_type, position, count } => {
+                self.storage_take_out(account_id, inv_type, position, count)
+            }
         }
+    }
+
+    /// Mode 5 - **bag to box, and the keeper takes their fee.**
+    ///
+    /// The owner, 2026-08-22: *"I tried to store an item with Mr. Kim. The item did not move to
+    /// storage, and it did not charge the 100 meso fee that it said it was going to charge."*
+    /// Both halves of that were one missing arm: the request parsed, and the answer was the
+    /// unchanged box. The fee is the client's own text, read out of `Npc.wz` - it announces
+    /// what the server is *going to* do, so an unimplemented deposit reads on screen as a fee
+    /// that was promised and not taken.
+    ///
+    /// # Every effect hangs off the transition
+    ///
+    /// The order here is the one `CLAUDE.md`'s repeated-quest bug bought: the store is asked
+    /// **first**, and the fee, the `0x0070` and the refreshed box are all reached only
+    /// through its `Ok`. The two pre-checks above it - a free slot, and enough mesos - exist
+    /// so the *refusal mode* can be specific (17 storage full, 16 cannot afford the fee)
+    /// rather than a bare refresh; they are not what protects the money.
+    ///
+    /// The fee is charged **after** a successful move, and it cannot fail after the pre-check
+    /// except on a database error, which is logged rather than swallowed. Charging first and
+    /// then failing to move would take mesos for nothing, which is the direction that costs
+    /// the player.
+    fn storage_put_in(
+        &mut self,
+        account_id: i64,
+        bag_slot: u16,
+        item_id: u32,
+        count: u16,
+    ) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let refresh = net::storage::RESULT_TRUNK_REFRESH;
+
+        // **The window must be open, because the fee lives on the keeper.** This is not
+        // defensive noise: `storage_fee` is per template and Mr. Thalj charges 150.
+        let Some(template) = self.open_storage else {
+            return self.storage_refusal(
+                refresh,
+                account_id,
+                format!("put-in of item {item_id} with no storage window open - refusing rather than inventing a deposit fee"),
+            );
+        };
+        let fee = net::storage::storage_fee(template).unwrap_or(0);
+
+        // Which bag is it in? The request carries the slot and the item id but not the type.
+        // Deriving the type from the item id alone is the thing `store::take_item`'s doc
+        // block warns about - only the equip case of `for_item` is corroborated - so the
+        // bags are asked instead, and the slot must really hold that item id.
+        let Some(inv) = self.bag_holding(chr.id, bag_slot, item_id) else {
+            return self.storage_refusal(
+                refresh,
+                account_id,
+                format!("no bag has item {item_id} in slot {bag_slot} - nothing moved"),
+            );
+        };
+
+        match self.store.storage(account_id) {
+            Ok(boxx) if boxx.free_slots() == 0 => {
+                return self.storage_refusal(
+                    net::storage::RESULT_STORAGE_FULL,
+                    account_id,
+                    format!("storage is full ({} slots)", boxx.slots),
+                )
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return self.storage_refusal(
+                    refresh,
+                    account_id,
+                    format!("the box could not be read: {e}"),
+                )
+            }
+        }
+        let purse = self.store.mesos(chr.id).unwrap_or(0);
+        if purse < fee {
+            return self.storage_refusal(
+                net::storage::RESULT_NOT_ENOUGH_FEE,
+                account_id,
+                format!("the deposit fee at template {template} is {fee} and the purse holds {purse}"),
+            );
+        }
+
+        let max_stack = self.config.shops.max_stack(item_id);
+        let moved = self.store.store_item(
+            account_id,
+            chr.id,
+            inv,
+            bag_slot,
+            (count > 0).then_some(count),
+            max_stack,
+        );
+        let placed = match moved {
+            Ok(rows) => rows,
+            Err(store::StoreError::ItemMayNotBeStored { item_id }) => {
+                return self.storage_refusal(
+                    net::storage::RESULT_TRUNK_REFRESH,
+                    account_id,
+                    format!("item {item_id} may not be stored"),
+                )
+            }
+            Err(store::StoreError::StorageFull { slots }) => {
+                return self.storage_refusal(
+                    net::storage::RESULT_STORAGE_FULL,
+                    account_id,
+                    format!("storage is full ({slots} slots)"),
+                )
+            }
+            Err(e) => {
+                return self.storage_refusal(
+                    refresh,
+                    account_id,
+                    format!("the deposit failed and nothing moved: {e}"),
+                )
+            }
+        };
+
+        // Only now. The item is in the box and out of the bag, in one transaction.
+        let mut out = self.bag_slot_replies(chr.id, inv, bag_slot, "stored");
+        match self.store.add_mesos(chr.id, -i64::from(fee)) {
+            Ok(_) => out.extend(self.meso_reply(chr.id)),
+            Err(e) => out.extend(self.notice(format!(
+                "The item was stored but the {fee} meso fee could not be taken: {e}"
+            ))),
+        }
+        let into: Vec<u16> = placed.iter().map(|r| r.slot).collect();
+        out.extend(self.storage_refusal(
+            net::storage::RESULT_PUT_OK,
+            account_id,
+            format!(
+                "stored item {item_id} from {inv:?} slot {bag_slot} into storage slot(s) {into:?}, fee {fee} at template {template}"
+            ),
+        ));
+        out
+    }
+
+    /// Mode 4 - **box to bag.** Free on all ten keepers.
+    ///
+    /// # `position` is not a slot, and this is the only place that can go wrong quietly
+    ///
+    /// The client hands back the 0-based position **within its inventory type, in the order
+    /// the server last sent the box**. Reading it as a storage slot would take the wrong item
+    /// whenever the box is not densely packed from slot 1 - and it would succeed, silently,
+    /// with the wrong item. [`Self::storage_order`] is the one function that decides that
+    /// ordering, and [`Self::storage_blobs`] builds the wire from the same array, so the
+    /// two cannot drift.
+    fn storage_take_out(
+        &mut self,
+        account_id: i64,
+        inv_type: u8,
+        position: u8,
+        count: u16,
+    ) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let refresh = net::storage::RESULT_TRUNK_REFRESH;
+
+        let Ok(inv) = store::InventoryType::from_wire(i16::from(inv_type)) else {
+            return self.storage_refusal(
+                refresh,
+                account_id,
+                format!("take-out named inventory type {inv_type}, which is not a bag"),
+            );
+        };
+        let boxx = match self.store.storage(account_id) {
+            Ok(b) => b,
+            Err(e) => {
+                return self.storage_refusal(
+                    refresh,
+                    account_id,
+                    format!("the box could not be read: {e}"),
+                )
+            }
+        };
+        let order = Self::storage_order(&boxx);
+        let idx = inv.index();
+        let Some(row) = order.get(idx).and_then(|list| list.get(usize::from(position))) else {
+            return self.storage_refusal(
+                refresh,
+                account_id,
+                format!("no item at position {position} of {inv:?} - the box holds {} there", order.get(idx).map_or(0, Vec::len)),
+            );
+        };
+        let (slot, item_id) = (row.slot, row.item.item_id);
+
+        let max_stack = self.config.shops.max_stack(item_id);
+        let taken = self.store.take_item(
+            account_id,
+            chr.id,
+            slot,
+            (count > 0).then_some(count),
+            inv,
+            max_stack,
+        );
+        let placed = match taken {
+            Ok(rows) => rows,
+            Err(store::StoreError::BagFull { slots, .. }) => {
+                return self.storage_refusal(
+                    net::storage::RESULT_INVENTORY_FULL,
+                    account_id,
+                    format!("{inv:?} is full ({slots} slots) - the item stays in the box"),
+                )
+            }
+            Err(e) => {
+                return self.storage_refusal(
+                    refresh,
+                    account_id,
+                    format!("the withdrawal failed and nothing moved: {e}"),
+                )
+            }
+        };
+
+        let mut out = self.inventory_added_replies(inv, &placed, "taken out of storage");
+        out.extend(self.storage_refusal(
+            net::storage::RESULT_PUT_OK,
+            account_id,
+            format!(
+                "took item {item_id} out of storage slot {slot} (position {position} of {inv:?}) into bag slot(s) {:?}",
+                placed.iter().map(|r| r.slot).collect::<Vec<_>>()
+            ),
+        ));
+        out
+    }
+
+    /// Which bag holds `item_id` at `bag_slot`, if any.
+    ///
+    /// Asked of the bags rather than derived from the item id: `InventoryType::for_item` is
+    /// corroborated for equips only, and a wrong answer here would hand `store_item` a slot
+    /// in the wrong bag - which either finds nothing, or finds a **different item** at the
+    /// same slot number and stores that instead. The item id is checked, not just the slot,
+    /// for exactly that reason.
+    fn bag_holding(
+        &self,
+        character_id: u32,
+        bag_slot: u16,
+        item_id: u32,
+    ) -> Option<store::InventoryType> {
+        store::InventoryType::ALL.iter().copied().find(|inv| {
+            self.store.bag_items(character_id, *inv).is_ok_and(|rows| {
+                rows.iter().any(|r| r.slot == bag_slot && r.item.item_id == item_id)
+            })
+        })
+    }
+
+    /// The `0x0070` for a bag slot **after** something left it: gone, or merely smaller.
+    ///
+    /// A whole-slot deposit needs a Remove and a partial one needs a Quantity, and the
+    /// difference is not visible from the request - `count` is what the player asked for, not
+    /// what happened. So the slot is read back. Sending the wrong one of these two leaves a
+    /// ghost item in the client's grid that only a relog clears.
+    fn bag_slot_replies(
+        &self,
+        character_id: u32,
+        inv: store::InventoryType,
+        slot: u16,
+        why: &str,
+    ) -> Vec<Reply> {
+        let left = self
+            .store
+            .bag_items(character_id, inv)
+            .ok()
+            .and_then(|rows| rows.iter().find(|r| r.slot == slot).map(|r| r.item.kind.quantity()));
+        match left {
+            Some(q) if q > 0 => vec![Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_quantity(inv.as_u8() as i8, slot as i16, q),
+                what: format!(
+                    "InventoryOperation QUANTITY: {inv:?} slot {slot} now holds {q} - {why}."
+                ),
+            }],
+            _ => vec![Reply {
+                opcode: net::inventory::INVENTORY_OPERATION,
+                body: net::inventory::inventory_removed(inv.as_u8() as i8, slot as i16),
+                what: format!("InventoryOperation REMOVE: {inv:?} slot {slot} is empty - {why}."),
+            }],
+        }
+    }
+
+    /// The box grouped by inventory type, **in the order the wire uses**.
+    ///
+    /// One function, two callers: the encoder below and the take-out resolver above. That is
+    /// deliberate - `research/storage.md` §11.5 lists this as the first of "the three numbers
+    /// that must not drift", because a take-out index that means a different item than the
+    /// one the client is pointing at fails by moving the **wrong item**, with no error
+    /// anywhere.
+    fn storage_order(boxx: &store::StorageBox) -> [Vec<store::StorageItem>; net::storage::INVENTORY_TYPES]
+    {
+        let mut out: [Vec<store::StorageItem>; net::storage::INVENTORY_TYPES] = Default::default();
+        // `StorageBox::items` is documented as "occupied slots only, in slot order", which is
+        // what makes the position stable between two sends.
+        for it in &boxx.items {
+            let Some(inv) = store::InventoryType::for_item(it.item.item_id) else { continue };
+            let idx = inv.index();
+            if idx < out.len() {
+                out[idx].push(*it);
+            }
+        }
+        out
     }
 
     /// Move mesos between the purse and the box.
@@ -182,25 +492,21 @@ impl Session {
         boxx: &store::StorageBox,
     ) -> [Vec<Vec<u8>>; net::storage::INVENTORY_TYPES] {
         let mut out: [Vec<Vec<u8>>; net::storage::INVENTORY_TYPES] = Default::default();
-        for it in &boxx.items {
-            let Some(inv) = store::InventoryType::for_item(it.item.item_id) else { continue };
-            let idx = inv.index();
-            if idx >= out.len() {
-                continue;
+        for (idx, list) in Self::storage_order(boxx).iter().enumerate() {
+            for it in list {
+                out[idx].push(match it.item.kind {
+                    store::ItemKind::Equip(stats) => {
+                        let stats = stats.unwrap_or_else(|| self.template_stats(it.item.item_id));
+                        net::opcode::equipped_item(it.item.item_id, &stats)
+                    }
+                    store::ItemKind::Bundle { quantity } => net::bag::bundle_item(
+                        it.item.item_id,
+                        quantity,
+                        0,
+                        &[0u8; net::bag::BUNDLE_OWNER_LEN],
+                    ),
+                });
             }
-            let blob = match it.item.kind {
-                store::ItemKind::Equip(stats) => {
-                    let stats = stats.unwrap_or_else(|| self.template_stats(it.item.item_id));
-                    net::opcode::equipped_item(it.item.item_id, &stats)
-                }
-                store::ItemKind::Bundle { quantity } => net::bag::bundle_item(
-                    it.item.item_id,
-                    quantity,
-                    0,
-                    &[0u8; net::bag::BUNDLE_OWNER_LEN],
-                ),
-            };
-            out[idx].push(blob);
         }
         out
     }

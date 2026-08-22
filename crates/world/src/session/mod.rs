@@ -166,6 +166,18 @@ pub struct Session {
     /// right-looking click, and nothing on either side would notice.
     open_shop: Option<(u32, Vec<net::shop::ShopRow>)>,
 
+    /// The storage keeper whose window is open, by **template** id.
+    ///
+    /// Kept for one reason: the deposit fee is a property of the keeper, and a put-in
+    /// request does not name them. `research/storage.md` §11.4 - *"charge `trunkPut`"* - and
+    /// `trunkPut` is `Npc.wz`'s, per template, 100 for nine of the ten and 150 for Mr. Thalj.
+    /// Guessing 100 would be right nine times in ten and quietly wrong once, which is the
+    /// worst shape a number can have here.
+    ///
+    /// `None` means no window is open, and a put-in that arrives then is refused rather than
+    /// charged a fee nobody can name.
+    open_storage: Option<u32>,
+
     /// Everything alive on this **channel's** maps: mobs, their positions, and the floor.
     ///
     /// **Shared by every connection, not owned by this one.** It used to be four maps on the
@@ -341,6 +353,7 @@ impl Session {
             clock_ms: 0,
             fields,
             open_shop: None,
+            open_storage: None,
             last_position: None,
             banner_shown: None,
             last_activity_ms: 0,

@@ -95,6 +95,8 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x0107 => "CLIENT_INVENTORY_MOVE (u32 tick, u8 invType, i16 src, i16 dst, i16 count)",
         0x00F2 => "CLIENT_NPC_CLICK (u32 npcObjectId, i16 charX, i16 charY, u32; the NO-QUEST click path)",
         0x00F3 => "CLIENT_SCRIPT_REPLY (u32 handle, u8 msgType, u32 echo, str the box's own text, i8 action)",
+        0x00F6 => "CLIENT_STORAGE (u8 mode: 4 take out, 5 put in, 6 sort, 7 mesos i64, 8 close)",
+        0x0572 => "STORAGE_RESULT (u8 mode: 24 open, 13 put ok, 15 refresh, 10/11/16/17 refusals)",
         0x01BE => "CLIENT_LOG_OUT (empty body; POISONS SetField until 0x0106 answers it)",
         0x00BB => "CHAT_NOTICE",
         0x0106 => "LOG_OUT_RESULT",

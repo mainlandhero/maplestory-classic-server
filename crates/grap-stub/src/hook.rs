@@ -511,6 +511,11 @@ pub unsafe fn install() {
     }
     VirtualProtect(target as *mut c_void, STOLEN, old, &mut old);
 
+    // Opt-in, and after the detour is in so its log line lands in order. Themida has
+    // long since unpacked .text by now - the detour above is written to the same
+    // section and has never been checksummed.
+    crate::heapfix::install();
+
     log("install: hook active");
 }
 

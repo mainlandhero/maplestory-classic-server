@@ -21,6 +21,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+pub mod heapfix;
 pub mod hook;
 pub mod minidump;
 pub mod netwatch;

@@ -60,60 +60,94 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - four things, two of them just "what did you see"
+    THE POINT OF THIS RUN - four steps, and the FIRST ONE IS THE ORDER
     -----------------------------------
-     1. FRESH SPAWNS SHOULD BE SPREAD ACROSS THE MAP. Go to Right Around Lith Harbor, or
-        any map you have not visited this launch, and look at where the mobs are.
-        You reported them "completely concentrated on the left side of the map on fresh
-        spawn". The per-type quota was already balanced; what was not is WHICH points inside
-        each type - it took the first N in WZ order, and WZ order runs left to right.
-          mobs across the whole map  -> fixed
-          still bunched at one end   -> say WHICH end. Left is the WZ order; right would
-                                        mean something else entirely
-          fewer mobs than before     -> the shuffle disturbed the quota, which its own test
-                                        says it must not
-        Leave the map and come back: the layout should DIFFER between two fresh entries,
-        because the seed carries the clock.
+     1. LOG IN AS "GoodTest" FIRST, BEFORE ANYTHING ELSE. This is the whole experiment and
+        doing it second destroys it.
+        Last run it crashed the client the instant you selected it. That has two readings and
+        they predict opposite things:
+          (a) map 10 "Mushroom Town" - where GoodTest is standing - is fatal to load. No
+              client has ever loaded it. GoodTest was on maps 1 and 30 before, both fine.
+          (b) the client was already 306 s old and carrying a damaged allocator slot, and a
+              character-select round trip is the biggest resource release in a session, so
+              the slot was going to be freed there whatever the map was.
+        Logging in FIRST, at ~40 s of client life, separates them:
+          it loads, you are in Mushroom Town  -> (b). Map 10 is fine and the crash is the
+                                                 accumulated-damage one we already track
+          it dies again straight away         -> (a). Map 10 is the cause, which is a
+                                                 brand-new and much more tractable bug
+        Either way say roughly HOW LONG the client had been alive. client-exit.log records it
+        to the millisecond, and tools/poolchain.py on the dump counts the damaged slots -
+        one per ~250 s is the rate three dumps agree on.
+        Then leave GoodTest and play as Idiot for the rest.
 
-     2. CLICK MR. KIM. The storage box is new this session and has never been on a screen.
-        They are in Lith Harbor, which is also where you revive, so this costs no travel.
-        Before this they did NOTHING when clicked - not a wrong thing, nothing - because they have
-        no dialogue line and the click fell through to a conversation with nothing to say.
-          the storage window opens  -> done. It should show 30 slots, the same as the
-                                       inventory default, and your meso balance
-          it opens with 4 slots     -> the default did not take
-          nothing happens           -> world.log will have the 0x0572 going out or not, which
-                                       splits this cleanly in half
-          the client dies           -> say so immediately. This is a brand-new packet and the
-                                       per-type count is ONE byte where the v214 reference
-                                       says four; if that is wrong every item blob after it
-                                       is shifted
-        Then try MOVING MESOS in and out. Both directions work and are one transaction.
-        TAKING ITEMS IN AND OUT IS NOT BUILT - the box comes back unchanged and the log says
-        so. That is expected, not a bug.
+     2. KILL SOMETHING AND WALK OVER THE DROPS. NO SETUP - IDIOT'S EQUIP TAB IS ALREADY
+        FULL, 30 of 30, left that way by last run. Use holds 5 and Etc holds 10.
+        You said: "when my equip slots are full, I should be able to get more items in my
+        other inventory where I still have slots, such as Use, ETC, or mesos."
+        The equip bag being full is what TRIGGERED it and is not what blocked you. The
+        sixth pick-up came back "inventory 1 is full (30 slots)" as a CHAT LINE AND NOTHING
+        ELSE - and the client latches player+0x2330 when it asks and only an inbound 0x0070
+        clears it. world.log has zero further pick-up requests in the next four minutes over
+        56 drops: the client had stopped asking, for everything, mesos included.
+          equips refuse, everything else still picks up -> fixed
+          nothing picks up after the first refusal      -> the latch is still not cleared
+          the refusal notice is gone too                -> I removed the wrong line
+        Mesos are the sharpest single check here: they need no slot at all, so a meso drop
+        you cannot pick up is the latch and nothing else.
+        While you are doing it: does a grey "<item> x<n> earned." line appear in the SCREEN
+        MESSAGE AREA - the strip above the chat box, not the chat log itself? That went out
+        five times last run and nobody has said what it looks like.
 
-     3. TWO THINGS THAT ALREADY WENT OUT LAST RUN, and all I need is what you SAW.
-        No setup for either; both packets are already in the log of the 02:50 run.
+     3. MR. KIM: PUT AN ITEM IN, THEN TAKE IT BACK OUT. The window itself is confirmed - it
+        opened with 30 slots and mesos moved both ways - so this is only the item half.
+        You said: "the item did not move to storage, and it did not charge the 100 meso fee
+        that it said it was going to charge." Both sentences were one missing arm; the fee
+        text is the CLIENT'S OWN, out of Npc.wz, so an unbuilt deposit reads as a broken
+        promise. Both are built now.
 
-        a. THE BLUE RECOVERY NUMBER. Sent 16 times as 0x02D1 effect 0x41, "+10".
-           Get hurt, stand still 20 s.
-             a blue number appears -> done. Say the COLOUR, and whether it reads 10 (the
-                                      amount) rather than the new total
-             nothing at all        -> the suppression gate at 14278bd75, the one link in
-                                      that chain nobody has measured. Swapping effect 0x41
-                                      for 0x23 does NOT test it - they share it
+        DO IT IN THIS ORDER, because Idiot's purse is EMPTY - all 600 of their mesos are in
+        the box, where you put them last run. That makes the refusal free to test first:
 
-        b. THE GREY QUEST ITEM LINE. Sent last run for quest 10001, two items.
-             a grey "<Item> x<n> earned. (<Tab>)" in the CHAT LOG -> done
-             another colour  -> the route is right, the colour is separate
-             nothing         -> the item id resolved no name, or category 6 is a tab that
-                                window does not show
+          a. Try to store an item with 0 mesos. Expect the client's own "Not enough mesos
+             (100) to store the item" box, and NOTHING to move.
+               that box appears, nothing moves -> the refusal is right
+               the item moves anyway           -> the fee is not gating the deposit
+               nothing happens at all          -> the window latched; say so
+          b. Withdraw the 600. That path already worked, so it is a free re-check.
+          c. Store the item again.
+               item moves and 100 mesos leave the purse -> done, both halves
+               item moves and the fee is NOT taken      -> the effect is not hanging off the
+                                                           transition, the exact shape of the
+                                                           repeated-quest bug
+               the fee is taken and the item does not   -> the worse direction. Say so loudly
+          d. Take it back out. Free on all ten keepers. Check it lands in the right tab.
+             If you have the patience: deposit TWO, withdraw the FIRST, then withdraw again.
+             The take-out index is a POSITION in the list, not a slot, and a sparse box is
+             the only place a server that confused the two would take the wrong item.
 
-     4. IF THE CLIENT DIES, THERE ARE ALREADY TWO DUMPS and they agree completely - same
-        stack, same damaged header value, same size class. A third is only worth anything if
-        it is DIFFERENT, so report what you were DOING rather than the file.
-        Both were at ~600 s on the client's own free() under a PCOM.dll release. If you die
-        at a wildly different time, or doing something new, that is the interesting case.
+     4. THE BLUE RECOVERY NUMBER, still unconfirmed after two runs. Free, no setup.
+        Sent 11 times last run as 0x02D1 effect 0x41, "+10". Get hurt, stand still 20 s.
+          a number appears -> what COLOUR, and does it read 10 (the amount) rather than the
+                              new total?
+          nothing at all   -> the suppression gate at 14278bd75, the one link in that chain
+                              nobody has measured. Swapping 0x41 for 0x23 does NOT test it -
+                              they share it
+
+    OPTIONAL, AND ONLY IF YOU WANT TO: -HeapFix
+    -----------------------------------
+    Three bytes at 14019b504 in the mapped image. Nothing in client-patched\ changes on disk.
+    The client's free reads the whole 64-bit pool slot header where only the low half is ever
+    legal; a stray 1 in the high dword therefore sends a pooled 0x20 slot to HeapFree, and
+    Windows kills the process. Reading 32 bits returns it to the correct free list.
+    Six damaged slots across three dumps, every one the identical 0x0000000100000020, every
+    one in the 0x20 class, accumulating at about one per 250 s. research/heap-third-dump.md.
+      the client stops dying with 0xC0000374  -> the whole chain is confirmed end to end
+      it dies anyway                          -> something in that chain is wrong, and the
+                                                 dump says which half. That is worth more
+    The stated risk: it discards a one's-complement header path that 481 000 enumerated slots
+    never used, but the walk only covers one pool context. DO NOT run this at the same time
+    as step 1 - one variable at a time, and step 1 is the one that matters.
 
     REGRESSION GLANCES - seconds each
     ---------------------------------
@@ -160,6 +194,9 @@
       mode=2            leave the client's mode-5 auto-login so the button gets a turn.
       create=on         set the protected flag that gates "Create a character", re-armed on
                         every login result because the handshake zeroes it.
+      heapfix=on        ONLY with -HeapFix, off by default. Three bytes at 14019b504 so a
+                        damaged pool header goes back to the free list instead of to
+                        HeapFree. research/heap-third-dump.md section 5 states the risk.
 
     NOTHING AUTHENTICATES. The game socket carries no credentials at all.
 
@@ -267,6 +304,21 @@ param(
     # which fires at world entry - late enough that the table is populated - and fires ONCE,
     # so it is one log line and no extra watch slot. Decode it with tools/decode_dump.py.
     [switch]$SetFieldProbe,
+    # OFF by default, and it is an EXPERIMENT rather than a fix.
+    #
+    # Three bytes at 14019b504 in the mapped image: the client's free reads the 64-bit pool
+    # slot header where only the low half is ever legal, so a stray 1 in the high dword sends
+    # a pooled 0x20 slot to HeapFree, and Windows kills the process. Reading 32 bits instead
+    # returns it to the right free list - the correct outcome, not a suppression.
+    #
+    # Six damaged slots across three dumps, all the identical value, all in the 0x20 class,
+    # accumulating at about one per 250 s. research/heap-third-dump.md.
+    #
+    # Nothing in client-patched\ changes on disk. The patch verifies the three bytes before
+    # writing, reads them back after, and logs both. If the client still dies with
+    # 0xC0000374 with this on, research/heap-wild-write.md is wrong somewhere - which is
+    # exactly what makes it worth running.
+    [switch]$HeapFix,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -728,6 +780,7 @@ $dumpDir = Join-Path $root 'dumps'
 New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.dumpdir') -Value $dumpDir -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Encoding ascii
+if ($HeapFix) { $Session = "$Session,heapfix=on" }
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
@@ -809,29 +862,27 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  4 steps. Two are procedures, two are just "what did you see".' -ForegroundColor Yellow
+    Write-Host '  4 steps, and STEP 1 MUST BE FIRST - the order is the experiment.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
     Write-Host '  CHANNEL CHANGE WORKS - claimed by channel, real SetField, inventory'
     Write-Host '  and mesos carried over. And THE HEAP DEATH IS NOT HEAP CORRUPTION -'
-    Write-Host '  TWO dumps now, both read with tools/dumpwalk.py. The heap chain is'
-    Write-Host '  intact in both and RtlFreeHeap REFUSED a bad free; the address lands'
-    Write-Host '  inside a LIVE block. Same stack frame for frame in both - the'
-    Write-Host '  client free() under a PCOM.dll release, under VariantClear.'
-    Write-Host '  BOTH dumps carry the identical damaged header, 0x0000000100000020,'
-    Write-Host '  five instances across two processes and every one in the 0x20 size'
-    Write-Host '  class. (I briefly wrote the opposite - that came from decoding a'
-    Write-Host '  BSTR as a heap header. The tool now refuses that decode.)'
+    Write-Host '  THREE dumps now. RtlFreeHeap REFUSED a bad free every time; the'
+    Write-Host '  heap chain is intact. Same stack in all three - the client free()'
+    Write-Host '  under a PCOM.dll release, under VariantClear. SIX damaged slots,'
+    Write-Host '  every one the identical 0x0000000100000020, every one in the 0x20'
+    Write-Host '  size class, against 0 of 360216 slots in the other three classes.'
+    Write-Host '  They accumulate at about ONE PER 250 SECONDS, which is a rate, and'
+    Write-Host '  a rate says the writer fires on something repeated.'
     Write-Host '  DEATH AND REVIVE WORK, first time out - the dialog appeared for a'
     Write-Host '  character who logged in ALREADY DEAD, and the revive warped them to'
     Write-Host '  Lith Harbor at 50 HP with no exp penalty at level 10. They then went'
     Write-Host '  on to reach level 11, which answers the half most likely to fail:'
     Write-Host '  they could move and attack afterwards.'
-    Write-Host '  BULK SKILL POINTS now work - confirmed this run.'
-    Write-Host '  STORAGE IS WIRED - the textbook'
-    Write-Host '  "built is not wired": crates/store had the whole layer for days'
-    Write-Host '  with no caller anywhere. It is step 2 and has never been seen.'
+    Write-Host '  BULK SKILL POINTS work. FRESH SPAWNS ARE SPREAD OUT - fixed and'
+    Write-Host '  confirmed. THE STORAGE WINDOW OPENS: 30 slots, and mesos move both'
+    Write-Host '  ways. Items and the fee are step 3 and have never been seen.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
     Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
@@ -844,46 +895,71 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  1. FRESH SPAWNS SHOULD BE SPREAD OUT.' -ForegroundColor Cyan
-    Write-Host '     Right Around Lith Harbor, or any map new to this launch.'
-    Write-Host '     The per-type quota was already balanced; WHICH points inside each'
-    Write-Host '     type was not - it took the first N in WZ order, which runs left'
-    Write-Host '     to right.'
-    Write-Host '       spread across the map -> fixed'
-    Write-Host '       still bunched         -> say WHICH end. Left is the WZ order;'
-    Write-Host '                                right would mean something else'
-    Write-Host '       fewer mobs than before-> the shuffle disturbed the quota'
-    Write-Host '     Leave and come back - the layout should DIFFER, the seed has the clock.'
+    Write-Host '  1. LOG IN AS "GoodTest" FIRST. THE ORDER IS THE EXPERIMENT.' -ForegroundColor Cyan
+    Write-Host '     It crashed the client instantly last run. Two readings:'
+    Write-Host '       (a) map 10 "Mushroom Town", where it stands, is fatal to load.'
+    Write-Host '           No client has ever loaded it.'
+    Write-Host '       (b) the client was already 306s old with a damaged allocator'
+    Write-Host '           slot, and a character swap is the biggest resource release'
+    Write-Host '           in a session - it would have been freed there regardless.'
+    Write-Host '     Doing it FIRST, at ~40s of life, separates them:'
+    Write-Host '       it loads      -> (b). Map 10 is fine.'
+    Write-Host '       it dies again -> (a). Map 10 is the cause - a new and much'
+    Write-Host '                        more tractable bug.'
+    Write-Host '     Say roughly HOW LONG the client had been alive either way.'
+    Write-Host '     Then leave GoodTest and play as Idiot.'
     Write-Host ''
-    Write-Host '  2. CLICK MR. KIM - storage is new and has never been on a screen.' -ForegroundColor Cyan
-    Write-Host '     They are in Lith Harbor, where you already revive, so no travel.'
-    Write-Host '     Before this they did NOTHING when clicked - not a wrong thing, nothing.'
-    Write-Host '       window opens    -> done. 30 slots (same as inventory) and your mesos'
-    Write-Host '       opens with 4    -> the default did not take'
-    Write-Host '       nothing happens -> world.log has the 0x0572 or it does not, which'
-    Write-Host '                          splits it cleanly in half'
-    Write-Host '       the client dies -> SAY SO. Brand-new packet, and its per-type count'
-    Write-Host '                          is ONE byte where the v214 reference says four'
-    Write-Host '     Then move MESOS both ways - that works, one transaction.'
-    Write-Host '     MOVING ITEMS IS NOT BUILT: the box comes back unchanged and says so.'
+    Write-Host '  2. KILL SOMETHING AND WALK OVER THE DROPS. NO SETUP NEEDED -' -ForegroundColor Cyan
+    Write-Host '     Idiot''s equip tab is ALREADY 30 of 30, left that way last run.'
+    Write-Host '     Your bug: a full equip bag stopped you picking up ANYTHING,'
+    Write-Host '     mesos included. The full bag only TRIGGERED it - the refusal'
+    Write-Host '     went out as a chat line with no 0x0070, and the client latches'
+    Write-Host '     on send. It stopped asking: zero pick-up requests in the next'
+    Write-Host '     four minutes over 56 drops.'
+    Write-Host '       equips refuse, everything else works -> fixed'
+    Write-Host '       nothing picks up after the refusal   -> latch still stuck'
+    Write-Host '       the refusal notice is gone too       -> wrong line removed'
+    Write-Host '     MESOS are the sharpest check: they need no slot at all, so a'
+    Write-Host '     meso drop you cannot take is the latch and nothing else.'
+    Write-Host '     While there: does a grey "<item> x<n> earned." line appear in'
+    Write-Host '     the SCREEN MESSAGE AREA above the chat box? Sent five times'
+    Write-Host '     last run, never described.'
     Write-Host ''
-    Write-Host '  3. TWO PACKETS ALREADY WENT OUT LAST RUN. I only need what you SAW.' -ForegroundColor Cyan
-    Write-Host '     a. THE BLUE NUMBER - sent 16 times as 0x02D1 effect 0x41, "+10".'
-    Write-Host '        Get hurt, stand still 20s.'
-    Write-Host '          a number appears -> COLOUR? And does it read 10 (the amount)'
-    Write-Host '                              rather than the new total?'
-    Write-Host '          nothing          -> the suppression gate at 14278bd75, the one'
-    Write-Host '                              unmeasured link. 0x23 does NOT test it'
-    Write-Host '     b. THE GREY QUEST ITEM LINE - sent last run for quest 10001.'
-    Write-Host '          grey line in the CHAT LOG -> done'
-    Write-Host '          another colour            -> route right, colour separate'
-    Write-Host '          nothing                   -> no name resolved, or category 6 is'
-    Write-Host '                                       a tab that window does not show'
+    Write-Host '  3. MR. KIM: PUT AN ITEM IN, THEN TAKE IT BACK OUT.' -ForegroundColor Cyan
+    Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and'
+    Write-Host '     the 100 meso fee are the new half - both were the same missing'
+    Write-Host '     arm, and the fee text is the CLIENT''S, out of Npc.wz.'
+    Write-Host '     IN THIS ORDER - Idiot''s purse is EMPTY, all 600 are in the box:'
+    Write-Host '       a. store an item with 0 mesos. Expect the client''s own "Not'
+    Write-Host '          enough mesos (100) to store the item" and NOTHING to move.'
+    Write-Host '            it moves anyway     -> the fee is not gating the deposit'
+    Write-Host '            nothing happens     -> the window latched. Say so'
+    Write-Host '       b. withdraw the 600 - a free re-check of a path that worked.'
+    Write-Host '       c. store it again.'
+    Write-Host '            item moves AND 100 leave -> done, both halves'
+    Write-Host '            item moves, no fee       -> effect not hanging off the'
+    Write-Host '                                        transition (the quest bug)'
+    Write-Host '            fee taken, item stays    -> the worse direction. Say so'
+    Write-Host '       d. take it back out - free - and check the tab it lands in.'
+    Write-Host '          If you have patience: deposit TWO, withdraw the FIRST,'
+    Write-Host '          then withdraw again. The index is a POSITION, not a slot.'
     Write-Host ''
-    Write-Host '  4. IF IT DIES there are already TWO dumps and they agree COMPLETELY -' -ForegroundColor Cyan
-    Write-Host '     same stack, same damaged header value, same size class. A third only'
-    Write-Host '     matters if it is DIFFERENT, so report what you were DOING, not the'
-    Write-Host '     file. Both were ~600s.'
+    Write-Host '  4. THE BLUE RECOVERY NUMBER - still unconfirmed, free.' -ForegroundColor Cyan
+    Write-Host '     Sent 11 times last run as 0x02D1 effect 0x41, "+10".'
+    Write-Host '     Get hurt, stand still 20s.'
+    Write-Host '       a number appears -> COLOUR? Does it read 10 (the amount)'
+    Write-Host '                           rather than the new total?'
+    Write-Host '       nothing          -> the suppression gate at 14278bd75, the one'
+    Write-Host '                           unmeasured link. 0x23 does NOT test it'
+    Write-Host ''
+    Write-Host '  OPTIONAL: -HeapFix (off by default, NOT with step 1)' -ForegroundColor DarkGray
+    Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
+    Write-Host '     A damaged pool header goes back to the free list instead of to'
+    Write-Host '     HeapFree. Six damaged slots over three dumps, all the identical'
+    Write-Host '     value, all in the 0x20 class, ~1 per 250s.'
+    Write-Host '       stops dying with 0xC0000374 -> chain confirmed end to end'
+    Write-Host '       dies anyway                 -> the chain is wrong somewhere,'
+    Write-Host '                                      which is worth more'
     Write-Host ''
     Write-Host '  NOT THIS RUN - decoded but deliberately NOT built:' -ForegroundColor DarkGray
     Write-Host '     Nimble Feet buffs, and Mina''s shop. The shop price is now known'

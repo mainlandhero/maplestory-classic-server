@@ -4246,6 +4246,234 @@ fn a_meso_move_that_cannot_be_afforded_is_refused_and_still_answered() {
     assert_eq!(store.storage_mesos(1).unwrap(), 0);
 }
 
+/// **A pick-up the bag refuses must still send the `0x0070`, or nothing is ever picked up
+/// again.**
+///
+/// The owner, 2026-08-22: *"when my equip slots are full, I should be able to get more items in my
+/// other inventory where I still have slots, such as Use, ETC, or mesos. Currently I'm not
+/// able to do that."*
+///
+/// The equip bag being full is what *triggered* it; it is not what blocked the later
+/// pick-ups. `world.log` of the 12:21 run has six `0x032C` requests, the sixth answered with
+/// `"inventory 1 is full (30 slots)"` **and a chat line alone**, and then **zero** further
+/// `0x032C` across the next four minutes and 56 drops. The client had stopped asking:
+/// `player+0x2330` latches on send and only an inbound `0x0070` clears it.
+///
+/// This test asserts the packet, not the notice, because the notice was there the whole time.
+#[test]
+fn a_pick_up_the_bag_refuses_still_clears_the_clients_latch() {
+    let (mut s, store, id) = gm_session();
+    let map = s.claimed_character().unwrap().map_id;
+
+    // Fill the equip bag to its last slot.
+    let slots = net::opcode::DEFAULT_INVENTORY_SLOTS;
+    for _ in 0..slots {
+        store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1).unwrap();
+    }
+
+    let object_id = s.fields.with_drops(map, |d| d.next_object_id());
+    s.fields.with_drops(map, |d| {
+        d.drop_item(crate::drops::DropFromBag {
+            map_id: map,
+            character_id: id,
+            inv_type: store::InventoryType::Equip,
+            slot: 1,
+            item: store::Item::equip(1302000),
+            x: 0,
+            y: 0,
+            now_ms: 0,
+        })
+    });
+
+    let out = s.on_pick_up(0x032C, &pick_up_body(object_id));
+    assert!(
+        out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "a refused pick-up owes a 0x0070 - without it the client never asks again, for ANY \
+         item, mesos included. Replies were: {:?}",
+        out.iter().map(|r| format!("0x{:04X}", r.opcode)).collect::<Vec<_>>()
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
+        "and the reason, which is the half that already worked"
+    );
+    assert_eq!(
+        s.fields.with_drops(map, |d| d.len()),
+        1,
+        "and the item is still on the floor, not destroyed"
+    );
+}
+
+/// **A full equip bag does not block a Use pick-up.** The other half of the same report.
+///
+/// This is what the server was always going to do - `add_item` is given the drop's own
+/// inventory type - so the test exists to say the failure was never here. With the latch
+/// fixed, it is the behaviour on screen too.
+#[test]
+fn a_full_equip_bag_does_not_stop_a_use_item_being_picked_up() {
+    let (mut s, store, id) = gm_session();
+    let map = s.claimed_character().unwrap().map_id;
+    let slots = net::opcode::DEFAULT_INVENTORY_SLOTS;
+    for _ in 0..slots {
+        store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1).unwrap();
+    }
+
+    let object_id = s.fields.with_drops(map, |d| d.next_object_id());
+    s.fields.with_drops(map, |d| {
+        d.drop_item(crate::drops::DropFromBag {
+            map_id: map,
+            character_id: id,
+            inv_type: store::InventoryType::Use,
+            slot: 1,
+            item: store::Item::bundle(2000000, 3),
+            x: 0,
+            y: 0,
+            now_ms: 0,
+        })
+    });
+
+    s.on_pick_up(0x032C, &pick_up_body(object_id));
+    let use_bag = store.bag_items(id, store::InventoryType::Use).unwrap();
+    assert_eq!(use_bag.len(), 1, "the potion landed in the Use bag");
+    assert_eq!(use_bag[0].item.item_id, 2000000);
+    assert_eq!(s.fields.with_drops(map, |d| d.len()), 0, "and left the floor");
+}
+
+/// A `0x032C` body with the drop's object id where the client puts it: **offset 13**.
+fn pick_up_body(object_id: u32) -> Vec<u8> {
+    let mut b = vec![0u8; 13];
+    b.extend_from_slice(&object_id.to_le_bytes());
+    b.extend_from_slice(&[0u8; 4]);
+    b
+}
+
+/// **Storing an item moves it, and the keeper takes the fee they advertised.**
+///
+/// The owner, 2026-08-22: *"I tried to store an item with Mr. Kim. The item did not move to
+/// storage, and it did not charge the 100 meso fee that it said it was going to charge."*
+/// Both sentences are one missing arm. The fee text is the **client's**, out of `Npc.wz`, so
+/// an unbuilt deposit shows a promise the server then does not keep.
+///
+/// Three effects, and the test says something about all three - the rule the repeated-quest
+/// bug bought, where a turn-in test counted fanfares and missed the doubled experience beside
+/// it: the bag loses it, the box gains it, and the purse pays 100.
+#[test]
+fn storing_an_item_moves_it_and_charges_the_keepers_fee() {
+    let (mut s, store, id) = gm_session();
+    let account_id = 1i64;
+    store.set_mesos(id, 5_000).unwrap();
+    store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1).unwrap();
+    s.open_storage_for(105).expect("Mr. Kim");
+
+    let mut body = vec![5u8];
+    body.extend_from_slice(&1u16.to_le_bytes()); // bag slot 1
+    body.extend_from_slice(&1302000u32.to_le_bytes());
+    body.extend_from_slice(&1u16.to_le_bytes());
+    let out = s.on_storage_request(&body);
+
+    let reply = out
+        .iter()
+        .find(|r| r.opcode == net::storage::STORAGE_RESULT)
+        .expect("every 0x00F6 is answered");
+    assert_eq!(reply.body[0], net::storage::RESULT_PUT_OK, "mode 13 rebuilds both grids");
+    assert!(
+        out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "and the bag grid is told, or the item is still drawn in a slot it left"
+    );
+
+    assert!(store.bag_items(id, store::InventoryType::Equip).unwrap().is_empty(), "left the bag");
+    let boxx = store.storage(account_id).unwrap();
+    assert_eq!(boxx.items.len(), 1, "arrived in the box");
+    assert_eq!(boxx.items[0].item.item_id, 1302000);
+    assert_eq!(store.mesos(id).unwrap(), 4_900, "Mr. Kim's fee is 100, and they took it");
+}
+
+/// A deposit that cannot pay the fee is refused with the mode that says so, and **moves
+/// nothing**. The refusal is a transition, so no effect may hang off the request.
+#[test]
+fn a_deposit_that_cannot_pay_the_fee_moves_nothing() {
+    let (mut s, store, id) = gm_session();
+    store.set_mesos(id, 50).unwrap();
+    store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1).unwrap();
+    s.open_storage_for(105).expect("Mr. Kim");
+
+    let mut body = vec![5u8];
+    body.extend_from_slice(&1u16.to_le_bytes());
+    body.extend_from_slice(&1302000u32.to_le_bytes());
+    body.extend_from_slice(&1u16.to_le_bytes());
+    let out = s.on_storage_request(&body);
+
+    let reply = out
+        .iter()
+        .find(|r| r.opcode == net::storage::STORAGE_RESULT)
+        .expect("refusals are answered too");
+    assert_eq!(reply.body[0], net::storage::RESULT_NOT_ENOUGH_FEE, "mode 16 names the fee");
+    assert_eq!(store.mesos(id).unwrap(), 50, "the purse is untouched");
+    assert_eq!(store.bag_items(id, store::InventoryType::Equip).unwrap().len(), 1, "so is the bag");
+    assert!(store.storage(1).unwrap().is_empty(), "and the box");
+}
+
+/// **A put-in with no window open is refused rather than charged a guessed fee.**
+///
+/// Nine of the ten keepers charge 100 and Mr. Thalj charges 150, so a default would be right
+/// nine times in ten and quietly wrong once. `Close` drops the keeper, and after it a deposit
+/// has no fee to name.
+#[test]
+fn closing_the_window_forgets_the_keeper_and_a_later_deposit_is_refused() {
+    let (mut s, store, id) = gm_session();
+    store.set_mesos(id, 5_000).unwrap();
+    store.add_item(id, store::InventoryType::Equip, &store::Item::equip(1302000), 1).unwrap();
+    s.open_storage_for(105).expect("Mr. Kim");
+    assert_eq!(s.open_storage, Some(105));
+
+    s.on_storage_request(&[8u8]); // close
+    assert_eq!(s.open_storage, None, "the keeper is forgotten");
+
+    let mut body = vec![5u8];
+    body.extend_from_slice(&1u16.to_le_bytes());
+    body.extend_from_slice(&1302000u32.to_le_bytes());
+    body.extend_from_slice(&1u16.to_le_bytes());
+    let out = s.on_storage_request(&body);
+    assert!(
+        out.iter().any(|r| r.opcode == net::storage::STORAGE_RESULT),
+        "still answered - the latch does not care why we refused"
+    );
+    assert_eq!(store.mesos(id).unwrap(), 5_000, "no fee was invented");
+    assert_eq!(store.bag_items(id, store::InventoryType::Equip).unwrap().len(), 1, "and nothing moved");
+}
+
+/// **The take-out index is positional, not a storage slot, and a sparse box is where the
+/// difference shows.**
+///
+/// `research/storage.md` §11.5 lists this first among "the three numbers that must not
+/// drift". Two equips go into slots 1 and 2, slot 1 is emptied by hand, and the client then
+/// asks for **position 0 of type 1** - which is the item in storage slot **2**. A server that
+/// read the index as a slot would look at slot 0, find nothing, and refuse; one that used a
+/// different ordering than it sent would hand back a different item with no error anywhere.
+#[test]
+fn a_take_out_index_is_a_position_in_the_list_that_was_sent_not_a_slot() {
+    let (mut s, store, id) = gm_session();
+    let account_id = 1i64;
+    store.set_storage_slot(account_id, 1, &store::Item::equip(1302000)).unwrap();
+    store.set_storage_slot(account_id, 2, &store::Item::equip(1332000)).unwrap();
+    store.storage_withdraw(account_id, 1, None).unwrap(); // slot 1 is now empty, 2 is not
+
+    let out = s.on_storage_request(&[4u8, 1, 0, 1, 0]); // type 1 equip, position 0, count 1
+    let reply = out
+        .iter()
+        .find(|r| r.opcode == net::storage::STORAGE_RESULT)
+        .expect("every 0x00F6 is answered");
+    assert_eq!(reply.body[0], net::storage::RESULT_PUT_OK, "mode 13");
+
+    let bag = store.bag_items(id, store::InventoryType::Equip).unwrap();
+    assert_eq!(bag.len(), 1, "one item came out");
+    assert_eq!(
+        bag[0].item.item_id, 1332000,
+        "position 0 is the FIRST SURVIVING row, which lives in storage slot 2 - reading the \
+         index as a slot would have found slot 0 and refused"
+    );
+    assert!(store.storage(account_id).unwrap().is_empty(), "and it left the box");
+}
+
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
 /// else. This is the always-answer rule with a different field name.
 #[test]

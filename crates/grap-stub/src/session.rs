@@ -173,7 +173,7 @@ fn mode() -> Option<String> {
 /// The marker used to hold exactly one setting. It now carries more than one, and splitting
 /// on commas rather than matching the whole string means an option that is not understood
 /// is ignored instead of silently disabling the one beside it.
-fn marker_token(prefix: &str) -> Option<String> {
+pub(crate) fn marker_token(prefix: &str) -> Option<String> {
     mode()?
         .split(',')
         .map(str::trim)

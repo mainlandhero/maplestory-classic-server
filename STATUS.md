@@ -470,18 +470,26 @@ twice:**
 Nothing is built. §9 gives the exact 336-byte body for a two-item shop as a field list *and* a
 hex dump, so an implementation can be diffed rather than re-derived.
 
-#### Storage and shops: unbuilt, and the shop is unbuilt on purpose
+#### Storage is built; the shop is unbuilt on purpose
 
-* **Mr. Kim's storage is BUILT as of 2026-08-22** - see the section above. It was the
-  textbook "built is not wired": the database half had been ready for days and nothing had
-  ever put it on the wire.
+* **Mr. Kim's storage is BUILT and half of it is CONFIRMED as of 2026-08-22.** The window
+  opens with 30 slots and mesos move both ways, both seen on screen. It was the textbook
+  "built is not wired": the database half had been ready for days and nothing had ever put it
+  on the wire. **Item put-in and take-out were then a second instance of the same thing** -
+  the requests parsed and the answer was "not implemented yet, here is the unchanged box" -
+  and the owner hit exactly that: *"the item did not move to storage, and it did not charge the 100
+  meso fee that it said it was going to charge."* Both arms are wired now and neither has been
+  on a screen.
 * **Mina's shop is off deliberately, and turning it on blind would kill the client.**
   `research/classic-shop-opcode.md`: this client has **two** shop windows. `crates/net/shop.rs`
   builds `0x0560`, whose art (`UI/UIWindow2.img/Shop2`) is **absent from this client's WZ** -
   which is why the shop killed the client twice, the constructor dying before a single row byte
-  was read. The right one is **`0x055D`**, whose art is present. But its body is a thirteen-field
-  row structure and **nothing establishes which field is the price**, so sending a `0x0560`-shaped
-  body to it is the truncated-chat-packet mistake again. The file says so and stops.
+  was read. The right one is **`0x055D`**, whose art is present.
+  **The row is now decoded** (`research/classic-shop-rows.md`): 42 reads, not thirteen fields,
+  and the **price is `row+0x38`, a u64**, from three independent sites. It is still not built,
+  and the reason has moved: not "the price is unknown" any more, but the three fields above -
+  a FILETIME with no sentinel, a silent-failure gate, and a dropped row that desynchronises
+  every row after it.
 
 **The owner's buyback spec, recorded because only they have it:** the counter keeps the **last 15
 items sold to any NPC**, so a sale can be undone by buying it back, and the list is **cleared on
@@ -1018,27 +1026,62 @@ new log lines say which - a repeat is now silent where a genuine inconsistency s
 * **A full Equip tab was blamed for blocking Etc pick-ups** and was innocent - a test proves
   it. The symptom was the missing restore above.
 
+#### The 2026-08-22 morning run, and the three things it changed
+
+The owner's report, in their words: *"Fresh spawns look correct now."* Then three problems.
+
+**1. A full equip bag stopped every pick-up, for everything.** *"when my equip slots are full,
+I should be able to get more items in my other inventory where I still have slots, such as Use,
+ETC, or mesos. Currently I'm not able to do that."*
+
+The full bag **triggered** it and was not what blocked them. `on_pick_up`'s bag-refusal branch
+was the one exit from that handler that sent a chat line and **no `0x0070`** - and the client
+latches `player+0x2330` when it asks, with only an inbound `0x0070` clearing it. The file's own
+doc comment two screens below says exactly that rule.
+
+Measured, not inferred: `world.log` has **six** `0x032C` pick-up requests, the sixth answered
+`"inventory 1 is full (30 slots)"` with a `0x00BB` alone, and then **zero** further requests in
+the following four minutes across **56** drops. The client had stopped asking. Fixed, and the
+test was checked against the unfixed code first - it fails with `Replies were: ["0x00BB"]`,
+which is the log line verbatim.
+
+**2. Storage moved mesos but not items, and did not take the fee it advertised.** *"I tried to
+store an item with Mr. Kim. The item did not move to storage, and it did not charge the 100
+meso fee that it said it was going to charge."* One missing arm, and the fee text is the
+**client's own**, read out of `Npc.wz` before anything is sent - so an unbuilt deposit reads as
+a promise broken. `PutIn` and `TakeOut` are wired now, the fee hangs off the store's `Ok` and
+nothing else, and the take-out index is resolved through the same function that orders the
+wire so the two cannot drift.
+
+**3. Selecting `GoodTest` killed the client instantly - and that is not yet the same claim as
+"map 10 is fatal".** The dump is the third of the `0xC0000374` family and is written up in
+`research/heap-third-dump.md`. It died **inside** the `0x01A0` SetField handler (no dispatch
+line, and the hook writes those on return), 0.33 s after the packet. But the client was already
+306 s old and carrying one damaged pool slot, and a character-select round trip is the biggest
+resource release in a session. **One login settles it**: log in as `GoodTest` first, at ~40 s of
+client life. It is step 1 of the plan and the order is the whole experiment.
+
 #### What to do next, in order
 
-**Rewritten 2026-08-22.** Six of the previous ten rows were done or superseded - the channel
-change, Roger's EXP and fanfare, the NPC fade, the heap dump, the shop decode and death. A
-next-steps list that still names finished work is how a launch gets spent re-testing.
+**Rewritten 2026-08-22, twice.** The morning run closed three more rows - storage item
+movement is built, the pick-up latch is fixed, and the heap dump got the third sample §10 of
+`heap-wild-write.md` asked for in advance. A next-steps list that still names finished work is
+how a launch gets spent re-testing.
 
-Three of these are **decoded and deliberately not built**, each with a byte-level body an
+Two of these are **decoded and deliberately not built**, each with a byte-level body an
 implementation can be diffed against rather than re-derived.
 
 | # | do this | state |
 |---|---|---|
 | 1 | **Buffs / Nimble Feet** | **Decoded, not built.** Use is `0x013C`; the grant is `0x007D` TemporaryStatSet - 124-byte mask, then `{value, u32 reason, u32 duration}` per set bit, duration in **milliseconds**. Nimble Feet is speed +10 at every level, 10/20/30 s. Two hazards: `0x007D` **collides** with our inbound migration-hello constant, and the value width depends on a constant in Themida-packed `.data`. `research/buffs.md` |
 | 2 | **The classic shop** | **Decoded, not built**, and the price is settled: **`row+0x38`, a u64**, from three independent sites. The row is **42 reads**, not thirteen fields. Request opcode is **`0x00F5`**, not `0x0104`. Buy-back is the same array tagged by a per-row `u8`. **Three traps**: `row+0xa4` is a FILETIME with no sentinel and `0` hides every row; `row+0x10c = 0` fails purchases silently; a dropped row desynchronises the byte stream. `research/classic-shop-rows.md` |
-| 3 | **Storage item movement** | Open and mesos are **built and unseen**; take-out and put-in answer with the box unchanged and say so. The take-out index is **positional**, not a slot. `research/storage.md` |
-| 4 | **The heap wild write** | Both dumps carry the **identical** damaged header `0x0000000100000020`, all five instances in the `0x20` class, same stack. The **writer is not found** - a sweep for it returned nothing and `research/heap-wild-write.md` says why that negative is worth nothing. It also proposes a **3-byte client patch** that would turn the crash into a correct free; that is the owner's call |
-| 5 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither parsed out of the attack header. `research/damage-formula.md` |
-| 6 | **The grey quest item line** | The packet goes out - `0x02D1` effect 8, category 6 - and nobody has reported what it looks like. One glance, no setup |
-| 7 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; the NPC path is not. Instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
-| 8 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry `attackSpeed` and `attack` on 203 weapons each, neither in `equips.txt` |
-| 9 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
-| 10 | **The NPC first draw** | Every server-side cause is eliminated: not the creation packet, not the appear-effect object, not a preload, not the timing - and it is **not a fade**, it is a late first draw. What has never existed is a **control**: one mob and one NPC created in the same batch on a settled map. `research/npc-preload.md` §8 |
+| 3 | **The heap wild write** | **Three dumps now**, and the third answered all three questions `heap-wild-write.md` §10 wrote down in advance: the value is `1` **six for six**, the class is `0x20` **six for six** (0 of 360 216 elsewhere), and the count tracks session length at about **one damaged slot per 250 s** - a rate, which says the writer fires on something repeated. The **writer is still not found**, and §8 names the blind spot that makes a static sweep for it impossible. The 3-byte patch is now **built and off by default**: `-HeapFix` on the launcher, `crates/grap-stub/src/heapfix.rs`, nothing on disk in `client-patched/` changes. `research/heap-third-dump.md` |
+| 4 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither parsed out of the attack header. `research/damage-formula.md` |
+| 5 | **The grey item line** | The packet goes out - `0x02D1` effect 8, category 6 - and nobody has reported what it looks like. It went out **five more times** on 2026-08-22 (every successful pick-up sends one) and is still undescribed. One glance, no setup |
+| 6 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; the NPC path is not. Instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
+| 7 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry `attackSpeed` and `attack` on 203 weapons each, neither in `equips.txt` |
+| 8 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
+| 9 | **The NPC first draw** | Every server-side cause is eliminated: not the creation packet, not the appear-effect object, not a preload, not the timing - and it is **not a fade**, it is a late first draw. What has never existed is a **control**: one mob and one NPC created in the same batch on a settled map. `research/npc-preload.md` §8 |
 
 **Two refusal paths still send a packet the client cannot dispatch.** `change_channel_refused`
 answers with `0x0011`, and so does the no-such-channel case - both undispatchable on a channel

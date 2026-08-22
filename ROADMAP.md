@@ -329,7 +329,9 @@ next.** This list is deliberately coarse so the two cannot drift; do not duplica
 - [x] **Death and revive - CONFIRMED on screen 2026-08-22.** `0x0315` opens the dialog and the
       client never opens it itself. Both entry points work: dying, and logging in already dead.
       Revive warps to the `reviveMap` town, 50 HP, -10% EXP above level 10.
-- [x] **Storage - opening and mesos.** `0x0572` out, `0x00F6` in. Item movement is not built.
+- [x] **Storage.** `0x0572` out, `0x00F6` in. Opening and mesos are CONFIRMED on screen
+      (30 slots, both directions). Item put-in and take-out are built and unseen, with the
+      keeper's deposit fee out of `Npc.wz`.
 - [ ] **Buffs.** Decoded, not built: `0x013C` in, `0x007D` TemporaryStatSet out, duration in
       milliseconds. `research/buffs.md`.
 - [ ] The classic shop counter - **row structure now decoded**, price at `row+0x38`, not yet

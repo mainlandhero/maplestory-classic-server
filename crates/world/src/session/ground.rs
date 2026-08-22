@@ -236,6 +236,22 @@ impl Session {
                     // Put it back on the floor and send NO leave. A leave for a drop that is
                     // still in the table is how an item disappears from the world entirely.
                     self.fields.with_drops(map, |d| d.restore(*drop));
+                    // **And the `0x0070`, which this branch used to omit.** Every other exit
+                    // from this handler sends one; this one sent a chat line alone, and a
+                    // chat line does not clear `player+0x2330`. Measured 2026-08-22: the owner's
+                    // equip bag filled, the sixth pick-up came back "inventory 1 is full",
+                    // and in the following four minutes the client sent **zero** further
+                    // 0x032C over 56 drops - it had stopped asking, for mesos too. On screen
+                    // that is "I cannot pick anything up any more", which is why the report
+                    // named the equip bag: the full bag is what triggered the branch, not
+                    // what blocked the later pick-ups.
+                    out.push(Reply {
+                        opcode: net::inventory::INVENTORY_OPERATION,
+                        body: net::inventory::inventory_rejected(),
+                        what: format!(
+                            "InventoryOperation: the bag refused the item ({e}) - nCount 0,                              bExclRequestSent 1. WITHOUT this the client never sends another                              pick-up for the rest of the session, whatever the item is."
+                        ),
+                    });
                     out.extend(self.notice(format!("Your bag would not take it: {e}")));
                 }
             }
