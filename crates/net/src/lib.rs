@@ -21,6 +21,7 @@
 //! ```
 
 pub mod bag;
+pub mod buff;
 pub mod broadcast;
 pub mod channel;
 pub mod codec;

@@ -4474,6 +4474,196 @@ fn a_take_out_index_is_a_position_in_the_list_that_was_sent_not_a_slot() {
     assert!(store.storage(account_id).unwrap().is_empty(), "and it left the box");
 }
 
+/// The `0x013C` body the client sends: `u32 skillId, u32 level`, then a tail we do not read.
+fn skill_use_body(skill_id: u32, level: u32) -> Vec<u8> {
+    let mut b = Vec::with_capacity(51);
+    b.extend_from_slice(&skill_id.to_le_bytes());
+    b.extend_from_slice(&level.to_le_bytes());
+    b.resize(51, 0);
+    b
+}
+
+/// The character's MP as the database holds it. `claimed_character` re-reads every call, so
+/// this is the stored value and not a copy taken before the handler ran.
+fn mp_of(s: &Session) -> u32 {
+    s.claimed_character().expect("a character is claimed").mp
+}
+
+/// A session whose character owns Nimble Feet at level 3 and has MP to spend.
+fn session_with_nimble_feet() -> (Session, Arc<Store>, u32) {
+    let (s, store, id) = gm_session();
+    store.set_skill_level(id, net::buff::NIMBLE_FEET, 3).unwrap();
+    let mut chr = s.claimed_character().unwrap();
+    // A fresh character has **5** max MP and level 3 costs 10, so without this every one of
+    // these tests would pass or fail on the MP gate rather than on what it is about.
+    chr.max_mp = 125;
+    chr.mp = 125;
+    store.save_character_progress(&chr).unwrap();
+    (s, store, id)
+}
+
+/// **Pressing Nimble Feet grants the buff.**
+///
+/// The owner, twice: *"Nimble Feet still does not give me a buff despite me activating the
+/// skill."* The request was arriving and being dropped - one `0x013C`, 51 bytes, skill 1002
+/// level 3, logged as UNKNOWN.
+///
+/// Three effects, and this asserts all three: the MP is spent, the `0x007C` goes out so the
+/// bar moves, and the `0x007D` carries the documented body. A test that counted only the
+/// `0x007D` would pass while the MP silently never left, which is the shape of the
+/// repeated-quest bug.
+#[test]
+fn casting_nimble_feet_spends_mp_and_sends_the_temporary_stat() {
+    let (mut s, _store, _id) = session_with_nimble_feet();
+    let before = s.claimed_character().unwrap().mp;
+
+    let out = s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+
+    let set = out
+        .iter()
+        .find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET)
+        .expect("0x007D goes out");
+    assert_eq!(set.body.len(), 152, "the documented body length");
+    assert_eq!(&set.body[8..12], &[0x08, 0, 0, 0], "CTS bit 92, Speed");
+    assert_eq!(
+        &set.body[124..134],
+        &[0x0a, 0x00, 0xea, 0x03, 0x00, 0x00, 0x30, 0x75, 0x00, 0x00],
+        "speed 10, reason 1002, 30000 MILLISECONDS"
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "and the MP bar is told, or it silently disagrees with the database"
+    );
+    assert_eq!(mp_of(&s), before - 10, "level 3 costs 10 mp");
+}
+
+/// A skill the character does not own casts nothing and costs nothing.
+///
+/// The client sends the level **it** believes it has, and nothing on this socket
+/// authenticates anybody.
+#[test]
+fn a_skill_the_character_does_not_have_is_refused_and_costs_nothing() {
+    let (mut s, store, _id) = gm_session();
+    let mut chr = s.claimed_character().unwrap();
+    chr.max_mp = 125;
+    chr.mp = 125;
+    store.save_character_progress(&chr).unwrap();
+    let before = chr.mp;
+
+    let out = s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    assert!(
+        !out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET),
+        "no buff for a skill nobody has"
+    );
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "and it says why");
+    assert_eq!(mp_of(&s), before, "and no MP was spent");
+}
+
+/// **The cooldown refuses the second cast and stays free.**
+///
+/// `Skill.wz` puts `cooltime` at 180 s. The refusal names the seconds left, because a silent
+/// one would be indistinguishable on screen from the buff being broken - which is the exact
+/// thing this run is trying to tell apart.
+#[test]
+fn a_second_cast_inside_the_cooldown_is_refused_and_costs_nothing() {
+    let (mut s, _store, _id) = session_with_nimble_feet();
+    s.clock_ms = 1_000;
+    s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    let after_first = mp_of(&s);
+
+    s.clock_ms = 60_000; // a minute later: buff over, cooldown not
+    let out = s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET));
+    assert_eq!(mp_of(&s), after_first, "a refused cast is free");
+    let why = out.iter().find(|r| r.opcode == net::notice::CHAT_NOTICE).map(notice_text);
+    assert!(
+        why.as_deref().is_some_and(|w| w.contains("cooldown")),
+        "and names the cooldown: {why:?}"
+    );
+
+    // And past it, the cast works again.
+    s.clock_ms = 1_000 + 180_000;
+    let out = s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    assert!(out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET), "180 s later it casts");
+}
+
+/// Not enough MP refuses, and refuses before anything is spent or stamped.
+#[test]
+fn a_cast_without_the_mp_is_refused_before_the_cooldown_is_stamped() {
+    let (mut s, store, _id) = session_with_nimble_feet();
+    let mut chr = s.claimed_character().unwrap();
+    chr.mp = 3; // level 3 costs 10
+    store.save_character_progress(&chr).unwrap();
+
+    let out = s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET));
+    assert_eq!(mp_of(&s), 3, "nothing was spent");
+
+    // The cooldown must NOT have been stamped by the refusal, or one mistimed press would
+    // lock the skill out for three minutes.
+    chr.mp = chr.max_mp;
+    store.save_character_progress(&chr).unwrap();
+    let out = s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    assert!(
+        out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET),
+        "with MP it casts immediately - the refusal stamped no cooldown"
+    );
+}
+
+/// **The buff expires on the tick, once, with a `0x007E`.**
+///
+/// The client holds its own `tExpire` and would drop the icon anyway; the server sends it
+/// because our table is what decides whether a later cast may replace the bit.
+#[test]
+fn the_buff_expires_exactly_once_and_thirty_seconds_later() {
+    let (mut s, _store, _id) = session_with_nimble_feet();
+    s.clock_ms = 1_000;
+    s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+
+    let resets = |out: &[Reply]| {
+        out.iter().filter(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).count()
+    };
+    assert_eq!(resets(&s.buff_tick(20_000)), 0, "still running at 19 s");
+    assert_eq!(resets(&s.buff_tick(30_999)), 0, "and at 29.999 s");
+
+    let out = s.buff_tick(31_000);
+    assert_eq!(resets(&out), 1, "30 s after the cast at 1 s");
+    let reset = out.iter().find(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).unwrap();
+    assert_eq!(reset.body.len(), 127);
+    assert_eq!(reset.body[3 + 8], 0x08, "bit 92 again");
+
+    assert_eq!(resets(&s.buff_tick(40_000)), 0, "and not a second time");
+}
+
+/// `!buff` sends the same bytes with none of the four gates in the way.
+///
+/// That is the point of it: a `!buff` that works while the keypress does not is a statement
+/// about the skill check, the MP, or the 180-second cooldown - not about the packet.
+#[test]
+fn the_buff_command_skips_every_gate_and_sends_the_same_packet() {
+    let (mut s, _store, _id) = gm_session(); // no skill, and whatever MP a new character has
+    let before = mp_of(&s);
+
+    let out = s.gm_buff("");
+    let set = out
+        .iter()
+        .find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET)
+        .expect("!buff with no arguments is Nimble Feet at level 3");
+    assert_eq!(set.body.len(), 152);
+    assert_eq!(&set.body[124..134], &[0x0a, 0x00, 0xea, 0x03, 0x00, 0x00, 0x30, 0x75, 0x00, 0x00]);
+    assert_eq!(mp_of(&s), before, "and it costs no MP");
+
+    // It still records the expiry, so the reset goes out on time.
+    assert_eq!(
+        s.buff_tick(31_000).iter().filter(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).count(),
+        1
+    );
+
+    // A skill with no entry says so rather than sending an empty mask.
+    let out = s.gm_buff("1000 1");
+    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET));
+}
+
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
 /// else. This is the always-answer rule with a different field name.
 #[test]

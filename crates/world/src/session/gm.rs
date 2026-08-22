@@ -73,6 +73,7 @@ impl Session {
             "migsweep" => self.gm_mig_sweep(arg),
             "npcecho" => self.gm_npc_echo(arg),
             "npcfx" => self.gm_npc_effect(arg),
+            "buff" => self.gm_buff(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -459,6 +460,58 @@ impl Session {
         out
     }
 
+
+    /// `!buff [skillId] [level]` - send the temporary-stat packet with no skill, MP or
+    /// cooldown in the way. Defaults to Nimble Feet at level 3.
+    ///
+    /// # This is the single-variant test `research/buffs.md` §7.3 asked for
+    ///
+    /// The cast path checks four things before it sends anything - the skill is a buff, the
+    /// character owns it at that level, the cooldown has run, and there is MP - and any of
+    /// those refusing looks on screen exactly like the packet being wrong. `Skill.wz` puts
+    /// Nimble Feet's `cooltime` at **180 seconds**, so a second cast to check something is
+    /// three minutes away. This command skips all four and sends the same bytes through the
+    /// same builder, so a `!buff` that works and a keypress that does not is a statement
+    /// about the *gates*, not about the packet.
+    ///
+    /// It does still record the expiry, so the `0x007E` goes out on time and the buff can be
+    /// watched all the way through.
+    pub(super) fn gm_buff(&mut self, arg: &str) -> Vec<Reply> {
+        if self.claimed_character().is_none() {
+            return self.gm_ack("!buff REFUSED: no character is claimed on this connection.".to_string());
+        }
+        let mut parts = arg.split_whitespace();
+        let skill_id = match parts.next() {
+            None => net::buff::NIMBLE_FEET,
+            Some(t) => match t.parse::<u32>() {
+                Ok(v) => v,
+                Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a skill id.")),
+            },
+        };
+        let level = match parts.next() {
+            None => 3,
+            Some(t) => match t.parse::<u32>() {
+                Ok(v) => v,
+                Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a level.")),
+            },
+        };
+        let Some(bl) = net::buff::buff_level(skill_id, level) else {
+            return self.gm_ack(format!(
+                "!buff: skill {skill_id} level {level} grants no temporary stat this server \
+                 knows. Today that table is Nimble Feet (1002) at levels 1-3."
+            ));
+        };
+
+        let now = self.clock_ms;
+        let mut out = self.gm_ack(format!(
+            "Casting skill {skill_id} level {level}: CTS bit {} = +{} for {} s. No skill check, \
+             no MP, no cooldown - if this works and the keypress does not, the difference is a \
+             gate and not the packet.",
+            bl.bit, bl.value, bl.seconds
+        ));
+        out.extend(self.grant_buff(skill_id, bl, now));
+        out
+    }
 
     /// `!item <itemId> [count]` - put an item in the bag, in the tab its id belongs to.
     ///

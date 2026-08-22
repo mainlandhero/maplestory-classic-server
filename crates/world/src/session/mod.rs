@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level], !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +178,18 @@ pub struct Session {
     /// charged a fee nobody can name.
     open_storage: Option<u32>,
 
+    /// The temporary stats this character is holding, one entry per CTS bit.
+    ///
+    /// Kept on the **session** rather than in the database on purpose: a buff is measured
+    /// against `clock_ms`, which restarts with the connection, so a persisted expiry would
+    /// be compared against a clock that no longer means the same thing. Losing buffs on
+    /// relog is also what this game family does.
+    buffs: Vec<crate::session::buff::ActiveBuff>,
+
+    /// `skill id -> the session millisecond it may be cast again`. `Skill.wz`'s `cooltime`,
+    /// which is **seconds** there and milliseconds here.
+    skill_ready_ms: std::collections::HashMap<u32, u64>,
+
     /// Everything alive on this **channel's** maps: mobs, their positions, and the floor.
     ///
     /// **Shared by every connection, not owned by this one.** It used to be four maps on the
@@ -312,6 +324,7 @@ struct Conversation {
 }
 
 mod ability;
+mod buff;
 mod combat;
 mod consume;
 mod field;
@@ -354,6 +367,8 @@ impl Session {
             fields,
             open_shop: None,
             open_storage: None,
+            buffs: Vec::new(),
+            skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
             banner_shown: None,
             last_activity_ms: 0,
@@ -409,6 +424,9 @@ impl Session {
         // Idle regeneration, which uses `now_ms` rather than the wall clock - it is a
         // property of one player rather than of the server. `crate::session::regen`.
         out.extend(self.regen_tick(now_ms));
+        // Buffs whose time is up. After regen so a `0x007C` and a `0x007E` in the same
+        // tick arrive in the order the client draws them.
+        out.extend(self.buff_tick(now_ms));
         if self.config.chatter_off {
             return out;
         }
@@ -530,6 +548,12 @@ impl Session {
             // which is the case a drag out of the inventory window is.
             net::skills::CLIENT_USER_SKILL_UP_REQUEST => {
                 return self.on_skill_up(body.get(2..).unwrap_or(&[]))
+            }
+            // **The buff request.** Unlike almost everything else here it does NOT latch -
+            // the 2026-08-22 cast went entirely unanswered and the client played on for four
+            // more minutes - so a refusal may be a chat line. See session/buff.rs.
+            net::buff::CLIENT_SKILL_USE => {
+                return self.on_skill_use(body.get(2..).unwrap_or(&[]))
             }
             // **Two AP opcodes, not one.** 0x0138 is a single + click and 0x0139 is the
             // bulk dialog; answering only the second still looks broken to anyone using the

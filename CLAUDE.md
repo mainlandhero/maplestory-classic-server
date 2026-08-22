@@ -192,6 +192,26 @@ The habit: **before hunting for the difference between two cases, check that bot
 under the same conditions.** A remembered contrast is not a measurement. It is worth one grep of
 an archived log, and here that grep was free and would have been decisive on day one.
 
+### The corollary that has now paid twice: separate "this thing" from "this session" first
+
+Both crashes the owner reported on 2026-08-22 arrived as *"X crashed the client"* - character
+`GoodTest`, then a teleport to map `10001050`. Each was **one observation**, and each had the
+same two readings: the thing is fatal, or the session had been running long enough for
+something else to fire. They look identical on screen and they need opposite work.
+
+The discriminator is the same both times and costs no launch of its own: **do it first, at
+~40 s of client life.** `GoodTest` came back (b) - the character and its map were innocent,
+and a day of "why is map 10 special" was avoided by one login. Map `10001050` is still open.
+
+Two things make it worth writing down rather than rediscovering:
+
+* **The answer went a different way each time**, so neither reading is the safe default. The
+  temptation after the first result is to assume "it is always the session"; that is the same
+  mistake in a new direction.
+* **Do not start the static work before the experiment.** Naming the field at `[0 + 0x3530]`
+  is one Ghidra pass and it is sitting there - but it answers *"why is this map different"*,
+  which is precisely the question nobody has established has an answer yet.
+
 The same pass produced the corollary, which is cheaper still: `research/` said `0x0467` was
 "a template preload list", and it is `SetNpcScriptable` - `u32 templateId; str script;
 u32 dateStart; u32 dateEnd` per entry. **A table row written from a quick read is a claim.**

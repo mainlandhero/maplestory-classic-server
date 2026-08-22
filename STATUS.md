@@ -1061,6 +1061,41 @@ line, and the hook writes those on return), 0.33 s after the packet. But the cli
 resource release in a session. **One login settles it**: log in as `GoodTest` first, at ~40 s of
 client life. It is step 1 of the plan and the order is the whole experiment.
 
+#### The 2026-08-22 midday run: three confirmations and one new crash family
+
+The owner: *"1. Logging in as GoodTest seems fine. 2. Inventories are now working correctly, when
+my Equip tab is full, I can continue to pick up items that belong to other slots. ... 4. Blue
+recovery number is now good, I do see 10 in blue above the character."*
+
+* **Map 10 is not fatal.** Yesterday's experiment - log in as `GoodTest` first, at ~40 s of
+  client life - came back clean in one login. The instant crash the day before was the
+  session, not the map, exactly as the alternative reading predicted. Worth noting because
+  the same shape of question is open again below and it resolved the *other* way this time.
+* **The pick-up latch is fixed on screen.** A full Equip tab now refuses equips and nothing
+  else, which is what the owner asked for in the sentence that opened it.
+* **The blue recovery number draws.** `0x02D1` effect `0x41` renders "+10 in blue above the
+  character", which closes a chain that had one unmeasured link in it (the suppression gate
+  at `0x14278bd75`) and two runs of nobody being sure.
+* **Storage items were not tested** - step 3 went unreported. It is step 3 again.
+
+**And Nimble Feet was still dead, for the reason the whole file keeps recording.** The owner:
+*"Nimble Feet still does not give me a buff despite me activating the skill."* `0x013C` had
+been arriving all along - one at 13:00:49, 51 bytes, `skillId 1002 level 3`, whose two
+checksum dwords match the ones `research/buffs.md` §3 read off a **different** session - and
+it was logged as `UNKNOWN` and dropped. `research/buffs.md` had the whole packet written out
+and nothing called it. Built now: `crates/net/src/buff.rs`, `crates/world/src/session/buff.rs`,
+and a `!buff` GM command that sends the same bytes with the skill check, the MP and the
+180-second cooldown all out of the way.
+
+**The teleport crash is a SECOND crash family, not another heap one.**
+`research/henesys-park-null-deref.md`. The owner said *"GoodTest teleporting to map 10001050
+crashed again"*, and "again" is the part that needed checking: the code is `0xC0000005`, an
+**access violation reading `[0 + 0x3530]`** - a null object pointer - where the other three
+are the allocator refusing a bad free. The damaged pool slot was present in this dump too
+**and was never touched**, which is the first time the two have been shown to be separable.
+Whether the map itself is fatal or the session was is the same one-command experiment as
+yesterday, and it is step 1 of the plan.
+
 #### What to do next, in order
 
 **Rewritten 2026-08-22, twice.** The morning run closed three more rows - storage item
@@ -1073,9 +1108,9 @@ implementation can be diffed against rather than re-derived.
 
 | # | do this | state |
 |---|---|---|
-| 1 | **Buffs / Nimble Feet** | **Decoded, not built.** Use is `0x013C`; the grant is `0x007D` TemporaryStatSet - 124-byte mask, then `{value, u32 reason, u32 duration}` per set bit, duration in **milliseconds**. Nimble Feet is speed +10 at every level, 10/20/30 s. Two hazards: `0x007D` **collides** with our inbound migration-hello constant, and the value width depends on a constant in Themida-packed `.data`. `research/buffs.md` |
+| 1 | **The Henesys Park null dereference** | **New, and a different family from the heap one.** `0xC0000005` reading `[0 + 0x3530]`, 328 ms into the `0x01A0` handler, no dispatch line. The damaged pool slot in that dump was a **bystander**. Whether map `10001050` is fatal or the 389-second session was is **not established**, and one GM command settles it - `research/henesys-park-null-deref.md` §3. `tools/check_map_resources.py` has already ruled out a missing tile, object, background or map mark, with a positive control |
 | 2 | **The classic shop** | **Decoded, not built**, and the price is settled: **`row+0x38`, a u64**, from three independent sites. The row is **42 reads**, not thirteen fields. Request opcode is **`0x00F5`**, not `0x0104`. Buy-back is the same array tagged by a per-row `u8`. **Three traps**: `row+0xa4` is a FILETIME with no sentinel and `0` hides every row; `row+0x10c = 0` fails purchases silently; a dropped row desynchronises the byte stream. `research/classic-shop-rows.md` |
-| 3 | **The heap wild write** | **Three dumps now**, and the third answered all three questions `heap-wild-write.md` §10 wrote down in advance: the value is `1` **six for six**, the class is `0x20` **six for six** (0 of 360 216 elsewhere), and the count tracks session length at about **one damaged slot per 250 s** - a rate, which says the writer fires on something repeated. The **writer is still not found**, and §8 names the blind spot that makes a static sweep for it impossible. The 3-byte patch is now **built and off by default**: `-HeapFix` on the launcher, `crates/grap-stub/src/heapfix.rs`, nothing on disk in `client-patched/` changes. `research/heap-third-dump.md` |
+| 3 | **The heap wild write** | **Four dumps now** (three of this family), and the third answered all three questions `heap-wild-write.md` §10 wrote down in advance: the value is `1` **seven for seven**, the class is `0x20` seven for seven (7 of 309 152 there, **0 of 472 760** elsewhere), and the count tracks session length at about **one damaged slot per 250 s** - a rate, which says the writer fires on something repeated. The **writer is still not found**, and §8 names the blind spot that makes a static sweep for it impossible. The 3-byte patch is now **built and off by default**: `-HeapFix` on the launcher, `crates/grap-stub/src/heapfix.rs`, nothing on disk in `client-patched/` changes. `research/heap-third-dump.md` |
 | 4 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither parsed out of the attack header. `research/damage-formula.md` |
 | 5 | **The grey item line** | The packet goes out - `0x02D1` effect 8, category 6 - and nobody has reported what it looks like. It went out **five more times** on 2026-08-22 (every successful pick-up sends one) and is still undescribed. One glance, no setup |
 | 6 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; the NPC path is not. Instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |

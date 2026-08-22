@@ -60,94 +60,83 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - four steps, and the FIRST ONE IS THE ORDER
+    THE POINT OF THIS RUN - four steps, and STEP 1 MUST BE FIRST
     -----------------------------------
-     1. LOG IN AS "GoodTest" FIRST, BEFORE ANYTHING ELSE. This is the whole experiment and
-        doing it second destroys it.
-        Last run it crashed the client the instant you selected it. That has two readings and
-        they predict opposite things:
-          (a) map 10 "Mushroom Town" - where GoodTest is standing - is fatal to load. No
-              client has ever loaded it. GoodTest was on maps 1 and 30 before, both fine.
-          (b) the client was already 306 s old and carrying a damaged allocator slot, and a
-              character-select round trip is the biggest resource release in a session, so
-              the slot was going to be freed there whatever the map was.
-        Logging in FIRST, at ~40 s of client life, separates them:
-          it loads, you are in Mushroom Town  -> (b). Map 10 is fine and the crash is the
-                                                 accumulated-damage one we already track
-          it dies again straight away         -> (a). Map 10 is the cause, which is a
-                                                 brand-new and much more tractable bug
-        Either way say roughly HOW LONG the client had been alive. client-exit.log records it
-        to the millisecond, and tools/poolchain.py on the dump counts the damaged slots -
-        one per ~250 s is the rate three dumps agree on.
-        Then leave GoodTest and play as Idiot for the rest.
+     1. TYPE  !map 10001050  AS THE FIRST THING AFTER YOU LOG IN. Ten seconds of work, and
+        doing it later destroys it.
+        That teleport crashed the client last run, 328 ms into the map load. It is a DIFFERENT
+        fault from the one we have three dumps of: an access violation reading [0 + 0x3530] -
+        a null object pointer - where the others were the allocator refusing a bad free. The
+        damaged pool slot was present in this dump too and was never touched, so whatever
+        accumulates is not what nulled this field.
+        Two readings, and this is the same experiment that answered the GoodTest question
+        yesterday - which came back the OTHER way, so it is worth running rather than assuming:
+          (a) map 10001050 (Henesys Park) is fatal to load. It is the only map of its group
+              this client has ever been sent to.
+          (b) it was the FOURTH map load of a 389-second session, and something accumulates.
+        At ~40 s of client life:
+          it dies again -> (a), the map. Relaunch and do steps 2-4; the crash is then worth
+                           one Ghidra pass and we know exactly where to point it
+          it loads      -> (b). Carry straight on with steps 2-4 in the same session
+        Then, either way, try  !map 10001000  - Henesys town, the map next door, also never
+        loaded. Park dies and town loads -> that one map. Both die -> that part of the world.
 
-     2. KILL SOMETHING AND WALK OVER THE DROPS. NO SETUP - IDIOT'S EQUIP TAB IS ALREADY
-        FULL, 30 of 30, left that way by last run. Use holds 5 and Etc holds 10.
-        You said: "when my equip slots are full, I should be able to get more items in my
-        other inventory where I still have slots, such as Use, ETC, or mesos."
-        The equip bag being full is what TRIGGERED it and is not what blocked you. The
-        sixth pick-up came back "inventory 1 is full (30 slots)" as a CHAT LINE AND NOTHING
-        ELSE - and the client latches player+0x2330 when it asks and only an inbound 0x0070
-        clears it. world.log has zero further pick-up requests in the next four minutes over
-        56 drops: the client had stopped asking, for everything, mesos included.
-          equips refuse, everything else still picks up -> fixed
-          nothing picks up after the first refusal      -> the latch is still not cleared
-          the refusal notice is gone too                -> I removed the wrong line
-        Mesos are the sharpest single check here: they need no slot at all, so a meso drop
-        you cannot pick up is the latch and nothing else.
-        While you are doing it: does a grey "<item> x<n> earned." line appear in the SCREEN
-        MESSAGE AREA - the strip above the chat box, not the chat log itself? That went out
-        five times last run and nobody has said what it looks like.
+     2. PRESS NIMBLE FEET. This is the one you have asked for twice.
+        It was arriving the whole time: 0x013C, 51 bytes, skillId 1002 level 3, logged as
+        UNKNOWN and dropped. Now the server answers with 0x007D TemporaryStatSet.
+          buff icon top right, counts ~30 s, YOU WALK FASTER -> everything is right: the
+                           opcode, the 124-byte mask, bit 92 = Speed, the i16 width, and
+                           milliseconds
+          icon appears and vanishes within a second -> the value is a u32, not an i16, so the
+                           duration reads as 0. One byte-width change, nothing else moves
+          icon stays 30 s but you do NOT move faster -> the packet is right and bit 92 is not
+                           Speed. I sweep 89-95 next
+          nothing at all, client fine -> 0x007D is not TemporaryStatSet, or the mask bit order
+                           is inverted
+          the client dies -> the tail is short. Say so and do not relaunch into it
+        WATCH THE ICON **AND** THE FEET. The icon alone passes a wrong bit; the feet alone
+        pass a packet that never drew anything.
+        MP costs 10 at level 3 and the bar should move. THE COOLDOWN IS 180 SECONDS - that is
+        Skill.wz's own cooltime - and a second press inside it gets a chat line naming the
+        seconds left, which is NOT the bug. If nothing happens at all, type  !buff  : it sends
+        the identical bytes with no skill check, no MP and no cooldown, so !buff working while
+        the keypress does not is a statement about the gates and not about the packet.
 
-     3. MR. KIM: PUT AN ITEM IN, THEN TAKE IT BACK OUT. The window itself is confirmed - it
-        opened with 30 slots and mesos moved both ways - so this is only the item half.
-        You said: "the item did not move to storage, and it did not charge the 100 meso fee
-        that it said it was going to charge." Both sentences were one missing arm; the fee
-        text is the CLIENT'S OWN, out of Npc.wz, so an unbuilt deposit reads as a broken
-        promise. Both are built now.
-
-        DO IT IN THIS ORDER, because Idiot's purse is EMPTY - all 600 of their mesos are in
-        the box, where you put them last run. That makes the refusal free to test first:
-
-          a. Try to store an item with 0 mesos. Expect the client's own "Not enough mesos
-             (100) to store the item" box, and NOTHING to move.
-               that box appears, nothing moves -> the refusal is right
-               the item moves anyway           -> the fee is not gating the deposit
-               nothing happens at all          -> the window latched; say so
-          b. Withdraw the 600. That path already worked, so it is a free re-check.
-          c. Store the item again.
-               item moves and 100 mesos leave the purse -> done, both halves
+     3. MR. KIM, THE HALF THAT IS STILL UNTESTED. You skipped this last run.
+        The window itself is confirmed - it opened with 30 slots and mesos moved both ways -
+        so this is only the item half, and your report that started it: "the item did not move
+        to storage, and it did not charge the 100 meso fee that it said it was going to
+        charge." Both sentences were one missing arm. Both are built now.
+          a. store an item, and watch your mesos.
+               item moves AND 100 mesos leave the purse -> done, both halves
                item moves and the fee is NOT taken      -> the effect is not hanging off the
-                                                           transition, the exact shape of the
+                                                           transition, the shape of the
                                                            repeated-quest bug
                the fee is taken and the item does not   -> the worse direction. Say so loudly
-          d. Take it back out. Free on all ten keepers. Check it lands in the right tab.
-             If you have the patience: deposit TWO, withdraw the FIRST, then withdraw again.
-             The take-out index is a POSITION in the list, not a slot, and a sparse box is
-             the only place a server that confused the two would take the wrong item.
+               "not enough mesos" with mesos in hand    -> the wrong keeper was looked up
+          b. take it back out. Free on all ten keepers. Check it lands in the right tab.
+          c. if you have the patience: deposit TWO, withdraw the FIRST, then withdraw again.
+             The take-out index is a POSITION in the list, not a slot, and a sparse box is the
+             only place a server that confused the two would take the wrong item.
 
-     4. THE BLUE RECOVERY NUMBER, still unconfirmed after two runs. Free, no setup.
-        Sent 11 times last run as 0x02D1 effect 0x41, "+10". Get hurt, stand still 20 s.
-          a number appears -> what COLOUR, and does it read 10 (the amount) rather than the
-                              new total?
-          nothing at all   -> the suppression gate at 14278bd75, the one link in that chain
-                              nobody has measured. Swapping 0x41 for 0x23 does NOT test it -
-                              they share it
+     4. GLANCE, NO SETUP: does a grey "<item> x<n> earned." line appear in the SCREEN MESSAGE
+        AREA - the strip above the chat box - when you pick something up? It has gone out on
+        every successful pick-up for two runs and nobody has said what it looks like.
 
-    OPTIONAL, AND ONLY IF YOU WANT TO: -HeapFix
+    OPTIONAL, AND NOT ON THE SAME RUN AS STEP 1: -HeapFix
     -----------------------------------
     Three bytes at 14019b504 in the mapped image. Nothing in client-patched\ changes on disk.
     The client's free reads the whole 64-bit pool slot header where only the low half is ever
     legal; a stray 1 in the high dword therefore sends a pooled 0x20 slot to HeapFree, and
     Windows kills the process. Reading 32 bits returns it to the correct free list.
-    Six damaged slots across three dumps, every one the identical 0x0000000100000020, every
-    one in the 0x20 class, accumulating at about one per 250 s. research/heap-third-dump.md.
+    SEVEN damaged slots across four dumps now, every one the identical 0x0000000100000020,
+    every one in the 0x20 class, accumulating at about one per 250 s.
+    research/heap-third-dump.md, and research/henesys-park-null-deref.md for why last run's
+    crash was NOT this one.
       the client stops dying with 0xC0000374  -> the whole chain is confirmed end to end
       it dies anyway                          -> something in that chain is wrong, and the
                                                  dump says which half. That is worth more
-    The stated risk: it discards a one's-complement header path that 481 000 enumerated slots
-    never used, but the walk only covers one pool context. DO NOT run this at the same time
-    as step 1 - one variable at a time, and step 1 is the one that matters.
+    One variable at a time: step 1 is the one that matters, so run it unpatched.
 
     REGRESSION GLANCES - seconds each
     ---------------------------------
@@ -164,9 +153,6 @@
       - The classic shop counter. DECODED now, including the price (row+0x38), and
         deliberately not built - three of its fields fail silently or desynchronise the
         stream if they are wrong, and this packet has killed the client twice.
-      - Buffs / Nimble Feet. Decoded, not built.
-      - Storage item movement. Opening the box and moving mesos ARE built; take-out and
-        put-in answer with the box unchanged and say so.
       - Outgoing damage validation. The formula is decoded but the 0x00DF header does not
         carry the action or the skill id, so nothing can be checked against it yet.
       - Page heap is OFF, so !heap -p -a has no allocation stacks to print. That is an IFEO
@@ -868,21 +854,27 @@ if ($SetFieldProbe) {
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
     Write-Host '  CHANNEL CHANGE WORKS - claimed by channel, real SetField, inventory'
     Write-Host '  and mesos carried over. And THE HEAP DEATH IS NOT HEAP CORRUPTION -'
-    Write-Host '  THREE dumps now. RtlFreeHeap REFUSED a bad free every time; the'
-    Write-Host '  heap chain is intact. Same stack in all three - the client free()'
-    Write-Host '  under a PCOM.dll release, under VariantClear. SIX damaged slots,'
-    Write-Host '  every one the identical 0x0000000100000020, every one in the 0x20'
-    Write-Host '  size class, against 0 of 360216 slots in the other three classes.'
-    Write-Host '  They accumulate at about ONE PER 250 SECONDS, which is a rate, and'
-    Write-Host '  a rate says the writer fires on something repeated.'
+    Write-Host '  THREE dumps of it. RtlFreeHeap REFUSED a bad free every time; the'
+    Write-Host '  heap chain is intact. SEVEN damaged slots over four dumps, every one'
+    Write-Host '  the identical 0x0000000100000020, every one in the 0x20 class,'
+    Write-Host '  against 0 of 472760 slots in the other three. They accumulate at'
+    Write-Host '  about ONE PER 250 SECONDS - a rate, which says the writer fires on'
+    Write-Host '  something repeated. THERE ARE NOW TWO CRASH FAMILIES: last run''s'
+    Write-Host '  was an ACCESS VIOLATION, a null read, and the damaged slot sat'
+    Write-Host '  there untouched. Step 1 is about that one.'
     Write-Host '  DEATH AND REVIVE WORK, first time out - the dialog appeared for a'
     Write-Host '  character who logged in ALREADY DEAD, and the revive warped them to'
     Write-Host '  Lith Harbor at 50 HP with no exp penalty at level 10. They then went'
     Write-Host '  on to reach level 11, which answers the half most likely to fail:'
     Write-Host '  they could move and attack afterwards.'
-    Write-Host '  BULK SKILL POINTS work. FRESH SPAWNS ARE SPREAD OUT - fixed and'
-    Write-Host '  confirmed. THE STORAGE WINDOW OPENS: 30 slots, and mesos move both'
-    Write-Host '  ways. Items and the fee are step 3 and have never been seen.'
+    Write-Host '  BULK SKILL POINTS work. FRESH SPAWNS ARE SPREAD OUT. INVENTORIES'
+    Write-Host '  ARE FIXED - a full Equip tab no longer stops Use, Etc or mesos being'
+    Write-Host '  picked up. THE BLUE RECOVERY NUMBER DRAWS: "+10 in blue above the'
+    Write-Host '  character", so 0x02D1 effect 0x41 is settled. And MAP 10 IS NOT'
+    Write-Host '  FATAL - GoodTest logged in there first thing and was fine, which'
+    Write-Host '  answered yesterday''s experiment in one login.'
+    Write-Host '  THE STORAGE WINDOW OPENS: 30 slots, mesos both ways. Items and the'
+    Write-Host '  fee are step 3 and have still never been seen.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
     Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
@@ -895,84 +887,74 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  1. LOG IN AS "GoodTest" FIRST. THE ORDER IS THE EXPERIMENT.' -ForegroundColor Cyan
-    Write-Host '     It crashed the client instantly last run. Two readings:'
-    Write-Host '       (a) map 10 "Mushroom Town", where it stands, is fatal to load.'
-    Write-Host '           No client has ever loaded it.'
-    Write-Host '       (b) the client was already 306s old with a damaged allocator'
-    Write-Host '           slot, and a character swap is the biggest resource release'
-    Write-Host '           in a session - it would have been freed there regardless.'
-    Write-Host '     Doing it FIRST, at ~40s of life, separates them:'
-    Write-Host '       it loads      -> (b). Map 10 is fine.'
-    Write-Host '       it dies again -> (a). Map 10 is the cause - a new and much'
-    Write-Host '                        more tractable bug.'
-    Write-Host '     Say roughly HOW LONG the client had been alive either way.'
-    Write-Host '     Then leave GoodTest and play as Idiot.'
+    Write-Host '  1. TYPE  !map 10001050  AS THE FIRST THING AFTER LOGIN.' -ForegroundColor Cyan
+    Write-Host '     Ten seconds of work, and doing it later destroys it.'
+    Write-Host '     That teleport crashed the client last run, 328ms into the map'
+    Write-Host '     load - and it is a DIFFERENT fault from the three heap dumps:'
+    Write-Host '     an access violation reading [0 + 0x3530], a NULL pointer. The'
+    Write-Host '     damaged pool slot was there too and was never touched.'
+    Write-Host '       (a) map 10001050 is fatal to load - never tried before'
+    Write-Host '       (b) it was the 4th map load of a 389s session'
+    Write-Host '     At ~40s of client life:'
+    Write-Host '       it dies again -> (a). Relaunch, do steps 2-4, and the crash is'
+    Write-Host '                        worth one Ghidra pass at a known address'
+    Write-Host '       it loads      -> (b). Carry on with 2-4 in the same session'
+    Write-Host '     Then either way try  !map 10001000  - Henesys town, next door,'
+    Write-Host '     also never loaded. Park dies + town loads -> that ONE map.'
     Write-Host ''
-    Write-Host '  2. KILL SOMETHING AND WALK OVER THE DROPS. NO SETUP NEEDED -' -ForegroundColor Cyan
-    Write-Host '     Idiot''s equip tab is ALREADY 30 of 30, left that way last run.'
-    Write-Host '     Your bug: a full equip bag stopped you picking up ANYTHING,'
-    Write-Host '     mesos included. The full bag only TRIGGERED it - the refusal'
-    Write-Host '     went out as a chat line with no 0x0070, and the client latches'
-    Write-Host '     on send. It stopped asking: zero pick-up requests in the next'
-    Write-Host '     four minutes over 56 drops.'
-    Write-Host '       equips refuse, everything else works -> fixed'
-    Write-Host '       nothing picks up after the refusal   -> latch still stuck'
-    Write-Host '       the refusal notice is gone too       -> wrong line removed'
-    Write-Host '     MESOS are the sharpest check: they need no slot at all, so a'
-    Write-Host '     meso drop you cannot take is the latch and nothing else.'
-    Write-Host '     While there: does a grey "<item> x<n> earned." line appear in'
-    Write-Host '     the SCREEN MESSAGE AREA above the chat box? Sent five times'
-    Write-Host '     last run, never described.'
+    Write-Host '  2. PRESS NIMBLE FEET. The one you have asked for twice.' -ForegroundColor Cyan
+    Write-Host '     0x013C was arriving all along - skill 1002 level 3 - and nothing'
+    Write-Host '     answered it. The server now sends 0x007D TemporaryStatSet.'
+    Write-Host '       icon + counts 30s + YOU WALK FASTER -> all of it is right'
+    Write-Host '       icon appears then vanishes  -> value is u32 not i16, so the'
+    Write-Host '                                      duration reads as 0'
+    Write-Host '       icon stays but no speed     -> packet right, bit 92 is not Speed'
+    Write-Host '       nothing, client fine        -> wrong opcode or inverted bit order'
+    Write-Host '       the client dies             -> the tail is short. Do not relaunch'
+    Write-Host '     WATCH THE ICON **AND** THE FEET. Either alone passes a wrong answer.'
+    Write-Host '     MP costs 10. COOLDOWN IS 180s (Skill.wz''s own cooltime) and a'
+    Write-Host '     second press inside it gets a chat line - that is NOT the bug.'
+    Write-Host '     If nothing happens, type  !buff  - identical bytes, no skill check,'
+    Write-Host '     no MP, no cooldown. !buff working and the key not = a gate, not the'
+    Write-Host '     packet.'
     Write-Host ''
-    Write-Host '  3. MR. KIM: PUT AN ITEM IN, THEN TAKE IT BACK OUT.' -ForegroundColor Cyan
-    Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and'
-    Write-Host '     the 100 meso fee are the new half - both were the same missing'
-    Write-Host '     arm, and the fee text is the CLIENT''S, out of Npc.wz.'
-    Write-Host '     IN THIS ORDER - Idiot''s purse is EMPTY, all 600 are in the box:'
-    Write-Host '       a. store an item with 0 mesos. Expect the client''s own "Not'
-    Write-Host '          enough mesos (100) to store the item" and NOTHING to move.'
-    Write-Host '            it moves anyway     -> the fee is not gating the deposit'
-    Write-Host '            nothing happens     -> the window latched. Say so'
-    Write-Host '       b. withdraw the 600 - a free re-check of a path that worked.'
-    Write-Host '       c. store it again.'
+    Write-Host '  3. MR. KIM - STILL UNTESTED, you skipped it last run.' -ForegroundColor Cyan
+    Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and the'
+    Write-Host '     100 meso fee are the new half - both were the same missing arm.'
+    Write-Host '       a. store an item and watch your mesos.'
     Write-Host '            item moves AND 100 leave -> done, both halves'
     Write-Host '            item moves, no fee       -> effect not hanging off the'
     Write-Host '                                        transition (the quest bug)'
     Write-Host '            fee taken, item stays    -> the worse direction. Say so'
-    Write-Host '       d. take it back out - free - and check the tab it lands in.'
-    Write-Host '          If you have patience: deposit TWO, withdraw the FIRST,'
-    Write-Host '          then withdraw again. The index is a POSITION, not a slot.'
+    Write-Host '       b. take it back out - free - and check the tab it lands in.'
+    Write-Host '       c. if you have patience: deposit TWO, withdraw the FIRST, then'
+    Write-Host '          withdraw again. The index is a POSITION, not a slot.'
     Write-Host ''
-    Write-Host '  4. THE BLUE RECOVERY NUMBER - still unconfirmed, free.' -ForegroundColor Cyan
-    Write-Host '     Sent 11 times last run as 0x02D1 effect 0x41, "+10".'
-    Write-Host '     Get hurt, stand still 20s.'
-    Write-Host '       a number appears -> COLOUR? Does it read 10 (the amount)'
-    Write-Host '                           rather than the new total?'
-    Write-Host '       nothing          -> the suppression gate at 14278bd75, the one'
-    Write-Host '                           unmeasured link. 0x23 does NOT test it'
+    Write-Host '  4. GLANCE: when you pick something up, does a grey "<item> x<n>' -ForegroundColor Cyan
+    Write-Host '     earned." line appear in the SCREEN MESSAGE AREA above the chat'
+    Write-Host '     box? Two runs of it going out and nobody has described it.'
     Write-Host ''
-    Write-Host '  OPTIONAL: -HeapFix (off by default, NOT with step 1)' -ForegroundColor DarkGray
+    Write-Host '  OPTIONAL: -HeapFix (off by default, NOT on the same run as step 1)' -ForegroundColor DarkGray
     Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
     Write-Host '     A damaged pool header goes back to the free list instead of to'
-    Write-Host '     HeapFree. Six damaged slots over three dumps, all the identical'
+    Write-Host '     HeapFree. SEVEN damaged slots over four dumps, all the identical'
     Write-Host '     value, all in the 0x20 class, ~1 per 250s.'
     Write-Host '       stops dying with 0xC0000374 -> chain confirmed end to end'
     Write-Host '       dies anyway                 -> the chain is wrong somewhere,'
     Write-Host '                                      which is worth more'
     Write-Host ''
     Write-Host '  NOT THIS RUN - decoded but deliberately NOT built:' -ForegroundColor DarkGray
-    Write-Host '     Nimble Feet buffs, and Mina''s shop. The shop price is now known'
-    Write-Host '     (row+0x38) but three of its fields fail SILENTLY or desynchronise the'
-    Write-Host '     byte stream if wrong, and it has killed the client twice already.'
+    Write-Host '     Mina''s shop. The price is now known (row+0x38) but three of its'
+    Write-Host '     fields fail SILENTLY or desynchronise the byte stream if wrong,'
+    Write-Host '     and it has killed the client twice already.'
     Write-Host ''
     Write-Host '  GLANCES: drops arc from the corpse and are walkable-over; kill-EXP'
     Write-Host '  line is WHITE; mobs on map 40 already standing; pick-ups stay OUT of'
     Write-Host '  the chat log; level-up +16 HP / +12 MP; relog keeps Etc and mesos;'
     Write-Host '  ores stack; !setrates 2 3 5 -> one banner.'
     Write-Host ''
-    Write-Host '  COMMANDS: !map !item !exp !heal !job !npcecho !npcfx !migsweep !exprate'
-    Write-Host '  !mesorate !droprate !setrates !rates. !help lists them all.'
+    Write-Host '  COMMANDS: !map !item !exp !heal !job !buff !npcecho !npcfx !migsweep'
+    Write-Host '  !exprate !mesorate !droprate !setrates !rates. !help lists them all.'
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'
