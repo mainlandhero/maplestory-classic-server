@@ -31,17 +31,23 @@
       THE CHANNEL CHANGE WORKS. Inventory and mesos carried over, and world-ch1.log shows
       the migration claimed BY CHANNEL with a real SetField rather than the minimal one.
 
-      THE HEAP DEATH IS SOLVED, AND IT WAS NEVER HEAP CORRUPTION. The dump was captured
-      (1 010 MB, written by the hook in 878 ms) and then READ, with tools/dumpwalk.py -
-      no debugger needed, and the tool self-checks against the dump before it prints.
-      156 heap blocks stepped, every header checksum valid, and the address the
-      allocator complained about lands inside a LIVE, BUSY 270 352-byte block:
-      RtlFreeHeap REFUSED a bad free rather than discovering damage. The real damage is
-      one stray DWORD - a block header that should read 0x20 read 0x0000000100000020,
-      which pushed a 32-byte free off its lookaside path. 6 239 clean headers in that
-      arena, exactly one wrong, and it is the one that was freed.
-      research/heap-corruption-dump.md. Page heap would NOT have helped: it guards
-      Windows heap blocks, and this is a slot inside a client-allocator arena.
+      THE HEAP DEATH IS NOT HEAP CORRUPTION, and there are now TWO dumps that agree.
+      Both were written by the hook and read with tools/dumpwalk.py - no debugger, and
+      the tool self-checks against the dump before it prints anything. In both the heap
+      chain is intact and the address the allocator complained about lands inside a
+      LIVE, BUSY ~264 KB block: RtlFreeHeap REFUSED a bad free rather than discovering
+      damage. The STACK IS THE SAME FRAME FOR FRAME in both - the client's own free()
+      called from a PCOM.dll refcounted release, under oleaut32!VariantClear, under
+      NAMESPACE.DLL - which is corroboration one dump could not give.
+      What the second dump CORRECTED: the first found a block header reading
+      0x0000000100000020 where 0x20 was expected and flagged 'a stray 1 at +4' as its
+      single inference. The second is a different failure type, on a different heap, at
+      a different address, with differently garbled bytes. So it is a WILD WRITE into
+      that arena rather than one repeatable off-by-one - exactly the measurement the
+      first analysis said a second dump would provide. An agent is on the writer now.
+      research/heap-corruption-dump.md and research/fixtures/heap-second-dump-*.log.
+      Page heap would NOT have helped either way: it guards Windows heap blocks, and
+      this is a slot inside a client-allocator arena it cannot see into.
 
     THE NPC FADE - THERE IS A LEVER AFTER ALL, AND IT IS STEP 4 BELOW. The echo could never
     have answered it: 0x044F and 0x0451 run the SAME decoder body, so comparing them was
@@ -50,88 +56,75 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - six things
+    THE POINT OF THIS RUN - five things
     -----------------------------------
-     1. BULK SKILL POINTS. Open the skill window and add 3 at once to Three Snails.
-        Last run that only moved it by 1: 0x013B carries a COUNT and the handler did
-        level + 1. The request's own doc said what the field was AND that the server must
-        clamp it; both halves were ignored.
-          it goes up by 3            -> fixed
-          it goes up by 1            -> the count is still being dropped
-          it goes past 3            -> the clamp failed. The client's own Skill.wz says
-                                       these three skills stop at level 3
-        Then try again at 3/3: it must refuse and the window must still respond.
-        NOTE: this server does NOT track SP at all, so nothing checks you had the points.
+     1. DEATH AND REVIVE. START BY LOGGING IN AS "Idiot" - they are still dead, 0/194 HP
+        on map 10000022 from two sessions ago, and that is the better half of this test
+        because it needs no setup.
+        THE DIALOG SHOULD APPEAR ON ARRIVAL, without being hit. That was a real gap: the
+        dialog fired on the death TRANSITION and logging in dead is not a transition, so they
+        were stranded with !heal as the only way out.
+          a. does the dialog appear? Expect ONE button, "REVIVE IN TOWN". The on-the-spot
+             button is hidden unless a Respawn Token counter is above zero and nothing here
+             sets it, so one button is the expected result and not a bug.
+          b. click it -> LITH HARBOR (10000000), 50 HP. That is a town and it is NOT next
+             door to a beach hunting ground, so arriving somewhere adjacent means the
+             revive table was not used.
+          c. Idiot is level 10, so they should lose NO experience. Check the bar does not move.
+          d. can you MOVE and attack afterwards? ~65 client sites gate on the sign of HP, so
+             a revive that fixes the bar but not the client's own copy leaves you standing
+             in town unable to act. There is a second 0x007C after the SetField for exactly
+             this, and it is the half most likely to be wrong.
+        THEN die on purpose to test the combat path, which is the one that was built first.
+        IF NO DIALOG APPEARS the client says why for free: it sends outbound 0x02C6 carrying
+        the reason. world.log will have it. Success is silence, so no 0x02C6 AND no dialog
+        means something other than the opener refused.
 
-     2. A QUEST THAT GIVES AN ITEM - the one thing step 2 never got to last time.
-        Quest EXP in the chat log and the fanfare are both CONFIRMED now. What has never
-        been seen is the grey ITEM line: "<Item> x<n> earned. (<Tab>)" in the chat log,
-        not bottom-right. Any quest that hands an item over will do.
-          grey line in the chat log -> done
-          another colour            -> route right, colour is a separate question
-          nothing                   -> the item id resolved no name, or category 6 is a
-                                       tab that window does not show
-
-     3. DEATH AND REVIVE. You already have a dead character, so this starts before you
-        even move: **"Idiot" is sitting at 0/194 HP on map 10000022 from last session.**
-        LOG IN AS IDIOT FIRST. The dialog should appear on arrival, without being hit.
-        That was a real gap: the dialog was opened on the death TRANSITION, and logging in
-        dead is not a transition, so the character was stranded with !heal as the only exit.
-        Reviving there should land you on 10000000, LITH HARBOR - which is a town, and is
-        not adjacent to a beach hunting ground, so arriving next door means the table was
-        not used. Then die again on purpose to test the
-        combat path, which is the one that was already built.
-        Last time you got a tombstone and no dialog. The client NEVER opens that dialog by
-        itself: a packet does, 0x0315, and its construction site was traced through a vtable
-        slot with exactly one caller. It goes out immediately after the 0x007C that zeroes
-        your HP, and the order is not cosmetic - the handler tests the client's own copy of
-        the HP the server just wrote, and drops the packet SILENTLY if it is still positive.
-          a. does the revive dialog appear? Expect a "REVIVE IN TOWN" button. The
-             "on the spot" button is hidden unless a Respawn Token counter is above zero and
-             nothing here sets it, so one button is the expected result, not a bug.
-          b. click it. You should arrive in a TOWN with 50 HP.
-             Dying on map 40 revives you at 60, Southperry - which is several screens away
-             and NOT a portal walk, so if you end up somewhere adjacent something is wrong.
-          c. EXP: 10% is taken above level 10, nothing at level 10 or below. Say your level
-             and whether the bar moved.
-          d. can you MOVE and attack after reviving? ~65 client sites gate on the sign of
-             HP, so a revive that restores the bar but not the client's own copy leaves you
-             standing in town unable to act. There is a second 0x007C after the SetField
-             specifically for this.
-        IF THE DIALOG DOES NOT APPEAR the client says why, for free: it sends outbound
-        0x02C6 when the opener refuses, carrying the reason. world.log will have it. Success
-        is silence, so no 0x02C6 and no dialog means something else entirely.
-
-     4. THE BLUE RECOVERY NUMBER, second attempt - the first was the WRONG PACKET.
+     2. THE BLUE RECOVERY NUMBER, second attempt - the first was the wrong packet entirely.
         Get hurt, then stand still for 20 seconds.
-        The 0x007C recovery trailer was sent on three ticks of a real run and drew nothing,
-        and the reason is not a bad body: the function the client hands those two values to
-        is a STATISTICS COUNTER - running totals, effective-versus-wasted healing, per-hour
-        averages, an hour-boundary reset, no renderer anywhere on the path. No body of that
-        packet was ever going to work. It is out.
-        0x02D1 effect 0x41 is the real one: the SAME renderer that draws the damage number,
-        with a POSITIVE argument, because the sign is what selects blue over violet.
-          a blue number on each tick  -> done. Say the colour, and whether it reads 10 (the
-                                         amount) rather than the new total
-          the wrong colour            -> the sign fork is not what we think it is
-          nothing, but world.log shows the 0x02D1 going out
+        The 0x007C recovery trailer drew nothing across three ticks of a real run because
+        the function it feeds is a STATISTICS COUNTER - running totals, per-hour averages,
+        no renderer anywhere on the path. It is out. 0x02D1 effect 0x41 is the real one: the
+        SAME renderer that draws the damage number, with a POSITIVE argument, because the
+        sign is what selects blue over violet.
+          a blue number on each tick  -> done. Say the COLOUR, and whether it reads 10 (the
+                                         amount recovered) rather than the new total
+          the wrong colour            -> the sign fork is not what we think
+          nothing, and world.log shows the 0x02D1 going out
                                       -> the suppression gate at 14278bd75, which is the one
                                          link in this chain nobody has measured. Swapping
                                          effect 0x41 for 0x23 does NOT test it: they share it
         A potion still draws no number, deliberately - that is for idle regen and chairs.
 
-     5. NPCs: !map 1 and just watch. No command needed.
-        Everything server-side is eliminated: not the creation packet, not the appear-effect
-        object, not a preload (0x0467 is SetNpcScriptable, and a cold template parse could
-        not fit in the 197 us a 0x044F dispatch takes anyway), and not the timing - the
-        client sits inside the SetField handler for 586 ms and dispatches nothing until it
-        returns, so no re-ordering can be earlier.
-        AND "mobs are instant" was never a control. In the archived logs the NPCs go out at
-        field entry and the mobs 7.16 s later from the respawn tick, with nothing to be late
-        against. Nobody has ever watched an NPC and a mob created at the same instant.
-        If you want to give one number: is the gap under a tenth of a second, or nearer half?
+     3. FRESH SPAWNS SHOULD BE SPREAD ACROSS THE MAP. Go to Right Around Lith Harbor, or
+        any map you have not visited this launch, and look at where the mobs are.
+        You reported them "completely concentrated on the left side of the map on fresh
+        spawn". The per-type quota was already balanced; what was not is WHICH points inside
+        each type, and it took the first N in WZ order - which runs left to right.
+          mobs across the whole map  -> fixed
+          still bunched at one end   -> say WHICH end, because left is the WZ order and
+                                        right would mean something else entirely
+          fewer mobs than before     -> the shuffle disturbed the quota, which its test says
+                                        it must not
+        Leave and come back: the layout should DIFFER between two fresh entries, because the
+        seed carries the clock.
 
-     6. IF THE CLIENT DIES, THERE SHOULD BE A DUMP. It is no longer a question of whether
+     4. A QUEST THAT GIVES AN ITEM - still never tested. Quest EXP in the chat log and the
+        fanfare are both CONFIRMED; the grey ITEM line has never been seen.
+        Expect "<Item> x<n> earned. (<Tab>)" in the CHAT LOG, not bottom-right.
+          grey line in the chat log -> done
+          another colour            -> the route is right and the colour is separate
+          nothing at all            -> either the item id resolved no name, or category 6 is
+                                       a tab that window does not show
+
+     5. IF THE CLIENT DIES, THERE IS ALREADY A DUMP - two of them, and they agree on the
+        call path. A third is only worth keeping if it is DIFFERENT, so the useful thing to
+        report is what you were doing, not the file.
+        Both deaths are the same stack: the client's free() called from a PCOM.dll
+        refcounted release, under VariantClear, under NAMESPACE.DLL. Both at ~600 s. If you
+        die at a wildly different time or while doing something new, say so.
+        Each dump is ~1 GB and two are kept per run.
+
     REGRESSION GLANCES - seconds each
     ---------------------------------
       Drops arc out of the corpse and are walkable-over, especially on a slope or step.
@@ -822,17 +815,20 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  6 steps. Say which you did.' -ForegroundColor Yellow
+    Write-Host '  5 steps. Say which you did.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
-    Write-Host '  WHAT THE LAST TWO RUNS SETTLED.' -ForegroundColor Green
+    Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
     Write-Host '  CHANNEL CHANGE WORKS - claimed by channel, real SetField, inventory'
-    Write-Host '  and mesos carried over. And THE HEAP DEATH IS SOLVED - the dump was'
-    Write-Host '  captured AND read, and it was never heap corruption. 156 blocks'
-    Write-Host '  stepped, every checksum valid, and RtlFreeHeap REFUSED a bad free.'
-    Write-Host '  One stray DWORD: a header that should read 0x20 read'
-    Write-Host '  0x0000000100000020. 6239 clean headers in that arena, exactly one'
-    Write-Host '  wrong, and it is the one that was freed. tools/dumpwalk.py.'
+    Write-Host '  and mesos carried over. And THE HEAP DEATH IS NOT HEAP CORRUPTION -'
+    Write-Host '  TWO dumps now, both read with tools/dumpwalk.py. The heap chain is'
+    Write-Host '  intact in both and RtlFreeHeap REFUSED a bad free; the address lands'
+    Write-Host '  inside a LIVE block. Same stack frame for frame in both - the'
+    Write-Host '  client free() under a PCOM.dll release, under VariantClear.'
+    Write-Host '  The first dump found a stray 1 in a header; the SECOND has a'
+    Write-Host '  different failure type and different garbage, so it is a WILD WRITE'
+    Write-Host '  into that arena, not one repeatable off-by-one. An agent is on it.'
+    Write-Host '  BULK SKILL POINTS now work - confirmed this run.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
     Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
@@ -845,51 +841,26 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  1. BULK SKILL POINTS. Add 3 at once to Three Snails.' -ForegroundColor Cyan
-    Write-Host '     Last run that only moved it by 1: 0x013B carries a COUNT and the'
-    Write-Host '     handler did level + 1. The field was documented and ignored.'
-    Write-Host '       goes up by 3 -> fixed'
-    Write-Host '       goes up by 1 -> the count is still being dropped'
-    Write-Host '       goes past 3  -> the clamp failed; Skill.wz says these stop at 3'
-    Write-Host '     Then try again at 3/3 - it must refuse and stay responsive.'
-    Write-Host '     NOTE: no SP is tracked at all, so nothing checks you had the points.'
+    Write-Host '  1. DEATH AND REVIVE. LOG IN AS "Idiot" FIRST.' -ForegroundColor Cyan
+    Write-Host '     They are still dead - 0/194 HP on map 10000022 - so the dialog should'
+    Write-Host '     appear ON ARRIVAL, with no setup and without being hit.'
+    Write-Host '       a. dialog appears? Expect ONE button, "REVIVE IN TOWN".'
+    Write-Host '       b. click it -> LITH HARBOR (10000000), 50 HP. That is a town and'
+    Write-Host '          NOT next door, so arriving adjacent means the table was unused.'
+    Write-Host '       c. Idiot is level 10 -> NO exp loss. Check the bar does not move.'
+    Write-Host '       d. can you MOVE and ATTACK after? ~65 client sites gate on the sign'
+    Write-Host '          of HP. This is the half most likely to be wrong.'
+    Write-Host '     Then die on purpose for the combat path.'
+    Write-Host '     No dialog? The client says why for free - outbound 0x02C6 in'
+    Write-Host '     world.log. Success is silence.'
     Write-Host ''
-    Write-Host '  2. A QUEST THAT GIVES AN ITEM - never got to this last time.' -ForegroundColor Cyan
-    Write-Host '     Quest EXP in the chat log and the fanfare are CONFIRMED. The grey'
-    Write-Host '     ITEM line has never been seen: "<Item> x<n> earned. (<Tab>)" in the'
-    Write-Host '     chat log, not bottom-right. Any item-granting quest will do.'
-    Write-Host ''
-    Write-Host '  3. DEATH AND REVIVE. START BY LOGGING IN AS "Idiot".' -ForegroundColor Cyan
-    Write-Host '     They are already dead - 0/194 HP on map 10000022 from last session -'
-    Write-Host '     so the dialog should appear on ARRIVAL, without being hit. That was'
-    Write-Host '     a real gap: the dialog fired on the death TRANSITION, and logging in'
-    Write-Host '     dead is not a transition, so they were stranded with !heal as the only'
-    Write-Host '     way out. Reviving there should land you on 10000000, LITH'
-    Write-Host '     HARBOR - a town, and not next door to a beach hunting ground.'
-    Write-Host '     Then die again on purpose, for the combat path.'
-    Write-Host '     You got a tombstone and no dialog last time. The client NEVER opens'
-    Write-Host '     that dialog itself - 0x0315 does, and it goes out right after the'
-    Write-Host '     0x007C that zeroes your HP. That order is not cosmetic: the handler'
-    Write-Host '     tests the client''s own copy of the HP and drops the packet SILENTLY'
-    Write-Host '     if it is still positive.'
-    Write-Host '       a. does the dialog appear? Expect ONE button, "REVIVE IN TOWN" -'
-    Write-Host '          the on-the-spot button is hidden without a Respawn Token.'
-    Write-Host '       b. click it -> a TOWN, 50 HP. Dying on map 40 revives at 60,'
-    Write-Host '          Southperry, which is several screens away, NOT next door.'
-    Write-Host '       c. EXP: 10% above level 10, nothing at 10 or below. Say your level.'
-    Write-Host '       d. can you MOVE and attack afterwards? ~65 client sites gate on the'
-    Write-Host '          sign of HP; there is a second 0x007C after the SetField for this.'
-    Write-Host '     If no dialog, the client says why for free: outbound 0x02C6 carries'
-    Write-Host '     the reason. Success is silence.'
-    Write-Host ''
-    Write-Host '  4. THE BLUE NUMBER, 2nd attempt - the 1st was the WRONG PACKET.' -ForegroundColor Cyan
+    Write-Host '  2. THE BLUE NUMBER, 2nd attempt - the 1st was the WRONG PACKET.' -ForegroundColor Cyan
     Write-Host '     Get hurt, then stand still 20s.'
     Write-Host '     The 0x007C trailer drew nothing across three real ticks because the'
-    Write-Host '     function it feeds is a STATISTICS COUNTER - running totals, per-hour'
-    Write-Host '     averages, no renderer on the path. It is out.'
-    Write-Host '     0x02D1 effect 0x41 is the real one: the SAME renderer as the damage'
-    Write-Host '     number, positive argument - the sign picks blue over violet.'
-    Write-Host '       blue number per tick -> done. Colour? And does it read 10 (the'
+    Write-Host '     function it feeds is a STATISTICS COUNTER. It is out. 0x02D1 effect'
+    Write-Host '     0x41 is the real one - same renderer as the damage number, positive'
+    Write-Host '     argument, and the sign picks blue over violet.'
+    Write-Host '       blue number per tick -> done. COLOUR? And does it read 10 (the'
     Write-Host '                               amount) rather than the new total?'
     Write-Host '       wrong colour         -> the sign fork is not what we think'
     Write-Host '       nothing, but world.log shows the 0x02D1 sent'
@@ -897,17 +868,30 @@ if ($SetFieldProbe) {
     Write-Host '                               unmeasured link. 0x23 does NOT test it'
     Write-Host '     A potion still draws nothing, deliberately.'
     Write-Host ''
-    Write-Host '  5. NPCs: !map 1 and just WATCH. No command.' -ForegroundColor Cyan
-    Write-Host '     Everything server-side is eliminated - creation packet, appear-effect'
-    Write-Host '     object, preload, and timing. AND "mobs are instant" was never a'
-    Write-Host '     control: in the logs the NPCs go out at field entry and the mobs'
-    Write-Host '     7.16s later from the respawn tick, with nothing to be late against.'
-    Write-Host '     One number if you like: is the gap under a tenth of a second, or'
-    Write-Host '     nearer half?'
+    Write-Host '  3. FRESH SPAWNS SHOULD BE SPREAD OUT.' -ForegroundColor Cyan
+    Write-Host '     Right Around Lith Harbor, or any map new to this launch.'
+    Write-Host '     The per-type quota was already balanced; WHICH points inside each'
+    Write-Host '     type was not - it took the first N in WZ order, which runs left'
+    Write-Host '     to right.'
+    Write-Host '       spread across the map -> fixed'
+    Write-Host '       still bunched         -> say WHICH end. Left is the WZ order;'
+    Write-Host '                                right would mean something else'
+    Write-Host '       fewer mobs than before-> the shuffle disturbed the quota'
+    Write-Host '     Leave and come back - the layout should DIFFER, the seed has the clock.'
     Write-Host ''
-    Write-Host '  6. IF THE CLIENT DIES THERE SHOULD BE A DUMP. Say how long you were' -ForegroundColor Cyan
-    Write-Host '     in and what you were doing - the logs cannot supply that.'
-    Write-Host '     Each is ~1 GB and two are kept per run.'
+    Write-Host '  4. A QUEST THAT GIVES AN ITEM - still never tested.' -ForegroundColor Cyan
+    Write-Host '     Quest EXP in the chat log and the fanfare are CONFIRMED. The grey'
+    Write-Host '     ITEM line has never been seen: "<Item> x<n> earned. (<Tab>)" in the'
+    Write-Host '     CHAT LOG, not bottom-right.'
+    Write-Host ''
+    Write-Host '  5. IF IT DIES there are already TWO dumps and they agree on the call' -ForegroundColor Cyan
+    Write-Host '     path. A third only matters if it is DIFFERENT - so report what you'
+    Write-Host '     were DOING, not the file. Both were ~600s, same stack.'
+    Write-Host ''
+    Write-Host '  NOT THIS RUN - agents are working on these:' -ForegroundColor DarkGray
+    Write-Host '     Nimble Feet buffs, Mr. Kim''s storage, Mina''s shop. The shop is OFF'
+    Write-Host '     on purpose: we build the opcode whose ART IS ABSENT from this client,'
+    Write-Host '     which is why it killed the client twice.'
     Write-Host ''
     Write-Host '  GLANCES: drops arc from the corpse and are walkable-over; kill-EXP'
     Write-Host '  line is WHITE; mobs on map 40 already standing; pick-ups stay OUT of'
