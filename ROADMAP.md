@@ -326,10 +326,14 @@ next.** This list is deliberately coarse so the two cannot drift; do not duplica
 - [x] Quests: accept, progress, turn in, forfeit, `Act.0`/`Act.1` payouts, an authored script
       overlay for the ones whose scripts this client does not ship.
 - [x] NPC dialogue and shops; ability points; job change; skill points.
-- [ ] **Death and revive.** `UI/Revive.img` is present in the WZ and `gm-handbook/returnmaps.txt`
-      now answers "which town", but what *opens* the dialog is reached only through the
-      Themida VM. Research in `research/revive.md` and `research/return-maps.md`.
-- [ ] The classic shop counter (`0x055D`, row structure undecoded), parties, the cash shop.
+- [x] **Death and revive - CONFIRMED on screen 2026-08-22.** `0x0315` opens the dialog and the
+      client never opens it itself. Both entry points work: dying, and logging in already dead.
+      Revive warps to the `reviveMap` town, 50 HP, -10% EXP above level 10.
+- [x] **Storage - opening and mesos.** `0x0572` out, `0x00F6` in. Item movement is not built.
+- [ ] **Buffs.** Decoded, not built: `0x013C` in, `0x007D` TemporaryStatSet out, duration in
+      milliseconds. `research/buffs.md`.
+- [ ] The classic shop counter - **row structure now decoded**, price at `row+0x38`, not yet
+      built (`research/classic-shop-rows.md`). Then parties and the cash shop.
 - [ ] Outgoing damage validation — blocked on two `0x00DF` header fields, not on the formula,
       which is decoded and tested.
 

@@ -1020,22 +1020,25 @@ new log lines say which - a repeat is now silent where a genuine inconsistency s
 
 #### What to do next, in order
 
-**The test plan is in `tools/test-server.ps1`** - both the `.NOTES` block and the on-screen
-`Write-Host` dialogue, and both were rewritten on 2026-08-21 to 7 steps. Item 2 of the old
-list is struck off: it has been answered without a run.
+**Rewritten 2026-08-22.** Six of the previous ten rows were done or superseded - the channel
+change, Roger's EXP and fanfare, the NPC fade, the heap dump, the shop decode and death. A
+next-steps list that still names finished work is how a launch gets spent re-testing.
 
-| # | do this | why it is here |
+Three of these are **decoded and deliberately not built**, each with a byte-level body an
+implementation can be diffed against rather than re-derived.
+
+| # | do this | state |
 |---|---|---|
-| 1 | **Finish the channel change** | The opcode is **`0x001A`, measured**, and the body is confirmed - the client tore down and connected to 8486. What failed was identification: a migrate carries **no character id**, the hello reported `32513` (our own `01 7f 00 00`), channel 1 refused, sent the **MINIMAL SetField**, and the client faulted 3.2 s later. Claim-by-channel is wired and prints a distinct line. **If the fault goes away with it, the minimal SetField is a loaded gun** and needs rethinking rather than being the documented safe fallback |
-| 2 | **What Roger's quest LOOKS like** | Every packet is proven on the wire (see above). Three open questions, all about drawing: is the item line **grey, in the chat log**; does quest EXP land in the **chat log** rather than bottom-right; does the fanfare play with **nothing drawn**, which is the predicted result |
-| 3 | **NPCs fading in - `!npcecho`** | Two passes said the server had no lever; both enumerated the **fields of `0x044F`** rather than the **packets the pool accepts**. There are two that create an NPC: `0x044F` (`or [obj+0x38],1`) and **`0x0451`** (`mov byte [obj+0x38],2`, then the identical body). **The case that works uses the second**: mobs get `0x03C6` *and* `0x03D2`. One command, one run |
-| 4 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither of which is parsed out of the attack header. `research/damage-formula.md`. Highest-value next step for goal J |
-| 5 | **The heap corruption, but only once a `.dmp` exists** | The instrument is finally real. `!analyze -v` and `!heap -p -a` are the two commands that matter. Do not spend a run *hunting* it - take the dump the next death produces on its own |
-| 6 | **The classic shop counter** | `0x055D` is the opcode; the body's thirteen-field row structure is not decoded. `research/classic-shop-opcode.md` |
-| 7 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; what is left is the NPC path. `research/job-advancement.md` 8.1 has the seven-step exchange. The instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
-| 8 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry **`attackSpeed` and `attack` on 203 weapons each**, neither in `equips.txt` - so no caller can supply a real weapon speed |
+| 1 | **Buffs / Nimble Feet** | **Decoded, not built.** Use is `0x013C`; the grant is `0x007D` TemporaryStatSet - 124-byte mask, then `{value, u32 reason, u32 duration}` per set bit, duration in **milliseconds**. Nimble Feet is speed +10 at every level, 10/20/30 s. Two hazards: `0x007D` **collides** with our inbound migration-hello constant, and the value width depends on a constant in Themida-packed `.data`. `research/buffs.md` |
+| 2 | **The classic shop** | **Decoded, not built**, and the price is settled: **`row+0x38`, a u64**, from three independent sites. The row is **42 reads**, not thirteen fields. Request opcode is **`0x00F5`**, not `0x0104`. Buy-back is the same array tagged by a per-row `u8`. **Three traps**: `row+0xa4` is a FILETIME with no sentinel and `0` hides every row; `row+0x10c = 0` fails purchases silently; a dropped row desynchronises the byte stream. `research/classic-shop-rows.md` |
+| 3 | **Storage item movement** | Open and mesos are **built and unseen**; take-out and put-in answer with the box unchanged and say so. The take-out index is **positional**, not a slot. `research/storage.md` |
+| 4 | **The heap wild write** | Both dumps carry the **identical** damaged header `0x0000000100000020`, all five instances in the `0x20` class, same stack. The **writer is not found** - a sweep for it returned nothing and `research/heap-wild-write.md` says why that negative is worth nothing. It also proposes a **3-byte client patch** that would turn the crash into a correct free; that is the owner's call |
+| 5 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither parsed out of the attack header. `research/damage-formula.md` |
+| 6 | **The grey quest item line** | The packet goes out - `0x02D1` effect 8, category 6 - and nobody has reported what it looks like. One glance, no setup |
+| 7 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; the NPC path is not. Instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
+| 8 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry `attackSpeed` and `attack` on 203 weapons each, neither in `equips.txt` |
 | 9 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
-| 10 | **Death, and mob->player damage tuning** | `damage::incoming_damage` is now authoritative for mob hits. Death itself is still unbuilt |
+| 10 | **The NPC first draw** | Every server-side cause is eliminated: not the creation packet, not the appear-effect object, not a preload, not the timing - and it is **not a fade**, it is a late first draw. What has never existed is a **control**: one mob and one NPC created in the same batch on a settled map. `research/npc-preload.md` §8 |
 
 **Two refusal paths still send a packet the client cannot dispatch.** `change_channel_refused`
 answers with `0x0011`, and so does the no-such-channel case - both undispatchable on a channel

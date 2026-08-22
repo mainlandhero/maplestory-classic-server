@@ -55,29 +55,46 @@ use crate::inventory::{
 
 /// Slots a brand-new storage box has.
 ///
-/// **[I], and nothing in this client corroborates it.** It is the number this game family
-/// starts an account at, and it is one constant to change, deliberately named so that changing
-/// it is a decision rather than an edit scattered through the code.
+/// **Thirty, and it is the owner's number.** 2026-08-22: *"Same as inventory, the first 30 slots of
+/// storage is provided as default."* That is the same figure as
+/// [`net::opcode::DEFAULT_INVENTORY_SLOTS`], and the constant below is written in terms of it
+/// rather than as a second literal `30`, so the two cannot drift apart while the sentence that
+/// ties them together stays true.
 ///
-/// The storage dialog **has** been decoded since this was written (`research/storage.md`), and
-/// it did **not** settle this: what it measures is the field's *width*, a `u8`, which admits
-/// any of 0..=255.
+/// # It used to be 4, and the way that nearly got "confirmed" is worth keeping
 ///
-/// **And there is a near-miss here that would have looked like corroboration.** The v214
-/// reference tree has `new Trunk(GameConstants.DEFAULT_TRUNK_SIZE); // Free first 4 storage
-/// slot` - a comment naming exactly this number, one line from where it would have been
-/// believed. `GameConstants.DEFAULT_TRUNK_SIZE` is **56**. The comment contradicts its own
-/// constant, so it corroborates nothing, and a search that stopped at the comment would have
-/// come back with a confident four.
-pub const DEFAULT_STORAGE_SLOTS: u16 = 4;
+/// The old value was **[I]** and honestly marked as uncorroborated. Decoding the storage
+/// dialog did not settle it either: what `research/storage.md` measures is the field's
+/// *width*, a `u8`, which admits any of 0..=255.
+///
+/// **And the v214 reference tree contains a line that would have read as corroboration.**
+/// `new Trunk(GameConstants.DEFAULT_TRUNK_SIZE); // Free first 4 storage slot` - a comment
+/// naming exactly the old number, one line from where it would have been believed.
+/// `GameConstants.DEFAULT_TRUNK_SIZE` is **56**. The comment contradicts its own constant, so
+/// it corroborated nothing, and a search that stopped at the comment would have come back with
+/// a confident four and a citation.
+pub const DEFAULT_STORAGE_SLOTS: u16 = net::opcode::DEFAULT_INVENTORY_SLOTS;
 
 /// The floor. A zero-slot box is a box that refuses everything, which reads on screen as
 /// broken rather than as full.
 pub const MIN_STORAGE_SLOTS: u16 = 1;
 
-/// The ceiling. **[I]**, same provenance as [`DEFAULT_STORAGE_SLOTS`]; it exists so a typo
-/// cannot ask for 65535 slots, not because the client is known to stop anywhere.
+/// The ceiling. **[I]**, and no longer the same provenance as [`DEFAULT_STORAGE_SLOTS`] -
+/// that one is the owner's number now, this one is still nobody's. It exists so a typo cannot ask
+/// for 65535 slots, not because the client is known to stop anywhere.
+///
+/// One thing the decode *does* constrain: the slot count goes on the wire as a **`u8`**, so
+/// anything above 255 could not be sent whatever this said.
 pub const MAX_STORAGE_SLOTS: u16 = 100;
+
+/// The two bounds the default has to satisfy, checked at **compile** time rather than in a
+/// test - clippy is right that a comparison between two constants is not an assertion, and a
+/// build that cannot produce the bad value beats a test that notices it afterwards.
+///
+/// The `u8` bound is the one with teeth: the slot count goes on the wire as a single byte, so
+/// a default above 255 would be silently truncated by `open_storage`.
+const _: () = assert!(DEFAULT_STORAGE_SLOTS <= MAX_STORAGE_SLOTS);
+const _: () = assert!(DEFAULT_STORAGE_SLOTS <= u8::MAX as u16);
 
 /// One occupied storage slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -712,6 +729,24 @@ mod tests {
             .unwrap();
         assert_eq!(rows, 0, "reading a box must not create one");
     }
+
+    /// **Storage starts with the same thirty slots the inventory does.**
+    ///
+    /// The owner, 2026-08-22: *"Same as inventory, the first 30 slots of storage is provided as
+    /// default."* Asserted against `net::opcode::DEFAULT_INVENTORY_SLOTS` rather than against
+    /// a literal `30`, because the constant is defined in terms of it and a test that repeated
+    /// the literal would pass even if the two drifted apart - which is the whole thing the
+    /// definition is there to prevent. The literal is checked once, separately, so that
+    /// "they agree" cannot be satisfied by both being wrong.
+    #[test]
+    fn a_new_box_has_the_same_slots_as_a_new_inventory() {
+        assert_eq!(DEFAULT_STORAGE_SLOTS, net::opcode::DEFAULT_INVENTORY_SLOTS);
+        assert_eq!(DEFAULT_STORAGE_SLOTS, 30, "the owner's number");
+        let (store, account, _, _) = store_with_two_characters();
+        let boxed = store.storage(account).unwrap();
+        assert_eq!(boxed.slots, 30, "and a brand-new box actually gets them");
+    }
+
 
     #[test]
     fn storage_mesos_move_between_the_purse_and_the_box_without_being_created() {

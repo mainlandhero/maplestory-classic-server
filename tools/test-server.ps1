@@ -60,11 +60,10 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - three things, and only the first is a procedure
+    THE POINT OF THIS RUN - four things, two of them just "what did you see"
     -----------------------------------
-     1. FRESH SPAWNS SHOULD BE SPREAD ACROSS THE MAP. **The only real procedure here.**
-        Go to Right Around Lith Harbor, or any map you have not visited this launch, and
-        look at where the mobs are.
+     1. FRESH SPAWNS SHOULD BE SPREAD ACROSS THE MAP. Go to Right Around Lith Harbor, or
+        any map you have not visited this launch, and look at where the mobs are.
         You reported them "completely concentrated on the left side of the map on fresh
         spawn". The per-type quota was already balanced; what was not is WHICH points inside
         each type - it took the first N in WZ order, and WZ order runs left to right.
@@ -76,10 +75,27 @@
         Leave the map and come back: the layout should DIFFER between two fresh entries,
         because the seed carries the clock.
 
-     2. TWO THINGS THAT ALREADY WENT OUT LAST RUN, and all I need is what you SAW.
-        Both packets are in the log of the 02:50 run; neither was reported on. No setup.
+     2. CLICK MR. KIM. The storage box is new this session and has never been on a screen.
+        They are in Lith Harbor, which is also where you revive, so this costs no travel.
+        Before this they did NOTHING when clicked - not a wrong thing, nothing - because they have
+        no dialogue line and the click fell through to a conversation with nothing to say.
+          the storage window opens  -> done. It should show 30 slots, the same as the
+                                       inventory default, and your meso balance
+          it opens with 4 slots     -> the default did not take
+          nothing happens           -> world.log will have the 0x0572 going out or not, which
+                                       splits this cleanly in half
+          the client dies           -> say so immediately. This is a brand-new packet and the
+                                       per-type count is ONE byte where the v214 reference
+                                       says four; if that is wrong every item blob after it
+                                       is shifted
+        Then try MOVING MESOS in and out. Both directions work and are one transaction.
+        TAKING ITEMS IN AND OUT IS NOT BUILT - the box comes back unchanged and the log says
+        so. That is expected, not a bug.
 
-        a. THE BLUE RECOVERY NUMBER. Sent **16 times** as 0x02D1 effect 0x41, "+10".
+     3. TWO THINGS THAT ALREADY WENT OUT LAST RUN, and all I need is what you SAW.
+        No setup for either; both packets are already in the log of the 02:50 run.
+
+        a. THE BLUE RECOVERY NUMBER. Sent 16 times as 0x02D1 effect 0x41, "+10".
            Get hurt, stand still 20 s.
              a blue number appears -> done. Say the COLOUR, and whether it reads 10 (the
                                       amount) rather than the new total
@@ -87,19 +103,17 @@
                                       that chain nobody has measured. Swapping effect 0x41
                                       for 0x23 does NOT test it - they share it
 
-        b. THE GREY QUEST ITEM LINE. Sent last run: quest 10001 rewarded 2000000 x5 and
-           2000003 x5, both as 0x02D1 effect 8 at chat category 6.
+        b. THE GREY QUEST ITEM LINE. Sent last run for quest 10001, two items.
              a grey "<Item> x<n> earned. (<Tab>)" in the CHAT LOG -> done
-             a line in another colour  -> the route is right, the colour is separate
-             nothing at all            -> the item id resolved no name, or category 6 is a
-                                          tab that window does not show
+             another colour  -> the route is right, the colour is separate
+             nothing         -> the item id resolved no name, or category 6 is a tab that
+                                window does not show
 
-     3. IF THE CLIENT DIES, THERE ARE ALREADY TWO DUMPS and they agree on the call path, so
-        a third is only worth anything if it is DIFFERENT. Report what you were DOING, not
-        the file.
-        Both deaths were at ~600 s on the same stack: the client's own free() called from a
-        PCOM.dll refcounted release, under VariantClear, under NAMESPACE.DLL. If you die at
-        a wildly different time, or while doing something new, that is the interesting case.
+     4. IF THE CLIENT DIES, THERE ARE ALREADY TWO DUMPS and they agree completely - same
+        stack, same damaged header value, same size class. A third is only worth anything if
+        it is DIFFERENT, so report what you were DOING rather than the file.
+        Both were at ~600 s on the client's own free() under a PCOM.dll release. If you die
+        at a wildly different time, or doing something new, that is the interesting case.
 
     REGRESSION GLANCES - seconds each
     ---------------------------------
@@ -113,10 +127,14 @@
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
-      - The classic shop counter. 0x055D is the opcode; the row structure is not decoded.
+      - The classic shop counter. DECODED now, including the price (row+0x38), and
+        deliberately not built - three of its fields fail silently or desynchronise the
+        stream if they are wrong, and this packet has killed the client twice.
+      - Buffs / Nimble Feet. Decoded, not built.
+      - Storage item movement. Opening the box and moving mesos ARE built; take-out and
+        put-in answer with the box unchanged and say so.
       - Outgoing damage validation. The formula is decoded but the 0x00DF header does not
         carry the action or the skill id, so nothing can be checked against it yet.
-      - Death. Unbuilt.
       - Page heap is OFF, so !heap -p -a has no allocation stacks to print. That is an IFEO
         setting and it is the owner's to turn on.
       - There is NO EXP-gain sound in this client.
@@ -791,7 +809,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  3 steps, and only the first needs doing.' -ForegroundColor Yellow
+    Write-Host '  4 steps. Two are procedures, two are just "what did you see".' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -811,6 +829,9 @@ if ($SetFieldProbe) {
     Write-Host '  on to reach level 11, which answers the half most likely to fail:'
     Write-Host '  they could move and attack afterwards.'
     Write-Host '  BULK SKILL POINTS now work - confirmed this run.'
+    Write-Host '  STORAGE IS WIRED - the textbook'
+    Write-Host '  "built is not wired": crates/store had the whole layer for days'
+    Write-Host '  with no caller anywhere. It is step 2 and has never been seen.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
     Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
@@ -823,7 +844,7 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  1. FRESH SPAWNS SHOULD BE SPREAD OUT - the only real test here.' -ForegroundColor Cyan
+    Write-Host '  1. FRESH SPAWNS SHOULD BE SPREAD OUT.' -ForegroundColor Cyan
     Write-Host '     Right Around Lith Harbor, or any map new to this launch.'
     Write-Host '     The per-type quota was already balanced; WHICH points inside each'
     Write-Host '     type was not - it took the first N in WZ order, which runs left'
@@ -834,7 +855,19 @@ if ($SetFieldProbe) {
     Write-Host '       fewer mobs than before-> the shuffle disturbed the quota'
     Write-Host '     Leave and come back - the layout should DIFFER, the seed has the clock.'
     Write-Host ''
-    Write-Host '  2. TWO PACKETS ALREADY WENT OUT LAST RUN. I only need what you SAW.' -ForegroundColor Cyan
+    Write-Host '  2. CLICK MR. KIM - storage is new and has never been on a screen.' -ForegroundColor Cyan
+    Write-Host '     They are in Lith Harbor, where you already revive, so no travel.'
+    Write-Host '     Before this they did NOTHING when clicked - not a wrong thing, nothing.'
+    Write-Host '       window opens    -> done. 30 slots (same as inventory) and your mesos'
+    Write-Host '       opens with 4    -> the default did not take'
+    Write-Host '       nothing happens -> world.log has the 0x0572 or it does not, which'
+    Write-Host '                          splits it cleanly in half'
+    Write-Host '       the client dies -> SAY SO. Brand-new packet, and its per-type count'
+    Write-Host '                          is ONE byte where the v214 reference says four'
+    Write-Host '     Then move MESOS both ways - that works, one transaction.'
+    Write-Host '     MOVING ITEMS IS NOT BUILT: the box comes back unchanged and says so.'
+    Write-Host ''
+    Write-Host '  3. TWO PACKETS ALREADY WENT OUT LAST RUN. I only need what you SAW.' -ForegroundColor Cyan
     Write-Host '     a. THE BLUE NUMBER - sent 16 times as 0x02D1 effect 0x41, "+10".'
     Write-Host '        Get hurt, stand still 20s.'
     Write-Host '          a number appears -> COLOUR? And does it read 10 (the amount)'
@@ -847,14 +880,15 @@ if ($SetFieldProbe) {
     Write-Host '          nothing                   -> no name resolved, or category 6 is'
     Write-Host '                                       a tab that window does not show'
     Write-Host ''
-    Write-Host '  3. IF IT DIES there are already TWO dumps and they agree. A third only' -ForegroundColor Cyan
-    Write-Host '     matters if it is DIFFERENT - report what you were DOING, not the'
-    Write-Host '     file. Both were ~600s on the same stack.'
+    Write-Host '  4. IF IT DIES there are already TWO dumps and they agree COMPLETELY -' -ForegroundColor Cyan
+    Write-Host '     same stack, same damaged header value, same size class. A third only'
+    Write-Host '     matters if it is DIFFERENT, so report what you were DOING, not the'
+    Write-Host '     file. Both were ~600s.'
     Write-Host ''
-    Write-Host '  NOT THIS RUN - agents are working on these:' -ForegroundColor DarkGray
-    Write-Host '     Nimble Feet buffs, Mr. Kim''s storage, Mina''s shop. The shop is OFF'
-    Write-Host '     on purpose: we build the opcode whose ART IS ABSENT from this client,'
-    Write-Host '     which is why it killed the client twice.'
+    Write-Host '  NOT THIS RUN - decoded but deliberately NOT built:' -ForegroundColor DarkGray
+    Write-Host '     Nimble Feet buffs, and Mina''s shop. The shop price is now known'
+    Write-Host '     (row+0x38) but three of its fields fail SILENTLY or desynchronise the'
+    Write-Host '     byte stream if wrong, and it has killed the client twice already.'
     Write-Host ''
     Write-Host '  GLANCES: drops arc from the corpse and are walkable-over; kill-EXP'
     Write-Host '  line is WHITE; mobs on map 40 already standing; pick-ups stay OUT of'
