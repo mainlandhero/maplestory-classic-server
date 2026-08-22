@@ -193,6 +193,45 @@ table cannot describe a level it does not contain. Re-derive with
 no `sp` column on `characters`, so nothing checks that a point was available to spend. The
 cap on the level table is the only limit.
 
+#### Where a dead character respawns: the data exists now
+
+`tools/dump_returnmaps.py` -> `gm-handbook/returnmaps.txt`, 426 rows, **tab** separated
+because one map is called `The Resting Spot, Pig Park`. Re-running it is byte-identical, and
+every count below was re-derived from the file rather than taken from the report.
+
+* **`returnMap` is the revive anchor.** 426/426 fields carry it, none is the sentinel, and it
+  lands on a `town == 1` field for 388 of them. It is **not** a map exit: cross-referenced
+  against `portals.txt` it is not among the field's own portal targets on 316 of the 401
+  fields that have a door, and 130 fields have no portal path to it at all within six hops.
+  Map 40 returns to 60 Southperry, several screens away. A teleport target. That it is the
+  **death** destination is **[D]**, not [L] - the WZ never names the event - and the argument
+  is `Return Scroll - Nearest Town` (2030000) carrying the same sentinel in `spec/moveTo`
+  where every other return scroll carries a literal town id.
+* **`forcedReturn` is eject, not respawn. Do not use it for death.** Sentinel on 354/426; 72
+  carry a real id, and those 72 are ship cabins mid-flight, timed subway depots, PQ stages and
+  instanced dungeons - fields you must not be left standing in. It disagrees with `returnMap`
+  on 28 of the 44 where both are real, and the disagreement is the discriminator: `Dead Mine I`
+  returns to El Nath, the town, but force-ejects to the field outside the mine. Decoded and
+  deliberately unwired; it is a login-placement question.
+* **`town` is coarser than "town square"** and a resolver that stops on it is wrong: shop
+  interiors carry `town == 1` too, and **94 of the 115 town fields point `returnMap`
+  elsewhere**. Stopping on the flag revives the player inside Southperry Armor Store. The
+  shipped rule is one **unconditional** hop, then walk while not a town, cap 8.
+* **It terminates.** 421 of 426 resolve in one hop, 5 in two, none deeper, none with no
+  destination. There are 33 self-loop cycles (a PQ, 22 event stages, 3 test maps); returning
+  the last real field means a PQ death lands on stage 1 instead of hanging. None of the 33 is
+  reachable on foot - walking portals from map 1 reaches 25 fields, all Maple Island.
+* **`NO_MAP = 999_999_999`** is the client's own "no map id here" sentinel, the same number
+  `portal/<n>/tm` uses. Never warp to it.
+
+**A note on how that was got, because it is this repo's own rule biting the coordinator.** The
+brief I wrote suggested `VRLimit` as the positive control for the WZ reader. **There is no
+`VRLimit` key in this client** - it is `VRTop`/`VRBottom`/`VRLeft`/`VRRight` - so that control
+could only ever have failed, and a reader verified against it would have been declared broken
+while working. The agent caught it and used `version`/`bgm`/`mapMark` (426 each) plus
+`fieldType` (379, so it also proves the reader *discriminates*) instead. Handing out a control
+that cannot pass is the same mistake as trusting a scan that cannot find anything.
+
 #### Death and revive: opened, not built
 
 The owner: *"My HP hit 0, I see the tombstone on my character, but I do not see the revive
