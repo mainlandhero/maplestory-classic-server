@@ -163,7 +163,7 @@ the work is listed under Stage 3.5.
 - [ ] The login server (Stage 3) validates the same session token, so the two agree on
       who the player is.
 
-### Stage 3 — Login server  ← **current**, and mostly done
+### Stage 3 — Login server  ✅ done
 - [x] Reach the login screen (inbound `0x0032`), the **world list** (`0x000B`, which is also
       what enables the Login button), and **character select**.
 - [x] The **account name / masked email** (`0x0000`) — server-supplied, on screen.
@@ -292,16 +292,20 @@ username and password. Designs: **`docs/deployment.md`** and **`docs/launcher.md
       found; `mode=2` may already be unnecessary — it is applied ~100ms *after* the client
       auto-logs in, so test whether anything breaks without it.
 
-### Stage 4 — Channel server / enter world
-- [ ] `crates/channel`: accept a migrating client, spawn the character into a map.
-      Needs server-side Map WZ (portals, spawns, footholds).
-- [ ] **Lead, not yet investigated:** the owner recalls the live service dropping a newly created
-      character straight into the starter map. `FUN_141b36a10` does *not* do that — its
-      success path ends at character select unconditionally — so a further packet must. The
-      candidate is inbound **`0x0011`** (`FUN_141b36f60`, 4821 bytes), which the opcode-name
-      mapping calls `SelectCharacterResult`, i.e. the packet that would carry a channel
-      address. That is also where the retracted migration question gets settled.
-- [ ] Movement, chat. **Walk around a map.**
+### Stage 4 — Channel server / enter world  ✅ done
+- [x] `crates/world`: accepts a migrating client and spawns the character into a map, with
+      server-side Map WZ (portals, spawns, footholds — 94 089 foothold segments across 426
+      maps). Confirmed on screen 2026-08-19.
+- [x] Movement, chat, portals both ways. **Walking around a map works.**
+- [x] **Changing channel**, which took three passes and was the last thing in this stage to
+      land. `0x00D2` is answered with **`0x001A`** — an opcode no static pass could reach, so
+      it was found by sending ten candidates in one run and reading the dispatch *timing* out
+      of the hook log. A migrate carries no character id, so the destination channel claims
+      the migration **by channel**. Confirmed 2026-08-21: *"Channel changed successfully…
+      everything carried over."*
+- The `0x0011` lead above was chased and is settled: `0x0011` is a **login-stage** opcode,
+  below the channel switch's `0x70` floor, so a channel connection cannot dispatch it at all.
+  Answering `0x00D2` with it was worse than not answering, because `0x00D2` latches on send.
 
 ### Stage 5 — Cash shop server
 The cash shop is a **separate server with its own connection**: the client disconnects
@@ -312,9 +316,22 @@ handler set, not a menu inside the channel server.
 - [ ] Wallet (NX/maple points) in `crates/store`; purchase → cash inventory grant.
 - [ ] Cash inventory as a distinct storage area from the normal inventory.
 
-### Stage 6+ — Gameplay systems
-- [ ] Mob spawns/AI/damage, drops, loot, inventory, skills, NPCs/shops, quests, parties…
-      Driven by extracted WZ data (Mob/Skill/Npc/Quest/Reactor/String).
+### Stage 6+ — Gameplay systems  ← **current**
+**`STATUS.md` is authoritative for what is confirmed, what is merely wired, and what is
+next.** This list is deliberately coarse so the two cannot drift; do not duplicate detail here.
+
+- [x] Mob spawns, movement and damage **both directions**; drops that land on the floor and
+      pick up; EXP, levelling and kill quests.
+- [x] Inventory, equipping and swapping, stacking, mesos, persistence across a relog.
+- [x] Quests: accept, progress, turn in, forfeit, `Act.0`/`Act.1` payouts, an authored script
+      overlay for the ones whose scripts this client does not ship.
+- [x] NPC dialogue and shops; ability points; job change; skill points.
+- [ ] **Death and revive.** `UI/Revive.img` is present in the WZ and `gm-handbook/returnmaps.txt`
+      now answers "which town", but what *opens* the dialog is reached only through the
+      Themida VM. Research in `research/revive.md` and `research/return-maps.md`.
+- [ ] The classic shop counter (`0x055D`, row structure undecoded), parties, the cash shop.
+- [ ] Outgoing damage validation — blocked on two `0x00DF` header fields, not on the formula,
+      which is decoded and tested.
 
 ---
 

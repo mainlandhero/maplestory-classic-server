@@ -554,7 +554,7 @@ instrument this project has.
 |---|---|---|---|
 | `0x01A0` | `SetField` | 33-byte head, three `u32`s, then the character record - **235 bytes undressed, 759 wearing four items with stats** | **works, and the character is dressed on screen.** The equipped list was confirmed 2026-08-19. What is *not* working is the item **tooltips**: both stat masks read back as zero in the Equipment window while the avatar is correct, so something in that window renders a different object. `research/naked-character.md`, `research/equip-stats.md` §11 |
 | `0x044F` | `NpcEnterField` | fixed **64 bytes** | **works** - NPCs on screen. Two of its fields being zero (`enabled`, `alpha`) made every NPC invisible while the layout was perfect. `research/npc-spawn.md` |
-| `0x055B` | `ScriptMessage` | 14-byte head, then per message type; type 0 `Say` is 26 bytes plus the text | **built 2026-08-19, unconfirmed on screen** - answers `0x0151`. Never send one with or just before a `SetField`: field entry runs `FUN_142caa4e0`, which resets the script manager and tears the dialog down silently. `research/npc-dialogue.md` |
+| `0x055B` | `ScriptMessage` | 14-byte head, then per message type; type 0 `Say` is 26 bytes plus the text | **confirmed on screen 2026-08-21** - answers `0x0151`. NPC dialogue works, including Roger's authored two-line opening and its Accept/Decline box. Note the reply shape: a yes/no box answers with **six bytes** (`handle, type, action`) and no echo or text, where a Say answers with the full 122; a parser that reads the echo unconditionally drops every Accept silently. Never send one with or just before a `SetField`: field entry runs `FUN_142caa4e0`, which resets the script manager and tears the dialog down silently. `research/npc-dialogue.md` |
 | `0x0138` | `UserAvatarModified` | `u32` character id, then the compact avatar look | **dead code in the client, and no longer sent.** The apply is guarded by a call to `0x1407f5ce0`, which is three bytes - `33 c0 c3`, `xor eax,eax; ret` - then `TEST/JZ`, so the branch is always taken. **Corrected 2026-08-19:** this row used to say "the handler reaches its apply but the apply's loop never runs. Measured." The measurement (a watch that never fired) was right; the *explanation* was wrong, and the real one needs no run. `research/naked-character.md` §5.1 |
 | `0x03C6` | mob enter field | `u8, u32 objectId, u8, u32 templateId, u8`, a 20-byte block, then a **variable-length** movement path | **not built** - `research/mob-spawn.md` |
 
@@ -588,7 +588,7 @@ in a capture, which has now identified seven and cost no static search at all.
 | `0x00D1` | transfer field (portal) | fully decoded, `research/transfer-field-request.md` | yes |
 | `0x00DC` | **field entered** | empty. **Once per `SetField`, every time** - this is the per-field marker | yes, with NPCs |
 | `0x0238` / `0x024D` | entered the world | empty. **First field entry only**, never again - not a per-field marker | no |
-| `0x0151` | **quest request** | `u8 action, u32 questId, u32 npcTemplateId, [i16 x, i16 y], [u32 selection]`. Builder `FUN_141f0e4c0`. **Not an "NPC click", and the first `u32` is a quest id, not an object id** - see the retraction below | **yes, since 2026-08-19** - answered with a `0x055B` Say, so the NPC speaks. That is text on screen and nothing more: no quest-result packet has been found, so **no quest state advances** |
+| `0x0151` | **quest request** | `u8 action, u32 questId, u32 npcTemplateId, [i16 x, i16 y], [u32 selection]`. Builder `FUN_141f0e4c0`. **Not an "NPC click", and the first `u32` is a quest id, not an object id** - see the retraction below | **yes**. Answered with a `0x055B` Say, and since 2026-08-21 it advances real state: `0x0089` records the accept or the completion, `Act.0`/`Act.1` pay out, and **action 3 is a forfeit with a 5-byte body** that `parse_quest_request` cannot read - it needs a 9-byte head, so the forfeit is split off before it. The 2026-08-19 note that "no quest state advances" is obsolete |
 | `0x00E7` | **chat** | `u32`, `u16`-length string, `u8` | no |
 | `0x0082` | **leave world** - BOTH "Choose another world" and "Back" on the character screen send this, empty body | | **yes**, already |
 | `0x0182` | **party create** | 68 bytes carrying a length-prefixed party name | no |
@@ -606,3 +606,71 @@ which is why the "always answer" rule has not bitten on the channel the way it d
 **`FUN_141820080`**, `CField::OnPacket`, covering `0x1a4..0x5ab` and range-chaining to about
 15 pool sub-dispatchers - the NPC pool at `0x44F..0x468` and the mob pool at `0x3C6..0x44E`
 among them.
+
+## Four more, decoded 2026-08-21/22
+
+Added because the table above did not know about any of them and one of them is the only
+opcode in this project ever pinned by a **timing** measurement rather than by reading code.
+
+### `0x001A` — the channel migrate reply. **MEASURED**, not inferred
+
+`u8 ok, u32 ip` in **network** order, `u16 port` **little-endian** (the client `htons`es it).
+Seven bytes. Answers `0x00D2`.
+
+The opcode could not be read statically and `research/change-channel-reply.md` said so
+plainly: the handler `FUN_1415d8c00` has zero callers of every kind, zero 4-byte RVA
+references, and `.themida` has `SizeOfRawData = 0`. So ten candidates were sent in one run and
+**the hook log named the winner by how long it took**, because it writes one dispatch line per
+inbound opcode *on handler return*:
+
+```text
+100 opcode=0x0019 elapsed_us=64.0       ret=1
+101 opcode=0x001A elapsed_us=354121.0   ret=1036749576   <- 354 ms: a socket teardown
+```
+
+Confirmed the same run: the client tore its connection down and reconnected to `127.0.0.1:8486`.
+
+**A migrate carries no character id**, which is why the receiving channel cannot identify the
+player from the hello - it reported `32513`, which is `01 7f 00 00` read back out of our own
+body. The far end claims the migration **by channel** instead. Working end to end since
+2026-08-21: *"Channel changed successfully… everything carried over."*
+
+### `0x0451` — `NpcChangeController`, the pool's *other* creation packet
+
+`u8 flag`, then the identical 20-field body `0x044F` uses. `flag != 0` on an unknown id
+allocates, sets `mov byte [obj+0x38], 2` where `0x044F` does `or [obj+0x38], 1`, and then calls
+**the same decoder body** `FUN_141e36b20`. `flag == 0` detaches.
+
+That last point is the one worth carrying: because both creation packets share one decoder,
+**a test that compares them can only ever report "no difference"**. One was built and run
+before anybody noticed.
+
+### `0x0452` — the NPC appear-effect switch
+
+`u32 v`, then `DAT_143ad2d30 = (v != 0)`. **The polarity is inverted**: `v = 0` leaves the
+effect *on*.
+
+While that global is zero, NPC creation allocates a `0x90`-byte object, constructs it against
+the NPC, stamps it with a clock value and starts it. The packet's two branches identify the
+object because they are asymmetric: `v == 0` runs the identical allocate/construct/stamp
+sequence on every NPC already in the pool, and `v != 0` tears it down.
+
+Wired as `!npcfx on|off` and **tested: it is not the NPC appearance delay.** Decoded, wired,
+eliminated.
+
+### `0x0467` — `SetNpcScriptable`, and `research/npc-spawn.md` misread it
+
+Not "count template ids". Four reads per entry, `tools/reads.py` and `tools/listing.py`
+agreeing:
+
+```text
+u8 count, then count x { u32 templateId; str script; u32 dateStart; u32 dateEnd }
+```
+
+`FUN_141e86bc0` builds `wYear*10000 + wMonth*100 + wDay` from a SYSTEMTIME, compares it against
+those two fields, and installs the winning script at `template+0x178`. It loads the template as
+a side effect through the same `FUN_141e77b70(templateId, 0)` that `0x044F` uses, but it also
+pushes onto a list on the process-global cached template with no dedup found — so it is **not**
+a free way to preload art, and the preload theory it was a candidate for is dead on a
+measurement anyway (a `0x044F` dispatch is 113–1381 µs; a cold field load is 415 000–598 000 µs,
+so the cache is already warm).

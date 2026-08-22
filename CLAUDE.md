@@ -166,6 +166,37 @@ Two things generalise:
 The self-test in `crates/grap-stub/src/minidump.rs` exists for the same reason. A dump writer
 that has never written a dump is exactly the kind of instrument this file keeps warning about.
 
+## The thing you are comparing against may never have been a control
+
+Three days went into *"mobs appear instantly and NPCs fade in - find the difference."* Two
+static passes, a decompilation pass, a new opcode, two GM commands and three client runs came
+out of that sentence. On 2026-08-22 the sentence itself was checked, in a log that had been
+sitting in `previous-runs/` the whole time:
+
+```text
+01:20:57.582  -> 0x044F NpcEnterField   template 8, template 9      <- field entry
+01:21:04.743  -> 0x03C6 MobEnterField   template 2, object id 2000  <- 7.16 s later
+```
+
+**The mobs were not in the field-entry batch.** They arrived from the respawn tick, seven
+seconds after the map had settled, with nothing to be late against. The one archived run where
+mobs *were* in the entry batch is map 10000022, which has no NPCs. **Nobody has ever watched an
+NPC and a mob created at the same instant**, which is the only observation the whole comparison
+rested on.
+
+Everything downstream was still real work - the `0x044F` field enumeration, `0x0451`, `0x0452`
+and its appear-effect object are all decoded and all correctly eliminated. But they were
+answering *"why is A different from B"* when nobody had established that A and B differ.
+
+The habit: **before hunting for the difference between two cases, check that both were observed
+under the same conditions.** A remembered contrast is not a measurement. It is worth one grep of
+an archived log, and here that grep was free and would have been decisive on day one.
+
+The same pass produced the corollary, which is cheaper still: `research/` said `0x0467` was
+"a template preload list", and it is `SetNpcScriptable` - `u32 templateId; str script;
+u32 dateStart; u32 dateEnd` per entry. **A table row written from a quick read is a claim.**
+Two separate briefs sent an agent after that row before anybody counted its reads.
+
 ## A guard whose answer is ignored is not a guard
 
 The owner, 2026-08-21: *"I was able to complete the Heena quest multiple times, this is not okay."*

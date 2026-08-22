@@ -99,6 +99,18 @@ jumps straight to the loop tail at `142d52168`.
 That is all 18 packet-read call sites in the function; the disassembly sweep found exactly
 18 and no more, so there is no hidden read.
 
+> **ADJUDICATED 2026-08-22: it is 17, not 18.** `python tools/reads.py 0x142d51930` re-run
+> today reports **17** sites - 14 direct and 3 through the `0x140303530` helper - and
+> `tools/reads.py` is the authority on this question by construction: it carries the list of
+> **ten** packet-read primitives, a count this project has had wrong four times (five, seven,
+> eight, nine), and each correction came from enumerating rather than sweeping a
+> neighbourhood. A hand sweep that finds one *more* than the tool is the direction that
+> matters least - an extra site cannot make a packet short - but the number in this sentence
+> is still wrong and `STATUS.md` listed the disagreement as unadjudicated for a day.
+>
+> The mode-2 path this document is actually about is unaffected either way. Nobody has
+> pointed at which site is the eighteenth.
+
 #### Mode 8's conditional short
 
 Mode 8 reads its i16 **only if `FUN_140255650(oldPos, invType) != 0`**. That function is

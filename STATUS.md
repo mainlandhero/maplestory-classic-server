@@ -609,7 +609,7 @@ new log lines say which - a repeat is now silent where a genuine inconsistency s
   That is precisely the asymmetry that makes `CLAUDE.md`'s "count the same event in two logs"
   impossible for any run but the current one - and three of this project's answers came from
   exactly that comparison. Both halves now land in the repo's `previous-runs/`.
-* **"The server cannot fix the NPC fade" was my over-generalisation, and the owner caught it.** Two agents proved a real negative - no field of `0x044F` controls it - and I restated that as *the server has no lever*, which does not follow. The owner: *"You shouldn't need to patch the client. Are there no way for the server to send the NPC data to the client so that it appears instantly?"* There is a second creation packet, `0x0451`, it sets a different state byte, and it is the one mobs get. Both agents were enumerating the wrong list; so was I when I accepted the conclusion.
+* **"The server cannot fix the NPC fade" was my over-generalisation, and the owner caught it.** Two agents proved a real negative - no field of `0x044F` controls it - and I restated that as *the server has no lever*, which does not follow. The owner: *"You shouldn't need to patch the client. Are there no way for the server to send the NPC data to the client so that it appears instantly?"* There is a second creation packet, `0x0451`, and it sets a different state byte. **Two corrections to this entry, both 2026-08-22.** *"It is the one mobs get"* is wrong - mobs get `0x03C6`/`0x03D2`, and `0x0451` is an NPC packet. And the distinction turned out not to matter at all: `0x044F` and `0x0451` **call the same decoder body**, `FUN_141e36b20`, so the test built on this reasoning could only ever have reported "no difference". The pushback was still right and the enumeration it forced still found `0x0452`; the specific reason given here was not.
 * **The dump instrument was configured and switched off at the master switch.** The owner,
   reasonably, believed crash dumps were enabled - `HKLM\...\Windows Error Reporting\
   LocalDumps\MapleStory.exe` points `DumpFolder` at the repo's `dumps\`, `DumpType` 2 (full),
@@ -739,7 +739,7 @@ answers with `0x0011`, and so does the no-such-channel case - both undispatchabl
 socket, so neither clears the `0x00D2` latch. Nothing decoded can. Said out loud rather than
 left to be rediscovered.
 
-**Two contradictions in this repo, both found 2026-08-21 and neither adjudicated:**
+**Three contradictions in this repo, found 2026-08-21 and none adjudicated** (the heading said "two" over three bullets for a day, which is the same drift this file keeps catching elsewhere):
 
 * **The `white` EXP byte.** `STATUS.md` above says `white = 1` was *confirmed on screen*;
   `research/exp-sharing.md` marks it **[I]**. Only `white = 0` -> yellow is [L] (from the owner's
@@ -751,9 +751,12 @@ left to be rediscovered.
   SIB byte, while `r12` always does, **so the control could not exercise the encoding that was
   actually there**. `opcode.rs`'s `ENABLED` label was right all along. This is the third time a
   carefully-hedged negative has been used to withdraw something correct.
-* **The `0x0070` read count.** `research/msexe-setfield.md` says 18 read sites;
-  `tools/reads.py`, which is the authority, finds **17**. The mode-2 path is unaffected either
-  way, but this project has shipped a short packet twice by trusting the wrong count.
+* ~~**The `0x0070` read count.**~~ **ADJUDICATED 2026-08-22 in favour of 17.**
+  `python tools/reads.py 0x142d51930` re-run today reports 17 - 14 direct, 3 through the
+  `0x140303530` helper - and `reads.py` is the authority by construction: it carries the list
+  of ten read primitives, a count this project has had wrong four times. `msexe-setfield.md`
+  now says so at the point of the claim. Nobody has ever pointed at which site is the
+  eighteenth, and the mode-2 path is unaffected either way.
 
 **Dead assets, so nobody hunts for them:** `Sound/Game.img` contains `IncEXP` and `questCount`
 and **neither name appears anywhere in the 76 MB executable, in either encoding** - while the

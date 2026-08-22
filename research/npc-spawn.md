@@ -207,13 +207,67 @@ that is the **mob pool** [I], and it is where mob spawning will live when it is 
 | `0x044F` | `u32 id`; if present, `or [obj+0x38],1` and stop; else allocate, `u32 templateId`, load template, insert, then `FUN_141e36b20` | **NpcEnterField** |
 | `0x0450` | `u32 id`; `and [obj+0x38],0xFE`; if the byte is now zero, unlink and free | **NpcLeaveField** |
 | `0x0451` | `u8 flag; u32 id;` if `flag == 0` clear bit 1 and detach; **if `flag != 0` and the id is unknown: allocate, `u32 templateId`, load template, `mov byte [obj+0x38],2`, insert, then the same `FUN_141e36b20` body** | **NpcChangeController** (a.k.a. SpawnNpcRequestController) |
-| `0x0452` | `u32 v`; sets global `DAT_143ad2d30 = (v != 0)` and walks every NPC in the pool | a global show/hide toggle |
+| `0x0452` | `u32 v`; sets global `DAT_143ad2d30 = (v != 0)` and walks every NPC in the pool | **the appear-effect switch** - see the 2026-08-22 note below, not "show/hide" |
 | `0x0453..0x0466` | `u32 id`, find the NPC, then a 20-case switch — per-NPC commands (move, emotion, script, …) | `BEGIN_NPC`-block |
-| `0x0467` | `u8 count`, then `count` template ids, each fed to `FUN_141e77b70` | a template preload list |
+| `0x0467` | **body misread here - see the 2026-08-22 note.** Not a bare id list | **`SetNpcScriptable`**, a dated script override |
 | `0x00BE` | `u8 count`, then `count` × `u32`, appended to a vector at `pool+0x40` | a "limited NPC" id list |
 
 `0x0468` is routed to the pool by `CField::OnPacket` but matches no case inside it, so it
 falls to the common exit and does nothing. [L]
+
+> **2026-08-22 - `0x0452` is narrower and more useful than "a global show/hide toggle", and
+> it was the only untried lever on the NPC appearance for three days.** The table row above
+> was written from a quick read and moved on; the listing of `FUN_141e76c60` says more. [L]
+>
+> The global it sets, `DAT_143ad2d30`, is tested **inside `FUN_141e36b20`** - the decoder body
+> that BOTH `0x044F` and `0x0451` call. While it is zero, creation allocates a `0x90`-byte
+> object from `DAT_143ad68a0`, constructs it against the NPC, stamps it with a clock value
+> from `FUN_142df7280(DAT_143ac18d8)+0xc`, hangs it on `npc[0xaf]` and starts it.
+>
+> The two branches of `0x0452` are what identify that object, because they are not symmetrical:
+> `v == 0` runs the **identical** allocate/construct/stamp sequence on every NPC already in the
+> pool, and `v != 0` calls `FUN_141e64690` to tear it down. One packet creates and destroys
+> exactly what creation creates.
+>
+> **And it is not the fade.** Wired as `!npcfx on|off` and tested on a real client: with the
+> effect disabled, a newly created NPC still appeared exactly the same way. The owner, asked the
+> discriminating question, also settled that **it was never an alpha fade at all** - *"it is no
+> see through, it's just absent-then-present, it's a very fast fade in effect but noticeable."*
+>
+> So this row is decoded, wired, and **eliminated as the cause**. The remaining question is why
+> the *first draw* is late, and `0x0467` below is the untried candidate.
+
+> **2026-08-22 - and `0x0467` is not a preload list. The row above misread its body.** [L],
+> `tools/reads.py` and `tools/listing.py` agreeing on four reads per entry:
+>
+> ```text
+> u8 count, then count x { u32 templateId; str script; u32 dateStart; u32 dateEnd }
+> ```
+>
+> `FUN_141e86bc0` builds `wYear*10000 + wMonth*100 + wDay` from a SYSTEMTIME, compares it
+> against those two fields, and installs the winning string at `template+0x178`. It is
+> **`SetNpcScriptable`** - a dated script override. It *does* load the template as a side
+> effect, through the same `FUN_141e77b70(templateId, 0)` that `0x044F` uses, but it also
+> pushes onto a list on the **process-global cached template** with no dedup found, so
+> sending it per field entry is not free.
+>
+> **And the preload theory it was the candidate for is dead on a measurement.** A `0x044F`
+> dispatch takes **113-1381 us** across every archived run, and 197-413 us on the three
+> first-entry-of-a-launch cases; a cold WZ field load in the same files takes
+> **415 000-598 000 us**. A cold template parse does not fit in 197 us. The cache is already
+> warm when the first `0x044F` arrives, because the client's own `life` walk filled it.
+>
+> Two further eliminations from the same pass, both [L]:
+>
+> * **Mobs get the identical preload** - the same loop in `FUN_141b7c960`, one `cmp` apart,
+>   `type=="n"` to `FUN_141e77b70` and `type=="m"` to `FUN_140495990`. Symmetric, so it cannot
+>   be what makes one instant.
+> * **Server re-timing cannot help.** The client sits inside the `0x01A0` handler for 586 ms,
+>   emits `0x0238` and `0x00DC` from *within* it, and dispatches nothing until it returns. The
+>   NPC packets are on the wire 63 ms before that return and dispatch 1 ms after it. Answering
+>   `0x0238` instead of `0x00DC` changes nothing.
+> * The NPC is **created opaque** - both `put_color` calls on the creation path pass
+>   `0xFFFFFFFF` - which independently corroborates the owner's "not see-through".
 
 `0x00BE` is the odd one out: it is **not** in the field block. It arrives through the
 *channel* dispatcher `FUN_142cbaa80`, `case 0xbe`, which does

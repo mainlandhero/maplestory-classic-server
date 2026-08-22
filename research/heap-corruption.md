@@ -138,6 +138,41 @@ WinDbg was installed on 2026-08-20 — the **Store build** (`WinDbgX`). There is
 independent of GameGuard."* This client is Themida-packed with anti-cheat modules loaded, so
 an attach is as likely to produce a fight over the debugger as an answer about the heap.
 
+> ## CORRECTED 2026-08-22: WER never wrote a dump for this client, and could not
+>
+> **Everything from here to the end of this section describes a method that does not work on
+> this executable.** It is kept for its working, not its verdict. What is true:
+>
+> * The registry recipe below is **correct and was correctly applied**. That was verified the
+>   expensive way and then the cheap way: `Disabled = 0` on the WER root key at 12:21:01, and a
+>   **decoy** built to do nothing but dereference null, named `MapleStory.exe` because
+>   LocalDumps keys match on the base name, wrote a **9.4 MB dump into `dumps\`** at 15:26.
+> * The real client raised the **same** exception code, `0xC0000005`, at **13:49:56 - 88
+>   minutes after WER was switched on** - and produced nothing at all. Same machine, same hour,
+>   same executable name, same exception. Every variable held but one.
+> * **The client ships its own crash reporting** - `CrashReportClient.exe` sits beside it, and
+>   it uploads its own error log and call stack in `0x008F`/`0x0090`. A process that handles
+>   its own faults never reaches `WerFault`. No amount of configuring fixes that.
+>
+> **The inference below is wrong and is the part that would have cost someone a week.** This
+> section says an absent dump *"means WER is not handling the exit, so something else is
+> terminating the process - which would point at the anti-cheat rather than at the heap."*
+> Nothing else was terminating the process. The exception was raised, went unhandled, and
+> ended the process exactly as documented; WER simply never saw it. Chasing the anti-cheat on
+> the strength of that sentence would have been chasing nothing.
+>
+> **What actually produces the dump now:** the hook writes it itself, from the vectored
+> exception handler that was already catching the fault and only logging it -
+> `crates/grap-stub/src/minidump.rs`. It is **first-chance**, so the dump is taken at the
+> faulting instruction rather than after the client has unwound. On 2026-08-21 20:20 it
+> produced **1 010 MB for a `0xC0000374`**, the first crash dump this project has ever had,
+> written in 878 ms.
+>
+> **Page heap is still OFF**, so the `!heap -p -a` advice below cannot deliver the allocation
+> and free stacks it promises. That is a real gap and it is the owner's to close - page heap is an
+> IFEO setting. Until then `kb` and `!heap -s` are what carry the weight, and
+> `tools/analyse-dump.ps1` says so.
+
 **Take a crash dump and open it offline instead.** Windows Error Reporting writes the dump
 after the process is already dying, and nothing is attached while it runs — so there is
 nothing for the anti-debug to detect. Same information, none of the fight.

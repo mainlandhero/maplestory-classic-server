@@ -387,6 +387,33 @@ change for whoever owns that file; this document does not touch `crates/`.
   raised at this return address was `STATUS_HEAP_CORRUPTION` **in `ntdll.dll`**. Nothing in
   the argument below depends on the names, only on "this is the only path in this function
   that leaves the image".
+
+> **CORRECTED 2026-08-22 by the first crash dump this project ever captured**
+> (`research/heap-corruption-dump.md`). Two things above need amending, and the first is a
+> piece of reasoning rather than a fact.
+>
+> **1. "This branch is only reached for blocks larger than `0x80`, therefore the freed object
+> was one of the large ones" is unsound.** The branch is chosen from the **header**, not from
+> the block. In the dump, the header of the block being freed read
+> `0x0000000100000020` where it should have read `0x20` - a stray `1` in the high dword - and
+> that pushed a **32-byte** allocation off the internal free-list path and into `RtlFreeHeap`.
+> So the branch says *the header claimed large*, which is a different statement, and the size
+> argument that follows from it cannot be used to identify the object. **[L]**, from a measured
+> header.
+>
+> **2. `DAT_143ad5530` and `DAT_143ad5538` are now named, not inferred.** Read out of the live
+> image in the dump they are **`kernel32!HeapFree`** and **`kernel32!GetProcessHeap`** - the
+> order the listing above uses. The `[D]` reasoning from the argument shape `(handle, 0, block)`
+> was right; it is now **[L]**, and the note that they "cannot be named statically" is true only
+> of the on-disk image.
+>
+> **3. And the death was not heap corruption at all.** The Windows heap chain was intact - 156
+> consecutive blocks stepped, every header checksum valid - and the address the allocator
+> complained about lands inside a **live, BUSY** 270 352-byte block. `RtlFreeHeap` refused a bad
+> free rather than discovering damage. The failure type is `8`, "block not busy". Page heap
+> would not have helped here and that is worth saying plainly: it guards Windows heap blocks,
+> and the damaged header is a slot inside a client-allocator arena it cannot see into.
+
 * This is a **different** free from the 2026-08-20 22:46 heap death, which faulted in
   `FUN_14019bb6a`. **[L]**
 * **The block was not an equipped-item object.** `FUN_1402cc180` allocates a type-1 item as
@@ -482,7 +509,7 @@ powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
 goes bare), whether step 3 put the hat back on, and whether the window died — and roughly how
 many seconds into the run. Which of the two drags it dies on is the whole result.
 
-If it dies at ~20 s, the second run is **full page heap plus a WER LocalDumps dump**, both
+If it dies at ~20 s, the second run is **full page heap plus a dump** (the dump comes from the hook now, not from WER — see the correction above), both
 already written out in `research/heap-corruption.md` — with a 20-second reproducer those stop
 being expensive, and `!heap -p -a <addr>` then prints the allocation and free stacks that a
 post-mortem `0xC0000374` can never give.
