@@ -104,8 +104,8 @@ stand as written.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-21, night: the channel change works, and the heap corruption is
-finally captured in a dump.** Read this section and nothing else to know where the project
+**Last updated 2026-08-22: four answers from the evening run, one new bug fixed, and death
+opened as a research thread.** Read this section and nothing else to know where the project
 is. Everything under it is older and
 kept for its working, not its verdicts.
 
@@ -132,6 +132,97 @@ kept current. `CLAUDE.md` has the section on why.
 | **the quest-finish fanfare** | *"the quest completion SFX is now working"* - `0x02D1` effect 15, sound and no picture as predicted |
 | **Roger's quest opens** | the authored overlay: their real opening, a **Next**, then an Accept/Decline box |
 | **THE CHANNEL MIGRATE OPCODE IS `0x001A`** | measured 2026-08-21. The client tore down, connected to **127.0.0.1:8486** and sent a migration hello - so `u32 ip` network-order and `u16 port` little-endian are confirmed too |
+
+#### The 2026-08-22 run: four answers, two of them negative and both useful
+
+* **Quest EXP is in the chat log and the fanfare plays.** The owner: *"Yup, quest exp is in the
+  chat now, which is correct. SFX is playing as expected."* Both confirmed on screen. The
+  grey **item** line is still unreported - no quest that grants an item was run.
+* **The blue recovery number does NOT come from the `0x007C` trailer.** A clean negative, and
+  the packet is not in doubt: `world.log` has three `idle regen ... with the recovery trailer`
+  lines and the bar moved on each. The owner: *"The blue number on top of the character is still
+  not drawn, but the HP is going up."* So the trailer reaches the client, is well-formed, and
+  draws nothing. The next thing to check is the **argument order** at `142d548ef`:
+  `FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp)` takes snapshots of
+  `record+0x5b`/`+0x73`, and if those are taken *after* the mask block has already stored the
+  new totals then `oldHp == newHp` and there is nothing to draw. If that is it, the fix is to
+  send the trailer **without** the hp/mp fields and let the client add them.
+* **The floating damage number is a stub. Settled.** The owner: *"Red snail is decreasing my bar by
+  10 but the damage number is still shown as 1."* Two different mobs, damage 3 and damage 10,
+  and the number is **1 both times** - as it was on all 25 hits of the previous run. A
+  computed value cannot be constant across a 10x change in the input. The client does not
+  compute mob damage, and `user-hit.md` §4.4 establishes the number is drawn at *send* time by
+  `FUN_142771360`, so **no server change can reach it**. The HP bar is right and the number
+  beside it will read 1 forever unless a redraw packet is found.
+* **The NPC "fade" is not a fade, and `0x0452` is not the cause.** The owner: *"I turned npcfx off,
+  but npcecho copy of Heena that newly showed up still faded in. Once it fades in, it is no
+  see through, it's just absent-then-present, it's a very fast fade in effect but
+  noticeable."*
+  Two results in one sentence. The `0x90` appear object is **eliminated** - turning it off
+  changed nothing - and that was the only creation-time branch left in `FUN_141e36b20`. And
+  the observable nobody had ever reported is now reported: **not see-through**. So it was
+  never an alpha ramp. `research/npc-fade.md` §8 named this exact possibility and said it was
+  cheap to settle and nobody had: *"an object that arrives late, or that is drawn while the
+  map's own transition is still running, reads on screen the same way."*
+  The question changes from *"which field controls alpha"* to **"why is the first draw
+  late"**, and the candidate that fits a late first draw is the pool's `0x0467` **template
+  preload list** - `u8 count`, then that many template ids, each fed to `FUN_141e77b70`.
+  Untried, and it is the natural shape for "load the art before you need it".
+
+#### Fixed 2026-08-22: bulk skill points only ever added one
+
+The owner: *"I just tried to bulk add 3 points into Three Snails, but it only went up 1 point."*
+
+`0x013B` carries a count and `on_skill_up` threw it away - `let next = level + 1`. The capture
+is unambiguous: `<- 0x013B 940e8711 e8030000 03000000` is tick, skill **1000**, count **3**,
+and the reply said *"skill 1000 raised 0 -> 1"*.
+
+`SkillUpRequest::count`'s own doc block already said what it was *and* what to do with it -
+*"`1` for `BtSpUp`, `min(sp, maxLevel - level)` for `BtSpUpAll` ... the server must clamp
+again: nothing here authenticates"*. Both halves were ignored. Same shape as the quest
+payouts: the information was in front of the caller.
+
+Now honoured and clamped to **`BEGINNER_SKILL_MAX_LEVEL = 3`**, which is **[L]** out of the
+client's own `Skill.wz` rather than game knowledge: `000.img` gives `masterLevel = 3` *and*
+exactly three numbered `level` children for all three of 1000/1001/1002. The level table is
+the stronger half - a `masterLevel` could be a ceiling the job never reaches, but a level
+table cannot describe a level it does not contain. Re-derive with
+`target/release/wz-dump cat "client-patched/Data/Skill/Skill_000.wz" 000.img`.
+
+**Still missing, and worth saying out loud: this server does not track SP at all.** There is
+no `sp` column on `characters`, so nothing checks that a point was available to spend. The
+cap on the level table is the only limit.
+
+#### Death and revive: opened, not built
+
+The owner: *"My HP hit 0, I see the tombstone on my character, but I do not see the revive
+confirmation. Reviving a character should warp them to the nearest town, start at 50 HP, and
+reduce their EXP by 10% unless they are level 10 or below."*
+
+What was found, all **[L]** unless marked:
+
+* **The dialog exists and its art is present** - `UI/Revive.img` in `UI_000.wz`, 1472 bytes,
+  with `backgrnd`, **`button:town`**, `anibutton:spot`, and a message rectangle. Unlike the
+  QuestClear case there is nothing missing from the WZ; the dialog can draw.
+* `FUN_1411a3440` loads that string. It has **zero callers of any kind** and **one qword
+  pointer** to it - slot 4 of a 66-slot vtable at `0x14338acf8`. It is a virtual method.
+* The vtable is installed by `FUN_1411a2ea0`, which has exactly **one** caller,
+  `FUN_142cb5cb0`, which in turn has **three**: `FUN_14289a3a0`, `FUN_142903cf3` and
+  `FUN_1429376c0`. All three are in the user-hit family - `user-hit.md` §7 already named
+  `FUN_14289a3a0` as the one `0x00E5`-family function that touches the request latch.
+* Above that the chain **stops**: `FUN_1429bbd50` and its siblings have zero calls, zero tail
+  jmps and zero data pointers. That is the Themida-VM dispatch signature - the same wall the
+  channel-migrate reply hit, where the opcode could only be found by sweeping.
+
+**The hypothesis that ties this to the damage stub [I]:** the revive dialog is opened from the
+client's own hit path, and the client's own damage is a constant 1, so by its arithmetic it
+never dies. The tombstone the owner sees comes from `hp = 0` in our `0x007C` (§6.2: hp<=0 gates
+every action off); the dialog does not, because nothing on the client's side ever concluded
+the player died.
+
+**Nothing is built.** Death detection, the revive effects (nearest town, 50 HP, -10% EXP above
+level 10) and the dialog trigger are all still to do, and `returnMap` is not dumped - it is a
+known `Map.wz` key (`config.rs`'s list) that `tools/dump_portals.py` does not currently emit.
 
 #### CONFIRMED on the 2026-08-21 evening run - the big two
 

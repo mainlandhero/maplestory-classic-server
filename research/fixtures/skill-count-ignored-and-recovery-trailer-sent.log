@@ -1,0 +1,31 @@
+# Extracted from previous-runs/world-20260821-212736.log. What it proves:
+#
+#   * 0x013B carries a COUNT and the server ignored it. The request asks for 3
+#     (940e8711 tick, e8030000 skill 1000, 03000000 count 3) and the reply says
+#     'raised 0 -> 1'. Wisp: 'I tried to bulk add 3 points into Three Snails, but
+#     it only went up 1 point.'
+#   * the recovery trailer WAS sent on every idle regen tick and drew no number -
+#     which is what makes the blue number a clean NEGATIVE rather than a packet
+#     that never went out.
+#   * the client claimed 1 damage on every hit while the server computed more.
+
+332:01:21:05.577 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 3 - hp 178 -> 175. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+630:01:21:08.726 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 3 - hp 175 -> 172. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+820:01:21:10.455 <- 0x013B UNKNOWN, 12 byte body 940e8711e803000003000000
+821:01:21:10.456 -> 0x0081 CLIENT_CHECK_NAME_REQUEST ChangeSkillRecordResult: skill 1000 raised 0 -> 1. The first byte clears user+0x2330 - without it the client will not send another request from that family at all.
+1858:01:21:22.249 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2004 (template 2, attack index -1) for 4 - hp 172 -> 168. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+2239:01:21:26.449 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 3 - hp 168 -> 165. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+2434:01:21:29.540 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2004 (template 2, attack index -1) for 3 - hp 165 -> 162. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+2633:01:21:31.579 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2004 (template 2, attack index -1) for 3 - hp 162 -> 159. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+4225:01:21:49.529 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 169/178 hp, 101/101 mp - with the recovery trailer, which is what draws the blue number
+5159:01:22:00.336 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +9 hp +0 mp -> 178/178 hp, 101/101 mp - with the recovery trailer, which is what draws the blue number
+7610:01:22:34.171 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2029 (template 3, attack index -1) for 5 - hp 178 -> 173. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+7788:01:22:36.481 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2024 (template 3, attack index -1) for 5 - hp 173 -> 168. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+9805:01:23:03.936 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2004 (template 5, attack index -1) for 10 - hp 168 -> 158. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+13912:01:24:46.049 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 35/114 hp, 53/53 mp - with the recovery trailer, which is what draws the blue number
+13915:01:24:47.257 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: used item 2010000 from Use slot 1 - +30 hp (now 65/114), +0 mp (now 53/53). No recovery trailer: that number is for idle regeneration and chairs, not for items. Byte 0 also clears the client's request latch
+13935:01:24:56.198 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 75/114 hp, 53/53 mp - with the recovery trailer, which is what draws the blue number
+13949:01:25:06.392 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 85/114 hp, 53/53 mp - with the recovery trailer, which is what draws the blue number
+13957:01:25:16.428 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 95/114 hp, 53/53 mp - with the recovery trailer, which is what draws the blue number
+13965:01:25:26.889 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 105/114 hp, 53/53 mp - with the recovery trailer, which is what draws the blue number
+13975:01:25:36.978 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +9 hp +0 mp -> 114/114 hp, 53/53 mp - with the recovery trailer, which is what draws the blue number

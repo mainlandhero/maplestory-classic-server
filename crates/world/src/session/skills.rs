@@ -51,8 +51,41 @@ impl Session {
             )];
         }
 
+        // **`count` is a field on the request and it used to be thrown away.** The owner,
+        // 2026-08-21: *"I just tried to bulk add 3 points into Three Snails, but it only went
+        // up 1 point."* The capture is unambiguous - `<- 0x013B 940e8711 e8030000 03000000`
+        // is tick, skill 1000, **count 3** - and this handler did `level + 1`.
+        //
+        // `SkillUpRequest::count`'s own doc block already said what it was and what to do
+        // with it: *"`1` for `BtSpUp`, `min(sp, maxLevel - level)` for `BtSpUpAll` ... the
+        // server must clamp again: nothing here authenticates, and nothing stops a crafted
+        // body carrying any number at all."* Both halves were ignored, which is the same
+        // shape as the quest payouts: the information was in front of the caller.
+        //
+        // **Clamped to the level table's own length**, not to the count. A body claiming
+        // 4 000 000 000 must not overflow a level into something the client cannot draw, and
+        // the client's own `Skill.wz` says these three stop at 3.
         let level = self.store.skill_level(chr.id, req.skill_id).unwrap_or(0);
-        let next = level.saturating_add(1);
+        if level >= net::skills::BEGINNER_SKILL_MAX_LEVEL {
+            return vec![self.skill_reply(
+                net::skills::skill_up_refused(net::skills::SkillUpRefusal::AtMaxLevel),
+                format!(
+                    "skill {} is already at {level}, the maximum this client's Skill.wz describes",
+                    req.skill_id
+                ),
+            )];
+        }
+        // A zero count is the client asking for nothing. Answer it - the latch still has to
+        // clear - and change nothing.
+        if req.count == 0 {
+            return vec![self.skill_reply(
+                net::skills::skill_up_refused(net::skills::SkillUpRefusal::BadCount),
+                format!("skill {} asked for 0 points; nothing to do", req.skill_id),
+            )];
+        }
+        let room = net::skills::BEGINNER_SKILL_MAX_LEVEL - level;
+        let granted = req.count.min(room);
+        let next = level + granted;
         if let Err(e) = self.store.set_skill_level(chr.id, req.skill_id, next) {
             return vec![self.skill_reply(
                 net::skills::skill_up_refused(net::skills::SkillUpRefusal::NotYours),
@@ -66,7 +99,12 @@ impl Session {
         ));
         vec![self.skill_reply(
             net::skills::change_skill_record_result(true, true, &[change]),
-            format!("skill {} raised {level} -> {next}", req.skill_id),
+            format!(
+                "skill {} raised {level} -> {next} (asked for {}, granted {granted}{})",
+                req.skill_id,
+                req.count,
+                if granted < req.count { ", clamped by the level table" } else { "" }
+            ),
         )]
     }
 

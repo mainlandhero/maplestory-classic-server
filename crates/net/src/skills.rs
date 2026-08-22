@@ -417,6 +417,26 @@ impl SkillUpRequest {
 /// in the capture above. The *names* are convention; the id `1000` is measured.
 pub const BEGINNER_SKILLS: [u32; 3] = [1000, 1001, 1002];
 
+/// The highest level a beginner skill reaches. **[L]**, out of this client's own `Skill.wz`.
+///
+/// Not game knowledge and not a guess. `Skill_000.wz`'s `000.img` was read with
+/// `target/release/wz-dump cat`, and all three beginner skills agree twice over:
+///
+/// ```text
+/// 0001000  masterLevel=3  level entries=3  highest=3
+/// 0001001  masterLevel=3  level entries=3  highest=3
+/// 0001002  masterLevel=3  level entries=3  highest=3
+/// ```
+///
+/// The `level` sub-tree having exactly three numbered children is the stronger half: a
+/// `masterLevel` field could be a maximum the job never reaches, but a level table cannot
+/// describe a level it does not contain. There is **no `maxLevel` key at all** on these
+/// three, which is why this is named for what was measured.
+///
+/// Re-derive it with:
+/// `target/release/wz-dump cat "client-patched/Data/Skill/Skill_000.wz" 000.img`
+pub const BEGINNER_SKILL_MAX_LEVEL: u32 = 3;
+
 /// The reason a [`SkillUpRequest`] was refused, for a server that wants to say so.
 ///
 /// This type exists because of the **always answer** rule: `0x013B` sets a latch in the

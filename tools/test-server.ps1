@@ -45,70 +45,40 @@
 
     THE POINT OF THIS RUN - five things
     -----------------------------------
-     1. THE BLUE RECOVERY NUMBER. The owner asked for it and it is now built.
-        Get hurt, then STAND STILL for 20 seconds - two regen ticks.
-        0x007C's second optional trailer - u8 flag, then u32 hpRecovery, u32 mpRecovery -
-        was never being sent, which is why the bar moved with no number. The client hands
-        both to FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp), and that
-        first argument being a UI global is why those fields have their names.
-          a number over your head on each regen tick  -> done. Say what COLOUR it is
-          the bar moves and still no number          -> the trailer is not the drawing
-                                                        route; world.log confirms it was
-                                                        sent, so the next question is the
-                                                        client and not the server
-          it shows the TOTAL instead of the gain     -> say so; we send the amount
-        A POTION MUST NOT DRAW ONE. The owner: "that's only for idle regeneration standing or
-        sitting in a chair in the Set-up tab or sitting on a chair in a map." It was sent
-        on the consumable path for one build - the reasoning being that a potion recovers
-        and the field is called recovery, which is arguing from the encoding outwards - and
-        has been taken back out. If a potion still draws a number, something else is doing
-        it and that is worth knowing.
-        Chairs are not built at all yet, so there is nothing to test there.
+     1. BULK SKILL POINTS. Open the skill window and add 3 at once to Three Snails.
+        Last run that only moved it by 1: 0x013B carries a COUNT and the handler did
+        level + 1. The request's own doc said what the field was AND that the server must
+        clamp it; both halves were ignored.
+          it goes up by 3            -> fixed
+          it goes up by 1            -> the count is still being dropped
+          it goes past 3            -> the clamp failed. The client's own Skill.wz says
+                                       these three skills stop at level 3
+        Then try again at 3/3: it must refuse and the window must still respond.
+        NOTE: this server does NOT track SP at all, so nothing checks you had the points.
 
-     2. ROGER, WATCHING THE SCREEN. This was asked last time and only the give-up half came
-        back. Every packet in it is known correct, so all three are about DRAWING:
-          a. on Accept, a GREY line in the CHAT LOG: "Roger's Apple x1 earned. (Use)"?
-             another colour -> route right, colour is a separate question
-             nothing        -> the item id resolved no name, or category 6 is a tab that
-                               window does not show
-          b. after eating the apple, WHERE does the EXP line appear - chat log, or
-             bottom-right? Quest EXP is meant to be in the CHAT LOG now. Kill EXP is
-             unchanged and still belongs bottom-right. Both -> say so.
-          c. the fanfare with NOTHING DRAWN is the EXPECTED result - that art was cut from
-             this client's WZ. Something drawn -> the analysis needs correcting.
+     2. A QUEST THAT GIVES AN ITEM - the one thing step 2 never got to last time.
+        Quest EXP in the chat log and the fanfare are both CONFIRMED now. What has never
+        been seen is the grey ITEM line: "<Item> x<n> earned. (<Tab>)" in the chat log,
+        not bottom-right. Any quest that hands an item over will do.
+          grey line in the chat log -> done
+          another colour            -> route right, colour is a separate question
+          nothing                   -> the item id resolved no name, or category 6 is a
+                                       tab that window does not show
 
-     3. GET HIT BY SOMETHING MUCH BIGGER THAN A SNAIL, and read the floating number.
-        Across 25 hits last run the client claimed 1 EVERY TIME - a constant, not a
-        distribution - while the server computed 3 fifteen times and 4 ten times.
-        A computed value would vary. A constant will not. So:
-          the number moves off 1  -> the client really does compute mob damage, and it is
-                                     our incoming formula that disagrees with it
-          it is still exactly 1   -> the field is a STUB, the client never computes this,
-                                     and the number will read 1 for every mob forever -
-                                     it is drawn at SEND time by FUN_142771360, so no
-                                     server change can reach it
-        Either answer settles something that has been guessed at twice. !map somewhere with
-        a real mob, or let a higher-level one on Maple Island have a go.
+     3. NPCs: !map 1 and just watch. NO command needed this time.
+        The appear-effect switch is ELIMINATED - !npcfx off changed nothing - and your
+        "not see-through, absent-then-present" settles that it was never an alpha fade.
+        So the question is now WHY THE FIRST DRAW IS LATE, and the untried candidate is
+        the pool's 0x0467 template-preload list. Nothing to test until that is built.
+        If you want to give one number: roughly how long is the gap? Under a tenth of a
+        second, or nearer half? That separates an asset load from a frame or two.
 
-     4. THE NPC FADE - !npcfx off, THEN !npcecho. One command, and it is the first
-        server-reachable lever anyone has found on this.
-        Go to !map 1, WATCH Heena and Sera fade in, then type:  !npcfx off
-        then:  !npcecho
-        0x0452 sets a global that the NPC creation path checks; while it is zero, creation
-        builds a 0x90-byte object per NPC, stamps it with a clock value and starts it. The
-        same packet's other branch rebuilds that exact object on every NPC, which is how we
-        know what it is. Turning it off means the next NPC created never gets one.
-          the copies POP IN SOLID   -> that object IS the fade. Field entry starts sending
-                                       0x0452 first and this is finished
-          the copies STILL FADE     -> a real elimination, not another absence: it is the
-                                       only creation-time branch left in that body
-          existing NPCs CHANGE when you type !npcfx off
-                                    -> say what changed; the walk does more than we think
-          NPCs VANISH               -> it is a show/hide toggle after all. !npcfx on puts
-                                       them back, and so does a map change
-        ALSO, and it is free: when something fades in, is it SEE-THROUGH - can you see the
-        ground through it - or is it simply absent and then present? Those are different
-        bugs and nobody has ever answered it. research/npc-fade.md flags it as unproven.
+     4. DEATH, if you feel like dying again. Nothing is built yet, so this is only worth
+        one sentence: does anything at all appear after the tombstone, or is it just the
+        tombstone and a dead character?
+        UI/Revive.img IS in this client's WZ - 1472 bytes, with a "town" button and a
+        "spot" button - so the dialog can draw. What opens it is reached only through the
+        Themida VM, the same wall the channel-migrate opcode hit.
 
      5. IF THE CLIENT DIES, THERE SHOULD BE A DUMP. It is no longer a question of whether
         the instrument works - it produced a 1 GB file last run.
@@ -813,68 +783,50 @@ if ($SetFieldProbe) {
     Write-Host '  5 steps. Say which you did.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
-    Write-Host '  LAST RUN CLOSED THE TWO BIG ONES.' -ForegroundColor Green
+    Write-Host '  WHAT THE LAST TWO RUNS SETTLED.' -ForegroundColor Green
     Write-Host '  CHANNEL CHANGE WORKS - claimed by channel, real SetField, inventory'
     Write-Host '  and mesos carried over. And THE HEAP CORRUPTION IS IN A DUMP: 1010 MB,'
     Write-Host '  written by the hook in 878ms, the first in this project after six'
     Write-Host '  deaths. Reading it is a desk job - tools\analyse-dump.ps1.'
-    Write-Host '  Also closed: create on second login, consumables and their cap, Sera''s'
-    Write-Host '  chatter, the mob-damage override, the damage model at STR 35, and the'
-    Write-Host '  NPC fade - the !npcecho COPY faded while the original stayed. That'
-    Write-Host '  test could never have answered it (both creation packets share one'
-    Write-Host '  decoder body) - but the enumeration since then found a lever, and'
-    Write-Host '  it is step 4.'
+    Write-Host '  Also closed: create on second login, consumables and their cap,'
+    Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
+    Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
+    Write-Host '  number does NOT come from the 0x007C trailer (it was sent, three'
+    Write-Host '  times, and drew nothing), and the floating damage number is a STUB'
+    Write-Host '  - a red snail doing 10 still shows 1, so no server change reaches'
+    Write-Host '  it.'
+    Write-Host '  And the NPC fade is not a fade: the appear-effect object was ruled'
+    Write-Host '  out by !npcfx off, and it is not see-through, so what is left is a'
+    Write-Host '  late first draw. See step 3.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  1. THE BLUE RECOVERY NUMBER - you asked, it is built.' -ForegroundColor Cyan
-    Write-Host '     Get hurt, then STAND STILL 20s - two regen ticks.'
-    Write-Host '     0x007C has a second optional trailer - hpRecovery, mpRecovery - that'
-    Write-Host '     was never being sent, which is why the bar moved with no number.'
-    Write-Host '       a number on each regen tick -> done. Say what COLOUR'
-    Write-Host '       bar moves, still no number  -> not the drawing route. world.log'
-    Write-Host '                                      proves it was sent'
-    Write-Host '       shows the TOTAL not the gain-> say so; we send the amount'
-    Write-Host '     A POTION MUST NOT DRAW ONE - it is for idle regen and chairs only.'
-    Write-Host '     It went out on the potion path for one build and is back out. If a'
-    Write-Host '     potion still draws a number, something else is doing it.'
+    Write-Host '  1. BULK SKILL POINTS. Add 3 at once to Three Snails.' -ForegroundColor Cyan
+    Write-Host '     Last run that only moved it by 1: 0x013B carries a COUNT and the'
+    Write-Host '     handler did level + 1. The field was documented and ignored.'
+    Write-Host '       goes up by 3 -> fixed'
+    Write-Host '       goes up by 1 -> the count is still being dropped'
+    Write-Host '       goes past 3  -> the clamp failed; Skill.wz says these stop at 3'
+    Write-Host '     Then try again at 3/3 - it must refuse and stay responsive.'
+    Write-Host '     NOTE: no SP is tracked at all, so nothing checks you had the points.'
     Write-Host ''
-    Write-Host '  2. ROGER, WATCHING THE SCREEN. Asked last time, only the give-up' -ForegroundColor Cyan
-    Write-Host '     half came back. Every packet is known correct, so all three are'
-    Write-Host '     about DRAWING:'
-    Write-Host '     a. on Accept, a GREY line in the CHAT LOG: "Roger''s Apple x1'
-    Write-Host '        earned. (Use)"?  Another colour = route right, colour separate.'
-    Write-Host '     b. after eating it, WHERE is the EXP line - chat log or bottom'
-    Write-Host '        right? Quest EXP should be in the CHAT LOG. Kill EXP is'
-    Write-Host '        unchanged and still belongs bottom-right.'
-    Write-Host '     c. fanfare with NOTHING DRAWN is EXPECTED - that art was cut.'
+    Write-Host '  2. A QUEST THAT GIVES AN ITEM - never got to this last time.' -ForegroundColor Cyan
+    Write-Host '     Quest EXP in the chat log and the fanfare are CONFIRMED. The grey'
+    Write-Host '     ITEM line has never been seen: "<Item> x<n> earned. (<Tab>)" in the'
+    Write-Host '     chat log, not bottom-right. Any item-granting quest will do.'
     Write-Host ''
-    Write-Host '  3. GET HIT BY SOMETHING MUCH BIGGER THAN A SNAIL.' -ForegroundColor Cyan
-    Write-Host '     Across 25 hits the client claimed 1 EVERY TIME - a constant, not a'
-    Write-Host '     distribution - while the server computed 3 or 4. A computed value'
-    Write-Host '     would vary. A constant will not.'
-    Write-Host '       the number moves off 1 -> the client DOES compute it, and our'
-    Write-Host '                                 incoming formula is what disagrees'
-    Write-Host '       still exactly 1        -> it is a STUB. The number will read 1 for'
-    Write-Host '                                 every mob forever - it is drawn at SEND'
-    Write-Host '                                 time, so no server change can reach it'
+    Write-Host '  3. NPCs: !map 1 and just WATCH. No command this time.' -ForegroundColor Cyan
+    Write-Host '     !npcfx off changed nothing, so the appear-effect object is'
+    Write-Host '     eliminated - and "not see-through, absent-then-present" settles that'
+    Write-Host '     it was never an alpha fade at all. The question is now why the FIRST'
+    Write-Host '     DRAW is late. If you want to give one number: is the gap under a'
+    Write-Host '     tenth of a second, or nearer half? That separates an asset load from'
+    Write-Host '     a dropped frame or two.'
     Write-Host ''
-    Write-Host '  4. THE NPC FADE - !npcfx off, THEN !npcecho.' -ForegroundColor Cyan
-    Write-Host '     !map 1, watch Heena and Sera fade in, then type !npcfx off and'
-    Write-Host '     then !npcecho. The echo alone could never have answered this:'
-    Write-Host '     0x044F and 0x0451 run the SAME decoder body. Inside it is a block'
-    Write-Host '     gated on a global that builds a 0x90-byte object per NPC, stamps'
-    Write-Host '     it with a clock value and starts it. 0x0452 sets that global, and'
-    Write-Host '     its other branch rebuilds that same object - which is how we know'
-    Write-Host '     what it is. First server lever anyone has found on this.'
-    Write-Host '       copies POP IN SOLID -> that object IS the fade. Field entry will'
-    Write-Host '                              send 0x0452 first and this is finished'
-    Write-Host '       copies STILL FADE   -> a real elimination; it is the only'
-    Write-Host '                              creation-time branch left'
-    Write-Host '       NPCs VANISH         -> show/hide toggle after all. !npcfx on, or'
-    Write-Host '                              a map change, puts them back'
-    Write-Host '     FREE: when something fades, is it SEE-THROUGH (ground visible'
-    Write-Host '     through it) or just absent-then-present? Different bugs, and'
-    Write-Host '     nobody has ever answered it.'
+    Write-Host '  4. DEATH - one sentence, nothing is built yet.' -ForegroundColor Cyan
+    Write-Host '     Does anything appear after the tombstone, or just the tombstone?'
+    Write-Host '     UI/Revive.img IS in the WZ (town button, spot button) so the dialog'
+    Write-Host '     CAN draw. What opens it is reached only through the Themida VM -'
+    Write-Host '     the same wall the channel-migrate opcode hit.'
     Write-Host ''
     Write-Host '  5. IF THE CLIENT DIES THERE SHOULD BE A DUMP. Not a question any' -ForegroundColor Cyan
     Write-Host '     more - it produced one last run. Say how long you were in and what'

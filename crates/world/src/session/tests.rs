@@ -3887,3 +3887,72 @@ fn a_finished_quest_cannot_be_farmed_by_giving_it_up_and_taking_it_again() {
     assert_eq!(book.completed.len(), 1, "one completion");
     assert!(book.started.is_empty(), "and nothing back in the started list");
 }
+
+/// Opcode then body, the way the framer hands it to `Session::handle`.
+fn skill_packet(body_hex: &str) -> Vec<u8> {
+    let mut p = net::skills::CLIENT_USER_SKILL_UP_REQUEST.to_le_bytes().to_vec();
+    p.extend_from_slice(&hex(body_hex));
+    p
+}
+
+/// **Bulk skill points: the request carries a count and it used to be ignored.**
+///
+/// The owner, 2026-08-21: *"I just tried to bulk add 3 points into Three Snails, but it only went
+/// up 1 point."* The capture says the client asked for three -
+/// `<- 0x013B 940e8711 e8030000 03000000` is tick, skill 1000, count **3** - and the handler
+/// did `level + 1`.
+///
+/// The body is the real one from `world.log`, not a hand-built one, so this test would have
+/// failed on the day the bug shipped.
+#[test]
+fn a_bulk_skill_request_spends_every_point_it_asks_for() {
+    let (mut s, _store, id) = gm_session();
+
+    // The owner's own packet: tick 0x1187_0e94, skill 1000, count 3.
+    let out = s.handle(&skill_packet("940e8711e803000003000000"));
+    assert!(
+        out.iter().any(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT),
+        "always answered - the reply is what clears the latch"
+    );
+    assert_eq!(
+        s.store.skill_level(id, 1000).unwrap_or(0),
+        3,
+        "three points asked for, three granted"
+    );
+}
+
+/// And it clamps, because nothing on this socket authenticates.
+///
+/// `SkillUpRequest::count`'s doc says the client computes `min(sp, maxLevel - level)` and
+/// clamps before sending - *"but the server must clamp again: nothing here authenticates, and
+/// nothing stops a crafted body carrying any number at all."* The cap is `masterLevel` and
+/// the length of the `level` table in this client's own `Skill.wz`, both of which say 3.
+#[test]
+fn a_skill_request_is_clamped_to_the_level_table_and_then_refused() {
+    let (mut s, _store, id) = gm_session();
+
+    // A body that asks for four billion points.
+    let greedy = skill_packet("940e8711e8030000ffffffff");
+    let out = s.handle(&greedy);
+    assert!(!out.is_empty(), "still answered");
+    assert_eq!(
+        s.store.skill_level(id, 1000).unwrap_or(0),
+        net::skills::BEGINNER_SKILL_MAX_LEVEL,
+        "clamped to the maximum the client's own Skill.wz describes, not to the count"
+    );
+
+    // Already at the top: refused, and the level does not move.
+    let again = s.handle(&greedy);
+    assert!(!again.is_empty(), "a refusal is still a reply - the latch has to clear");
+    assert_eq!(
+        s.store.skill_level(id, 1000).unwrap_or(0),
+        net::skills::BEGINNER_SKILL_MAX_LEVEL,
+        "and nothing moved"
+    );
+
+    // A count of zero is the client asking for nothing. Answer, change nothing.
+    let (mut s2, _store2, id2) = gm_session();
+    let zero = s2.handle(&skill_packet("940e8711e803000000000000"));
+    assert!(!zero.is_empty(), "answered");
+    assert_eq!(s2.store.skill_level(id2, 1000).unwrap_or(0), 0, "and nothing was granted");
+}
