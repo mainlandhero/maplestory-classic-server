@@ -204,7 +204,10 @@ impl Fields {
             Some(n) => alive.min(n),
             None => alive,
         };
-        for mob in crate::config::share_balanced(points, alive) {
+        // Seeded from the map and the clock so two fresh spawns of the same field do not
+        // lay the mobs out identically, and so a test can reproduce one exactly.
+        let seed = (map as u64) << 32 ^ now_ms.wrapping_mul(0x9E37_79B9);
+        for mob in crate::config::share_balanced(points, alive, seed) {
             let wz = config.mob_respawn_s.get(&(map, mob.object_id)).copied().unwrap_or(0);
             if let Some(delay) = crate::config::respawn_delay_ms(wz) {
                 field.pending.push((now_ms.saturating_add(delay), mob.object_id));

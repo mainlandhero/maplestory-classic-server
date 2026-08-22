@@ -1,0 +1,133 @@
+# The SECOND crash dump, 2026-08-21 23:01. What it adds to the first.
+#
+# Same exception (0xC0000374) at the same address, 644 s of life against 596 s.
+# The STACK IS THE SAME PATH, frame for frame:
+#   RtlFreeHeap <- MapleStory.exe fn 0x14019b4e0 <- PCOM.dll fn 0x152c12ce0
+#   <- PCOM chain <- oleaut32!VariantClear <- NAMESPACE.DLL
+# Two independent deaths on one call path is corroboration the first could not give.
+#
+# What DIFFERS, and it matters: failure Type 9 here, Type 8 in the first; a different
+# heap handle and address; and a differently-garbled header. So the first dump's
+# 'a stray 1 at +4' is NOT a constant - it is a wild write into that arena, and the
+# agent that found it flagged exactly this as its one [I]. Both arenas are ~264 KB.
+
+
+==============================================================================
+== SELF-CHECKS  (if these fail the parser is wrong, not the dump)
+==============================================================================
+  [PASS] header magic is MDMP                       b'MDMP'
+  [PASS] stream directory parses                    12 streams
+  [PASS] module list has MapleStory.exe             C:\MapleCW\client-patched\MapleStory.exe
+  [PASS] MapleStory.exe image base is 0x140000000   0x140000000
+  [PASS] process id                                 1160396 (expected 1160396)
+  [PASS] Memory64List covers the file               1331937280 of 1332533622 bytes
+
+==============================================================================
+== FILE
+==============================================================================
+  C:\MapleCW\dumps\maplecw-crash-1160396-c0000374-1.dmp
+  1332533622 bytes, minidump version 0xa061a793, flags 0x201826
+  streams: ThreadList(3316), ThreadInfoList(4428), ModuleList(16528), UnloadedModuleList(516), Memory64List(29776), MemoryInfoList(143392), Exception(168), SystemInfo(56), MiscInfo(1364), HandleData(63056), SystemMemoryInfo(492), ProcessVmCounters(152)
+  windows 10.0.19044, 8 cpus, arch 9
+  pid 1160396, user time 67s, kernel time 10s
+  process created 1787367019, dump written 1787367662 -> alive 643 s
+  working set 420.5 MB (peak 478.1 MB), private 443.0 MB, pagefile 443.0 MB (peak 565.1 MB)
+  virtual 6668.4 MB (peak 6808.6 MB), 304483 page faults   [layout check: PASS]
+  153 modules, 69 threads, 1270.2 MB of memory in Memory64List
+
+==============================================================================
+== EXCEPTION
+==============================================================================
+  Reading the symbol column: `= mod!name+0x..` is EXACT - the containing function's
+  start is that exported address. `(~mod!name+0x..)` is only the nearest export BEFORE
+  the address and names nothing; internal functions inherit whatever export precedes
+  them, so treat those as orientation, not identification. `fn 0x..` is the containing
+  function from the image's .pdata, which is authoritative.
+
+  thread          1166304
+  code            0xc0000374  HEAP_CORRUPTION
+  flags           0x00000001  NONCONTINUABLE
+  address         0x00007ffca83af509  ntdll.dll+0xff509  fn 0x7ffca83af500+0x9  (~ntdll.dll!RtlIsZeroMemory+0x119)
+  nested record   0x0
+  NumberParameters 1
+
+   param[ 0] 0x00007ffca8419800  ntdll.dll+0x169800
+    past [ 1] 0x0000000000000001  [FREE 0x0 NOACCESS]   <- NOT a parameter
+    past [ 2] 0x0000000037c09e48  [COMMIT PRIVATE READWRITE]   <- NOT a parameter
+    past [ 3] 0x0000000150160849  Canvas.dll+0x160849  fn 0x150160800+0x49   <- NOT a parameter
+    past [ 4] 0x000000003f441de0  [COMMIT PRIVATE READWRITE]   <- NOT a parameter
+    past [ 5] 0x00007ffca83b81ef  ntdll.dll+0x1081ef  fn 0x7ffca83b81c8+0x27   <- NOT a parameter
+    past [ 6] 0x000082d5b0dcecc7  [not in any module]   <- NOT a parameter
+    past [ 7] 0x000000003dbd0020  [COMMIT PRIVATE READWRITE]   <- NOT a parameter
+    past [ 8] 0x0000000000006000  [FREE 0x0 NOACCESS]   <- NOT a parameter
+    past [ 9] 0x0000000000000000  [FREE 0x0 NOACCESS]   <- NOT a parameter
+    past [10] 0x0000000000000000  [FREE 0x0 NOACCESS]   <- NOT a parameter
+    past [11] 0x0000000000000000  [FREE 0x0 NOACCESS]   <- NOT a parameter
+    past [12] 0x00007ffca8419858  ntdll.dll+0x169858   <- NOT a parameter
+    past [13] 0x00007ffca83bafb5  ntdll.dll+0x10afb5  fn 0x7ffca83bafa8+0xd   <- NOT a parameter
+    past [14] 0x00000000464dffab  [COMMIT PRIVATE READWRITE]   <- NOT a parameter
+
+  Only the first 1 slot(s) are exception parameters. Everything below that is
+  whatever was in the EXCEPTION_RECORD's 15-slot array and must not be read as
+  data - some of it is stale stack, some is the writer's own frame.
+
+  STATUS_HEAP_CORRUPTION is raised at the NEXT allocator walk, not where the
+  damage was done. The fault address above names ntdll because ntdll is what
+  noticed. It is not the bug. The stack is where the value is.
+
+==============================================================================
+== HEAP FAILURE INFORMATION  (ntdll!_HEAP_FAILURE_INFORMATION @ param[0])
+==============================================================================
+  Version         2
+  Length          0x6d0
+  Type            9   candidate name: heap_failure_invalid_argument
+                  (the enum is a claim - no symbols here to check it)
+  Heap            0x00000000004b0000  [COMMIT PRIVATE READWRITE]
+  Address         0x000000002e8ee7f8  [COMMIT PRIVATE READWRITE]
+  Param1/2/3      0x0 0x0 0x0
+  PreviousBlock   0x0
+  NextBlock       0x0
+  ExpectedEntry   0x0 0x0
+
+  StackTrace[32]: 29 slots used, 3 zero. Innermost first.
+  This is the allocator's own capture at the moment it noticed the
+  damage - a real backtrace, not a scan. It is the best artefact here.
+
+   #0  0x00007ffca83be1c1  ntdll.dll+0x10e1c1  fn 0x7ffca83be17c+0x45  (~ntdll.dll!RtlpNtSetValueKey+0x6421)
+   #1  0x00007ffca82d5b43  ntdll.dll+0x25b43  fn 0x7ffca82d5710+0x433  (~ntdll.dll!RtlGetCurrentServiceSessionId+0x12f3)
+   #2  0x00007ffca82d47b1  ntdll.dll+0x247b1  fn 0x7ffca82d4760+0x51  = ntdll.dll!RtlFreeHeap+0x51
+   #3  0x000000014019b58e  MapleStory.exe+0x19b58e  fn 0x14019b4e0+0xae
+   #4  0x0000000152c12d16  PCOM.dll+0x12d16  fn 0x152c12ce0+0x36
+   #5  0x0000000152c17078  PCOM.dll+0x17078  fn 0x152c17060+0x18  (~PCOM.dll!PcPassPackIgnoreProp+0x1328)
+   #6  0x0000000152c16a1e  PCOM.dll+0x16a1e  fn 0x152c169f6+0x28  (~PCOM.dll!PcPassPackIgnoreProp+0xcce)
+   #7  0x0000000152c19c2e  PCOM.dll+0x19c2e  fn 0x152c19bfd+0x31  (~PCOM.dll!PcPassPackIgnoreProp+0x3ede)
+   #8  0x0000000152c16ec0  PCOM.dll+0x16ec0  fn 0x152c16e80+0x40  (~PCOM.dll!PcPassPackIgnoreProp+0x1170)
+   #9  0x0000000152c199cc  PCOM.dll+0x199cc  fn 0x152c19990+0x3c  (~PCOM.dll!PcPassPackIgnoreProp+0x3c7c)
+   #10 0x00007ffca67cc713  oleaut32.dll+0x9c713  fn 0x7ffca67cc580+0x193  = oleaut32.dll!VariantClear+0x193
+   #11 0x00000001529009cf  NAMESPACE.DLL+0x1009cf  fn 0x152900910+0xbf
+   #12 0x0000000152900bbb  NAMESPACE.DLL+0x100bbb  fn 0x152900b70+0x4b
+   #13 0x000000015290149c  NAMESPACE.DLL+0x10149c  fn 0x152901460+0x3c
+   #14 0x0000000152c34bb9  PCOM.dll+0x34bb9  fn 0x152c34b90+0x29  (~PCOM.dll!PcSetPropertyDelayedLoad+0x3479)
+   #15 0x0000000152c34a3f  PCOM.dll+0x34a3f  fn 0x152c34a00+0x3f  (~PCOM.dll!PcSetPropertyDelayedLoad+0x32ff)
+   #16 0x0000000152c0b405  PCOM.dll+0xb405  fn 0x152c0b340+0xc5  (~PCOM.dll!DllCanUnloadNow+0x945)
+   #17 0x0000000152c0bb6b  PCOM.dll+0xbb6b  fn 0x152c0bb20+0x4b  (~PCOM.dll!DllCanUnloadNow+0x10ab)
+   #18 0x0000000152c09f1c  PCOM.dll+0x9f1c  fn 0x152c09ee0+0x3c
+   #19 0x00007ffca67cc713  oleaut32.dll+0x9c713  fn 0x7ffca67cc580+0x193  = oleaut32.dll!VariantClear+0x193
+   #20 0x000000015300e637  ResMan.dll+0xe637  fn 0x15300e0b0+0x587
+   #21 0x00000001530118cd  ResMan.dll+0x118cd  fn 0x1530118b0+0x1d
+   #22 0x000000014181ded5  MapleStory.exe+0x181ded5  fn 0x14181d650+0x885
+   #23 0x0000000144eb77dc  MapleStory.exe+0x4eb77dc  fn 0x144eb76b0+0x12c
+   #24 0x0000000144e5ef38  MapleStory.exe+0x4e5ef38  fn 0x144e5ee89+0xaf
+   #25 0x0000000142c4336b  MapleStory.exe+0x2c4336b  fn 0x142c42f30+0x43b
+   #26 0x0000000142ef4aea  MapleStory.exe+0x2ef4aea  fn 0x142ef49e4+0x106
+   #27 0x00007ffca6487374  kernel32.dll+0x17374  fn 0x7ffca6487360+0x14  = kernel32.dll!BaseThreadInitThunk+0x14
+   #28 0x00007ffca82fcc91  ntdll.dll+0x4cc91  fn 0x7ffca82fcc70+0x21  = ntdll.dll!RtlUserThreadStart+0x21
+
+  [PASS] bottom-of-thread control: last two frames are kernel32/ntdll
+
+==============================================================================
+== MEMORY AT THE REPORTED FAILURE ADDRESS
+==============================================================================
+  region 0x2e2b0000 + 0x641000, AllocationBase 0x2e2b0000, COMMIT PRIVATE READWRITE
+  AllocationBase+0x10 = 0xffeeffee (FFEEFFEE: an NT heap segment), +0x28 = 0x4b0000 -> heap 0x4b0000
+

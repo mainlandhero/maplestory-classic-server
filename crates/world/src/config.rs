@@ -682,7 +682,26 @@ pub fn spawn_capacity(spawn_points: usize, players: usize) -> usize {
 ///
 /// Returns the chosen mobs in spawn order, so the wire order does not depend on the
 /// grouping.
-pub fn share_balanced(mobs: &[net::mob::FieldMob], cap: usize) -> Vec<&net::mob::FieldMob> {
+/// A tiny splitmix64, so the spawn choice can be random without a dependency and still be
+/// reproducible from a seed.
+///
+/// Deliberately not a good general-purpose PRNG and deliberately not `rand`: this picks which
+/// of forty spawn points are used, a decision with no security property and one caller. What
+/// it does need is to be **seedable**, so a test can pin an exact selection and so two runs of
+/// the same map do not lay the mobs out identically.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+pub fn share_balanced(
+    mobs: &[net::mob::FieldMob],
+    cap: usize,
+    seed: u64,
+) -> Vec<&net::mob::FieldMob> {
     let total = mobs.len();
     if cap == 0 || total == 0 {
         return Vec::new();
@@ -721,10 +740,37 @@ pub fn share_balanced(mobs: &[net::mob::FieldMob], cap: usize) -> Vec<&net::mob:
         leftover -= 1;
     }
 
+    // **Which points, not just how many of each.** The owner, 2026-08-22, on Right Around Lith
+    // Harbor: *"the mobs that spawn are completely concentrated on the left side of the map
+    // on fresh spawn. The spawn points that gets activated should be randomly chosen even on
+    // fresh spawn."*
+    //
+    // The quota arithmetic above was written to fix a *different* half of this, and its test
+    // says so: taking the first N in WZ order returned almost all of one TYPE. That is fixed
+    // and stays fixed. But inside each group this still did `idx.iter().take(n)` - the first
+    // n in WZ order - and `life` entries are laid out left to right, so every fresh spawn put
+    // its mobs at the low-x end of the map. Balanced by type, bunched by position.
+    //
+    // Shuffled per group rather than globally, so the per-template quota is untouched: this
+    // decides *which* of a template's points are used, never how many.
+    let mut rng = seed;
     let mut keep: Vec<usize> = Vec::with_capacity(cap);
     for (g, (_, idx)) in groups.iter().enumerate() {
-        keep.extend(idx.iter().take(quota[g].1).copied());
+        let take = quota[g].1;
+        if take >= idx.len() {
+            keep.extend(idx.iter().copied());
+            continue;
+        }
+        // Partial Fisher-Yates: only the first `take` positions have to be settled.
+        let mut pool: Vec<usize> = idx.clone();
+        for i in 0..take {
+            let j = i + (splitmix64(&mut rng) % (pool.len() - i) as u64) as usize;
+            pool.swap(i, j);
+        }
+        keep.extend(pool.into_iter().take(take));
     }
+    // Sorted so the packets still go out in map order, which is what the client expects and
+    // what makes two logs of the same field comparable.
     keep.sort_unstable();
     keep.into_iter().map(|i| &mobs[i]).collect()
 }
@@ -1284,6 +1330,11 @@ impl Default for Config {
 
 #[cfg(test)]
 mod spawn_tests {
+    /// A fixed seed for the tests that are about the per-type QUOTA rather than about which
+    /// positions get used. Pinning it keeps those assertions exact; the tests that are about
+    /// the randomness vary it on purpose.
+    const TEST_SEED: u64 = 0x5EED_1234_5EED_1234;
+
     use super::*;
 
     fn field(templates: &[(u32, usize)]) -> Vec<net::mob::FieldMob> {
@@ -1306,13 +1357,85 @@ mod spawn_tests {
         m
     }
 
+    /// **A fresh spawn must use points from all over the map, not the first N.**
+    ///
+    /// The owner, 2026-08-22, on Right Around Lith Harbor: *"the mobs that spawn are completely
+    /// concentrated on the left side of the map on fresh spawn. The spawn points that gets
+    /// activated should be randomly chosen even on fresh spawn."*
+    ///
+    /// The per-type quota below was written for a *different* half of this - it stopped one
+    /// TYPE taking every slot - and inside each group the code still did `take(n)` on WZ
+    /// order. `life` entries run left to right, so a fresh field put every mob at the low-x
+    /// end. Balanced by type, bunched by position.
+    ///
+    /// This is a distribution test, so it is written not to be flaky: with 20 of 60 points
+    /// taken, it asserts only that **both halves of the list are represented** and that the
+    /// mean index is not jammed against one end. The old `take(n)` behaviour fails it on the
+    /// first assertion for every seed, not probabilistically - it can only ever return
+    /// indices 0..20.
+    #[test]
+    fn a_fresh_spawn_spreads_across_the_map_instead_of_the_first_n() {
+        let mobs = field(&[(2, 60)]);
+        let cap = 20;
+
+        for seed in [1u64, 2, 3, 99, 0x5EED, u64::MAX] {
+            let chosen = share_balanced(&mobs, cap, seed);
+            assert_eq!(chosen.len(), cap, "seed {seed}: the cap is still filled exactly");
+
+            let idx: Vec<usize> = chosen
+                .iter()
+                .map(|c| mobs.iter().position(|m| std::ptr::eq(m, *c)).unwrap())
+                .collect();
+            let lower = idx.iter().filter(|&&i| i < 30).count();
+            let upper = idx.len() - lower;
+            assert!(
+                lower > 0 && upper > 0,
+                "seed {seed}: every chosen point came from one half - {idx:?}"
+            );
+            // The mean of 20 draws from 0..60 sits near 29.5. Anything under 15 or over 44
+            // is a list that is still ordered rather than sampled.
+            let mean = idx.iter().sum::<usize>() as f64 / idx.len() as f64;
+            assert!(
+                (15.0..=44.0).contains(&mean),
+                "seed {seed}: mean index {mean:.1} - the choice is not spread"
+            );
+        }
+    }
+
+    /// Two different seeds must not produce the same field, or a "random" spawn is just a
+    /// fixed one with extra steps - and two fresh entries in a row would look identical.
+    #[test]
+    fn different_seeds_choose_different_spawn_points() {
+        let mobs = field(&[(2, 40)]);
+        let ids = |seed| -> Vec<u32> {
+            share_balanced(&mobs, 30, seed).iter().map(|m| m.object_id).collect()
+        };
+        assert_ne!(ids(1), ids(2));
+        assert_eq!(ids(7), ids(7), "and the same seed reproduces exactly, or nothing is testable");
+    }
+
+    /// The quota is decided before the shuffle and the shuffle must not disturb it.
+    ///
+    /// This is the control for the two tests above: randomising *which* points are used must
+    /// never change *how many* of each type, which is the property the earlier fix bought.
+    #[test]
+    fn shuffling_positions_does_not_disturb_the_per_type_quota() {
+        let mobs = field(&[(1, 10), (2, 16), (3, 7), (4, 6), (5, 6)]);
+        let cap = spawn_capacity(45, 1);
+        let want: std::collections::BTreeMap<u32, usize> =
+            [(1, 7), (2, 12), (3, 5), (4, 5), (5, 4)].into_iter().collect();
+        for seed in [0u64, 1, 12345, u64::MAX / 3] {
+            assert_eq!(counts(&share_balanced(&mobs, cap, seed)), want, "seed {seed}");
+        }
+    }
+
     /// Map 40, "Snail Hunting Ground I": 40 spawn points, one type, 30 alive for a solo
     /// player. The single datapoint the capacity rule has.
     #[test]
     fn map_40_keeps_thirty_of_its_forty_spawn_points() {
         assert_eq!(spawn_capacity(40, 1), 30);
         let mobs = field(&[(2, 40)]);
-        let chosen = share_balanced(&mobs, spawn_capacity(mobs.len(), 1));
+        let chosen = share_balanced(&mobs, spawn_capacity(mobs.len(), 1), TEST_SEED);
         assert_eq!(chosen.len(), 30);
         assert_eq!(counts(&chosen), [(2, 30)].into_iter().collect());
     }
@@ -1327,7 +1450,7 @@ mod spawn_tests {
         let cap = spawn_capacity(45, 1);
         assert_eq!(cap, 33);
 
-        let chosen = share_balanced(&mobs, cap);
+        let chosen = share_balanced(&mobs, cap, TEST_SEED);
         assert_eq!(chosen.len(), cap, "the cap must be filled exactly");
 
         // Largest remainder from 10/16/7/6/6 at cap 33: bases 7/11/5/4/4 = 31, and the two
@@ -1361,7 +1484,7 @@ mod spawn_tests {
     #[test]
     fn the_chosen_mobs_come_back_in_spawn_order() {
         let mobs = field(&[(1, 4), (2, 4)]);
-        let chosen = share_balanced(&mobs, 6);
+        let chosen = share_balanced(&mobs, 6, TEST_SEED);
         let ids: Vec<u32> = chosen.iter().map(|m| m.object_id).collect();
         let mut sorted = ids.clone();
         sorted.sort_unstable();
@@ -1372,23 +1495,23 @@ mod spawn_tests {
     /// down on a field entry.
     #[test]
     fn the_edges_do_not_panic_or_overshoot() {
-        assert!(share_balanced(&[], 10).is_empty());
-        assert!(share_balanced(&field(&[(1, 5)]), 0).is_empty());
+        assert!(share_balanced(&[], 10, TEST_SEED).is_empty());
+        assert!(share_balanced(&field(&[(1, 5)]), 0, TEST_SEED).is_empty());
 
         // A cap at or above the total keeps everything, and never more.
         let mobs = field(&[(1, 3), (2, 2)]);
-        assert_eq!(share_balanced(&mobs, 5).len(), 5);
-        assert_eq!(share_balanced(&mobs, 99).len(), 5);
+        assert_eq!(share_balanced(&mobs, 5, TEST_SEED).len(), 5);
+        assert_eq!(share_balanced(&mobs, 99, TEST_SEED).len(), 5);
 
         // And a cap of one still returns exactly one, from the largest type.
-        let one = share_balanced(&mobs, 1);
+        let one = share_balanced(&mobs, 1, TEST_SEED);
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].template_id, 1, "the largest share takes the only slot");
 
         // Every cap from 0 to total is filled exactly, on a ragged mix.
         let ragged = field(&[(7, 1), (3, 13), (9, 4), (1, 2)]);
         for cap in 0..=ragged.len() {
-            assert_eq!(share_balanced(&ragged, cap).len(), cap, "cap {cap}");
+            assert_eq!(share_balanced(&ragged, cap, TEST_SEED).len(), cap, "cap {cap}");
         }
     }
 

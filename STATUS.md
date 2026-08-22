@@ -266,6 +266,81 @@ the finding.
 reports it outbound as `0x02C6`, 44 bytes, carrying which of four things went wrong. Success
 is silence.
 
+#### 2026-08-22: fresh spawns were bunched at one end of the map
+
+The owner, on Right Around Lith Harbor: *"the mobs that spawn are completely concentrated on the
+left side of the map on fresh spawn. The spawn points that gets activated should be randomly
+chosen even on fresh spawn."*
+
+`share_balanced` computes a per-**type** quota and then took `idx.iter().take(n)` inside each
+group - the first n in WZ order. `life` entries run left to right, so every fresh field put its
+mobs at the low-x end.
+
+**The interesting part is that this function was already the fix for the other half of the same
+bug.** Its own test says so: *"Taking the first N in WZ order would return almost all of one
+type, which is the bug this replaces."* That fix was correct and stays; it balanced **which
+types** spawn and said nothing about **where**. A partial fix that names itself in a test is
+easy to read as a whole one.
+
+Now shuffled per group with a seeded splitmix64 (`(map << 32) ^ now_ms * const`), so the quota
+is untouched and only the choice of positions moves. Three tests, and the third is the control:
+the spread across the list, that two seeds differ while one seed reproduces, and that the
+per-type counts are **identical across four seeds**. The spread test was checked against the
+old `take(n)` and fails on it for every seed rather than probabilistically.
+
+#### A second crash dump, and it corrects the first one's guess
+
+2026-08-21 23:01, 1.33 GB, `0xC0000374` again, 644 s of life against 596 s.
+
+**The stack is the same path frame for frame** - `RtlFreeHeap` <- `MapleStory.exe`
+`fn 0x14019b4e0` <- `PCOM.dll` `fn 0x152c12ce0` <- the PCOM chain <- `oleaut32!VariantClear` <-
+`NAMESPACE.DLL`. Two independent deaths on one call path is corroboration the single dump could
+not give, and it points the search at that refcounted release path rather than anywhere else.
+
+**But the first dump's stray-`1`-at-`+4` is not a constant.** This one is failure **type 9**
+where the first was type 8, on a different heap, at a different address, with differently
+garbled header bytes. Both arenas are ~264 KB. So the reading is a **wild write into that
+arena**, not one repeatable off-by-one - which is exactly the `[I]` the agent flagged rather
+than buried, and exactly the measurement it said a second dump would provide.
+
+`research/fixtures/heap-second-dump-same-stack-different-type.log`.
+
+#### Nimble Feet: the packet is `0x013D` and its body is NOT decoded
+
+The owner: *"I tried activating Nimble Feet, but the server did not give me the Nimble Feet buff for
+the duration that the skill indicated (30 seconds)."*
+
+`0x013D` arrives **exactly every 30 seconds** - 02:51:29, 02:51:59, 02:52:29, eighteen times,
+30.0 s apart - carrying `ea030000`, skill **1002**, and it goes unanswered. Nimble Feet's
+duration is 30 seconds. That coincidence is the whole reason to look here.
+
+What is **not** established, and must not be guessed: the body layout. A 25-byte form and a
+41-byte form exist, and the obvious `u8, u32 count, then entries` reading does not divide
+evenly - 20 bytes per entry in one and 18 in the other. Nor is the **direction** settled: this
+could be the client asking for a buff, or reporting one it already believes in. Two other
+opcodes in the same family carry skill 1002 as well (`0x013C`, 51 bytes, right after a skill-up;
+`0x01A5`, 20 bytes). **Nothing is built.**
+
+#### Storage and shops: unbuilt, and the shop is unbuilt on purpose
+
+* **Mr. Kim's storage.** `crates/store` has the whole storage layer - `storage`,
+  `storage_item`, deposit, withdraw, slot counts - and **there is no packet and no session
+  handler at all.** Textbook "built is not wired": the database half has been ready for days
+  and nothing has ever put it on the wire.
+* **Mina's shop is off deliberately, and turning it on blind would kill the client.**
+  `research/classic-shop-opcode.md`: this client has **two** shop windows. `crates/net/shop.rs`
+  builds `0x0560`, whose art (`UI/UIWindow2.img/Shop2`) is **absent from this client's WZ** -
+  which is why the shop killed the client twice, the constructor dying before a single row byte
+  was read. The right one is **`0x055D`**, whose art is present. But its body is a thirteen-field
+  row structure and **nothing establishes which field is the price**, so sending a `0x0560`-shaped
+  body to it is the truncated-chat-packet mistake again. The file says so and stops.
+
+**The owner's buyback spec, recorded because only they have it:** the counter keeps the **last 15
+items sold to any NPC**, so a sale can be undone by buying it back, and the list is **cleared on
+server restart or player logout** - i.e. it is per-session, not persisted. The client side of
+that exists: `repurchaseInfo` is one of the classic window's own `.rdata` fragments, and the
+screenshots show the `Buy Back` tab beside `All`.
+
 #### Death had one entry point and needed two
 
 The owner, 2026-08-22, the first time death was in front of a client: *"My character 'Idiot' has 0
