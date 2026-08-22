@@ -990,7 +990,36 @@ def main():
                            else "(not a heap segment signature)",
                            seg_heap or 0,
                            "-> heap %#x" % hfi["heap"] if seg_heap == hfi["heap"] else ""))
-            if enc is not None:
+            # **`Address` does not mean the same thing for every failure type, and reading
+            # it as a heap entry regardless produced a confidently wrong retraction.**
+            #
+            # For a **type 8** (block-not-busy) failure it is the ENTRY, `ptr - 0x10`, and
+            # decoding it is exactly right. For a **type 9** (invalid-argument) failure it is
+            # the POINTER the caller passed. Decoding a pointer as an entry XOR-decodes
+            # whatever the object happens to start with, and it always prints something.
+            #
+            # On 2026-08-22 that "something" was `0072005000000010` from the second dump,
+            # which was written up as "differently garbled header bytes, therefore a wild
+            # write rather than a repeatable off-by-one". It is a **BSTR**: length prefix
+            # `0x10` - sixteen bytes, eight UTF-16 characters - followed by `"Pr"`, i.e. the
+            # string `"Property"`. Enumerating the pool properly showed every damaged header
+            # in both dumps reads the identical `0x0000000100000020`.
+            #
+            # So the decode is gated on the type now, and says why when it declines. An
+            # instrument that always prints a plausible answer is worse than one that
+            # sometimes prints nothing.
+            entry_types = (8,)
+            if enc is not None and hfi["type"] not in entry_types:
+                print("")
+                print("  NOT decoding those bytes as a _HEAP_ENTRY: failure type %d puts the"
+                      % hfi["type"])
+                print("  CALLER'S POINTER in Address, not the entry at ptr-0x10. Only type 8")
+                print("  reports an entry. Decoding a pointer here XOR-decodes whatever the")
+                print("  object starts with and always yields a plausible-looking header -")
+                print("  which is how a BSTR reading `\\x10\\x00\\x00\\x00Pr` was once")
+                print("  written up as a corrupted block. Use tools/poolchain.py instead: it")
+                print("  enumerates the client pool's own slots exactly.")
+            elif enc is not None:
                 print("")
                 e = decode_heap_entry(dump, hfi["address"], enc)
                 if e:

@@ -253,6 +253,51 @@ Two habits:
   never moved, which is what finally pointed at layout rather than data. A failure that
   ignores its inputs is not being caused by them.
 
+## A field whose meaning depends on a type byte will decode as garbage without saying so
+
+The fourth retraction that was itself the mistake, and the first where **I** made it rather
+than an agent, in a file that already carries three warnings about exactly this.
+
+Two crash dumps of the same failure. The first found a damaged block header - `0x20` had
+become `0x0000000100000020`, a stray `1` in the high dword - and honestly flagged "always at
+`+4`, always `1`" as its single inference, saying a second dump would settle it. The second
+dump arrived. `tools/dumpwalk.py` printed a header for it that looked nothing like the first,
+so it was written up as *"differently garbled bytes, therefore a wild write, not one
+repeatable off-by-one"* - and that went into `STATUS.md`, a fixture name, a commit message and
+both copies of the test plan.
+
+**`_HEAP_FAILURE_INFORMATION.Address` is not one thing.** For a **type 8** failure it is the
+heap *entry*, `ptr - 0x10`. For a **type 9** it is the *pointer the caller passed*. The tool
+decoded it as an entry either way, because nothing in the struct forces you to look at the
+type first. Decoding a pointer as an entry XOR-decodes whatever the object happens to begin
+with, and it **always produces a plausible-looking header**.
+
+The bytes were `0072005000000010`:
+
+```text
+10 00 00 00 50 00 72 00
+^^^^^^^^^^^ BSTR length prefix 0x10 = 16 bytes = 8 UTF-16 characters
+            ^^^^^^^^^^^ "Pr"          -> the string "Property"
+```
+
+A string. Enumerating the allocator's own slots properly - `tools/poolchain.py`, which walks
+every chunk and checks a size identity per chunk, 2 238 passed and 0 failed - shows **every
+damaged header in both processes is the identical `0x0000000100000020`**, all five of them in
+the same size class. The original finding was right the whole time.
+
+Three things generalise:
+
+* **Look at the discriminator before you read the union.** A struct with a `type` field has
+  members whose meaning changes with it, and a decoder that ignores that never errors - it
+  prints something. `dumpwalk.py` now refuses that decode unless the type says the field is an
+  entry, and prints why instead.
+* **A retraction needs a stronger instrument than the claim it retracts, not a weaker one.**
+  The claim came from an exact enumeration of a pool; the retraction came from one line of
+  incidental output. That asymmetry alone should have stopped it.
+* **"Different" is a much weaker observation than "the same".** Two identical values across
+  two processes is a measurement. Two values that merely fail to match can differ because one
+  of them is not a value at all, which is what happened here.
+
 ## "Not found" is not "not there", and the retraction can be the mistake
 
 On 2026-08-20 a static pass reported that a mob's body rectangle could not be involved in

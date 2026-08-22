@@ -338,13 +338,25 @@ old `take(n)` and fails on it for every seed rather than probabilistically.
 `NAMESPACE.DLL`. Two independent deaths on one call path is corroboration the single dump could
 not give, and it points the search at that refcounted release path rather than anywhere else.
 
-**But the first dump's stray-`1`-at-`+4` is not a constant.** This one is failure **type 9**
-where the first was type 8, on a different heap, at a different address, with differently
-garbled header bytes. Both arenas are ~264 KB. So the reading is a **wild write into that
-arena**, not one repeatable off-by-one - which is exactly the `[I]` the agent flagged rather
-than buried, and exactly the measurement it said a second dump would provide.
+**And the first dump's finding generalises exactly - my first reading of this dump was
+wrong.** Every damaged header in both processes is the identical `0x0000000100000020`: five
+instances, two processes, one value, and all five in the `0x20` size class (0 damaged in
+249 496 slots of the other three classes, 5 in 158 688 of that one).
 
-`research/fixtures/heap-second-dump-same-stack-different-type.log`.
+I had written the opposite - *"differently garbled header bytes ... a wild write, not one
+repeatable off-by-one"* - and used it to retract the first dump's finding. That came from one
+line of `dumpwalk.py` output. **`_HEAP_FAILURE_INFORMATION.Address` is the entry (`ptr-0x10`)
+for a type-8 failure and the caller's pointer for a type-9**, and the tool decoded it as an
+entry either way. The "garbled bytes" were `0072005000000010` - a **BSTR**: length prefix
+`0x10`, sixteen bytes, eight UTF-16 characters, beginning `"Pr"`. The string `"Property"`.
+
+`tools/dumpwalk.py` now refuses that decode unless the failure type says it is an entry, and
+`tools/poolchain.py` enumerates the pool exactly - 2 238 chunks passing a size identity with
+0 failures, so it validates itself. The two failure types are two arms of one `if` in ntdll
+(`test r13b, 0xf`), and since the pool stride is 40 the headers alternate 0/8 mod 16 - **the
+type is decided by the parity of the damaged slot's index**, not by different damage.
+
+`research/heap-wild-write.md`, `research/fixtures/heap-second-dump-same-damage-value.log`.
 
 #### Nimble Feet: the packet is `0x013D` and its body is NOT decoded
 

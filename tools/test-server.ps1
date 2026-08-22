@@ -39,12 +39,16 @@
       damage. The STACK IS THE SAME FRAME FOR FRAME in both - the client's own free()
       called from a PCOM.dll refcounted release, under oleaut32!VariantClear, under
       NAMESPACE.DLL - which is corroboration one dump could not give.
-      What the second dump CORRECTED: the first found a block header reading
-      0x0000000100000020 where 0x20 was expected and flagged 'a stray 1 at +4' as its
-      single inference. The second is a different failure type, on a different heap, at
-      a different address, with differently garbled bytes. So it is a WILD WRITE into
-      that arena rather than one repeatable off-by-one - exactly the measurement the
-      first analysis said a second dump would provide. An agent is on the writer now.
+      What the second dump CONFIRMED: the first found a block header reading
+      0x0000000100000020 where 0x20 was expected and flagged 'a stray 1' as its single
+      inference. It generalises exactly - EVERY damaged header in both processes is that
+      same value, five instances, and all five are in the 0x20 size class.
+      I briefly wrote the opposite here, from one line of tool output: the failure
+      record's Address field is the ENTRY for a type-8 failure and the CALLER'S POINTER
+      for a type-9, and decoding a pointer as an entry always prints a plausible header.
+      The 'garbled bytes' were a BSTR - length prefix 0x10, then "Pr", i.e. "Property".
+      tools/dumpwalk.py now refuses that decode unless the type says it is an entry, and
+      tools/poolchain.py enumerates the pool exactly.
       research/heap-corruption-dump.md and research/fixtures/heap-second-dump-*.log.
       Page heap would NOT have helped either way: it guards Windows heap blocks, and
       this is a slot inside a client-allocator arena it cannot see into.
@@ -797,9 +801,10 @@ if ($SetFieldProbe) {
     Write-Host '  intact in both and RtlFreeHeap REFUSED a bad free; the address lands'
     Write-Host '  inside a LIVE block. Same stack frame for frame in both - the'
     Write-Host '  client free() under a PCOM.dll release, under VariantClear.'
-    Write-Host '  The first dump found a stray 1 in a header; the SECOND has a'
-    Write-Host '  different failure type and different garbage, so it is a WILD WRITE'
-    Write-Host '  into that arena, not one repeatable off-by-one. An agent is on it.'
+    Write-Host '  BOTH dumps carry the identical damaged header, 0x0000000100000020,'
+    Write-Host '  five instances across two processes and every one in the 0x20 size'
+    Write-Host '  class. (I briefly wrote the opposite - that came from decoding a'
+    Write-Host '  BSTR as a heap header. The tool now refuses that decode.)'
     Write-Host '  DEATH AND REVIVE WORK, first time out - the dialog appeared for a'
     Write-Host '  character who logged in ALREADY DEAD, and the revive warped them to'
     Write-Host '  Lith Harbor at 50 HP with no exp penalty at level 10. They then went'

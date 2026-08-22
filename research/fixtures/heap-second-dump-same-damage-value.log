@@ -1,16 +1,41 @@
-# The SECOND crash dump, 2026-08-21 23:01. What it adds to the first.
+# The SECOND crash dump, 2026-08-21 23:01. RENAMED AND CORRECTED 2026-08-22.
 #
-# Same exception (0xC0000374) at the same address, 644 s of life against 596 s.
-# The STACK IS THE SAME PATH, frame for frame:
-#   RtlFreeHeap <- MapleStory.exe fn 0x14019b4e0 <- PCOM.dll fn 0x152c12ce0
-#   <- PCOM chain <- oleaut32!VariantClear <- NAMESPACE.DLL
-# Two independent deaths on one call path is corroboration the first could not give.
+# THE HEADER THIS FILE ORIGINALLY CARRIED WAS WRONG, and it was wrong in the
+# direction that matters: it said the second dump showed "differently garbled
+# header bytes ... a wild write into that arena, not one repeatable off-by-one",
+# and used that to RETRACT the first dump's finding.
 #
-# What DIFFERS, and it matters: failure Type 9 here, Type 8 in the first; a different
-# heap handle and address; and a differently-garbled header. So the first dump's
-# 'a stray 1 at +4' is NOT a constant - it is a wild write into that arena, and the
-# agent that found it flagged exactly this as its one [I]. Both arenas are ~264 KB.
-
+# The first dump's finding was right and it generalises exactly. Every damaged
+# header in both processes reads the identical value:
+#
+#     0x0000000100000020        five instances, two processes, one value
+#
+# and every one of them is in the 0x20 size class: 0 damaged in 249 496 slots of
+# the 0x10 / 0x40 / 0x80 classes, 5 in 158 688 of the 0x20 class.
+#
+# WHERE MY ERROR CAME FROM, because it is worth more than the finding:
+#
+# `_HEAP_FAILURE_INFORMATION.Address` does not mean the same thing for every
+# failure type. For type 8 (block-not-busy) it is the ENTRY, ptr-0x10, and
+# decoding it as a _HEAP_ENTRY is right. For type 9 (invalid-argument) it is the
+# CALLER'S POINTER. dumpwalk.py decoded it as an entry either way, and printed a
+# plausible-looking header for the type-9 dump.
+#
+# Those "garbled bytes" were 0072005000000010, which is not a header at all:
+#
+#     10 00 00 00 50 00 72 00
+#     ^^^^^^^^^^^ BSTR length prefix 0x10 = 16 bytes = 8 UTF-16 chars
+#                 ^^^^^^^^^^^ "Pr"   -> the string "Property"
+#
+# I read a string as a corrupted block and retracted a correct measurement on it.
+# tools/dumpwalk.py now refuses to decode the address as an entry unless the
+# failure type says it is one, and says why. tools/poolchain.py enumerates the
+# client pool's slots exactly and is the right instrument for this question.
+#
+# The name of this file was wrong twice over: the stacks are NOT identical frame
+# for frame either - they share frames #0-#21 and diverge above ResMan.dll.
+#
+# research/heap-wild-write.md has the full working.
 
 ==============================================================================
 == SELF-CHECKS  (if these fail the parser is wrong, not the dump)
