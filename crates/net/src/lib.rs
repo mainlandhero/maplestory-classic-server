@@ -48,6 +48,7 @@ pub mod session;
 pub mod shop;
 pub mod skills;
 pub mod stats;
+pub mod storage;
 pub mod userchat;
 pub mod userhit;
 pub mod usermove;

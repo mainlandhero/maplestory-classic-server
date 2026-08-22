@@ -1,0 +1,92 @@
+; CSecondaryStat::DecodeForRemote - FUN_140a46e50, same 124-byte mask, short list
+
+; 0x140a46e50 .. 0x140a4a58f  (14143 bytes)
+ 000140a46e50  mov      qword ptr [rsp + 0x18], r8
+ 000140a46e55  mov      qword ptr [rsp + 0x10], rdx
+ 000140a46e5a  mov      qword ptr [rsp + 8], rcx
+ 000140a46e5f  sub      rsp, 0x178
+ 000140a46e66  mov      rax, qword ptr [rip + 0x3044a9b]
+ 000140a46e6d  xor      rax, rsp
+ 000140a46e70  mov      qword ptr [rsp + 0x160], rax
+ 000140a46e78  lea      rcx, [rsp + 0x60]
+ 000140a46e7d  call     0x1402c24f0
+ 000140a46e82  mov      r8d, 0x7c
+ 000140a46e88  lea      rdx, [rsp + 0x60]
+ 000140a46e8d  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46e95  call     0x1406e9170   <<< READ raw
+ 000140a46e9a  mov      edx, 0x6a
+ 000140a46e9f  lea      rcx, [rsp + 0x60]
+ 000140a46ea4  call     0x1402bf6d0
+ 000140a46ea9  movzx    eax, al
+ 000140a46eac  test     eax, eax
+ 000140a46eae  je       0x140a46eeb   [branch]
+ 000140a46eb0  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46eb8  call     0x1406e8b80   <<< READ u16
+ 000140a46ebd  movzx    eax, ax
+ 000140a46ec0  mov      edx, eax
+ 000140a46ec2  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46eca  call     0x140c3c500
+ 000140a46ecf  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46ed7  call     0x1406e8c20   <<< READ u32
+ 000140a46edc  mov      edx, eax
+ 000140a46ede  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46ee6  call     0x140c415a0
+>000140a46eeb  mov      edx, 0x6d
+ 000140a46ef0  lea      rcx, [rsp + 0x60]
+ 000140a46ef5  call     0x1402bf6d0
+ 000140a46efa  movzx    eax, al
+ 000140a46efd  test     eax, eax
+ 000140a46eff  je       0x140a46f3c   [branch]
+ 000140a46f01  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46f09  call     0x1406e8b80   <<< READ u16
+ 000140a46f0e  movzx    eax, ax
+ 000140a46f11  mov      edx, eax
+ 000140a46f13  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46f1b  call     0x140c3bab0
+ 000140a46f20  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46f28  call     0x1406e8c20   <<< READ u32
+ 000140a46f2d  mov      edx, eax
+ 000140a46f2f  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46f37  call     0x140c40b50
+>000140a46f3c  mov      edx, 0x71
+ 000140a46f41  lea      rcx, [rsp + 0x60]
+ 000140a46f46  call     0x1402bf6d0
+ 000140a46f4b  movzx    eax, al
+ 000140a46f4e  test     eax, eax
+ 000140a46f50  je       0x140a46f8d   [branch]
+ 000140a46f52  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46f5a  call     0x1406e8b80   <<< READ u16
+ 000140a46f5f  movzx    eax, ax
+ 000140a46f62  mov      edx, eax
+ 000140a46f64  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46f6c  call     0x140c3b6a0
+ 000140a46f71  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46f79  call     0x1406e8c20   <<< READ u32
+ 000140a46f7e  mov      edx, eax
+ 000140a46f80  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46f88  call     0x140c40740
+>000140a46f8d  mov      edx, 0x5c
+ 000140a46f92  lea      rcx, [rsp + 0x60]
+ 000140a46f97  call     0x1402bf6d0
+ 000140a46f9c  movzx    eax, al
+ 000140a46f9f  test     eax, eax
+ 000140a46fa1  je       0x140a46fc2   [branch]
+ 000140a46fa3  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46fab  call     0x1406e8ae0   <<< READ u8
+ 000140a46fb0  movsx    eax, al
+ 000140a46fb3  mov      edx, eax
+ 000140a46fb5  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46fbd  call     0x140c3ba60
+>000140a46fc2  mov      edx, 0x74
+ 000140a46fc7  lea      rcx, [rsp + 0x60]
+ 000140a46fcc  call     0x1402bf6d0
+ 000140a46fd1  movzx    eax, al
+ 000140a46fd4  test     eax, eax
+ 000140a46fd6  je       0x140a47013   [branch]
+ 000140a46fd8  mov      rcx, qword ptr [rsp + 0x190]
+ 000140a46fe0  call     0x1406e8b80   <<< READ u16
+ 000140a46fe5  movzx    eax, ax
+ 000140a46fe8  mov      edx, eax
+ 000140a46fea  mov      rcx, qword ptr [rsp + 0x180]
+ 000140a46ff2  call     0x140c3bd30
+ 000140a46ff7  mov      rcx, qword ptr [rsp + 0x190]

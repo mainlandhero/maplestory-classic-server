@@ -4165,3 +4165,97 @@ fn entering_a_field_alive_offers_no_revive_dialog() {
         "a living character must not be asked whether to revive"
     );
 }
+
+/// **Clicking Mr. Kim opens the storage box.**
+///
+/// The owner, 2026-08-22: *"Mr. Kim the storage keeper does not open the storage UI."* They did not,
+/// because nothing had ever sent a packet - `crates/store` has had the whole storage layer for
+/// days with no caller anywhere.
+///
+/// The packet must carry the **template** id, not the object id: the client loads `Npc.wz`
+/// from it to find the deposit fee, so an object id charges the wrong fee or none.
+#[test]
+fn a_storage_keeper_opens_a_box_instead_of_talking() {
+    let (mut s, _store, _id) = gm_session();
+
+    let out = s.open_storage_for(105).expect("105 is Mr. Kim, a storage keeper");
+    let open = out
+        .iter()
+        .find(|r| r.opcode == net::storage::STORAGE_RESULT)
+        .expect("a 0x0572 goes out");
+    assert_eq!(open.body[0], net::storage::RESULT_OPEN, "mode 24");
+    assert_eq!(
+        u32::from_le_bytes(open.body[1..5].try_into().unwrap()),
+        105,
+        "the TEMPLATE id - an object id here would charge the wrong fee"
+    );
+    // An empty box with every gate on: 1 mode + 4 template + 115 block.
+    assert_eq!(open.body.len(), 120);
+
+    // And an NPC that is not a keeper is left alone, or every NPC would open a box.
+    assert!(s.open_storage_for(2).is_none(), "Sera is not a storage keeper");
+}
+
+/// **The wire's meso sign is the opposite of the store's, and getting it backwards would
+/// quietly move money the wrong way.**
+///
+/// `0x00F6` mode 7 carries one signed `i64` where **positive withdraws** from the box.
+/// `store::move_storage_mesos` takes positive to mean **deposit**. The session negates
+/// between them, and nothing about an inverted version would error, crash or look wrong in a
+/// log - it would just move the money the other way.
+#[test]
+fn depositing_and_withdrawing_mesos_move_the_money_the_right_way() {
+    let (mut s, store, id) = gm_session();
+    store.set_mesos(id, 5_000).unwrap();
+    let account_id = 1i64;
+
+    // Negative on the wire = DEPOSIT into the box.
+    let mut body = vec![7u8];
+    body.extend_from_slice(&(-2_000i64).to_le_bytes());
+    let out = s.on_storage_request(&body);
+    assert!(
+        out.iter().any(|r| r.opcode == net::storage::STORAGE_RESULT),
+        "every 0x00F6 is answered - the client latches until a 0x0572 arrives"
+    );
+    assert_eq!(store.mesos(id).unwrap(), 3_000, "2000 left the purse");
+    assert_eq!(store.storage_mesos(account_id).unwrap(), 2_000, "and arrived in the box");
+
+    // Positive on the wire = WITHDRAW from the box.
+    let mut body = vec![7u8];
+    body.extend_from_slice(&500i64.to_le_bytes());
+    s.on_storage_request(&body);
+    assert_eq!(store.mesos(id).unwrap(), 3_500, "500 came back to the purse");
+    assert_eq!(store.storage_mesos(account_id).unwrap(), 1_500, "and left the box");
+}
+
+/// Over-withdrawing is refused with the mode that says so, and moves nothing.
+#[test]
+fn a_meso_move_that_cannot_be_afforded_is_refused_and_still_answered() {
+    let (mut s, store, id) = gm_session();
+    store.set_mesos(id, 100).unwrap();
+
+    let mut body = vec![7u8];
+    body.extend_from_slice(&(-9_999i64).to_le_bytes()); // deposit more than the purse holds
+    let out = s.on_storage_request(&body);
+    let reply = out
+        .iter()
+        .find(|r| r.opcode == net::storage::STORAGE_RESULT)
+        .expect("refusals are answered too, or the window locks up");
+    assert_eq!(reply.body[0], net::storage::RESULT_NOT_ENOUGH_MESOS);
+    assert_eq!(store.mesos(id).unwrap(), 100, "and nothing moved");
+    assert_eq!(store.storage_mesos(1).unwrap(), 0);
+}
+
+/// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
+/// else. This is the always-answer rule with a different field name.
+#[test]
+fn an_unreadable_storage_request_is_answered_rather_than_dropped() {
+    let (mut s, _store, _id) = gm_session();
+    for body in [vec![], vec![4u8], vec![99u8, 1, 2, 3], vec![7u8, 1, 2]] {
+        let out = s.on_storage_request(&body);
+        assert!(
+            out.iter().any(|r| r.opcode == net::storage::STORAGE_RESULT),
+            "body {body:02x?} must still be answered"
+        );
+    }
+}

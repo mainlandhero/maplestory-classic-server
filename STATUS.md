@@ -358,28 +358,123 @@ type is decided by the parity of the damaged slot's index**, not by different da
 
 `research/heap-wild-write.md`, `research/fixtures/heap-second-dump-same-damage-value.log`.
 
-#### Nimble Feet: the packet is `0x013D` and its body is NOT decoded
+#### Storage is wired, 2026-08-22
 
-The owner: *"I tried activating Nimble Feet, but the server did not give me the Nimble Feet buff for
-the duration that the skill indicated (30 seconds)."*
+`0x0572` out, `0x00F6` in, both found statically with no client run. Clicking a storage keeper
+now opens the box, beside the shop branch in `on_npc_click` and before the conversation
+fallback - which is why Mr. Kim did nothing visible rather than doing something wrong: they have
+no `d0` line to fall back to.
 
-`0x013D` arrives **exactly every 30 seconds** - 02:51:29, 02:51:59, 02:52:29, eighteen times,
-30.0 s apart - carrying `ea030000`, skill **1002**, and it goes unanswered. Nimble Feet's
-duration is 30 seconds. That coincidence is the whole reason to look here.
+Verified here rather than taken on trust: the storage gate mask comes out as mesos at 1 and the
+six bags at `[2, 3, 4, 5, 6, 44]`, byte-for-byte `net::bag::BAG_PRESENCE_BYTE`, derived by the
+agent from a **different** key table. The `44` is what makes that a real cross-check rather than
+a coincidence. Mr. Kim is template **105** (`npcstrings.txt`) and their `info/trunkPut` is **100**
+straight out of `Npc_000.wz`.
 
-What is **not** established, and must not be guessed: the body layout. A 25-byte form and a
-41-byte form exist, and the obvious `u8, u32 count, then entries` reading does not divide
-evenly - 20 bytes per entry in one and 18 in the other. Nor is the **direction** settled: this
-could be the client asking for a buff, or reporting one it already believes in. Two other
-opcodes in the same family carry skill 1002 as well (`0x013C`, 51 bytes, right after a skill-up;
-`0x01A5`, 20 bytes). **Nothing is built.**
+**Three things that would each have cost a launch:**
+
+* **The take-out "index" is positional, not a slot** - the 0-based position within its type's
+  list *as the server sent it* - while the put-in request at the **same field offset** carries
+  the player's real 1-based bag slot.
+* **Every `0x00F6` latches `dlg+0x334` and only a `0x0572` clears it.** Every path out of the
+  handler answers, including the ones that change nothing.
+* **The wire's meso sign is the opposite of the store's.** `0x00F6` mode 7 is one signed `i64`
+  where **positive withdraws**; `store::move_storage_mesos` takes positive to mean **deposit**.
+  Getting that backwards would not error, crash, or look wrong in a log - it would quietly move
+  money the other way. The test for it was checked against an un-negated version and fails.
+
+Item movement is **not** built - take-out and put-in answer with the box unchanged and say so.
+Mesos work in both directions, through the store's single transaction. And per-account rather
+than per-character is **[I]**: nothing on the wire carries an owner in either direction, so one
+launch with two characters on one account is what would settle it.
+
+#### Nimble Feet: `0x013D` was a coincidence, and it is an anti-cheat census
+
+I wrote that `0x013D` *"arrives exactly every 30 seconds carrying skill 1002, and 30 s is the
+skill's duration - that is where to look."* **The 30 is unrelated to the 30.** One grep of the
+same log settles it: `0x013D` was already ticking at 02:50:28 and 02:50:59 with a nine-byte
+**empty** body, and Nimble Feet was not raised until 02:51:11. The cadence predates the skill.
+
+`0x013D` is a **30-second anti-cheat census**:
+`u8 reset, u32 opcodeCount, {u32 opcode, u32 n, n x {u32 skillId, u32 count}}, ...`, and the
+unexplained `0x13c = 316` is the **opcode `0x013C`**. Proven by counting rather than by
+reading, which is why it is worth repeating: the 41-byte body claims skill 0 x **7** under
+opcode `0x00DF`, and `grep -c "<- 0x00DF" world.log` is **7**; it claims skill 1002 x **1**
+under `0x013C`, and there is exactly **1**. Both re-checked here. **The client is reporting,
+not asking** - 22 went unanswered in that session with no freeze, so it must not be answered.
+
+**What was actually wanted:** **[L]** unless marked.
+
+* **The skill-use packet is `0x013C`**, one per cast, 51 bytes:
+  `u32 skillId, u32 skillLevel, u32 tick, u32 crcLevel, u32 crcSkill, u8, u32, u32, u32,
+  u16 x, u16 y, u8`. Cross-checked two ways - the x/y match the bracketing `0x00D9` movement
+  packets, and both checksums reappear in the `0x01A5` bodies for skill 1002. The server needs
+  offsets 0 and 4.
+* **The grant is `0x007D` TemporaryStatSet**: a **124-byte mask** (31 LE `u32` words, bit
+  `1 << (31 - (idx & 31))` in word `idx >> 5`), then per set bit `{value, u32 reason,
+  u32 duration}`, then a 13-or-14-byte tail. **Duration is milliseconds**, and that is
+  measured, not assumed - the client stores `tExpire = tick + duration` and `timeGetTime` is
+  this PE's only clock import.
+* **Nimble Feet (1002)**: `speed` **+10 at every level**; `time` **10 / 20 / 30 seconds**;
+  `mpCon` 4/7/10; `cooltime` 180 s. Only the duration scales with level.
+* **CTS bit 92 is Speed**, and from this client rather than the reference tree: string `0x14DA`
+  is *"Nimble Feet cannot be used while another Speed increase effect is active"*, the only
+  `mov r32,0x14DA` in the image reads `secStat+0x5cc/+0x5d4` and `+0x5d8/+0x5e0`, and those are
+  exactly the value/reason pairs one identified block writes. The reference tree has 14 entries
+  where this client has 13, so it does not align and was not used.
+
+**Two hazards for whoever wires it.** `0x007D` **collides with the inbound migration-hello
+constant** already in `crates/world`, so the outbound one needs its own name. And the value
+field is `u32` or sign-extended `i16` depending on a constant in **Themida-packed `.data`** -
+32% bit density, i.e. not in the file at all. That is a missing section, not a failed search.
+The write-up sends `i16` and neutralises the tail with 18 zero bytes so all four possible
+parses stay in bounds, and makes the wrong-width case **visible**: under a `u32` parse the
+duration reads 0, so the icon flashes and vanishes instead of counting down.
+
+`research/buffs.md`. Nothing is built.
+
+#### The classic shop is decoded, including the price
+
+`research/classic-shop-rows.md`. The four things `classic-shop-opcode.md` listed as undone:
+
+* **The price is `row+0x38`, a 64-bit meso amount** - **[L]** from three independent sites: the
+  affordability check multiplies it by quantity and compares against the player's mesos
+  (failure prints *"You don't have enough Mesos."*), the discount function reads it, and the
+  row renderer formats it and appends string `0x4AF` = `" Mesos"`. It is **not** negated for
+  the sell tab; that was a Shop2 convention.
+* **The conditional tail: the predecessor stopped one branch too early.** The `u8`'s `je`
+  target is the instruction before the *next* read, so it guards **one** sub-decoder and the
+  27 reads after it are unconditional. The row is **42 direct reads**, not thirteen fields -
+  42/42/42 across listing, decompiler and `tools/reads.py`.
+* **Head `a` is the NPC template id**, now [D] rather than [I]; `d`/`name`/`e` are echoed
+  verbatim in every request; `c` and `b` remain unexplained.
+* **`0x055E` is a 41-case switch**, not a type byte. Unknown types are safe.
+* **The request opcode is `0x00F5`, not Shop2's `0x0104`** - four sub-ops, and its latch is
+  stricter: only a `0x055E` clears it, and a fresh `0x055D` cannot, because `0x055D` is
+  discarded whenever any modal is open **including a `0x055B` script message**.
+
+**Buy-back is the same row array tagged by a per-row `u8`** - not a second block and not a
+separate packet. The client sends the *same* sub-op for a buy-back as for a buy, so the server
+tells them apart purely by which row index it is, because the server set the flag.
+
+**Three sentences that are worth more than the rest, given this packet has killed the client
+twice:**
+
+* `row+0xa4` is a sale-end FILETIME compared against the wall clock **with no sentinel**, and
+  `0` **hides every row** - the shop opens empty with nothing in any log.
+* `row+0x10c = 0` makes every purchase **fail silently**.
+* Gates on `row+0xf0` and `row+0xa4` drop a row **before** its trailing item blob is read, so a
+  buy-back-flagged row that gets dropped **desynchronises the stream by one byte and every
+  later row is garbage**. Never flag a row any gate might drop.
+
+Nothing is built. §9 gives the exact 336-byte body for a two-item shop as a field list *and* a
+hex dump, so an implementation can be diffed rather than re-derived.
 
 #### Storage and shops: unbuilt, and the shop is unbuilt on purpose
 
-* **Mr. Kim's storage.** `crates/store` has the whole storage layer - `storage`,
-  `storage_item`, deposit, withdraw, slot counts - and **there is no packet and no session
-  handler at all.** Textbook "built is not wired": the database half has been ready for days
-  and nothing has ever put it on the wire.
+* **Mr. Kim's storage is BUILT as of 2026-08-22** - see the section above. It was the
+  textbook "built is not wired": the database half had been ready for days and nothing had
+  ever put it on the wire.
 * **Mina's shop is off deliberately, and turning it on blind would kill the client.**
   `research/classic-shop-opcode.md`: this client has **two** shop windows. `crates/net/shop.rs`
   builds `0x0560`, whose art (`UI/UIWindow2.img/Shop2`) is **absent from this client's WZ** -

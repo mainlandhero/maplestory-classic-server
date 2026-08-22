@@ -310,6 +310,7 @@ mod npc;
 mod rates;
 mod regen;
 mod shop;
+mod storage;
 mod skills;
 #[cfg(test)]
 mod tests;
@@ -488,6 +489,9 @@ impl Session {
         match opcode {
             CLIENT_MIGRATION_HELLO => {}
             CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
+            net::storage::CLIENT_STORAGE => {
+                return self.on_storage_request(body.get(2..).unwrap_or(&[]))
+            }
             net::revive::CLIENT_REVIVE_ON_SPOT => {
                 return self.on_revive_on_spot(body.get(2..).unwrap_or(&[]))
             }

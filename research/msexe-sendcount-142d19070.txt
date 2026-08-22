@@ -1,0 +1,75 @@
+; 0x142d19070 .. 0x142d1919c  (300 bytes)  [4 contiguous .pdata entries merged]
+ 000142d19070  mov      dword ptr [rsp + 0x18], r8d
+ 000142d19075  mov      dword ptr [rsp + 0x10], edx
+ 000142d19079  push     rbx
+ 000142d1907a  sub      rsp, 0x20
+ 000142d1907e  mov      rbx, rcx
+ 000142d19081  cmp      edx, 0x247
+ 000142d19087  jg       0x142d190ac   [branch]
+ 000142d19089  je       0x142d190c5   [branch]
+ 000142d1908b  lea      eax, [rdx - 0xdf]
+ 000142d19091  cmp      eax, 5
+ 000142d19094  ja       0x142d190ac   [branch]
+ 000142d19096  lea      r8, [rip - 0x2d1909d]
+ 000142d1909d  cdqe     
+ 000142d1909f  mov      ecx, dword ptr [r8 + rax*4 + 0x2d19184]
+ 000142d190a7  add      rcx, r8
+ 000142d190aa  jmp      rcx
+>000142d190ac  sub      edx, 0x13c
+ 000142d190b2  je       0x142d190c5   [branch]
+ 000142d190b4  sub      edx, 5
+ 000142d190b7  je       0x142d190c5   [branch]
+ 000142d190b9  cmp      edx, 0x132
+ 000142d190bf  jne      0x142d1917e   [branch]
+>000142d190c5  mov      ecx, 0x1ae
+ 000142d190ca  call     0x14090d2c0
+ 000142d190cf  test     al, al
+ 000142d190d1  je       0x142d190e1   [branch]
+ 000142d190d3  mov      rcx, rbx
+ 000142d190d6  call     0x142d199c0
+ 000142d190db  add      rsp, 0x20
+ 000142d190df  pop      rbx
+ 000142d190e0  ret      
+>000142d190e1  lea      rdx, [rsp + 0x38]
+ 000142d190e6  mov      qword ptr [rsp + 0x30], rdi
+ 000142d190eb  lea      rcx, [rbx + 0x4060]
+ 000142d190f2  call     0x1411f6df0
+ 000142d190f7  mov      edx, dword ptr [rsp + 0x40]
+ 000142d190fb  mov      rcx, qword ptr [rax]
+ 000142d190fe  mov      rax, qword ptr [rcx + 8]
+ 000142d19102  cmp      byte ptr [rax + 0x19], 0
+ 000142d19106  jne      0x142d1911f   [branch]
+>000142d19108  cmp      dword ptr [rax + 0x1c], edx
+ 000142d1910b  jge      0x142d19113   [branch]
+ 000142d1910d  mov      rax, qword ptr [rax + 0x10]
+ 000142d19111  jmp      0x142d19119
+>000142d19113  mov      rcx, rax
+ 000142d19116  mov      rax, qword ptr [rax]
+>000142d19119  cmp      byte ptr [rax + 0x19], 0
+ 000142d1911d  je       0x142d19108   [branch]
+>000142d1911f  cmp      byte ptr [rcx + 0x19], 0
+ 000142d19123  jne      0x142d19155   [branch]
+ 000142d19125  cmp      edx, dword ptr [rcx + 0x1c]
+ 000142d19128  jl       0x142d19155   [branch]
+ 000142d1912a  lea      rcx, [rbx + 0x4060]
+ 000142d19131  lea      rdx, [rsp + 0x38]
+ 000142d19136  call     0x1411f6df0
+ 000142d1913b  lea      rdx, [rsp + 0x40]
+ 000142d19140  mov      rcx, rax
+ 000142d19143  call     0x14028c520
+ 000142d19148  mov      rdi, qword ptr [rsp + 0x30]
+ 000142d1914d  inc      dword ptr [rax]
+ 000142d1914f  add      rsp, 0x20
+ 000142d19153  pop      rbx
+ 000142d19154  ret      
+>000142d19155  lea      rdx, [rsp + 0x38]
+ 000142d1915a  lea      rcx, [rbx + 0x4060]
+ 000142d19161  call     0x1411f6df0
+ 000142d19166  lea      rdx, [rsp + 0x40]
+ 000142d1916b  mov      rcx, rax
+ 000142d1916e  call     0x14028c520
+ 000142d19173  mov      rdi, qword ptr [rsp + 0x30]
+ 000142d19178  mov      dword ptr [rax], 1
+>000142d1917e  add      rsp, 0x20
+ 000142d19182  pop      rbx
+ 000142d19183  ret      

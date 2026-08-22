@@ -614,6 +614,14 @@ impl Session {
             return replies;
         }
 
+        // **And a storage keeper opens a box instead of talking.** Same shape as the shop
+        // branch above and for the same reason - Mr. Kim has no `d0` line at all, so before
+        // this they fell through to a one-line conversation with nothing to say, which on
+        // screen is indistinguishable from a click that did nothing.
+        if let Some(replies) = self.open_storage_for(template) {
+            return replies;
+        }
+
         // A quest-less NPC is a one-line conversation: its own `d0`. Going through the
         // same state machine means its OK is handled the way a quest's is, rather than
         // leaving a stale conversation behind for the next 0x00F3 to walk into.

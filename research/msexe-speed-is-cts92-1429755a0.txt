@@ -1,0 +1,144 @@
+; The client's own guard that names CTS bit 92 as Speed.
+; String id 0x14DA decrypts to:
+;   'Nimble Feet cannot be used while another Speed increase effect is active.'
+; The only mov r32,0x14DA in the whole image is at 0x1429759c4, inside FUN_1429755a0,
+; and the two tests immediately above it read secStat+0x5cc (the VALUE triple of
+; CTS 92) and secStat+0x5d8 (the REASON triple of CTS 92) - the exact offsets that
+; FUN_140c3ba60 / FUN_140c40b00 write for bit index 92 in FUN_140a165f0.
+
+  000142975958  mov      ecx, r15d                                       
+  00014297595b  call     0x1407f91c0                                     
+  000142975960  test     al, al                                          
+  000142975962  je       0x1429759d9                                     
+  000142975964  mov      r8d, r15d                                       
+  000142975967  mov      rdx, rbx                                        
+  00014297596a  lea      rcx, [rbp + 0x30]                               
+  00014297596e  call     0x140909f30                                     
+  000142975973  lea      rcx, [rbp + 0x30]                               
+  000142975977  call     0x140909d50                                     
+  00014297597c  test     al, al                                          
+  00014297597e  je       0x1429759bf                                     
+  000142975980  mov      rax, qword ptr [r14]                            
+  000142975983  mov      rcx, r14                                        
+  000142975986  call     qword ptr [rax + 0x48]                          
+  000142975989  lea      rcx, [rax + 0x5cc]                              
+  000142975990  mov      edx, dword ptr [rax + 0x5d4]                    
+  000142975996  call     0x1401ba9d0                                     
+  00014297599b  test     eax, eax                                        
+  00014297599d  je       0x1429759d9                                     
+  00014297599f  mov      rax, qword ptr [r14]                            
+  0001429759a2  mov      rcx, r14                                        
+  0001429759a5  call     qword ptr [rax + 0x48]                          
+  0001429759a8  lea      rcx, [rax + 0x5d8]                              
+  0001429759af  mov      edx, dword ptr [rax + 0x5e0]                    
+  0001429759b5  call     0x1401ba9d0                                     
+  0001429759ba  cmp      r15d, eax                                       
+  0001429759bd  je       0x1429759d9                                     
+  0001429759bf  mov      edx, 0xb                                        
+  0001429759c4  mov      ecx, 0x14da                                     
+  0001429759c9  mov      r8d, 0x3e8                                      
+  0001429759cf  call     0x1415ecc10                                     
+  0001429759d4  jmp      0x142975690                                     
+  0001429759d9  xor      r8d, r8d                                        
+  0001429759dc  mov      edx, r15d                                       
+
+; the three setters for bit index 92, from FUN_140a165f0's block at 0x140a17e3b
+; --- value  0x140c3ba60
+  000140c3ba60  mov      qword ptr [rsp + 8], rbx                        
+  000140c3ba65  push     rdi                                             
+  000140c3ba66  sub      rsp, 0x20                                       
+  000140c3ba6a  mov      rbx, rcx                                        
+  000140c3ba6d  mov      edi, edx                                        
+  000140c3ba6f  lea      rcx, [rip + 0x2e8603a]                             -> 0x143ac1ab0
+  000140c3ba76  call     0x1407386b0                                     
+  000140c3ba7b  mov      dword ptr [rbx + 0x5cc], eax                    
+  000140c3ba81  mov      r8d, eax                                        
+  000140c3ba84  xor      eax, 0xbaadf00d                                 
+  000140c3ba89  xor      r8d, edi                                        
+  000140c3ba8c  ror      r8d, 5                                          
+  000140c3ba90  ror      eax, 5                                          
+  000140c3ba93  add      eax, r8d                                        
+  000140c3ba96  mov      dword ptr [rbx + 0x5d0], r8d                    
+  000140c3ba9d  mov      dword ptr [rbx + 0x5d4], eax                    
+  000140c3baa3  mov      eax, edi                                        
+  000140c3baa5  mov      rbx, qword ptr [rsp + 0x30]                     
+  000140c3baaa  add      rsp, 0x20                                       
+  000140c3baae  pop      rdi                                             
+  000140c3baaf  ret                                                      
+; --- reason 0x140c40b00
+  000140c40b00  mov      qword ptr [rsp + 8], rbx                        
+  000140c40b05  push     rdi                                             
+  000140c40b06  sub      rsp, 0x20                                       
+  000140c40b0a  mov      rbx, rcx                                        
+  000140c40b0d  mov      edi, edx                                        
+  000140c40b0f  lea      rcx, [rip + 0x2e80f9a]                             -> 0x143ac1ab0
+  000140c40b16  call     0x1407386b0                                     
+  000140c40b1b  mov      dword ptr [rbx + 0x5d8], eax                    
+  000140c40b21  mov      r8d, eax                                        
+  000140c40b24  xor      eax, 0xbaadf00d                                 
+  000140c40b29  xor      r8d, edi                                        
+  000140c40b2c  ror      r8d, 5                                          
+  000140c40b30  ror      eax, 5                                          
+  000140c40b33  add      eax, r8d                                        
+  000140c40b36  mov      dword ptr [rbx + 0x5dc], r8d                    
+  000140c40b3d  mov      dword ptr [rbx + 0x5e0], eax                    
+  000140c40b43  mov      eax, edi                                        
+  000140c40b45  mov      rbx, qword ptr [rsp + 0x30]                     
+  000140c40b4a  add      rsp, 0x20                                       
+  000140c40b4e  pop      rdi                                             
+  000140c40b4f  ret                                                      
+; --- expire 0x140c45b00
+  000140c45b00  mov      qword ptr [rsp + 8], rbx                        
+  000140c45b05  push     rdi                                             
+  000140c45b06  sub      rsp, 0x20                                       
+  000140c45b0a  mov      rbx, rcx                                        
+  000140c45b0d  mov      edi, edx                                        
+  000140c45b0f  lea      rcx, [rip + 0x2e7bf9a]                             -> 0x143ac1ab0
+  000140c45b16  call     0x1407386b0                                     
+  000140c45b1b  mov      dword ptr [rbx + 0x5e4], eax                    
+  000140c45b21  mov      r8d, eax                                        
+  000140c45b24  xor      eax, 0xbaadf00d                                 
+  000140c45b29  xor      r8d, edi                                        
+  000140c45b2c  ror      r8d, 5                                          
+  000140c45b30  ror      eax, 5                                          
+  000140c45b33  add      eax, r8d                                        
+  000140c45b36  mov      dword ptr [rbx + 0x5e8], r8d                    
+  000140c45b3d  mov      dword ptr [rbx + 0x5ec], eax                    
+  000140c45b43  mov      eax, edi                                        
+  000140c45b45  mov      rbx, qword ptr [rsp + 0x30]                     
+  000140c45b4a  add      rsp, 0x20                                       
+  000140c45b4e  pop      rdi                                             
+  000140c45b4f  ret                                                      
+
+; the bit test itself - FUN_1402bf6d0(mask, idx):
+  0001402bf6d0  mov      r8, rcx                                         
+  0001402bf6d3  cmp      edx, 0x3e0                                      
+  0001402bf6d9  jb       0x1402bf6e1                                     
+  0001402bf6db  xor      edx, edx                                        
+  0001402bf6dd  movzx    eax, dl                                         
+  0001402bf6e0  ret                                                      
+  0001402bf6e1  mov      eax, edx                                        
+  0001402bf6e3  mov      ecx, 0x1f                                       
+  0001402bf6e8  and      eax, 0x1f                                       
+  0001402bf6eb  sub      ecx, eax                                        
+  0001402bf6ed  mov      eax, edx                                        
+  0001402bf6ef  shr      rax, 5                                          
+  0001402bf6f3  mov      eax, dword ptr [r8 + rax*4]                     
+  0001402bf6f7  shr      eax, cl                                         
+  0001402bf6f9  and      eax, 1                                          
+  0001402bf6fc  ret                                                      
+
+; ---------------------------------------------------------------------------------------
+; The other half: FUN_140a165f0's block for bit index 92, disassembled from a byte offset
+; chosen by hand rather than by the block parser, so the immediate is read directly.
+;
+;   140a17e2e  ba 5c 00 00 00        mov  edx, 0x5c            <- 92
+;   140a17e33  48 8d 8c 24 40 47..   lea  rcx, [rsp + 0x4740]  <- the received mask
+;   140a17e3b  e8 ..                 call 0x1402bf6d0          <- bit test
+;   140a17e5b                        call 0x140a10800          <- u32 or i16 ?
+;   140a17e6f  call 1406e8c20 (u32)  -> 140a17e7e call 0x140c3ba60   ; VALUE  -> +0x5cc
+;   140a17e8d  call 1406e8b80 (u16)  -> cwde -> 140a17e9d 0x140c3ba60
+;   140a17eaa  call 1406e8c20 (u32)  -> 140a17ebf call 0x140c40b00   ; REASON -> +0x5d8
+;   (then u32 duration -> 0x140c45b00, expire -> +0x5e4)
+;
+; and the guard above reads +0x5cc/+0x5d4 then +0x5d8/+0x5e0. Four offsets, both halves.
