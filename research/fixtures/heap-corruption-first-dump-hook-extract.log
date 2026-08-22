@@ -1,0 +1,72 @@
+# Extracted from client-patched/maplecw-hook.log, 2026-08-21 20:10 run.
+#
+# THE FIRST CRASH DUMP THIS PROJECT HAS EVER CAPTURED. Windows Error Reporting
+# produced nothing across six heap-corruption deaths and could not have: a decoy
+# named MapleStory.exe dumped fine with the same LocalDumps key armed, so the
+# client - which ships its own crash reporting - never reaches WerFault.
+#
+# The dump comes from the hook's vectored handler instead, the one that was already
+# writing the CLIENT FAULT line and only logging it.
+
+4191:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT 0x140dfefe2<-TEXT *****
+4193:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT 0x140dfefe2<-TEXT *****
+4195:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT 0x140dfefe2<-TEXT *****
+4198:      stack: 0x144ec8f72(vm) 0x14277aef7<-TEXT 0x140933a0a<-TEXT 0x143273970(?) 0x140f0b2bc<-TEXT *****
+5052:      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+5054:      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+5915:      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+6827:      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+7889:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+7891:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+7893:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+7895:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+8550:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+8552:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+8554:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+8556:      stack: 0x140309686<-TEXT 0x140306223<-TEXT 0x140309f70<-TEXT *****
+11618:20:20:46.782 ***** CLIENT FAULT #1: code=0xc0000374 at 0x7ffca83af509 in ntdll.dll - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 23 C++ throw(s) seen before this, 23 logged. *****
+11619:      stack: 0x14019b58e<-TEXT
+11620:20:20:46.782 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-1096760-c0000374-1.dmp ... (full memory, this can take a few seconds) *****
+11621:20:20:47.660 ***** CRASH DUMP: wrote C:\MapleCW\dumps\maplecw-crash-1096760-c0000374-1.dmp, 1058811810 bytes. Open it with WinDbg; `!analyze -v` and `!heap -p -a <addr>` are the two that matter here *****
+
+# --- the last 40 lines of the run, for context on what preceded the fault ---
+20:20:44.679 11029 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+20:20:45.191 11030 opcode=0x0453 elapsed_us=433.5 ret=1 flag=1->1 state=2->2
+20:20:45.192 11031 opcode=0x0453 elapsed_us=87.0 ret=1 flag=1->1 state=2->2
+20:20:45.751 11032 opcode=0x03E4 elapsed_us=93.8 ret=1 flag=1->1 state=2->2
+20:20:45.752 11033 opcode=0x03E4 elapsed_us=57.9 ret=1 flag=1->1 state=2->2
+20:20:45.752 11034 opcode=0x03E4 elapsed_us=40.5 ret=1 flag=1->1 state=2->2
+20:20:45.752 11035 opcode=0x03E4 elapsed_us=36.5 ret=1 flag=1->1 state=2->2
+20:20:45.752 11036 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+20:20:45.753 11037 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+20:20:45.753 11038 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+20:20:45.753 11039 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+20:20:45.753 11040 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+20:20:45.753 11041 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+20:20:45.754 11042 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+20:20:45.754 11043 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+20:20:45.754 11044 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+20:20:45.754 11045 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+20:20:45.755 11046 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+20:20:45.755 11047 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+20:20:45.755 11048 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+20:20:45.755 11049 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+20:20:45.756 11050 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+20:20:45.756 11051 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+20:20:45.756 11052 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+20:20:45.756 11053 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+20:20:45.756 11054 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+20:20:45.757 11055 opcode=0x03E4 elapsed_us=34.4 ret=1 flag=1->1 state=2->2
+20:20:45.757 11056 opcode=0x03E4 elapsed_us=48.2 ret=1 flag=1->1 state=2->2
+20:20:45.757 11057 opcode=0x03E4 elapsed_us=40.8 ret=1 flag=1->1 state=2->2
+20:20:45.757 11058 opcode=0x03E4 elapsed_us=35.0 ret=1 flag=1->1 state=2->2
+20:20:45.758 11059 opcode=0x03E4 elapsed_us=34.8 ret=1 flag=1->1 state=2->2
+20:20:45.758 11060 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+20:20:45.758 11061 opcode=0x03E4 elapsed_us=33.6 ret=1 flag=1->1 state=2->2
+20:20:46.130 ***** SOCKET conn=0x5c1ecb8 +0x20=0xffffffffffffffff - closed and cleared by the client (FUN_1415e3b60 ran) *****
+20:20:46.130 ***** SESSION obj=0x5c2fa68 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+20:20:46.740 session: object at 0x0 is now UNREADABLE - values below are stale
+20:20:46.782 ***** CLIENT FAULT #1: code=0xc0000374 at 0x7ffca83af509 in ntdll.dll - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 23 C++ throw(s) seen before this, 23 logged. *****
+      stack: 0x14019b58e<-TEXT
+20:20:46.782 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-1096760-c0000374-1.dmp ... (full memory, this can take a few seconds) *****
+20:20:47.660 ***** CRASH DUMP: wrote C:\MapleCW\dumps\maplecw-crash-1096760-c0000374-1.dmp, 1058811810 bytes. Open it with WinDbg; `!analyze -v` and `!heap -p -a <addr>` are the two that matter here *****

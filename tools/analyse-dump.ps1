@@ -6,14 +6,30 @@
 #
 # `research/protection-surface.md` says of this client: "Runtime anti-debug. Expect debugger
 # detection; attaching to a running client is a fight, independent of GameGuard." A dump is
-# written by Windows Error Reporting *after* the process is already dying, and nothing is
-# attached while it runs - so there is nothing for the anti-debug to detect. That is the whole
-# reason this script exists instead of a `-pn MapleStory.exe` one-liner.
+# read after the process is gone and nothing is attached while it runs, so there is nothing
+# for the anti-debug to detect. That is the whole reason this script exists instead of a
+# `-pn MapleStory.exe` one-liner.
 #
-# WHAT PRODUCES THE DUMP
+# WHAT PRODUCES THE DUMP - NOT WER, AND THAT MATTERS
 #
-# WER LocalDumps, which the owner enables by hand - it is a system setting. See
-# `research/heap-corruption.md`.
+# The hook writes it, from the vectored exception handler in `crates/grap-stub/src/minidump.rs`.
+# Windows Error Reporting never produced one and never could: on 2026-08-21 a decoy named
+# MapleStory.exe that only dereferences null wrote a 9.4 MB dump into dumps\ with the same
+# LocalDumps key armed, while the real client's own 0xC0000005 - 88 minutes after WER was
+# switched on - produced nothing at all. The client ships its own crash reporting and a
+# process that handles its own faults never reaches WerFault.
+#
+# Two consequences for reading the file:
+#
+#   * It is taken FIRST-CHANCE, at the faulting instruction, rather than post-mortem. The
+#     faulting thread's stack is intact and has not been unwound.
+#   * PAGE HEAP IS NOT ENABLED, so `!heap -p -a` will not have allocation and free stacks to
+#     print. It is still worth running - it identifies the block - but the stack at the stop
+#     and `!heap -s` are what carry the weight here. Page heap is a separate IFEO setting and
+#     is the owner's to turn on; the 418 MB peak working set is the independent evidence it is off,
+#     because a page-heap run peaks near 990 MB.
+#
+# See `research/heap-corruption.md`.
 
 param(
     # A specific dump, or the newest one in dumps/ when omitted.
@@ -27,10 +43,10 @@ $root = Split-Path -Parent $PSScriptRoot
 
 if (-not $Dump) {
     $dir = Join-Path $root 'dumps'
-    if (-not (Test-Path $dir)) { throw "no dumps directory at $dir - is WER LocalDumps enabled? See research/heap-corruption.md" }
+    if (-not (Test-Path $dir)) { throw "no dumps directory at $dir - the launcher creates it, so this means test-server.ps1 has not run" }
     $newest = Get-ChildItem $dir -Filter *.dmp -ErrorAction SilentlyContinue |
               Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $newest) { throw "no .dmp files in $dir - the crash did not produce one, which is itself a finding: WER may not be handling the exit" }
+    if (-not $newest) { throw "no .dmp files in $dir - which is itself a finding. Check client-patched\maplecw-hook.log for a CRASH DUMP line: one saying 'writing' with no matching 'wrote' means the dump attempt died partway, and neither line means the fault was not one the handler matches" }
     $Dump = $newest.FullName
 }
 if (-not (Test-Path $Dump)) { throw "no such dump: $Dump" }
@@ -95,4 +111,10 @@ if ($cdb) {
     Write-Host ""
     Write-Host "     !heap -p -a <address> wants the faulting address, which .exr -1 prints"
     Write-Host "     as the first exception parameter."
+    Write-Host ""
+    Write-Host "     PAGE HEAP IS OFF, so !heap -p -a cannot print allocation and free stacks."
+    Write-Host "     The stack at the stop and !heap -s are what carry the weight. STATUS_HEAP_"
+    Write-Host "     CORRUPTION is raised at the NEXT allocator walk rather than where the"
+    Write-Host "     damage happened, so the fault address names ntdll and not the culprit -"
+    Write-Host "     read `kb` for the client frame that was allocating or freeing."
 }

@@ -99,16 +99,41 @@ impl Session {
                 what: format!("regen: save failed: {e}"),
             }];
         }
+        // **The blue number over the player's head.** The owner, 2026-08-21: *"the idle recovery
+        // should pop up with a blue number of the recovery amount above the player's head. I
+        // don't see that here, the HP bar just moves up without a number indication."*
+        //
+        // The bar moved because `hp`/`mp` carry the new totals; nothing drew a number because
+        // this packet's **second optional trailer** was absent. `0x007C` ends with
+        // `u8 flag`, then `u32 hpRecovery, u32 mpRecovery` when the flag is set, and the
+        // client hands both to `FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp)`
+        // - a **UI** global, which is the argument `research/level-up.md` used to name those
+        // two fields in the first place.
+        //
+        // **These are the amounts recovered, not the new totals.** They sit beside the
+        // client's own snapshots of `record+0x5b` and `+0x73` in that call, which is what
+        // pairs them with hp and mp rather than maxHp and maxMp - `[L]` for the shape,
+        // `[D]` for the pairing.
+        //
+        // `user-hit.md` §5.2 said this trailer "should stay `None`", and for a *hit* that is
+        // still right: it is not how an ordinary HP change is reported, and a hit already
+        // draws its own number client-side. A recovery is the case it exists for.
+        //
+        // Absent when nothing moved, so a tick that only restores MP cannot draw a "+0" over
+        // the head for HP.
+        let recovery =
+            if healed_hp > 0 || healed_mp > 0 { Some((healed_hp, healed_mp)) } else { None };
         vec![Reply {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange {
                 hp: Some(chr.hp),
                 mp: Some(chr.mp),
+                recovery,
                 ..Default::default()
             }
             .build(),
             what: format!(
-                "StatChanged: idle regen +{healed_hp} hp +{healed_mp} mp -> {}/{} hp, {}/{} mp",
+                "StatChanged: idle regen +{healed_hp} hp +{healed_mp} mp -> {}/{} hp, {}/{} mp - with the recovery trailer, which is what draws the blue number",
                 chr.hp, chr.max_hp, chr.mp, chr.max_mp
             ),
         }]
@@ -144,6 +169,69 @@ mod tests {
         chr.mp = 1;
         store.save_character_progress(&chr).unwrap();
         (s, store)
+    }
+
+    /// **The blue number.** The owner, 2026-08-21: *"the idle recovery should pop up with a blue
+    /// number of the recovery amount above the player's head ... the HP bar just moves up
+    /// without a number indication."*
+    ///
+    /// The bar always moved, because `hp`/`mp` carry the new totals. What was missing is
+    /// `0x007C`'s second optional trailer, which the client hands to
+    /// `FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp)`.
+    ///
+    /// This asserts the whole body against a hand-built expectation rather than poking at the
+    /// tail bytes, so a change to any earlier field cannot quietly shift the trailer's offset
+    /// and still pass.
+    #[test]
+    fn the_regen_packet_carries_the_recovery_amounts_not_the_totals() {
+        let (mut s, _) = hurt_session();
+        s.clock_ms = 10_000;
+        let out = s.regen_tick(10_000);
+        assert_eq!(out.len(), 1, "one 0x007C");
+
+        let want = net::stats::StatChange {
+            hp: Some(1 + REGEN_AMOUNT),
+            mp: Some(1 + REGEN_AMOUNT),
+            recovery: Some((REGEN_AMOUNT, REGEN_AMOUNT)),
+            ..Default::default()
+        }
+        .build();
+        assert_eq!(out[0].body, want);
+
+        // And the distinction that matters: the trailer is the AMOUNT, and the amount is not
+        // the new total. Sending the total here would draw "+11" over the head of someone who
+        // recovered 10 - which is exactly the mistake `0x007C`'s exp field is documented to
+        // invite, in the other direction.
+        let totals = net::stats::StatChange {
+            hp: Some(1 + REGEN_AMOUNT),
+            mp: Some(1 + REGEN_AMOUNT),
+            recovery: Some((1 + REGEN_AMOUNT, 1 + REGEN_AMOUNT)),
+            ..Default::default()
+        }
+        .build();
+        assert_ne!(out[0].body, totals, "the trailer must carry the gain, not the new total");
+    }
+
+    /// A tick that heals only MP must not draw a "+0" over the player's HP - and a tick that
+    /// heals nothing at all does not happen, because the caller returns early when both bars
+    /// are full. This pins the first half, which is reachable.
+    #[test]
+    fn a_capped_bar_contributes_zero_to_the_recovery_trailer() {
+        let (mut s, store) = hurt_session();
+        let mut chr = s.claimed_character().unwrap();
+        chr.hp = chr.max_hp; // full HP, MP still at 1
+        store.save_character_progress(&chr).unwrap();
+
+        s.clock_ms = 10_000;
+        let out = s.regen_tick(10_000);
+        let want = net::stats::StatChange {
+            hp: Some(chr.max_hp),
+            mp: Some(1 + REGEN_AMOUNT),
+            recovery: Some((0, REGEN_AMOUNT)),
+            ..Default::default()
+        }
+        .build();
+        assert_eq!(out[0].body, want, "hp contributes 0, mp contributes the gain");
     }
 
     #[test]

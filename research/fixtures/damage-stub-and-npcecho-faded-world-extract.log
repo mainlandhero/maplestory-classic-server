@@ -1,0 +1,107 @@
+# Extracted from world.log of the 2026-08-21 20:10 run by tools/, keeping the lines
+# four conclusions rest on. The full 7 MB original was mostly mob-move traffic and
+# lives in previous-runs/ until that buffer rolls.
+#
+# What this proves:
+#   * the client claimed 1 on EVERY hit while the server computed 3 or 4 - a
+#     constant, not a distribution, which is the whole argument for it being a stub
+#   * !npcecho sent both NPCs again as 0x0451 and the copies still faded
+#   * a 100 HP potion healed 11 into a bar 11 short - the cap working
+#   * the migrate went out as 0x001A alone
+
+34:00:11:07.578    MIGRATION HELLO: character id 211
+108:00:11:23.521    MIGRATION HELLO: character id 206
+178:00:11:49.256    MIGRATION HELLO: character id 212
+218:00:11:53.655 -> 0x0089 UNKNOWN quest 1000 accepted from NPC 1 by character 212 (Idiot) and stored
+220:00:11:53.655 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 1 for quest 1000, line 1 of 1 on path "0.yes"
+227:00:11:54.917 -> 0x0089 UNKNOWN quest 1000 completed for character 212
+229:00:11:54.918 -> 0x02D1 UNKNOWN UserEffectLocal QuestClear for quest 1000 - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result.
+231:00:11:54.918 -> 0x0089 UNKNOWN quest 1001 accepted from NPC 0 by character 212 (Idiot) and stored
+235:00:11:54.918 -> 0x02D1 UNKNOWN UserEffectLocal item line: quest 1001 gave 4031000 x1 - chat category 6, grey
+237:00:11:54.918 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 2 for quest 1001, line 1 of 2 on path "0"
+240:00:11:56.086 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 2 for quest 1001, line 2 of 2 on path "0"
+247:00:12:00.027 -> 0x0089 UNKNOWN quest 1001 given up by character 212 (Idiot) and the row is gone
+252:00:12:03.497 -> 0x0089 UNKNOWN quest 1001 accepted from NPC 2 by character 212 (Idiot) and stored
+256:00:12:03.498 -> 0x02D1 UNKNOWN UserEffectLocal item line: quest 1001 gave 4031000 x1 - chat category 6, grey
+258:00:12:03.498 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 2 for quest 1001, line 1 of 2 on path "0"
+261:00:12:04.187 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 2 for quest 1001, line 2 of 2 on path "0"
+268:00:12:06.639 -> 0x0089 UNKNOWN quest 1001 completed for character 212
+272:00:12:06.639 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: +2 exp from quest 1001 -> 2 total. Bit 16 carries the NEW                  TOTAL; the client differences its own snapshot to draw the gain.
+276:00:12:06.639 -> 0x02D1 UNKNOWN UserEffectLocal QuestClear for quest 1001 - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result.
+278:00:12:06.639 -> 0x055B SCRIPT_MESSAGE ScriptMessage yes/no prompt from NPC template 1 for quest 1001, line 1 of 1 on path "1"
+281:00:12:07.827 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 1 for quest 1001, line 1 of 1 on path "1.yes"
+364:00:12:23.501 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 3 for quest 1002, line 1 of 2 on path "0"
+367:00:12:24.211 -> 0x055B SCRIPT_MESSAGE ScriptMessage yes/no prompt from NPC template 3 for quest 1002, line 2 of 2 on path "0"
+370:00:12:25.461 -> 0x0089 UNKNOWN quest 1002 accepted from NPC 3 by character 212 (Idiot) and stored
+374:00:12:25.462 -> 0x02D1 UNKNOWN UserEffectLocal item line: quest 1002 gave 2010000 x1 - chat category 6, grey
+376:00:12:25.462 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: quest 1002 state 0 set hp 50 -> 25/50 (Act.0.hp is an AUTHORED key - the WZ has none)
+378:00:12:25.462 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 3 for quest 1002, line 1 of 2 on path "0.yes"
+381:00:12:27.120 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 3 for quest 1002, line 2 of 2 on path "0.yes"
+392:00:12:30.373 -> 0x0089 UNKNOWN quest 1002 completed for character 212
+394:00:12:30.373 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: +3 exp from quest 1002 -> 5 total. Bit 16 carries the NEW                  TOTAL; the client differences its own snapshot to draw the gain.
+398:00:12:30.373 -> 0x02D1 UNKNOWN UserEffectLocal QuestClear for quest 1002 - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result.
+455:00:12:43.004 -> 0x0089 UNKNOWN quest 1003 accepted from NPC 4 by character 212 (Idiot) and stored
+457:00:12:43.004 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 4 for quest 1003, line 1 of 2 on path "0"
+460:00:12:43.445 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 4 for quest 1003, line 2 of 2 on path "0"
+507:00:12:50.197 -> 0x0089 UNKNOWN quest 1003 completed for character 212
+509:00:12:50.197 -> 0x02D1 UNKNOWN UserEffectLocal QuestClear for quest 1003 - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result.
+511:00:12:50.197 -> 0x0089 UNKNOWN quest 1004 accepted from NPC 0 by character 212 (Idiot) and stored
+513:00:12:50.197 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 5 for quest 1004, line 1 of 2 on path "0"
+516:00:12:50.415 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 5 for quest 1004, line 2 of 2 on path "0"
+545:00:12:53.267 -> 0x0089 UNKNOWN quest 1004 completed for character 212
+547:00:12:53.267 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: +3 exp from quest 1004 -> 8 total. Bit 16 carries the NEW                  TOTAL; the client differences its own snapshot to draw the gain.
+551:00:12:53.267 -> 0x02D1 UNKNOWN UserEffectLocal QuestClear for quest 1004 - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result.
+553:00:12:53.267 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 4 for quest 1004, line 1 of 1 on path "1"
+606:00:13:01.147 -> 0x0089 UNKNOWN quest 1005 accepted from NPC 7 by character 212 (Idiot) and stored
+608:00:13:01.147 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 7 for quest 1005, line 1 of 1 on path "0.yes"
+706:00:13:08.261 -> 0x0089 UNKNOWN QuestRecord: quest 1005 progress "001" after killing template                      1. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+947:00:13:22.374 -> 0x0089 UNKNOWN QuestRecord: quest 1005 progress "002" after killing template                      1. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+1024:00:13:25.763 -> 0x0089 UNKNOWN QuestRecord: quest 1005 progress "003" after killing template                      1. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+1255:00:13:40.716 -> 0x0089 UNKNOWN quest 1005 completed for character 212
+1259:00:13:40.716 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: +10 exp from quest 1005 -> 120 total. Bit 16 carries the NEW                  TOTAL; the client differences its own snapshot to draw the gain.
+1263:00:13:40.717 -> 0x02D1 UNKNOWN UserEffectLocal QuestClear for quest 1005 - plays Sound/Game.img/QuestClear. The animation node Effect/BasicEff.img/QuestClear is NOT in this client's WZ, so sound and no picture is the EXPECTED result.
+1265:00:13:40.717 -> 0x055B SCRIPT_MESSAGE ScriptMessage yes/no prompt from NPC template 6 for quest 1005, line 1 of 1 on path "1"
+1279:00:13:41.545 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 6 for quest 1005, line 1 of 1 on path "1.yes"
+4103:00:14:20.022 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2001 (template 2, attack index -1) for 4 - hp 114 -> 110. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+4492:00:14:23.863 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 4 - hp 110 -> 106. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+4591:00:14:25.453 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 3 - hp 106 -> 103. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+5078:00:14:30.625 -> 0x0089 UNKNOWN quest 1006 accepted from NPC 9 by character 212 (Idiot) and stored
+5080:00:14:30.625 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 9 for quest 1006, line 1 of 2 on path "0.yes"
+5083:00:14:31.244 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 9 for quest 1006, line 2 of 2 on path "0.yes"
+5479:00:14:35.266 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2006 (template 2, attack index -1) for 3 - hp 103 -> 100. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+5710:00:14:36.939 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "001" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+6544:00:14:45.840 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "002" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+7049:00:14:51.167 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2023 (template 2, attack index -1) for 4 - hp 146 -> 142. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+7644:00:15:00.489 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 4 - hp 142 -> 138. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+7754:00:15:01.989 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 3 - hp 138 -> 135. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+8282:00:15:07.171 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: used item 2000000 from Use slot 1 - +11 hp (now 146/146), +0 mp (now 77/77). Byte 0 also clears the client's request latch
+11807:00:16:09.913 -> 0x00BB CHAT_NOTICE ChatNotice: !npcecho: sending 2 NPC(s) again as 0x0451 NpcChangeController, 70 px to the side. Do they POP or FADE? The ones already on this map arrived as 0x044F.
+11809:00:16:09.913 -> 0x0451 UNKNOWN NpcChangeController ECHO: template 1 at (24, 305) as object 6000 - the 0x0451 creation route, which sets obj+0x38 to 2 where 0x044F sets bit 0. This is the packet mobs get and NPCs never have
+11811:00:16:09.913 -> 0x0451 UNKNOWN NpcChangeController ECHO: template 2 at (903, 125) as object 6001 - the 0x0451 creation route, which sets obj+0x38 to 2 where 0x044F sets bit 0. This is the packet mobs get and NPCs never have
+12579:00:16:42.268 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 3 - hp 146 -> 143. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+12772:00:16:44.488 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2001 (template 2, attack index -1) for 3 - hp 143 -> 140. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+12893:00:16:46.322 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 3 - hp 140 -> 137. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+17218:00:17:35.431 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "003" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+17412:00:17:37.258 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2004 (template 2, attack index -1) for 4 - hp 146 -> 142. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+17538:00:17:38.268 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "004" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+18012:00:17:44.359 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 3 - hp 142 -> 139. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+18428:00:17:48.476 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "005" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+18537:00:17:49.860 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2000 (template 2, attack index -1) for 4 - hp 162 -> 158. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+19088:00:17:56.392 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2000 (template 2, attack index -1) for 3 - hp 158 -> 155. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+19316:00:17:58.674 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "006" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+19502:00:18:00.712 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 3 - hp 155 -> 152. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+19626:00:18:01.647 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "007" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+20318:00:18:08.656 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "008" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+20603:00:18:11.904 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 4 - hp 162 -> 158. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+20711:00:18:13.854 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 4 - hp 158 -> 154. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+20891:00:18:15.924 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2003 (template 2, attack index -1) for 3 - hp 154 -> 151. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+21104:00:18:17.208 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "009" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+21131:00:18:18.145 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2000 (template 2, attack index -1) for 3 - hp 178 -> 175. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+21300:00:18:19.695 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 3 - hp 175 -> 172. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+21394:00:18:21.195 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 4 - hp 172 -> 168. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+21563:00:18:22.706 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 3 - hp 168 -> 165. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+21671:00:18:24.206 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2002 (template 2, attack index -1) for 4 - hp 165 -> 161. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+21794:00:18:25.140 -> 0x0089 UNKNOWN QuestRecord: quest 1006 progress "010" after killing template                      2. Three zero-padded characters per mob slot - an integer here                      renders as nothing.
+21804:00:18:25.706 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: hit by mob 2004 (template 2, attack index -1) for 3 - hp 161 -> 158. The CLIENT claimed 1 and the server overrode it. Bit 10 carries the NEW HP, not a delta.
+22913:00:18:38.039 -> 0x001A UNKNOWN migrate candidate 0x001a: character to channel 1 at 127.0.0.1:8486, seed 0xab65eb1c - the 7-byte body is MEASURED, the opcode is [I]. Single use, NOT authentication
+22923:00:19:05.170    MIGRATION HELLO: character id 212

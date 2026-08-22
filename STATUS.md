@@ -104,9 +104,9 @@ stand as written.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-21, late: the crash-dump instrument was replaced, and the last run
-turned out to have answered more than was reported.** Read this section and nothing else to
-know where the project is. Everything under it is older and
+**Last updated 2026-08-21, night: the channel change works, and the heap corruption is
+finally captured in a dump.** Read this section and nothing else to know where the project
+is. Everything under it is older and
 kept for its working, not its verdicts.
 
 **The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
@@ -132,6 +132,86 @@ kept current. `CLAUDE.md` has the section on why.
 | **the quest-finish fanfare** | *"the quest completion SFX is now working"* - `0x02D1` effect 15, sound and no picture as predicted |
 | **Roger's quest opens** | the authored overlay: their real opening, a **Next**, then an Accept/Decline box |
 | **THE CHANNEL MIGRATE OPCODE IS `0x001A`** | measured 2026-08-21. The client tore down, connected to **127.0.0.1:8486** and sent a migration hello - so `u32 ip` network-order and `u16 port` little-endian are confirmed too |
+
+#### CONFIRMED on the 2026-08-21 evening run - the big two
+
+* **THE CHANNEL CHANGE WORKS.** The owner: *"Channel changed successfully seemingly. I checked my
+  inventory items and mesos, seems like everything carried over."* `world-ch1.log` says how:
+  `MIGRATION HELLO: character id 212` then *"claimed the migration for character 212 of
+  account 1"* and a real `SetField` carrying map 40 - not the minimal fallback that killed the
+  client last time. Goal closed: the opcode is `0x001A`, the body is `u8 ok, u32 ip` network
+  order, `u16 port` little-endian, and identification is by **channel** because a migrate
+  carries no character id.
+* **THE HEAP CORRUPTION IS IN A DUMP.** For the first time in this project, after six
+  undiagnosed deaths. `dumps\maplecw-crash-1096760-c0000374-1.dmp`, **1 010 MB**, written by
+  the hook in **878 ms**, exception `0xC0000374` = `STATUS_HEAP_CORRUPTION` at
+  `0x7ffca83af509` in ntdll. The client died at **596 s** of life, which extends the old
+  193-482 s band rather than fitting it.
+  The hook's own heuristic stack scan produced exactly one client frame, `0x14019b58e` - a
+  lead and nothing more. **The real stack is in the dump**, and reading it needs a debugger:
+  `tools/analyse-dump.ps1` finds the file and prints the WinDbg commands, because only the
+  Store build of WinDbg is on this machine and it has no scriptable console.
+  **Page heap is still off**, so `!heap -p -a` cannot print allocation and free stacks. `kb`
+  and `!heap -s` are what carry the weight until it is enabled.
+
+Also confirmed the same run, all of them first sightings on a screen:
+
+| | |
+|---|---|
+| **create on the second login** | *"Done, no issues"* |
+| **the client refuses to forfeit a completed quest** | so the client-side half of the farming loop was never open; the three server-side holes were |
+| **consumables, with the cap** | *"hurt down to 136, it recovered to 146, the stack went from 2 to 1"*. The log says `+11 hp (now 146/146)` - a **100 HP potion capped at the 11 that were missing**, which is the cap working, not a 10-point potion |
+| **Sera's idle chatter** | *"seem okay now"* - the byte revert holds |
+| **the mob-damage override** | *"the snail hit me for 1 with the number on top of my head, but I actually took 3 damage according to the HP bar"* - exactly the predicted outcome |
+| **the damage model, at a second stat point** | 14 swings at STR 35 with the same axe: **17..31**. The model spans **15.5..32.6** across the three attack actions (swing 2.4, mixed 1.8, stab 1.2 at `incWAT` 17), snail PDD is **0** and it is level 1 so neither defence nor level gap applies. Fits, and 14 samples would not be expected to reach either extreme |
+
+#### The NPC fade: `!npcecho` says the creation packet is NOT the difference
+
+The owner: *"with !npcecho, Heena still faded in."* The command sent template 1 (Heena) and
+template 2 (Sera) on map 1 as **`0x0451` NpcChangeController** - the other creation packet,
+the one mobs get and NPCs never had - 70 px to the side.
+
+**The copies faded too.** That kills both standing theories at once: the creation route is not
+what makes mobs pop, and the *timing* theory dies with it, because these arrived minutes after
+field entry rather than during it. What is left is that the client fades an NPC because it is
+an NPC, in its own rendering path, with no field of either packet to change it - which is what
+two static passes concluded and which I was wrong to restate as "the server has no lever"
+before there was a measurement. Now there is one.
+
+*One thing to confirm before this is closed:* that it was the **copy** that faded rather than
+the original. Two Heenas were on screen and only one sentence came back.
+
+#### The owner's new request, built and unseen: the blue recovery number
+
+*"the idle recovery should pop up with a blue number of the recovery amount above the player's
+head. I don't see that here, the HP bar just moves up without a number indication."*
+
+The bar always moved, because `hp`/`mp` carry the new totals. Nothing drew a number because
+`0x007C`'s **second optional trailer** was absent - `u8 flag`, then `u32 hpRecovery,
+u32 mpRecovery`, which the client hands to
+`FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp)`. That call takes a **UI**
+global, and it is the argument `research/level-up.md` used to name those two fields in the
+first place. `user-hit.md` §5.2 said the trailer "should stay `None`" - correct for a *hit*,
+which draws its own number client-side, and this is the case the field exists for.
+
+Now sent by **idle regen and by consumables**, carrying the **amounts** rather than the new
+totals, and absent when nothing moved so a full bar cannot draw "+0". **[L]** for the shape,
+**[D]** for the hp/mp pairing.
+
+#### The floating damage number is a constant, and that is worth one measurement
+
+The client claimed **1 on all 25 hits** in that run - not a distribution, a constant - while
+the server computed 3 fifteen times and 4 ten times. `incoming_damage` already applies the
+player's own defence, so 3-4 is a defended number.
+
+A computed value would vary. A constant will not. So either the client's formula genuinely
+yields 1 for a snail against this character, or **the field is a stub and the client never
+computes mob damage at all** - in which case the floating number will read 1 for every mob
+forever and no server change can move it, because `user-hit.md` §4.4 establishes it is drawn
+at *send* time by `FUN_142771360`.
+
+**One hit from a much stronger mob discriminates.** If the number moves off 1, the client
+computes and our formula is the thing that disagrees. If it stays 1, it is a stub.
 
 #### PROVEN ON THE WIRE by the 13:48 run of 2026-08-21, but never reported
 

@@ -13,212 +13,111 @@
     wrong, the server is the only thing that changed.
 
 .NOTES
-    ================== THE TEST PLAN, as of 2026-08-21 evening ==================
+    ================== THE TEST PLAN, as of 2026-08-21 night ==================
 
-    It lives here rather than in STATUS.md so the steps and the thing that launches them
-    cannot drift apart. Update it in the same commit that changes what it tests, and
-    remember there are TWO copies in this file - this one, and the Write-Host block near
-    the bottom that actually gets printed. Both, every time.
+    TWO copies in this file - this one and the Write-Host block near the bottom that
+    actually gets printed. Update both, then RENDER the second one and read it.
 
-    -SetFieldProbe is NOT optional. Without it Session::handle returns nothing for EVERY
-    packet and the client sits on "Connecting...", which looks exactly like a server that
-    is not running. It has cost a launch.
+    -SetFieldProbe is NOT optional: without it Session::handle returns nothing for EVERY
+    packet and the client sits on "Connecting...". Run -Stop before relaunching.
 
-    Run -Stop before relaunching. A running server holds the release binaries and the
-    rebuild fails with "Access is denied".
+    WHAT THE LAST RUN CLOSED - none of this needs testing again
+    ----------------------------------------------------------
+    Create on the second login. Consumables and their cap (a 100 HP potion healing 11 into
+    a bar 11 short is the cap WORKING). Sera's idle chatter. The mob-damage override. The
+    damage model, now at a second stat point - 14 swings at STR 35 came in at 17..31 where
+    the model spans 15.5..32.6. And the two big ones:
 
-    WHAT THE LAST RUN ALREADY ANSWERED - do not spend this one re-testing it
-    -----------------------------------------------------------------------
-    The 13:48 run was read properly afterwards and it had far more in it than was
-    reported at the time. On the wire, all of this WORKED:
+      THE CHANNEL CHANGE WORKS. Inventory and mesos carried over, and world-ch1.log shows
+      the migration claimed BY CHANNEL with a real SetField rather than the minimal one.
 
-      Roger's quest, the whole chain.  The 6-byte yes/no accept parsed, quest 1002 was
-        stored, the apple went into Use slot 1, HP was set to 25/130, and the grey item
-        line went out. Then the apple was eaten: +30 HP, the slot emptied cleanly, the
-        quest completed, +3 EXP.
-      Consumables.  Same event - a real use of item 2010000 answered correctly.
-      Quest completion and its EXP payout.
+      THE HEAP CORRUPTION IS IN A DUMP - the first in this project, after six deaths.
+      1 010 MB, written by the hook in 878 ms, 0xC0000374 at 596 s of life. Reading it is
+      a desk job, not a client run: powershell -ExecutionPolicy Bypass -File
+      "C:\MapleCW\tools\analyse-dump.ps1"
 
-    So the mechanism is proven and what is NOT known is what any of it LOOKED like, because
-    the only thing reported back was the channel change. That is what step 2 below is for:
-    it is a question about the screen, not about the packet.
+    ALSO ANSWERED: the NPC fade. !npcecho created Heena and Sera again through the OTHER
+    packet the pool accepts and the copies faded too, which kills the creation-route theory
+    and the timing theory together. Nothing left to try from the server.
 
-    ALSO CONFIRMED EARLIER, and off the list for good: equipping and swapping, ability
-    points in singles and in bulk, the job change with its sound, the quest-finish fanfare,
-    Roger's dialogue opening, and the channel migrate OPCODE (0x001A, measured).
+    THE POINT OF THIS RUN - four things
+    -----------------------------------
+     1. THE BLUE RECOVERY NUMBER. The owner asked for it and it is now built.
+        Get hurt, then stand still for 20 seconds. Then drink a potion.
+        0x007C's second optional trailer - u8 flag, then u32 hpRecovery, u32 mpRecovery -
+        was never being sent, which is why the bar moved with no number. The client hands
+        both to FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp), and that
+        first argument being a UI global is why those fields have their names.
+          a number over your head on each regen tick  -> done. Say what COLOUR it is
+          a number when you drink a potion too       -> the same trailer, both paths
+          on one and not the other                   -> say WHICH. The packet is identical,
+                                                        so that would mean the client cares
+                                                        about something else as well
+          the bar moves and still no number          -> the trailer is not the drawing
+                                                        route; world.log confirms it was
+                                                        sent, so the next question is the
+                                                        client and not the server
+          it shows the TOTAL instead of the gain     -> say so; we send the amount
 
-    CRASH DUMPS: THE INSTRUMENT WAS REPLACED, BECAUSE THE OLD ONE COULD NOT WORK
-    ---------------------------------------------------------------------------
-    Windows Error Reporting is not the problem and never was after 2026-08-21 12:21. That
-    is measured, not assumed, and it cost no client run to establish: a decoy that does
-    nothing but dereference null, named MapleStory.exe so it matches the LocalDumps key,
-    wrote a 9.4 MB dump into dumps\ at 15:26. The real client raised the SAME exception
-    code at 13:49:56 - 88 minutes AFTER WER was switched on - and produced nothing.
+     2. ROGER, WATCHING THE SCREEN. This was asked last time and only the give-up half came
+        back. Every packet in it is known correct, so all three are about DRAWING:
+          a. on Accept, a GREY line in the CHAT LOG: "Roger's Apple x1 earned. (Use)"?
+             another colour -> route right, colour is a separate question
+             nothing        -> the item id resolved no name, or category 6 is a tab that
+                               window does not show
+          b. after eating the apple, WHERE does the EXP line appear - chat log, or
+             bottom-right? Quest EXP is meant to be in the CHAT LOG now. Kill EXP is
+             unchanged and still belongs bottom-right. Both -> say so.
+          c. the fanfare with NOTHING DRAWN is the EXPECTED result - that art was cut from
+             this client's WZ. Something drawn -> the analysis needs correcting.
 
-    Same machine, same hour, same executable name, same exception. The variable is the
-    client: it ships its own crash reporting, and a process that handles its own faults
-    never reaches WerFault.
+     3. GET HIT BY SOMETHING MUCH BIGGER THAN A SNAIL, and read the floating number.
+        Across 25 hits last run the client claimed 1 EVERY TIME - a constant, not a
+        distribution - while the server computed 3 fifteen times and 4 ten times.
+        A computed value would vary. A constant will not. So:
+          the number moves off 1  -> the client really does compute mob damage, and it is
+                                     our incoming formula that disagrees with it
+          it is still exactly 1   -> the field is a STUB, the client never computes this,
+                                     and the number will read 1 for every mob forever -
+                                     it is drawn at SEND time by FUN_142771360, so no
+                                     server change can reach it
+        Either answer settles something that has been guessed at twice. !map somewhere with
+        a real mob, or let a higher-level one on Maple Island have a go.
 
-    So the hook writes the dump itself now, from the vectored handler that was ALREADY
-    catching the fault and only logging it. That path does not involve WER at all.
+     4. IF THE CLIENT DIES, THERE SHOULD BE A DUMP. It is no longer a question of whether
+        the instrument works - it produced a 1 GB file last run.
+          dumps\ has a new maplecw-crash-*.dmp -> say so, and note how long you were in and
+                                                  what you were doing. That is the variable
+                                                  the logs cannot supply
+          only "CRASH DUMP: writing" in the hook log, no "wrote"
+                                               -> the dump attempt died partway. Still
+                                                  evidence, and NOT the same as not trying
+        Each one is about a gigabyte. Two are kept per run; move anything decisive out.
 
-      IF THE CLIENT DIES, THERE SHOULD NOW BE A FILE IN:
-        C:\MapleCW\dumps\maplecw-crash-<pid>-<code>-1.dmp
-      and two lines in client-patched\maplecw-hook.log:
-        "CRASH DUMP: writing ..."    then    "CRASH DUMP: wrote ..., N bytes"
-
-      the second line is there      -> we finally have a dump. SAY SO. It is a few hundred
-                                       MB; move it somewhere safe, only 2 are kept per run
-      only the FIRST line           -> the dump attempt itself died partway. That is still
-                                       evidence and is NOT the same as never trying
-      neither line, but a fault     -> the fault is not one of the codes we match, or it
-                                       killed the process before the handler ran
-
-    The writer is tested end to end - it writes a real MDMP and the test reads it back -
-    so if nothing appears, suspect the client, not the code.
-
-    THE POINT OF THIS RUN, IN ORDER
-    -------------------------------
-     1. CREATE A CHARACTER ON THE SECOND LOGIN. This is first because it is also how you
-        get a FRESH CHARACTER, and steps 2-3 need one: character 210 has already finished
-        quest 1002, so Roger will not offer it again.
-        Log in, enter the world, Log Out back to character select, then click Create.
-        The handshake zeroes the flag gating that button on EVERY login success, and our
-        create=on patch used to set it once per LAUNCH. Now it re-arms per login.
-          the creation screen opens        -> fixed. Make a character and use it below
-          nothing happens at all           -> still gated. There should be no 0x00A8 in
-                                              login.log, and the hook log should carry
-                                              "re-armed the create-character flag"
-          "no room for another character"  -> we DID reach the handler; the slot arithmetic
-                                              is ours and is wrong
-
-     2. ROGER'S QUEST AGAIN - but this time WATCH THE SCREEN, not the outcome.
-        Every packet in this sequence is known to be correct. Four things - the first
-        three are about what is DRAWN, the last is about what is PAID:
-          a. When the apple is handed over, is there a GREY line in the CHAT LOG reading
-             "Roger's Apple x1 earned. (Use)"?   -> 0x02D1 effect 8, chat category 6
-             in another colour  -> the route is right and the category is a separate
-                                   question
-             nothing at all     -> either the item id resolved no name, or category 6 is a
-                                   tab that window does not show
-          b. After eating the apple and completing the quest, WHERE does the EXP line
-             appear - chat log, or bottom-right? Quest EXP is meant to go to the CHAT LOG
-             now; kill EXP is unchanged and still belongs bottom-right. If it is in both,
-             say so, that would be new.
-          c. Does the fanfare play with NOTHING DRAWN? Sound-and-no-picture is the
-             EXPECTED result - that art was cut from this client's WZ. If something IS
-             drawn, the analysis needs correcting.
-        Also worth one word: does the HP bar visibly drop to 25 on Accept?
-        d. THEN CLICK ROGER AGAIN, AND CLICK HEENA AGAIN AFTER HER QUEST.
-           The owner, 2026-08-21: *"I was able to complete the Heena quest multiple times, this
-           is not okay."* THREE holes did that, any one of them enough on its own: the
-           turn-in paid Act.1 outside the check that a quest was still in progress, the
-           accept handed Act.0 over outside the same check, and GIVE-UP DELETED A COMPLETED
-           ROW - which put the character back to never having touched the quest. The store
-           had been refusing all three correctly the whole time and the callers carried on
-           regardless.
-             no experience, no second item, no fanfare   -> fixed
-             anything is paid a second time             -> say WHICH: EXP, item, or both
-           Also press GIVE UP on a quest you have already FINISHED. It must stay finished.
-
-     3. RED POTION, TWICE. !item 2000000 5 if you have none. Get hurt first.
-        The apple already proved this path works, so this is about the CAP and the LATCH:
-          +100 HP, or only up to full if 100 would overshoot
-          the stack drops 5 -> 4 and the slot does NOT empty
-          the SECOND drink works too   -> the request latch is being cleared. One
-                                          unanswered use used to block every later one
-
-     4. !map 1, THEN STAND STILL FOR 30 SECONDS, THEN TYPE !npcecho. Two claims, one place.
-        First: last week the client died 9 s after !map 1, on Sera's first idle line, from
-        two bytes of their spawn packet that had been swapped on a static reading. Reverted.
-          they speak and the client lives  -> the revert is right
-          it dies again                    -> say how long you were on map 1. There should
-                                              now be a DUMP - see above
-        Then !npcecho: a second Heena and a second Sera appear about 70 px to the right,
-        created by the OTHER packet the NPC pool accepts. NPCs have only ever been sent
-        0x044F; mobs - which are instant - get 0x03C6 AND 0x03D2.
-          the copies POP in solid   -> 0x0451 is the fix, and field entry switches to it
-          the copies FADE too       -> the creation route is not the difference, AND the
-                                       timing theory dies with it: these arrive minutes
-                                       after field entry
-          nothing appears           -> the flag or the body is wrong, not the theory
-          they stay SEE-THROUGH     -> it was never a fade-in at all
-
-     5. MOB DAMAGE, on !map 40. Let a snail hit you 3-4 times and report TWO numbers: the
-        one that floats over your head, and how much the HP bar actually dropped.
-        They may DISAGREE, and that is the measurement. Every captured hit claimed 1; the
-        snail's PADamage is 3 in the client's own data, and 3 appears at no offset in any
-        of those bodies, so the client really did compute 1. The server now works it out
-        itself and world.log prints both.
-          bar drops 3-4, number says 1  -> working; the mismatch is cosmetic
-          bar still drops 1             -> the override did not fire
-          the bar empties               -> stop and say so
-
-     6. FREE WHILE YOU ARE THERE: about 40 swings at snails, then the LOWEST and HIGHEST.
-        A fresh level-1 character will NOT match the old prediction - that window (16..27)
-        was for character 206 at STR 30 with the 1312000 axe. Just report the two numbers
-        and world.log supplies the kit.
-        And kill one mob ON A SLOPE OR A STEP, not on flat ground - flat looks identical
-        before and after, which is why the drop bug went unnoticed. Every drop must be
-        walkable-over.
-
-     7. LAST: CLICK CHANGE CHANNEL. This is the one thing that can end the session, so
-        nothing else can follow it.
-        The opcode is no longer a guess. Last run sent ten candidates and the hook log
-        named the winner by how long it took: 0x0019 dispatched in 64 us and did nothing,
-        0x001A took 354 ms and the socket closed. The button now sends 0x001A ALONE.
-        What failed last time was the far end. A channel migrate carries NO character id -
-        seven bytes, ok/ip/port - so the hello on channel 2 reported id 32513, which is
-        01 7f 00 00 read straight back out of our own body. Channel 1 refused it, answered
-        with the MINIMAL SetField, and the client faulted 3.2 s later. A migration is now
-        claimed BY CHANNEL when the hello names nobody.
-          the character appears on channel 2   -> done. world-ch1.log will say "claimed the
-                                                  migration ... by CHANNEL"
-          fades to black, then the client dies -> read world-ch1.log FIRST. If it still
-                                                  says MINIMAL record, the claim did not
-                                                  fire. If it claimed correctly and the
-                                                  client died anyway, that is a NEW fault
-                                                  and there should be a dump
-          nothing happens at all               -> 0x001A is not the migrate opcode after
-                                                  all and the 354 ms was something else.
-                                                  !migsweep [first] [last] is still there
-
-    REGRESSION GLANCES - seconds each, not exercises
-    -----------------------------------------------
-      Drops arc out of the corpse over about half a second, at the mob, spread apart.
-      The kill-EXP line bottom-right is WHITE.
+    REGRESSION GLANCES - seconds each
+    ---------------------------------
+      Drops arc out of the corpse and are walkable-over, especially on a slope or step.
+      The kill-EXP line bottom-right is WHITE, and quest EXP is not.
       Mobs on !map 40 are already standing there - no fade-in.
-      Item pick-ups stay OUT of the chat log. Measured rather than tested: the client's
-        only chat-log copy is gated on the map's fieldType being 0x56 and none of this
-        client's 426 maps has that type.
+      Item pick-ups stay OUT of the chat log.
       A level-up gives +16 max HP and +12 max MP.
       Etc items and mesos survive a relog; Garnet Ores stack into one slot.
-      Idle regen +10 HP / +10 MP every 10 s after 10 s of standing still.
       !setrates 2 3 5 -> one banner naming all three; !rates reads them back.
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
       - The classic shop counter. 0x055D is the opcode; the row structure is not decoded.
-      - The blue HP/MP recovery number. Packet not found.
       - Outgoing damage validation. The formula is decoded but the 0x00DF header does not
         carry the action or the skill id, so nothing can be checked against it yet.
       - Death. Unbuilt.
-      - There is NO EXP-gain sound in this client. IncEXP and questCount are in
-        Sound/Game.img and neither name appears anywhere in the executable.
+      - Page heap is OFF, so !heap -p -a has no allocation stacks to print. That is an IFEO
+        setting and it is the owner's to turn on.
+      - There is NO EXP-gain sound in this client.
       - Two refusal paths still answer 0x00D2 with 0x0011, which a channel socket cannot
-        dispatch, so neither clears the request latch. Nothing decoded can.
+        dispatch. Nothing decoded can.
 
     COMMANDS: !map, !item, !exp, !heal, !job, !npcecho, !migsweep, !exprate, !mesorate,
     !droprate, !setrates, !rates. !help lists them all.
-
-    IF THE CLIENT DIES
-    ------------------
-    Check dumps\ FIRST, and the two CRASH DUMP lines in the hook log - see the top of this
-    plan. Then do not lose the logs: previous-runs/ is a rolling buffer and now archives
-    the HOOK log alongside world.log, so both halves of a run stay together. Copy anything
-    that settles a question into research/fixtures/ under a name that says what it proves.
-    Say roughly how long you were in and what you were doing - for the heap corruption that
-    is the variable the logs cannot supply.
 
     THE FREE MEASUREMENT NOBODY HAS TAKEN
     -------------------------------------
@@ -230,17 +129,12 @@
 
       1415db360:ret     skip the server-reachability check. NOT OPTIONAL: without it the
                         client __fastfails after ~37 seconds, because that check overruns
-                        its own stack buffer when every address is unreachable. A client
-                        bug, on a path that only ever runs because we are firewalled.
+                        its own stack buffer when every address is unreachable.
       141b2a280:rdx=0   suppress the "trouble logging in" dialog, which otherwise blocks
                         the per-frame tick that enables the Login button.
       mode=2            leave the client's mode-5 auto-login so the button gets a turn.
-      create=on         set the protected flag that gates "Create a character". The real
-                        service sets this from virtualised code and we have not found the
-                        packet that does it.
-
-    The last two are standing in for protocol we have not implemented. See
-    docs/launcher.md for which patches retire and when.
+      create=on         set the protected flag that gates "Create a character", re-armed on
+                        every login result because the handshake zeroes it.
 
     NOTHING AUTHENTICATES. The game socket carries no credentials at all.
 
@@ -889,99 +783,59 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  7 steps, IN ORDER. Say which you did.' -ForegroundColor Yellow
-    Write-Host '  A run that does three steps and crashes tells us less than one that'
-    Write-Host '  does a single step and reports it. Full text: Get-Help on this script.'
+    Write-Host '  4 steps. Say which you did.' -ForegroundColor Yellow
+    Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
-    Write-Host '  LAST RUN ALREADY ANSWERED MORE THAN WAS REPORTED.' -ForegroundColor Green
-    Write-Host '  On the wire, all of this WORKED and needs no re-testing: Roger''s whole'
-    Write-Host '  quest (accept parsed, apple given, HP set to 25/130, eaten, completed,'
-    Write-Host '  +3 EXP), consumables, and the quest EXP payout. What is NOT known is'
-    Write-Host '  what any of it LOOKED like - that is step 2, a question about the'
-    Write-Host '  screen and not about the packet.'
-    Write-Host '  Also done for good: equipping and swapping, ability points, the job'
-    Write-Host '  change and its sound, the quest fanfare, the 0x001A migrate opcode.'
+    Write-Host '  LAST RUN CLOSED THE TWO BIG ONES.' -ForegroundColor Green
+    Write-Host '  CHANNEL CHANGE WORKS - claimed by channel, real SetField, inventory'
+    Write-Host '  and mesos carried over. And THE HEAP CORRUPTION IS IN A DUMP: 1010 MB,'
+    Write-Host '  written by the hook in 878ms, the first in this project after six'
+    Write-Host '  deaths. Reading it is a desk job - tools\analyse-dump.ps1.'
+    Write-Host '  Also closed: create on second login, consumables and their cap, Sera''s'
+    Write-Host '  chatter, the mob-damage override, the damage model at STR 35, and the'
+    Write-Host '  NPC fade (the !npcecho copies faded too, so it is not the packet).'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  1. CREATE A CHARACTER ON THE SECOND LOGIN.' -ForegroundColor Cyan
-    Write-Host '     Log in, enter the world, Log Out, then click Create.'
-    Write-Host '     FIRST because it is also how you get a FRESH CHARACTER, and steps'
-    Write-Host '     2-3 need one: 210 has already finished quest 1002, so Roger will'
-    Write-Host '     not offer it again.'
-    Write-Host '       creation screen opens  -> fixed; make one and use it below'
-    Write-Host '       nothing at all         -> still gated. No 0x00A8 in login.log, and'
-    Write-Host '                                 the hook log should say "re-armed the'
-    Write-Host '                                 create-character flag"'
+    Write-Host '  1. THE BLUE RECOVERY NUMBER - you asked, it is built.' -ForegroundColor Cyan
+    Write-Host '     Get hurt, stand still 20s. Then drink a potion.'
+    Write-Host '     0x007C has a second optional trailer - hpRecovery, mpRecovery - that'
+    Write-Host '     was never being sent, which is why the bar moved with no number.'
+    Write-Host '       a number on each regen tick -> done. Say what COLOUR'
+    Write-Host '       a number on the potion too  -> same trailer, both paths'
+    Write-Host '       one but not the other       -> say WHICH; the packet is identical'
+    Write-Host '       bar moves, still no number  -> not the drawing route. world.log'
+    Write-Host '                                      proves it was sent'
+    Write-Host '       shows the TOTAL not the gain-> say so; we send the amount'
     Write-Host ''
-    Write-Host '  2. ROGER AGAIN - WATCH THE SCREEN, not the outcome.' -ForegroundColor Cyan
-    Write-Host '     Every packet here is known correct. Four things: a-c are about'
-    Write-Host '     what is DRAWN, d is about what is PAID.'
+    Write-Host '  2. ROGER, WATCHING THE SCREEN. Asked last time, only the give-up' -ForegroundColor Cyan
+    Write-Host '     half came back. Every packet is known correct, so all three are'
+    Write-Host '     about DRAWING:'
     Write-Host '     a. on Accept, a GREY line in the CHAT LOG: "Roger''s Apple x1'
     Write-Host '        earned. (Use)"?  Another colour = route right, colour separate.'
-    Write-Host '     b. after eating it, WHERE does the EXP line appear - chat log or'
-    Write-Host '        bottom-right? Quest EXP should be in the CHAT LOG now. Kill EXP'
-    Write-Host '        is unchanged and still belongs bottom-right. Both = say so.'
-    Write-Host '     c. does the fanfare play with NOTHING DRAWN? That is EXPECTED -'
-    Write-Host '        the art was cut from this client. Something drawn = tell us.'
-    Write-Host '     And: does the HP bar visibly drop to 25 on Accept?'
-    Write-Host '     d. THEN CLICK HIM AGAIN. Nothing may be paid twice.' -ForegroundColor Yellow
-    Write-Host '        You could complete Heena''s quest repeatedly. THREE holes did'
-    Write-Host '        that: the turn-in paid out without checking the quest was still'
-    Write-Host '        in progress, the accept re-handed its items, and GIVE-UP DELETED'
-    Write-Host '        A COMPLETED ROW - putting you back to never having touched it.'
-    Write-Host '          no EXP, no second item, no fanfare -> fixed'
-    Write-Host '          anything paid again                -> say WHICH'
-    Write-Host '        Also press GIVE UP on a FINISHED quest. It must stay finished.'
+    Write-Host '     b. after eating it, WHERE is the EXP line - chat log or bottom'
+    Write-Host '        right? Quest EXP should be in the CHAT LOG. Kill EXP is'
+    Write-Host '        unchanged and still belongs bottom-right.'
+    Write-Host '     c. fanfare with NOTHING DRAWN is EXPECTED - that art was cut.'
     Write-Host ''
-    Write-Host '  3. RED POTION, TWICE. !item 2000000 5, get hurt first.' -ForegroundColor Cyan
-    Write-Host '     The apple already proved the path. This is the CAP and the LATCH:'
-    Write-Host '     +100 or only up to full; stack 5->4 WITHOUT the slot emptying; and'
-    Write-Host '     the SECOND drink must work too.'
+    Write-Host '  3. GET HIT BY SOMETHING MUCH BIGGER THAN A SNAIL.' -ForegroundColor Cyan
+    Write-Host '     Across 25 hits the client claimed 1 EVERY TIME - a constant, not a'
+    Write-Host '     distribution - while the server computed 3 or 4. A computed value'
+    Write-Host '     would vary. A constant will not.'
+    Write-Host '       the number moves off 1 -> the client DOES compute it, and our'
+    Write-Host '                                 incoming formula is what disagrees'
+    Write-Host '       still exactly 1        -> it is a STUB. The number will read 1 for'
+    Write-Host '                                 every mob forever - it is drawn at SEND'
+    Write-Host '                                 time, so no server change can reach it'
     Write-Host ''
-    Write-Host '  4. !map 1, STAND STILL 30s, THEN !npcecho.' -ForegroundColor Cyan
-    Write-Host '     First: the client used to die 9s in on Sera''s idle line, from two'
-    Write-Host '     bytes of their spawn packet swapped on a static reading. Reverted.'
-    Write-Host '       they speak and it lives -> the revert is right'
-    Write-Host '       it dies again           -> say how long. There should be a DUMP'
-    Write-Host '     Then !npcecho: copies appear ~70px right, made by the OTHER packet'
-    Write-Host '     the NPC pool accepts. DO THEY POP OR FADE?'
-    Write-Host '       pop solid -> 0x0451 is the fix; field entry switches to it'
-    Write-Host '       fade too  -> the route is not the difference, and the timing'
-    Write-Host '                    theory dies with it: these arrive minutes after entry'
-    Write-Host '       nothing   -> flag or body wrong, not the theory'
+    Write-Host '  4. IF THE CLIENT DIES THERE SHOULD BE A DUMP. Not a question any' -ForegroundColor Cyan
+    Write-Host '     more - it produced one last run. Say how long you were in and what'
+    Write-Host '     you were doing; that is the variable the logs cannot supply.'
+    Write-Host '     Each is ~1 GB and two are kept per run - move decisive ones out.'
     Write-Host ''
-    Write-Host '  5. !map 40. LET A SNAIL HIT YOU 3-4 TIMES. Report TWO numbers:' -ForegroundColor Cyan
-    Write-Host '     the number over your head, and how much the bar dropped.'
-    Write-Host '     They may DISAGREE - that is the measurement. Every captured hit'
-    Write-Host '     claimed 1; the snail''s PADamage is 3 and 3 is at no offset in any'
-    Write-Host '     of those bodies, so the client really did compute 1. The server now'
-    Write-Host '     works it out itself and world.log prints both.'
-    Write-Host ''
-    Write-Host '  6. FREE WHILE THERE: ~40 swings, report LOWEST and HIGHEST. A fresh'
-    Write-Host '     level-1 will NOT match the old 16..27 window - that was character'
-    Write-Host '     206 at STR 30 with the axe. Just the two numbers; world.log has the'
-    Write-Host '     kit. And kill one mob ON A SLOPE OR STEP, not flat ground - flat'
-    Write-Host '     looks the same before and after. Drops must be walkable-over.'
-    Write-Host ''
-    Write-Host '  7. LAST: CLICK CHANGE CHANNEL. It can end the session.' -ForegroundColor Red
-    Write-Host '     The opcode is no longer a guess: last run sent ten candidates and' -ForegroundColor Red
-    Write-Host '     the hook log named the winner by TIME - 0x0019 took 64us and did' -ForegroundColor Red
-    Write-Host '     nothing, 0x001A took 354ms and the socket closed. It now sends' -ForegroundColor Red
-    Write-Host '     0x001A ALONE. What failed last time was the FAR END: a migrate' -ForegroundColor Red
-    Write-Host '     carries no character id, so channel 2 was told id 32513 - our own' -ForegroundColor Red
-    Write-Host '     ip bytes read back - refused, sent the MINIMAL SetField, and the' -ForegroundColor Red
-    Write-Host '     client faulted 3.2s later. A migration is now claimed BY CHANNEL.' -ForegroundColor Red
-    Write-Host '       you appear on channel 2 -> done; world-ch1.log says "by CHANNEL"' -ForegroundColor Red
-    Write-Host '       fade to black, then die -> read world-ch1.log FIRST. Still says' -ForegroundColor Red
-    Write-Host '                                  MINIMAL? the claim did not fire. Claimed' -ForegroundColor Red
-    Write-Host '                                  and died anyway? NEW fault, expect a dump' -ForegroundColor Red
-    Write-Host '       nothing at all          -> 0x001A is not it and the 354ms was' -ForegroundColor Red
-    Write-Host '                                  something else. !migsweep still exists' -ForegroundColor Red
-    Write-Host ''
-    Write-Host '  GLANCES: drops arc from the corpse; kill-EXP line is WHITE; mobs on'
-    Write-Host '  map 40 already standing; pick-ups stay OUT of the chat log; level-up'
-    Write-Host '  +16 HP / +12 MP; Etc items and mesos survive a relog; ores stack;'
-    Write-Host '  idle regen +10/+10 per 10s; !setrates 2 3 5 -> one banner.'
+    Write-Host '  GLANCES: drops arc from the corpse and are walkable-over; kill-EXP'
+    Write-Host '  line is WHITE; mobs on map 40 already standing; pick-ups stay OUT of'
+    Write-Host '  the chat log; level-up +16 HP / +12 MP; relog keeps Etc and mesos;'
+    Write-Host '  ores stack; !setrates 2 3 5 -> one banner.'
     Write-Host ''
     Write-Host '  COMMANDS: !map !item !exp !heal !job !npcecho !migsweep !exprate'
     Write-Host '  !mesorate !droprate !setrates !rates. !help lists them all.'

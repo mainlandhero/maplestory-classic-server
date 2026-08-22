@@ -77,16 +77,29 @@ impl Session {
             return self.use_refused(format!("could not save your health: {e}"));
         }
 
+        // The recovery trailer, the same one idle regen now sends - `u8 flag`, then
+        // `u32 hpRecovery, u32 mpRecovery`, the **amounts** rather than the new totals. It is
+        // what puts a number over the player's head; see the long note in `regen.rs`.
+        //
+        // A potion is a recovery in exactly the sense that field is for, so it gets one too.
+        // If the number appears for one of these and not the other, that difference is itself
+        // worth knowing - the packet is identical, so it would mean the client cares about
+        // something other than the trailer.
+        //
+        // Absent when the drink healed nothing, which is a real case: the item is consumed
+        // whether or not it healed, so drinking at full HP must not draw "+0".
+        let recovery = if hp_gain > 0 || mp_gain > 0 { Some((hp_gain, mp_gain)) } else { None };
         let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange {
                 hp: Some(chr.hp),
                 mp: Some(chr.mp),
+                recovery,
                 ..Default::default()
             }
             .build(),
             what: format!(
-                "StatChanged: used item {} from Use slot {slot} - +{hp_gain} hp (now {}/{}), +{mp_gain} mp (now {}/{}). Byte 0 also clears the client's request latch",
+                "StatChanged: used item {} from Use slot {slot} - +{hp_gain} hp (now {}/{}), +{mp_gain} mp (now {}/{}), recovery trailer {recovery:?}. Byte 0 also clears the client's request latch",
                 req.item_id, chr.hp, chr.max_hp, chr.mp, chr.max_mp
             ),
         }];
