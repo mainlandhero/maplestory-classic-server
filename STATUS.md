@@ -266,6 +266,29 @@ the finding.
 reports it outbound as `0x02C6`, 44 bytes, carrying which of four things went wrong. Success
 is silence.
 
+#### Death had one entry point and needed two
+
+The owner, 2026-08-22, the first time death was in front of a client: *"My character 'Idiot' has 0
+HP from last time, and I don't see any revive dialogue when I login because I immediately
+spawned in dead."*
+
+`on_user_hit` opens the dialog on the **transition** alive -> dead. That is right there, and
+it is exactly what stops a dead character being re-prompted on every further hit. But **logging
+in dead is not a transition** - the zero was already in the database - so nothing fired, and the
+character was stranded with `!heal` as the only way out.
+
+The general form is worth keeping, because the gating decision that caused it was the *correct*
+one: **a state that can be entered by more than one route needs its recovery offered on all of
+them.** Gating on the transition is right for the event and wrong for the state, and the second
+entry point here is not another packet, it is a *reload*.
+
+Fixed in `on_field_entered`, which is the right moment and that is measured rather than hoped:
+field entry runs `FUN_142caa4e0` and tears dialogs down, but `0x00DC` is emitted from *inside*
+the `SetField` handler and the client dispatches nothing until that returns ~586 ms later, so a
+reply to `0x00DC` lands about a millisecond after the reset has finished
+(`research/npc-preload.md` §4). A `0x007C` restating `hp = 0` goes first, for the same reason it
+does in combat.
+
 #### The blue recovery number was on the wrong packet, and the second theory was wrong too
 
 `0x007C`'s recovery trailer **can never draw anything**. It was sent on three ticks of a real

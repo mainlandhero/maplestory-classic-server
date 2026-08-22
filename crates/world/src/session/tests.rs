@@ -4109,3 +4109,59 @@ fn a_low_level_character_revives_without_an_experience_penalty() {
     assert_eq!(after.exp, 500, "'level 10 or below' is inclusive");
     assert_eq!(after.map_id, 60, "and they still get to town");
 }
+
+/// **Logging in dead must still offer the way out.**
+///
+/// The owner, 2026-08-22: *"My character 'Idiot' has 0 HP from last time, and I don't see any
+/// revive dialogue when I login because I immediately spawned in dead."*
+///
+/// `on_user_hit` opens the dialog on the **transition** alive -> dead, which is correct there
+/// and is exactly what stops a dead character being re-prompted on every further hit. Logging
+/// in dead is not a transition, so nothing fired and the character was stranded with `!heal`
+/// as the only escape. Death has to be recoverable from both directions or it is a trap.
+///
+/// This asserts the ordering too: the `0x007C` restating `hp = 0` must precede the `0x0315`,
+/// because the dialog's handler tests the client's own HP copy and drops the packet silently
+/// if it is still positive.
+#[test]
+fn entering_a_field_already_dead_opens_the_revive_dialog() {
+    let (mut s, store, _id) = gm_session();
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 0;
+    chr.max_hp = 194;
+    store.save_character_progress(&chr).unwrap();
+
+    let out = s.on_field_entered();
+    let stat = out
+        .iter()
+        .position(|r| {
+            r.opcode == net::stats::STAT_CHANGED
+                && r.body == net::stats::StatChange::hp_only(0).build()
+        })
+        .expect("the hp = 0 restatement");
+    let dialog = out
+        .iter()
+        .position(|r| r.opcode == net::revive::SHOW_REVIVE_DIALOG)
+        .expect("a character who logs in dead is offered the dialog");
+    assert!(stat < dialog, "the 0x007C must precede the 0x0315 or it is dropped silently");
+    assert_eq!(out[dialog].body, net::revive::show_revive_dialog());
+}
+
+/// And a living character entering a field is offered nothing.
+///
+/// The control for the test above: if `on_field_entered` sent the dialog unconditionally this
+/// would pass anyway, and every map change would pop a revive box.
+#[test]
+fn entering_a_field_alive_offers_no_revive_dialog() {
+    let (mut s, store, _id) = gm_session();
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 50;
+    chr.max_hp = 194;
+    store.save_character_progress(&chr).unwrap();
+
+    let out = s.on_field_entered();
+    assert!(
+        !out.iter().any(|r| r.opcode == net::revive::SHOW_REVIVE_DIALOG),
+        "a living character must not be asked whether to revive"
+    );
+}

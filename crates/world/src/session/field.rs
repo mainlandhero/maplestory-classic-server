@@ -108,6 +108,47 @@ impl Session {
         let (map, now) = (chr.map_id, self.clock_ms);
         out.extend(self.fields.with_drops(map, |d| d.field_entry(map, now)));
         out.extend(self.restore_bag_and_mesos());
+
+        // **A character who was already dead when they arrived gets the dialog here.**
+        //
+        // The owner, 2026-08-22: *"My character 'Idiot' has 0 HP from last time, and I don't see
+        // any revive dialogue when I login because I immediately spawned in dead."*
+        //
+        // `on_user_hit` opens the dialog on the **transition** from alive to dead, which is
+        // right for combat and is the whole reason a dead character is not re-prompted on
+        // every further hit. But logging in dead is not a transition - the HP was already 0
+        // in the database - so nothing fired, and the player was stranded with no way out but
+        // `!heal`. Death has to be recoverable from both directions or it is a trap.
+        //
+        // **This is the right moment, and that is measured rather than hoped.** Field entry
+        // runs `FUN_142caa4e0`, which tears down dialogs silently - which is why `CLAUDE.md`
+        // forbids sending a script with or just before a `SetField`. But `0x00DC` is emitted
+        // from *inside* the `SetField` handler, and the client dispatches nothing until that
+        // handler returns ~586 ms later, so a reply to `0x00DC` lands about a millisecond
+        // after field entry has finished resetting everything. `research/npc-preload.md` §4.
+        //
+        // The `0x007C` goes first for the same reason it does in combat: the `0x0315` handler
+        // tests the client's own copy of the HP and drops the packet **silently** if it is
+        // still positive. The record in the `SetField` already carries `hp = 0`, so this is
+        // belt and braces - but it costs 13 bytes and the failure it prevents is invisible.
+        if chr.hp == 0 {
+            out.push(Reply {
+                opcode: net::stats::STAT_CHANGED,
+                body: net::stats::StatChange::hp_only(0).build(),
+                what: format!(
+                    "StatChanged: character {} entered the field already DEAD - restating hp 0 so the revive dialog's own HP test cannot miss it",
+                    chr.id
+                ),
+            });
+            out.push(Reply {
+                opcode: net::revive::SHOW_REVIVE_DIALOG,
+                body: net::revive::show_revive_dialog(),
+                what: format!(
+                    "ShowReviveDialog on field entry: character {} arrived on map {} with 0 HP. Logging in dead is not a death TRANSITION, so on_user_hit never fires for it - without this the character is stranded with no way out but !heal",
+                    chr.id, chr.map_id
+                ),
+            });
+        }
         out
     }
 

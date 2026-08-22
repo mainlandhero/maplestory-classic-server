@@ -72,7 +72,15 @@
           nothing                   -> the item id resolved no name, or category 6 is a
                                        tab that window does not show
 
-     3. DEATH AND REVIVE - built this session, never seen. Die on purpose.
+     3. DEATH AND REVIVE. You already have a dead character, so this starts before you
+        even move: **"Idiot" is sitting at 0/194 HP on map 10000022 from last session.**
+        LOG IN AS IDIOT FIRST. The dialog should appear on arrival, without being hit.
+        That was a real gap: the dialog was opened on the death TRANSITION, and logging in
+        dead is not a transition, so the character was stranded with !heal as the only exit.
+        Reviving there should land you on 10000000, LITH HARBOR - which is a town, and is
+        not adjacent to a beach hunting ground, so arriving next door means the table was
+        not used. Then die again on purpose to test the
+        combat path, which is the one that was already built.
         Last time you got a tombstone and no dialog. The client NEVER opens that dialog by
         itself: a packet does, 0x0315, and its construction site was traced through a vtable
         slot with exactly one caller. It goes out immediately after the 0x007C that zeroes
@@ -851,7 +859,14 @@ if ($SetFieldProbe) {
     Write-Host '     ITEM line has never been seen: "<Item> x<n> earned. (<Tab>)" in the'
     Write-Host '     chat log, not bottom-right. Any item-granting quest will do.'
     Write-Host ''
-    Write-Host '  3. DEATH AND REVIVE - built this session, never seen. Die.' -ForegroundColor Cyan
+    Write-Host '  3. DEATH AND REVIVE. START BY LOGGING IN AS "Idiot".' -ForegroundColor Cyan
+    Write-Host '     They are already dead - 0/194 HP on map 10000022 from last session -'
+    Write-Host '     so the dialog should appear on ARRIVAL, without being hit. That was'
+    Write-Host '     a real gap: the dialog fired on the death TRANSITION, and logging in'
+    Write-Host '     dead is not a transition, so they were stranded with !heal as the only'
+    Write-Host '     way out. Reviving there should land you on 10000000, LITH'
+    Write-Host '     HARBOR - a town, and not next door to a beach hunting ground.'
+    Write-Host '     Then die again on purpose, for the combat path.'
     Write-Host '     You got a tombstone and no dialog last time. The client NEVER opens'
     Write-Host '     that dialog itself - 0x0315 does, and it goes out right after the'
     Write-Host '     0x007C that zeroes your HP. That order is not cosmetic: the handler'
