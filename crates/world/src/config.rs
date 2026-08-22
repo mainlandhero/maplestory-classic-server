@@ -236,6 +236,22 @@ pub struct Config {
     /// Empty means "unknown", not "nothing exists" - see [`Config::map_exists`].
     pub fields: std::collections::HashSet<u32>,
 
+    /// Where a character who dies on each map comes back, from
+    /// `gm-handbook/returnmaps.txt`'s **`reviveMap`** column.
+    ///
+    /// **Do not walk `returnMap` yourself.** The generator already did, and the walk has two
+    /// traps a caller re-deriving it will fall into. `town == 1` is coarser than "town
+    /// square" - shop interiors carry it, and **94 of this client's 115 town fields point
+    /// their own `returnMap` somewhere else** - so a resolver that stops on the flag revives
+    /// the player inside Southperry Armor Store. And 33 fields form `returnMap` self-loops.
+    /// The shipped rule is one **unconditional** hop, then walk while not a town, cap 8,
+    /// returning the last real field on a loop; over all 426 maps that gives 421 in one hop,
+    /// 5 in two, and none with no destination. `research/return-maps.md`.
+    ///
+    /// Empty means the file was not generated - [`Config::revive_field`] then leaves the
+    /// character where they fell rather than guessing.
+    pub revive_maps: HashMap<u32, u32>,
+
     /// Every map's floor, from `gm-handbook/footholds.txt`, so a drop lands somewhere a
     /// player can actually reach it. See [`crate::footholds`].
     ///
@@ -341,6 +357,49 @@ impl Config {
             }
         }
         out
+    }
+
+    /// Load the `reviveMap` column of `gm-handbook/returnmaps.txt`.
+    ///
+    /// Columns are `map, returnMap, forcedReturn, town, reviveMap, hops, name` and the file
+    /// is **TAB separated**, because one map is called `The Resting Spot, Pig Park` and a
+    /// comma split would cut it in the wrong place.
+    ///
+    /// `forcedReturn` is deliberately **not** read here. It is an *eject* target, not a
+    /// respawn one - its 72 real entries are ship cabins mid-flight, timed subway depots and
+    /// PQ stages, and it disagrees with `returnMap` on 28 of the 44 where both are real.
+    /// `Dead Mine I` returns to El Nath, the town, and force-ejects to the field outside the
+    /// mine. Using it for death would put a dead player back at the dungeon door.
+    pub fn load_revive_maps(path: &std::path::Path) -> HashMap<u32, u32> {
+        let mut out = HashMap::new();
+        let Ok(text) = std::fs::read_to_string(path) else { return out };
+        for line in text.lines() {
+            let line = line.trim_end();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut cols = line.split('\t');
+            let (Some(map), Some(_ret), Some(_forced), Some(_town), Some(revive)) =
+                (cols.next(), cols.next(), cols.next(), cols.next(), cols.next())
+            else {
+                continue;
+            };
+            if let (Ok(map), Ok(revive)) = (map.trim().parse::<u32>(), revive.trim().parse::<u32>())
+            {
+                out.insert(map, revive);
+            }
+        }
+        out
+    }
+
+    /// Where a character who died on `field` comes back, or `None` if the table has no row.
+    ///
+    /// `None` means the caller should leave them where they fell. That is deliberately not
+    /// the same as picking a default: sending a character to a map this client has no field
+    /// image for strands them, and `research/map1-exists.md` records a branch that does not
+    /// return.
+    pub fn revive_field(&self, field: u32) -> Option<u32> {
+        self.revive_maps.get(&field).copied()
     }
 
     pub fn load_fields(path: &std::path::Path) -> std::collections::HashSet<u32> {
@@ -1216,6 +1275,7 @@ impl Default for Config {
             item_names: HashMap::new(),
             send_mobs: true,
             fields: std::collections::HashSet::new(),
+            revive_maps: HashMap::new(),
             footholds: crate::footholds::Footholds::default(),
             consumables: crate::consumables::Consumables::default(),
         }

@@ -103,49 +103,51 @@ impl Session {
         // should pop up with a blue number of the recovery amount above the player's head. I
         // don't see that here, the HP bar just moves up without a number indication."*
         //
-        // The bar moved because `hp`/`mp` carry the new totals; nothing drew a number because
-        // this packet's **second optional trailer** was absent. `0x007C` ends with
-        // `u8 flag`, then `u32 hpRecovery, u32 mpRecovery` when the flag is set, and the
-        // client hands both to `FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp)`
-        // - a **UI** global, which is the argument `research/level-up.md` used to name those
-        // two fields in the first place.
+        // **This is NOT `0x007C`'s recovery trailer, and that trailer was tried and cannot
+        // work.** It was sent for a build - `u8 flag`, then `u32 hpRecovery, u32 mpRecovery` -
+        // on three regen ticks of one run, on a bar that visibly moved, and drew nothing. The
+        // reason is not a bad body: `FUN_140fd31f0`, which the client hands those two values
+        // to, is a **statistics counter**. It accumulates into running totals, separates
+        // effective healing from wasted against `maxHp - oldHp`, keeps per-hour averages and
+        // resets on an hour boundary. Its entire call list is two tick functions, a getter
+        // twice and a tail `jmp`. There is no renderer on that path at all.
         //
-        // **These are the amounts recovered, not the new totals.** They sit beside the
-        // client's own snapshots of `record+0x5b` and `+0x73` in that call, which is what
-        // pairs them with hp and mp rather than maxHp and maxMp - `[L]` for the shape,
-        // `[D]` for the pairing.
+        // The follow-up theory - that the `oldHp` snapshot is taken after the mask block
+        // stores the new total, so the delta is zero - is dead too, and is worth recording
+        // because testing it would have cost a client run: the snapshots are taken 65 bytes
+        // *earlier*, into a stack slot and a callee-saved register the mask block cannot
+        // reach. Dropping the hp/mp bits would have produced the identical blank screen.
         //
-        // `user-hit.md` §5.2 said this trailer "should stay `None`", and for a *hit* that is
-        // still right: it is not how an ordinary HP change is reported, and a hit already
-        // draws its own number client-side.
+        // What actually draws it is `0x02D1` effect `0x41`, which reaches the same renderer as
+        // the damage number with a **positive** argument - the sign is what selects blue over
+        // violet. `net::revive::recovery_number`.
         //
-        // **This is the only path that sends it, and potions deliberately do not.** The owner,
-        // 2026-08-21: *"Potion recovery should not trigger the recovery number, that's only
-        // for idle regeneration standing or sitting in a chair in the Set-up tab or sitting
-        // on a chair in a map."* It went into `consume.rs` first, on the reasoning that a
-        // potion recovers and the field is called recovery - which is arguing from the
-        // encoding outwards. The field is the **regeneration indicator**; what may raise it
-        // is a property of the game and the byte layout cannot tell you. Chairs are the other
-        // case, and this server has none yet: when it grows them, that path sends this too.
-        //
-        // Absent when nothing moved, so a tick that only restores MP cannot draw a "+0" over
-        // the head for HP.
-        let recovery =
-            if healed_hp > 0 || healed_mp > 0 { Some((healed_hp, healed_mp)) } else { None };
-        vec![Reply {
+        // Sent **after** the `0x007C`, so the bar and the number agree on screen. HP only: a
+        // tick that restores both would otherwise stack two numbers on one head, and the owner
+        // asked for the recovery amount, singular.
+        let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange {
                 hp: Some(chr.hp),
                 mp: Some(chr.mp),
-                recovery,
                 ..Default::default()
             }
             .build(),
             what: format!(
-                "StatChanged: idle regen +{healed_hp} hp +{healed_mp} mp -> {}/{} hp, {}/{} mp - with the recovery trailer, which is what draws the blue number",
+                "StatChanged: idle regen +{healed_hp} hp +{healed_mp} mp -> {}/{} hp, {}/{} mp",
                 chr.hp, chr.max_hp, chr.mp, chr.max_mp
             ),
-        }]
+        }];
+        if healed_hp > 0 {
+            out.push(Reply {
+                opcode: net::stats::USER_EFFECT_LOCAL,
+                body: net::revive::recovery_number(healed_hp as i32, 0),
+                what: format!(
+                    "UserEffectLocal effect 0x41: the blue +{healed_hp} over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run"
+                ),
+            });
+        }
+        out
     }
 }
 
@@ -180,52 +182,47 @@ mod tests {
         (s, store)
     }
 
-    /// **The blue number.** The owner, 2026-08-21: *"the idle recovery should pop up with a blue
-    /// number of the recovery amount above the player's head ... the HP bar just moves up
-    /// without a number indication."*
+    /// **The blue number is a second packet, not a field of the first.**
     ///
-    /// The bar always moved, because `hp`/`mp` carry the new totals. What was missing is
-    /// `0x007C`'s second optional trailer, which the client hands to
-    /// `FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp)`.
+    /// The owner asked for *"a blue number of the recovery amount above the player's head"*. The
+    /// first attempt put it in `0x007C`'s recovery trailer; that reaches a statistics counter,
+    /// not a renderer, and drew nothing across three ticks of a real run. What draws it is
+    /// `0x02D1` effect `0x41`.
     ///
-    /// This asserts the whole body against a hand-built expectation rather than poking at the
-    /// tail bytes, so a change to any earlier field cannot quietly shift the trailer's offset
-    /// and still pass.
+    /// This asserts the `0x007C` is byte-identical to one built with no trailer, so the dead
+    /// route cannot creep back in beside the live one.
     #[test]
-    fn the_regen_packet_carries_the_recovery_amounts_not_the_totals() {
+    fn a_regen_tick_sends_the_bar_and_then_the_blue_number() {
         let (mut s, _) = hurt_session();
         s.clock_ms = 10_000;
         let out = s.regen_tick(10_000);
-        assert_eq!(out.len(), 1, "one 0x007C");
+        assert_eq!(out.len(), 2, "the 0x007C and the number");
 
         let want = net::stats::StatChange {
             hp: Some(1 + REGEN_AMOUNT),
             mp: Some(1 + REGEN_AMOUNT),
-            recovery: Some((REGEN_AMOUNT, REGEN_AMOUNT)),
             ..Default::default()
         }
         .build();
-        assert_eq!(out[0].body, want);
+        assert_eq!(out[0].body, want, "no recovery trailer - it cannot draw anything");
+        assert_eq!(*out[0].body.last().unwrap(), 0, "the trailer flag byte is 0");
 
-        // And the distinction that matters: the trailer is the AMOUNT, and the amount is not
-        // the new total. Sending the total here would draw "+11" over the head of someone who
-        // recovered 10 - which is exactly the mistake `0x007C`'s exp field is documented to
-        // invite, in the other direction.
-        let totals = net::stats::StatChange {
-            hp: Some(1 + REGEN_AMOUNT),
-            mp: Some(1 + REGEN_AMOUNT),
-            recovery: Some((1 + REGEN_AMOUNT, 1 + REGEN_AMOUNT)),
-            ..Default::default()
-        }
-        .build();
-        assert_ne!(out[0].body, totals, "the trailer must carry the gain, not the new total");
+        assert_eq!(out[1].opcode, net::stats::USER_EFFECT_LOCAL);
+        assert_eq!(out[1].body, net::revive::recovery_number(REGEN_AMOUNT as i32, 0));
+        assert_eq!(out[1].body[0], net::revive::EFFECT_RECOVERY_NUMBER);
+        assert_eq!(
+            i32::from_le_bytes(out[1].body[1..5].try_into().unwrap()),
+            REGEN_AMOUNT as i32,
+            "the AMOUNT recovered, not the new total - the total would draw +11 for a 10 HP tick"
+        );
     }
 
-    /// A tick that heals only MP must not draw a "+0" over the player's HP - and a tick that
-    /// heals nothing at all does not happen, because the caller returns early when both bars
-    /// are full. This pins the first half, which is reachable.
+    /// A tick that only restores MP draws no number at all.
+    ///
+    /// The number is the HP recovery and the owner asked for one number, so an MP-only tick must
+    /// send the bar update alone rather than a blue `+0`.
     #[test]
-    fn a_capped_bar_contributes_zero_to_the_recovery_trailer() {
+    fn an_mp_only_tick_draws_no_number() {
         let (mut s, store) = hurt_session();
         let mut chr = s.claimed_character().unwrap();
         chr.hp = chr.max_hp; // full HP, MP still at 1
@@ -233,14 +230,19 @@ mod tests {
 
         s.clock_ms = 10_000;
         let out = s.regen_tick(10_000);
-        let want = net::stats::StatChange {
-            hp: Some(chr.max_hp),
-            mp: Some(1 + REGEN_AMOUNT),
-            recovery: Some((0, REGEN_AMOUNT)),
-            ..Default::default()
-        }
-        .build();
-        assert_eq!(out[0].body, want, "hp contributes 0, mp contributes the gain");
+        assert_eq!(out.len(), 1, "the bar update and nothing else");
+        assert_eq!(out[0].opcode, net::stats::STAT_CHANGED);
+        assert!(
+            !out.iter().any(|r| r.opcode == net::stats::USER_EFFECT_LOCAL),
+            "no blue +0 over the head"
+        );
+    }
+
+    /// Did a tick fire? These tests are about the CLOCK, not the packet count, and counting
+    /// replies made all three fail the day regeneration grew its second packet. Asking for the
+    /// `0x007C` specifically survives another one being added beside it.
+    fn ticked(out: &[Reply]) -> bool {
+        out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED)
     }
 
     #[test]
@@ -257,13 +259,13 @@ mod tests {
         let (mut s, store) = hurt_session();
         let id = s.claimed_character().unwrap().id;
         s.clock_ms = 10_000;
-        assert_eq!(s.regen_tick(10_000).len(), 1, "the first tick lands at 10 s");
+        assert!(ticked(&s.regen_tick(10_000)), "the first tick lands at 10 s");
         let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
         assert_eq!(after.hp, 1 + REGEN_AMOUNT);
         assert_eq!(after.mp, 1 + REGEN_AMOUNT);
 
         assert!(s.regen_tick(15_000).is_empty(), "not again until the interval is up");
-        assert_eq!(s.regen_tick(20_000).len(), 1, "and then again at 20 s");
+        assert!(ticked(&s.regen_tick(20_000)), "and then again at 20 s");
     }
 
     #[test]
@@ -274,7 +276,7 @@ mod tests {
         // Ten seconds after the connection opened, but only one second after they moved.
         assert!(s.regen_tick(10_000).is_empty());
         assert!(s.regen_tick(18_999).is_empty(), "still inside the idle window");
-        assert_eq!(s.regen_tick(19_000).len(), 1, "ten seconds after the ACTIVITY");
+        assert!(ticked(&s.regen_tick(19_000)), "ten seconds after the ACTIVITY");
     }
 
     #[test]
@@ -299,7 +301,7 @@ mod tests {
         let (max_hp, max_mp) = (chr.max_hp, chr.max_mp);
         s.store.save_character_progress(&chr).unwrap();
 
-        assert_eq!(s.regen_tick(10_000).len(), 1);
+        assert!(ticked(&s.regen_tick(10_000)));
         let after = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
         assert_eq!((after.hp, after.mp), (max_hp, max_mp), "capped, not overshot");
         assert!(s.regen_tick(20_000).is_empty(), "and then it stops");

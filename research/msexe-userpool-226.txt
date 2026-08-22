@@ -1,0 +1,535 @@
+; 0x1429bafb0 .. 0x1429bb714  (1892 bytes)
+ 0001429bafb0  mov      r11, rsp
+ 0001429bafb3  mov      qword ptr [r11 + 8], rbx
+ 0001429bafb7  mov      qword ptr [r11 + 0x10], rbp
+ 0001429bafbb  mov      qword ptr [r11 + 0x18], rsi
+ 0001429bafbf  push     rdi
+ 0001429bafc0  sub      rsp, 0x60
+ 0001429bafc4  mov      rdi, r8
+ 0001429bafc7  mov      esi, edx
+ 0001429bafc9  mov      rbp, rcx
+ 0001429bafcc  cmp      edx, 0x226
+ 0001429bafd2  jne      0x1429bb08a   [branch]
+ 0001429bafd8  lea      rax, [rip + 0xa4e229]
+ 0001429bafdf  mov      qword ptr [r11 - 0x48], rax
+ 0001429bafe3  lea      rax, [rip - 0x1d2748a]
+ 0001429bafea  mov      qword ptr [r11 - 0x40], rax
+ 0001429bafee  lea      rax, [r11 - 0x48]
+ 0001429baff2  mov      qword ptr [r11 - 0x10], rax
+ 0001429baff6  lea      rax, [r11 - 0x48]
+ 0001429baffa  mov      qword ptr [r11 + 0x20], rax
+ 0001429baffe  mov      rcx, r8
+ 0001429bb001  call     0x1406e8c20   <<< READ u32
+ 0001429bb006  mov      ebx, eax
+ 0001429bb008  test     eax, eax
+ 0001429bb00a  jne      0x1429bb061   [branch]
+ 0001429bb00c  mov      rcx, rdi
+ 0001429bb00f  call     0x1406e8c20   <<< READ u32
+ 0001429bb014  mov      ebx, eax
+ 0001429bb016  mov      eax, 0x2f684bdb
+ 0001429bb01b  mul      ebx
+ 0001429bb01d  mov      eax, ebx
+ 0001429bb01f  sub      eax, edx
+ 0001429bb021  shr      eax, 1
+ 0001429bb023  add      eax, edx
+ 0001429bb025  shr      eax, 4
+ 0001429bb028  imul     ecx, eax, 0x1b
+ 0001429bb02b  cmp      ebx, ecx
+ 0001429bb02d  je       0x1429bb044   [branch]
+ 0001429bb02f  mov      rcx, qword ptr [rsp + 0x58]
+ 0001429bb034  test     rcx, rcx
+ 0001429bb037  je       0x1429bb5c8   [branch]
+>0001429bb03d  mov      rax, qword ptr [rcx]
+ 0001429bb040  call     qword ptr [rax + 0x10]
+ 0001429bb043  nop      
+>0001429bb044  mov      rcx, qword ptr [rsp + 0x58]
+ 0001429bb049  test     rcx, rcx
+ 0001429bb04c  je       0x1429bb094   [branch]
+ 0001429bb04e  mov      rax, qword ptr [rcx]
+ 0001429bb051  lea      rdx, [rsp + 0x20]
+ 0001429bb056  cmp      rcx, rdx
+ 0001429bb059  setne    dl
+ 0001429bb05c  call     qword ptr [rax + 0x20]
+ 0001429bb05f  jmp      0x1429bb094
+>0001429bb061  mov      eax, 0x2f684bdb
+ 0001429bb066  mul      ebx
+ 0001429bb068  mov      eax, ebx
+ 0001429bb06a  sub      eax, edx
+ 0001429bb06c  shr      eax, 1
+ 0001429bb06e  add      eax, edx
+ 0001429bb070  shr      eax, 4
+ 0001429bb073  imul     ecx, eax, 0x1b
+ 0001429bb076  cmp      ebx, ecx
+ 0001429bb078  jne      0x1429bb044   [branch]
+ 0001429bb07a  mov      rcx, qword ptr [rsp + 0x58]
+ 0001429bb07f  test     rcx, rcx
+ 0001429bb082  je       0x1429bb5c8   [branch]
+ 0001429bb088  jmp      0x1429bb03d
+>0001429bb08a  mov      rcx, rdi
+ 0001429bb08d  call     0x1406e8c20   <<< READ u32
+ 0001429bb092  mov      ebx, eax
+>0001429bb094  mov      edx, ebx
+ 0001429bb096  mov      rcx, rbp
+ 0001429bb099  call     0x1429b6c90
+ 0001429bb09e  mov      rbx, rax
+ 0001429bb0a1  test     rax, rax
+ 0001429bb0a4  jne      0x1429bb0bf   [branch]
+ 0001429bb0a6  cmp      esi, 0x226
+ 0001429bb0ac  jne      0x1429bb5b0   [branch]
+ 0001429bb0b2  mov      rcx, rdi
+ 0001429bb0b5  call     0x14285ff30
+ 0001429bb0ba  jmp      0x1429bb5b0
+>0001429bb0bf  cmp      qword ptr [rip + 0x110d6d9], 0
+ 0001429bb0c7  je       0x1429bb100   [branch]
+ 0001429bb0c9  lea      rcx, [rsp + 0x20]
+ 0001429bb0ce  call     0x1415ed8e0
+ 0001429bb0d3  nop      
+ 0001429bb0d4  mov      rax, qword ptr [rbx]
+ 0001429bb0d7  mov      rcx, rbx
+ 0001429bb0da  call     qword ptr [rax + 0x50]
+ 0001429bb0dd  test     eax, eax
+ 0001429bb0df  setne    byte ptr [rsp + 0x41]
+ 0001429bb0e4  lea      rdx, [rsp + 0x20]
+ 0001429bb0e9  mov      rcx, qword ptr [rip + 0x110d6b0]
+ 0001429bb0f0  call     0x1415f0bf0
+ 0001429bb0f5  nop      
+ 0001429bb0f6  lea      rcx, [rsp + 0x20]
+ 0001429bb0fb  call     0x1415ed910
+>0001429bb100  lea      eax, [rsi - 0x226]
+ 0001429bb106  cmp      eax, 0x50
+ 0001429bb109  ja       0x1429bb53f   [branch]
+ 0001429bb10f  cdqe     
+ 0001429bb111  lea      rdx, [rip - 0x29bb118]
+ 0001429bb118  mov      ecx, dword ptr [rdx + rax*4 + 0x29bb5d0]
+ 0001429bb11f  add      rcx, rdx
+ 0001429bb122  jmp      rcx
+ 0001429bb124  mov      rdx, rdi
+ 0001429bb127  mov      rcx, rbx
+ 0001429bb12a  call     0x1427847a0
+ 0001429bb12f  jmp      0x1429bb59f
+ 0001429bb134  mov      rdx, rdi
+ 0001429bb137  mov      rcx, rbx
+ 0001429bb13a  call     0x142784970
+ 0001429bb13f  jmp      0x1429bb59f
+ 0001429bb144  mov      rdx, rdi
+ 0001429bb147  mov      rcx, rbx
+ 0001429bb14a  call     0x142785e20
+ 0001429bb14f  jmp      0x1429bb59f
+ 0001429bb154  mov      rdx, rdi
+ 0001429bb157  mov      rcx, rbx
+ 0001429bb15a  call     0x1427956b0
+ 0001429bb15f  jmp      0x1429bb59f
+ 0001429bb164  mov      rdx, rdi
+ 0001429bb167  mov      rcx, rbx
+ 0001429bb16a  call     0x142795a70
+ 0001429bb16f  jmp      0x1429bb59f
+ 0001429bb174  mov      rdx, rdi
+ 0001429bb177  mov      rcx, rbx
+ 0001429bb17a  call     0x14277b0e0
+ 0001429bb17f  jmp      0x1429bb59f
+ 0001429bb184  mov      rdx, rdi
+ 0001429bb187  mov      rcx, rbx
+ 0001429bb18a  call     0x142792340
+ 0001429bb18f  jmp      0x1429bb59f
+ 0001429bb194  mov      rdx, rdi
+ 0001429bb197  mov      rcx, rbx
+ 0001429bb19a  call     0x142793aa0
+ 0001429bb19f  jmp      0x1429bb59f
+ 0001429bb1a4  mov      rdx, rdi
+ 0001429bb1a7  mov      rcx, rbx
+ 0001429bb1aa  call     0x142793c10
+ 0001429bb1af  jmp      0x1429bb59f
+ 0001429bb1b4  mov      rdx, rdi
+ 0001429bb1b7  mov      rcx, rbx
+ 0001429bb1ba  call     0x1427948d0
+ 0001429bb1bf  jmp      0x1429bb59f
+ 0001429bb1c4  mov      rdx, rdi
+ 0001429bb1c7  mov      rcx, rbx
+ 0001429bb1ca  call     0x142794130
+ 0001429bb1cf  jmp      0x1429bb59f
+ 0001429bb1d4  mov      rdx, rdi
+ 0001429bb1d7  mov      rcx, rbx
+ 0001429bb1da  call     0x142794540
+ 0001429bb1df  jmp      0x1429bb59f
+ 0001429bb1e4  mov      rdx, rdi
+ 0001429bb1e7  mov      rcx, rbx
+ 0001429bb1ea  call     0x1427946b0
+ 0001429bb1ef  jmp      0x1429bb59f
+ 0001429bb1f4  mov      rdx, rdi
+ 0001429bb1f7  mov      rcx, rbx
+ 0001429bb1fa  call     0x1427934e0
+ 0001429bb1ff  jmp      0x1429bb59f
+ 0001429bb204  mov      rdx, rdi
+ 0001429bb207  mov      rcx, rbx
+ 0001429bb20a  call     0x1427938c0
+ 0001429bb20f  jmp      0x1429bb59f
+ 0001429bb214  mov      rdx, rdi
+ 0001429bb217  mov      rcx, rbx
+ 0001429bb21a  call     0x142794ec0
+ 0001429bb21f  jmp      0x1429bb59f
+ 0001429bb224  mov      rdx, rdi
+ 0001429bb227  mov      rcx, rbx
+ 0001429bb22a  call     0x142795050
+ 0001429bb22f  jmp      0x1429bb59f
+ 0001429bb234  mov      rdx, rdi
+ 0001429bb237  mov      rcx, rbx
+ 0001429bb23a  call     0x1427951c0
+ 0001429bb23f  jmp      0x1429bb59f
+ 0001429bb244  mov      rdx, rdi
+ 0001429bb247  mov      rcx, rbx
+ 0001429bb24a  call     0x142795330
+ 0001429bb24f  jmp      0x1429bb59f
+ 0001429bb254  mov      rdx, rdi
+ 0001429bb257  mov      rcx, rbx
+ 0001429bb25a  call     0x1427954e0
+ 0001429bb25f  jmp      0x1429bb59f
+ 0001429bb264  mov      rdx, rdi
+ 0001429bb267  mov      rcx, rbx
+ 0001429bb26a  call     0x142798c20
+ 0001429bb26f  jmp      0x1429bb59f
+ 0001429bb274  mov      rdx, rdi
+ 0001429bb277  mov      rcx, rbx
+ 0001429bb27a  call     0x142798c30
+ 0001429bb27f  jmp      0x1429bb59f
+ 0001429bb284  mov      rdx, rdi
+ 0001429bb287  mov      rcx, rbx
+ 0001429bb28a  call     0x142798c40
+ 0001429bb28f  jmp      0x1429bb59f
+ 0001429bb294  mov      rdx, rdi
+ 0001429bb297  mov      rcx, rbx
+ 0001429bb29a  call     0x142798c70
+ 0001429bb29f  jmp      0x1429bb59f
+ 0001429bb2a4  mov      rdx, rdi
+ 0001429bb2a7  mov      rcx, rbx
+ 0001429bb2aa  call     0x14279bc20
+ 0001429bb2af  jmp      0x1429bb59f
+ 0001429bb2b4  mov      rdx, rdi
+ 0001429bb2b7  mov      rcx, rbx
+ 0001429bb2ba  call     0x1427922b0
+ 0001429bb2bf  jmp      0x1429bb59f
+ 0001429bb2c4  mov      rdx, rdi
+ 0001429bb2c7  mov      rcx, rbx
+ 0001429bb2ca  call     0x142798cf0
+ 0001429bb2cf  jmp      0x1429bb59f
+ 0001429bb2d4  mov      rdx, rdi
+ 0001429bb2d7  mov      rcx, rbx
+ 0001429bb2da  call     0x1427eeb40
+ 0001429bb2df  jmp      0x1429bb59f
+ 0001429bb2e4  mov      rdx, rdi
+ 0001429bb2e7  mov      rcx, rbx
+ 0001429bb2ea  call     0x1427991b0
+ 0001429bb2ef  jmp      0x1429bb59f
+ 0001429bb2f4  mov      rdx, rdi
+ 0001429bb2f7  mov      rcx, rbx
+ 0001429bb2fa  call     0x142799290
+ 0001429bb2ff  jmp      0x1429bb59f
+ 0001429bb304  mov      rdx, rdi
+ 0001429bb307  mov      rcx, rbx
+ 0001429bb30a  call     0x1427995c0
+ 0001429bb30f  jmp      0x1429bb59f
+ 0001429bb314  mov      rdx, rdi
+ 0001429bb317  mov      rcx, rbx
+ 0001429bb31a  call     0x14279a6e0
+ 0001429bb31f  jmp      0x1429bb59f
+ 0001429bb324  mov      rdx, rdi
+ 0001429bb327  mov      rcx, rbx
+ 0001429bb32a  call     0x142826ab0
+ 0001429bb32f  jmp      0x1429bb59f
+ 0001429bb334  mov      rdx, rdi
+ 0001429bb337  mov      rcx, rbx
+ 0001429bb33a  call     0x1427bdd40
+ 0001429bb33f  jmp      0x1429bb59f
+ 0001429bb344  mov      rdx, rdi
+ 0001429bb347  mov      rcx, rbx
+ 0001429bb34a  call     0x1428341c0
+ 0001429bb34f  jmp      0x1429bb59f
+ 0001429bb354  mov      rdx, rdi
+ 0001429bb357  mov      rcx, rbx
+ 0001429bb35a  call     0x142834230
+ 0001429bb35f  jmp      0x1429bb59f
+ 0001429bb364  mov      rdx, rdi
+ 0001429bb367  mov      rcx, rbx
+ 0001429bb36a  call     0x1428350a0
+ 0001429bb36f  jmp      0x1429bb59f
+ 0001429bb374  mov      rdx, rdi
+ 0001429bb377  mov      rcx, rbx
+ 0001429bb37a  call     0x142835870
+ 0001429bb37f  jmp      0x1429bb59f
+ 0001429bb384  mov      rdx, rdi
+ 0001429bb387  mov      rcx, rbx
+ 0001429bb38a  call     0x1428358e0
+ 0001429bb38f  jmp      0x1429bb59f
+ 0001429bb394  mov      rdx, rdi
+ 0001429bb397  mov      rcx, rbx
+ 0001429bb39a  call     0x142835930
+ 0001429bb39f  jmp      0x1429bb59f
+ 0001429bb3a4  mov      rdx, rdi
+ 0001429bb3a7  mov      rcx, rbx
+ 0001429bb3aa  call     0x142835a80
+ 0001429bb3af  jmp      0x1429bb59f
+ 0001429bb3b4  mov      rdx, rdi
+ 0001429bb3b7  mov      rcx, rbx
+ 0001429bb3ba  call     0x1428482a0
+ 0001429bb3bf  jmp      0x1429bb59f
+ 0001429bb3c4  mov      rdx, rdi
+ 0001429bb3c7  mov      rcx, rbx
+ 0001429bb3ca  call     0x142834060
+ 0001429bb3cf  jmp      0x1429bb59f
+ 0001429bb3d4  mov      rdx, rdi
+ 0001429bb3d7  mov      rcx, rbx
+ 0001429bb3da  call     0x142836380
+ 0001429bb3df  jmp      0x1429bb59f
+ 0001429bb3e4  mov      rdx, rdi
+ 0001429bb3e7  mov      rcx, rbx
+ 0001429bb3ea  call     0x1428363b0
+ 0001429bb3ef  jmp      0x1429bb59f
+ 0001429bb3f4  mov      rdx, rdi
+ 0001429bb3f7  mov      rcx, rbx
+ 0001429bb3fa  call     0x142836660
+ 0001429bb3ff  jmp      0x1429bb59f
+ 0001429bb404  mov      rdx, rdi
+ 0001429bb407  mov      rcx, rbx
+ 0001429bb40a  call     0x1428377f0
+ 0001429bb40f  jmp      0x1429bb59f
+ 0001429bb414  mov      rdx, rdi
+ 0001429bb417  mov      rcx, rbx
+ 0001429bb41a  call     0x142837540
+ 0001429bb41f  jmp      0x1429bb59f
+ 0001429bb424  mov      rdx, rdi
+ 0001429bb427  mov      rcx, rbx
+ 0001429bb42a  call     0x142833e80
+ 0001429bb42f  jmp      0x1429bb59f
+ 0001429bb434  mov      rdx, rdi
+ 0001429bb437  mov      rcx, rbx
+ 0001429bb43a  call     0x142833ff0
+ 0001429bb43f  jmp      0x1429bb59f
+ 0001429bb444  mov      rdx, rdi
+ 0001429bb447  mov      rcx, rbx
+ 0001429bb44a  call     0x142853840
+ 0001429bb44f  jmp      0x1429bb59f
+ 0001429bb454  mov      rdx, rdi
+ 0001429bb457  mov      rcx, rbx
+ 0001429bb45a  call     0x142853ae0
+ 0001429bb45f  jmp      0x1429bb59f
+ 0001429bb464  mov      rdx, rdi
+ 0001429bb467  mov      rcx, rbx
+ 0001429bb46a  call     0x1428542a0
+ 0001429bb46f  jmp      0x1429bb59f
+ 0001429bb474  mov      rdx, rdi
+ 0001429bb477  mov      rcx, rbx
+ 0001429bb47a  call     0x142854520
+ 0001429bb47f  jmp      0x1429bb59f
+ 0001429bb484  mov      rdx, rdi
+ 0001429bb487  mov      rcx, rbx
+ 0001429bb48a  call     0x142854710
+ 0001429bb48f  jmp      0x1429bb59f
+ 0001429bb494  mov      rax, qword ptr [rbx]
+ 0001429bb497  mov      rdx, rdi
+ 0001429bb49a  mov      rcx, rbx
+ 0001429bb49d  call     qword ptr [rax + 0x90]
+ 0001429bb4a3  jmp      0x1429bb59f
+ 0001429bb4a8  mov      rdx, rdi
+ 0001429bb4ab  mov      rcx, rbx
+ 0001429bb4ae  call     0x1427fb990
+ 0001429bb4b3  jmp      0x1429bb59f
+ 0001429bb4b8  mov      rdx, rdi
+ 0001429bb4bb  mov      rcx, rbx
+ 0001429bb4be  call     0x1427fba10
+ 0001429bb4c3  jmp      0x1429bb59f
+ 0001429bb4c8  mov      rdx, rdi
+ 0001429bb4cb  mov      rcx, rbx
+ 0001429bb4ce  call     0x142859c60
+ 0001429bb4d3  jmp      0x1429bb59f
+ 0001429bb4d8  mov      rdx, rdi
+ 0001429bb4db  mov      rcx, rbx
+ 0001429bb4de  call     0x1427fba70
+ 0001429bb4e3  jmp      0x1429bb59f
+ 0001429bb4e8  mov      rdx, rdi
+ 0001429bb4eb  mov      rcx, rbx
+ 0001429bb4ee  call     0x1427fbaa0
+ 0001429bb4f3  jmp      0x1429bb59f
+ 0001429bb4f8  mov      rdx, rdi
+ 0001429bb4fb  mov      rcx, rbx
+ 0001429bb4fe  call     0x142859f00
+ 0001429bb503  jmp      0x1429bb59f
+ 0001429bb508  mov      rdx, rdi
+ 0001429bb50b  mov      rcx, rbx
+ 0001429bb50e  call     0x142859f70
+ 0001429bb513  jmp      0x1429bb59f
+ 0001429bb518  mov      rdx, rdi
+ 0001429bb51b  mov      rcx, rbx
+ 0001429bb51e  call     0x14285b4f0
+ 0001429bb523  jmp      0x1429bb59f
+ 0001429bb525  mov      rdx, rdi
+ 0001429bb528  mov      rcx, rbx
+ 0001429bb52b  call     0x14285f040
+ 0001429bb530  jmp      0x1429bb59f
+ 0001429bb532  mov      rdx, rdi
+ 0001429bb535  mov      rcx, rbx
+ 0001429bb538  call     0x14285f8e0
+ 0001429bb53d  jmp      0x1429bb59f
+>0001429bb53f  lea      eax, [rsi - 0x277]
+ 0001429bb545  cmp      eax, 7
+ 0001429bb548  ja       0x1429bb557   [branch]
+ 0001429bb54a  mov      r8, rdi
+ 0001429bb54d  mov      edx, esi
+ 0001429bb54f  mov      rcx, rbx
+ 0001429bb552  call     0x142795b20
+>0001429bb557  lea      eax, [rsi - 0x27f]
+ 0001429bb55d  cmp      eax, 4
+ 0001429bb560  ja       0x1429bb56f   [branch]
+ 0001429bb562  mov      r8, rdi
+ 0001429bb565  mov      edx, esi
+ 0001429bb567  mov      rcx, rbx
+ 0001429bb56a  call     0x142798a40
+>0001429bb56f  lea      eax, [rsi - 0x284]
+ 0001429bb575  cmp      eax, 7
+ 0001429bb578  ja       0x1429bb587   [branch]
+ 0001429bb57a  mov      r8, rdi
+ 0001429bb57d  mov      edx, esi
+ 0001429bb57f  mov      rcx, rbx
+ 0001429bb582  call     0x142846520
+>0001429bb587  lea      eax, [rsi - 0x28c]
+ 0001429bb58d  cmp      eax, 5
+ 0001429bb590  ja       0x1429bb59f   [branch]
+ 0001429bb592  mov      r8, rdi
+ 0001429bb595  mov      edx, esi
+ 0001429bb597  mov      rcx, rbx
+ 0001429bb59a  call     0x1428340e0
+>0001429bb59f  mov      rcx, qword ptr [rip + 0x110d1fa]
+ 0001429bb5a6  test     rcx, rcx
+ 0001429bb5a9  je       0x1429bb5b0   [branch]
+ 0001429bb5ab  call     0x1415f0d70
+>0001429bb5b0  mov      rbx, qword ptr [rsp + 0x70]
+ 0001429bb5b5  mov      rbp, qword ptr [rsp + 0x78]
+ 0001429bb5ba  mov      rsi, qword ptr [rsp + 0x80]
+ 0001429bb5c2  add      rsp, 0x60
+ 0001429bb5c6  pop      rdi
+ 0001429bb5c7  ret      
+>0001429bb5c8  call     0x142ed3024
+ 0001429bb5cd  nop      
+ 0001429bb5ce  nop      
+ 0001429bb5d0  and      al, 0xb1
+ 0001429bb5d2  wait     
+ 0001429bb5d3  add      bh, byte ptr [rdi]
+ 0001429bb5d5  mov      ch, 0x9b
+ 0001429bb5d7  add      bh, byte ptr [rdi]
+ 0001429bb5d9  mov      ch, 0x9b
+ 0001429bb5db  add      bh, byte ptr [rdi]
+ 0001429bb5dd  mov      ch, 0x9b
+ 0001429bb5df  add      bh, byte ptr [rdi]
+ 0001429bb5e1  mov      ch, 0x9b
+ 0001429bb5e3  add      bh, byte ptr [rdi]
+ 0001429bb5e5  mov      ch, 0x9b
+ 0001429bb5e7  add      bh, byte ptr [rdi]
+ 0001429bb5e9  mov      ch, 0x9b
+ 0001429bb5eb  add      bh, byte ptr [rdi]
+ 0001429bb5ed  mov      ch, 0x9b
+ 0001429bb5ef  add      bh, byte ptr [rdi]
+ 0001429bb5f1  mov      ch, 0x9b
+ 0001429bb5f3  add      bh, byte ptr [rdi]
+ 0001429bb5f5  mov      ch, 0x9b
+ 0001429bb5f7  add      bh, byte ptr [rdi]
+ 0001429bb5f9  mov      ch, 0x9b
+ 0001429bb5fb  add      dh, byte ptr [rcx + rsi*4]
+ 0001429bb5fe  wait     
+ 0001429bb5ff  add      al, byte ptr [rcx + rsi*4 - 0x65]
+ 0001429bb603  add      dl, byte ptr [rcx + rsi*4 - 0x65]
+ 0001429bb607  add      ah, byte ptr [rcx + rsi*4 - 0x65]
+ 0001429bb60b  add      dh, byte ptr [rcx + rsi*4 - 0x65]
+ 0001429bb60f  add      al, byte ptr [rcx + rsi*4 - 0x4ac0fd65]
+ 0001429bb616  wait     
+ 0001429bb617  add      dh, ah
+ 0001429bb619  mov      cl, 0x9b
+ 0001429bb61b  add      al, byte ptr [rdx + rsi*4]
+ 0001429bb61e  wait     
+ 0001429bb61f  add      dl, byte ptr [rcx + rsi*4 - 0x4e5bfd65]
+ 0001429bb626  wait     
+ 0001429bb627  add      dh, byte ptr [rcx + rsi*4 - 0x4e3bfd65]
+ 0001429bb62e  wait     
+ 0001429bb62f  add      dl, ah
+ 0001429bb631  mov      cl, 0x9b
+ 0001429bb633  add      ah, ah
+ 0001429bb635  mov      cl, 0x9b
+ 0001429bb637  add      dl, byte ptr [rdx + rsi*4]
+ 0001429bb63a  wait     
+ 0001429bb63b  add      al, byte ptr [rdx + rsi*4 - 0x65]
+ 0001429bb63f  add      dl, byte ptr [rdx + rsi*4 - 0x65]
+ 0001429bb643  add      ah, byte ptr [rdx + rsi*4 - 0x65]
+ 0001429bb647  add      dh, byte ptr [rdx + rsi*4 - 0x65]
+ 0001429bb64b  add      al, byte ptr [rdx + rsi*4 - 0x4d6bfd65]
+ 0001429bb652  wait     
+ 0001429bb653  add      ah, byte ptr [rdx + rsi*4 - 0x4d4bfd65]
+ 0001429bb65a  wait     
+ 0001429bb65b  add      al, ah
+ 0001429bb65d  mov      dl, 0x9b
+ 0001429bb65f  add      dl, ah
+ 0001429bb661  mov      dl, 0x9b
+ 0001429bb663  add      ah, ah
+ 0001429bb665  mov      dl, 0x9b
+ 0001429bb667  add      dh, ah
+ 0001429bb669  mov      dl, 0x9b
+ 0001429bb66b  add      al, byte ptr [rbx + rsi*4]
+ 0001429bb66e  wait     
+ 0001429bb66f  add      dl, byte ptr [rbx + rsi*4]
+ 0001429bb672  wait     
+ 0001429bb673  add      bh, byte ptr [rdi]
+ 0001429bb675  mov      ch, 0x9b
+ 0001429bb677  add      ah, byte ptr [rbx + rsi*4]
+ 0001429bb67a  wait     
+ 0001429bb67b  add      dh, byte ptr [rbx + rsi*4]
+ 0001429bb67e  wait     
+ 0001429bb67f  add      al, byte ptr [rbx + rsi*4 - 0x65]
+ 0001429bb683  add      dl, byte ptr [rbx + rsi*4 - 0x65]
+ 0001429bb687  add      ah, byte ptr [rbx + rsi*4 - 0x65]
+ 0001429bb68b  add      dh, byte ptr [rbx + rsi*4 - 0x65]
+ 0001429bb68f  add      al, byte ptr [rbx + rsi*4 - 0x4c6bfd65]
+ 0001429bb696  wait     
+ 0001429bb697  add      ah, byte ptr [rbx + rsi*4 - 0x4ddbfd65]
+ 0001429bb69e  wait     
+ 0001429bb69f  add      dh, byte ptr [rdx + rsi*4]
+ 0001429bb6a2  wait     
+ 0001429bb6a3  add      bh, byte ptr [rdi]
+ 0001429bb6a5  mov      ch, 0x9b
+ 0001429bb6a7  add      dh, byte ptr [rbx + rsi*4 - 0x4c3bfd65]
+ 0001429bb6ae  wait     
+ 0001429bb6af  add      ah, byte ptr [rsp + rsi*4]
+ 0001429bb6b2  wait     
+ 0001429bb6b3  add      dl, ah
+ 0001429bb6b5  mov      bl, 0x9b
+ 0001429bb6b7  add      ah, ah
+ 0001429bb6b9  mov      bl, 0x9b
+ 0001429bb6bb  add      dh, ah
+ 0001429bb6bd  mov      bl, 0x9b
+ 0001429bb6bf  add      al, byte ptr [rsp + rsi*4]
+ 0001429bb6c2  wait     
+ 0001429bb6c3  add      dl, byte ptr [rsp + rsi*4]
+ 0001429bb6c6  wait     
+ 0001429bb6c7  add      dh, byte ptr [rsp + rsi*4]
+ 0001429bb6ca  wait     
+ 0001429bb6cb  add      bh, byte ptr [rdi]
+ 0001429bb6cd  mov      ch, 0x9b
+ 0001429bb6cf  add      al, byte ptr [rsp + rsi*4 - 0x65]
+ 0001429bb6d3  add      dl, byte ptr [rsp + rsi*4 - 0x65]
+ 0001429bb6d7  add      ah, byte ptr [rsp + rsi*4 - 0x65]
+ 0001429bb6db  add      dh, byte ptr [rsp + rsi*4 - 0x65]
+ 0001429bb6df  add      al, byte ptr [rsp + rsi*4 - 0x4b6bfd65]
+ 0001429bb6e6  wait     
+ 0001429bb6e7  add      ch, byte ptr [rax - 0x47fd644c]
+ 0001429bb6ed  mov      ah, 0x9b
+ 0001429bb6ef  add      bl, al
+ 0001429bb6f1  mov      ah, 0x9b
+ 0001429bb6f3  add      ch, al
+ 0001429bb6f5  mov      ah, 0x9b
+ 0001429bb6f7  add      cl, al
+ 0001429bb6f9  mov      ah, 0x9b
+ 0001429bb6fb  add      bh, al
+ 0001429bb6fd  mov      ah, 0x9b
+ 0001429bb6ff  add      cl, byte ptr [rax]
+ 0001429bb701  mov      ch, 0x9b
+ 0001429bb703  add      bl, byte ptr [rax]
+ 0001429bb705  mov      ch, 0x9b
+ 0001429bb707  add      ah, byte ptr [rip + 0x3f029bb5]
+ 0001429bb70d  mov      ch, 0x9b
+ 0001429bb70f  add      dh, byte ptr [rdx]
+ 0001429bb711  mov      ch, 0x9b

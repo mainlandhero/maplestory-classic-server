@@ -232,6 +232,63 @@ while working. The agent caught it and used `version`/`bgm`/`mapMark` (426 each)
 `fieldType` (379, so it also proves the reader *discriminates*) instead. Handing out a control
 that cannot pass is the same mistake as trusting a scan that cannot find anything.
 
+#### Death and revive: BUILT 2026-08-22, unseen
+
+`0x0315` opens the revive dialog and **the client never opens it by itself.** The chain was
+enumerated two ways with different blind spots: `CUIRevive` is constructed at exactly one
+site, `tools/dataref.py` on the dialog global finds 13 references with a **single write** in
+that constructor, and that constructor's only reachable caller is index `0x50` of the
+local-user table at `0x14289d660` - `0x2C5 + 0x50 = 0x0315`. *Control:* index `0xC` decodes to
+`0x02D1`, which `research/level-up.md` had established independently. **[L]**
+
+Body is 23 bytes, eight fields, and only two matter: `a`'s bit 0 must be set and `b` must not
+be `9`. **Both failures are silent**, which is why the builder takes no arguments.
+
+**Ordering is a real constraint, not a nicety.** The handler gates on a client-side HP test of
+the value the server just wrote, so a `0x0315` that overtakes its `0x007C` is dropped without a
+word. It goes after, in the same batch, and is gated on the **transition** (`before > 0 &&
+hp == 0`) because a dead character can still be hit.
+
+**The revive click is an ordinary `0x00D1` with `targetField = 0`**, 25 bytes where a portal
+walk is 34. `parse_transfer_field` reads that `0` as a perfectly good map id, so without a
+guard a revive would have warped the character **to map 0**. The guard is on the server's own
+`hp == 0`, deliberately not on the packet shape.
+
+Revive does: `reviveMap` from `gm-handbook/returnmaps.txt`, 50 HP, and -10% EXP above level 10.
+A second `0x007C` follows the `SetField` because ~65 client sites gate on the sign of HP and a
+character revived without it arrives in town unable to act.
+
+`0x01E7` (revive on the spot) is answered and refused - the button is hidden unless a Respawn
+Token counter is above zero and nothing here sets it, so seeing that packet at all is itself
+the finding.
+
+**And there is a free instrument if it does not work:** when the opener refuses, the client
+reports it outbound as `0x02C6`, 44 bytes, carrying which of four things went wrong. Success
+is silence.
+
+#### The blue recovery number was on the wrong packet, and the second theory was wrong too
+
+`0x007C`'s recovery trailer **can never draw anything**. It was sent on three ticks of a real
+run, on a bar that visibly moved, and drew nothing - and the reason is not a bad body:
+`FUN_140fd31f0` is a **statistics counter**. Running totals at `+0x208`/`+0x210`, effective
+healing separated from wasted against `maxHp - oldHp`, per-hour averages, a reset on the hour.
+Its entire call list is two tick functions, a getter twice, and a tail `jmp`.
+
+My follow-up theory - that the `oldHp` snapshot is taken *after* the mask block stores the new
+total, so the delta is zero - is **also dead**, and is recorded because testing it would have
+cost a client run: the snapshots are taken 65 bytes earlier, into `[rbp-0x58]` and callee-saved
+`r15`, where the mask block cannot reach them.
+
+What draws it is **`0x02D1` effect `0x41`** - the *same renderer as the damage number*, with a
+**positive** argument, because the sign is what selects digit set 2 (`NoBlue`) over set 3
+(`NoViolet`). Of the eleven call sites of the digit-set loader, exactly one ever asks for set 2.
+Now sent by idle regen, after the `0x007C`, HP only.
+
+**One link in that chain is unmeasured** and it is named rather than buried: effects `0x41` and
+`0x23` share a suppression gate at `14278bd75`. If the hook log shows the `0x02D1` dispatched
+*and returned* with nothing on screen, that gate is the place to look - and swapping `0x41` for
+`0x23` does **not** test it.
+
 #### Death and revive: opened, not built
 
 The owner: *"My HP hit 0, I see the tombstone on my character, but I do not see the revive

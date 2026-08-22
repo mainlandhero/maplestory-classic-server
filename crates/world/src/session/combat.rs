@@ -559,16 +559,33 @@ impl Session {
             ),
         }];
 
-        // **Death is not built.** `research/user-hit.md` established that `hp = 0` in a
-        // `0x007C` is not a death packet and will not hang the client - what it does is
-        // disable the player through some 65 sites that branch on the sign of HP - but what
-        // plays the death sequence was not found. So say so out loud rather than leaving a
-        // character wedged at zero with no explanation.
-        if chr.hp == 0 {
-            out.extend(self.notice(
-                "You are out of HP. Death is not implemented yet - use !heal to carry on."
-                    .to_string(),
-            ));
+        // **Death.** The owner, 2026-08-21: *"My HP hit 0, I see the tombstone on my character,
+        // but I do not see the revive confirmation."*
+        //
+        // The tombstone was already working: `hp = 0` in the `0x007C` above disables the
+        // player through the ~65 sites `research/user-hit.md` §6.2 enumerates. What was
+        // missing is the dialog, and **the client never opens it by itself** - a packet does,
+        // `0x0315`, and `research/revive.md` traced it through a vtable slot with exactly one
+        // construction site.
+        //
+        // **Order matters and it is not cosmetic.** The handler gates on a client-side HP
+        // test of the value the server just wrote (`world[0x2358]`, the field `0x007C` bit 10
+        // sets), so a `0x0315` that overtakes the `0x007C` is dropped **silently**. It goes
+        // after, in the same batch.
+        //
+        // **Gated on the transition, not on the state.** `before > 0 && chr.hp == 0` fires
+        // once; `chr.hp == 0` alone would re-open the dialog on every subsequent hit, and a
+        // dead character can still be hit. That is the same rule the quest payouts had to
+        // learn: every effect hangs off the transition.
+        if before > 0 && chr.hp == 0 {
+            out.push(Reply {
+                opcode: net::revive::SHOW_REVIVE_DIALOG,
+                body: net::revive::show_revive_dialog(),
+                what: format!(
+                    "ShowReviveDialog: character {} died to mob {} (template {}). 0x0315, and it MUST follow the 0x007C above - the client gates it on its own copy of the HP the server just set, and drops it silently if that is still positive. Clicking REVIVE IN TOWN sends 0x00D1 with targetField 0",
+                    chr.id, hit.mob_object_id, hit.mob_template_id
+                ),
+            });
         }
         out
     }

@@ -365,8 +365,22 @@ along `.../CitizenshipGet` and `.../CitizenshipGradeUp` — Classic World's own 
 142d5498a  sub  rdi,r14
 142d5498d  add  rdi,rax                   ; delta = newExp - oldExp + needed(oldLevel)
 142d54990  mov  rdx,rdi
-142d5499a  call 0x140fd3110               ; show "+N EXP"
+142d5499a  call 0x140fd3110               ; NOT "show +N EXP" - see the note below
 ```
+
+> **CORRECTED 2026-08-22: `0x140fd3110` does not show anything.** It is **106 bytes** and its
+> whole body is `totalExpGained += delta` on the object at `0x143AC92C8` - confirmed with
+> `tools/dataref.py` rather than by reading the arithmetic. That is the same accumulator
+> object `FUN_140fd31f0` writes its hp/mp recovery totals into, and that function turned out
+> to be a **statistics counter** too: running totals, effective-versus-wasted healing, per-hour
+> averages, an hour-boundary reset, and no renderer anywhere on the path.
+>
+> This matters beyond a label. §5 of this document uses that call as evidence that *"the EXP
+> indicator is client-side too"* - and that conclusion now rests on a counter rather than on a
+> drawing call. The indicator may still be client-side; nothing here shows it.
+>
+> The **drawing** call for a floating number is `FUN_142771360(pUser, N, ...)`, which forks on
+> the sign of `N` to choose digit set 2 (`NoBlue`) or 3 (`NoViolet`). `research/recovery-number.md`.
 
 **[D]** A handler that computes `newExp - oldExp` and, when the level changed, adds the EXP
 required for the old level, is computing "how much EXP did you just gain". The field it

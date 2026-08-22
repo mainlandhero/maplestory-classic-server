@@ -3956,3 +3956,156 @@ fn a_skill_request_is_clamped_to_the_level_table_and_then_refused() {
     assert!(!zero.is_empty(), "answered");
     assert_eq!(s2.store.skill_level(id2, 1000).unwrap_or(0), 0, "and nothing was granted");
 }
+
+/// **Dying opens the revive dialog, and it opens exactly once.**
+///
+/// The owner, 2026-08-21: *"My HP hit 0, I see the tombstone on my character, but I do not see the
+/// revive confirmation."* The tombstone was always working - `hp = 0` disables the player
+/// through ~65 client sites - and the dialog needs `0x0315`, which the client never sends
+/// itself.
+///
+/// Two things are asserted that a "does it send the packet" test would miss:
+///
+/// * **Order.** The client gates `0x0315` on its own copy of the HP the server just wrote, so
+///   a `0x0315` that overtakes the `0x007C` is dropped in silence. The `0x007C` must come
+///   first in the batch.
+/// * **Once.** A dead character can still be hit. Gating on `hp == 0` rather than on the
+///   transition would re-open the dialog on every subsequent hit.
+#[test]
+fn dying_opens_the_revive_dialog_once_and_after_the_stat_change() {
+    let (mut s, store, id) = gm_session();
+    let mut chr = s.claimed_character().unwrap();
+    // One HP. `gm_session`'s config carries no `mob_attack` table, so `incoming_damage_for`
+    // returns None and the server keeps the client's number - which in this captured body is
+    // 1. That fallback is the documented behaviour for an unknown template, and using it here
+    // keeps the test about the DEATH TRANSITION rather than about the damage formula, which
+    // has its own tests.
+    chr.hp = 1;
+    chr.max_hp = 200;
+    store.save_character_progress(&chr).unwrap();
+
+    // A snail hit. The server computes its own damage, which for template 2 exceeds 3.
+    // The same captured 0x00E5 the other hit tests use: attack index -1, template 2, and the
+    // client's damage of 1, which the server overrides from the template's PADamage of 3.
+    let body = hex(
+        "00000000ffffffff0100000002002100431e140f0000000000000000000001000000010000000100000001000000d3070000d307000001000000000000000000000000000000000000de0100008b010000000000000000000000000000ffffffff00000000ffffffff000000000000000002000000000000000000000000000000000000000100000000000000000000000000",
+    );
+    let killing = s.on_user_hit(&body);
+    let stat = killing
+        .iter()
+        .position(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("the bar update");
+    let dialog = killing
+        .iter()
+        .position(|r| r.opcode == net::revive::SHOW_REVIVE_DIALOG)
+        .expect("death opens the revive dialog");
+    assert!(
+        dialog > stat,
+        "0x0315 must FOLLOW the 0x007C - the client drops it while it still thinks HP is positive"
+    );
+    assert_eq!(killing[dialog].body, net::revive::show_revive_dialog());
+    assert_eq!(reload(&s, 1, id).hp, 0, "and the character is dead");
+
+    // Hit again while dead. The bar still updates; the dialog must not re-open.
+    let again = s.on_user_hit(&body);
+    assert!(
+        !again.iter().any(|r| r.opcode == net::revive::SHOW_REVIVE_DIALOG),
+        "the dialog opens on the TRANSITION, not on the state - a dead character can still be hit"
+    );
+}
+
+/// **Reviving: town, 50 HP, and the experience penalty.**
+///
+/// The owner: *"Reviving a character should warp them to the nearest town, start at 50 HP, and
+/// reduce their EXP by 10% unless they are level 10 or below."*
+///
+/// The transfer request is the real one the town button sends - `targetField = 0`, empty
+/// portal name - which is why the branch is on the server's own HP and not on the packet:
+/// read as an ordinary portal walk, `0` is a perfectly good map id and the character would be
+/// warped to **map 0**, which this client has no field image for.
+#[test]
+fn reviving_warps_to_town_restores_fifty_hp_and_charges_the_penalty() {
+    let path = std::path::Path::new("../../gm-handbook/returnmaps.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    let (mut s, store, id) = gm_session();
+    {
+        let cfg = Arc::get_mut(&mut s.config).expect("sole owner in this test");
+        cfg.revive_maps = crate::config::Config::load_revive_maps(path);
+    }
+    // Map 40 returns to 60, Southperry - not a neighbouring screen, which is the point of
+    // using the table rather than walking portals.
+    let want_town = s.config.revive_field(40).expect("map 40 has a revive destination");
+    assert_eq!(want_town, 60, "Snail Hunting Ground I -> Southperry");
+
+    let mut chr = s.claimed_character().unwrap();
+    chr.map_id = 40;
+    chr.level = 20;
+    chr.exp = 1_000;
+    chr.hp = 0;
+    chr.max_hp = 200;
+    store.save_character_progress(&chr).unwrap();
+    // save_character_progress does NOT persist the map - that is set_character_map's column.
+    store.set_character_map(id, 40).unwrap();
+
+    // The town button: 25 bytes, target 0, empty portal name.
+    let mut body = net::opcode::SET_FIELD.to_le_bytes().to_vec(); // any 2-byte head
+    body.clear();
+    body.extend_from_slice(&[0u8; 16]); // the client integrity block, unread
+    body.extend_from_slice(&0u32.to_le_bytes()); // targetField = 0
+    body.extend_from_slice(&0u16.to_le_bytes()); // empty portal name
+    assert_eq!(body.len(), 22, "the revive shape: no position follows an empty name");
+
+    let out = s.on_transfer_field(&body);
+    assert!(
+        out.iter().any(|r| r.opcode == net::opcode::SET_FIELD),
+        "always answered"
+    );
+
+    let after = reload(&s, 1, id);
+    assert_eq!(after.map_id, 60, "warped to town, NOT to map 0");
+    assert_eq!(after.hp, 50, "back at 50 HP");
+    assert_eq!(after.exp, 900, "10% of 1000 at level 20");
+
+    // And the 0x007C after the SetField, without which ~65 client action gates stay shut.
+    let stat = out
+        .iter()
+        .position(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("the HP has to be restored in the client's own copy too");
+    let field = out
+        .iter()
+        .position(|r| r.opcode == net::opcode::SET_FIELD)
+        .expect("the SetField");
+    assert!(stat > field, "the stat change goes AFTER the SetField");
+}
+
+/// A level-10 character pays nothing, and still revives.
+#[test]
+fn a_low_level_character_revives_without_an_experience_penalty() {
+    let path = std::path::Path::new("../../gm-handbook/returnmaps.txt");
+    if !path.exists() {
+        return;
+    }
+    let (mut s, store, id) = gm_session();
+    {
+        let cfg = Arc::get_mut(&mut s.config).expect("sole owner in this test");
+        cfg.revive_maps = crate::config::Config::load_revive_maps(path);
+    }
+    let mut chr = s.claimed_character().unwrap();
+    chr.map_id = 40;
+    chr.level = 10;
+    chr.exp = 500;
+    chr.hp = 0;
+    store.save_character_progress(&chr).unwrap();
+    store.set_character_map(id, 40).unwrap();
+
+    let mut body = vec![0u8; 16];
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&0u16.to_le_bytes());
+    s.on_transfer_field(&body);
+
+    let after = reload(&s, 1, id);
+    assert_eq!(after.exp, 500, "'level 10 or below' is inclusive");
+    assert_eq!(after.map_id, 60, "and they still get to town");
+}

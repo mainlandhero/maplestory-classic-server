@@ -488,6 +488,9 @@ impl Session {
         match opcode {
             CLIENT_MIGRATION_HELLO => {}
             CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
+            net::revive::CLIENT_REVIVE_ON_SPOT => {
+                return self.on_revive_on_spot(body.get(2..).unwrap_or(&[]))
+            }
             CLIENT_FIELD_ENTERED => return self.on_field_entered(),
             net::opcode::CLIENT_CHAT => return self.on_chat(body.get(2..).unwrap_or(&[])),
             net::script::CLIENT_QUEST_REQUEST => {

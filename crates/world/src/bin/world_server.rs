@@ -189,6 +189,18 @@ fn main() -> ExitCode {
     config.item_names =
         world::config::Config::load_id_names(&PathBuf::from("gm-handbook/items.txt"));
     config.fields = world::config::Config::load_fields(&fields_path);
+    // Where a dead character comes back. A missing file is not fatal - revive then leaves
+    // the player where they fell, which is wrong but safe - so it warns rather than exits.
+    let revive_path = PathBuf::from("gm-handbook/returnmaps.txt");
+    config.revive_maps = world::config::Config::load_revive_maps(&revive_path);
+    if config.revive_maps.is_empty() {
+        eprintln!(
+            "maplecw-world: no revive map table from {} - a dead character will be revived WHERE THEY FELL. Regenerate with: python tools/dump_returnmaps.py",
+            revive_path.display()
+        );
+    } else {
+        println!("maplecw-world: revive: {} maps have a respawn destination", config.revive_maps.len());
+    }
     if config.fields.is_empty() {
         eprintln!(
             "maplecw-world: no field list from {} - map ids will NOT be validated, so a bad /map can strand a character. Regenerate with: python tools/dump_portals.py",

@@ -438,6 +438,24 @@ impl Session {
             }];
         };
 
+        // **A dead character's transfer request is a REVIVE, and it must be caught here
+        // before the portal logic ever sees it.**
+        //
+        // Clicking REVIVE IN TOWN sends an ordinary `0x00D1` with `targetField = 0` and an
+        // empty portal name - 25 bytes where a portal walk is 34, because the client skips
+        // both position encodes when the name is empty. `parse_transfer_field` reads that
+        // `0` as a perfectly good map id, so without this branch a revive would warp the
+        // character **to map 0** - a map this client has no field image for - with no HP
+        // restored. `research/revive.md`.
+        //
+        // **Branch on the server's own HP, not on the packet shape.** A 25-byte body with
+        // target 0 is what the revive button happens to send today; the character being dead
+        // is what actually makes this a revive. Matching on the shape would break the moment
+        // a real map 0 existed or the client padded differently.
+        if chr.hp == 0 {
+            return self.revive(chr);
+        }
+
         // Where the character ARRIVES. The source portal names its destination portal in
         // the WZ's `tn`, and the stat block wants that portal's index on the target map.
         // Without it every walk lands on the map's spawn point, which is right for a login
@@ -469,5 +487,107 @@ impl Session {
 
 
         self.go_to_map(&mut chr, target, arrival, note)
+    }
+
+    /// Bring a dead character back: town, 50 HP, and 10% of their experience unless they are
+    /// level 10 or below.
+    ///
+    /// The owner, 2026-08-21: *"Reviving a character should warp them to the nearest town, start at
+    /// 50 HP, and reduce their EXP by 10% unless they are level 10 or below."* All three
+    /// numbers are their and none is read out of the client.
+    ///
+    /// # Why "nearest town" is a table lookup and not a walk
+    ///
+    /// `gm-handbook/returnmaps.txt`'s `reviveMap` column already encodes one **unconditional**
+    /// `returnMap` hop followed by a walk to the first `town == 1` field, and re-deriving that
+    /// here would step into both traps `research/return-maps.md` documents: `town == 1` is
+    /// carried by shop interiors, and 94 of this client's 115 town fields point their own
+    /// `returnMap` elsewhere - so stopping on the flag revives the player inside Southperry
+    /// Armor Store. 33 fields are also `returnMap` self-loops.
+    ///
+    /// # Two packets, and the second is not optional
+    ///
+    /// `go_to_map` sends a `SetField` whose stat block carries the restored HP, but a `0x007C`
+    /// goes out **after** it as well. `research/user-hit.md` §6.2 enumerated ~65 sites that
+    /// gate an action on the sign of the client's HP; the character has to be positive in the
+    /// client's own copy or it arrives in town unable to do anything.
+    fn revive(&mut self, mut chr: net::opcode::Character) -> Vec<Reply> {
+        let died_on = chr.map_id;
+        let lost = net::revive::death_exp_loss(chr.level, chr.exp);
+        chr.exp = chr.exp.saturating_sub(lost);
+        chr.hp = net::revive::REVIVE_HP.min(chr.max_hp);
+
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            // Not fatal - the client is still told where it is and what its HP is, and a
+            // relog puts it back. Silence here would freeze the UI.
+            return self.notice(format!("Could not save your revival: {e}"));
+        }
+
+        // No row means the table was not generated. Leaving the character where they fell is
+        // wrong but safe; sending them to a map with no field image strands them outright.
+        let (target, where_note) = match self.config.revive_field(died_on) {
+            Some(t) => (t, format!("map {died_on} -> {t}")),
+            None => (
+                died_on,
+                format!(
+                    "map {died_on} has no row in the revive table, so this leaves the character where they fell - regenerate with python tools/dump_returnmaps.py"
+                ),
+            ),
+        };
+
+        // Built before the call: `go_to_map` borrows `chr` mutably, so reading its fields in
+        // the argument list would borrow it twice.
+        let note = format!(
+            "REVIVE: {where_note}, hp {}/{}, {}",
+            chr.hp,
+            chr.max_hp,
+            if lost > 0 {
+                format!("-{lost} exp (10% at level {}) -> {}", chr.level, chr.exp)
+            } else {
+                format!("no exp penalty at level {} (10 or below is free)", chr.level)
+            }
+        );
+        let mut out = self.go_to_map(&mut chr, target, 0, note);
+
+        // After the SetField, deliberately. Without a positive HP in the client's own copy
+        // the action gates stay shut and the player arrives in town unable to move.
+        out.push(Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange {
+                hp: Some(chr.hp),
+                exp: Some(chr.exp),
+                ..Default::default()
+            }
+            .build(),
+            what: format!(
+                "StatChanged after revive: hp {}/{}, exp {} - sent AFTER the SetField because ~65 client sites gate on the sign of HP, and a character revived without this arrives in town unable to act",
+                chr.hp, chr.max_hp, chr.exp
+            ),
+        });
+        out
+    }
+
+    /// `0x01E7` - "revive on the spot", which this server never enables but always answers.
+    ///
+    /// The button is **hidden** at create time unless an obfuscated counter at
+    /// `world[0x2368]+0x200` is above zero, and nothing this server sends alters it - so in
+    /// practice the client only ever offers the town button. It is answered anyway: the
+    /// always-answer rule does not have an exception for a request that should be impossible,
+    /// and if it ever does arrive, the log line below is how we find out.
+    pub(super) fn on_revive_on_spot(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        if chr.hp > 0 {
+            return self.notice(
+                "You are not dead. (A revive request arrived for a living character.)".to_string(),
+            );
+        }
+        let mut out = self.notice(
+            "Reviving on the spot is not available - use the town button.".to_string(),
+        );
+        out[0].what = format!(
+            "0x01E7 revive-on-the-spot from character {} on map {}, body {:02x?} - REFUSED and answered. This should not be reachable: the button is hidden unless world[0x2368]+0x200 > 0 and nothing here sets it, so seeing this line at all is the finding",
+            chr.id, chr.map_id, payload
+        );
+        out
     }
 }

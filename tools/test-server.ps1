@@ -43,7 +43,7 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - five things
+    THE POINT OF THIS RUN - six things
     -----------------------------------
      1. BULK SKILL POINTS. Open the skill window and add 3 at once to Three Snails.
         Last run that only moved it by 1: 0x013B carries a COUNT and the handler did
@@ -65,31 +65,58 @@
           nothing                   -> the item id resolved no name, or category 6 is a
                                        tab that window does not show
 
-     3. NPCs: !map 1 and just watch. NO command needed this time.
-        The appear-effect switch is ELIMINATED - !npcfx off changed nothing - and your
-        "not see-through, absent-then-present" settles that it was never an alpha fade.
-        So the question is now WHY THE FIRST DRAW IS LATE, and the untried candidate is
-        the pool's 0x0467 template-preload list. Nothing to test until that is built.
-        If you want to give one number: roughly how long is the gap? Under a tenth of a
-        second, or nearer half? That separates an asset load from a frame or two.
+     3. DEATH AND REVIVE - built this session, never seen. Die on purpose.
+        Last time you got a tombstone and no dialog. The client NEVER opens that dialog by
+        itself: a packet does, 0x0315, and its construction site was traced through a vtable
+        slot with exactly one caller. It goes out immediately after the 0x007C that zeroes
+        your HP, and the order is not cosmetic - the handler tests the client's own copy of
+        the HP the server just wrote, and drops the packet SILENTLY if it is still positive.
+          a. does the revive dialog appear? Expect a "REVIVE IN TOWN" button. The
+             "on the spot" button is hidden unless a Respawn Token counter is above zero and
+             nothing here sets it, so one button is the expected result, not a bug.
+          b. click it. You should arrive in a TOWN with 50 HP.
+             Dying on map 40 revives you at 60, Southperry - which is several screens away
+             and NOT a portal walk, so if you end up somewhere adjacent something is wrong.
+          c. EXP: 10% is taken above level 10, nothing at level 10 or below. Say your level
+             and whether the bar moved.
+          d. can you MOVE and attack after reviving? ~65 client sites gate on the sign of
+             HP, so a revive that restores the bar but not the client's own copy leaves you
+             standing in town unable to act. There is a second 0x007C after the SetField
+             specifically for this.
+        IF THE DIALOG DOES NOT APPEAR the client says why, for free: it sends outbound
+        0x02C6 when the opener refuses, carrying the reason. world.log will have it. Success
+        is silence, so no 0x02C6 and no dialog means something else entirely.
 
-     4. DEATH, if you feel like dying again. Nothing is built yet, so this is only worth
-        one sentence: does anything at all appear after the tombstone, or is it just the
-        tombstone and a dead character?
-        UI/Revive.img IS in this client's WZ - 1472 bytes, with a "town" button and a
-        "spot" button - so the dialog can draw. What opens it is reached only through the
-        Themida VM, the same wall the channel-migrate opcode hit.
+     4. THE BLUE RECOVERY NUMBER, second attempt - the first was the WRONG PACKET.
+        Get hurt, then stand still for 20 seconds.
+        The 0x007C recovery trailer was sent on three ticks of a real run and drew nothing,
+        and the reason is not a bad body: the function the client hands those two values to
+        is a STATISTICS COUNTER - running totals, effective-versus-wasted healing, per-hour
+        averages, an hour-boundary reset, no renderer anywhere on the path. No body of that
+        packet was ever going to work. It is out.
+        0x02D1 effect 0x41 is the real one: the SAME renderer that draws the damage number,
+        with a POSITIVE argument, because the sign is what selects blue over violet.
+          a blue number on each tick  -> done. Say the colour, and whether it reads 10 (the
+                                         amount) rather than the new total
+          the wrong colour            -> the sign fork is not what we think it is
+          nothing, but world.log shows the 0x02D1 going out
+                                      -> the suppression gate at 14278bd75, which is the one
+                                         link in this chain nobody has measured. Swapping
+                                         effect 0x41 for 0x23 does NOT test it: they share it
+        A potion still draws no number, deliberately - that is for idle regen and chairs.
 
-     5. IF THE CLIENT DIES, THERE SHOULD BE A DUMP. It is no longer a question of whether
-        the instrument works - it produced a 1 GB file last run.
-          dumps\ has a new maplecw-crash-*.dmp -> say so, and note how long you were in and
-                                                  what you were doing. That is the variable
-                                                  the logs cannot supply
-          only "CRASH DUMP: writing" in the hook log, no "wrote"
-                                               -> the dump attempt died partway. Still
-                                                  evidence, and NOT the same as not trying
-        Each one is about a gigabyte. Two are kept per run; move anything decisive out.
+     5. NPCs: !map 1 and just watch. No command needed.
+        Everything server-side is eliminated: not the creation packet, not the appear-effect
+        object, not a preload (0x0467 is SetNpcScriptable, and a cold template parse could
+        not fit in the 197 us a 0x044F dispatch takes anyway), and not the timing - the
+        client sits inside the SetField handler for 586 ms and dispatches nothing until it
+        returns, so no re-ordering can be earlier.
+        AND "mobs are instant" was never a control. In the archived logs the NPCs go out at
+        field entry and the mobs 7.16 s later from the respawn tick, with nothing to be late
+        against. Nobody has ever watched an NPC and a mob created at the same instant.
+        If you want to give one number: is the gap under a tenth of a second, or nearer half?
 
+     6. IF THE CLIENT DIES, THERE SHOULD BE A DUMP. It is no longer a question of whether
     REGRESSION GLANCES - seconds each
     ---------------------------------
       Drops arc out of the corpse and are walkable-over, especially on a slope or step.
@@ -780,7 +807,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  5 steps. Say which you did.' -ForegroundColor Yellow
+    Write-Host '  6 steps. Say which you did.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  WHAT THE LAST TWO RUNS SETTLED.' -ForegroundColor Green
@@ -797,7 +824,7 @@ if ($SetFieldProbe) {
     Write-Host '  it.'
     Write-Host '  And the NPC fade is not a fade: the appear-effect object was ruled'
     Write-Host '  out by !npcfx off, and it is not see-through, so what is left is a'
-    Write-Host '  late first draw. See step 3.'
+    Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
     Write-Host '  1. BULK SKILL POINTS. Add 3 at once to Three Snails.' -ForegroundColor Cyan
@@ -814,24 +841,48 @@ if ($SetFieldProbe) {
     Write-Host '     ITEM line has never been seen: "<Item> x<n> earned. (<Tab>)" in the'
     Write-Host '     chat log, not bottom-right. Any item-granting quest will do.'
     Write-Host ''
-    Write-Host '  3. NPCs: !map 1 and just WATCH. No command this time.' -ForegroundColor Cyan
-    Write-Host '     !npcfx off changed nothing, so the appear-effect object is'
-    Write-Host '     eliminated - and "not see-through, absent-then-present" settles that'
-    Write-Host '     it was never an alpha fade at all. The question is now why the FIRST'
-    Write-Host '     DRAW is late. If you want to give one number: is the gap under a'
-    Write-Host '     tenth of a second, or nearer half? That separates an asset load from'
-    Write-Host '     a dropped frame or two.'
+    Write-Host '  3. DEATH AND REVIVE - built this session, never seen. Die.' -ForegroundColor Cyan
+    Write-Host '     You got a tombstone and no dialog last time. The client NEVER opens'
+    Write-Host '     that dialog itself - 0x0315 does, and it goes out right after the'
+    Write-Host '     0x007C that zeroes your HP. That order is not cosmetic: the handler'
+    Write-Host '     tests the client''s own copy of the HP and drops the packet SILENTLY'
+    Write-Host '     if it is still positive.'
+    Write-Host '       a. does the dialog appear? Expect ONE button, "REVIVE IN TOWN" -'
+    Write-Host '          the on-the-spot button is hidden without a Respawn Token.'
+    Write-Host '       b. click it -> a TOWN, 50 HP. Dying on map 40 revives at 60,'
+    Write-Host '          Southperry, which is several screens away, NOT next door.'
+    Write-Host '       c. EXP: 10% above level 10, nothing at 10 or below. Say your level.'
+    Write-Host '       d. can you MOVE and attack afterwards? ~65 client sites gate on the'
+    Write-Host '          sign of HP; there is a second 0x007C after the SetField for this.'
+    Write-Host '     If no dialog, the client says why for free: outbound 0x02C6 carries'
+    Write-Host '     the reason. Success is silence.'
     Write-Host ''
-    Write-Host '  4. DEATH - one sentence, nothing is built yet.' -ForegroundColor Cyan
-    Write-Host '     Does anything appear after the tombstone, or just the tombstone?'
-    Write-Host '     UI/Revive.img IS in the WZ (town button, spot button) so the dialog'
-    Write-Host '     CAN draw. What opens it is reached only through the Themida VM -'
-    Write-Host '     the same wall the channel-migrate opcode hit.'
+    Write-Host '  4. THE BLUE NUMBER, 2nd attempt - the 1st was the WRONG PACKET.' -ForegroundColor Cyan
+    Write-Host '     Get hurt, then stand still 20s.'
+    Write-Host '     The 0x007C trailer drew nothing across three real ticks because the'
+    Write-Host '     function it feeds is a STATISTICS COUNTER - running totals, per-hour'
+    Write-Host '     averages, no renderer on the path. It is out.'
+    Write-Host '     0x02D1 effect 0x41 is the real one: the SAME renderer as the damage'
+    Write-Host '     number, positive argument - the sign picks blue over violet.'
+    Write-Host '       blue number per tick -> done. Colour? And does it read 10 (the'
+    Write-Host '                               amount) rather than the new total?'
+    Write-Host '       wrong colour         -> the sign fork is not what we think'
+    Write-Host '       nothing, but world.log shows the 0x02D1 sent'
+    Write-Host '                            -> the suppression gate at 14278bd75, the one'
+    Write-Host '                               unmeasured link. 0x23 does NOT test it'
+    Write-Host '     A potion still draws nothing, deliberately.'
     Write-Host ''
-    Write-Host '  5. IF THE CLIENT DIES THERE SHOULD BE A DUMP. Not a question any' -ForegroundColor Cyan
-    Write-Host '     more - it produced one last run. Say how long you were in and what'
-    Write-Host '     you were doing; that is the variable the logs cannot supply.'
-    Write-Host '     Each is ~1 GB and two are kept per run - move decisive ones out.'
+    Write-Host '  5. NPCs: !map 1 and just WATCH. No command.' -ForegroundColor Cyan
+    Write-Host '     Everything server-side is eliminated - creation packet, appear-effect'
+    Write-Host '     object, preload, and timing. AND "mobs are instant" was never a'
+    Write-Host '     control: in the logs the NPCs go out at field entry and the mobs'
+    Write-Host '     7.16s later from the respawn tick, with nothing to be late against.'
+    Write-Host '     One number if you like: is the gap under a tenth of a second, or'
+    Write-Host '     nearer half?'
+    Write-Host ''
+    Write-Host '  6. IF THE CLIENT DIES THERE SHOULD BE A DUMP. Say how long you were' -ForegroundColor Cyan
+    Write-Host '     in and what you were doing - the logs cannot supply that.'
+    Write-Host '     Each is ~1 GB and two are kept per run.'
     Write-Host ''
     Write-Host '  GLANCES: drops arc from the corpse and are walkable-over; kill-EXP'
     Write-Host '  line is WHITE; mobs on map 40 already standing; pick-ups stay OUT of'
