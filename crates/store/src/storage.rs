@@ -56,9 +56,19 @@ use crate::inventory::{
 /// Slots a brand-new storage box has.
 ///
 /// **[I], and nothing in this client corroborates it.** It is the number this game family
-/// starts an account at, and no storage dialog has been decoded in either direction, so there
-/// is nothing here to measure it against. It is one constant to change, deliberately named so
-/// that changing it is a decision rather than an edit scattered through the code.
+/// starts an account at, and it is one constant to change, deliberately named so that changing
+/// it is a decision rather than an edit scattered through the code.
+///
+/// The storage dialog **has** been decoded since this was written (`research/storage.md`), and
+/// it did **not** settle this: what it measures is the field's *width*, a `u8`, which admits
+/// any of 0..=255.
+///
+/// **And there is a near-miss here that would have looked like corroboration.** The v214
+/// reference tree has `new Trunk(GameConstants.DEFAULT_TRUNK_SIZE); // Free first 4 storage
+/// slot` - a comment naming exactly this number, one line from where it would have been
+/// believed. `GameConstants.DEFAULT_TRUNK_SIZE` is **56**. The comment contradicts its own
+/// constant, so it corroborates nothing, and a search that stopped at the comment would have
+/// come back with a confident four.
 pub const DEFAULT_STORAGE_SLOTS: u16 = 4;
 
 /// The floor. A zero-slot box is a box that refuses everything, which reads on screen as

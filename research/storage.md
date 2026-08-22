@@ -360,6 +360,75 @@ So **storage reuses the bag's item encoding exactly.** `net::opcode::equipped_it
 *including the leading type byte*, and both are already on the wire in `0x0107` mode 0. There
 is no second encoder to write and no reason to write one.
 
+### 4.5 A held-out check against the v214 reference - and the one place it is wrong
+
+Everything above was derived from the binary **before** the reference tree was opened, so this
+section is a check on finished work rather than a source of candidates. That is a stronger use
+of a source `CLAUDE.md` scores at 1 of 8, and it is the only use made of it here. **Every row
+below is [I].**
+
+`ModernMapleSource/v214 src/src/main/java/net/swordie/ms/client/trunk/Trunk.java`,
+`encodeItems`:
+
+```java
+outPacket.encodeByte(getSlotCount());
+for (int i = 0; i < 100; i++) { outPacket.encodeByte(1); }
+outPacket.encodeLong(getMoney());
+for (int i = 1; i <= 6; i++) {
+    List<Item> items = getItems().stream().filter(it -> it.getInvType() == curInvType).toList();
+    outPacket.encodeInt(items.size());
+    for (Item item : items) { ... item.encode(outPacket); }
+}
+```
+
+| §4.1, measured **[L]** | reference **[I]** | |
+|---|---|---|
+| `u8 slots` | `encodeByte(getSlotCount())` | agrees |
+| `raw[100]` mask | `for i in 0..100: encodeByte(1)` | agrees, **and on the length** |
+| `u64 mesos` | `encodeLong(getMoney())` | agrees |
+| six types, `1..=6`, filtered by inventory type | the identical loop | agrees |
+| **`u8 count` per type** | **`encodeInt(items.size())`** | **DISAGREES - 1 byte vs 4** |
+| item blob per item | `item.encode` | agrees |
+
+**The `u8` stands.** `0x142150ec4` is `call 0x1406e8ae0`, the same one-byte read primitive that
+takes the mode byte at `0x142159acb` and the slot count at `0x142150c55`; `tools/reads.py`
+classifies all three identically, and `0x1406e8c20` (`u32`) is a different address that appears
+elsewhere in the same function. This is a *different game version*, which is exactly the case
+`CLAUDE.md` says the reference loses. It is written down rather than quietly dropped because
+the size of the error is nasty: **three extra bytes per inventory type, eighteen on an empty
+box**, and a length-wrong trunk block is the failure mode that has killed this client twice.
+
+The request side, `handlers/user/UserTrunkHandler.java`, reproduces §5 field for field: [I]
+
+| mode | §5, measured **[L]** | reference **[I]** |
+|---|---|---|
+| 4 get | `u8 invType, u8 index, u16` | `decodeByte, decodeByte, decodeShort` |
+| 5 put | `u16 bagSlot, u32 itemId, u16 count` | `decodeShort, decodeInt, decodeShort` |
+| 7 mesos | one signed `i64` | `decodeLong` |
+| 6 sort, 8 close | no body | no decode |
+
+and the **sign convention** independently: `reqMoney < 0` -> `chr.deductMoney / trunk.addMoney`
+(deposit), `> 0` -> `chr.addMoney / trunk.deductMoney` (withdraw). That is §5.3's reading of
+`neg rbx`, from an unrelated artefact. [I]
+
+Two more that land on conclusions reached here by other routes: the reference **writes a
+`TrunkUpdate` on every path including every refusal** - §7's latch discipline - and it **sets
+all 100 mask bytes unconditionally**, which is §9.2's recommendation for a different reason.
+
+`TrunkType.java`'s enum is one numbering space for both directions. Deleting its
+`TrunkReq_FindAll`, `TrunkReq_AutoStore` and their two responses and renumbering densely maps
+it onto the measured modes: requests `3 CheckSSN2, 4 GetItem, 5 PutItem, 6 SortItem, 7 Money,
+8 CloseDialog` - all six of §5 - and responses including `12 GetHavingOnlyItem`,
+`16 PutNoMoney`, `17 PutNoSpace`, `21 MoneyExceededMesoLimit`, `22 MoneyCantStoreAnyMoreMesos`,
+`23 TrunkCheckSSN2` and **`24 OpenTrunkDlg`**, each matching the string this document decrypted
+for that mode in §6. [I]
+
+That also explains something §6 recorded without understanding: mode 23 shows string `0x024A`
+*"Check your SSN"* / `0x024B` *"Please verify your PIC"* and replies mode 3. The reference calls
+both `CheckSSN2`. **The tail diverges** - the reference's `32..38` do not sit at a constant
+offset from the measured `26..35` - so the mapping is a corroboration of the head, not a table
+to copy.
+
 ---
 
 ## 5. What the client sends
@@ -473,6 +542,7 @@ bound and by mode 24's tail. [L] This agrees with what the repo already ships:
 `net::stats::StatChange::meso` is `Option<u64>` and its own test pins bit 18 to a 64-bit
 value. [L] `crates/store`'s `StorageBox.mesos` is a `u32`; that is a server-side cap and not
 a wire fact, but the **eight bytes must go out as eight bytes**.
+§4.5 reproduces both the width and the sign convention from an unrelated artefact.
 
 ### 5.4 `sort` and `exit`
 
@@ -579,7 +649,9 @@ other uses are a read in `FUN_142151cd0` and a bound test at `0x1421539c1`. The 
 neither computes it nor takes it from the NPC.
 
 `crates/store::storage::DEFAULT_STORAGE_SLOTS` is `4` and marked **[I], nothing in this
-client corroborates it**. That is still true - nothing here measures a *default* - but the
+client corroborates it**. That is still true - nothing here measures a *default*, and
+§9 records the near-miss where the reference source appeared to corroborate `4` and did
+not - but the
 field's width is now measured: **`u8`, so 0..255**, and `MAX_STORAGE_SLOTS = 100` is safely
 inside it. The visible grid is 5x6 = 30 cells with a scrollbar, so a box larger than 30
 scrolls rather than clipping.
@@ -650,8 +722,33 @@ What can be said:
   `0x0925`, *"Your account has been inactive for a while, so items and mesos cannot be
   transferred."* An account-scoped lockout on a storage window is consistent with an
   account-scoped box, and inconsistent with nothing.
-* **[I]** This game family stores the trunk per account in every server tree I am aware of.
-  Per `CLAUDE.md` that is a candidate, not a fact.
+* **[I]** The v214 reference stores it on the **account**, and structurally rather than by
+  convention: `client/Account.java:54` is `private Trunk trunk;`, loaded by
+  `getTrunkFromSQLByTrunkID(rs.getInt("trunkid"))` from a `trunks` table joined off the
+  account row. `Char.java` has **no** trunk field at all - its only trunk reference is
+  `getAccount().getEmployeeTrunk()`, i.e. it reaches one *through* the account. Per
+  `CLAUDE.md` this is a candidate and could not overturn a measurement; there is no
+  measurement here to overturn, and it is the same shape `crates/store` already has.
+  `Trunk`'s own fields are `id, List<Item> items, long money, int slotCount` - **`long`
+  money**, agreeing with §5.3's `u64`.
+
+**And one trap in the same file, because it nearly went in as corroboration.**
+`Account.java:264` reads:
+
+```java
+this.trunk = new Trunk(GameConstants.DEFAULT_TRUNK_SIZE); // Free first 4 storage slot
+```
+
+`crates/store::storage::DEFAULT_STORAGE_SLOTS` is `4` and marked *"[I], and nothing in this
+client corroborates it"*, so that comment looks like exactly the corroboration it was missing.
+It is not. `GameConstants.java:302` is `public static final byte DEFAULT_TRUNK_SIZE = 56;`
+**The comment contradicts its own constant** - `CLAUDE.md`'s "a comment describing a guarantee
+is not the guarantee", in a source file, one line from where it would have been believed.
+
+So the reference does **not** corroborate `4`; if it votes at all it votes `56`, and it is a
+different game version so it does not get a vote. `DEFAULT_STORAGE_SLOTS` stays **[I] and
+uncorroborated**. What §8 *does* now measure is the field's width - `u8`, so any value 0..255
+is legal on the wire, and both 4 and 56 fit.
 
 So: **keep `account_id`.** It is what the owner asked for, the store already implements it, and
 the client neither confirms nor contradicts it. If it ever needs settling, the measurement is
@@ -805,7 +902,7 @@ Three details that will otherwise cost a launch each:
 | **4** take out | `u8 invType, u8 index, u16 count` | resolve `(invType, index)` by §9.2's rule -> a `slot`; `store::take_item` | `0x0070` `inventory_added`, **then** `0x0572` mode **13** + trunk block |
 | **5** put in | `u16 bagSlot, u32 itemId, u16 count` | verify the bag slot really holds `itemId`; charge `trunkPut`; `store::store_item` | `0x0070` `inventory_removed` + `0x007C` mesos, **then** `0x0572` mode **13** |
 | **6** sort | (none) | re-slot the box however you like | `0x0572` mode **15** + trunk block |
-| **7** mesos | `i64 delta` | `delta > 0` = **withdraw** to the player, `delta < 0` = **deposit** | `0x007C` mesos, **then** `0x0572` mode **15** |
+| **7** mesos | `i64 delta` | `delta > 0` = **withdraw** to the player, `delta < 0` = **deposit** | `0x007C` mesos, **then** `0x0572` mode **15** (the reference uses its own `MoneySuccess`, this document's mode **19**; both carry the block, 19 preserves the scroll) |
 | **8** close | (none) | drop `self.storage_npc` | **none** - log it |
 | anything else | | | `0x0572` mode **33** (*"This function cannot be used right now."*) |
 

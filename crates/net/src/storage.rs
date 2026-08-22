@@ -155,6 +155,16 @@ pub fn trunk_block(slots: u8, mesos: u64, per_type: &[Vec<Vec<u8>>; INVENTORY_TY
     // can legitimately hold.
     w.u64(mesos);
 
+    // **The per-type count is ONE byte, and the v214 reference says four.** The measurement
+    // wins and the disagreement is written down rather than resolved quietly: `0x142150ec4`
+    // is `call 0x1406e8ae0`, the same one-byte primitive that reads the mode byte and the
+    // slot count, where `0x1406e8c20` is the visibly different `u32` reader used elsewhere in
+    // the same function. The reference is a different game version and scored 1 of 8 against
+    // a held-out control here.
+    //
+    // It matters because of the error size: three bytes per inventory type, **eighteen on an
+    // empty box**, every one of them shifting the item blobs that follow. That is exactly the
+    // shape that has killed this client twice.
     for list in per_type {
         w.u8(list.len().min(u8::MAX as usize) as u8);
         for blob in list.iter().take(u8::MAX as usize) {
