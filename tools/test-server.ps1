@@ -36,7 +36,7 @@
       a desk job, not a client run: powershell -ExecutionPolicy Bypass -File
       "C:\MapleCW\tools\analyse-dump.ps1"
 
-    THE NPC FADE - THERE IS A LEVER AFTER ALL, AND IT IS STEP 5 BELOW. The echo could never
+    THE NPC FADE - THERE IS A LEVER AFTER ALL, AND IT IS STEP 4 BELOW. The echo could never
     have answered it: 0x044F and 0x0451 run the SAME decoder body, so comparing them was
     comparing a thing with itself. Inside that shared body is a block gated on a global that
     allocates a 0x90-byte object per NPC, stamps it with a clock value and starts it - and
@@ -743,7 +743,8 @@ if ($SetFieldProbe) {
     Write-Host "    python tools/dump_portals.py     (footholds)"
     Write-Host "    python tools/dump_itemdata.py    (consumables)"
     Write-Host ""
-    Write-Host "THE HOOK NOW WRITES ITS OWN CRASH DUMP." -ForegroundColor Cyan
+    Write-Host "THE HOOK WRITES ITS OWN CRASH DUMP, AND IT HAS NOW DONE SO." -ForegroundColor Cyan
+    Write-Host "  1010 MB on the 20:10 run, the first this project has ever had."
     Write-Host "  Windows Error Reporting was never going to work for this client, and"
     Write-Host "  that is measured rather than assumed: a decoy named MapleStory.exe that"
     Write-Host "  only dereferences null wrote a 9.4 MB dump into dumps\ - while the real"
@@ -756,7 +757,7 @@ if ($SetFieldProbe) {
     Write-Host "  IF THE CLIENT DIES, LOOK HERE:" -ForegroundColor Yellow
     Write-Host "    $dumpDir\maplecw-crash-<pid>-<code>-1.dmp"
     Write-Host "    and two lines in the hook log: 'CRASH DUMP: writing' then 'wrote'"
-    Write-Host "      both lines      -> we finally have a dump. SAY SO, and move it out"
+    Write-Host "      both lines      -> a dump. Move it out; each is about a gigabyte"
     Write-Host "      only 'writing'  -> the dump attempt died partway. Still evidence,"
     Write-Host "                         and NOT the same as never having tried"
     Write-Host "      neither         -> the fault is not one we match, or it killed the"
@@ -819,9 +820,10 @@ if ($SetFieldProbe) {
     Write-Host '  deaths. Reading it is a desk job - tools\analyse-dump.ps1.'
     Write-Host '  Also closed: create on second login, consumables and their cap, Sera''s'
     Write-Host '  chatter, the mob-damage override, the damage model at STR 35, and the'
-    Write-Host '  NPC fade NARROWED - the !npcecho COPY faded while the original'
-    Write-Host '  stayed, so the creation packet is not the difference. Whether'
-    Write-Host '  any other packet reaches an NPC object is still being enumerated.'
+    Write-Host '  NPC fade - the !npcecho COPY faded while the original stayed. That'
+    Write-Host '  test could never have answered it (both creation packets share one'
+    Write-Host '  decoder body) - but the enumeration since then found a lever, and'
+    Write-Host '  it is step 4.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
     Write-Host '  1. THE BLUE RECOVERY NUMBER - you asked, it is built.' -ForegroundColor Cyan
