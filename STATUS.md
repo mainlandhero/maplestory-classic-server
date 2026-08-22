@@ -178,8 +178,69 @@ an NPC, in its own rendering path, with no field of either packet to change it -
 two static passes concluded and which I was wrong to restate as "the server has no lever"
 before there was a measurement. Now there is one.
 
-*One thing to confirm before this is closed:* that it was the **copy** that faded rather than
-the original. Two Heenas were on screen and only one sentence came back.
+**Confirmed, and the question is closed.** The owner: *"The copy that was spawned in additionally
+faded in as well after !npcecho was executed. The original Heena stayed on the screen."* So it
+was the new object, created through the packet mobs get, arriving minutes after field entry -
+and it still faded.
+
+**And the echo could never have answered it.** `0x044F` and `0x0451` **run the same decoder
+body**, `FUN_141e36b20` - the pool's two creation cases differ only in the state byte they set
+before calling it. Comparing them was comparing a thing with itself, and I designed that test
+without noticing. The fade was always going to survive it.
+
+The owner asked again - *"Is there no other way that NPC can be spawned on the client side?"* - and
+the enumeration this time is the pool's own opcode table rather than a neighbourhood:
+
+| | |
+|---|---|
+| `0x044F` | NpcEnterField - creates |
+| `0x0450` | NpcLeaveField |
+| `0x0451` | NpcChangeController - creates, same body |
+| **`0x0452`** | **`u32 v`, then `DAT_143ad2d30 = (v != 0)`, then it walks every NPC** |
+| `0x0453..0x0466` | a 20-case per-NPC command block |
+| `0x0467` | template preload list |
+| `0x00BE` | a "limited NPC" id list, arriving through the *channel* dispatcher |
+
+So **no, there is no third way to spawn one** - that part is now a real enumeration. But
+`0x0452` is not a spawn and it is the thing that matters.
+
+#### `0x0452` is the appear-effect switch, and it is the first server lever found on this
+
+Inside `FUN_141e36b20` - the body **both** creation packets share - is a block gated on
+`DAT_143ad2d30 == 0`: **[L]**
+
+```text
+FUN_14019b780(&DAT_143ad68a0, 0x90)   allocate a 0x90-byte object from a pool
+FUN_140d13c80(obj, npc)               construct it against this NPC
+FUN_142df7280(DAT_143ac18d8) -> +0xc  a clock value
+FUN_140d13cc0(obj, that)              stamp it
+npc[0xaf] = obj ; FUN_140d13270(obj)  hang it on the NPC and start it
+```
+
+A per-object, timestamped, started-on-creation thing is an animation, and it is built **only
+while that global is zero**. `0x0452` sets the global - and its two branches are what make
+this more than a guess, because they are not symmetrical: **`v == 0` runs the identical
+allocate/construct/stamp sequence on every NPC already in the pool, and `v != 0` calls
+`FUN_141e64690` to tear it down.** One packet creates and destroys exactly the thing creation
+creates. **[L]** for both branches, read from `tools/listing.py` on `FUN_141e76c60`; **[D]**
+for "that object is the appear animation".
+
+`research/npc-spawn.md` §3.1 called `0x0452` *"a global show/hide toggle"* from a quick read
+and moved on. It had the right packet in the table the whole time.
+
+Wired as **`!npcfx on|off`**, deliberately not into field entry, so one run compares faded
+NPCs and popped ones on the same map: `!map 1`, watch them fade, `!npcfx off`, `!npcecho`.
+The polarity is inverted on the wire and the builder takes a `bool` for that reason.
+
+**And one thing nobody has ever answered**, flagged as unproven by `research/npc-fade.md`
+itself: whether what the owner sees is a *fade* at all. A see-through NPC and one that is simply
+absent-then-present look the same in a sentence and are different bugs.
+
+Worth recording how that went, because it is not a clean win: two static passes had said the
+server could not fix it, I over-generalised one of them into a claim they had not made, the owner
+pushed back, and the measurement came out agreeing with the original conclusion. Getting a
+measurement was still right - it is what turned a static inference into something known - but
+the *reason* I asked for it was wrong.
 
 #### The owner's new request, built and unseen: the blue recovery number
 
@@ -194,9 +255,21 @@ global, and it is the argument `research/level-up.md` used to name those two fie
 first place. `user-hit.md` §5.2 said the trailer "should stay `None`" - correct for a *hit*,
 which draws its own number client-side, and this is the case the field exists for.
 
-Now sent by **idle regen and by consumables**, carrying the **amounts** rather than the new
-totals, and absent when nothing moved so a full bar cannot draw "+0". **[L]** for the shape,
-**[D]** for the hp/mp pairing.
+Sent by **idle regeneration only**, carrying the **amounts** rather than the new totals, and
+absent when nothing moved so a full bar cannot draw "+0". **[L]** for the shape, **[D]** for
+the hp/mp pairing.
+
+**Potions deliberately do not send it**, and that correction is the owner's: *"Potion recovery
+should not trigger the recovery number, that's only for idle regeneration standing or sitting
+in a chair in the Set-up tab or sitting on a chair in a map."* It went into the consumable
+path first on the reasoning that a potion recovers and the field is called recovery - which is
+arguing from the encoding outwards. **The field is the regeneration indicator, and which
+events may raise it is a property of the game that no byte layout can tell you.** A test now
+asserts the absence, because "a recovery is a recovery" is a persuasive-sounding reason to put
+it back.
+
+**Chairs are the other case** the owner named - the Set-up tab chair and map chairs - and this
+server has neither. When it grows them, that path sends this trailer too.
 
 #### The floating damage number is a constant, and that is worth one measurement
 

@@ -36,28 +36,34 @@
       a desk job, not a client run: powershell -ExecutionPolicy Bypass -File
       "C:\MapleCW\tools\analyse-dump.ps1"
 
-    ALSO ANSWERED: the NPC fade. !npcecho created Heena and Sera again through the OTHER
-    packet the pool accepts and the copies faded too, which kills the creation-route theory
-    and the timing theory together. Nothing left to try from the server.
+    THE NPC FADE - THERE IS A LEVER AFTER ALL, AND IT IS STEP 5 BELOW. The echo could never
+    have answered it: 0x044F and 0x0451 run the SAME decoder body, so comparing them was
+    comparing a thing with itself. Inside that shared body is a block gated on a global that
+    allocates a 0x90-byte object per NPC, stamps it with a clock value and starts it - and
+    0x0452 is the packet that sets the global. Its two branches identify the object: v=0
+    rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - four things
+    THE POINT OF THIS RUN - five things
     -----------------------------------
      1. THE BLUE RECOVERY NUMBER. The owner asked for it and it is now built.
-        Get hurt, then stand still for 20 seconds. Then drink a potion.
+        Get hurt, then STAND STILL for 20 seconds - two regen ticks.
         0x007C's second optional trailer - u8 flag, then u32 hpRecovery, u32 mpRecovery -
         was never being sent, which is why the bar moved with no number. The client hands
         both to FUN_140fd31f0(uiGlobal, hpRecovery, mpRecovery, oldHp, oldMp), and that
         first argument being a UI global is why those fields have their names.
           a number over your head on each regen tick  -> done. Say what COLOUR it is
-          a number when you drink a potion too       -> the same trailer, both paths
-          on one and not the other                   -> say WHICH. The packet is identical,
-                                                        so that would mean the client cares
-                                                        about something else as well
           the bar moves and still no number          -> the trailer is not the drawing
                                                         route; world.log confirms it was
                                                         sent, so the next question is the
                                                         client and not the server
           it shows the TOTAL instead of the gain     -> say so; we send the amount
+        A POTION MUST NOT DRAW ONE. The owner: "that's only for idle regeneration standing or
+        sitting in a chair in the Set-up tab or sitting on a chair in a map." It was sent
+        on the consumable path for one build - the reasoning being that a potion recovers
+        and the field is called recovery, which is arguing from the encoding outwards - and
+        has been taken back out. If a potion still draws a number, something else is doing
+        it and that is worth knowing.
+        Chairs are not built at all yet, so there is nothing to test there.
 
      2. ROGER, WATCHING THE SCREEN. This was asked last time and only the give-up half came
         back. Every packet in it is known correct, so all three are about DRAWING:
@@ -84,7 +90,27 @@
         Either answer settles something that has been guessed at twice. !map somewhere with
         a real mob, or let a higher-level one on Maple Island have a go.
 
-     4. IF THE CLIENT DIES, THERE SHOULD BE A DUMP. It is no longer a question of whether
+     4. THE NPC FADE - !npcfx off, THEN !npcecho. One command, and it is the first
+        server-reachable lever anyone has found on this.
+        Go to !map 1, WATCH Heena and Sera fade in, then type:  !npcfx off
+        then:  !npcecho
+        0x0452 sets a global that the NPC creation path checks; while it is zero, creation
+        builds a 0x90-byte object per NPC, stamps it with a clock value and starts it. The
+        same packet's other branch rebuilds that exact object on every NPC, which is how we
+        know what it is. Turning it off means the next NPC created never gets one.
+          the copies POP IN SOLID   -> that object IS the fade. Field entry starts sending
+                                       0x0452 first and this is finished
+          the copies STILL FADE     -> a real elimination, not another absence: it is the
+                                       only creation-time branch left in that body
+          existing NPCs CHANGE when you type !npcfx off
+                                    -> say what changed; the walk does more than we think
+          NPCs VANISH               -> it is a show/hide toggle after all. !npcfx on puts
+                                       them back, and so does a map change
+        ALSO, and it is free: when something fades in, is it SEE-THROUGH - can you see the
+        ground through it - or is it simply absent and then present? Those are different
+        bugs and nobody has ever answered it. research/npc-fade.md flags it as unproven.
+
+     5. IF THE CLIENT DIES, THERE SHOULD BE A DUMP. It is no longer a question of whether
         the instrument works - it produced a 1 GB file last run.
           dumps\ has a new maplecw-crash-*.dmp -> say so, and note how long you were in and
                                                   what you were doing. That is the variable
@@ -116,7 +142,7 @@
       - Two refusal paths still answer 0x00D2 with 0x0011, which a channel socket cannot
         dispatch. Nothing decoded can.
 
-    COMMANDS: !map, !item, !exp, !heal, !job, !npcecho, !migsweep, !exprate, !mesorate,
+    COMMANDS: !map, !item, !exp, !heal, !job, !npcecho, !npcfx, !migsweep, !exprate, !mesorate,
     !droprate, !setrates, !rates. !help lists them all.
 
     THE FREE MEASUREMENT NOBODY HAS TAKEN
@@ -783,7 +809,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  4 steps. Say which you did.' -ForegroundColor Yellow
+    Write-Host '  5 steps. Say which you did.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  LAST RUN CLOSED THE TWO BIG ONES.' -ForegroundColor Green
@@ -793,19 +819,22 @@ if ($SetFieldProbe) {
     Write-Host '  deaths. Reading it is a desk job - tools\analyse-dump.ps1.'
     Write-Host '  Also closed: create on second login, consumables and their cap, Sera''s'
     Write-Host '  chatter, the mob-damage override, the damage model at STR 35, and the'
-    Write-Host '  NPC fade (the !npcecho copies faded too, so it is not the packet).'
+    Write-Host '  NPC fade NARROWED - the !npcecho COPY faded while the original'
+    Write-Host '  stayed, so the creation packet is not the difference. Whether'
+    Write-Host '  any other packet reaches an NPC object is still being enumerated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
     Write-Host '  1. THE BLUE RECOVERY NUMBER - you asked, it is built.' -ForegroundColor Cyan
-    Write-Host '     Get hurt, stand still 20s. Then drink a potion.'
+    Write-Host '     Get hurt, then STAND STILL 20s - two regen ticks.'
     Write-Host '     0x007C has a second optional trailer - hpRecovery, mpRecovery - that'
     Write-Host '     was never being sent, which is why the bar moved with no number.'
     Write-Host '       a number on each regen tick -> done. Say what COLOUR'
-    Write-Host '       a number on the potion too  -> same trailer, both paths'
-    Write-Host '       one but not the other       -> say WHICH; the packet is identical'
     Write-Host '       bar moves, still no number  -> not the drawing route. world.log'
     Write-Host '                                      proves it was sent'
     Write-Host '       shows the TOTAL not the gain-> say so; we send the amount'
+    Write-Host '     A POTION MUST NOT DRAW ONE - it is for idle regen and chairs only.'
+    Write-Host '     It went out on the potion path for one build and is back out. If a'
+    Write-Host '     potion still draws a number, something else is doing it.'
     Write-Host ''
     Write-Host '  2. ROGER, WATCHING THE SCREEN. Asked last time, only the give-up' -ForegroundColor Cyan
     Write-Host '     half came back. Every packet is known correct, so all three are'
@@ -827,7 +856,25 @@ if ($SetFieldProbe) {
     Write-Host '                                 every mob forever - it is drawn at SEND'
     Write-Host '                                 time, so no server change can reach it'
     Write-Host ''
-    Write-Host '  4. IF THE CLIENT DIES THERE SHOULD BE A DUMP. Not a question any' -ForegroundColor Cyan
+    Write-Host '  4. THE NPC FADE - !npcfx off, THEN !npcecho.' -ForegroundColor Cyan
+    Write-Host '     !map 1, watch Heena and Sera fade in, then type !npcfx off and'
+    Write-Host '     then !npcecho. The echo alone could never have answered this:'
+    Write-Host '     0x044F and 0x0451 run the SAME decoder body. Inside it is a block'
+    Write-Host '     gated on a global that builds a 0x90-byte object per NPC, stamps'
+    Write-Host '     it with a clock value and starts it. 0x0452 sets that global, and'
+    Write-Host '     its other branch rebuilds that same object - which is how we know'
+    Write-Host '     what it is. First server lever anyone has found on this.'
+    Write-Host '       copies POP IN SOLID -> that object IS the fade. Field entry will'
+    Write-Host '                              send 0x0452 first and this is finished'
+    Write-Host '       copies STILL FADE   -> a real elimination; it is the only'
+    Write-Host '                              creation-time branch left'
+    Write-Host '       NPCs VANISH         -> show/hide toggle after all. !npcfx on, or'
+    Write-Host '                              a map change, puts them back'
+    Write-Host '     FREE: when something fades, is it SEE-THROUGH (ground visible'
+    Write-Host '     through it) or just absent-then-present? Different bugs, and'
+    Write-Host '     nobody has ever answered it.'
+    Write-Host ''
+    Write-Host '  5. IF THE CLIENT DIES THERE SHOULD BE A DUMP. Not a question any' -ForegroundColor Cyan
     Write-Host '     more - it produced one last run. Say how long you were in and what'
     Write-Host '     you were doing; that is the variable the logs cannot supply.'
     Write-Host '     Each is ~1 GB and two are kept per run - move decisive ones out.'
@@ -837,7 +884,7 @@ if ($SetFieldProbe) {
     Write-Host '  the chat log; level-up +16 HP / +12 MP; relog keeps Etc and mesos;'
     Write-Host '  ores stack; !setrates 2 3 5 -> one banner.'
     Write-Host ''
-    Write-Host '  COMMANDS: !map !item !exp !heal !job !npcecho !migsweep !exprate'
+    Write-Host '  COMMANDS: !map !item !exp !heal !job !npcecho !npcfx !migsweep !exprate'
     Write-Host '  !mesorate !droprate !setrates !rates. !help lists them all.'
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'

@@ -72,6 +72,7 @@ impl Session {
             "job" => self.gm_job(arg),
             "migsweep" => self.gm_mig_sweep(arg),
             "npcecho" => self.gm_npc_echo(arg),
+            "npcfx" => self.gm_npc_effect(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -217,6 +218,70 @@ impl Session {
         out
     }
 
+
+    /// `!npcfx on|off` - the NPC **appear-effect switch**, `0x0452`.
+    ///
+    /// # The lever two passes and one measurement all missed
+    ///
+    /// The owner, after `!npcecho`: *"The copy that was spawned in additionally faded in as well
+    /// after !npcecho was executed. The original Heena stayed on the screen."* That looked
+    /// like the end of the road - both creation packets fade, so the packet is not the
+    /// variable. It is not the end of the road, and the reason the echo could never have
+    /// answered it is that **`0x044F` and `0x0451` run the same decoder body**,
+    /// `FUN_141e36b20`. Comparing them was comparing a thing with itself.
+    ///
+    /// Inside that shared body sits a block gated on `DAT_143ad2d30 == 0` which allocates a
+    /// `0x90`-byte object, constructs it against the NPC, stamps it with a clock value and
+    /// starts it. `0x0452` is the packet that sets that global, and its two branches are what
+    /// make the identification more than a guess: `v == 0` runs the **identical** allocate /
+    /// construct / stamp sequence on every NPC already in the pool, and `v != 0` calls
+    /// `FUN_141e64690` to tear it down. One packet creates and destroys exactly the thing
+    /// creation creates. `research/npc-spawn.md` §3.1 named `0x0452` "a global show/hide
+    /// toggle" from a quick read; the listing says it is narrower and more useful than that.
+    ///
+    /// # How to test it, and why it is a command rather than a change to field entry
+    ///
+    /// `!npcfx off` then `!npcecho`, on a map whose NPCs have already faded in. The switch is
+    /// global and sticky, so the echoes are created with the global already set:
+    ///
+    /// | on screen | what it says |
+    /// |---|---|
+    /// | the echoes **pop in solid** | that object is the fade, and field entry should send `0x0452` before its `0x044F`s |
+    /// | the echoes **still fade** | the object is not the fade. It is a real elimination rather than another absence, because this is the only creation-time branch left in `FUN_141e36b20` |
+    /// | **existing NPCs change** when the command runs | the walk does more than tear down an animation - say what changed |
+    /// | **NPCs vanish** | `research/npc-spawn.md`'s "show/hide toggle" reading was right after all. `!npcfx on` puts it back, and so does a map change |
+    ///
+    /// Field entry is deliberately **not** changed: this way one run compares faded NPCs and
+    /// popped ones on the same map, and nothing needs undoing if it does nothing.
+    pub(super) fn gm_npc_effect(&mut self, arg: &str) -> Vec<Reply> {
+        let enabled = match arg.trim().to_ascii_lowercase().as_str() {
+            "on" | "1" | "true" => true,
+            "off" | "0" | "false" => false,
+            "" => {
+                return self.gm_ack(
+                    "!npcfx wants on or off. `!npcfx off` disables the NPC appear animation, then `!npcecho` shows whether that was the fade.".to_string(),
+                )
+            }
+            other => {
+                return self.gm_ack(format!("!npcfx: {other:?} is not on or off."));
+            }
+        };
+        let mut out = self.gm_ack(format!(
+            "!npcfx {}: sending 0x0452 with v={} - the appear-effect switch. The wire value is INVERTED (v=0 leaves it on). Now run !npcecho and say whether the copies POP or FADE.",
+            if enabled { "on" } else { "off" },
+            u32::from(!enabled)
+        ));
+        out.push(Reply {
+            opcode: net::opcode::NPC_APPEAR_EFFECT,
+            body: net::opcode::npc_appear_effect(enabled),
+            what: format!(
+                "NpcAppearEffect: {} - 0x0452 sets DAT_143ad2d30 = {}, and the creation path in FUN_141e36b20 builds the 0x90-byte appear object ONLY while that global is 0. Also walks every NPC already in the pool: v=0 rebuilds the object on each, v!=0 tears it down",
+                if enabled { "ENABLED" } else { "DISABLED" },
+                u32::from(!enabled)
+            ),
+        });
+        out
+    }
 
     /// `!npcecho [dx]` - spawn a second copy of every NPC on this map, the OTHER way.
     ///

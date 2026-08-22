@@ -355,6 +355,42 @@ fn the_item_command_adds_an_equip_and_announces_it() {
 /// The persistence half is the point. Experience that is announced but not written down
 /// would look identical on the ack line and be gone at the next field entry, which is the
 /// exact shape of the unequip bug that goal I existed to fix.
+/// `!npcfx off` must actually reach the wire as `0x0452`, and with the INVERTED value.
+///
+/// The polarity is pinned in `net::opcode`; what this adds is the dispatch, because the
+/// command was wired by hand into a match arm and a typo there fails silently as "unknown
+/// command" - which reads on screen exactly like a packet that did nothing.
+#[test]
+fn the_npcfx_command_sends_the_appear_effect_switch() {
+    let (mut s, _store, _id) = gm_session();
+
+    let off = s.handle(&gm_chat("!npcfx off"));
+    let sent = off
+        .iter()
+        .find(|r| r.opcode == net::opcode::NPC_APPEAR_EFFECT)
+        .expect("!npcfx off sends 0x0452");
+    assert_eq!(sent.body, net::opcode::npc_appear_effect(false));
+    assert_eq!(sent.body, vec![1, 0, 0, 0], "disabled is v=1 on the wire");
+
+    let on = s.handle(&gm_chat("!npcfx on"));
+    let back = on
+        .iter()
+        .find(|r| r.opcode == net::opcode::NPC_APPEAR_EFFECT)
+        .expect("!npcfx on sends it too");
+    assert_eq!(back.body, vec![0, 0, 0, 0], "enabled is v=0");
+
+    // A bare or unknown argument must be refused rather than guessed at: picking a default
+    // here would toggle the client's global on a typo.
+    for bad in ["!npcfx", "!npcfx maybe"] {
+        let out = s.handle(&gm_chat(bad));
+        assert!(
+            !out.iter().any(|r| r.opcode == net::opcode::NPC_APPEAR_EFFECT),
+            "{bad} must send no packet"
+        );
+        assert!(!out.is_empty(), "{bad} still answers - it is a chat command");
+    }
+}
+
 #[test]
 fn the_exp_command_awards_and_persists_experience() {
     let (mut s, store, id) = gm_session();
@@ -2039,6 +2075,62 @@ fn drinking_a_red_potion_heals_a_hundred_and_takes_one_from_the_stack() {
     );
     let left = s.store.inventory_slot(id, store::InventoryType::Use, 1).unwrap().unwrap();
     assert_eq!(left.kind.quantity(), 1);
+}
+
+/// **A potion draws no number over the player's head**, and this is a rule about the game
+/// rather than about the packet.
+///
+/// The owner, 2026-08-21: *"Potion recovery should not trigger the recovery number, that's only
+/// for idle regeneration standing or sitting in a chair in the Set-up tab or sitting on a
+/// chair in a map."*
+///
+/// `0x007C`'s second optional trailer - `u8 flag`, then `u32 hpRecovery, u32 mpRecovery` - is
+/// what draws it, and it was briefly sent here on the reasoning that a potion recovers and
+/// the field is called recovery. That is arguing from the encoding outwards. The field is the
+/// **regeneration indicator**, and which events may raise it is not something the byte layout
+/// can tell you.
+///
+/// So this test asserts an **absence**, which is worth stating plainly: the flag byte must be
+/// `0`, and the body must be byte-identical to the same change built without a trailer. It
+/// exists because "a recovery is a recovery" is a persuasive-sounding reason to put it back.
+#[test]
+fn a_potion_sends_no_recovery_trailer_and_therefore_no_floating_number() {
+    let (mut s, acct, id) = session_with_potions(2, 1);
+    let before = reload(&s, acct, id);
+    assert!(before.max_hp >= 101, "the cap must not be what this test measures");
+
+    let replies = s.on_use_item(&net::useitem::use_item(0x0f14_e1f7, 1, 2_000_000, 1));
+    let stat = replies
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("every 0x010E is answered");
+
+    let after = reload(&s, acct, id);
+    let want = net::stats::StatChange {
+        hp: Some(after.hp),
+        mp: Some(after.mp),
+        ..Default::default()
+    }
+    .build();
+    assert_eq!(stat.body, want, "the potion's 0x007C carries no recovery trailer");
+
+    // The trailer is the last field, so its flag is the last byte. Naming it separately from
+    // the whole-body compare means a failure says WHICH of the two things went wrong.
+    assert_eq!(*stat.body.last().unwrap(), 0, "the recovery flag byte must be 0");
+
+    // And the control, so this cannot pass by the packet being empty or the heal not
+    // happening: idle regeneration on the same session DOES carry one.
+    assert_ne!(
+        stat.body,
+        net::stats::StatChange {
+            hp: Some(after.hp),
+            mp: Some(after.mp),
+            recovery: Some((100, 0)),
+            ..Default::default()
+        }
+        .build(),
+        "sanity: the two bodies are distinguishable"
+    );
 }
 
 /// *"(Or less if it will fill my HP bar up to full)"* - the owner asked for the cap in the same

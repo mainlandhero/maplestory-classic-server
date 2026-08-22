@@ -1652,6 +1652,54 @@ pub const NPC_CHANGE_CONTROLLER: u16 = 0x0451;
 /// One leading flag byte plus the whole [`npc_enter_field`] body.
 pub const NPC_CHANGE_CONTROLLER_LEN: usize = 1 + NPC_ENTER_FIELD_LEN;
 
+/// `0x0452` - the NPC pool's **appear-effect switch**, and the first server-reachable lever
+/// on the NPC fade that anybody has found.
+///
+/// # Why this is the fade and the creation packets were not
+///
+/// The owner, 2026-08-21, after `!npcecho`: *"The copy that was spawned in additionally faded in as
+/// well after !npcecho was executed. The original Heena stayed on the screen."* Both packets
+/// that create an NPC - `0x044F` and `0x0451` - produced a fade, which looked like proof the
+/// server had no lever. It is not: **both of them run the same decoder body**,
+/// `FUN_141e36b20`, so a difference between the two could never have shown up.
+///
+/// Inside that shared body, gated on `DAT_143ad2d30 == 0`: **[L]**
+///
+/// ```text
+/// FUN_14019b780(&DAT_143ad68a0, 0x90)   allocate a 0x90-byte object from a pool
+/// FUN_140d13c80(obj, npc)               construct it against this NPC
+/// FUN_142df7280(DAT_143ac18d8) -> +0xc  a clock value
+/// FUN_140d13cc0(obj, that)              stamp it
+/// npc[0xaf] = obj ; FUN_140d13270(obj)  hang it on the NPC and start it
+/// ```
+///
+/// A per-object, timestamped, started-on-creation thing is an animation, and it is created
+/// **only when that global is zero**.
+///
+/// `0x0452` is what sets the global: `u32 v`, then `DAT_143ad2d30 = (v != 0)`, then it walks
+/// every NPC in the pool. And the two walks settle what the object is, because they are not
+/// symmetrical guesses - `v == 0` runs the **identical** allocate/construct/stamp sequence
+/// quoted above on every existing NPC, and `v != 0` calls `FUN_141e64690` to tear it down.
+/// One packet both creates and destroys the same thing the creation path creates. **[L]** for
+/// the two branches, **[D]** for "that object is the appear animation".
+///
+/// # The polarity is inverted, which is why this takes a bool
+///
+/// The wire value is *disable*: `v = 0` leaves the effect **on** (the global stays zero, so
+/// creation builds the object), `v != 0` turns it **off**. Sending a raw integer here would
+/// invert on somebody eventually, so the argument is what the caller means.
+///
+/// Nothing about this is confirmed on a screen yet. `!npcfx off` then `!npcecho` is the test.
+pub fn npc_appear_effect(enabled: bool) -> Vec<u8> {
+    let mut b = Vec::with_capacity(4);
+    // `DAT_143ad2d30 = (v != 0)`, and the effect is built only while that global is 0.
+    b.extend_from_slice(&u32::from(!enabled).to_le_bytes());
+    b
+}
+
+/// `0x0452`. See [`npc_appear_effect`].
+pub const NPC_APPEAR_EFFECT: u16 = 0x0452;
+
 pub const SET_FIELD: u16 = 0x01A0;
 
 /// The 33-byte **fixed head** of a `SetField`, and nothing after it.
@@ -2991,6 +3039,24 @@ mod set_field_tests {
         assert_eq!(ctrl.len(), enter.len() + 1, "exactly one byte of difference");
         assert_eq!(ctrl[0], 1, "the flag - 0 would DETACH an NPC instead of creating one");
         assert_eq!(&ctrl[1..], &enter[..], "and the rest is the same decoder's body");
+    }
+
+    /// The appear-effect switch is four bytes and its polarity is **inverted** on the wire.
+    ///
+    /// `0x0452` reads one `u32` and stores `DAT_143ad2d30 = (v != 0)`; the creation path
+    /// builds the appear object only while that global is **zero**. So "enabled" is `0` and
+    /// "disabled" is `1`, which is exactly the kind of thing that silently inverts the first
+    /// time somebody passes a raw integer - hence the bool, and hence this test.
+    #[test]
+    fn the_npc_appear_effect_switch_inverts_on_the_wire() {
+        assert_eq!(npc_appear_effect(true), vec![0, 0, 0, 0], "enabled -> v = 0");
+        assert_eq!(npc_appear_effect(false), vec![1, 0, 0, 0], "disabled -> v = 1");
+        assert_ne!(
+            npc_appear_effect(true),
+            npc_appear_effect(false),
+            "the two must not encode the same"
+        );
+        assert_eq!(NPC_APPEAR_EFFECT, 0x0452);
     }
 
     /// Two NPCs on one field must not share an object id: the pool keys on it, and a repeat

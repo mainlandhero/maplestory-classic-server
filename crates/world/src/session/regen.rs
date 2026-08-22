@@ -117,7 +117,16 @@ impl Session {
         //
         // `user-hit.md` §5.2 said this trailer "should stay `None`", and for a *hit* that is
         // still right: it is not how an ordinary HP change is reported, and a hit already
-        // draws its own number client-side. A recovery is the case it exists for.
+        // draws its own number client-side.
+        //
+        // **This is the only path that sends it, and potions deliberately do not.** The owner,
+        // 2026-08-21: *"Potion recovery should not trigger the recovery number, that's only
+        // for idle regeneration standing or sitting in a chair in the Set-up tab or sitting
+        // on a chair in a map."* It went into `consume.rs` first, on the reasoning that a
+        // potion recovers and the field is called recovery - which is arguing from the
+        // encoding outwards. The field is the **regeneration indicator**; what may raise it
+        // is a property of the game and the byte layout cannot tell you. Chairs are the other
+        // case, and this server has none yet: when it grows them, that path sends this too.
         //
         // Absent when nothing moved, so a tick that only restores MP cannot draw a "+0" over
         // the head for HP.
