@@ -125,17 +125,34 @@ impl Session {
         // Sent **after** the `0x007C`, so the bar and the number agree on screen. HP only: a
         // tick that restores both would otherwise stack two numbers on one head, and the owner
         // asked for the recovery amount, singular.
+        // **A full bar is not touched at all.** The owner, 2026-08-22: *"the server should not try
+        // to idle regenerate if a character is full HP."*
+        //
+        // The tick already returns early when BOTH bars are full, and the log bears that out -
+        // the last tick of a heal is the capped `+4 hp -> 194/194` and then it stops. What it
+        // did not do is handle the halves separately: with HP full and MP short, the `0x007C`
+        // still carried `hp = <full>`, restating a value that had not moved.
+        //
+        // So each field is present only if it actually changed. That is strictly less traffic
+        // and it cannot regress anything: the client applies the fields the mask names and
+        // leaves the rest alone.
         let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange {
-                hp: Some(chr.hp),
-                mp: Some(chr.mp),
+                hp: (healed_hp > 0).then_some(chr.hp),
+                mp: (healed_mp > 0).then_some(chr.mp),
                 ..Default::default()
             }
             .build(),
             what: format!(
-                "StatChanged: idle regen +{healed_hp} hp +{healed_mp} mp -> {}/{} hp, {}/{} mp",
-                chr.hp, chr.max_hp, chr.mp, chr.max_mp
+                "StatChanged: idle regen +{healed_hp} hp +{healed_mp} mp -> {}/{} hp, {}/{} mp{}",
+                chr.hp, chr.max_hp, chr.mp, chr.max_mp,
+                match (healed_hp > 0, healed_mp > 0) {
+                    (true, true) => "",
+                    (true, false) => " - MP is full, so the packet does not mention it",
+                    (false, true) => " - HP is full, so the packet does not mention it",
+                    (false, false) => " - NOTHING moved, which the early return should have caught",
+                }
             ),
         }];
         if healed_hp > 0 {
@@ -214,6 +231,42 @@ mod tests {
             i32::from_le_bytes(out[1].body[1..5].try_into().unwrap()),
             REGEN_AMOUNT as i32,
             "the AMOUNT recovered, not the new total - the total would draw +11 for a 10 HP tick"
+        );
+    }
+
+    /// **A bar that is already full is not mentioned in the packet.**
+    ///
+    /// The owner, 2026-08-22: *"the server should not try to idle regenerate if a character is full
+    /// HP."* The both-full case was already an early return; this is the half that was not -
+    /// with HP full and MP short, the `0x007C` still carried `hp = <full>`.
+    ///
+    /// Asserted against a hand-built expectation rather than by poking at the mask, so a
+    /// change to any earlier field cannot shift an offset and still pass.
+    #[test]
+    fn a_full_bar_is_left_out_of_the_regen_packet() {
+        let (mut s, store) = hurt_session();
+        let mut chr = s.claimed_character().unwrap();
+        chr.hp = chr.max_hp; // full HP, MP still at 1
+        store.save_character_progress(&chr).unwrap();
+
+        s.clock_ms = 10_000;
+        let out = s.regen_tick(10_000);
+        let want = net::stats::StatChange {
+            hp: None,
+            mp: Some(1 + REGEN_AMOUNT),
+            ..Default::default()
+        }
+        .build();
+        assert_eq!(out[0].body, want, "HP is full, so the packet must not carry it");
+        assert_ne!(
+            out[0].body,
+            net::stats::StatChange {
+                hp: Some(chr.max_hp),
+                mp: Some(1 + REGEN_AMOUNT),
+                ..Default::default()
+            }
+            .build(),
+            "and it is not the same as restating the full value"
         );
     }
 

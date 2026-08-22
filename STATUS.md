@@ -266,6 +266,47 @@ the finding.
 reports it outbound as `0x02C6`, 44 bytes, carrying which of four things went wrong. Success
 is silence.
 
+#### CONFIRMED 2026-08-22: death and revive, first time out
+
+The owner: *"I already performed the revive last time, it worked, and then the crash happened."*
+The log corroborates it exactly, and it covers **both** entry points:
+
+```text
+02:50:28.547 -> 0x0315 ShowReviveDialog on field entry: character 212 arrived on map
+                10000022 with 0 HP
+02:50:31.161 -> 0x01A0 SetField, REVIVE: map 10000022 -> 10000000, hp 50/194,
+                no exp penalty at level 10
+```
+
+They clicked the button 2.6 s after the dialog packet, so they saw it. The **dead-login** path is
+the one that mattered - that character had been stranded since the previous session and would
+never have got a dialog from the combat path. And the half most likely to fail silently, "can
+you act afterwards", is answered by what happened next: **they reached level 11.**
+
+**And I nearly had them re-test all of it.** The plan still opened with "LOG IN AS Idiot
+FIRST". Two of the other steps were in the same state - the blue number went out **16 times**
+as `0x02D1` effect `0x41` and the grey quest item line went out for quest 10001 - so three of
+five steps were asking for work the run had already done. `CLAUDE.md` has a section telling me
+to strike finished items off, and one telling me to count the same event in two logs; the fix
+for both was one `grep` of `world.log` that I did not run before writing the plan.
+
+What is genuinely still unknown is **what they saw**, not what was sent. The plan now asks only
+that.
+
+#### Idle regeneration does not touch a full bar
+
+The owner: *"the server should not try to idle regenerate if a character is full HP."*
+
+The both-full case was already an early return and the log bears it out - a heal ends with a
+capped `+4 hp -> 194/194` and then stops. The half that was **not** handled is one bar being
+full: with HP at maximum and MP short, the `0x007C` still carried `hp = <full>`, restating a
+value that had not moved. Each field is now present only if it changed.
+
+**Left open deliberately, because it is the owner's call and not mine:** whether MP regeneration
+should also stop when HP is full. Independent regeneration is the usual behaviour in this game
+family, so stopping it would be a real change rather than a tidy-up, and their wording could
+mean either.
+
 #### 2026-08-22: fresh spawns were bunched at one end of the map
 
 The owner, on Right Around Lith Harbor: *"the mobs that spawn are completely concentrated on the

@@ -56,74 +56,46 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - five things
+    THE POINT OF THIS RUN - three things, and only the first is a procedure
     -----------------------------------
-     1. DEATH AND REVIVE. START BY LOGGING IN AS "Idiot" - they are still dead, 0/194 HP
-        on map 10000022 from two sessions ago, and that is the better half of this test
-        because it needs no setup.
-        THE DIALOG SHOULD APPEAR ON ARRIVAL, without being hit. That was a real gap: the
-        dialog fired on the death TRANSITION and logging in dead is not a transition, so they
-        were stranded with !heal as the only way out.
-          a. does the dialog appear? Expect ONE button, "REVIVE IN TOWN". The on-the-spot
-             button is hidden unless a Respawn Token counter is above zero and nothing here
-             sets it, so one button is the expected result and not a bug.
-          b. click it -> LITH HARBOR (10000000), 50 HP. That is a town and it is NOT next
-             door to a beach hunting ground, so arriving somewhere adjacent means the
-             revive table was not used.
-          c. Idiot is level 10, so they should lose NO experience. Check the bar does not move.
-          d. can you MOVE and attack afterwards? ~65 client sites gate on the sign of HP, so
-             a revive that fixes the bar but not the client's own copy leaves you standing
-             in town unable to act. There is a second 0x007C after the SetField for exactly
-             this, and it is the half most likely to be wrong.
-        THEN die on purpose to test the combat path, which is the one that was built first.
-        IF NO DIALOG APPEARS the client says why for free: it sends outbound 0x02C6 carrying
-        the reason. world.log will have it. Success is silence, so no 0x02C6 AND no dialog
-        means something other than the opener refused.
-
-     2. THE BLUE RECOVERY NUMBER, second attempt - the first was the wrong packet entirely.
-        Get hurt, then stand still for 20 seconds.
-        The 0x007C recovery trailer drew nothing across three ticks of a real run because
-        the function it feeds is a STATISTICS COUNTER - running totals, per-hour averages,
-        no renderer anywhere on the path. It is out. 0x02D1 effect 0x41 is the real one: the
-        SAME renderer that draws the damage number, with a POSITIVE argument, because the
-        sign is what selects blue over violet.
-          a blue number on each tick  -> done. Say the COLOUR, and whether it reads 10 (the
-                                         amount recovered) rather than the new total
-          the wrong colour            -> the sign fork is not what we think
-          nothing, and world.log shows the 0x02D1 going out
-                                      -> the suppression gate at 14278bd75, which is the one
-                                         link in this chain nobody has measured. Swapping
-                                         effect 0x41 for 0x23 does NOT test it: they share it
-        A potion still draws no number, deliberately - that is for idle regen and chairs.
-
-     3. FRESH SPAWNS SHOULD BE SPREAD ACROSS THE MAP. Go to Right Around Lith Harbor, or
-        any map you have not visited this launch, and look at where the mobs are.
+     1. FRESH SPAWNS SHOULD BE SPREAD ACROSS THE MAP. **The only real procedure here.**
+        Go to Right Around Lith Harbor, or any map you have not visited this launch, and
+        look at where the mobs are.
         You reported them "completely concentrated on the left side of the map on fresh
         spawn". The per-type quota was already balanced; what was not is WHICH points inside
-        each type, and it took the first N in WZ order - which runs left to right.
+        each type - it took the first N in WZ order, and WZ order runs left to right.
           mobs across the whole map  -> fixed
-          still bunched at one end   -> say WHICH end, because left is the WZ order and
-                                        right would mean something else entirely
-          fewer mobs than before     -> the shuffle disturbed the quota, which its test says
-                                        it must not
-        Leave and come back: the layout should DIFFER between two fresh entries, because the
-        seed carries the clock.
+          still bunched at one end   -> say WHICH end. Left is the WZ order; right would
+                                        mean something else entirely
+          fewer mobs than before     -> the shuffle disturbed the quota, which its own test
+                                        says it must not
+        Leave the map and come back: the layout should DIFFER between two fresh entries,
+        because the seed carries the clock.
 
-     4. A QUEST THAT GIVES AN ITEM - still never tested. Quest EXP in the chat log and the
-        fanfare are both CONFIRMED; the grey ITEM line has never been seen.
-        Expect "<Item> x<n> earned. (<Tab>)" in the CHAT LOG, not bottom-right.
-          grey line in the chat log -> done
-          another colour            -> the route is right and the colour is separate
-          nothing at all            -> either the item id resolved no name, or category 6 is
-                                       a tab that window does not show
+     2. TWO THINGS THAT ALREADY WENT OUT LAST RUN, and all I need is what you SAW.
+        Both packets are in the log of the 02:50 run; neither was reported on. No setup.
 
-     5. IF THE CLIENT DIES, THERE IS ALREADY A DUMP - two of them, and they agree on the
-        call path. A third is only worth keeping if it is DIFFERENT, so the useful thing to
-        report is what you were doing, not the file.
-        Both deaths are the same stack: the client's free() called from a PCOM.dll
-        refcounted release, under VariantClear, under NAMESPACE.DLL. Both at ~600 s. If you
-        die at a wildly different time or while doing something new, say so.
-        Each dump is ~1 GB and two are kept per run.
+        a. THE BLUE RECOVERY NUMBER. Sent **16 times** as 0x02D1 effect 0x41, "+10".
+           Get hurt, stand still 20 s.
+             a blue number appears -> done. Say the COLOUR, and whether it reads 10 (the
+                                      amount) rather than the new total
+             nothing at all        -> the suppression gate at 14278bd75, the one link in
+                                      that chain nobody has measured. Swapping effect 0x41
+                                      for 0x23 does NOT test it - they share it
+
+        b. THE GREY QUEST ITEM LINE. Sent last run: quest 10001 rewarded 2000000 x5 and
+           2000003 x5, both as 0x02D1 effect 8 at chat category 6.
+             a grey "<Item> x<n> earned. (<Tab>)" in the CHAT LOG -> done
+             a line in another colour  -> the route is right, the colour is separate
+             nothing at all            -> the item id resolved no name, or category 6 is a
+                                          tab that window does not show
+
+     3. IF THE CLIENT DIES, THERE ARE ALREADY TWO DUMPS and they agree on the call path, so
+        a third is only worth anything if it is DIFFERENT. Report what you were DOING, not
+        the file.
+        Both deaths were at ~600 s on the same stack: the client's own free() called from a
+        PCOM.dll refcounted release, under VariantClear, under NAMESPACE.DLL. If you die at
+        a wildly different time, or while doing something new, that is the interesting case.
 
     REGRESSION GLANCES - seconds each
     ---------------------------------
@@ -815,7 +787,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  5 steps. Say which you did.' -ForegroundColor Yellow
+    Write-Host '  3 steps, and only the first needs doing.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -828,6 +800,11 @@ if ($SetFieldProbe) {
     Write-Host '  The first dump found a stray 1 in a header; the SECOND has a'
     Write-Host '  different failure type and different garbage, so it is a WILD WRITE'
     Write-Host '  into that arena, not one repeatable off-by-one. An agent is on it.'
+    Write-Host '  DEATH AND REVIVE WORK, first time out - the dialog appeared for a'
+    Write-Host '  character who logged in ALREADY DEAD, and the revive warped them to'
+    Write-Host '  Lith Harbor at 50 HP with no exp penalty at level 10. They then went'
+    Write-Host '  on to reach level 11, which answers the half most likely to fail:'
+    Write-Host '  they could move and attack afterwards.'
     Write-Host '  BULK SKILL POINTS now work - confirmed this run.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
@@ -841,34 +818,7 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  1. DEATH AND REVIVE. LOG IN AS "Idiot" FIRST.' -ForegroundColor Cyan
-    Write-Host '     They are still dead - 0/194 HP on map 10000022 - so the dialog should'
-    Write-Host '     appear ON ARRIVAL, with no setup and without being hit.'
-    Write-Host '       a. dialog appears? Expect ONE button, "REVIVE IN TOWN".'
-    Write-Host '       b. click it -> LITH HARBOR (10000000), 50 HP. That is a town and'
-    Write-Host '          NOT next door, so arriving adjacent means the table was unused.'
-    Write-Host '       c. Idiot is level 10 -> NO exp loss. Check the bar does not move.'
-    Write-Host '       d. can you MOVE and ATTACK after? ~65 client sites gate on the sign'
-    Write-Host '          of HP. This is the half most likely to be wrong.'
-    Write-Host '     Then die on purpose for the combat path.'
-    Write-Host '     No dialog? The client says why for free - outbound 0x02C6 in'
-    Write-Host '     world.log. Success is silence.'
-    Write-Host ''
-    Write-Host '  2. THE BLUE NUMBER, 2nd attempt - the 1st was the WRONG PACKET.' -ForegroundColor Cyan
-    Write-Host '     Get hurt, then stand still 20s.'
-    Write-Host '     The 0x007C trailer drew nothing across three real ticks because the'
-    Write-Host '     function it feeds is a STATISTICS COUNTER. It is out. 0x02D1 effect'
-    Write-Host '     0x41 is the real one - same renderer as the damage number, positive'
-    Write-Host '     argument, and the sign picks blue over violet.'
-    Write-Host '       blue number per tick -> done. COLOUR? And does it read 10 (the'
-    Write-Host '                               amount) rather than the new total?'
-    Write-Host '       wrong colour         -> the sign fork is not what we think'
-    Write-Host '       nothing, but world.log shows the 0x02D1 sent'
-    Write-Host '                            -> the suppression gate at 14278bd75, the one'
-    Write-Host '                               unmeasured link. 0x23 does NOT test it'
-    Write-Host '     A potion still draws nothing, deliberately.'
-    Write-Host ''
-    Write-Host '  3. FRESH SPAWNS SHOULD BE SPREAD OUT.' -ForegroundColor Cyan
+    Write-Host '  1. FRESH SPAWNS SHOULD BE SPREAD OUT - the only real test here.' -ForegroundColor Cyan
     Write-Host '     Right Around Lith Harbor, or any map new to this launch.'
     Write-Host '     The per-type quota was already balanced; WHICH points inside each'
     Write-Host '     type was not - it took the first N in WZ order, which runs left'
@@ -879,14 +829,22 @@ if ($SetFieldProbe) {
     Write-Host '       fewer mobs than before-> the shuffle disturbed the quota'
     Write-Host '     Leave and come back - the layout should DIFFER, the seed has the clock.'
     Write-Host ''
-    Write-Host '  4. A QUEST THAT GIVES AN ITEM - still never tested.' -ForegroundColor Cyan
-    Write-Host '     Quest EXP in the chat log and the fanfare are CONFIRMED. The grey'
-    Write-Host '     ITEM line has never been seen: "<Item> x<n> earned. (<Tab>)" in the'
-    Write-Host '     CHAT LOG, not bottom-right.'
+    Write-Host '  2. TWO PACKETS ALREADY WENT OUT LAST RUN. I only need what you SAW.' -ForegroundColor Cyan
+    Write-Host '     a. THE BLUE NUMBER - sent 16 times as 0x02D1 effect 0x41, "+10".'
+    Write-Host '        Get hurt, stand still 20s.'
+    Write-Host '          a number appears -> COLOUR? And does it read 10 (the amount)'
+    Write-Host '                              rather than the new total?'
+    Write-Host '          nothing          -> the suppression gate at 14278bd75, the one'
+    Write-Host '                              unmeasured link. 0x23 does NOT test it'
+    Write-Host '     b. THE GREY QUEST ITEM LINE - sent last run for quest 10001.'
+    Write-Host '          grey line in the CHAT LOG -> done'
+    Write-Host '          another colour            -> route right, colour separate'
+    Write-Host '          nothing                   -> no name resolved, or category 6 is'
+    Write-Host '                                       a tab that window does not show'
     Write-Host ''
-    Write-Host '  5. IF IT DIES there are already TWO dumps and they agree on the call' -ForegroundColor Cyan
-    Write-Host '     path. A third only matters if it is DIFFERENT - so report what you'
-    Write-Host '     were DOING, not the file. Both were ~600s, same stack.'
+    Write-Host '  3. IF IT DIES there are already TWO dumps and they agree. A third only' -ForegroundColor Cyan
+    Write-Host '     matters if it is DIFFERENT - report what you were DOING, not the'
+    Write-Host '     file. Both were ~600s on the same stack.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - agents are working on these:' -ForegroundColor DarkGray
     Write-Host '     Nimble Feet buffs, Mr. Kim''s storage, Mina''s shop. The shop is OFF'
