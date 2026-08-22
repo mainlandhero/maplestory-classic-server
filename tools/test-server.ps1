@@ -31,10 +31,17 @@
       THE CHANNEL CHANGE WORKS. Inventory and mesos carried over, and world-ch1.log shows
       the migration claimed BY CHANNEL with a real SetField rather than the minimal one.
 
-      THE HEAP CORRUPTION IS IN A DUMP - the first in this project, after six deaths.
-      1 010 MB, written by the hook in 878 ms, 0xC0000374 at 596 s of life. Reading it is
-      a desk job, not a client run: powershell -ExecutionPolicy Bypass -File
-      "C:\MapleCW\tools\analyse-dump.ps1"
+      THE HEAP DEATH IS SOLVED, AND IT WAS NEVER HEAP CORRUPTION. The dump was captured
+      (1 010 MB, written by the hook in 878 ms) and then READ, with tools/dumpwalk.py -
+      no debugger needed, and the tool self-checks against the dump before it prints.
+      156 heap blocks stepped, every header checksum valid, and the address the
+      allocator complained about lands inside a LIVE, BUSY 270 352-byte block:
+      RtlFreeHeap REFUSED a bad free rather than discovering damage. The real damage is
+      one stray DWORD - a block header that should read 0x20 read 0x0000000100000020,
+      which pushed a 32-byte free off its lookaside path. 6 239 clean headers in that
+      arena, exactly one wrong, and it is the one that was freed.
+      research/heap-corruption-dump.md. Page heap would NOT have helped: it guards
+      Windows heap blocks, and this is a slot inside a client-allocator arena.
 
     THE NPC FADE - THERE IS A LEVER AFTER ALL, AND IT IS STEP 4 BELOW. The echo could never
     have answered it: 0x044F and 0x0451 run the SAME decoder body, so comparing them was
@@ -812,9 +819,12 @@ if ($SetFieldProbe) {
     Write-Host ''
     Write-Host '  WHAT THE LAST TWO RUNS SETTLED.' -ForegroundColor Green
     Write-Host '  CHANNEL CHANGE WORKS - claimed by channel, real SetField, inventory'
-    Write-Host '  and mesos carried over. And THE HEAP CORRUPTION IS IN A DUMP: 1010 MB,'
-    Write-Host '  written by the hook in 878ms, the first in this project after six'
-    Write-Host '  deaths. Reading it is a desk job - tools\analyse-dump.ps1.'
+    Write-Host '  and mesos carried over. And THE HEAP DEATH IS SOLVED - the dump was'
+    Write-Host '  captured AND read, and it was never heap corruption. 156 blocks'
+    Write-Host '  stepped, every checksum valid, and RtlFreeHeap REFUSED a bad free.'
+    Write-Host '  One stray DWORD: a header that should read 0x20 read'
+    Write-Host '  0x0000000100000020. 6239 clean headers in that arena, exactly one'
+    Write-Host '  wrong, and it is the one that was freed. tools/dumpwalk.py.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
     Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
