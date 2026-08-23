@@ -122,6 +122,18 @@ impl Session {
         level: net::buff::BuffLevel,
         now_ms: u64,
     ) -> Vec<Reply> {
+        self.grant_buff_with_tail(skill_id, level, now_ms, net::buff::TAIL_LEN)
+    }
+
+    /// [`Self::grant_buff`] with the tail length chosen by the caller - `!buff`'s third
+    /// argument. See `net::buff::TAIL_LEN` for why that number is slack and not a length.
+    pub(super) fn grant_buff_with_tail(
+        &mut self,
+        skill_id: u32,
+        level: net::buff::BuffLevel,
+        now_ms: u64,
+        tail: usize,
+    ) -> Vec<Reply> {
         let stat = level.granted_by(skill_id);
         // One holder per bit. Two entries for the same stat would leave the second expiry
         // clearing a buff the first had already replaced - and the client tracks one value
@@ -132,13 +144,15 @@ impl Session {
             skill_id,
             expires_ms: now_ms.saturating_add(u64::from(stat.duration_ms)),
         });
+        let body = net::buff::temporary_stat_set_with_tail(&[stat], tail);
         vec![Reply {
             opcode: net::buff::TEMPORARY_STAT_SET,
-            body: net::buff::temporary_stat_set(&[stat]),
+            body,
             what: format!(
-                "TemporaryStatSet: skill {skill_id} grants CTS bit {} = {} for {} ms ({} s from Skill.wz). \
-                 OUTBOUND 0x007D is TemporaryStatSet; the client's INBOUND 0x007D is the migration hello, \
-                 a different opcode space. The value's width is the one guess here - i16, research/buffs.md 5.5",
+                "TemporaryStatSet: skill {skill_id} grants CTS bit {} = {} for {} ms ({} s from Skill.wz), \
+                 {tail}-byte tail. The 18-byte tail threw an unhandled C++ exception at 0x142d5690c on \
+                 2026-08-22 - the u32 reader's own `cmp edi,4 / jb` underflow path - so this length is \
+                 SLACK around an unknown, not a computed size. net::buff::TAIL_LEN has the working",
                 stat.bit, stat.value, stat.duration_ms, level.seconds
             ),
         }]

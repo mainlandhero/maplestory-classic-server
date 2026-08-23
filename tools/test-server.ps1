@@ -81,19 +81,27 @@
         Then, either way, try  !map 10001000  - Henesys town, the map next door, also never
         loaded. Park dies and town loads -> that one map. Both die -> that part of the world.
 
-     2. PRESS NIMBLE FEET. This is the one you have asked for twice.
-        It was arriving the whole time: 0x013C, 51 bytes, skillId 1002 level 3, logged as
-        UNKNOWN and dropped. Now the server answers with 0x007D TemporaryStatSet.
+     2. PRESS NIMBLE FEET AGAIN. It killed the client last time and the reason is known.
+        The packet was SEVEN BYTES SHORT of what the client wanted. That is measured, not
+        guessed: exit code 0xE06D7363 is an unhandled C++ throw, the throw stack names
+        0x142d5690c inside the 0x007D handler, and that read primitive's own code is
+        "cmp edi,4 / jb <raise>" where edi is bytes-remaining. The body is 152 -> 198 now.
+        THE CRASH ALSO PROVED SOMETHING: the throw happened INSIDE FUN_142d563d0, so 0x007D
+        really is TemporaryStatSet. That was an inference until last night.
+        BE READY FOR IT TO DIE AGAIN. Four separate static instruments say 152 should have
+        been enough, so the extra 46 bytes are slack around a number nobody has derived.
           buff icon top right, counts ~30 s, YOU WALK FASTER -> everything is right: the
                            opcode, the 124-byte mask, bit 92 = Speed, the i16 width, and
-                           milliseconds
+                           milliseconds. THEN SEE THE BISECT BELOW
           icon appears and vanishes within a second -> the value is a u32, not an i16, so the
                            duration reads as 0. One byte-width change, nothing else moves
           icon stays 30 s but you do NOT move faster -> the packet is right and bit 92 is not
                            Speed. I sweep 89-95 next
-          nothing at all, client fine -> 0x007D is not TemporaryStatSet, or the mask bit order
-                           is inverted
-          the client dies -> the tail is short. Say so and do not relaunch into it
+          nothing at all, client fine -> 0x007D reached a branch that reads nothing
+          it dies the same way again -> 198 is still short, and the hidden consumer is bigger
+                           than anything the listings can explain
+          it dies DIFFERENTLY - a length complaint, a dialog -> the opposite problem: this
+                           reader DOES check for leftover bytes and the length must be exact
         WATCH THE ICON **AND** THE FEET. The icon alone passes a wrong bit; the feet alone
         pass a packet that never drew anything.
         MP costs 10 at level 3 and the bar should move. THE COOLDOWN IS 180 SECONDS - that is
@@ -101,6 +109,14 @@
         seconds left, which is NOT the bug. If nothing happens at all, type  !buff  : it sends
         the identical bytes with no skill check, no MP and no cooldown, so !buff working while
         the keypress does not is a statement about the gates and not about the packet.
+
+        IF IT WORKS, BISECT THE TAIL - this is the cheapest measurement in the whole plan and
+        it costs chat lines instead of launches:
+          !buff 1002 3 32     then 24, then 20
+        Each is one cast. The FIRST ONE THAT KILLS THE CLIENT is the answer: the true
+        requirement is between it and the last one that worked. Go DOWNWARDS from something
+        that worked, never upwards from something that did not - too short ends the session.
+        18 and below are refused outright, because 18 has already killed a client once.
 
      3. MR. KIM, THE HALF THAT IS STILL UNTESTED. You skipped this last run.
         The window itself is confirmed - it opened with 30 slots and mesos moved both ways -
@@ -902,21 +918,31 @@ if ($SetFieldProbe) {
     Write-Host '     Then either way try  !map 10001000  - Henesys town, next door,'
     Write-Host '     also never loaded. Park dies + town loads -> that ONE map.'
     Write-Host ''
-    Write-Host '  2. PRESS NIMBLE FEET. The one you have asked for twice.' -ForegroundColor Cyan
-    Write-Host '     0x013C was arriving all along - skill 1002 level 3 - and nothing'
-    Write-Host '     answered it. The server now sends 0x007D TemporaryStatSet.'
+    Write-Host '  2. PRESS NIMBLE FEET AGAIN. It killed the client; the reason is known.' -ForegroundColor Cyan
+    Write-Host '     The packet was SEVEN BYTES SHORT. Measured: 0xE06D7363 is an'
+    Write-Host '     unhandled C++ throw, the stack names 0x142d5690c inside the 0x007D'
+    Write-Host '     handler, and that reader is literally "cmp edi,4 / jb <raise>"'
+    Write-Host '     with edi = bytes remaining. Body is 152 -> 198 now.'
+    Write-Host '     The crash also PROVED 0x007D is TemporaryStatSet - it threw from'
+    Write-Host '     inside that handler. That was only an inference before.'
+    Write-Host '     BE READY FOR IT TO DIE AGAIN: four static instruments say 152'
+    Write-Host '     should have been enough, so the extra 46 bytes are slack.'
     Write-Host '       icon + counts 30s + YOU WALK FASTER -> all of it is right'
-    Write-Host '       icon appears then vanishes  -> value is u32 not i16, so the'
-    Write-Host '                                      duration reads as 0'
+    Write-Host '       icon appears then vanishes  -> value is u32 not i16, duration 0'
     Write-Host '       icon stays but no speed     -> packet right, bit 92 is not Speed'
-    Write-Host '       nothing, client fine        -> wrong opcode or inverted bit order'
-    Write-Host '       the client dies             -> the tail is short. Do not relaunch'
+    Write-Host '       nothing, client fine        -> it reached a branch reading nothing'
+    Write-Host '       dies the SAME way           -> 198 is still short'
+    Write-Host '       dies DIFFERENTLY            -> it checks for leftover bytes and'
+    Write-Host '                                      the length must be exact'
     Write-Host '     WATCH THE ICON **AND** THE FEET. Either alone passes a wrong answer.'
     Write-Host '     MP costs 10. COOLDOWN IS 180s (Skill.wz''s own cooltime) and a'
     Write-Host '     second press inside it gets a chat line - that is NOT the bug.'
     Write-Host '     If nothing happens, type  !buff  - identical bytes, no skill check,'
-    Write-Host '     no MP, no cooldown. !buff working and the key not = a gate, not the'
-    Write-Host '     packet.'
+    Write-Host '     no MP, no cooldown.'
+    Write-Host '     IF IT WORKS, BISECT THE TAIL - chat lines, not launches:'
+    Write-Host '       !buff 1002 3 32   then 24, then 20'
+    Write-Host '     The first one that KILLS it is the answer. Go DOWNWARDS from what'
+    Write-Host '     worked, never up from what did not. 18 and below are refused.'
     Write-Host ''
     Write-Host '  3. MR. KIM - STILL UNTESTED, you skipped it last run.' -ForegroundColor Cyan
     Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and the'

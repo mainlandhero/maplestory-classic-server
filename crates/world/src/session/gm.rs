@@ -461,8 +461,8 @@ impl Session {
     }
 
 
-    /// `!buff [skillId] [level]` - send the temporary-stat packet with no skill, MP or
-    /// cooldown in the way. Defaults to Nimble Feet at level 3.
+    /// `!buff [skillId] [level] [tailBytes]` - send the temporary-stat packet with no skill,
+    /// MP or cooldown in the way. Defaults to Nimble Feet at level 3 with the safe tail.
     ///
     /// # This is the single-variant test `research/buffs.md` §7.3 asked for
     ///
@@ -476,6 +476,17 @@ impl Session {
     ///
     /// It does still record the expiry, so the `0x007E` goes out on time and the buff can be
     /// watched all the way through.
+    ///
+    /// # The third argument is what makes the unknown measurable
+    ///
+    /// `net::buff::TAIL_LEN` is **slack around a length nobody has derived** - the 18-byte
+    /// version threw an unhandled C++ exception in the client and killed it, while four
+    /// static instruments say 18 should have been ample. A rebuild per attempt costs a manual
+    /// launch; a chat line costs nothing, so the tail length is typeable.
+    ///
+    /// **Bisect downwards from a length that worked**, never upwards from one that did not:
+    /// too short ends the session outright. Anything at or below the 18 that has already
+    /// killed a client is refused here rather than re-learned.
     pub(super) fn gm_buff(&mut self, arg: &str) -> Vec<Reply> {
         if self.claimed_character().is_none() {
             return self.gm_ack("!buff REFUSED: no character is claimed on this connection.".to_string());
@@ -495,6 +506,21 @@ impl Session {
                 Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a level.")),
             },
         };
+        let tail = match parts.next() {
+            None => net::buff::TAIL_LEN,
+            Some(t) => match t.parse::<usize>() {
+                Ok(v) if v <= net::buff::TAIL_KNOWN_TOO_SHORT => {
+                    return self.gm_ack(format!(
+                        "!buff: a {v}-byte tail is at or below the {} that already killed a \
+                         client on 2026-08-22 - it would end this session and teach nothing. \
+                         Bisect DOWNWARDS from a length that worked.",
+                        net::buff::TAIL_KNOWN_TOO_SHORT
+                    ))
+                }
+                Ok(v) => v,
+                Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a tail length.")),
+            },
+        };
         let Some(bl) = net::buff::buff_level(skill_id, level) else {
             return self.gm_ack(format!(
                 "!buff: skill {skill_id} level {level} grants no temporary stat this server \
@@ -504,12 +530,15 @@ impl Session {
 
         let now = self.clock_ms;
         let mut out = self.gm_ack(format!(
-            "Casting skill {skill_id} level {level}: CTS bit {} = +{} for {} s. No skill check, \
-             no MP, no cooldown - if this works and the keypress does not, the difference is a \
-             gate and not the packet.",
-            bl.bit, bl.value, bl.seconds
+            "Casting skill {skill_id} level {level}: CTS bit {} = +{} for {} s, {tail}-byte \
+             tail ({} bytes total). No skill check, no MP, no cooldown - if this works and the \
+             keypress does not, the difference is a gate and not the packet.",
+            bl.bit,
+            bl.value,
+            bl.seconds,
+            net::buff::MASK_LEN + 10 + tail
         ));
-        out.extend(self.grant_buff(skill_id, bl, now));
+        out.extend(self.grant_buff_with_tail(skill_id, bl, now, tail));
         out
     }
 

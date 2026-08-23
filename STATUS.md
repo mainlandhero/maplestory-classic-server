@@ -1096,6 +1096,33 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### Nimble Feet crashed the client, and the crash proved the opcode
+
+2026-08-22 evening. First send of the `0x007D` packet `research/buffs.md` §7.1 specifies, and
+the client died with `0xE06D7363` - an **unhandled C++ throw**, not an access violation and
+not the heap family.
+
+**It threw because the body ran out.** The throw stack names `0x142d56911`, the instruction
+after the `call` at `0x142d5690c`, which is the `u32` read four fields from the end of
+`FUN_142d563d0`'s tail - and that primitive's own listing is `cmp edi, 4 / jb <raise>` where
+`edi = length - position`. There is no dispatch line for `0x007D` in the hook log, and the
+hook writes those on return.
+
+**The crash is also the best news of the day**: the throw happened *inside* `FUN_142d563d0`,
+so `0x007D` **is** TemporaryStatSet. That was `[D]` resting on a case table and two
+neighbouring anchors; it is now `[L]` from a live capture.
+
+**And one thing does not add up, which is written down rather than smoothed over.** Four
+instruments - `reads.py` at depth 4, the raw primitive's listing, bit 92's own 87-line
+decoder block, and an enumeration of all 476 bit tests - agree the handler consumes **at most
+145** of the 152 bytes sent. Seven to spare. Something none of them can see takes the
+difference, and re-running any of them is not a second opinion.
+
+The tail is **64 zero bytes** now, and it is labelled as slack rather than a computed length
+everywhere it appears. `!buff <skill> <level> <tail>` makes the number typeable so a session
+that survives can bisect it in chat lines instead of one launch per attempt; 18 and below are
+refused, because 18 has already killed a client once. `research/buffs-underflow.md`.
+
 #### What to do next, in order
 
 **Rewritten 2026-08-22, twice.** The morning run closed three more rows - storage item

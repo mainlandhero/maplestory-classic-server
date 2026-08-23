@@ -37,10 +37,15 @@
 //! Themida-packed `.data`, so its bytes at rest are not its runtime content and no static
 //! read can settle it. `i16` is the best available guess and it is **[I]**.
 //!
-//! The tail is sent as **18 zero bytes** for exactly this reason: it is 13 bytes, or 14 if one
-//! conditional fires, and a wrong width guess costs 2 more. 13 + 1 + 2 = 16, so 18 leaves
-//! margin, every tail field is fixed-width, and **all four parses read the same zeros**.
-//! Do not put a non-zero byte in the tail until the width is settled.
+//! The tail is sent as zero bytes for exactly this reason: every field in it is fixed-width,
+//! so **all four parses read the same zeros**. Do not put a non-zero byte in the tail until
+//! the width is settled.
+//!
+//! # The first attempt crashed the client, and the tail is why
+//!
+//! 18 bytes of tail was sized from the documented layout and the client threw a C++ exception
+//! reading four bytes it did not have. [`TAIL_LEN`] carries the whole measurement, including
+//! the seven bytes that four separate instruments say should have been there and were not.
 
 use crate::packet::PacketWriter;
 
@@ -69,8 +74,59 @@ pub const MASK_LEN: usize = 124;
 /// false, so 992 is out of range and 991 is the last legal bit. **[L]**
 pub const MAX_CTS_BIT: u32 = 992;
 
-/// Zero bytes after the per-stat list. See the module docs for why it is 18 and not 13.
-pub const TAIL_LEN: usize = 18;
+/// Zero bytes after the per-stat list.
+///
+/// # It was 18, the client threw, and 18 should have been enough
+///
+/// 2026-08-22, the owner: *"Nimble Feet crashed the client."* Exit code `0xE06D7363` - an
+/// unhandled **C++ exception**, not an access violation - and the hook's throw log names the
+/// frame: `0x142d56911`, the instruction after the `call` at `0x142d5690c`, which is the
+/// `u32` read near the end of `FUN_142d563d0`'s tail. The primitive it called says exactly
+/// why it threw:
+///
+/// ```asm
+/// 1406e8c32  mov  edi, [rcx+0x18]     ; length
+/// 1406e8c35  sub  edi, [rcx+0x24]     ; minus position = bytes remaining
+/// 1406e8c79  cmp  edi, 4
+/// 1406e8c7c  jb   1406e8c91           ; fewer than four left -> raise
+/// 1406e8cb1  int3                     ; the return address on the throw stack
+/// ```
+///
+/// **[L]**. So the body was too short. That much is measured, and it also proves something
+/// that was only [D] before: `0x007D` really is TemporaryStatSet, because the throw happened
+/// inside its handler.
+///
+/// # What does not add up, said plainly rather than smoothed over
+///
+/// Four instruments were run on the layout and they agree with each other:
+///
+/// * `tools/reads.py` at depth 4 on `FUN_142d563d0` - the whole tail is `u16, 6x u8, one
+///   conditional u8, u32, u8`, and **nothing** reads the packet before the mask;
+/// * the listing of the raw primitive `0x1406e9170` - it copies exactly `r8d` bytes with no
+///   length prefix, and the call site passes `0x7c`, so the mask is **124**;
+/// * the listing of bit 92's own decoder block at `0x140a17e3b` - 87 lines, and the `u32` at
+///   `+0x34` and the `u16` at `+0x52` are the **two arms of one `if`**, so a stat is 10 bytes
+///   or 12, never both;
+/// * an enumeration of all 476 bit tests against `0x1402bf6d0` - bit 92 is tested **once**,
+///   so one bit sets one block.
+///
+/// That totals **at most 145** bytes consumed before the `u32`, out of the 152 sent - seven
+/// to spare. The client says otherwise. **Something between the handler's entry and
+/// `0x142d5690c` consumes bytes that none of those four can see**, and re-running any of them
+/// is not a second opinion.
+///
+/// # So this is slack, not a computed length
+///
+/// 64 zero bytes: 46 more than the worst layout any of the evidence supports, which absorbs
+/// a hidden consumer several times over. Every tail field is fixed width and zero, so a
+/// longer tail cannot change what any of them decode - and the reader's only length test is
+/// "fewer than N remaining", with no check that the body was fully consumed.
+///
+/// **It is honestly a guess about the size of an unknown, and the next run narrows it.** If
+/// the buff works at 64, the true requirement is somewhere in 153..198 and can be bisected
+/// later; if the client dies *differently* - a complaint about a long packet rather than a
+/// silent death - then this reader does check for leftovers and the number has to be exact.
+pub const TAIL_LEN: usize = 64;
 
 /// One temporary stat being granted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +173,23 @@ pub fn stat_mask(bits: &[u32]) -> [u8; MASK_LEN] {
 /// mis-paired - and a mis-pairing would not error, it would give the wrong stat the wrong
 /// number for the wrong length of time.
 pub fn temporary_stat_set(stats: &[TemporaryStat]) -> Vec<u8> {
+    temporary_stat_set_with_tail(stats, TAIL_LEN)
+}
+
+/// [`temporary_stat_set`] with the tail length chosen by the caller.
+///
+/// # This exists to turn one guess per launch into many probes per launch
+///
+/// [`TAIL_LEN`] is slack around a number nobody has been able to derive statically, and the
+/// only way to narrow it is to send one and see. A rebuild per attempt costs the owner a manual
+/// launch; `!buff <skill> <level> <tail>` costs a chat line. So the length is a parameter,
+/// the skill keypress uses the safe default, and a session that survives the default can
+/// bisect downwards until the client throws again.
+///
+/// The failure is not gentle - the client raises an unhandled C++ exception and the process
+/// ends - so a probe that goes too low ends the session. Bisect **downwards from working**,
+/// not upwards from broken.
+pub fn temporary_stat_set_with_tail(stats: &[TemporaryStat], tail: usize) -> Vec<u8> {
     let mut ordered: Vec<TemporaryStat> =
         stats.iter().copied().filter(|s| s.bit < MAX_CTS_BIT).collect();
     ordered.sort_by_key(|s| s.bit);
@@ -130,7 +203,7 @@ pub fn temporary_stat_set(stats: &[TemporaryStat]) -> Vec<u8> {
         w.u32(s.reason);
         w.u32(s.duration_ms);
     }
-    w.bytes(&[0u8; TAIL_LEN]);
+    w.bytes(&vec![0u8; tail]);
     w.into_vec()
 }
 
@@ -138,6 +211,13 @@ pub fn temporary_stat_set(stats: &[TemporaryStat]) -> Vec<u8> {
 pub const fn temporary_stat_set_len(n: usize) -> usize {
     MASK_LEN + n * 10 + TAIL_LEN
 }
+
+/// The shortest tail known to be too short: the client threw with **18**.
+///
+/// Kept as a constant so the probe path can refuse to go back below a length that has
+/// already killed a client once. Costing the owner a launch to re-learn something the log
+/// already says is exactly what this repo's rules exist to prevent.
+pub const TAIL_KNOWN_TOO_SHORT: usize = 18;
 
 /// `0x007E` - clear these stats.
 ///
@@ -301,11 +381,11 @@ mod tests {
     /// wrong order, and the client would then read the duration as a reason and expire the
     /// buff immediately - which looks like "the buff does not work", the symptom being fixed.
     #[test]
-    fn nimble_feet_at_level_three_is_the_documented_152_bytes() {
+    fn nimble_feet_at_level_three_is_the_documented_body() {
         let level = buff_level(NIMBLE_FEET, 3).unwrap();
         let body = temporary_stat_set(&[level.granted_by(NIMBLE_FEET)]);
 
-        assert_eq!(body.len(), 152);
+        assert_eq!(body.len(), 198, "124 mask + 10 stat + 64 tail");
         assert_eq!(body.len(), temporary_stat_set_len(1));
         assert_eq!(&body[0..8], &[0u8; 8], "the mask is zero before the speed word");
         assert_eq!(&body[8..12], &[0x08, 0, 0, 0], "bit 92");
@@ -316,6 +396,41 @@ mod tests {
             "speed 10, reason 1002, duration 30000 MILLISECONDS"
         );
         assert_eq!(&body[134..], &[0u8; TAIL_LEN], "the tail is all zero - see the module docs");
+    }
+
+    /// **Lengthening the tail moved nothing that the client reads.**
+    ///
+    /// The tail went 18 -> 64 after a crash, and the whole value of that change rests on it
+    /// being *only* a length change. This pins the 134 bytes before the tail against the
+    /// same literals the 152-byte version asserted, so a future edit cannot quietly shift a
+    /// field and hide behind the padding.
+    #[test]
+    fn the_bytes_before_the_tail_are_unchanged_by_the_padding() {
+        let level = buff_level(NIMBLE_FEET, 3).unwrap();
+        let body = temporary_stat_set(&[level.granted_by(NIMBLE_FEET)]);
+        let head = &body[..MASK_LEN + 10];
+        assert_eq!(head.len(), 134);
+        assert_eq!(&head[8..12], &[0x08, 0, 0, 0]);
+        assert_eq!(
+            &head[124..134],
+            &[0x0a, 0x00, 0xea, 0x03, 0x00, 0x00, 0x30, 0x75, 0x00, 0x00]
+        );
+        assert!(body[134..].iter().all(|b| *b == 0), "and the tail is all zero");
+        assert_eq!(body.len() - head.len(), TAIL_LEN);
+    }
+
+    /// The tail override changes the length and nothing else.
+    #[test]
+    fn the_tail_override_only_changes_the_tail() {
+        let stat = buff_level(NIMBLE_FEET, 3).unwrap().granted_by(NIMBLE_FEET);
+        let default = temporary_stat_set(&[stat]);
+        for tail in [24usize, 64, 200] {
+            let probe = temporary_stat_set_with_tail(&[stat], tail);
+            assert_eq!(probe.len(), MASK_LEN + 10 + tail);
+            assert_eq!(&probe[..134], &default[..134], "the head is identical at tail {tail}");
+            assert!(probe[134..].iter().all(|b| *b == 0));
+        }
+        assert_eq!(temporary_stat_set_with_tail(&[stat], TAIL_LEN), default);
     }
 
     /// Seconds reach the wire as milliseconds, at every level. The failure this catches shows

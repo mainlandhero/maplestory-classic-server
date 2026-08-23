@@ -1,0 +1,41 @@
+20:55:40.251 watching MapleStory pid 24796, started 20:55:39.995, 17 threads, 299 handles
+20:55:40.254 this shell is elevated
+20:55:40.260 threads at start: 1388:Wait/Unknown 16780:Wait/EventPairLow 18324:Wait/EventPairLow 4120:Wait/EventPairLow 8444:Wait/UserRequest 10124:Wait/EventPairLow 23608:Wait/UserRequest 2928:Wait/EventPairLow 10100:Wait/UserRequest 24972:Wait/LpcReply 21660:Wait/EventPairLow 24048:Wait/UserRequest 14484:Wait/EventPairLow 23964:Wait/UserRequest 24012:Wait/EventPairLow 19224:Wait/Unknown 6100:Wait/Unknown
+20:55:40.337 in a job object: False (common, and true for both controls - only a lead if the lifetime is also constant)
+20:55:40.466 protection/nexon processes at start: cncmd#21268@20:38:49 maplecw-login#15324@20:55:39 maplecw-world#1796@20:55:39 maplecw-world#3712@20:55:39 MapleStory#24796@20:55:39
+20:55:40.751 threads 17 -> 30 started=7616,25128,24052,13324,25064,24828,25092,18220,5788,12792,7652,10708,24316
+20:55:40.824 handles on the client: lsass#1140 svchost#4268 [examined 1293 process handles, 358 unreachable]
+20:55:41.092 threads 30 -> 32 started=24728,7852
+20:55:41.616 threads 32 -> 57 started=5916,25072,3952,13372,1768,22984,1836,13008,13012,1656,11580,1496,12408,12552,12476,12468,12464,12460,12456,13028,14100,12996,1744,19104,4816
+20:55:41.876 threads 57 -> 59 started=19380,24044
+20:55:42.142 threads 59 -> 62 started=25004,20852,7672
+20:55:42.675 threads 62 -> 77 started=12668,23760,24540,22860,3424,23840,25456,15004,8276,24192,23176,23676,19768,10264,17544
+20:55:45.061 threads 77 -> 76 ended=8444
+20:55:45.111 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#18060 audiodg#15332 [examined 1322 process handles, 365 unreachable]
+20:55:45.631 +5.6s threads=76 handles=1437 cpu=4.02s ws=302MB
+20:55:46.164 threads 76 -> 75 ended=12668
+20:55:49.336 threads 75 -> 76 started=4428
+20:55:50.702 +10.7s threads=76 handles=1450 cpu=5.30s ws=388MB
+20:55:55.762 +15.8s threads=76 handles=1454 cpu=5.55s ws=386MB
+20:56:00.829 +20.8s threads=76 handles=1456 cpu=5.89s ws=370MB
+20:56:05.886 +25.9s threads=76 handles=1456 cpu=6.09s ws=366MB
+20:56:10.998 +31.0s threads=76 handles=1456 cpu=6.31s ws=366MB
+20:56:11.262 threads 76 -> 75 ended=7852
+20:56:16.054 +36.1s threads=75 handles=1454 cpu=6.61s ws=366MB
+20:56:21.118 +41.1s threads=75 handles=1452 cpu=6.81s ws=368MB
+20:56:26.170 +46.2s threads=75 handles=1452 cpu=7.25s ws=388MB
+20:56:31.225 +51.2s threads=75 handles=1454 cpu=7.66s ws=378MB
+20:56:32.069 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#18060 audiodg#15332 [examined 1318 process handles, 363 unreachable]
+20:56:36.289 +56.3s threads=75 handles=1454 cpu=8.03s ws=390MB
+20:56:40.556 threads 75 -> 74 ended=17544
+20:56:40.600 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#18060 [examined 1316 process handles, 363 unreachable]
+20:56:40.868 EXIT code 0xE06D7363 (-529697949) after 60.7s of life, 8.14s of CPU
+20:56:40.869 last sample was 0.15s before the exit: threads=74 (peak 77) handles=1439
+20:56:40.870 threads in that sample (data, not a verdict - see the header): 1388:Wait/UserRequest 16780:Wait/EventPairLow 18324:Wait/EventPairLow 4120:Wait/EventPairLow 10124:Wait/EventPairLow 23608:Wait/UserRequest 2928:Wait/EventPairLow 10100:Wait/UserRequest 24972:Wait/Unknown 21660:Wait/EventPairLow 24048:Wait/UserRequest 14484:Wait/EventPairLow 23964:Wait/UserRequest 24012:Wait/EventPairLow 19224:Wait/Unknown 6100:Wait/Unknown 7616:Wait/EventPairLow 25128:Wait/EventPairLow 24052:Wait/EventPairLow 13324:Wait/EventPairLow 25064:Wait/UserRequest 24828:Wait/UserRequest 25092:Wait/EventPairLow 18220:Wait/EventPairLow 5788:Wait/EventPairLow 12792:Wait/UserRequest 7652:Wait/UserRequest 10708:Wait/UserRequest 24316:Wait/EventPairLow 24728:Wait/UserRequest 5916:Wait/EventPairLow 25072:Wait/Unknown 3952:Wait/Unknown 13372:Wait/UserRequest 1768:Wait/UserRequest 22984:Wait/UserRequest 1836:Wait/UserRequest 13008:Wait/UserRequest 13012:Wait/UserRequest 1656:Wait/UserRequest 11580:Wait/UserRequest 1496:Wait/UserRequest 12408:Wait/UserRequest 12552:Wait/UserRequest 12476:Wait/UserRequest 12468:Wait/UserRequest 12464:Wait/UserRequest 12460:Wait/UserRequest 12456:Wait/UserRequest 13028:Wait/UserRequest 14100:Wait/UserRequest 12996:Wait/UserRequest 1744:Wait/UserRequest 19104:Wait/Unknown 4816:Wait/Unknown 19380:Wait/ExecutionDelay 24044:Wait/Unknown 25004:Wait/Executive 20852:Wait/LpcReply 7672:Wait/UserRequest 23760:Wait/UserRequest 24540:Wait/UserRequest 22860:Wait/UserRequest 3424:Wait/UserRequest 23840:Wait/UserRequest 25456:Wait/UserRequest 15004:Wait/UserRequest 8276:Wait/UserRequest 24192:Wait/UserRequest 23176:Wait/UserRequest 23676:Wait/UserRequest 19768:Wait/UserRequest 10264:Wait/UserRequest 4428:Wait/UserRequest
+20:56:40.870 handles on the client, last scan: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#18060 [examined 1316 process handles, 363 unreachable]
+20:56:40.874 READ: a code with no standard meaning, so it was chosen - either by the client as an ordinary application exit code, or by an outside killer passing a value to TerminateProcess. The orderly 2026-08-17 control returned 0x0000002A this way. Repeating exactly across runs says it was deliberate; only the in-process watches say which side chose it.
+20:56:40.875 READ: the decisive line is in client-patched\maplecw-hook.log, not here - a WATCH on ntdll!RtlExitUserThread or ntdll!NtTerminateThread means the client ended itself; silence on both means it did not.
+20:56:40.879 protection/nexon processes at exit: cncmd#21268@20:38:49 maplecw-login#15324@20:55:39 maplecw-world#1796@20:55:39 maplecw-world#3712@20:55:39
+20:56:40.895 vanished during the run: MapleStory#24796@20:55:39
+20:56:40.913 processes that started after the client did: DwarfAxe#16412 DwarfAxe#18680 DwarfAxe#24504 svchost#2980 svchost#14520
+20:56:41.126 event: 20:55:41 System/Microsoft-Windows-DistributedCOM Error - The server Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter did not register with DCOM within the required timeout.

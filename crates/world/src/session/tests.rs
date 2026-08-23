@@ -4523,7 +4523,10 @@ fn casting_nimble_feet_spends_mp_and_sends_the_temporary_stat() {
         .iter()
         .find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET)
         .expect("0x007D goes out");
-    assert_eq!(set.body.len(), 152, "the documented body length");
+    // NOT a literal: net::buff::TAIL_LEN is slack around a length nobody has derived, and
+    // it has already changed once - 18 bytes threw an unhandled C++ exception in the client.
+    // The head is pinned byte for byte below; the total follows the constant.
+    assert_eq!(set.body.len(), net::buff::temporary_stat_set_len(1));
     assert_eq!(&set.body[8..12], &[0x08, 0, 0, 0], "CTS bit 92, Speed");
     assert_eq!(
         &set.body[124..134],
@@ -4649,7 +4652,7 @@ fn the_buff_command_skips_every_gate_and_sends_the_same_packet() {
         .iter()
         .find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET)
         .expect("!buff with no arguments is Nimble Feet at level 3");
-    assert_eq!(set.body.len(), 152);
+    assert_eq!(set.body.len(), net::buff::temporary_stat_set_len(1), "the default tail");
     assert_eq!(&set.body[124..134], &[0x0a, 0x00, 0xea, 0x03, 0x00, 0x00, 0x30, 0x75, 0x00, 0x00]);
     assert_eq!(mp_of(&s), before, "and it costs no MP");
 
@@ -4662,6 +4665,21 @@ fn the_buff_command_skips_every_gate_and_sends_the_same_packet() {
     // A skill with no entry says so rather than sending an empty mask.
     let out = s.gm_buff("1000 1");
     assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET));
+
+    // **The third argument sets the tail, and a length already known to kill is refused.**
+    // 18 bytes threw an unhandled C++ exception in the client on 2026-08-22; costing a
+    // launch to re-learn that is the failure this repo's rules exist to prevent.
+    let out = s.gm_buff("1002 3 200");
+    let long = out.iter().find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET).unwrap();
+    assert_eq!(long.body.len(), net::buff::MASK_LEN + 10 + 200);
+
+    let out = s.gm_buff("1002 3 18");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET),
+        "a tail at the length that already killed a client is refused, not sent"
+    );
+    let out = s.gm_buff("1002 3 4");
+    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET), "and below it");
 }
 
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
