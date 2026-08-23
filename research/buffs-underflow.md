@@ -129,3 +129,77 @@ reader does check for leftovers and the number has to be exact after all.
 
 `TAIL_KNOWN_TOO_SHORT = 18` is refused by `!buff`: spending a launch to re-learn something
 already in a log is the failure this repo's rules exist to prevent.
+
+
+---
+
+# Part two: the buff worked, and then `0x007E` did the same thing
+
+2026-08-22, later. The owner: *"The buff works, but after the buff expired, the client crashed
+again."*
+
+## What the working grant settled
+
+`hook.log`: `18 opcode=0x007D elapsed_us=602.7 ret=1` - **a dispatch line, which means the
+handler returned.** It had never done that before. On screen: the icon, the countdown and the
+speed. **[L] + the screen.**
+
+One packet reaching one screen settled five things that no static pass could:
+
+| | was | now |
+|---|---|---|
+| `0x007D` is TemporaryStatSet | `[D]` from a case table | `[L]` |
+| the mask is 124 bytes with big-endian bits inside each word | `[L]` from three code reads | drawn |
+| CTS bit **92** is Speed | `[L]` from the client's own guard | **the character moved faster** |
+| the value is `i16`, not `u32` | `[I]`, and unreadable statically - the deciding constant is in Themida-packed `.data` | **settled**: a `u32` parse reads the duration as 0 and the icon would have flashed and vanished |
+| the duration is milliseconds | `[D]` from three readings | **counted down for 30 s** |
+
+And one more, which is why the padding argument is now evidence-backed rather than hopeful:
+**a 198-byte body was accepted without complaint**, so this client does not check that a
+packet was fully consumed. **[D]**
+
+## And then the reset, one handler over
+
+```text
+world.log  01:15:40.058  -> 0x007E   127 bytes, 30 s after the grant
+hook.log   21:15:40.059  ***** C++ THROW #3 *****
+                stack: ... 0x1406e8b71<-TEXT 0x142d57327<-TEXT ...
+client-exit.log          EXIT code 0xE06D7363 after 57.9s
+```
+
+**No dispatch line for `0x007E`.** `[L]`
+
+* `0x142d57327` is the instruction after the `call` at `0x142d57322`;
+* `0x1406e8b71` is the raise path of the **u8** primitive `0x1406e8ae0`, whose own listing is
+  `cmp edi, 1 / jb 0x1406e8b51` - the same shape as the `u32`'s, at the same `+0x91` offset.
+
+`tools/reads.py` at depth 4 on `FUN_142d56f80`: **[L]**
+
+```text
+0x142d56fc3  u8
+0x142d56fd1  u8
+0x142d56fdf  u8
+0x142d57040  raw            <- 124
+0x142d571c3  u32 via helper, gated
+0x142d57322  u8             <- threw
+0x142d57360  u8
+```
+
+`research/buffs.md` §7.1 lists only the first four and calls the body 127 bytes. **Three
+reads after the mask are missing from that description.**
+
+**This time the arithmetic is exact and nothing is left over.** `3 + 124 = 127` consumed, the
+gated `u32` did not fire - had it, the throw would have been at `0x142d571c3` - and then a
+`u8` with zero bytes left. Minimum **129**, or **133** if that `u32` ever fires.
+
+## What shipped
+
+* `0x007E` is padded to the same `TAIL_LEN` (191 bytes total) and `!unbuff [tail]` bisects it.
+* **The natural expiry no longer sends it at all.** The client stores its own expiry from
+  `0x007D`'s duration field (`buffs.md` §5.3 reads the decoder adding it to the current tick),
+  so at thirty seconds both sides drop the stat with nothing crossing the wire. The packet
+  that killed the client twice is off the one code path every buff takes; it now fires only
+  when a person asks for it, which is what dispel, death and logout will need.
+
+If the icon *never* disappears on its own, the client does not self-expire after all - a
+harmless and very informative outcome, and `!unbuff` becomes mandatory rather than a test.

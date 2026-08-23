@@ -332,10 +332,13 @@ next.** This list is deliberately coarse so the two cannot drift; do not duplica
 - [x] **Storage.** `0x0572` out, `0x00F6` in. Opening and mesos are CONFIRMED on screen
       (30 slots, both directions). Item put-in and take-out are built and unseen, with the
       keeper's deposit fee out of `Npc.wz`.
-- [x] **Buffs.** `0x013C` in, `0x007D` TemporaryStatSet out, `0x007E` to clear, duration in
-      **milliseconds**. Nimble Feet costs MP, honours `Skill.wz`'s 180-second cooltime, and
-      expires on the session tick. Built and unseen; `!buff` sends the same bytes with no
-      gates. `research/buffs.md`.
+- [x] **Buffs - CONFIRMED on screen 2026-08-22.** `0x013C` in, `0x007D` TemporaryStatSet
+      out, duration in **milliseconds**. The icon, the countdown and the speed all drew, which
+      settled the opcode, bit 92 = Speed and the `i16` value width in one go. Nimble Feet
+      costs MP and honours `Skill.wz`'s 180-second cooltime.
+      `0x007E` is built but **not sent on natural expiry** - the client self-expires and a
+      127-byte version of it killed the client. `!unbuff` sends it deliberately.
+      `research/buffs.md`, `research/buffs-underflow.md`.
 - [ ] The classic shop counter - **row structure now decoded**, price at `row+0x38`, not yet
       built (`research/classic-shop-rows.md`). Then parties and the cash shop.
 - [ ] Outgoing damage validation — blocked on two `0x00DF` header fields, not on the formula,

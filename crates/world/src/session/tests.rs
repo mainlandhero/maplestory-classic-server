@@ -4613,29 +4613,66 @@ fn a_cast_without_the_mp_is_refused_before_the_cooldown_is_stamped() {
     );
 }
 
-/// **The buff expires on the tick, once, with a `0x007E`.**
+/// **The natural expiry sends NOTHING, and drops the buff from our table on time.**
 ///
-/// The client holds its own `tExpire` and would drop the icon anyway; the server sends it
-/// because our table is what decides whether a later cast may replace the bit.
+/// The owner, 2026-08-22: *"The buff works, but after the buff expired, the client crashed
+/// again."* The tick used to send a 127-byte `0x007E` at the thirty-second mark and the
+/// client threw an unhandled C++ exception reading one byte past its end.
+///
+/// It does not send it any more. The client holds its own `tExpire` - `0x007D`'s duration
+/// field is what feeds it - so both sides drop the stat at the same moment with no packet
+/// crossing. This asserts **both halves**: no packet, and the table really did expire, because
+/// a test that only checked the silence would also pass on a tick that had stopped working.
 #[test]
-fn the_buff_expires_exactly_once_and_thirty_seconds_later() {
+fn the_natural_expiry_is_silent_and_still_expires() {
+    let (mut s, _store, _id) = session_with_nimble_feet();
+    s.clock_ms = 1_000;
+    s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    assert_eq!(s.buffs.len(), 1, "held");
+
+    assert!(s.buff_tick(20_000).is_empty());
+    assert!(s.buff_tick(30_999).is_empty());
+    assert_eq!(s.buffs.len(), 1, "still held at 29.999 s");
+
+    assert!(s.buff_tick(31_000).is_empty(), "30 s after the cast, and STILL no 0x007E");
+    assert!(s.buffs.is_empty(), "but the table dropped it");
+
+    // And with nothing held, the deliberate path has nothing to send either.
+    assert!(s.clear_buffs(net::buff::TAIL_LEN).is_empty());
+}
+
+/// **`!unbuff` is the only thing that sends `0x007E`, and it clears the length that threw.**
+///
+/// Early removal - dispel, death, logout - will need the packet, so it stays built and stays
+/// testable. What changed is that it no longer fires on a timer, which is the one path every
+/// buff takes.
+#[test]
+fn unbuff_sends_the_reset_and_refuses_the_length_that_threw() {
     let (mut s, _store, _id) = session_with_nimble_feet();
     s.clock_ms = 1_000;
     s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
 
-    let resets = |out: &[Reply]| {
-        out.iter().filter(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).count()
-    };
-    assert_eq!(resets(&s.buff_tick(20_000)), 0, "still running at 19 s");
-    assert_eq!(resets(&s.buff_tick(30_999)), 0, "and at 29.999 s");
+    let out = s.gm_unbuff("");
+    let reset = out
+        .iter()
+        .find(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET)
+        .expect("!unbuff sends it");
+    assert_eq!(reset.body.len(), net::buff::TEMPORARY_STAT_RESET_LEN);
+    assert!(reset.body.len() > net::buff::RESET_KNOWN_TOO_SHORT, "127 threw");
+    assert_eq!(reset.body[3 + 8], 0x08, "bit 92");
+    assert!(s.buffs.is_empty(), "and the table is cleared");
 
-    let out = s.buff_tick(31_000);
-    assert_eq!(resets(&out), 1, "30 s after the cast at 1 s");
-    let reset = out.iter().find(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).unwrap();
-    assert_eq!(reset.body.len(), 127);
-    assert_eq!(reset.body[3 + 8], 0x08, "bit 92 again");
+    // Nothing held: it says so rather than sending an empty mask.
+    let out = s.gm_unbuff("");
+    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET));
 
-    assert_eq!(resets(&s.buff_tick(40_000)), 0, "and not a second time");
+    // A tail that would recreate the 127-byte body is refused.
+    s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
+    let out = s.gm_unbuff("0");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET),
+        "a zero tail is the 127 bytes that already killed a client"
+    );
 }
 
 /// `!buff` sends the same bytes with none of the four gates in the way.
@@ -4656,11 +4693,10 @@ fn the_buff_command_skips_every_gate_and_sends_the_same_packet() {
     assert_eq!(&set.body[124..134], &[0x0a, 0x00, 0xea, 0x03, 0x00, 0x00, 0x30, 0x75, 0x00, 0x00]);
     assert_eq!(mp_of(&s), before, "and it costs no MP");
 
-    // It still records the expiry, so the reset goes out on time.
-    assert_eq!(
-        s.buff_tick(31_000).iter().filter(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).count(),
-        1
-    );
+    // It still records the expiry - silently, since the natural expiry sends no packet.
+    assert_eq!(s.buffs.len(), 1);
+    assert!(s.buff_tick(31_000).is_empty());
+    assert!(s.buffs.is_empty(), "the table expired it on time");
 
     // A skill with no entry says so rather than sending an empty mask.
     let out = s.gm_buff("1000 1");

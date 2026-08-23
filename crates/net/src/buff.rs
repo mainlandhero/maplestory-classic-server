@@ -52,7 +52,10 @@ use crate::packet::PacketWriter;
 /// `0x007D` **outbound** - TemporaryStatSet. See the module docs on the direction collision.
 pub const TEMPORARY_STAT_SET: u16 = 0x007D;
 
-/// `0x007E` outbound - TemporaryStatReset. `u8, u8, u8, raw[124]`.
+/// `0x007E` outbound - TemporaryStatReset. `u8, u8, u8, raw[124]`, **and then more**.
+///
+/// See [`temporary_stat_reset`]: the documented 127 bytes are not enough, and the client says
+/// so by throwing.
 pub const TEMPORARY_STAT_RESET: u16 = 0x007E;
 
 /// `0x013C` - the client asking to use a skill. `u32 skillId, u32 level`, then a tail.
@@ -221,20 +224,62 @@ pub const TAIL_KNOWN_TOO_SHORT: usize = 18;
 
 /// `0x007E` - clear these stats.
 ///
-/// `u8, u8, u8` then the mask. The three leading bytes are zero: `0x007E`'s conditional extra
-/// reads are gated on bits **27** and **411** only, so a mask carrying neither - which is
-/// every mask this server builds today - makes the body exactly 127 bytes. **[L]**
+/// `u8, u8, u8`, the mask, then a zero tail.
+///
+/// # 127 bytes killed the client, one handler after `0x007D` did
+///
+/// 2026-08-22, the owner: *"The buff works, but after the buff expired, the client crashed
+/// again."* The same fault as the grant packet and the same shape of cause, thirty seconds
+/// later - and this time the arithmetic comes out **exactly**, with nothing unexplained.
+///
+/// `research/buffs.md` §7.1 gives the body as `u8, u8, u8, raw[124]` = 127, on the reading
+/// that `0x007E`'s conditional extras are gated on bits 27 and 411 only. `tools/reads.py` at
+/// depth 4 on `FUN_142d56f80` finds **three reads after the mask** that the §7.1 list does
+/// not mention: **[L]**
+///
+/// ```text
+/// 0x142d56fc3  u8
+/// 0x142d56fd1  u8
+/// 0x142d56fdf  u8
+/// 0x142d57040  raw          <- 124, the mask
+/// 0x142d571c3  u32 via helper, gated
+/// 0x142d57322  u8           <- THREW HERE
+/// 0x142d57360  u8
+/// ```
+///
+/// The throw stack names `0x142d57327`, the instruction after the `call` at `0x142d57322`,
+/// and `0x1406e8b71`, which is the raise path of the **u8** primitive - `cmp edi, 1 / jb`.
+/// **[L]** So the client consumed all 127 and then wanted one more byte. That also says the
+/// gated `u32` did *not* fire: had it, the throw would have been at `0x142d571c3`.
+///
+/// Minimum is therefore `3 + 124 + 1 + 1` = **129**, or **133** if that `u32` ever fires.
+///
+/// # Why the tail is [`TAIL_LEN`] anyway
+///
+/// Because the grant packet taught that this enumeration can still be short, and because
+/// **198 bytes of `0x007D` were accepted without complaint** - the first hard evidence that
+/// this client ignores trailing bytes rather than checking that a body was fully consumed.
+/// Padding is now supported by a measurement instead of a hope. `research/buffs-underflow.md`
 pub fn temporary_stat_reset(bits: &[u32]) -> Vec<u8> {
+    temporary_stat_reset_with_tail(bits, TAIL_LEN)
+}
+
+/// [`temporary_stat_reset`] with the tail length chosen by the caller - `!unbuff`'s argument.
+pub fn temporary_stat_reset_with_tail(bits: &[u32], tail: usize) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u8(0);
     w.u8(0);
     w.u8(0);
     w.bytes(&stat_mask(bits));
+    w.bytes(&vec![0u8; tail]);
     w.into_vec()
 }
 
-/// Body length of a [`temporary_stat_reset`]: 3 + the mask.
-pub const TEMPORARY_STAT_RESET_LEN: usize = 3 + MASK_LEN;
+/// Body length of a [`temporary_stat_reset`]: 3 + the mask + the tail.
+pub const TEMPORARY_STAT_RESET_LEN: usize = 3 + MASK_LEN + TAIL_LEN;
+
+/// The shortest `0x007E` known to be too short: the client threw with **127**.
+pub const RESET_KNOWN_TOO_SHORT: usize = 3 + MASK_LEN;
 
 /// A decoded [`CLIENT_SKILL_USE`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -461,15 +506,25 @@ mod tests {
         assert_eq!(i16::from_le_bytes([body[134], body[135]]), 7, "then bit 200");
     }
 
-    /// The reset body is the 127 bytes the handler reads when the mask carries neither of its
-    /// two conditional bits.
+    /// **The reset body is longer than the 127 bytes that killed a client.**
+    ///
+    /// `reads.py` puts the minimum at 129 - `u8, u8, u8, raw[124], u8, u8` - and 133 if the
+    /// gated `u32` at `0x142d571c3` fires. The literal below is the padded length; the
+    /// assertion that matters is that it clears both.
     #[test]
-    fn the_reset_body_is_127_bytes() {
+    fn the_reset_body_clears_the_length_that_threw() {
         let body = temporary_stat_reset(&[CTS_SPEED]);
-        assert_eq!(body.len(), 127);
         assert_eq!(body.len(), TEMPORARY_STAT_RESET_LEN);
+        assert!(body.len() > RESET_KNOWN_TOO_SHORT, "127 threw on 2026-08-22");
+        assert!(body.len() >= 133, "and 133 is the maximum the enumerated reads can want");
         assert_eq!(&body[0..3], &[0, 0, 0]);
         assert_eq!(body[3 + 8], 0x08, "the same bit 92");
+        assert!(body[3 + MASK_LEN..].iter().all(|b| *b == 0), "the tail is zero");
+
+        // The override moves the length and nothing else.
+        let probe = temporary_stat_reset_with_tail(&[CTS_SPEED], 200);
+        assert_eq!(probe.len(), 3 + MASK_LEN + 200);
+        assert_eq!(&probe[..3 + MASK_LEN], &body[..3 + MASK_LEN]);
     }
 
     /// **The owner's real `0x013C`, off the wire.** 51 bytes, 12:59 run of 2026-08-22.

@@ -81,42 +81,35 @@
         Then, either way, try  !map 10001000  - Henesys town, the map next door, also never
         loaded. Park dies and town loads -> that one map. Both die -> that part of the world.
 
-     2. PRESS NIMBLE FEET AGAIN. It killed the client last time and the reason is known.
-        The packet was SEVEN BYTES SHORT of what the client wanted. That is measured, not
-        guessed: exit code 0xE06D7363 is an unhandled C++ throw, the throw stack names
-        0x142d5690c inside the 0x007D handler, and that read primitive's own code is
-        "cmp edi,4 / jb <raise>" where edi is bytes-remaining. The body is 152 -> 198 now.
-        THE CRASH ALSO PROVED SOMETHING: the throw happened INSIDE FUN_142d563d0, so 0x007D
-        really is TemporaryStatSet. That was an inference until last night.
-        BE READY FOR IT TO DIE AGAIN. Four separate static instruments say 152 should have
-        been enough, so the extra 46 bytes are slack around a number nobody has derived.
-          buff icon top right, counts ~30 s, YOU WALK FASTER -> everything is right: the
-                           opcode, the 124-byte mask, bit 92 = Speed, the i16 width, and
-                           milliseconds. THEN SEE THE BISECT BELOW
-          icon appears and vanishes within a second -> the value is a u32, not an i16, so the
-                           duration reads as 0. One byte-width change, nothing else moves
-          icon stays 30 s but you do NOT move faster -> the packet is right and bit 92 is not
-                           Speed. I sweep 89-95 next
-          nothing at all, client fine -> 0x007D reached a branch that reads nothing
-          it dies the same way again -> 198 is still short, and the hidden consumer is bigger
-                           than anything the listings can explain
-          it dies DIFFERENTLY - a length complaint, a dialog -> the opposite problem: this
-                           reader DOES check for leftover bytes and the length must be exact
-        WATCH THE ICON **AND** THE FEET. The icon alone passes a wrong bit; the feet alone
-        pass a packet that never drew anything.
-        MP costs 10 at level 3 and the bar should move. THE COOLDOWN IS 180 SECONDS - that is
-        Skill.wz's own cooltime - and a second press inside it gets a chat line naming the
-        seconds left, which is NOT the bug. If nothing happens at all, type  !buff  : it sends
-        the identical bytes with no skill check, no MP and no cooldown, so !buff working while
-        the keypress does not is a statement about the gates and not about the packet.
-
-        IF IT WORKS, BISECT THE TAIL - this is the cheapest measurement in the whole plan and
-        it costs chat lines instead of launches:
-          !buff 1002 3 32     then 24, then 20
-        Each is one cast. The FIRST ONE THAT KILLS THE CLIENT is the answer: the true
-        requirement is between it and the last one that worked. Go DOWNWARDS from something
-        that worked, never upwards from something that did not - too short ends the session.
-        18 and below are refused outright, because 18 has already killed a client once.
+     2. THE BUFF WORKS. What is left is the packet that TAKES IT AWAY.
+        Confirmed last run and not to be re-tested: the icon, the countdown and the speed.
+        That settles the opcode, the 124-byte mask, bit 92 = Speed, the i16 width and
+        milliseconds - five things at once, and the hook log shows 0x007D dispatching and
+        RETURNING, which it had never done before.
+        Then thirty seconds later the client died. Same fault one handler over: the 127-byte
+        0x007E ran out and the u8 reader raised, at 0x142d57322. reads.py finds THREE reads
+        after the mask that research/buffs.md never listed, so the real minimum is 129, or
+        133 if a gated u32 fires.
+        TWO THINGS CHANGED, and only one of them is a length:
+          * the natural expiry now sends NOTHING. The client holds its own tExpire - that is
+            what 0x007D's duration field feeds - so it drops the stat on its own schedule and
+            our table drops it on the same clock. No packet crosses.
+          * 0x007E itself is 191 bytes now and fires ONLY from !unbuff.
+        So:
+          a. press Nimble Feet, then WAIT OUT THE THIRTY SECONDS and do nothing.
+               the icon fades on its own and the client lives -> done. The client expires its
+                            own buffs, and the packet that killed you twice is off the timer
+               the icon NEVER goes away -> the client does not self-expire after all. Harmless
+                            and very informative: !unbuff becomes mandatory rather than a test
+               it dies anyway -> something other than 0x007E is involved, and that is new
+          b. THEN type  !unbuff  . This is the only thing that sends 0x007E now.
+               the icon clears and the client lives -> 191 bytes is enough
+               the client dies -> 191 is still short, exactly as 127 and 152 were
+          c. if !unbuff works, bisect it the same way:  !unbuff 32  then 16, then 8.
+             The first one that kills the client is the answer. DOWNWARDS from what worked;
+             a tail that would recreate the 127-byte body is refused outright.
+        And the grant packet is bisectable the same way if you have the patience:
+          !buff 1002 3 32   then 24, then 20   (18 and below refused)
 
      3. MR. KIM, THE HALF THAT IS STILL UNTESTED. You skipped this last run.
         The window itself is confirmed - it opened with 30 slots and mesos moved both ways -
@@ -889,6 +882,9 @@ if ($SetFieldProbe) {
     Write-Host '  character", so 0x02D1 effect 0x41 is settled. And MAP 10 IS NOT'
     Write-Host '  FATAL - GoodTest logged in there first thing and was fine, which'
     Write-Host '  answered yesterday''s experiment in one login.'
+    Write-Host '  NIMBLE FEET WORKS - icon, countdown and speed. That one screen'
+    Write-Host '  settled 0x007D, the 124-byte mask, bit 92 = Speed, the i16 value'
+    Write-Host '  width and milliseconds, none of which could be read statically.'
     Write-Host '  THE STORAGE WINDOW OPENS: 30 slots, mesos both ways. Items and the'
     Write-Host '  fee are step 3 and have still never been seen.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
@@ -918,31 +914,28 @@ if ($SetFieldProbe) {
     Write-Host '     Then either way try  !map 10001000  - Henesys town, next door,'
     Write-Host '     also never loaded. Park dies + town loads -> that ONE map.'
     Write-Host ''
-    Write-Host '  2. PRESS NIMBLE FEET AGAIN. It killed the client; the reason is known.' -ForegroundColor Cyan
-    Write-Host '     The packet was SEVEN BYTES SHORT. Measured: 0xE06D7363 is an'
-    Write-Host '     unhandled C++ throw, the stack names 0x142d5690c inside the 0x007D'
-    Write-Host '     handler, and that reader is literally "cmp edi,4 / jb <raise>"'
-    Write-Host '     with edi = bytes remaining. Body is 152 -> 198 now.'
-    Write-Host '     The crash also PROVED 0x007D is TemporaryStatSet - it threw from'
-    Write-Host '     inside that handler. That was only an inference before.'
-    Write-Host '     BE READY FOR IT TO DIE AGAIN: four static instruments say 152'
-    Write-Host '     should have been enough, so the extra 46 bytes are slack.'
-    Write-Host '       icon + counts 30s + YOU WALK FASTER -> all of it is right'
-    Write-Host '       icon appears then vanishes  -> value is u32 not i16, duration 0'
-    Write-Host '       icon stays but no speed     -> packet right, bit 92 is not Speed'
-    Write-Host '       nothing, client fine        -> it reached a branch reading nothing'
-    Write-Host '       dies the SAME way           -> 198 is still short'
-    Write-Host '       dies DIFFERENTLY            -> it checks for leftover bytes and'
-    Write-Host '                                      the length must be exact'
-    Write-Host '     WATCH THE ICON **AND** THE FEET. Either alone passes a wrong answer.'
-    Write-Host '     MP costs 10. COOLDOWN IS 180s (Skill.wz''s own cooltime) and a'
-    Write-Host '     second press inside it gets a chat line - that is NOT the bug.'
-    Write-Host '     If nothing happens, type  !buff  - identical bytes, no skill check,'
-    Write-Host '     no MP, no cooldown.'
-    Write-Host '     IF IT WORKS, BISECT THE TAIL - chat lines, not launches:'
-    Write-Host '       !buff 1002 3 32   then 24, then 20'
-    Write-Host '     The first one that KILLS it is the answer. Go DOWNWARDS from what'
-    Write-Host '     worked, never up from what did not. 18 and below are refused.'
+    Write-Host '  2. THE BUFF WORKS. Now the packet that TAKES IT AWAY.' -ForegroundColor Cyan
+    Write-Host '     Confirmed, do not re-test: icon, countdown, speed. That settled'
+    Write-Host '     the opcode, the 124-byte mask, bit 92 = Speed, the i16 width and'
+    Write-Host '     milliseconds - five things at once.'
+    Write-Host '     Then 30s later it died: the 127-byte 0x007E ran out and the u8'
+    Write-Host '     reader raised at 0x142d57322. reads.py finds THREE reads after'
+    Write-Host '     the mask that research/buffs.md never listed - minimum is 129.'
+    Write-Host '     TWO changes, only one of them a length:'
+    Write-Host '       * the natural expiry now sends NOTHING. The client holds its'
+    Write-Host '         own tExpire, so both sides drop the stat with no packet.'
+    Write-Host '       * 0x007E is 191 bytes and fires ONLY from !unbuff.'
+    Write-Host '     a. press Nimble Feet, then WAIT OUT THE 30s and do nothing.'
+    Write-Host '          icon fades on its own, client lives -> done'
+    Write-Host '          icon NEVER goes away  -> the client does not self-expire.'
+    Write-Host '                                   Harmless, and very informative'
+    Write-Host '          it dies anyway        -> something other than 0x007E'
+    Write-Host '     b. THEN type  !unbuff  - the only thing that sends 0x007E now.'
+    Write-Host '          icon clears, client lives -> 191 bytes is enough'
+    Write-Host '          it dies                   -> 191 is short too'
+    Write-Host '     c. if !unbuff works, bisect:  !unbuff 32  then 16, then 8.'
+    Write-Host '        First one that kills it is the answer. DOWNWARDS only.'
+    Write-Host '     The grant is bisectable too:  !buff 1002 3 32  then 24, then 20.'
     Write-Host ''
     Write-Host '  3. MR. KIM - STILL UNTESTED, you skipped it last run.' -ForegroundColor Cyan
     Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and the'
@@ -979,8 +972,8 @@ if ($SetFieldProbe) {
     Write-Host '  the chat log; level-up +16 HP / +12 MP; relog keeps Etc and mesos;'
     Write-Host '  ores stack; !setrates 2 3 5 -> one banner.'
     Write-Host ''
-    Write-Host '  COMMANDS: !map !item !exp !heal !job !buff !npcecho !npcfx !migsweep'
-    Write-Host '  !exprate !mesorate !droprate !setrates !rates. !help lists them all.'
+    Write-Host '  COMMANDS: !map !item !exp !heal !job !buff !unbuff !npcecho !npcfx'
+    Write-Host '  !migsweep !exprate !mesorate !droprate !setrates !rates. !help lists all.'
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'

@@ -74,6 +74,7 @@ impl Session {
             "npcecho" => self.gm_npc_echo(arg),
             "npcfx" => self.gm_npc_effect(arg),
             "buff" => self.gm_buff(arg),
+            "unbuff" => self.gm_unbuff(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -539,6 +540,52 @@ impl Session {
             net::buff::MASK_LEN + 10 + tail
         ));
         out.extend(self.grant_buff_with_tail(skill_id, bl, now, tail));
+        out
+    }
+
+    /// `!unbuff [tailBytes]` - send `0x007E` for whatever buffs are held.
+    ///
+    /// # Why this is a command and not a timer
+    ///
+    /// The natural expiry does not send `0x007E` any more: the client holds its own
+    /// `tExpire` and drops the stat on schedule, and a 127-byte `0x007E` killed the client
+    /// thirty seconds after a working grant on 2026-08-22. Early removal - dispel, death,
+    /// logout - will need the packet, so it stays built and stays testable, but it fires only
+    /// when someone asks for it.
+    ///
+    /// The optional argument is the tail length, for the same downward bisect `!buff`
+    /// supports. 127 total - the length that already threw - is refused.
+    pub(super) fn gm_unbuff(&mut self, arg: &str) -> Vec<Reply> {
+        if self.claimed_character().is_none() {
+            return self.gm_ack("!unbuff REFUSED: no character is claimed.".to_string());
+        }
+        let tail = match arg.split_whitespace().next() {
+            None => net::buff::TAIL_LEN,
+            Some(t) => match t.parse::<usize>() {
+                Ok(v) if 3 + net::buff::MASK_LEN + v <= net::buff::RESET_KNOWN_TOO_SHORT => {
+                    return self.gm_ack(format!(
+                        "!unbuff: a {v}-byte tail makes {} bytes, at or below the {} that \
+                         already threw in the client. Bisect DOWNWARDS from a length that worked.",
+                        3 + net::buff::MASK_LEN + v,
+                        net::buff::RESET_KNOWN_TOO_SHORT
+                    ))
+                }
+                Ok(v) => v,
+                Err(_) => return self.gm_ack(format!("!unbuff: {t:?} is not a tail length.")),
+            },
+        };
+        let mut out = self.clear_buffs(tail);
+        if out.is_empty() {
+            return self.gm_ack("!unbuff: nothing is buffed right now.".to_string());
+        }
+        let len = 3 + net::buff::MASK_LEN + tail;
+        out.splice(
+            0..0,
+            self.gm_ack(format!(
+                "Clearing held buffs with a {len}-byte 0x007E ({tail}-byte tail). The reads \
+                 enumerate to 129, or 133 if the gated u32 fires; 127 threw."
+            )),
+        );
         out
     }
 

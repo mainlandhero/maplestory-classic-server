@@ -158,27 +158,51 @@ impl Session {
         }]
     }
 
-    /// Send `0x007E` for anything whose time is up. Called from [`Session::tick`].
+    /// Drop expired buffs from **our** table. Called from [`Session::tick`].
     ///
-    /// **The server expires it as well as the client**, even though the client holds its own
-    /// `tExpire` and would drop the icon on its own. Two reasons: our table is what decides
-    /// whether a recast is allowed to replace the bit, and a reset that the client has
-    /// already performed is harmless, while a bit we think is held and the client does not is
-    /// a desync nobody would see until the next cast did nothing.
+    /// # It no longer sends `0x007E`, and that is the point
+    ///
+    /// The owner, 2026-08-22: *"The buff works, but after the buff expired, the client crashed
+    /// again."* Thirty seconds after a working grant, this function sent a 127-byte `0x007E`
+    /// and the client threw an unhandled C++ exception reading one byte past the end. The
+    /// length is fixed now - see `net::buff::temporary_stat_reset` - but **the natural expiry
+    /// does not need that packet at all.**
+    ///
+    /// The client stores its own expiry: `research/buffs.md` §5.3 reads the decoder adding
+    /// the duration to the current tick and storing it, and `0x007D`'s duration field is what
+    /// feeds it. So at thirty seconds the client drops the stat whether or not we say so, and
+    /// the packet we were sending was pure risk on the one path every buff takes.
+    ///
+    /// The earlier reasoning here - "our table decides whether a recast may replace the bit,
+    /// and a desync would be invisible" - is still true and is still served: the table below
+    /// expires on the same clock the grant was stamped with, so both sides drop it at the
+    /// same moment without a packet crossing.
+    ///
+    /// **`0x007E` is still built and still testable**, by `!unbuff`, because early removal -
+    /// dispel, death, a logout - will need it. What changed is that a packet with a length
+    /// nobody has confirmed no longer fires automatically on a timer.
     pub(super) fn buff_tick(&mut self, now_ms: u64) -> Vec<Reply> {
-        let done: Vec<ActiveBuff> =
-            self.buffs.iter().copied().filter(|b| now_ms >= b.expires_ms).collect();
-        if done.is_empty() {
+        self.buffs.retain(|b| now_ms < b.expires_ms);
+        Vec::new()
+    }
+
+    /// Send `0x007E` for the bits we are holding, and drop them from the table.
+    ///
+    /// Deliberate removal only - `!unbuff`. Never on a timer; see [`Self::buff_tick`].
+    pub(super) fn clear_buffs(&mut self, tail: usize) -> Vec<Reply> {
+        if self.buffs.is_empty() {
             return Vec::new();
         }
-        self.buffs.retain(|b| now_ms < b.expires_ms);
-        let bits: Vec<u32> = done.iter().map(|b| b.bit).collect();
-        let skills: Vec<u32> = done.iter().map(|b| b.skill_id).collect();
+        let bits: Vec<u32> = self.buffs.iter().map(|b| b.bit).collect();
+        let skills: Vec<u32> = self.buffs.iter().map(|b| b.skill_id).collect();
+        self.buffs.clear();
         vec![Reply {
             opcode: net::buff::TEMPORARY_STAT_RESET,
-            body: net::buff::temporary_stat_reset(&bits),
+            body: net::buff::temporary_stat_reset_with_tail(&bits, tail),
             what: format!(
-                "TemporaryStatReset: CTS bit(s) {bits:?} expired (from skill(s) {skills:?})"
+                "TemporaryStatReset: clearing CTS bit(s) {bits:?} (from skill(s) {skills:?}), \
+                 {tail}-byte tail. NOT sent on natural expiry - the client holds its own \
+                 tExpire, and a 127-byte version of this killed the client on 2026-08-22"
             ),
         }]
     }

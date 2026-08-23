@@ -1096,6 +1096,31 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### Nimble Feet works, and one screen settled five unreadable things
+
+2026-08-22, the owner: *"The buff works, but after the buff expired, the client crashed again."*
+
+`0x007D` dispatched **and returned** - the hook writes those on return and it had never
+appeared for this opcode before - and the icon, the countdown and the speed were all on
+screen. That single packet settled, at once: the opcode; the 124-byte mask with big-endian
+bits inside each little-endian word; **CTS bit 92 is Speed** (the character moved faster);
+the value is an **`i16`**, which could not be read statically because the deciding constant
+lives in Themida-packed `.data`; and the duration is **milliseconds**. It also showed that a
+198-byte body is accepted without complaint, so this client does not check that a packet was
+fully consumed - which turns the padding below from a hope into a supported choice.
+
+**Then `0x007E` did the same thing one handler over**, thirty seconds later, and this time
+the arithmetic is exact. `reads.py` on `FUN_142d56f80` finds **three reads after the mask**
+that `research/buffs.md` §7.1 never lists, so the 127 bytes it specifies are `3 + 124`
+consumed and then a `u8` with nothing left - the throw stack names `0x142d57322` and the u8
+primitive's `cmp edi, 1 / jb` raise path. Minimum 129, or 133 if a gated `u32` fires.
+
+Two things changed and only one is a length: `0x007E` is padded like its sibling **and the
+natural expiry no longer sends it at all**. The client holds its own `tExpire` from
+`0x007D`'s duration field, so both sides drop the stat on the same clock with no packet
+crossing. `0x007E` now fires only from `!unbuff`, which is what dispel, death and logout will
+need. `research/buffs-underflow.md`.
+
 #### Nimble Feet crashed the client, and the crash proved the opcode
 
 2026-08-22 evening. First send of the `0x007D` packet `research/buffs.md` §7.1 specifies, and
