@@ -97,38 +97,50 @@
         HIT IT THREE TIMES AGAIN. It is a pure function of the contents, so clicks two and
         three must change nothing; anything that keeps shuffling is a different bug.
 
-     3. THE CASH SHOP - CLICK "INVEN" FIRST, THEN CASH SHOP. Two watches are armed and the
-        order is what makes them mean anything.
-        What you told me: the button highlights, depresses and makes a click sound. So the
-        control is live, and something after it refuses - which kills the two readings I had.
-        It is NOT the global being null: that address has 5459 references, it is the context
-        singleton, and if it were null every button would be dead. And the CashShop arm of the
-        dispatcher has NO CONDITION on it at all.
-        The dispatcher IS the status bar, read rather than guessed - its nineteen arms are
-        ChatLogMin, ChatLogMax, ChatPrev, ChatNext, ChatTargetSelect, CashShop, Menu, Shortcut,
-        Claim, Mailbox, Equip, Inven, Stat, StatUp, Skill, SkillUp, Key, QuickSlot, QuickSlotD.
-        CLICK "INVEN" FIRST. That is the positive control: Inven works, so 1411ab7b0 must log a
-        line for it. If it does not, the watch is not armed and nothing below means anything.
-        Then click Cash Shop two or three times and read client-patched\maplecw-hook.log:
-          WATCH lines for Inven but NONE for Cash Shop -> the click never reaches the
-                       dispatcher. The work is in the status-bar UI and no server change
-                       touches it
-          a line for Cash Shop from 1411ab7b0 and NONE from 142caee70 -> the dispatcher runs
-                       and the name never matches the CashShop arm. rdx on entry is the button
-                       index; comparing it against Inven's names the mismatch
-          lines from BOTH -> the sender refuses, and it is 1012 bytes to read
-          no WATCH lines at all, even for Inven -> the hook did not arm. Say so and ignore
-                       everything else
+     3. THE CASH SHOP. CLICK ANY OTHER STATUS-BAR BUTTON FIRST, THEN CASH SHOP.
+        The other button is the POSITIVE CONTROL and the order is the whole experiment. Use
+        whichever of these you can see - they are all handled by the same function as the Cash
+        Shop button, and they all work:
+            Equip   Inven (the inventory bags)   Stat   Skill   Key   Menu   Mailbox
+        One click on any one of them, then two or three on Cash Shop, then quit.
+
+        READ IT BACK WITH THIS - it is one line and it needs no elevation:
+          powershell -NoProfile -Command "Select-String -Path 'C:\MapleCW\client-patched\maplecw-hook.log' -Pattern 'WATCH #\d+: (0x1411ab7b0|0x142caee70)' | ForEach-Object { $_.Line }"
+
+          lines for the FIRST button, none after the Cash Shop clicks -> the click never
+                       reaches the dispatcher. That is a status-bar UI problem and no server
+                       change touches it
+          lines from 0x1411ab7b0 for Cash Shop and NONE from 0x142caee70 -> the dispatcher
+                       runs and the name never matches its CashShop arm. rdx on entry is the
+                       button index and comparing the two names the mismatch
+          lines from BOTH -> the sender is what refuses, and it is 1012 bytes to read
+          NO lines at all, not even for the first button -> the hook did not arm, and nothing
+                       else in this step means anything. Say so and ignore the rest
+          "watch on 0x1411ab7b0 disarmed after the hit limit" -> you clicked more than sixty
+                       status-bar buttons; the cap ran out and later clicks are missing
+
+        WHY THAT BUTTON LIST AND NOT ANOTHER. FUN_1411ab7b0 dispatches on the button's NAME,
+        and its nineteen arms are exactly StatusBar.img's own buttons - ChatLogMin, ChatLogMax,
+        ChatPrev, ChatNext, ChatTargetSelect, CashShop, Menu, Shortcut, Claim, Mailbox, Equip,
+        Inven, Stat, StatUp, Skill, SkillUp, Key, QuickSlot, QuickSlotD. That is read out of
+        the listing and matched against the WZ, not guessed.
+        The client also ships StatusBar3.img, a completely different modern bar whose Cash Shop
+        button lives under mainBar/menu. IT IS DEAD ART: monsterCollection, bossParty,
+        dailyGift and GuildCastle are all StatusBar3-only names and every one has ZERO code
+        references, while Inven, QuickSlotD and ChatTargetSelect from the classic bar have 1,
+        2 and 5. The control passes, so the negative means something.
+
         ON YOUR TWO QUESTIONS. "Does the server need to advertise that the cash shop is
-        available?" - very possibly yes, and it is the same shape as the channel list's
-        per-channel enable byte, which is a real precedent in this project. But it cannot be
-        WHY the button is silent, because the client would have to reach the sender to care.
+        available?" - very possibly, and with a precedent rather than a guess: the world list
+        carries a per-channel enable byte, and getting it wrong once emptied the Change Channel
+        dialog completely. But it cannot be why the button is silent, because a flag has to be
+        checked somewhere and the only conditional on this path is a null test on the context
+        singleton.
         "Since channels have to be advertised with their IP, I assume cash shop would have to
-        be too" - CHANNELS ARE NOT. Look at world_list_entry in crates/net/src/opcode.rs: a
-        channel entry carries a name, a user count and four bytes, and NO ADDRESS. The client
-        learns a channel's address only in the 0x0011 migrate reply, after it asks. So a cash
-        shop address would arrive the same way, which means it cannot be a precondition for
-        asking. research/cash-shop.md.
+        be too" - CHANNELS ARE NOT. world_list_entry in crates/net/src/opcode.rs writes a name,
+        a u32 user count and four bytes per channel, and no address at all; the client learns
+        one from the 0x0011 migrate reply AFTER it asks. So an address cannot be a precondition
+        for asking. research/cash-shop.md.
 
      4. GLANCE, NO SETUP: does a grey "<item> x<n> earned." line appear in the SCREEN MESSAGE
         AREA - the strip above the chat box - when you pick something up? It has gone out on
@@ -955,26 +967,30 @@ if ($SetFieldProbe) {
     Write-Host '                          refuses to commit if the count changed'
     Write-Host '     HIT IT THREE TIMES AGAIN - clicks 2 and 3 must change nothing.'
     Write-Host ''
-    Write-Host '  3. CASH SHOP - CLICK "INVEN" FIRST, THEN CASH SHOP.' -ForegroundColor Cyan
-    Write-Host '     Two watches are armed and the ORDER is what makes them mean'
-    Write-Host '     anything. Inven works, so 1411ab7b0 must log a line for it -'
-    Write-Host '     that is the positive control. No line for Inven means the'
-    Write-Host '     watch never armed and nothing below counts.'
-    Write-Host '     You said the button highlights, depresses and clicks. So the'
-    Write-Host '     control is live. It is NOT the global being null - that address'
-    Write-Host '     has 5459 references, it is the context singleton - and the'
-    Write-Host '     CashShop arm has NO condition on it at all.'
-    Write-Host '     Then click Cash Shop 2-3 times and read the hook log:'
-    Write-Host '       Inven logs, Cash Shop does NOT -> the click never reaches the'
-    Write-Host '                        dispatcher. Status-bar UI, not the protocol'
-    Write-Host '       1411ab7b0 only  -> the name never matches the CashShop arm'
-    Write-Host '       BOTH watches    -> the sender refuses; 1012 bytes to read'
-    Write-Host '       nothing at all  -> the hook did not arm. Ignore the rest'
+    Write-Host '  3. CASH SHOP. CLICK ANY OTHER STATUS-BAR BUTTON FIRST.' -ForegroundColor Cyan
+    Write-Host '     The other button is the POSITIVE CONTROL and the order is the'
+    Write-Host '     whole experiment. Any of these will do - same handler as Cash'
+    Write-Host '     Shop, and they all work:'
+    Write-Host '        Equip   Inven (the inventory bags)   Stat   Skill'
+    Write-Host '        Key     Menu    Mailbox'
+    Write-Host '     One click on one of those, then 2-3 on Cash Shop, then quit.'
+    Write-Host '     Read it back with the ONE-LINER printed under Logs: below.'
+    Write-Host '       control logs, Cash Shop does NOT -> the click never reaches'
+    Write-Host '                        the dispatcher. Status-bar UI, not protocol'
+    Write-Host '       0x1411ab7b0 only -> the name never matches the CashShop arm'
+    Write-Host '       BOTH addresses   -> the sender refuses; 1012 bytes to read'
+    Write-Host '       nothing at all   -> the hook did not arm. Ignore the rest'
+    Write-Host '       "disarmed after the hit limit" -> over sixty button clicks;'
+    Write-Host '                        the cap ran out and later ones are missing'
+    Write-Host '     The nineteen arms of that handler ARE StatusBar.img''s buttons,'
+    Write-Host '     matched against the WZ. The modern StatusBar3.img is DEAD ART:'
+    Write-Host '     its own names have ZERO code references while the classic bar''s'
+    Write-Host '     have 1, 2 and 5 - so the control passes.'
     Write-Host '     ON YOUR QUESTION: channels are NOT advertised with an IP. A'
     Write-Host '     channel entry is a name, a user count and four bytes - no'
     Write-Host '     address. The client learns it in the 0x0011 migrate reply AFTER'
-    Write-Host '     it asks, so an address cannot be a precondition for asking.'
-    Write-Host '     An "available" FLAG is a different matter and may well be real.'
+    Write-Host '     it asks, so an address cannot gate the asking. An "available"'
+    Write-Host '     FLAG is a different matter and may well be real.'
     Write-Host ''
     Write-Host '  4. GLANCE: when you pick something up, does a grey "<item> x<n>' -ForegroundColor Cyan
     Write-Host '     earned." line appear in the SCREEN MESSAGE AREA above the chat'
@@ -1038,5 +1054,8 @@ Write-Host 'Logs:'
 Write-Host "  $serverLog                 every packet both ways, and what each reply was"
 Write-Host "  $hookLog   client patches and faults"
 Write-Host "  $exitLog          how the client died; 0 is a hand-close"
+Write-Host ''
+Write-Host 'Read the Cash Shop watches back with this - no elevation needed:' -ForegroundColor DarkGray
+Write-Host ('  powershell -NoProfile -Command "Select-String -Path ''' + $hookLog + ''' -Pattern ''WATCH #\d+: (0x1411ab7b0|0x142caee70)'' | ForEach-Object { $_.Line }"') -ForegroundColor DarkGray
 Write-Host ''
 Write-Host "Then: powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Stop"

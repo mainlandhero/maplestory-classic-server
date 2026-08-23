@@ -257,3 +257,55 @@ Two watches, armed in the launcher's default `-SetFieldProbe` set (they displace
 | `1411ab7b0` for Cash Shop, nothing from `142caee70` | the dispatcher runs and the name never matches. `rdx` on entry is the button index; comparing it with Inven's names the mismatch |
 | both | the sender refuses, and it is 1012 bytes to read |
 | nothing at all, not even Inven | the hook did not arm and the run proves nothing |
+
+
+---
+
+# Part four: which status bar, and why the control button matters
+
+The owner: *"More specifically, I don't know what Inven is."* A fair question, and chasing it turned
+up something worth keeping.
+
+## `Inven` is the Inventory button, and the client ships two status bars
+
+`Inven` is a **WZ node name**, not a label on screen: `StatusBar.img/button:Inven`, the button
+that opens the item bags. Its siblings on the same bar are `Equip`, `Stat`, `Skill`, `Key`,
+`Menu`, `Shortcut`, `Mailbox` - and `CashShop`.
+
+But the client also ships **`StatusBar3.img`**, a completely different modern bar whose Cash
+Shop button lives at `mainBar/menu/button:CashShop` beside `Event`, `Character`, `Community`,
+`Setting` and `ExitDungeon`. If *that* were the bar in use, the click would go to a different
+dispatcher and the watch on `FUN_1411ab7b0` would be aimed at nothing.
+
+## Which one is live, with the control run first
+
+`tools/xref.py --string <name> --callers`, classic-bar names as the positive control and
+modern-bar-only names as the question: `[L]`
+
+```text
+  QuickSlotD           2 code reference(s)     StatusBar.img
+  Inven                1 code reference(s)     StatusBar.img
+  ChatTargetSelect     5 code reference(s)     StatusBar.img
+  monsterCollection    0 code reference(s)     StatusBar3.img only
+  bossParty            0 code reference(s)     StatusBar3.img only
+  dailyGift            0 code reference(s)     StatusBar3.img only
+  GuildCastle          0 code reference(s)     StatusBar3.img only
+```
+
+**The control passes, so the zeros mean something.** `StatusBar3.img` is dead art in this
+build - the same situation as `UI/UIWindow2.img/Trunk`, whose absence keeps the classic shop
+window unbuildable. This client draws `StatusBar.img`, `FUN_1411ab7b0` is its dispatcher, and
+the watch is aimed correctly.
+
+That also settles the button list: the nineteen arms of `FUN_1411ab7b0` **are**
+`StatusBar.img`'s own buttons, name for name, matched against the WZ rather than assumed.
+
+## So the control click can be any of them
+
+The point of clicking another button first is not `Inven` specifically - it is that **the
+control and the subject go through the same function**. `Equip`, `Stat`, `Skill`, `Key`,
+`Menu` and `Mailbox` are all in the same comparison chain and all work, so any one of them
+proves the watch is armed before Cash Shop's silence is allowed to mean anything.
+
+Without it, "no WATCH lines" has two readings - the click did not reach the dispatcher, or the
+hook never armed - and this project has spent runs on exactly that ambiguity.
