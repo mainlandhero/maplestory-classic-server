@@ -203,3 +203,73 @@ gated `u32` did not fire - had it, the throw would have been at `0x142d571c3` - 
 
 If the icon *never* disappears on its own, the client does not self-expire after all - a
 harmless and very informative outcome, and `!unbuff` becomes mandatory rather than a test.
+
+
+---
+
+# Part three: the client never removes a temporary stat, and `0x013F` is how it asks
+
+2026-08-22, later still. The owner: *"the buff works, but after the expiry, the buff did not go
+away. (It just kept flashing, but the temporary stats were still there) I also tried to
+pre-emptively kill the buff by right clicking on the icon, it also did not dismiss the buff."*
+
+Exit code this run was **`0x00000001`** - a hand-close. **No crash**, so removing `0x007E`
+from the expiry did stop the deaths. It also stopped the buff ending.
+
+## The retraction, and it was a written-down prediction
+
+The expiry stopped sending `0x007E` on the reading that the client would drop the stat itself:
+`buffs.md` §5.3 reads the decoder adding `0x007D`'s duration to the current tick and storing
+it, so the client plainly *knows* when the buff ends.
+
+It does know. **It flashes the icon and keeps the stat.** `tExpire` drives the animation and
+nothing else, and at the thirty-second mark the client sent **nothing at all** - not a
+request, not a report. `[L]`, from `world.log`: the grant is at `01:27:11.497`, and between
+`01:27:41` and the hand-close there is no packet from the client but movement and env
+reports.
+
+The plan named this outcome in advance - *"icon NEVER goes away -> the client does not
+self-expire. Harmless, and very informative"* - which is the only reason a wrong version was
+worth one run. **Removal is the server's job on both paths.**
+
+## `0x013F`, and how one capture pins its layout
+
+Right-clicking the icon produced **fourteen** identical 133-byte bodies in three seconds, one
+every ~180 ms. `[L]` That cadence is a retry loop rather than fourteen clicks, and it is the
+clearest thing the client has said about waiting on us.
+
+The body has exactly **three** non-zero bytes: `ea 03` at 0..1, and `0x08` at offset 17.
+
+```text
+ea030000 0000000000000000000000000008 0000...   (133 bytes)
+^^^^^^^^ u32 skillId = 1002                     ^ offset 17
+```
+
+For each candidate mask start, two things must both come out right - the mask must be 124
+bytes, and the set bit must decode by the client's own
+`words[i>>5] >> (31 - (i&31))` to a stat that was actually granted:
+
+| mask starts at | mask length | the `0x08` decodes to |
+|---:|---:|---|
+| 4 | 129 | bit 116 |
+| 8 | 125 | bit 84 |
+| **9** | **124** | **bit 92** - the Speed bit we granted |
+| 10 | 123 | bit 36 |
+
+**Only offset 9 satisfies both.** `[D]` So the body is `u32 skillId`, five bytes, then the
+same 124-byte CTS mask `0x007D` and `0x007E` use.
+
+This is **one sample**, and one sample is a reading rather than a settled layout - but a
+coincidence would have to satisfy both constraints at once, and the bit it lands on is the
+one the player was pointing at.
+
+## What shipped
+
+* `0x013F` is parsed and answered with `0x007E` for the bits **the server is actually
+  holding**. A bit we never granted is refused with a chat line rather than honoured: telling
+  the client to clear a stat that came from somewhere else is worse than doing nothing.
+* The expiry sends `0x007E` again.
+* `net::buff::bits_in_mask` is the exact inverse of `stat_mask`, with a round-trip test over
+  all 992 bits - a decoder off by one would cancel the wrong stat and report success.
+* Right-clicking is now the **fast** way to test `0x007E`: no thirty-second wait, and it
+  retries by itself if the answer is wrong.

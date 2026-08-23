@@ -64,6 +64,32 @@ pub const CLIENT_SKILL_USE: u16 = 0x013C;
 /// `0x013D` - the send-counter census. **Never answered**; see `research/buffs.md` §2.5.
 pub const CLIENT_SKILL_CENSUS: u16 = 0x013D;
 
+/// `0x013F` - the player right-clicked a buff icon. See [`parse_skill_cancel`].
+pub const CLIENT_SKILL_CANCEL: u16 = 0x013F;
+
+/// Where the 124-byte mask starts inside a [`CLIENT_SKILL_CANCEL`] body.
+///
+/// **Two independent constraints pick this out and nothing else fits.** The one capture is
+/// 133 bytes with exactly three non-zero bytes: `ea 03` at 0..1 (skill 1002) and `0x08` at
+/// offset 17. For each candidate start, the mask must be **124 bytes long** and the set bit
+/// must decode - by the client's own `words[i>>5] >> (31 - (i&31))` - to a stat that was
+/// actually granted:
+///
+/// ```text
+/// start  mask length  the 0x08 decodes to
+///     4          129  bit 116
+///     8          125  bit  84
+///     9          124  bit  92   <- both right, and 92 is the Speed bit we granted
+///    10          123  bit  36
+/// ```
+///
+/// **[D]** from one body. It is one sample, so it is a reading rather than a settled layout -
+/// but a coincidence would have to satisfy both constraints at once.
+pub const CANCEL_MASK_OFFSET: usize = 9;
+
+/// Total length of a [`CLIENT_SKILL_CANCEL`] body: the 9-byte header and the mask.
+pub const CLIENT_SKILL_CANCEL_LEN: usize = CANCEL_MASK_OFFSET + MASK_LEN;
+
 /// The character-temporary-stat bit for movement speed.
 ///
 /// **[L]**, from `FUN_1429755a0` - the client's own guard that refuses a second Nimble Feet
@@ -281,6 +307,55 @@ pub const TEMPORARY_STAT_RESET_LEN: usize = 3 + MASK_LEN + TAIL_LEN;
 /// The shortest `0x007E` known to be too short: the client threw with **127**.
 pub const RESET_KNOWN_TOO_SHORT: usize = 3 + MASK_LEN;
 
+/// Every CTS bit set in a 124-byte mask, ascending.
+///
+/// The inverse of [`stat_mask`], and there is a round-trip test, because a decoder that
+/// disagreed with the encoder by one bit would cancel the wrong stat and report success.
+pub fn bits_in_mask(mask: &[u8]) -> Vec<u32> {
+    let mut out = Vec::new();
+    for (w, chunk) in mask.chunks_exact(4).enumerate() {
+        let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        if word == 0 {
+            continue;
+        }
+        for b in 0..32u32 {
+            if (word >> (31 - b)) & 1 == 1 {
+                out.push(w as u32 * 32 + b);
+            }
+        }
+    }
+    out
+}
+
+/// A decoded [`CLIENT_SKILL_CANCEL`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillCancel {
+    pub skill_id: u32,
+    /// The CTS bits the client wants removed.
+    pub bits: Vec<u32>,
+}
+
+/// Parse a `0x013F` body - the player right-clicked a buff icon.
+///
+/// # The client will not remove a stat by itself, and this is how it asks
+///
+/// The owner, 2026-08-22: *"after the expiry, the buff did not go away. (It just kept flashing,
+/// but the temporary stats were still there) I also tried to pre-emptively kill the buff by
+/// right clicking on the icon, it also did not dismiss the buff."*
+///
+/// Both halves are the same fact. Right-clicking sent **fourteen** `0x013F` bodies in three
+/// seconds, one every ~180 ms - a retry loop, not fourteen clicks - and each was dropped. At
+/// the natural expiry the client sent **nothing at all** and simply flashed the icon. So the
+/// client's `tExpire` drives the *animation* and nothing else: **the server owns removal**,
+/// and `0x007E` is mandatory rather than a courtesy. `research/buffs-underflow.md` part three.
+pub fn parse_skill_cancel(body: &[u8]) -> Option<SkillCancel> {
+    let mask = body.get(CANCEL_MASK_OFFSET..CANCEL_MASK_OFFSET + MASK_LEN)?;
+    Some(SkillCancel {
+        skill_id: u32::from_le_bytes(body.get(0..4)?.try_into().ok()?),
+        bits: bits_in_mask(mask),
+    })
+}
+
 /// A decoded [`CLIENT_SKILL_USE`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkillUse {
@@ -476,6 +551,40 @@ mod tests {
             assert!(probe[134..].iter().all(|b| *b == 0));
         }
         assert_eq!(temporary_stat_set_with_tail(&[stat], TAIL_LEN), default);
+    }
+
+    /// **The mask decoder is the exact inverse of the encoder**, for every legal bit.
+    ///
+    /// A decoder off by one would cancel a stat the player did not ask about and report
+    /// success, which is the silent-wrong-answer shape this project keeps paying for.
+    #[test]
+    fn every_bit_round_trips_through_the_mask_and_back() {
+        for bit in 0..MAX_CTS_BIT {
+            assert_eq!(bits_in_mask(&stat_mask(&[bit])), vec![bit], "bit {bit}");
+        }
+        assert_eq!(bits_in_mask(&stat_mask(&[])), Vec::<u32>::new());
+        assert_eq!(bits_in_mask(&stat_mask(&[92, 7, 400])), vec![7, 92, 400], "ascending");
+    }
+
+    /// **The owner's real `0x013F`, off the wire.** 133 bytes, right-clicking Nimble Feet.
+    ///
+    /// The capture has exactly three non-zero bytes, and the layout below is the only one
+    /// that makes the mask 124 bytes AND decodes the set bit to 92 - the Speed stat that had
+    /// just been granted. Both constraints, one answer.
+    #[test]
+    fn the_real_cancel_request_names_the_skill_and_the_bit() {
+        let mut body = vec![0u8; CLIENT_SKILL_CANCEL_LEN];
+        assert_eq!(body.len(), 133, "the captured length");
+        body[0..4].copy_from_slice(&NIMBLE_FEET.to_le_bytes());
+        body[17] = 0x08; // the only other non-zero byte in the capture
+
+        let c = parse_skill_cancel(&body).expect("133 bytes parses");
+        assert_eq!(c.skill_id, NIMBLE_FEET);
+        assert_eq!(c.bits, vec![CTS_SPEED], "byte 17 is mask byte 8, which is bit 92");
+
+        // Short bodies are refused rather than read past the end.
+        assert!(parse_skill_cancel(&body[..132]).is_none());
+        assert!(parse_skill_cancel(&[]).is_none());
     }
 
     /// Seconds reach the wire as milliseconds, at every level. The failure this catches shows

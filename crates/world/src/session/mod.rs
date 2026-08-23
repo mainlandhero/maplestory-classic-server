@@ -555,6 +555,12 @@ impl Session {
             net::buff::CLIENT_SKILL_USE => {
                 return self.on_skill_use(body.get(2..).unwrap_or(&[]))
             }
+            // Right-click on a buff icon. It **retries every ~180 ms** until answered - the
+            // 2026-08-22 run took fourteen of them in three seconds - so this is not one of
+            // the packets that can be left alone.
+            net::buff::CLIENT_SKILL_CANCEL => {
+                return self.on_skill_cancel(body.get(2..).unwrap_or(&[]))
+            }
             // **Two AP opcodes, not one.** 0x0138 is a single + click and 0x0139 is the
             // bulk dialog; answering only the second still looks broken to anyone using the
             // button, which is what happened. Both latch ctx+0x2330 on send and only a

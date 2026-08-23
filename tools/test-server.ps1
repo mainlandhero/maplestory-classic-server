@@ -81,34 +81,32 @@
         Then, either way, try  !map 10001000  - Henesys town, the map next door, also never
         loaded. Park dies and town loads -> that one map. Both die -> that part of the world.
 
-     2. THE BUFF WORKS. What is left is the packet that TAKES IT AWAY.
-        Confirmed last run and not to be re-tested: the icon, the countdown and the speed.
-        That settles the opcode, the 124-byte mask, bit 92 = Speed, the i16 width and
-        milliseconds - five things at once, and the hook log shows 0x007D dispatching and
-        RETURNING, which it had never done before.
-        Then thirty seconds later the client died. Same fault one handler over: the 127-byte
-        0x007E ran out and the u8 reader raised, at 0x142d57322. reads.py finds THREE reads
-        after the mask that research/buffs.md never listed, so the real minimum is 129, or
-        133 if a gated u32 fires.
-        TWO THINGS CHANGED, and only one of them is a length:
-          * the natural expiry now sends NOTHING. The client holds its own tExpire - that is
-            what 0x007D's duration field feeds - so it drops the stat on its own schedule and
-            our table drops it on the same clock. No packet crosses.
-          * 0x007E itself is 191 bytes now and fires ONLY from !unbuff.
-        So:
-          a. press Nimble Feet, then WAIT OUT THE THIRTY SECONDS and do nothing.
-               the icon fades on its own and the client lives -> done. The client expires its
-                            own buffs, and the packet that killed you twice is off the timer
-               the icon NEVER goes away -> the client does not self-expire after all. Harmless
-                            and very informative: !unbuff becomes mandatory rather than a test
-               it dies anyway -> something other than 0x007E is involved, and that is new
-          b. THEN type  !unbuff  . This is the only thing that sends 0x007E now.
-               the icon clears and the client lives -> 191 bytes is enough
-               the client dies -> 191 is still short, exactly as 127 and 152 were
-          c. if !unbuff works, bisect it the same way:  !unbuff 32  then 16, then 8.
-             The first one that kills the client is the answer. DOWNWARDS from what worked;
-             a tail that would recreate the 127-byte body is refused outright.
-        And the grant packet is bisectable the same way if you have the patience:
+     2. THE BUFF WORKS AND STAYS FOR EVER. Taking it off is the whole of this step.
+        Confirmed twice and not to be re-tested: the icon, the countdown, the speed. Nothing
+        about the grant needs looking at again.
+        What last run settled, and it is the opposite of what I expected: THE CLIENT NEVER
+        REMOVES A TEMPORARY STAT BY ITSELF. Your words - "after the expiry, the buff did not
+        go away. (It just kept flashing, but the temporary stats were still there)" - and at
+        the thirty-second mark the client sent nothing at all. tExpire drives the FLASHING and
+        nothing else. And the right-click sent 0x013F fourteen times in three seconds, one
+        every ~180 ms, which is a retry loop rather than fourteen clicks.
+        So removal is the server's job on both paths, and both are built now:
+          a. cast it, then RIGHT-CLICK THE ICON. This is the quick one - no waiting.
+               the buff goes away and the speed drops -> both the new opcode and the 191-byte
+                            0x007E are right
+               nothing happens, no error on screen -> 0x013F's layout is wrong. It is read as
+                            u32 skillId, 5 bytes, then the 124-byte mask; two constraints
+                            picked that out of one capture and one capture is one capture
+               a chat line saying nothing is held -> the mask decoded to a bit we did not
+                            grant, which names the layout error precisely
+               the client dies -> the 191-byte 0x007E is short, like 127 and 152 were
+          b. cast it again and WAIT OUT THE THIRTY SECONDS.
+               it disappears on its own -> the expiry path works too
+               it flashes for ever again -> the reset went out and did nothing, which is a
+                            different fault from last time and worth the log
+          c. if (a) works, bisect the reset:  !unbuff 32  then 16, then 8.
+             The first one that kills the client is the answer. DOWNWARDS from what worked.
+        The grant is bisectable the same way if you have patience:
           !buff 1002 3 32   then 24, then 20   (18 and below refused)
 
      3. MR. KIM, THE HALF THAT IS STILL UNTESTED. You skipped this last run.
@@ -882,9 +880,10 @@ if ($SetFieldProbe) {
     Write-Host '  character", so 0x02D1 effect 0x41 is settled. And MAP 10 IS NOT'
     Write-Host '  FATAL - GoodTest logged in there first thing and was fine, which'
     Write-Host '  answered yesterday''s experiment in one login.'
-    Write-Host '  NIMBLE FEET WORKS - icon, countdown and speed. That one screen'
-    Write-Host '  settled 0x007D, the 124-byte mask, bit 92 = Speed, the i16 value'
-    Write-Host '  width and milliseconds, none of which could be read statically.'
+    Write-Host '  NIMBLE FEET WORKS - icon, countdown and speed, twice. That one'
+    Write-Host '  screen settled 0x007D, the 124-byte mask, bit 92 = Speed, the i16'
+    Write-Host '  value width and milliseconds, none readable statically. Taking the'
+    Write-Host '  buff OFF is what is left, and step 2 is only about that.'
     Write-Host '  THE STORAGE WINDOW OPENS: 30 slots, mesos both ways. Items and the'
     Write-Host '  fee are step 3 and have still never been seen.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
@@ -914,28 +913,30 @@ if ($SetFieldProbe) {
     Write-Host '     Then either way try  !map 10001000  - Henesys town, next door,'
     Write-Host '     also never loaded. Park dies + town loads -> that ONE map.'
     Write-Host ''
-    Write-Host '  2. THE BUFF WORKS. Now the packet that TAKES IT AWAY.' -ForegroundColor Cyan
-    Write-Host '     Confirmed, do not re-test: icon, countdown, speed. That settled'
-    Write-Host '     the opcode, the 124-byte mask, bit 92 = Speed, the i16 width and'
-    Write-Host '     milliseconds - five things at once.'
-    Write-Host '     Then 30s later it died: the 127-byte 0x007E ran out and the u8'
-    Write-Host '     reader raised at 0x142d57322. reads.py finds THREE reads after'
-    Write-Host '     the mask that research/buffs.md never listed - minimum is 129.'
-    Write-Host '     TWO changes, only one of them a length:'
-    Write-Host '       * the natural expiry now sends NOTHING. The client holds its'
-    Write-Host '         own tExpire, so both sides drop the stat with no packet.'
-    Write-Host '       * 0x007E is 191 bytes and fires ONLY from !unbuff.'
-    Write-Host '     a. press Nimble Feet, then WAIT OUT THE 30s and do nothing.'
-    Write-Host '          icon fades on its own, client lives -> done'
-    Write-Host '          icon NEVER goes away  -> the client does not self-expire.'
-    Write-Host '                                   Harmless, and very informative'
-    Write-Host '          it dies anyway        -> something other than 0x007E'
-    Write-Host '     b. THEN type  !unbuff  - the only thing that sends 0x007E now.'
-    Write-Host '          icon clears, client lives -> 191 bytes is enough'
-    Write-Host '          it dies                   -> 191 is short too'
-    Write-Host '     c. if !unbuff works, bisect:  !unbuff 32  then 16, then 8.'
+    Write-Host '  2. THE BUFF WORKS AND STAYS FOR EVER. Taking it off is the step.' -ForegroundColor Cyan
+    Write-Host '     Confirmed twice, do not re-test: icon, countdown, speed.'
+    Write-Host '     Last run settled the opposite of what I expected: THE CLIENT'
+    Write-Host '     NEVER REMOVES A STAT BY ITSELF. At 30s it sent nothing and just'
+    Write-Host '     flashed - tExpire drives the animation and nothing else. And the'
+    Write-Host '     right-click sent 0x013F FOURTEEN times in three seconds, one'
+    Write-Host '     every ~180ms: a retry loop, not fourteen clicks.'
+    Write-Host '     Both removal paths are built now.'
+    Write-Host '     a. cast it, then RIGHT-CLICK THE ICON. No waiting.'
+    Write-Host '          buff goes, speed drops -> the new opcode and the 191-byte'
+    Write-Host '                                    0x007E are both right'
+    Write-Host '          nothing at all         -> 0x013F''s layout is wrong. It is'
+    Write-Host '                                    read as u32 skillId, 5 bytes, then'
+    Write-Host '                                    the 124-byte mask, from ONE capture'
+    Write-Host '          "nothing is held" line -> the mask decoded to a bit we never'
+    Write-Host '                                    granted - names the error exactly'
+    Write-Host '          the client dies        -> 191 is short, like 127 and 152'
+    Write-Host '     b. cast again and WAIT OUT THE 30s.'
+    Write-Host '          it disappears  -> the expiry path works too'
+    Write-Host '          flashes for ever -> the reset went out and did nothing, which'
+    Write-Host '                              is a NEW fault and worth the log'
+    Write-Host '     c. if (a) works, bisect:  !unbuff 32  then 16, then 8.'
     Write-Host '        First one that kills it is the answer. DOWNWARDS only.'
-    Write-Host '     The grant is bisectable too:  !buff 1002 3 32  then 24, then 20.'
+    Write-Host '     The grant bisects too:  !buff 1002 3 32  then 24, then 20.'
     Write-Host ''
     Write-Host '  3. MR. KIM - STILL UNTESTED, you skipped it last run.' -ForegroundColor Cyan
     Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and the'

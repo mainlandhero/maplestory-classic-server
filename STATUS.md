@@ -1096,6 +1096,33 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### The client never removes a temporary stat, and `0x013F` is how it asks
+
+2026-08-22, the owner: *"the buff works, but after the expiry, the buff did not go away. (It just
+kept flashing, but the temporary stats were still there) I also tried to pre-emptively kill
+the buff by right clicking on the icon, it also did not dismiss the buff."*
+
+**No crash** - the client hand-closed with exit code 1 - so taking `0x007E` off the expiry did
+stop the deaths. It also stopped the buff ending, and that was a retraction waiting to happen.
+
+The reasoning for removing it was that `0x007D`'s duration reaches the client's own `tExpire`,
+so the client would drop the stat itself. It *knows* when the buff ends and **flashes the
+icon**; it does not remove anything, and at the thirty-second mark it sent nothing at all.
+`tExpire` drives the animation and nothing else. **Removal is the server's job on both paths.**
+The plan named that outcome in advance, which is the only reason the wrong version was worth
+one run.
+
+Right-clicking the icon sends **`0x013F`**, and it sent **fourteen** identical 133-byte bodies
+in three seconds - one every ~180 ms, a retry loop rather than fourteen clicks. One capture
+pins its layout, because two constraints have to hold at once: the mask must be 124 bytes
+**and** the single set bit must decode to a stat that was granted. Only a mask starting at
+body offset **9** does both, landing on bit 92. So the body is `u32 skillId`, five bytes, then
+the same CTS mask. `research/buffs-underflow.md` part three.
+
+Both removal paths are built. A cancel for a bit the server is not holding is refused with a
+line rather than honoured, and `bits_in_mask` is the exact inverse of `stat_mask` with a
+round-trip test over all 992 bits.
+
 #### Nimble Feet works, and one screen settled five unreadable things
 
 2026-08-22, the owner: *"The buff works, but after the buff expired, the client crashed again."*

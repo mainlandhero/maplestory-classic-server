@@ -336,8 +336,9 @@ next.** This list is deliberately coarse so the two cannot drift; do not duplica
       out, duration in **milliseconds**. The icon, the countdown and the speed all drew, which
       settled the opcode, bit 92 = Speed and the `i16` value width in one go. Nimble Feet
       costs MP and honours `Skill.wz`'s 180-second cooltime.
-      `0x007E` is built but **not sent on natural expiry** - the client self-expires and a
-      127-byte version of it killed the client. `!unbuff` sends it deliberately.
+      Removal is the SERVER's job: the client flashes the icon at `tExpire` and keeps the
+      stat. `0x007E` goes out on expiry and on `0x013F`, the right-click, which the client
+      retries every ~180 ms until answered. `!unbuff` bisects its length.
       `research/buffs.md`, `research/buffs-underflow.md`.
 - [ ] The classic shop counter - **row structure now decoded**, price at `row+0x38`, not yet
       built (`research/classic-shop-rows.md`). Then parties and the cash shop.

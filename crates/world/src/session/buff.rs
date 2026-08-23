@@ -19,6 +19,17 @@
 //! **four more minutes**, walking, fighting and changing maps. So a refusal here can be a
 //! chat line, and it is.
 //!
+//! # The client never removes a temporary stat by itself
+//!
+//! `0x007D`'s duration reaches the client's own `tExpire`, and it was reasonable to think
+//! that meant the client would drop the stat on schedule. It does not: it **flashes the icon
+//! and waits**. The owner, 2026-08-22: *"after the expiry, the buff did not go away. (It just kept
+//! flashing, but the temporary stats were still there)"* - and at that moment the client sent
+//! nothing at all.
+//!
+//! Right-clicking the icon is how it asks: `0x013F`, retried every ~180 ms until something
+//! answers. So **removal is the server's job on both paths**, and `0x007E` is mandatory.
+//!
 //! # Every effect hangs off "the cast was allowed"
 //!
 //! MP, the stat change, the grant and the cooldown stamp are all reached through one `Ok`,
@@ -158,37 +169,102 @@ impl Session {
         }]
     }
 
-    /// Drop expired buffs from **our** table. Called from [`Session::tick`].
+    /// Expire buffs whose time is up, and **tell the client**, because it will not do it.
     ///
-    /// # It no longer sends `0x007E`, and that is the point
+    /// # The retraction, and the observation that forced it
     ///
-    /// The owner, 2026-08-22: *"The buff works, but after the buff expired, the client crashed
-    /// again."* Thirty seconds after a working grant, this function sent a 127-byte `0x007E`
-    /// and the client threw an unhandled C++ exception reading one byte past the end. The
-    /// length is fixed now - see `net::buff::temporary_stat_reset` - but **the natural expiry
-    /// does not need that packet at all.**
+    /// This function sent `0x007E` on expiry, then stopped, and now sends it again. The
+    /// middle step was wrong and one run said so.
     ///
-    /// The client stores its own expiry: `research/buffs.md` §5.3 reads the decoder adding
-    /// the duration to the current tick and storing it, and `0x007D`'s duration field is what
-    /// feeds it. So at thirty seconds the client drops the stat whether or not we say so, and
-    /// the packet we were sending was pure risk on the one path every buff takes.
+    /// The reasoning for stopping was that the client holds its own `tExpire` - true, and
+    /// `research/buffs.md` §5.3 reads the decoder storing it - so it would drop the stat by
+    /// itself and the packet was pure risk on the one path every buff takes. The owner,
+    /// 2026-08-22: *"after the expiry, the buff did not go away. (It just kept flashing, but
+    /// the temporary stats were still there)"*
     ///
-    /// The earlier reasoning here - "our table decides whether a recast may replace the bit,
-    /// and a desync would be invisible" - is still true and is still served: the table below
-    /// expires on the same clock the grant was stamped with, so both sides drop it at the
-    /// same moment without a packet crossing.
+    /// **`tExpire` drives the flashing and nothing else.** The client sent nothing at the
+    /// thirty-second mark - not a request, not a report - and kept the stat. Removal is the
+    /// server's job, and `0x007E` is mandatory.
     ///
-    /// **`0x007E` is still built and still testable**, by `!unbuff`, because early removal -
-    /// dispel, death, a logout - will need it. What changed is that a packet with a length
-    /// nobody has confirmed no longer fires automatically on a timer.
+    /// That is what the plan's outcome table called "the client does not self-expire after
+    /// all - harmless, and very informative", which is the only reason the wrong version was
+    /// worth shipping for one run: it was written down as a claim that could come back false,
+    /// and it did.
     pub(super) fn buff_tick(&mut self, now_ms: u64) -> Vec<Reply> {
+        let done: Vec<ActiveBuff> =
+            self.buffs.iter().copied().filter(|b| now_ms >= b.expires_ms).collect();
+        if done.is_empty() {
+            return Vec::new();
+        }
         self.buffs.retain(|b| now_ms < b.expires_ms);
-        Vec::new()
+        let bits: Vec<u32> = done.iter().map(|b| b.bit).collect();
+        let skills: Vec<u32> = done.iter().map(|b| b.skill_id).collect();
+        self.reset_reply(&bits, net::buff::TAIL_LEN, format!("expired (from skill(s) {skills:?})"))
     }
 
-    /// Send `0x007E` for the bits we are holding, and drop them from the table.
+    /// `0x013F` - the player right-clicked a buff icon.
     ///
-    /// Deliberate removal only - `!unbuff`. Never on a timer; see [`Self::buff_tick`].
+    /// # It retries until something answers
+    ///
+    /// Fourteen of these arrived in three seconds, one every ~180 ms, all identical and all
+    /// dropped. That cadence is a retry loop rather than fourteen clicks, and it is the
+    /// clearest statement the client has made that it is waiting on us.
+    ///
+    /// The body names both the skill and the CTS bits - `u32 skillId`, five bytes, then the
+    /// same 124-byte mask `0x007D` uses. **The mask is preferred over the skill id** because
+    /// it is what the client is actually pointing at; the skill id is used only to explain
+    /// the refusal when nothing matches, and a mismatch between the two is worth a log line
+    /// rather than a guess.
+    pub(super) fn on_skill_cancel(&mut self, body: &[u8]) -> Vec<Reply> {
+        if self.claimed_character().is_none() {
+            return Vec::new();
+        }
+        let Some(req) = net::buff::parse_skill_cancel(body) else {
+            return self.notice(format!(
+                "Unreadable buff-cancel body, {} bytes - expected {}.",
+                body.len(),
+                net::buff::CLIENT_SKILL_CANCEL_LEN
+            ));
+        };
+        // Only bits we believe are held. Answering for a bit we never granted would tell the
+        // client to clear something it may hold from elsewhere.
+        let held: Vec<u32> =
+            req.bits.iter().copied().filter(|b| self.buffs.iter().any(|h| h.bit == *b)).collect();
+        if held.is_empty() {
+            // **Still worth a line, because this is the retry case.** Fourteen unanswered
+            // requests is what the run before this looked like, and silence here would be
+            // indistinguishable from the handler not existing.
+            return self.notice(format!(
+                "Nothing to cancel for skill {}: the server is not holding CTS bit(s) {:?}.",
+                req.skill_id, req.bits
+            ));
+        }
+        self.buffs.retain(|b| !held.contains(&b.bit));
+        self.reset_reply(
+            &held,
+            net::buff::TAIL_LEN,
+            format!("cancelled by right-click on skill {}", req.skill_id),
+        )
+    }
+
+    /// One `0x007E`, with the length and the reason written into the log line.
+    fn reset_reply(&self, bits: &[u32], tail: usize, why: String) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::buff::TEMPORARY_STAT_RESET,
+            body: net::buff::temporary_stat_reset_with_tail(bits, tail),
+            what: format!(
+                "TemporaryStatReset: CTS bit(s) {bits:?} {why}. {}-byte body ({tail}-byte tail); \
+                 the 127-byte version threw at 0x142d57322 on 2026-08-22 and the enumerated \
+                 reads want 129, or 133 if the gated u32 fires",
+                3 + net::buff::MASK_LEN + tail
+            ),
+        }]
+    }
+
+    /// Send `0x007E` for everything held, and drop it from the table. `!unbuff`.
+    ///
+    /// Kept beside the expiry and the right-click because it is the only one whose tail
+    /// length is typeable, which is how the 191 gets bisected without a launch per attempt.
     pub(super) fn clear_buffs(&mut self, tail: usize) -> Vec<Reply> {
         if self.buffs.is_empty() {
             return Vec::new();
@@ -196,15 +272,7 @@ impl Session {
         let bits: Vec<u32> = self.buffs.iter().map(|b| b.bit).collect();
         let skills: Vec<u32> = self.buffs.iter().map(|b| b.skill_id).collect();
         self.buffs.clear();
-        vec![Reply {
-            opcode: net::buff::TEMPORARY_STAT_RESET,
-            body: net::buff::temporary_stat_reset_with_tail(&bits, tail),
-            what: format!(
-                "TemporaryStatReset: clearing CTS bit(s) {bits:?} (from skill(s) {skills:?}), \
-                 {tail}-byte tail. NOT sent on natural expiry - the client holds its own \
-                 tExpire, and a 127-byte version of this killed the client on 2026-08-22"
-            ),
-        }]
+        self.reset_reply(&bits, tail, format!("cleared by !unbuff (from skill(s) {skills:?})"))
     }
 
 }
