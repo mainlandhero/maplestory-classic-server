@@ -963,6 +963,31 @@ if ($SetFieldProbe) {
     Write-Host '     should still be listed. That is the whole point of this run.'
 }
 Write-Host ''
+# WHAT THIS PROJECT COSTS THE MACHINE, said at the moment the owner can act on it.
+#
+# The owner, 2026-08-22: "my computer has been getting pretty slow with all of these tests."
+# The crash dumps are FULL MEMORY - 1.0 to 1.4 GB each - and every crash keeps one. Nothing
+# deletes them, deliberately: CLAUDE.md's rule is that a run's output is the most expensive
+# data this project produces. So this reports the number instead of acting on it.
+$dumpBytes = 0
+$dumpCount = 0
+try {
+    $dmp = Get-ChildItem -Path $dumpDir -Filter *.dmp -ErrorAction Stop
+    $dumpCount = @($dmp).Count
+    $dumpBytes = ($dmp | Measure-Object -Property Length -Sum).Sum
+} catch { }
+if ($dumpCount -gt 0) {
+    $free = (Get-PSDrive -Name ($root.Substring(0, 1)) -ErrorAction SilentlyContinue).Free
+    Write-Host ("Disk: {0} crash dump(s) in dumps\ using {1:N1} GB{2}" -f `
+        $dumpCount, ($dumpBytes / 1GB), $(if ($free) { ", {0:N0} GB free" -f ($free / 1GB) } else { '' })) -ForegroundColor DarkGray
+    if ($dumpCount -ge 3) {
+        Write-Host '      Each new crash adds another ~1.3 GB. research/heap-wild-write.md says' -ForegroundColor DarkGray
+        Write-Host '      the first two are exhausted; deleting one is your call, not mine.' -ForegroundColor DarkGray
+    }
+}
+Write-Host 'If the machine is slow and Task Manager blames System, name the driver:' -ForegroundColor DarkGray
+Write-Host '  powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\system-cpu.ps1"' -ForegroundColor DarkGray
+Write-Host ''
 Write-Host 'Logs:'
 Write-Host "  $serverLog                 every packet both ways, and what each reply was"
 Write-Host "  $hookLog   client patches and faults"
