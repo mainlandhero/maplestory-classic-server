@@ -184,3 +184,76 @@ One sentence, and it is now a sharper question than yesterday's:
 
 Nothing here is worth building until that is known. The migrate architecture in §4 stands and
 is still unbuilt for the same reason: **the client has not asked for anything.**
+
+
+---
+
+# Part three: the button is live, and both of my readings are dead
+
+2026-08-22. The owner: *"The button can be highlighted, does depress when clicked, and does make a
+click sound."* And two questions worth more than the answer I had: *"Does the server need to
+advertise that the cash shop is available?"* and *"Since channels have to be advertised with
+their IP, I assume cash shop would have to be too."*
+
+## The control is live, so the two candidates I named are both wrong
+
+* **Not the null global.** `tools/dataref.py 0x143AA84A0` returns **5459** RIP-relative
+  references. `[L]` That is the context singleton, not a cash-shop flag - and if it were null,
+  every one of the dispatcher's nineteen buttons would be dead, not one.
+* **Not a gate in the handler.** The CashShop arm has no condition on it; part two has the
+  listing.
+
+## The dispatcher is the status bar, and that is read rather than assumed
+
+Every `lea rdx,<name> ; call 0x142aa1a20` in `FUN_1411ab7b0`, decoded as UTF-16: `[L]`
+
+```text
+ChatLogMin  ChatLogMax  ChatPrev  ChatNext  ChatTargetSelect  CashShop  Menu
+Shortcut  Claim  Mailbox  Equip  Inven  Stat  StatUp  Skill  SkillUp  Key
+QuickSlot  QuickSlotD
+```
+
+Nineteen arms, and they are the status bar's buttons. **`Inven` is in the same chain as
+`CashShop`, and Inven works** - which turns it into a positive control that costs one extra
+click: the watch below must log a line for Inven before its silence on CashShop means
+anything.
+
+## On the two questions, and the second one has a correction in it
+
+**"Does the server need to advertise that the cash shop is available?"** Very possibly, and
+there is a real precedent in this project rather than a guess: the world list carries a
+**per-channel enable byte**, and `research/channel-select.md` records a run where getting it
+wrong emptied the Change Channel dialog completely. An account- or world-level "cash shop
+available" flag would be exactly that shape. **[I]**
+
+But it cannot be what silences *this* click. A flag the client checks would have to be checked
+somewhere, and the only conditional on the path is the context null test.
+
+**"Since channels have to be advertised with their IP, I assume cash shop would have to be
+too."** **Channels are not.** `crates/net/src/opcode.rs`'s `world_list_entry` writes, per
+channel: a name, a `u32` user count, and four bytes `[world, index, 0, CHANNEL_ENABLED]`.
+**No address.** `[L]` The client learns a channel's address only from the `0x0011`
+MIGRATE_COMMAND, *after* it asks to change channel.
+
+So a cash shop address would arrive the same way - in a migrate reply - which means **it
+cannot be a precondition for the client asking.** The analogy holds for the architecture in §4
+and points the opposite way for the gate.
+
+## The one run that splits it three ways
+
+Two watches, armed in the launcher's default `-SetFieldProbe` set (they displaced
+`141c532ab`, a regression check on mob spawning that has rendered correctly for days):
+
+```text
+1411ab7b0:hits=60    the status-bar name dispatcher
+142caee70:hits=20    the sender its CashShop arm tail-jumps to
+```
+
+**Click `Inven` first.** Then Cash Shop, two or three times.
+
+| hook log shows | what it means |
+|---|---|
+| a line for Inven, none for Cash Shop | the click never reaches the dispatcher - a status-bar UI problem, and no server change touches it |
+| `1411ab7b0` for Cash Shop, nothing from `142caee70` | the dispatcher runs and the name never matches. `rdx` on entry is the button index; comparing it with Inven's names the mismatch |
+| both | the sender refuses, and it is 1012 bytes to read |
+| nothing at all, not even Inven | the hook did not arm and the run proves nothing |

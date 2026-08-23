@@ -1096,6 +1096,32 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### The Cash Shop button is live, both of my readings are dead, and two watches are armed
+
+2026-08-22, the owner: *"The button can be highlighted, does depress when clicked, and does make a
+click sound."*
+
+So the control is live and something after it refuses. That kills both candidates: the global
+the handler loads has **5459** references - it is the context singleton, and if it were null
+all nineteen status-bar buttons would be dead - and the CashShop arm has no condition on it
+at all.
+
+The dispatcher is confirmed as the status bar by reading its arms rather than assuming:
+`ChatLogMin, ChatLogMax, ChatPrev, ChatNext, ChatTargetSelect, CashShop, Menu, Shortcut,
+Claim, Mailbox, Equip, Inven, Stat, StatUp, Skill, SkillUp, Key, QuickSlot, QuickSlotD`.
+**`Inven` is in the same chain and Inven works**, which makes it a free positive control.
+
+**The owner asked whether the server has to advertise the cash shop, and whether it needs an
+address like a channel.** The first is plausible and has a precedent - the world list's
+per-channel enable byte, which once emptied the Change Channel dialog when it was wrong. The
+second contains a correction worth keeping: **channels are not advertised with an address.**
+`world_list_entry` writes a name, a user count and four bytes per channel and no address at
+all; the client learns one from the `0x0011` migrate reply *after* it asks. So an address
+cannot be a precondition for asking, and neither can a flag the client never gets to check.
+
+Two watches are armed in the default `-SetFieldProbe` set - `1411ab7b0` and `142caee70` -
+and one run splits it three ways. `research/cash-shop.md` part three.
+
 #### Storage is done bar Organize, and five Cash Shop clicks sent nothing
 
 2026-08-22, the owner: *"The storage fees are working, but I tried hitting the 'Organize Item' 3

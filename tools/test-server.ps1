@@ -97,23 +97,38 @@
         HIT IT THREE TIMES AGAIN. It is a pure function of the contents, so clicks two and
         three must change nothing; anything that keeps shuffling is a different bug.
 
-     3. THE CASH SHOP, AND THE QUESTION IS SHARPER NOW. Thank you for the five clicks - they
-        went in the log, and what is in the log is NOTHING. Five packets in those 24 seconds
-        and every one is routine telemetry that arrives in sessions where nobody touches it.
-        That is two sessions with zero cash-shop packets.
-        What changed since yesterday: I read the handler. FUN_1411ab7b0 is a button-NAME
-        dispatcher, and its CashShop arm has NO CONDITION AT ALL - match the name, load a
-        global, tail-jump to the sender. So "a gate in the handler" is now the LESS likely
-        reading, because if the click had reached that function a packet would have gone out.
-        Which makes the button itself the suspect, and sharpens the one thing I cannot see:
-          DOES THE BUTTON REACT AT ALL - depress, highlight, a click sound?
-            no reaction whatever -> the control is inert. The work is in the status-bar UI
-                         and no server change can reach it
-            it depresses, then nothing -> the handler IS entered, so the global at 0x143AA84A0
-                         is null or the sender bails. Both are one watch away
-            any words anywhere -> quote them. A string is one command from the branch
-        Nothing is worth building until that is known, and the migrate architecture you
-        described is still the right shape for the step after it. research/cash-shop.md.
+     3. THE CASH SHOP - CLICK "INVEN" FIRST, THEN CASH SHOP. Two watches are armed and the
+        order is what makes them mean anything.
+        What you told me: the button highlights, depresses and makes a click sound. So the
+        control is live, and something after it refuses - which kills the two readings I had.
+        It is NOT the global being null: that address has 5459 references, it is the context
+        singleton, and if it were null every button would be dead. And the CashShop arm of the
+        dispatcher has NO CONDITION on it at all.
+        The dispatcher IS the status bar, read rather than guessed - its nineteen arms are
+        ChatLogMin, ChatLogMax, ChatPrev, ChatNext, ChatTargetSelect, CashShop, Menu, Shortcut,
+        Claim, Mailbox, Equip, Inven, Stat, StatUp, Skill, SkillUp, Key, QuickSlot, QuickSlotD.
+        CLICK "INVEN" FIRST. That is the positive control: Inven works, so 1411ab7b0 must log a
+        line for it. If it does not, the watch is not armed and nothing below means anything.
+        Then click Cash Shop two or three times and read client-patched\maplecw-hook.log:
+          WATCH lines for Inven but NONE for Cash Shop -> the click never reaches the
+                       dispatcher. The work is in the status-bar UI and no server change
+                       touches it
+          a line for Cash Shop from 1411ab7b0 and NONE from 142caee70 -> the dispatcher runs
+                       and the name never matches the CashShop arm. rdx on entry is the button
+                       index; comparing it against Inven's names the mismatch
+          lines from BOTH -> the sender refuses, and it is 1012 bytes to read
+          no WATCH lines at all, even for Inven -> the hook did not arm. Say so and ignore
+                       everything else
+        ON YOUR TWO QUESTIONS. "Does the server need to advertise that the cash shop is
+        available?" - very possibly yes, and it is the same shape as the channel list's
+        per-channel enable byte, which is a real precedent in this project. But it cannot be
+        WHY the button is silent, because the client would have to reach the sender to care.
+        "Since channels have to be advertised with their IP, I assume cash shop would have to
+        be too" - CHANNELS ARE NOT. Look at world_list_entry in crates/net/src/opcode.rs: a
+        channel entry carries a name, a user count and four bytes, and NO ADDRESS. The client
+        learns a channel's address only in the 0x0011 migrate reply, after it asks. So a cash
+        shop address would arrive the same way, which means it cannot be a precondition for
+        asking. research/cash-shop.md.
 
      4. GLANCE, NO SETUP: does a grey "<item> x<n> earned." line appear in the SCREEN MESSAGE
         AREA - the strip above the chat box - when you pick something up? It has gone out on
@@ -536,18 +551,39 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968'
     } else {
-        # 141c532ab:peek=24 - rcx is the CInPacket and +0x24 is its read cursor, inside the
-        #   mob's encodeInit. Mobs render now, so this is a regression check rather than a
-        #   diagnosis: the cursor should be consistent across every mob in a field.
+        # THE CASH SHOP BUTTON, and these two split the question three ways in one run.
+        #
+        # The owner, 2026-08-22: the button highlights, depresses and makes a click sound, and no
+        # packet leaves. So the control is live and something after it refuses.
+        #
+        # 1411ab7b0:hits=60 - the status bar's button-NAME dispatcher. It is the status bar
+        #   and that is read, not guessed: its nineteen arms are ChatLogMin, ChatLogMax,
+        #   ChatPrev, ChatNext, ChatTargetSelect, CashShop, Menu, Shortcut, Claim, Mailbox,
+        #   Equip, Inven, Stat, StatUp, Skill, SkillUp, Key, QuickSlot, QuickSlotD. It fires
+        #   on ANY status-bar button, hence the raised cap - and that is a feature, because
+        #   clicking Inven first proves the watch is armed before Cash Shop proves anything.
+        # 142caee70:hits=20 - the sender the CashShop arm tail-jumps to.
+        #
+        #   NEITHER fires on a Cash Shop click -> the click never reaches the dispatcher.
+        #                    The work is in the status-bar UI and no server change touches it
+        #   ONLY 1411ab7b0   -> the dispatcher runs and the name never matches the CashShop
+        #                    arm. rdx on entry is the button index; compare it against the
+        #                    index a working button (Inven) reports
+        #   BOTH fire        -> the sender is what refuses, and it is 1012 bytes to read
+        #
         # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE CONTROL: no lines
         #   at all means the hook never armed and the log proves nothing.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,141c532ab:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968'
+        #
+        # WHAT WENT: 141c532ab:peek=24, the mob encodeInit cursor. It was a regression check
+        #   on a thing that has rendered correctly for days, and world.log already carries
+        #   every mob packet it was watching.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1411ab7b0:hits=60,142caee70:hits=20,140304100:hits=200:dump=143AC2400/968'
     }
     # Announce which pair actually got armed. The old line said "mobs" for 141c532ab, which
     # is the mob SPAWN decoder - now that -MobTargets arms a mob TARGETING watch, one word
     # would have covered two different runs. Same precedence as the if/elseif above, and
     # written as three statements because 5.1 has no ternary.
-    $pair = "mob spawn (141c532ab)"
+    $pair = "THE CASH SHOP BUTTON (1411ab7b0 the status-bar name dispatcher, 142caee70 its sender)"
     if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
     if ($MobTargets) { $pair = "MOB TARGETING (mob+0xa88 and mob+0x42c in the collector loop)" }
     if ($UserState) { $pair = "THE USER STATE FIELD (140f810e0, rdx is the value)" }
@@ -919,22 +955,26 @@ if ($SetFieldProbe) {
     Write-Host '                          refuses to commit if the count changed'
     Write-Host '     HIT IT THREE TIMES AGAIN - clicks 2 and 3 must change nothing.'
     Write-Host ''
-    Write-Host '  3. CASH SHOP - the question is sharper now.' -ForegroundColor Cyan
-    Write-Host '     Thank you for the five clicks. They went in the log and what is'
-    Write-Host '     in the log is NOTHING: five packets in those 24 seconds, every'
-    Write-Host '     one routine telemetry. Two sessions, zero cash-shop packets.'
-    Write-Host '     I read the handler since: FUN_1411ab7b0 is a button-NAME'
-    Write-Host '     dispatcher and its CashShop arm has NO CONDITION - match the'
-    Write-Host '     name, load a global, tail-jump to the sender. So "a gate in the'
-    Write-Host '     handler" is now the LESS likely reading, and the button itself'
-    Write-Host '     is the suspect.'
-    Write-Host '     DOES THE BUTTON REACT AT ALL - depress, highlight, a sound?'
-    Write-Host '       no reaction at all -> the control is inert. The work is in the'
-    Write-Host '                             status-bar UI, not the protocol'
-    Write-Host '       depresses, nothing -> the handler IS entered; the global at'
-    Write-Host '                             0x143AA84A0 is null or the sender bails'
-    Write-Host '       any words anywhere -> quote them. One command from the branch'
-    Write-Host '     research/cash-shop.md'
+    Write-Host '  3. CASH SHOP - CLICK "INVEN" FIRST, THEN CASH SHOP.' -ForegroundColor Cyan
+    Write-Host '     Two watches are armed and the ORDER is what makes them mean'
+    Write-Host '     anything. Inven works, so 1411ab7b0 must log a line for it -'
+    Write-Host '     that is the positive control. No line for Inven means the'
+    Write-Host '     watch never armed and nothing below counts.'
+    Write-Host '     You said the button highlights, depresses and clicks. So the'
+    Write-Host '     control is live. It is NOT the global being null - that address'
+    Write-Host '     has 5459 references, it is the context singleton - and the'
+    Write-Host '     CashShop arm has NO condition on it at all.'
+    Write-Host '     Then click Cash Shop 2-3 times and read the hook log:'
+    Write-Host '       Inven logs, Cash Shop does NOT -> the click never reaches the'
+    Write-Host '                        dispatcher. Status-bar UI, not the protocol'
+    Write-Host '       1411ab7b0 only  -> the name never matches the CashShop arm'
+    Write-Host '       BOTH watches    -> the sender refuses; 1012 bytes to read'
+    Write-Host '       nothing at all  -> the hook did not arm. Ignore the rest'
+    Write-Host '     ON YOUR QUESTION: channels are NOT advertised with an IP. A'
+    Write-Host '     channel entry is a name, a user count and four bytes - no'
+    Write-Host '     address. The client learns it in the 0x0011 migrate reply AFTER'
+    Write-Host '     it asks, so an address cannot be a precondition for asking.'
+    Write-Host '     An "available" FLAG is a different matter and may well be real.'
     Write-Host ''
     Write-Host '  4. GLANCE: when you pick something up, does a grey "<item> x<n>' -ForegroundColor Cyan
     Write-Host '     earned." line appear in the SCREEN MESSAGE AREA above the chat'
