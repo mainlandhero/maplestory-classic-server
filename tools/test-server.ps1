@@ -81,35 +81,31 @@
         Then, either way, try  !map 10001000  - Henesys town, the map next door, also never
         loaded. Park dies and town loads -> that one map. Both die -> that part of the world.
 
-     2. THE BUFF WORKS AND STAYS FOR EVER. Taking it off is the whole of this step.
-        Confirmed twice and not to be re-tested: the icon, the countdown, the speed. Nothing
-        about the grant needs looking at again.
-        What last run settled, and it is the opposite of what I expected: THE CLIENT NEVER
-        REMOVES A TEMPORARY STAT BY ITSELF. Your words - "after the expiry, the buff did not
-        go away. (It just kept flashing, but the temporary stats were still there)" - and at
-        the thirty-second mark the client sent nothing at all. tExpire drives the FLASHING and
-        nothing else. And the right-click sent 0x013F fourteen times in three seconds, one
-        every ~180 ms, which is a retry loop rather than fourteen clicks.
-        So removal is the server's job on both paths, and both are built now:
-          a. cast it, then RIGHT-CLICK THE ICON. This is the quick one - no waiting.
-               the buff goes away and the speed drops -> both the new opcode and the 191-byte
-                            0x007E are right
-               nothing happens, no error on screen -> 0x013F's layout is wrong. It is read as
-                            u32 skillId, 5 bytes, then the 124-byte mask; two constraints
-                            picked that out of one capture and one capture is one capture
-               a chat line saying nothing is held -> the mask decoded to a bit we did not
-                            grant, which names the layout error precisely
-               the client dies -> the 191-byte 0x007E is short, like 127 and 152 were
-          b. cast it again and WAIT OUT THE THIRTY SECONDS.
-               it disappears on its own -> the expiry path works too
-               it flashes for ever again -> the reset went out and did nothing, which is a
-                            different fault from last time and worth the log
-          c. if (a) works, bisect the reset:  !unbuff 32  then 16, then 8.
-             The first one that kills the client is the answer. DOWNWARDS from what worked.
-        The grant is bisectable the same way if you have patience:
-          !buff 1002 3 32   then 24, then 20   (18 and below refused)
+     2. THE CASH SHOP: I ONLY NEED ONE SENTENCE ABOUT WHAT THE SCREEN DID.
+        No setup, no packet to watch for, and nothing has been built - because there is
+        nothing to build yet. You said "the opcode is most likely not handled". It is not
+        that: NO PACKET WAS SENT AT ALL. world.log records every inbound packet and the only
+        unanswered ones that run are the same telemetry set every session produces. A cash
+        shop server built today would sit waiting for a connection the client never makes.
+        And it is not missing art either - CashShopUI.img, CashShopPreview.img and
+        button:CashShop in BOTH status bars are all present, unlike the classic shop's window,
+        whose image really was cut. There IS a path from the button's handler to a packet
+        builder (FUN_1411ab7b0, 904 bytes, two builders, both behind a conditional).
+        So the click was refused inside the client. Three possibilities, three different jobs:
+          the button does nothing at all, does not even depress -> a gate before the handler,
+                       which is the create-character flag pattern. The hook already patches
+                       one of those
+          a dialog or a chat line appears, anything with words -> TELL ME THE WORDS. A string
+                       is one command away from the exact branch that refused
+          a window opens and is blank, or closes itself -> the handler ran and the REQUEST is
+                       what is missing. That is when your migrate reading becomes the thing to
+                       build, and this project already owns the seed minting, the 0x0011
+                       builder and a second listener
+        Your architecture is very likely right about the step AFTER this one - in this game
+        family the cash shop is a separate server reached by a migrate - but none of it can be
+        tested until the client asks for something. research/cash-shop.md.
 
-     3. MR. KIM, THE HALF THAT IS STILL UNTESTED. You skipped this last run.
+     3. MR. KIM, THE HALF THAT IS STILL UNTESTED. Skipped three runs running now.
         The window itself is confirmed - it opened with 30 slots and mesos moved both ways -
         so this is only the item half, and your report that started it: "the item did not move
         to storage, and it did not charge the 100 meso fee that it said it was going to
@@ -880,10 +876,11 @@ if ($SetFieldProbe) {
     Write-Host '  character", so 0x02D1 effect 0x41 is settled. And MAP 10 IS NOT'
     Write-Host '  FATAL - GoodTest logged in there first thing and was fine, which'
     Write-Host '  answered yesterday''s experiment in one login.'
-    Write-Host '  NIMBLE FEET WORKS - icon, countdown and speed, twice. That one'
-    Write-Host '  screen settled 0x007D, the 124-byte mask, bit 92 = Speed, the i16'
-    Write-Host '  value width and milliseconds, none readable statically. Taking the'
-    Write-Host '  buff OFF is what is left, and step 2 is only about that.'
+    Write-Host '  BUFFS ARE DONE, BOTH WAYS. Nimble Feet grants and the right-click'
+    Write-Host '  cancels it - one 0x013F, one 0x007E, no retry loop. That settled'
+    Write-Host '  0x007D, the 124-byte mask, bit 92 = Speed, the i16 value width and'
+    Write-Host '  milliseconds, none of which was readable statically, plus 0x013F''s'
+    Write-Host '  layout. THREE SNAILS WORKS and deals damage.'
     Write-Host '  THE STORAGE WINDOW OPENS: 30 slots, mesos both ways. Items and the'
     Write-Host '  fee are step 3 and have still never been seen.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
@@ -913,32 +910,25 @@ if ($SetFieldProbe) {
     Write-Host '     Then either way try  !map 10001000  - Henesys town, next door,'
     Write-Host '     also never loaded. Park dies + town loads -> that ONE map.'
     Write-Host ''
-    Write-Host '  2. THE BUFF WORKS AND STAYS FOR EVER. Taking it off is the step.' -ForegroundColor Cyan
-    Write-Host '     Confirmed twice, do not re-test: icon, countdown, speed.'
-    Write-Host '     Last run settled the opposite of what I expected: THE CLIENT'
-    Write-Host '     NEVER REMOVES A STAT BY ITSELF. At 30s it sent nothing and just'
-    Write-Host '     flashed - tExpire drives the animation and nothing else. And the'
-    Write-Host '     right-click sent 0x013F FOURTEEN times in three seconds, one'
-    Write-Host '     every ~180ms: a retry loop, not fourteen clicks.'
-    Write-Host '     Both removal paths are built now.'
-    Write-Host '     a. cast it, then RIGHT-CLICK THE ICON. No waiting.'
-    Write-Host '          buff goes, speed drops -> the new opcode and the 191-byte'
-    Write-Host '                                    0x007E are both right'
-    Write-Host '          nothing at all         -> 0x013F''s layout is wrong. It is'
-    Write-Host '                                    read as u32 skillId, 5 bytes, then'
-    Write-Host '                                    the 124-byte mask, from ONE capture'
-    Write-Host '          "nothing is held" line -> the mask decoded to a bit we never'
-    Write-Host '                                    granted - names the error exactly'
-    Write-Host '          the client dies        -> 191 is short, like 127 and 152'
-    Write-Host '     b. cast again and WAIT OUT THE 30s.'
-    Write-Host '          it disappears  -> the expiry path works too'
-    Write-Host '          flashes for ever -> the reset went out and did nothing, which'
-    Write-Host '                              is a NEW fault and worth the log'
-    Write-Host '     c. if (a) works, bisect:  !unbuff 32  then 16, then 8.'
-    Write-Host '        First one that kills it is the answer. DOWNWARDS only.'
-    Write-Host '     The grant bisects too:  !buff 1002 3 32  then 24, then 20.'
+    Write-Host '  2. CASH SHOP: I ONLY NEED ONE SENTENCE ABOUT THE SCREEN.' -ForegroundColor Cyan
+    Write-Host '     Nothing is built, because there is nothing to build yet.'
+    Write-Host '     It is NOT an unhandled opcode: NO PACKET WAS SENT AT ALL.'
+    Write-Host '     world.log has every inbound packet and there was nothing new.'
+    Write-Host '     Not missing art either - CashShopUI.img, CashShopPreview.img'
+    Write-Host '     and button:CashShop in both status bars are all present. And'
+    Write-Host '     the button''s handler DOES reach two packet builders, both'
+    Write-Host '     behind a conditional. So the client refused it internally.'
+    Write-Host '       nothing at all, no depress -> a gate before the handler, the'
+    Write-Host '                                     create-character flag pattern'
+    Write-Host '       a dialog or a chat line    -> TELL ME THE WORDS. A string is'
+    Write-Host '                                     one command from the branch'
+    Write-Host '       a window opens, blank      -> the handler ran and the REQUEST'
+    Write-Host '                                     is missing. Then your migrate'
+    Write-Host '                                     reading is the thing to build'
+    Write-Host '     Your architecture is likely right for the step AFTER this one.'
+    Write-Host '     research/cash-shop.md'
     Write-Host ''
-    Write-Host '  3. MR. KIM - STILL UNTESTED, you skipped it last run.' -ForegroundColor Cyan
+    Write-Host '  3. MR. KIM - STILL UNTESTED, and skipped three runs running.' -ForegroundColor Cyan
     Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and the'
     Write-Host '     100 meso fee are the new half - both were the same missing arm.'
     Write-Host '       a. store an item and watch your mesos.'

@@ -341,7 +341,11 @@ next.** This list is deliberately coarse so the two cannot drift; do not duplica
       retries every ~180 ms until answered. `!unbuff` bisects its length.
       `research/buffs.md`, `research/buffs-underflow.md`.
 - [ ] The classic shop counter - **row structure now decoded**, price at `row+0x38`, not yet
-      built (`research/classic-shop-rows.md`). Then parties and the cash shop.
+      built (`research/classic-shop-rows.md`). Then parties.
+- [ ] **The cash shop.** Blocked inside the client, not on the protocol: the button produces
+      **no packet at all**. The art is present and the handler reaches two senders, both
+      behind a conditional, so a gate refuses it. `research/cash-shop.md` names the one
+      observation that decides what to do next.
 - [ ] Outgoing damage validation — blocked on two `0x00DF` header fields, not on the formula,
       which is decoded and tested.
 

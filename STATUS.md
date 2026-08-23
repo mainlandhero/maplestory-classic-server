@@ -1096,6 +1096,36 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### Buffs are done, and the Cash Shop click never became a packet
+
+2026-08-22, the owner: *"I confirmed that the buff now works. Three Snails also works as intended
+and dealt damage. I tried entering Cash Shop but was unfortunately not able to because the
+opcode is most likely not handled. Transitioning to the cash shop is most likely similar to
+transitioning to another channel, we probably need a dedicated cash shop server."*
+
+**Buffs are closed, both directions.** One `0x013F` in, one `0x007E` out, **no retry loop** -
+which is the client saying the answer was accepted. Exit code 0. Between this run and the last
+two, that subsystem settled `0x007D`, the 124-byte mask and its big-endian-within-word bit
+order, CTS bit 92 = Speed, the **`i16`** value width - unreadable statically, the deciding
+constant is in Themida-packed `.data` - milliseconds, and `0x013F`'s layout. **Three Snails
+works and deals damage.**
+
+**The Cash Shop is not an unhandled opcode: no packet was sent at all.** `world.log` records
+every inbound packet and the only unanswered ones are the telemetry set every session
+produces. A cash-shop server built today would wait for a connection the client has no reason
+to make.
+
+It is also not missing art - `CashShopUI.img`, `CashShopPreview.img` and `button:CashShop` in
+**both** status bars are present, unlike the classic shop's `UIWindow2.img`, which really was
+cut. And the button's handler **does** reach two packet builders (`FUN_1411ab7b0`, 904 bytes,
+both sends behind a conditional). So the client refused the click internally, which is the
+shape of the create-character flag.
+
+**What the screen did decides which of three jobs this is**, and only the owner can see it:
+nothing at all (a gate), a dialog with words (a string, one command from the branch), or a
+window that opens blank (the request is the missing part, and their migrate reading becomes the
+thing to build). `research/cash-shop.md`.
+
 #### The client never removes a temporary stat, and `0x013F` is how it asks
 
 2026-08-22, the owner: *"the buff works, but after the expiry, the buff did not go away. (It just
