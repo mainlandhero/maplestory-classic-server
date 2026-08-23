@@ -106,3 +106,81 @@ The parts this project already owns: the second listener, the seed minting, the 
 `0x0011` builder, and the channel-teardown behaviour that took three passes to get right
 (`research/channel-select.md`). The parts it does not: `SetCashShop`'s body, the cash
 inventory, a wallet, and the purchase flow.
+
+
+---
+
+# Part two: five deliberate clicks, five packets, none of them new
+
+2026-08-22, later. The owner: *"I also clicked on the Cash Shop button 5 times before exiting the
+game."* Deliberately, so the log would carry it. It does not.
+
+## The measurement, tightened
+
+Between the storage window closing at `02:05:00.548` and the shutdown telemetry at
+`02:05:24.873` - the twenty-four seconds containing all five clicks - the client sent
+**exactly five packets**: `[L]`
+
+```text
+02:05:01.898  0x02F4   12 bytes   telemetry, every session
+02:05:06.189  0x00B8    1 byte    telemetry, every session
+02:05:20.982  0x013D    9 bytes   the skill send-counter census
+02:05:20.982  0x0070   46 bytes   env report
+02:05:24.553  0x00B8    1 byte    telemetry
+```
+
+Five packets and five clicks is a coincidence of counts: none of these is new, none is
+click-shaped, and `0x013D`+`0x0070` arrive together on a timer. **Nothing the client sent can
+be attributed to a Cash Shop click**, across two sessions now.
+
+## The handler has no gate, which changes what to look for
+
+`FUN_1411ab7b0` turns out to be a **button-name dispatcher**: a chain of
+`lea rdx,<name> ; call 0x142aa1a20 ; test al,al ; je <next>` comparisons. The Cash Shop arm is
+`[L]`:
+
+```asm
+1411ab8c6  mov  r8d, edi
+1411ab8c9  lea  rdx, [rip+0x21e04c8]   ; -> 0x14338bd98, "CashShop"
+1411ab8d3  call 0x142aa1a20            ; name compare
+1411ab8da  je   0x1411ab8f9            ; not it -> next name
+1411ab8dc  xor  r8d, r8d
+1411ab8df  xor  edx, edx
+1411ab8e1  mov  rcx, [rip+0x28fcbb8]   ; -> 0x143AA84A0
+1411ab8f4  jmp  0x142caee70            ; TAIL CALL the sender
+```
+
+**There is no condition on that path.** Match the name, load a global, jump to the sender. The
+only test in the whole function is a null check on the *same* global at the top
+(`0x1411ab7c1`), and if that were null every button in the chain would be dead, not just this
+one. **[D]**
+
+So the earlier reading - *"a gate before the handler, the create-character pattern"* - is now
+the **less** likely of the three. If the click reached this dispatcher, a packet would have
+gone out.
+
+## Which moves the suspicion to the button itself
+
+`0x142caee70` is a shared sender: `research/msexe-send-opcodes.txt` records its CTOR at
+`0x142caf180` as opcode **`0x00D5`**, and exactly one `0x00D5` arrives per session - in the
+shutdown batch beside `0x0420`..`0x0426`, in this run and the one before. `[L]` So other arms
+of this same dispatcher do reach the wire; the Cash Shop arm did not.
+
+**The remaining reading is that the click never became a button event at all** - the control
+is drawn but not hooked, or disabled, in the status bar. That is a different kind of bug from
+a protocol gap and it is not something a server change can reach.
+
+## The observation that would settle it, still outstanding
+
+One sentence, and it is now a sharper question than yesterday's:
+
+> **Does the button react to the click at all - depress, highlight, make a sound?**
+
+| | what it means |
+|---|---|
+| **no reaction whatever** | the control is inert. `FUN_1411ab7b0` is never entered, and the work is in the status-bar UI, not the protocol |
+| **it depresses, then nothing** | it *is* entered, so the global at `0x143AA84A0` is null or `0x142caee70` bails - both findable, and both one watch away |
+| **any words on screen** | quote them; a string is one `xref.py` from the branch that refused |
+
+Nothing here is worth building until that is known. The migrate architecture in §4 stands and
+is still unbuilt for the same reason: **the client has not asked for anything.**

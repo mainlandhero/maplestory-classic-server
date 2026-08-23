@@ -453,6 +453,69 @@ impl Store {
         Ok(changed)
     }
 
+    /// **Organize Item.** Repack the box so the occupied slots run 1..n with no gaps.
+    ///
+    /// The owner, 2026-08-22: *"I tried hitting the 'Organize Item' 3 times, but it did not perform
+    /// anything."* It did not, because the session answered mode 6 with the unchanged box and
+    /// a log line calling that *"a legal no-op"*. It is legal, and it is not what the button
+    /// says it does.
+    ///
+    /// # The order, and why it is this one
+    ///
+    /// **Inventory type ascending, then item id ascending, then the old slot.** The first two
+    /// are what this game family does - items group into their tabs and sort by id inside a
+    /// tab. The third is only a tie-break, and it exists so the result is a **pure function of
+    /// the box**: two sorts of the same contents produce the same layout, and an item that
+    /// appears twice keeps its relative order rather than swapping on every click.
+    ///
+    /// # Why every row is rewritten rather than moved
+    ///
+    /// `(account_id, slot)` is the primary key, so shuffling in place can collide with a row
+    /// that has not moved yet. Deleting the account's rows and re-inserting them inside one
+    /// transaction has no ordering hazard at all, and the box is small - it cannot exceed
+    /// [`MAX_STORAGE_SLOTS`].
+    ///
+    /// # It must not lose an item
+    ///
+    /// The count is asserted before the commit. A sort that silently dropped a row would be
+    /// the worst possible bug in this file - the player would see the box tidy itself and
+    /// come back shorter - so the transaction rolls back rather than commits if the numbers
+    /// disagree.
+    pub fn sort_storage(&self, account_id: i64) -> Result<StorageBox> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut boxed = read_storage(&tx, account_id)?;
+        let before = boxed.items.len();
+        if before == 0 {
+            return Ok(boxed);
+        }
+
+        boxed.items.sort_by_key(|it| {
+            let inv = InventoryType::for_item(it.item.item_id).map_or(u8::MAX, |i| i.as_u8());
+            (inv, it.item.item_id, it.slot)
+        });
+        for (i, it) in boxed.items.iter_mut().enumerate() {
+            it.slot = i as u16 + 1;
+        }
+
+        tx.execute("DELETE FROM storage_item WHERE account_id = ?1", [account_id])?;
+        for it in &boxed.items {
+            set_storage_slot_row(&tx, account_id, it.slot, &it.item)?;
+        }
+
+        // Read it back rather than trusting the writes. `set_storage_slot_row` is an upsert,
+        // and an upsert that collided would leave the box short without erroring.
+        let after = read_storage(&tx, account_id)?;
+        if after.items.len() != before {
+            return Err(StoreError::SlotOutOfRange {
+                slot: after.items.len() as u16,
+                slots: before as u16,
+            });
+        }
+        tx.commit()?;
+        Ok(after)
+    }
+
     /// The mesos in the box. Separate from a character's own purse: storage holds its own.
     pub fn storage_mesos(&self, account_id: i64) -> Result<u32> {
         Ok(self.storage(account_id)?.mesos)
@@ -586,6 +649,86 @@ impl Store {
         let conn = self.conn();
         ensure_header(&conn, account_id)?;
         set_storage_slot_row(&conn, account_id, slot, item)
+    }
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+
+    fn store() -> (crate::Store, i64) {
+        let st = crate::Store::open_in_memory().unwrap();
+        let account = st.create_account("maplecw", "correct horse battery").unwrap();
+        (st, account)
+    }
+
+    /// **A sparse box is packed to the front, grouped by tab and ordered by id.**
+    ///
+    /// The owner, 2026-08-22: *"I tried hitting the 'Organize Item' 3 times, but it did not perform
+    /// anything."*
+    #[test]
+    fn organize_packs_the_box_by_tab_then_id() {
+        let (st, account) = store();
+        // Deliberately out of order and full of gaps.
+        st.set_storage_slot(account, 9, &Item::bundle(2000000, 3)).unwrap();
+        st.set_storage_slot(account, 2, &Item::equip(1302000)).unwrap();
+        st.set_storage_slot(account, 7, &Item::bundle(4000001, 5)).unwrap();
+        st.set_storage_slot(account, 4, &Item::equip(1040001)).unwrap();
+
+        let sorted = st.sort_storage(account).unwrap();
+        let layout: Vec<(u16, u32)> =
+            sorted.items.iter().map(|i| (i.slot, i.item.item_id)).collect();
+        assert_eq!(
+            layout,
+            vec![(1, 1040001), (2, 1302000), (3, 2000000), (4, 4000001)],
+            "packed 1..n, equips first by id, then Use, then Etc"
+        );
+
+        // And it survives a re-read: the rows really moved.
+        assert_eq!(st.storage(account).unwrap().items, sorted.items);
+    }
+
+    /// **Sorting twice is the same as sorting once**, so a second click cannot reshuffle.
+    ///
+    /// The owner clicked it three times. A sort whose tie-break depended on read order would move
+    /// items every click, which on screen is indistinguishable from it being broken.
+    #[test]
+    fn sorting_is_idempotent_even_with_duplicates() {
+        let (st, account) = store();
+        st.set_storage_slot(account, 5, &Item::equip(1302000)).unwrap();
+        st.set_storage_slot(account, 1, &Item::equip(1302000)).unwrap();
+        st.set_storage_slot(account, 8, &Item::equip(1302000)).unwrap();
+
+        let once = st.sort_storage(account).unwrap();
+        let twice = st.sort_storage(account).unwrap();
+        let thrice = st.sort_storage(account).unwrap();
+        assert_eq!(once.items, twice.items);
+        assert_eq!(twice.items, thrice.items);
+        assert_eq!(once.items.iter().map(|i| i.slot).collect::<Vec<_>>(), vec![1, 2, 3]);
+    }
+
+    /// An empty box sorts to an empty box rather than erroring, and the header is untouched.
+    #[test]
+    fn an_empty_box_sorts_to_nothing() {
+        let (st, account) = store();
+        let sorted = st.sort_storage(account).unwrap();
+        assert!(sorted.is_empty());
+        assert_eq!(sorted.slots, DEFAULT_STORAGE_SLOTS);
+    }
+
+    /// **Nothing is lost, and the mesos are not touched.**
+    #[test]
+    fn sorting_loses_no_item_and_no_mesos() {
+        let (st, account) = store();
+        st.set_storage_mesos(account, 4_321).unwrap();
+        for slot in [3u16, 11, 19, 27, 30] {
+            st.set_storage_slot(account, slot, &Item::bundle(2000000 + u32::from(slot), 1))
+                .unwrap();
+        }
+        let sorted = st.sort_storage(account).unwrap();
+        assert_eq!(sorted.items.len(), 5, "every item survived");
+        assert_eq!(sorted.mesos, 4_321, "and the balance is untouched");
+        assert_eq!(sorted.items.iter().map(|i| i.slot).collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
     }
 }
 

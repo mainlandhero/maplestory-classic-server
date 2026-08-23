@@ -81,46 +81,39 @@
         Then, either way, try  !map 10001000  - Henesys town, the map next door, also never
         loaded. Park dies and town loads -> that one map. Both die -> that part of the world.
 
-     2. THE CASH SHOP: I ONLY NEED ONE SENTENCE ABOUT WHAT THE SCREEN DID.
-        No setup, no packet to watch for, and nothing has been built - because there is
-        nothing to build yet. You said "the opcode is most likely not handled". It is not
-        that: NO PACKET WAS SENT AT ALL. world.log records every inbound packet and the only
-        unanswered ones that run are the same telemetry set every session produces. A cash
-        shop server built today would sit waiting for a connection the client never makes.
-        And it is not missing art either - CashShopUI.img, CashShopPreview.img and
-        button:CashShop in BOTH status bars are all present, unlike the classic shop's window,
-        whose image really was cut. There IS a path from the button's handler to a packet
-        builder (FUN_1411ab7b0, 904 bytes, two builders, both behind a conditional).
-        So the click was refused inside the client. Three possibilities, three different jobs:
-          the button does nothing at all, does not even depress -> a gate before the handler,
-                       which is the create-character flag pattern. The hook already patches
-                       one of those
-          a dialog or a chat line appears, anything with words -> TELL ME THE WORDS. A string
-                       is one command away from the exact branch that refused
-          a window opens and is blank, or closes itself -> the handler ran and the REQUEST is
-                       what is missing. That is when your migrate reading becomes the thing to
-                       build, and this project already owns the seed minting, the 0x0011
-                       builder and a second listener
-        Your architecture is very likely right about the step AFTER this one - in this game
-        family the cash shop is a separate server reached by a migrate - but none of it can be
-        tested until the client asks for something. research/cash-shop.md.
+     2. ORGANIZE ITEM NOW ORGANISES. You hit it three times and nothing happened, because
+        mode 6 answered with the unchanged box and the log line called that "a legal no-op".
+        Legal it was; a no-op is not what the button says it does.
+        It repacks to slots 1..n, grouped by tab and then by item id. Put three or four things
+        in the box, take one out from the middle to leave a hole, then hit Organize.
+          the gap closes and the items group by tab -> done
+          nothing moves -> the sort ran on the database and the client is not redrawing from
+                       mode 15. Mode 19 preserves the scroll instead of recalculating it, and
+                       that is the next thing to try
+          the order looks arbitrary -> tell me what order you expected. Equips first by id,
+                       then Use, then Etc is what this does
+          items VANISH -> stop and say so immediately. The sort re-reads the box and refuses
+                       to commit if the count changed, so this should be impossible
+        HIT IT THREE TIMES AGAIN. It is a pure function of the contents, so clicks two and
+        three must change nothing; anything that keeps shuffling is a different bug.
 
-     3. MR. KIM, THE HALF THAT IS STILL UNTESTED. Skipped three runs running now.
-        The window itself is confirmed - it opened with 30 slots and mesos moved both ways -
-        so this is only the item half, and your report that started it: "the item did not move
-        to storage, and it did not charge the 100 meso fee that it said it was going to
-        charge." Both sentences were one missing arm. Both are built now.
-          a. store an item, and watch your mesos.
-               item moves AND 100 mesos leave the purse -> done, both halves
-               item moves and the fee is NOT taken      -> the effect is not hanging off the
-                                                           transition, the shape of the
-                                                           repeated-quest bug
-               the fee is taken and the item does not   -> the worse direction. Say so loudly
-               "not enough mesos" with mesos in hand    -> the wrong keeper was looked up
-          b. take it back out. Free on all ten keepers. Check it lands in the right tab.
-          c. if you have the patience: deposit TWO, withdraw the FIRST, then withdraw again.
-             The take-out index is a POSITION in the list, not a slot, and a sparse box is the
-             only place a server that confused the two would take the wrong item.
+     3. THE CASH SHOP, AND THE QUESTION IS SHARPER NOW. Thank you for the five clicks - they
+        went in the log, and what is in the log is NOTHING. Five packets in those 24 seconds
+        and every one is routine telemetry that arrives in sessions where nobody touches it.
+        That is two sessions with zero cash-shop packets.
+        What changed since yesterday: I read the handler. FUN_1411ab7b0 is a button-NAME
+        dispatcher, and its CashShop arm has NO CONDITION AT ALL - match the name, load a
+        global, tail-jump to the sender. So "a gate in the handler" is now the LESS likely
+        reading, because if the click had reached that function a packet would have gone out.
+        Which makes the button itself the suspect, and sharpens the one thing I cannot see:
+          DOES THE BUTTON REACT AT ALL - depress, highlight, a click sound?
+            no reaction whatever -> the control is inert. The work is in the status-bar UI
+                         and no server change can reach it
+            it depresses, then nothing -> the handler IS entered, so the global at 0x143AA84A0
+                         is null or the sender bails. Both are one watch away
+            any words anywhere -> quote them. A string is one command from the branch
+        Nothing is worth building until that is known, and the migrate architecture you
+        described is still the right shape for the step after it. research/cash-shop.md.
 
      4. GLANCE, NO SETUP: does a grey "<item> x<n> earned." line appear in the SCREEN MESSAGE
         AREA - the strip above the chat box - when you pick something up? It has gone out on
@@ -851,7 +844,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  4 steps, and STEP 1 MUST BE FIRST - the order is the experiment.' -ForegroundColor Yellow
+    Write-Host '  4 steps. STEP 1 MUST BE FIRST - the order is the experiment.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -881,8 +874,9 @@ if ($SetFieldProbe) {
     Write-Host '  0x007D, the 124-byte mask, bit 92 = Speed, the i16 value width and'
     Write-Host '  milliseconds, none of which was readable statically, plus 0x013F''s'
     Write-Host '  layout. THREE SNAILS WORKS and deals damage.'
-    Write-Host '  THE STORAGE WINDOW OPENS: 30 slots, mesos both ways. Items and the'
-    Write-Host '  fee are step 3 and have still never been seen.'
+    Write-Host '  STORAGE IS DONE except Organize: the window, 30 slots, mesos both'
+    Write-Host '  ways, items in and out, and the 100 meso fee - ten deposits in one'
+    Write-Host '  session, all charged.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
     Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
@@ -910,35 +904,37 @@ if ($SetFieldProbe) {
     Write-Host '     Then either way try  !map 10001000  - Henesys town, next door,'
     Write-Host '     also never loaded. Park dies + town loads -> that ONE map.'
     Write-Host ''
-    Write-Host '  2. CASH SHOP: I ONLY NEED ONE SENTENCE ABOUT THE SCREEN.' -ForegroundColor Cyan
-    Write-Host '     Nothing is built, because there is nothing to build yet.'
-    Write-Host '     It is NOT an unhandled opcode: NO PACKET WAS SENT AT ALL.'
-    Write-Host '     world.log has every inbound packet and there was nothing new.'
-    Write-Host '     Not missing art either - CashShopUI.img, CashShopPreview.img'
-    Write-Host '     and button:CashShop in both status bars are all present. And'
-    Write-Host '     the button''s handler DOES reach two packet builders, both'
-    Write-Host '     behind a conditional. So the client refused it internally.'
-    Write-Host '       nothing at all, no depress -> a gate before the handler, the'
-    Write-Host '                                     create-character flag pattern'
-    Write-Host '       a dialog or a chat line    -> TELL ME THE WORDS. A string is'
-    Write-Host '                                     one command from the branch'
-    Write-Host '       a window opens, blank      -> the handler ran and the REQUEST'
-    Write-Host '                                     is missing. Then your migrate'
-    Write-Host '                                     reading is the thing to build'
-    Write-Host '     Your architecture is likely right for the step AFTER this one.'
-    Write-Host '     research/cash-shop.md'
+    Write-Host '  2. ORGANIZE ITEM NOW ORGANISES.' -ForegroundColor Cyan
+    Write-Host '     You hit it three times and nothing happened: mode 6 answered'
+    Write-Host '     with the unchanged box and called that "a legal no-op". Legal,'
+    Write-Host '     but not what the button says it does.'
+    Write-Host '     It repacks to 1..n, grouped by tab then item id. Put a few'
+    Write-Host '     things in, take one from the middle to leave a hole, Organize.'
+    Write-Host '       the gap closes, items group by tab -> done'
+    Write-Host '       nothing moves   -> the DB sorted and the client is not'
+    Write-Host '                          redrawing from mode 15. Mode 19 next'
+    Write-Host '       order looks odd -> say what you expected. This does equips'
+    Write-Host '                          by id, then Use, then Etc'
+    Write-Host '       items VANISH    -> stop and say so. The sort re-reads and'
+    Write-Host '                          refuses to commit if the count changed'
+    Write-Host '     HIT IT THREE TIMES AGAIN - clicks 2 and 3 must change nothing.'
     Write-Host ''
-    Write-Host '  3. MR. KIM - STILL UNTESTED, and skipped three runs running.' -ForegroundColor Cyan
-    Write-Host '     The window is confirmed (30 slots, mesos both ways). Items and the'
-    Write-Host '     100 meso fee are the new half - both were the same missing arm.'
-    Write-Host '       a. store an item and watch your mesos.'
-    Write-Host '            item moves AND 100 leave -> done, both halves'
-    Write-Host '            item moves, no fee       -> effect not hanging off the'
-    Write-Host '                                        transition (the quest bug)'
-    Write-Host '            fee taken, item stays    -> the worse direction. Say so'
-    Write-Host '       b. take it back out - free - and check the tab it lands in.'
-    Write-Host '       c. if you have patience: deposit TWO, withdraw the FIRST, then'
-    Write-Host '          withdraw again. The index is a POSITION, not a slot.'
+    Write-Host '  3. CASH SHOP - the question is sharper now.' -ForegroundColor Cyan
+    Write-Host '     Thank you for the five clicks. They went in the log and what is'
+    Write-Host '     in the log is NOTHING: five packets in those 24 seconds, every'
+    Write-Host '     one routine telemetry. Two sessions, zero cash-shop packets.'
+    Write-Host '     I read the handler since: FUN_1411ab7b0 is a button-NAME'
+    Write-Host '     dispatcher and its CashShop arm has NO CONDITION - match the'
+    Write-Host '     name, load a global, tail-jump to the sender. So "a gate in the'
+    Write-Host '     handler" is now the LESS likely reading, and the button itself'
+    Write-Host '     is the suspect.'
+    Write-Host '     DOES THE BUTTON REACT AT ALL - depress, highlight, a sound?'
+    Write-Host '       no reaction at all -> the control is inert. The work is in the'
+    Write-Host '                             status-bar UI, not the protocol'
+    Write-Host '       depresses, nothing -> the handler IS entered; the global at'
+    Write-Host '                             0x143AA84A0 is null or the sender bails'
+    Write-Host '       any words anywhere -> quote them. One command from the branch'
+    Write-Host '     research/cash-shop.md'
     Write-Host ''
     Write-Host '  4. GLANCE: when you pick something up, does a grey "<item> x<n>' -ForegroundColor Cyan
     Write-Host '     earned." line appear in the SCREEN MESSAGE AREA above the chat'

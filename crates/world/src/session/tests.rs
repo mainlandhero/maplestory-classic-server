@@ -4783,6 +4783,42 @@ fn the_buff_command_skips_every_gate_and_sends_the_same_packet() {
     assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET), "and below it");
 }
 
+/// **"Organize Item" organises.**
+///
+/// The owner, 2026-08-22: *"I tried hitting the 'Organize Item' 3 times, but it did not perform
+/// anything."* Mode 6 answered with the unchanged box and a log line calling that a legal
+/// no-op. It was legal; it was not what the button says it does.
+///
+/// Three clicks is what they actually did, so three is what this asserts - a sort whose
+/// tie-break depended on read order would reshuffle every click, which on screen looks
+/// exactly like the old broken version.
+#[test]
+fn organize_item_repacks_the_box_and_repeats_do_not_reshuffle() {
+    let (mut s, store, _id) = gm_session();
+    let account_id = 1i64;
+    store.set_storage_slot(account_id, 9, &store::Item::bundle(2000000, 3)).unwrap();
+    store.set_storage_slot(account_id, 2, &store::Item::equip(1302000)).unwrap();
+    store.set_storage_slot(account_id, 7, &store::Item::equip(1040001)).unwrap();
+
+    let out = s.on_storage_request(&[6u8]);
+    let reply = out
+        .iter()
+        .find(|r| r.opcode == net::storage::STORAGE_RESULT)
+        .expect("every 0x00F6 is answered");
+    assert_eq!(reply.body[0], net::storage::RESULT_TRUNK_REFRESH, "mode 15 recalculates scroll");
+
+    let after = store.storage(account_id).unwrap();
+    assert_eq!(
+        after.items.iter().map(|i| (i.slot, i.item.item_id)).collect::<Vec<_>>(),
+        vec![(1, 1040001), (2, 1302000), (3, 2000000)],
+        "packed 1..n, equips by id first, then Use"
+    );
+
+    s.on_storage_request(&[6u8]);
+    s.on_storage_request(&[6u8]);
+    assert_eq!(store.storage(account_id).unwrap().items, after.items, "clicks 2 and 3 change nothing");
+}
+
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
 /// else. This is the always-answer rule with a different field name.
 #[test]

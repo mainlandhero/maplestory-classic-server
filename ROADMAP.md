@@ -331,7 +331,8 @@ next.** This list is deliberately coarse so the two cannot drift; do not duplica
       Revive warps to the `reviveMap` town, 50 HP, -10% EXP above level 10.
 - [x] **Storage.** `0x0572` out, `0x00F6` in. Opening and mesos are CONFIRMED on screen
       (30 slots, both directions). Item put-in and take-out are built and unseen, with the
-      keeper's deposit fee out of `Npc.wz`.
+      keeper's deposit fee out of `Npc.wz` - CONFIRMED on screen 2026-08-22, ten deposits
+      and ten fees. Organize Item repacks the box, grouped by tab then item id.
 - [x] **Buffs - CONFIRMED on screen 2026-08-22.** `0x013C` in, `0x007D` TemporaryStatSet
       out, duration in **milliseconds**. The icon, the countdown and the speed all drew, which
       settled the opcode, bit 92 = Speed and the `i16` value width in one go. Nimble Feet

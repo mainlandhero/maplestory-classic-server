@@ -96,11 +96,7 @@ impl Session {
                 self.open_storage = None;
                 Vec::new()
             }
-            net::storage::StorageRequest::Sort => self.storage_refusal(
-                net::storage::RESULT_TRUNK_REFRESH,
-                account_id,
-                "sort: the box is re-sent unchanged, which is a legal no-op".to_string(),
-            ),
+            net::storage::StorageRequest::Sort => self.storage_sort(account_id),
             net::storage::StorageRequest::Mesos { amount } => {
                 self.storage_mesos(account_id, amount)
             }
@@ -407,6 +403,33 @@ impl Session {
             }
         }
         out
+    }
+
+    /// Mode 6 - **Organize Item**, and it now organises.
+    ///
+    /// The owner, 2026-08-22: *"I tried hitting the 'Organize Item' 3 times, but it did not perform
+    /// anything."* It did not: this arm re-sent the box unchanged and the log line called that
+    /// *"a legal no-op"*. Legal it was; a no-op is not what the button says it does, and
+    /// answering a request with the shape of a success while changing nothing is the same
+    /// failure the storage window itself started as.
+    ///
+    /// Mode **15** rather than 19: 19 preserves the scroll position and 15 recalculates it,
+    /// and after a repack the old scroll points at different items.
+    fn storage_sort(&mut self, account_id: i64) -> Vec<Reply> {
+        match self.store.sort_storage(account_id) {
+            Ok(boxx) => self.storage_refusal(
+                net::storage::RESULT_TRUNK_REFRESH,
+                account_id,
+                format!("sort: repacked {} item(s) into slots 1..{}, grouped by tab then item id", boxx.items.len(), boxx.items.len()),
+            ),
+            // Still answered. The window latches on every request and only a 0x0572 clears
+            // it, so a failed sort that said nothing would freeze every later button.
+            Err(e) => self.storage_refusal(
+                net::storage::RESULT_TRUNK_REFRESH,
+                account_id,
+                format!("sort failed and nothing moved: {e}"),
+            ),
+        }
     }
 
     /// Move mesos between the purse and the box.

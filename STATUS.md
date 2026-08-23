@@ -1096,6 +1096,35 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### Storage is done bar Organize, and five Cash Shop clicks sent nothing
+
+2026-08-22, the owner: *"The storage fees are working, but I tried hitting the 'Organize Item' 3
+times, but it did not perform anything. I also clicked on the Cash Shop button 5 times before
+exiting the game."*
+
+**Storage items and the fee are confirmed** - ten deposits in one session, `mode 13` each
+time, and the 100 mesos charged. That closes the last of the storage window bar one button.
+
+**"Organize Item" did nothing because it was written to do nothing.** Mode 6 answered with
+the unchanged box and the log line called it *"a legal no-op"*. Legal it was, and a no-op is
+not what the button says it does - answering with the shape of a success while changing
+nothing is the same failure the storage window itself started as. `Store::sort_storage`
+repacks to slots 1..n, grouped by inventory type then item id, in one transaction that
+**re-reads the box and refuses to commit if the count changed**. The order is a pure function
+of the contents, so the second and third clicks cannot reshuffle - which matters, because the owner
+clicked three times.
+
+**Five deliberate Cash Shop clicks produced five packets, and every one is routine telemetry**
+that arrives in sessions where nobody touches the button. Two sessions now with zero
+cash-shop traffic.
+
+And the reading has changed. `FUN_1411ab7b0` is a button-**name** dispatcher, and its CashShop
+arm has **no condition at all**: match the name, load a global, tail-jump to the sender. So "a
+gate in the handler" is now the *less* likely explanation, because reaching that function at
+all would have produced a packet. **The button itself is the suspect**, which sharpens the one
+thing only the owner can see: does it react to the click - depress, highlight, a sound?
+`research/cash-shop.md` part two.
+
 #### Buffs are done, and the Cash Shop click never became a packet
 
 2026-08-22, the owner: *"I confirmed that the buff now works. Three Snails also works as intended
