@@ -309,3 +309,68 @@ proves the watch is armed before Cash Shop's silence is allowed to mean anything
 
 Without it, "no WATCH lines" has two readings - the click did not reach the dispatcher, or the
 hook never armed - and this project has spent runs on exactly that ambiguity.
+
+
+---
+
+# Part five: the sender is entered on every click, and its six exits are named
+
+2026-08-22. The owner: *"as a test, I took out a 'Sword' from the storage before spamming the cash
+shop button and then leaving the game to try to get you something usable."* It was.
+
+## The watches answered it outright
+
+```text
+0x1411ab7b0  the status-bar name dispatcher   29 hits
+0x142caee70  the sender its CashShop arm jumps to   20 hits, then "disarmed after the hit limit"
+```
+
+**The sender's twenty timestamps are the dispatcher's first twenty, to the millisecond** -
+`09:39:30.002, .162, .322, .472, …` in both lists. `[L]` So every click runs
+dispatcher -> sender, one for one, and **the sender is what refuses**. Third row of part
+three's table.
+
+The window is unambiguous too: the storage close is at `09:39:29.082` and the first watch hit
+at `09:39:30.002`, with the socket closing at `09:39:35.5`. Nothing else was happening.
+
+**And the Sword came out**: `took item 1302000 out of storage slot 10`. Storage take-out is
+confirmed on screen, which closes the last untested half of that window. `[L]`
+
+## `FUN_142caee70`'s six exits before the packet
+
+Read off the listing, and the three message ids decrypted with `tools/dump_stringids.py` out
+of the client's own table: `[L]`
+
+| exit | condition | what the player sees |
+|---|---|---|
+| `0x142caeea2` | a global is null | nothing |
+| `0x142caeeed` | `[ctx+0x31fc] > 1` | **"You cannot go into the cash shop. Please try again later."** (`0x091E`) |
+| `0x142caef58` | a UI-window chain, `[…+0x1498] != 0` | **"You must close the window before using the Cash Shop or changing channels."** (`0x0486`) |
+| `0x142caef7c` | `[ctx+0x2338] != 0` | **nothing** |
+| `0x142caef88` | `[ctx+0x2330] != 0` | **nothing** |
+| `0x142caef9e` | `tick - [ctx+0x2334] < 0x1f4` | **nothing** |
+| `0x142caefac` | `[ctx+0x2dd8] != 0` | "You can't do this while taking the quiz." (`0x0AE2`) |
+
+Two of those matter more than the rest.
+
+**`[ctx+0x2330]` is the exclusive-request latch** - the same field
+`research/pick-up-latch.md` is about, the one `0x0107` sets and an inbound `0x0070` clears,
+and the one whose stuck state killed every pick-up on 2026-08-22. If a request left it set,
+the Cash Shop button goes dead **silently**, which is exactly the symptom. `[D]`
+
+**`0x1f4` is 500 milliseconds.** The 29 clicks came at ~150 ms intervals, so *every click
+after the first* was refused by the rate limiter alone, whatever else is true. Spamming was
+the worst possible way to test it, through no fault of the owner's - nobody knew.
+
+## What the next run changes, and why it is two things
+
+1. **Click once, wait three seconds, click again.** Three clicks. That removes the rate
+   limiter from the question entirely.
+2. **Do it on a fresh login before opening anything.** One of the three messages is literally
+   *"You must close the window…"*, and the storage window had been open seconds earlier. Then
+   repeat the three clicks *after* using storage: **working before and dead after is a
+   complete answer on its own**, with no watch needed.
+
+The watch now peeks the latch directly - `142caee70:peek=2330` - because `rcx` on entry is the
+context (`mov rbx, rcx` at `0x142caee97`). Non-zero on a click means the latch is stuck, and a
+stuck latch is **our** bug: something sent a request and never got its `0x0070`.

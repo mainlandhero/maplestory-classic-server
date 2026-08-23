@@ -97,50 +97,39 @@
         HIT IT THREE TIMES AGAIN. It is a pure function of the contents, so clicks two and
         three must change nothing; anything that keeps shuffling is a different bug.
 
-     3. THE CASH SHOP. CLICK ANY OTHER STATUS-BAR BUTTON FIRST, THEN CASH SHOP.
-        The other button is the POSITIVE CONTROL and the order is the whole experiment. Use
-        whichever of these you can see - they are all handled by the same function as the Cash
-        Shop button, and they all work:
-            Equip   Inven (the inventory bags)   Stat   Skill   Key   Menu   Mailbox
-        One click on any one of them, then two or three on Cash Shop, then quit.
+     3. THE CASH SHOP. CLICK IT FIRST, BEFORE OPENING ANYTHING, AND ONCE EVERY 3 SECONDS.
+        The Sword run answered the last question completely, so thank you. Both watches fired
+        on IDENTICAL timestamps - 29 dispatcher hits and 20 sender hits, same milliseconds -
+        which means the click reaches FUN_142caee70 and THE SENDER IS WHAT REFUSES. It is 1012
+        bytes and it has six exits before the packet.
+        THREE OF THEM SHOW A MESSAGE, and they are decrypted out of the client's own string
+        table so you can recognise them on sight:
+          "You cannot go into the cash shop. Please try again later."
+          "You must close the window before using the Cash Shop or changing channels."
+          "You can't do this while taking the quiz."
+        IF ANY OF THOSE APPEARS, THAT IS THE ANSWER - say which one and stop there.
+        THREE RETURN SILENTLY, which is what you have been seeing:
+          a flag at +0x2338
+          the EXCLUSIVE-REQUEST LATCH at +0x2330 - the same one research/pick-up-latch.md is
+            about, the one an inbound 0x0070 clears
+          a 500 ms RATE LIMIT. You spammed at about 150 ms, so every click after the first was
+            refused by this alone, whatever else is true
 
-        READ IT BACK WITH THIS - it is one line and it needs no elevation:
-          powershell -NoProfile -Command "Select-String -Path 'C:\MapleCW\client-patched\maplecw-hook.log' -Pattern 'WATCH #\d+: (0x1411ab7b0|0x142caee70)' | ForEach-Object { $_.Line }"
+        SO THE PROCEDURE IS TWO CHANGES, AND BOTH MATTER:
+          a. CLICK IT ONCE, COUNT TO THREE, CLICK AGAIN. Three clicks, not thirty. That takes
+             the rate limiter out of the question entirely.
+          b. DO IT BEFORE TALKING TO ANY NPC OR OPENING ANY WINDOW, on a fresh login. Last run
+             you had the storage window open seconds earlier, and one of the three messages is
+             literally about a window being open.
+        Then, if it still does nothing, do the same three clicks AFTER using storage. Working
+        before and dead after is a complete answer on its own.
 
-          lines for the FIRST button, none after the Cash Shop clicks -> the click never
-                       reaches the dispatcher. That is a status-bar UI problem and no server
-                       change touches it
-          lines from 0x1411ab7b0 for Cash Shop and NONE from 0x142caee70 -> the dispatcher
-                       runs and the name never matches its CashShop arm. rdx on entry is the
-                       button index and comparing the two names the mismatch
-          lines from BOTH -> the sender is what refuses, and it is 1012 bytes to read
-          NO lines at all, not even for the first button -> the hook did not arm, and nothing
-                       else in this step means anything. Say so and ignore the rest
-          "watch on 0x1411ab7b0 disarmed after the hit limit" -> you clicked more than sixty
-                       status-bar buttons; the cap ran out and later clicks are missing
-
-        WHY THAT BUTTON LIST AND NOT ANOTHER. FUN_1411ab7b0 dispatches on the button's NAME,
-        and its nineteen arms are exactly StatusBar.img's own buttons - ChatLogMin, ChatLogMax,
-        ChatPrev, ChatNext, ChatTargetSelect, CashShop, Menu, Shortcut, Claim, Mailbox, Equip,
-        Inven, Stat, StatUp, Skill, SkillUp, Key, QuickSlot, QuickSlotD. That is read out of
-        the listing and matched against the WZ, not guessed.
-        The client also ships StatusBar3.img, a completely different modern bar whose Cash Shop
-        button lives under mainBar/menu. IT IS DEAD ART: monsterCollection, bossParty,
-        dailyGift and GuildCastle are all StatusBar3-only names and every one has ZERO code
-        references, while Inven, QuickSlotD and ChatTargetSelect from the classic bar have 1,
-        2 and 5. The control passes, so the negative means something.
-
-        ON YOUR TWO QUESTIONS. "Does the server need to advertise that the cash shop is
-        available?" - very possibly, and with a precedent rather than a guess: the world list
-        carries a per-channel enable byte, and getting it wrong once emptied the Change Channel
-        dialog completely. But it cannot be why the button is silent, because a flag has to be
-        checked somewhere and the only conditional on this path is a null test on the context
-        singleton.
-        "Since channels have to be advertised with their IP, I assume cash shop would have to
-        be too" - CHANNELS ARE NOT. world_list_entry in crates/net/src/opcode.rs writes a name,
-        a u32 user count and four bytes per channel, and no address at all; the client learns
-        one from the 0x0011 migrate reply AFTER it asks. So an address cannot be a precondition
-        for asking. research/cash-shop.md.
+        THE WATCH READS THE LATCH DIRECTLY. rcx on entry to the sender is the context, so
+        +0x2330 is peeked on every click:
+          peek non-zero -> the latch is stuck, and that is OUR bug: something sent a request
+                       and never got the 0x0070 that clears it
+          peek zero     -> the gate is +0x2338 or the rate limit, and the next run peeks 2338
+        Read it back with the one-liner printed under Logs: below.
 
      4. GLANCE, NO SETUP: does a grey "<item> x<n> earned." line appear in the SCREEN MESSAGE
         AREA - the strip above the chat box - when you pick something up? It has gone out on
@@ -563,39 +552,37 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968'
     } else {
-        # THE CASH SHOP BUTTON, and these two split the question three ways in one run.
+        # THE CASH SHOP, AND THE QUESTION IS NOW ONE FIELD.
         #
-        # The owner, 2026-08-22: the button highlights, depresses and makes a click sound, and no
-        # packet leaves. So the control is live and something after it refuses.
+        # ANSWERED 2026-08-22: both the dispatcher (1411ab7b0) and the sender (142caee70)
+        # fire on every Cash Shop click, on IDENTICAL timestamps, 29 and 20 of them. So the
+        # click reaches the sender and the sender refuses. The dispatcher watch has done its
+        # job and its slot is free.
         #
-        # 1411ab7b0:hits=60 - the status bar's button-NAME dispatcher. It is the status bar
-        #   and that is read, not guessed: its nineteen arms are ChatLogMin, ChatLogMax,
-        #   ChatPrev, ChatNext, ChatTargetSelect, CashShop, Menu, Shortcut, Claim, Mailbox,
-        #   Equip, Inven, Stat, StatUp, Skill, SkillUp, Key, QuickSlot, QuickSlotD. It fires
-        #   on ANY status-bar button, hence the raised cap - and that is a feature, because
-        #   clicking Inven first proves the watch is armed before Cash Shop proves anything.
-        # 142caee70:hits=20 - the sender the CashShop arm tail-jumps to.
+        # FUN_142caee70 has six exits before the packet. Three SHOW A MESSAGE - now decrypted
+        # out of the client's own string table, so they can be recognised on sight:
+        #   0x091E  "You cannot go into the cash shop. Please try again later."   [rbx+0x31fc] > 1
+        #   0x0486  "You must close the window before using the Cash Shop or changing channels."
+        #   0x0AE2  "You can't do this while taking the quiz."                    [rbx+0x2dd8]
+        # and three RETURN SILENTLY, which is what the owner sees:
+        #   [rbx+0x2338] != 0
+        #   [rbx+0x2330] != 0            <- THE EXCLUSIVE-REQUEST LATCH, the same one
+        #                                   research/pick-up-latch.md is about
+        #   tick - [rbx+0x2334] < 0x1f4  <- a 500 ms RATE LIMIT, and they spammed at ~150 ms
         #
-        #   NEITHER fires on a Cash Shop click -> the click never reaches the dispatcher.
-        #                    The work is in the status-bar UI and no server change touches it
-        #   ONLY 1411ab7b0   -> the dispatcher runs and the name never matches the CashShop
-        #                    arm. rdx on entry is the button index; compare it against the
-        #                    index a working button (Inven) reports
-        #   BOTH fire        -> the sender is what refuses, and it is 1012 bytes to read
+        # 142caee70:peek=2330:hits=60 - rcx on entry IS the context (mov rbx,rcx at
+        #   142caee97), so +0x2330 is read directly. Non-zero on a click and the button is
+        #   dead because something left the latch set, which is a SERVER bug we can fix.
         #
         # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE CONTROL: no lines
         #   at all means the hook never armed and the log proves nothing.
-        #
-        # WHAT WENT: 141c532ab:peek=24, the mob encodeInit cursor. It was a regression check
-        #   on a thing that has rendered correctly for days, and world.log already carries
-        #   every mob packet it was watching.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,1411ab7b0:hits=60,142caee70:hits=20,140304100:hits=200:dump=143AC2400/968'
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142caee70:peek=2330:hits=60,140304100:hits=200:dump=143AC2400/968'
     }
     # Announce which pair actually got armed. The old line said "mobs" for 141c532ab, which
     # is the mob SPAWN decoder - now that -MobTargets arms a mob TARGETING watch, one word
     # would have covered two different runs. Same precedence as the if/elseif above, and
     # written as three statements because 5.1 has no ternary.
-    $pair = "THE CASH SHOP BUTTON (1411ab7b0 the status-bar name dispatcher, 142caee70 its sender)"
+    $pair = "THE CASH SHOP SENDER (142caee70, peeking the exclusive-request latch at +0x2330)"
     if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
     if ($MobTargets) { $pair = "MOB TARGETING (mob+0xa88 and mob+0x42c in the collector loop)" }
     if ($UserState) { $pair = "THE USER STATE FIELD (140f810e0, rdx is the value)" }
@@ -967,30 +954,30 @@ if ($SetFieldProbe) {
     Write-Host '                          refuses to commit if the count changed'
     Write-Host '     HIT IT THREE TIMES AGAIN - clicks 2 and 3 must change nothing.'
     Write-Host ''
-    Write-Host '  3. CASH SHOP. CLICK ANY OTHER STATUS-BAR BUTTON FIRST.' -ForegroundColor Cyan
-    Write-Host '     The other button is the POSITIVE CONTROL and the order is the'
-    Write-Host '     whole experiment. Any of these will do - same handler as Cash'
-    Write-Host '     Shop, and they all work:'
-    Write-Host '        Equip   Inven (the inventory bags)   Stat   Skill'
-    Write-Host '        Key     Menu    Mailbox'
-    Write-Host '     One click on one of those, then 2-3 on Cash Shop, then quit.'
-    Write-Host '     Read it back with the ONE-LINER printed under Logs: below.'
-    Write-Host '       control logs, Cash Shop does NOT -> the click never reaches'
-    Write-Host '                        the dispatcher. Status-bar UI, not protocol'
-    Write-Host '       0x1411ab7b0 only -> the name never matches the CashShop arm'
-    Write-Host '       BOTH addresses   -> the sender refuses; 1012 bytes to read'
-    Write-Host '       nothing at all   -> the hook did not arm. Ignore the rest'
-    Write-Host '       "disarmed after the hit limit" -> over sixty button clicks;'
-    Write-Host '                        the cap ran out and later ones are missing'
-    Write-Host '     The nineteen arms of that handler ARE StatusBar.img''s buttons,'
-    Write-Host '     matched against the WZ. The modern StatusBar3.img is DEAD ART:'
-    Write-Host '     its own names have ZERO code references while the classic bar''s'
-    Write-Host '     have 1, 2 and 5 - so the control passes.'
-    Write-Host '     ON YOUR QUESTION: channels are NOT advertised with an IP. A'
-    Write-Host '     channel entry is a name, a user count and four bytes - no'
-    Write-Host '     address. The client learns it in the 0x0011 migrate reply AFTER'
-    Write-Host '     it asks, so an address cannot gate the asking. An "available"'
-    Write-Host '     FLAG is a different matter and may well be real.'
+    Write-Host '  3. CASH SHOP: CLICK IT FIRST, ONCE EVERY 3 SECONDS.' -ForegroundColor Cyan
+    Write-Host '     The Sword run answered the last question completely. Both'
+    Write-Host '     watches fired on IDENTICAL timestamps - 29 and 20 hits - so the'
+    Write-Host '     click reaches FUN_142caee70 and THE SENDER REFUSES.'
+    Write-Host '     It has six exits before the packet. THREE SHOW A MESSAGE, now'
+    Write-Host '     decrypted from the client''s own string table:'
+    Write-Host '       "You cannot go into the cash shop. Please try again later."'
+    Write-Host '       "You must close the window before using the Cash Shop or'
+    Write-Host '        changing channels."'
+    Write-Host '       "You can''t do this while taking the quiz."'
+    Write-Host '     IF ONE APPEARS, SAY WHICH AND STOP - that is the answer.'
+    Write-Host '     THREE RETURN SILENTLY: a flag at +0x2338, the EXCLUSIVE-REQUEST'
+    Write-Host '     LATCH at +0x2330, and a 500ms RATE LIMIT. You spammed at ~150ms,'
+    Write-Host '     so every click after the first died on the rate limit alone.'
+    Write-Host '     TWO CHANGES, both matter:'
+    Write-Host '       a. click ONCE, count to three, click again. Three clicks.'
+    Write-Host '       b. do it BEFORE any NPC or window, on a fresh login. One of'
+    Write-Host '          those messages is literally about an open window, and you'
+    Write-Host '          had storage open seconds before.'
+    Write-Host '     Then repeat the three clicks AFTER using storage. Working before'
+    Write-Host '     and dead after is a complete answer on its own.'
+    Write-Host '     The watch peeks +0x2330 on every click:'
+    Write-Host '       non-zero -> the latch is stuck, and that is OUR bug'
+    Write-Host '       zero     -> it is +0x2338 or the rate limit; peek 2338 next'
     Write-Host ''
     Write-Host '  4. GLANCE: when you pick something up, does a grey "<item> x<n>' -ForegroundColor Cyan
     Write-Host '     earned." line appear in the SCREEN MESSAGE AREA above the chat'
@@ -1056,6 +1043,6 @@ Write-Host "  $hookLog   client patches and faults"
 Write-Host "  $exitLog          how the client died; 0 is a hand-close"
 Write-Host ''
 Write-Host 'Read the Cash Shop watches back with this - no elevation needed:' -ForegroundColor DarkGray
-Write-Host ('  powershell -NoProfile -Command "Select-String -Path ''' + $hookLog + ''' -Pattern ''WATCH #\d+: (0x1411ab7b0|0x142caee70)'' | ForEach-Object { $_.Line }"') -ForegroundColor DarkGray
+Write-Host ('  powershell -NoProfile -Command "Select-String -Path ''' + $hookLog + ''' -Pattern ''WATCH #\d+: 0x142caee70'' | ForEach-Object { $_.Line }"') -ForegroundColor DarkGray
 Write-Host ''
 Write-Host "Then: powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Stop"

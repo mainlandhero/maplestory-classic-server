@@ -1096,6 +1096,38 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### The Cash Shop sender IS entered, and its six exits are named
+
+2026-08-22, the owner: *"as a test, I took out a 'Sword' from the storage before spamming the cash
+shop button and then leaving the game to try to get you something usable."*
+
+It was. Both watches fired and **the sender's twenty timestamps are the dispatcher's first
+twenty, to the millisecond** - so every click runs dispatcher -> `FUN_142caee70`, one for one,
+and **the sender is what refuses**. The storage-take-out also landed: `took item 1302000 out of
+storage slot 10`, which closes the last untested half of that window.
+
+`FUN_142caee70` has **six exits before the packet**, and the three message ids are decrypted
+out of the client's own table:
+
+* *"You cannot go into the cash shop. Please try again later."* (`0x091E`)
+* *"You must close the window before using the Cash Shop or changing channels."* (`0x0486`)
+* *"You can't do this while taking the quiz."* (`0x0AE2`)
+
+and three that **return silently**, which is the symptom: `[ctx+0x2338]`, **`[ctx+0x2330]`**,
+and `tick - [ctx+0x2334] < 0x1f4`.
+
+**`[ctx+0x2330]` is the exclusive-request latch** - the same field `research/pick-up-latch.md`
+is about, the one an inbound `0x0070` clears, and the one whose stuck state killed every
+pick-up earlier the same day. A stuck latch would kill this button silently, and that would be
+**our** bug.
+
+**`0x1f4` is 500 ms**, and the clicks came at ~150 ms - so every click after the first died on
+the rate limiter alone. Spamming was the worst way to test it, and nobody knew.
+
+Next run: three clicks three seconds apart, on a fresh login before opening anything, then
+again after using storage. The watch peeks `+0x2330` directly. `research/cash-shop.md` part
+five.
+
 #### The Cash Shop button is live, both of my readings are dead, and two watches are armed
 
 2026-08-22, the owner: *"The button can be highlighted, does depress when clicked, and does make a
