@@ -65,9 +65,22 @@ except ImportError:  # pragma: no cover
 # `0x142d23ef0` is 6 MB away from the others, which is exactly why searching a neighbourhood
 # missed it. CLAUDE.md: enumerate before you filter.
 PRIM = {
-    # the six real readers
+    # the SEVEN real readers
     0x1406e8ae0: "u8", 0x1406e8b80: "u16", 0x1406e8c20: "u32",
     0x1406e8f10: "u64", 0x1406e9050: "str", 0x1406e9170: "raw",
+    # **The eleventh entry, added 2026-08-24, and it was missing for the whole life of this
+    # tool.** `0x1406e8fb0` is byte-for-byte the `u64` reader above - same `[rcx+0x18]`
+    # length, same `[rbx+0x24]` cursor, the same `cmp edi, 8 / jb <raise>` underflow test and
+    # the same 8-byte advance - differing only in `movsd xmm0, [rax]` where the other has
+    # `mov rax, [rax]`. It is the **double** reader.
+    #
+    # 71 call sites in 35 functions, including `FUN_142CBAA80`, `CWvsContext::OnPacket`
+    # itself. **Every read walk that crossed one came back EIGHT BYTES SHORT, silently** -
+    # which is this file's own docstring reason 3 happening to this file.
+    #
+    # `CLAUDE.md`: "Re-run your own analysis when you fix a shared instrument." Anything
+    # resting on a read count through those 35 functions is suspect until re-run.
+    0x1406e8fb0: "f64",
     # the four thunks
     0x1406e8ee0: "u8", 0x1406e8ef0: "u16", 0x1406e8f00: "u32", 0x142d23ef0: "u32",
 }

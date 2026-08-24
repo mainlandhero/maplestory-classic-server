@@ -51,7 +51,8 @@
 //! **[L]** So the button is not broken and never was: it fires once, latches, and waits for a
 //! reply that never comes. `research/cash-shop.md` part six.
 
-use crate::packet::PacketReader;
+use crate::opcode::{character_record_for_set_field_with_quests_and_skills, Character, EquipStats};
+use crate::packet::{PacketReader, PacketWriter};
 
 /// `0x00D5` - "take me to the Cash Shop".
 ///
@@ -104,5 +105,208 @@ mod tests {
         // A body of the wrong length is refused rather than read past the end or padded.
         assert!(parse_cash_shop_request(&body[..4]).is_none());
         assert!(parse_cash_shop_request(&[]).is_none());
+    }
+}
+
+
+// ===========================================================================================
+// The reply: SetCashShop
+// ===========================================================================================
+
+/// `0x01A3` - **SetCashShop**, and it goes out on the connection the client is already using.
+///
+/// # There is no migrate, and that reverses what this project believed for two days
+///
+/// `research/cash-shop.md` §4 described a separate cash-shop process reached by a migrate, and
+/// said so twice. Two agents reached the same answer independently and it is not that:
+/// `0x01A0..0x01A3` are the **four cases of one stage forwarder**, `FUN_142097EE0`, and
+/// `CField::OnPacket` chains into it. The ladder is four arms and no more: **[L]**
+///
+/// ```asm
+/// 142097ee0  sub edx, 0x1a0 ; je  -> 0x01A0  field
+/// 142097ee8  sub edx, 1     ; je  -> 0x01A1  farm field
+/// 142097eed  sub edx, 1     ; je  -> 0x01A2  auction field
+/// 142097ef2  cmp edx, 1     ; jne -> default
+///                                  -> 0x01A3 at 14209ad60
+/// ```
+///
+/// That is exactly why this server's `!map` `0x01A0` already works mid-session on a live
+/// channel socket, and the `0x01A3` handler **never reads its `this`**, so it does not care
+/// which stage forwarded it. `0x001A`, the socket-level migrate, has **no cash-shop branch at
+/// all** - three reads, `u8 ok, u32 ip, u16 port`, no destination and no seed - so a separate
+/// process remains a *deployment* choice that would still have to send this packet. **[L]**
+///
+/// # Why it is `0x01A3` of the four
+///
+/// Three independent discriminators, and the first is a closed loop: **[L]/[D]**
+///
+/// * `FUN_142caee70` - the `0x00D5` builder - writes `[CWvsContext+0x2d10]`
+///   (`mov [rbx+0x2d10], edi` at `0x142caf06f`). `FUN_142cc42c0` reads it, two instruments
+///   agree those are the only two touchers, and the getter has **one caller image-wide**: the
+///   `0x01A3` handler. Request and response, closed.
+/// * only `0x01A3` reads packet bytes after the character record.
+/// * its stage's `OnPacket` reaches `originalPrice`, `discount`, `bombSale`, `mileageRate`,
+///   `forcedCategory`; the same scan on its siblings returns `Town Map` for `0x01A1` and
+///   `Etc/GlobalMarketData.img` for `0x01A2`. **The instrument discriminates** rather than
+///   matching everything, which is what makes the positive worth anything.
+///
+/// **The opcode NUMBER is `[D]`, not `[L]`.** No `SetCashShop` has ever been on this wire.
+/// `0x01A0` is the only member of the block with a live confirmation, and if this draws
+/// nothing the number is the first thing to doubt.
+pub const SET_CASH_SHOP: u16 = 0x01A3;
+
+/// Bytes after the character record, before the margin: `u8 u8 u8`, `u16`, `u16`, `u32`.
+pub const CASH_SHOP_TAIL_LEN: usize = 3 + 2 + 2 + 4;
+
+/// The same margin `set_field_with_character_dressed_quests` carries, and for the same reason.
+///
+/// Surplus bytes are never looked at - the frame carries its own length - and this project has
+/// now been short **twice in one week**: `0x007D` threw at 152 bytes and `0x007E` threw at 127,
+/// both because a read walk under-counted a tail. Being long costs nothing and being short
+/// kills the client, so the asymmetry decides it.
+pub const CASH_SHOP_MARGIN: usize = 384;
+
+/// Build a `0x01A3` body.
+///
+/// ```text
+/// raw[8]              server clock base           read at 14209ad98, identical to SetField's
+/// <character record>  FUN_140304B20(...)          read at 14209ade8, the SAME record SetField
+///                                                 sends - not a cash-shop variant
+/// u8, u8, u8          read and discarded          140d71efd / f02 / f0d
+/// u16 nModifiedCommodity   0 jumps the whole loop 142d46be0
+/// u16 nNotice              0 skips the loop       142d47287
+/// u32 nSpecial             <= 0 skips the loop    142d474fa
+/// ```
+///
+/// **All three counts are zero here.** The client ships `Etc/Commodity.img` and reads it
+/// itself, so the modified-commodity list is a *delta*, not the catalogue - an empty one means
+/// "nothing differs from your own data", which is exactly true of this server today.
+/// `research/cash-shop-items.md` has the 159 rows that data contains.
+///
+/// **There is no fixed head beyond the FILETIME.** `SetField` reads a `u32 channel`, four more
+/// fields and a `u16 stringCount` before its record; `0x01A3` reads none of them. Sending
+/// SetField's head here would shift the record by 25 bytes and decode garbage. **[L]**
+pub fn set_cash_shop(
+    chr: &Character,
+    world_id: u32,
+    clock: u64,
+    equips: &[(u8, u32, EquipStats)],
+    quests: &crate::quest::QuestBook,
+    skills: &[crate::skills::Skill],
+) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.bytes(&clock.to_le_bytes());
+    w.bytes(&character_record_for_set_field_with_quests_and_skills(
+        chr, world_id, equips, quests, skills,
+    ));
+    w.bytes(&[0u8; 3]);
+    w.u16(0); // nModifiedCommodity - no row differs from the client's own Commodity.img
+    w.u16(0); // nNotice
+    w.u32(0); // nSpecial
+    w.bytes(&vec![0u8; CASH_SHOP_MARGIN]);
+    w.into_vec()
+}
+
+/// `0x00D1` with an **empty body** - the cash shop's Exit button.
+///
+/// The same opcode as the field transfer, which is why this needs saying: a portal walk sends
+/// **35 bytes** and the Exit button sends **none**. The dispatcher has to split on the length,
+/// and getting that backwards would make every portal in the game try to leave a cash shop.
+/// `FUN_1410BCDA0`'s `exit` / `checkCash` / `chargeCash` / `cartBuy` chain. **[L]**
+pub const CASH_SHOP_EXIT_BODY_LEN: usize = 0;
+
+/// `0x05AD` - the wallet, and the only packet that carries it.
+///
+/// `u32 nxCredit, u32 maplePoint, u32 <read, range-checked, discarded>`. **[L]**
+///
+/// No `CWvsContext` opcode carries a balance: the two wallet setters have 4 and 2 call sites
+/// image-wide and every one is in this class. So a cash shop with no `0x05AD` shows nothing to
+/// spend, whatever the server thinks the player has.
+///
+/// # It is both a reply and an unprompted greeting
+///
+/// `0x03E0` is the request - empty body, throttled to once every 60 s, latched on `[this+0x74]`
+/// which the `0x05AD` arm clears at `0x140D736DC`. Request and reply measured on both ends of
+/// the same latch. **[L]** But nothing requires it to be a reply, and sending it straight after
+/// `SetCashShop` means the balance is on screen before the player can ask.
+pub const CASH_SHOP_WALLET: u16 = 0x05AD;
+
+/// Body length of a [`CASH_SHOP_WALLET`]: three `u32`s.
+pub const CASH_SHOP_WALLET_LEN: usize = 12;
+
+/// `0x03E0` - the client asking for its balance. **Empty body**, throttled 60 s.
+pub const CLIENT_CASH_SHOP_QUERY: u16 = 0x03E0;
+
+/// Build a `0x05AD`.
+///
+/// The third `u32` is read, range-checked and discarded, so it goes out as zero - the same
+/// rule this project applies to every field whose meaning is not established.
+pub fn cash_shop_wallet(nx: u32, maple_points: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u32(nx);
+    w.u32(maple_points);
+    w.u32(0);
+    w.into_vec()
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+    use crate::opcode::Character;
+
+    fn body() -> Vec<u8> {
+        let chr = Character { name: "GoodTest".to_string(), ..Default::default() };
+        set_cash_shop(&chr, 0, 0x0123_4567_89ab_cdef, &[], &crate::quest::QuestBook::default(), &[])
+    }
+
+    /// **The head is eight bytes and nothing else.**
+    ///
+    /// `SetField` puts a `u32 channel` and four more fields before its record. `0x01A3` reads
+    /// none of them, so borrowing SetField's head would shift the character record by 25
+    /// bytes and decode garbage. This pins the one thing that would fail silently.
+    #[test]
+    fn the_head_is_the_filetime_alone() {
+        let b = body();
+        assert_eq!(&b[0..8], &0x0123_4567_89ab_cdefu64.to_le_bytes(), "the clock, then the record");
+        assert_ne!(
+            &b[0..crate::opcode::SET_FIELD_HEAD_LEN],
+            &crate::opcode::set_field_head(0x0123_4567_89ab_cdef, 0, 0)[..],
+            "this must NOT be SetField's head"
+        );
+    }
+
+    /// The wallet is three `u32`s and the balances land where the client reads them.
+    #[test]
+    fn the_wallet_is_three_u32s() {
+        let b = cash_shop_wallet(12_345, 678);
+        assert_eq!(b.len(), CASH_SHOP_WALLET_LEN);
+        assert_eq!(u32::from_le_bytes(b[0..4].try_into().unwrap()), 12_345, "nxCredit");
+        assert_eq!(u32::from_le_bytes(b[4..8].try_into().unwrap()), 678, "maplePoint");
+        assert_eq!(u32::from_le_bytes(b[8..12].try_into().unwrap()), 0, "read and discarded");
+    }
+
+    /// The three list counts are zero and the margin is zero, so every loop is skipped.
+    #[test]
+    fn the_three_list_counts_are_zero_and_the_margin_is_zero() {
+        let b = body();
+        let tail_at = b.len() - CASH_SHOP_MARGIN - CASH_SHOP_TAIL_LEN;
+        assert_eq!(&b[tail_at..tail_at + CASH_SHOP_TAIL_LEN], &[0u8; CASH_SHOP_TAIL_LEN]);
+        assert!(b[tail_at + CASH_SHOP_TAIL_LEN..].iter().all(|x| *x == 0), "the margin is zero");
+        assert_eq!(b.len() - tail_at, CASH_SHOP_TAIL_LEN + CASH_SHOP_MARGIN);
+    }
+
+    /// **The record is the SAME one SetField sends**, byte for byte - not a cash-shop variant.
+    ///
+    /// If these ever diverge, one of the two packets is decoding a record the client did not
+    /// build for it, and the failure would be a garbled character rather than an error.
+    #[test]
+    fn the_record_is_the_one_set_field_already_sends() {
+        let chr = Character { name: "GoodTest".to_string(), ..Default::default() };
+        let record = character_record_for_set_field_with_quests_and_skills(
+            &chr, 0, &[], &crate::quest::QuestBook::default(), &[],
+        );
+        let b = body();
+        assert_eq!(&b[8..8 + record.len()], &record[..]);
+        assert_eq!(b.len(), 8 + record.len() + CASH_SHOP_TAIL_LEN + CASH_SHOP_MARGIN);
     }
 }

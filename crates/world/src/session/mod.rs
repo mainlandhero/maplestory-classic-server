@@ -520,6 +520,14 @@ impl Session {
         }
         match opcode {
             CLIENT_MIGRATION_HELLO => {}
+            // **`0x00D1` is two different requests and only the LENGTH separates them.** A
+            // portal walk sends 35 bytes; the Cash Shop's Exit button sends none. Getting this
+            // split backwards would make every portal in the game try to leave a cash shop.
+            CLIENT_TRANSFER_FIELD
+                if body.len() == 2 + net::cashshop::CASH_SHOP_EXIT_BODY_LEN =>
+            {
+                return self.on_cash_shop_exit()
+            }
             CLIENT_TRANSFER_FIELD => return self.on_transfer_field(body.get(2..).unwrap_or(&[])),
             net::storage::CLIENT_STORAGE => {
                 return self.on_storage_request(body.get(2..).unwrap_or(&[]))
@@ -568,6 +576,8 @@ impl Session {
             net::cashshop::CLIENT_CASH_SHOP_REQUEST => {
                 return self.on_cash_shop_request(body.get(2..).unwrap_or(&[]))
             }
+            // "What is my balance." Empty body, and the client throttles it to once a minute.
+            net::cashshop::CLIENT_CASH_SHOP_QUERY => return self.on_cash_shop_query(),
             // **Two AP opcodes, not one.** 0x0138 is a single + click and 0x0139 is the
             // bulk dialog; answering only the second still looks broken to anyone using the
             // button, which is what happened. Both latch ctx+0x2330 on send and only a

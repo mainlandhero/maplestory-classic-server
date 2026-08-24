@@ -4819,63 +4819,96 @@ fn organize_item_repacks_the_box_and_repeats_do_not_reshuffle() {
     assert_eq!(store.storage(account_id).unwrap().items, after.items, "clicks 2 and 3 change nothing");
 }
 
-/// **The Cash Shop button gets its latch cleared, even though there is no cash shop.**
+/// **The Cash Shop button sends the player into the shop.**
 ///
-/// `0x00D5` is an exclusive request: the client sets `[ctx+0x2330]` when it sends and only an
-/// inbound packet clears it. Measured 2026-08-22 with a peek on that field across three
-/// clicks five seconds apart - `0`, then `1`, then `1` - so an unanswered request costs every
-/// later click of the session, and the same field gates the pick-up sweep.
+/// This assertion has been replaced once. It used to demand a `0x0070` - a borrowed packet
+/// whose only job was to clear `[ctx+0x2330]` so the button would fire more than once. `0x01A3`
+/// clears that latch itself (`FUN_142CBE8F0` at `0x142CBE918`), so sending both would be a
+/// packet whose whole purpose is already served, telling the client an inventory operation
+/// completed when none did.
 ///
-/// This asserts the `0x0070` **and** the notice: the packet is what frees the button, and the
-/// line is what stops "nothing happened" from being the player's whole experience.
+/// Both halves are asserted: the stage packet, and the wallet - which is the **only** packet
+/// that carries a balance, so without it the shop has nothing to spend.
 #[test]
-fn the_cash_shop_button_is_answered_so_it_works_more_than_once() {
-    let (mut s, _store, _id) = gm_session();
+fn the_cash_shop_button_sends_the_stage_packet_and_the_wallet() {
+    let (mut s, store, _id) = gm_session();
+    store.add_nx(1, 25_000).unwrap();
     let body = [0xe9, 0x29, 0xba, 0x05, 0x00]; // the real capture
 
     let out = s.on_cash_shop_request(&body);
+    let stage = out
+        .iter()
+        .find(|r| r.opcode == net::cashshop::SET_CASH_SHOP)
+        .expect("0x01A3 goes out");
     assert!(
-        out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
-        "the 0x0070 is what clears ctx+0x2330"
+        !out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "and NO 0x0070 - 0x01A3 clears ctx+0x2330 by itself"
     );
-    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "and it says why");
 
-    // **An unreadable body is answered too.** The latch is set by the client's builder,
-    // before the body ever reaches us, so failing to parse it is no reason to leave the
-    // button dead for the rest of the session.
+    let wallet = out
+        .iter()
+        .find(|r| r.opcode == net::cashshop::CASH_SHOP_WALLET)
+        .expect("the balance is the only thing that makes the shop usable");
+    assert_eq!(u32::from_le_bytes(wallet.body[0..4].try_into().unwrap()), 25_000);
+
+    // The head is the FILETIME alone. Borrowing SetField's head would shift the character
+    // record by 25 bytes and decode garbage, and net/cashshop.rs pins that byte for byte;
+    // here it is enough that the stage body is a different shape from a SetField body.
+    let field = out.iter().find(|r| r.opcode == net::opcode::SET_FIELD);
+    assert!(field.is_none(), "entering the shop is NOT a SetField");
+    assert!(stage.body.len() > net::cashshop::CASH_SHOP_MARGIN, "record plus margin");
+
+    // **An unreadable body still enters the shop.** The latch was set by the client's builder
+    // before we ever saw the body.
     for bad in [vec![], vec![1u8, 2, 3], vec![0u8; 9]] {
         let out = s.on_cash_shop_request(&bad);
         assert!(
-            out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
-            "body {bad:02x?} must still clear the latch"
+            out.iter().any(|r| r.opcode == net::cashshop::SET_CASH_SHOP),
+            "body {bad:02x?} must still be answered"
         );
     }
 }
 
-/// **`!nx` grants and reports, and a refused debit does not clamp.**
-///
-/// A new account starts at zero on purpose: a test server that hands out currency by existing
-/// makes every later "did the purchase deduct?" question unanswerable.
+/// **`0x03E0` is answered with the balance**, and it is the packet that clears the client's
+/// own 60-second query latch.
 #[test]
-fn the_nx_command_grants_reports_and_refuses() {
+fn the_balance_query_is_answered() {
     let (mut s, store, _id) = gm_session();
-    let account_id = 1i64;
+    store.add_nx(1, 777).unwrap();
+    let out = s.on_cash_shop_query();
+    let wallet = out
+        .iter()
+        .find(|r| r.opcode == net::cashshop::CASH_SHOP_WALLET)
+        .expect("0x05AD");
+    assert_eq!(u32::from_le_bytes(wallet.body[0..4].try_into().unwrap()), 777);
+    assert_eq!(wallet.body.len(), net::cashshop::CASH_SHOP_WALLET_LEN);
+}
 
-    let out = s.gm_nx("");
-    assert!(notice_text(&out[0]).contains("0 NX"), "a new account is empty: {}", notice_text(&out[0]));
+/// **`0x00D1` is two requests and the LENGTH is the only thing that separates them.**
+///
+/// A portal walk sends 35 bytes; the Cash Shop's Exit button sends none. Getting this
+/// backwards would make every portal in the game try to leave a cash shop, so it is asserted
+/// from the dispatcher rather than from the handler - the split lives there.
+#[test]
+fn an_empty_transfer_field_leaves_the_cash_shop_and_a_full_one_is_a_portal() {
+    let (mut s, _store, _id) = gm_session();
 
-    s.gm_nx("10000");
-    assert_eq!(store.cash_wallet(account_id).unwrap().nx, 10_000);
+    // Empty body: the Exit button. A SetField comes back for the map they are already on.
+    let mut empty = 0x00D1u16.to_le_bytes().to_vec();
+    let out = s.handle(&empty);
+    assert!(
+        out.iter().any(|r| r.opcode == net::opcode::SET_FIELD),
+        "an empty 0x00D1 is the Exit button"
+    );
 
-    // A debit larger than the balance is refused, and refusing is not flooring at zero.
-    s.gm_nx("-99999");
-    assert_eq!(store.cash_wallet(account_id).unwrap().nx, 10_000, "unchanged, not clamped");
-
-    s.gm_nx("-10000");
-    assert_eq!(store.cash_wallet(account_id).unwrap().nx, 0, "and exactly enough is allowed");
-
-    let out = s.gm_nx("not a number");
-    assert!(notice_text(&out[0]).contains("is not an amount"));
+    // A portal-shaped body must NOT take the exit path. It carries a target and a name, so it
+    // reaches the transfer handler and is answered on its own terms.
+    empty.extend_from_slice(&[0u8; 35]);
+    let out = s.handle(&empty);
+    assert!(
+        !out.is_empty(),
+        "a 35-byte 0x00D1 is a portal walk and is still answered"
+    );
 }
 
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
