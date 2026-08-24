@@ -325,6 +325,7 @@ struct Conversation {
 
 mod ability;
 mod buff;
+mod cashshop;
 mod combat;
 mod consume;
 mod field;
@@ -560,6 +561,12 @@ impl Session {
             // the packets that can be left alone.
             net::buff::CLIENT_SKILL_CANCEL => {
                 return self.on_skill_cancel(body.get(2..).unwrap_or(&[]))
+            }
+            // The Cash Shop button. An EXCLUSIVE REQUEST - it latches ctx+0x2330 on send, so
+            // leaving it unanswered costs every later click of the session AND the pick-up
+            // sweep, which gates on the same field. See session/cashshop.rs.
+            net::cashshop::CLIENT_CASH_SHOP_REQUEST => {
+                return self.on_cash_shop_request(body.get(2..).unwrap_or(&[]))
             }
             // **Two AP opcodes, not one.** 0x0138 is a single + click and 0x0139 is the
             // bulk dialog; answering only the second still looks broken to anyone using the

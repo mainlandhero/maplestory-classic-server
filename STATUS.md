@@ -1096,6 +1096,37 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### RETRACTION: the Cash Shop was sending all along, and it is `0x00D5`
+
+2026-08-22, the owner: *"I logged in, clicked Cash Shop, then counted to 3, then clicked Cash Shop,
+then counted to 3, then clicked Cash Shop, then exited the game."*
+
+**This file said three times that the Cash Shop click sent nothing. It was wrong.** `0x00D5`
+went out on the first click of that session and of the two before it.
+
+The peek on the latch, three clicks 5.6 s apart so the rate limiter is irrelevant:
+`[ctx+0x2330]` reads **0**, then **1**, then **1**. The button fires once, sets the
+exclusive-request latch, and waits. At the same millisecond as click 1, `world.log` carries
+`0x00D5`, five bytes - which is exactly the opcode `msexe-send-opcodes.txt` records for the
+`COutPacket` inside `FUN_142caee70`, the function the watch fired on.
+
+**How the negative survived:** `0x00D5` arrives inside a burst with `0x0420`..`0x0426`, and
+that burst lands near the end of a session, so the whole thing was filed as "shutdown
+telemetry" **as a unit** without separating the opcodes. One grep over the archives breaks it:
+`0x0420` appears in five runs where nobody touched the button; `0x00D5` appears in **exactly
+the two runs with a click**, once each. That is "enumerate before you filter" with a new face -
+the filter was *when it arrived*, not *which opcode it was*. The owner said *"the opcode is most
+likely not handled"* in their first message and was right.
+
+**Shipped:** `0x00D5` is parsed and answered with the `0x0070` that clears `[ctx+0x2330]`,
+plus a line saying the Cash Shop is unavailable. Not a cash shop - but that latch also gates
+the **pick-up sweep** (`research/pick-up-latch.md` §2.2.2), so a player who clicked Cash Shop
+was leaving it set for the rest of the session. Falsifiable next run: **one `0x00D5` per click**
+instead of one per session.
+
+And `research/cash-shop.md` §4 - the migrate to a dedicated cash shop server, which is what
+The owner proposed on day one - is now the live next step rather than a footnote.
+
 #### The Cash Shop sender IS entered, and its six exits are named
 
 2026-08-22, the owner: *"as a test, I took out a 'Sword' from the storage before spamming the cash

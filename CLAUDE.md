@@ -127,6 +127,29 @@ functions, **27 909** would have come back "zero callers" while being reached by
 (6 927) or a pointer in data (21 889) - and one of them had already been written up as
 "zero direct callers, therefore virtual", which was wrong twice over.
 
+**And on 2026-08-22 the filter was a *timestamp*, which is the same mistake wearing a clock.**
+The owner's first sentence about the cash shop was *"the opcode is most likely not handled"*. It was
+reported back to them three times, across three sessions, that **no packet was sent at all** -
+"world.log records every inbound packet and there is nothing new in it". `0x00D5` was in that
+log every time.
+
+It survived because it arrives inside a six-opcode burst with `0x0420`..`0x0426`, and that
+burst lands near the end of a session, so the **whole burst was filed as "shutdown telemetry"
+as one object**. Nobody ever asked which opcodes were in it. The control costs one grep of the
+archived runs and would have broken it on day one:
+
+```text
+                                    0x00D5   0x0420
+  five runs, nobody clicked it          0      0..2     <- 0x0420 really is telemetry
+  the two runs with a click             1        1      <- 0x00D5 appears nowhere else
+```
+
+The generalisation: **"nothing new arrived" is a different claim from "this thing did not
+arrive", and only the second one is worth making.** When a user says an action produced no
+packet, grep for the specific opcode the action's own code builds - `research/msexe-send-opcodes.txt`
+names it - rather than eyeballing the tail of the log for something unfamiliar. A burst is not
+an object; it is a set, and it has to be enumerated like one.
+
 ## A correctly-armed instrument can still be blind to its subject
 
 Everything else in this file is about instruments that were *wrong*: stale, mis-scoped,

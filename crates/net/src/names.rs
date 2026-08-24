@@ -98,6 +98,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00F6 => "CLIENT_STORAGE (u8 mode: 4 take out, 5 put in, 6 sort, 7 mesos i64, 8 close)",
         0x013C => "CLIENT_SKILL_USE (u32 skillId, u32 level, then a tail)",
         0x013F => "CLIENT_SKILL_CANCEL (u32 skillId, 5 bytes, raw[124] CTS mask; RETRIES every ~180ms)",
+        0x00D5 => "CLIENT_CASH_SHOP_REQUEST (u32 tick, u8; an EXCLUSIVE REQUEST - it latches ctx+0x2330 and only fires once until answered)",
         0x007E => "TEMPORARY_STAT_RESET (u8,u8,u8, raw[124] mask, tail)",
         0x0572 => "STORAGE_RESULT (u8 mode: 24 open, 13 put ok, 15 refresh, 10/11/16/17 refusals)",
         0x01BE => "CLIENT_LOG_OUT (empty body; POISONS SetField until 0x0106 answers it)",

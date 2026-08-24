@@ -97,39 +97,32 @@
         HIT IT THREE TIMES AGAIN. It is a pure function of the contents, so clicks two and
         three must change nothing; anything that keeps shuffling is a different bug.
 
-     3. THE CASH SHOP. CLICK IT FIRST, BEFORE OPENING ANYTHING, AND ONCE EVERY 3 SECONDS.
-        The Sword run answered the last question completely, so thank you. Both watches fired
-        on IDENTICAL timestamps - 29 dispatcher hits and 20 sender hits, same milliseconds -
-        which means the click reaches FUN_142caee70 and THE SENDER IS WHAT REFUSES. It is 1012
-        bytes and it has six exits before the packet.
-        THREE OF THEM SHOW A MESSAGE, and they are decrypted out of the client's own string
-        table so you can recognise them on sight:
-          "You cannot go into the cash shop. Please try again later."
-          "You must close the window before using the Cash Shop or changing channels."
-          "You can't do this while taking the quiz."
-        IF ANY OF THOSE APPEARS, THAT IS THE ANSWER - say which one and stop there.
-        THREE RETURN SILENTLY, which is what you have been seeing:
-          a flag at +0x2338
-          the EXCLUSIVE-REQUEST LATCH at +0x2330 - the same one research/pick-up-latch.md is
-            about, the one an inbound 0x0070 clears
-          a 500 ms RATE LIMIT. You spammed at about 150 ms, so every click after the first was
-            refused by this alone, whatever else is true
+     3. THE CASH SHOP: CLICK IT THREE TIMES AND COUNT THEM IN THE LOG.
+        YOUR THREE-CLICK RUN OVERTURNED MY OWN FINDING, so thank you for doing it exactly as
+        described. THE BUTTON WAS SENDING ALL ALONG. The peek read [ctx+0x2330] as 0, then 1,
+        then 1 - it fires once, sets the exclusive-request latch, and waits for a reply. And
+        0x00D5 was in world.log at the same millisecond as your first click, and in the two
+        sessions before that.
+        I had reported three times that no packet was sent. That was wrong, and the reason is
+        worth one sentence: 0x00D5 arrives inside a burst with 0x0420..0x0426 that lands near
+        the end of a session, and I filed the whole burst as "shutdown telemetry" without ever
+        separating the opcodes in it. One grep of the archives: 0x0420 appears in five runs
+        where nobody touched the button, 0x00D5 appears in exactly the two runs with a click.
+        Your very first message said "the opcode is most likely not handled". It was.
 
-        SO THE PROCEDURE IS TWO CHANGES, AND BOTH MATTER:
-          a. CLICK IT ONCE, COUNT TO THREE, CLICK AGAIN. Three clicks, not thirty. That takes
-             the rate limiter out of the question entirely.
-          b. DO IT BEFORE TALKING TO ANY NPC OR OPENING ANY WINDOW, on a fresh login. Last run
-             you had the storage window open seconds earlier, and one of the three messages is
-             literally about a window being open.
-        Then, if it still does nothing, do the same three clicks AFTER using storage. Working
-        before and dead after is a complete answer on its own.
-
-        THE WATCH READS THE LATCH DIRECTLY. rcx on entry to the sender is the context, so
-        +0x2330 is peeked on every click:
-          peek non-zero -> the latch is stuck, and that is OUR bug: something sent a request
-                       and never got the 0x0070 that clears it
-          peek zero     -> the gate is +0x2338 or the rate limit, and the next run peeks 2338
-        Read it back with the one-liner printed under Logs: below.
+        The server now answers 0x00D5 with the 0x0070 that clears the latch. THIS IS NOT A
+        CASH SHOP - there is no cash shop server and no window will open. What should change
+        is that the button stops being a once-per-session button.
+          click Cash Shop THREE times, a couple of seconds apart, then quit. Then count:
+            powershell -NoProfile -Command "(Select-String -Path 'C:\MapleCW\world.log' -Pattern '<- 0x00D5').Count"
+          THREE -> the latch is being cleared and the fix works
+          ONE   -> 0x0070 does not clear this latch. Not a disaster: the watch will show
+                   [ctx+0x2330] going 0,1,1 again, and the next candidate is the real refusal
+                   packet rather than a borrowed one
+          You should also see a chat line: "The Cash Shop is not available on this server."
+        AND THE PICK-UP MATTERS HERE. That latch is not the Cash Shop's own field - it gates
+        the pick-up sweep too - so after clicking Cash Shop, kill something and walk over the
+        drop. Picking up fine after three clicks is the second half of the same measurement.
 
      4. GLANCE, NO SETUP: does a grey "<item> x<n> earned." line appear in the SCREEN MESSAGE
         AREA - the strip above the chat box - when you pick something up? It has gone out on
@@ -552,27 +545,18 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968'
     } else {
-        # THE CASH SHOP, AND THE QUESTION IS NOW ONE FIELD.
+        # THE CASH SHOP IS ANSWERED NOW, AND THE WATCH IS THE FALSIFIER.
         #
-        # ANSWERED 2026-08-22: both the dispatcher (1411ab7b0) and the sender (142caee70)
-        # fire on every Cash Shop click, on IDENTICAL timestamps, 29 and 20 of them. So the
-        # click reaches the sender and the sender refuses. The dispatcher watch has done its
-        # job and its slot is free.
+        # ANSWERED 2026-08-22 with a peek across three clicks 5.6 s apart: [ctx+0x2330] read
+        # 0, then 1, then 1. The button fires ONCE, sets the exclusive-request latch, and
+        # waits - and 0x00D5 was in world.log at the same millisecond as click 1, and in the
+        # two sessions before it. The "no packet was sent" finding was WRONG for two days.
         #
-        # FUN_142caee70 has six exits before the packet. Three SHOW A MESSAGE - now decrypted
-        # out of the client's own string table, so they can be recognised on sight:
-        #   0x091E  "You cannot go into the cash shop. Please try again later."   [rbx+0x31fc] > 1
-        #   0x0486  "You must close the window before using the Cash Shop or changing channels."
-        #   0x0AE2  "You can't do this while taking the quiz."                    [rbx+0x2dd8]
-        # and three RETURN SILENTLY, which is what the owner sees:
-        #   [rbx+0x2338] != 0
-        #   [rbx+0x2330] != 0            <- THE EXCLUSIVE-REQUEST LATCH, the same one
-        #                                   research/pick-up-latch.md is about
-        #   tick - [rbx+0x2334] < 0x1f4  <- a 500 ms RATE LIMIT, and they spammed at ~150 ms
-        #
-        # 142caee70:peek=2330:hits=60 - rcx on entry IS the context (mov rbx,rcx at
-        #   142caee97), so +0x2330 is read directly. Non-zero on a click and the button is
-        #   dead because something left the latch set, which is a SERVER bug we can fix.
+        # The server now answers 0x00D5 with the 0x0070 that clears ctx+0x2330. The watch
+        # stays exactly as it was, because it is what falsifies the fix:
+        #   [ctx+0x2330] reads 0 on EVERY click -> the latch is being cleared. Done
+        #   0 then 1 then 1 again              -> 0x0070 does not clear THIS latch, and the
+        #                                         next candidate is the real refusal packet
         #
         # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE CONTROL: no lines
         #   at all means the hook never armed and the log proves nothing.
@@ -954,30 +938,29 @@ if ($SetFieldProbe) {
     Write-Host '                          refuses to commit if the count changed'
     Write-Host '     HIT IT THREE TIMES AGAIN - clicks 2 and 3 must change nothing.'
     Write-Host ''
-    Write-Host '  3. CASH SHOP: CLICK IT FIRST, ONCE EVERY 3 SECONDS.' -ForegroundColor Cyan
-    Write-Host '     The Sword run answered the last question completely. Both'
-    Write-Host '     watches fired on IDENTICAL timestamps - 29 and 20 hits - so the'
-    Write-Host '     click reaches FUN_142caee70 and THE SENDER REFUSES.'
-    Write-Host '     It has six exits before the packet. THREE SHOW A MESSAGE, now'
-    Write-Host '     decrypted from the client''s own string table:'
-    Write-Host '       "You cannot go into the cash shop. Please try again later."'
-    Write-Host '       "You must close the window before using the Cash Shop or'
-    Write-Host '        changing channels."'
-    Write-Host '       "You can''t do this while taking the quiz."'
-    Write-Host '     IF ONE APPEARS, SAY WHICH AND STOP - that is the answer.'
-    Write-Host '     THREE RETURN SILENTLY: a flag at +0x2338, the EXCLUSIVE-REQUEST'
-    Write-Host '     LATCH at +0x2330, and a 500ms RATE LIMIT. You spammed at ~150ms,'
-    Write-Host '     so every click after the first died on the rate limit alone.'
-    Write-Host '     TWO CHANGES, both matter:'
-    Write-Host '       a. click ONCE, count to three, click again. Three clicks.'
-    Write-Host '       b. do it BEFORE any NPC or window, on a fresh login. One of'
-    Write-Host '          those messages is literally about an open window, and you'
-    Write-Host '          had storage open seconds before.'
-    Write-Host '     Then repeat the three clicks AFTER using storage. Working before'
-    Write-Host '     and dead after is a complete answer on its own.'
-    Write-Host '     The watch peeks +0x2330 on every click:'
-    Write-Host '       non-zero -> the latch is stuck, and that is OUR bug'
-    Write-Host '       zero     -> it is +0x2338 or the rate limit; peek 2338 next'
+    Write-Host '  3. CASH SHOP: CLICK IT THREE TIMES AND COUNT THEM.' -ForegroundColor Cyan
+    Write-Host '     YOUR THREE-CLICK RUN OVERTURNED MY OWN FINDING. The button was'
+    Write-Host '     SENDING ALL ALONG: the peek read [ctx+0x2330] as 0, then 1, then'
+    Write-Host '     1 - it fires once, latches, and waits. 0x00D5 was in world.log at'
+    Write-Host '     the same millisecond as click 1, and in the two runs before.'
+    Write-Host '     I reported "no packet was sent" three times and it was wrong:'
+    Write-Host '     0x00D5 rides in a burst with 0x0420..0x0426 near the end of a'
+    Write-Host '     session and I filed the whole burst as telemetry without ever'
+    Write-Host '     splitting it. Your first message said "the opcode is most likely'
+    Write-Host '     not handled". It was.'
+    Write-Host '     The server now answers 0x00D5 with the 0x0070 that clears the'
+    Write-Host '     latch. THIS IS NOT A CASH SHOP - no window will open. What should'
+    Write-Host '     change is that the button stops being once-per-session.'
+    Write-Host '       click it THREE times a couple of seconds apart, then quit and'
+    Write-Host '       count the requests with the one-liner under Logs: below.'
+    Write-Host '         THREE -> the latch clears and the fix works'
+    Write-Host '         ONE   -> 0x0070 does not clear this latch; the watch will'
+    Write-Host '                  show 0,1,1 again and names the next candidate'
+    Write-Host '       expect a chat line: "The Cash Shop is not available on this'
+    Write-Host '       server."'
+    Write-Host '     THEN KILL SOMETHING AND WALK OVER THE DROP. That latch gates the'
+    Write-Host '     pick-up sweep too, so picking up fine after three clicks is the'
+    Write-Host '     second half of the same measurement.'
     Write-Host ''
     Write-Host '  4. GLANCE: when you pick something up, does a grey "<item> x<n>' -ForegroundColor Cyan
     Write-Host '     earned." line appear in the SCREEN MESSAGE AREA above the chat'
@@ -1042,7 +1025,9 @@ Write-Host "  $serverLog                 every packet both ways, and what each r
 Write-Host "  $hookLog   client patches and faults"
 Write-Host "  $exitLog          how the client died; 0 is a hand-close"
 Write-Host ''
-Write-Host 'Read the Cash Shop watches back with this - no elevation needed:' -ForegroundColor DarkGray
+Write-Host 'Count the Cash Shop requests - THREE clicks should be THREE lines:' -ForegroundColor DarkGray
+Write-Host ('  powershell -NoProfile -Command "(Select-String -Path ''' + $serverLog + ''' -Pattern ''<- 0x00D5'').Count"') -ForegroundColor DarkGray
+Write-Host 'And the latch the client read on each click:' -ForegroundColor DarkGray
 Write-Host ('  powershell -NoProfile -Command "Select-String -Path ''' + $hookLog + ''' -Pattern ''WATCH #\d+: 0x142caee70'' | ForEach-Object { $_.Line }"') -ForegroundColor DarkGray
 Write-Host ''
 Write-Host "Then: powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Stop"

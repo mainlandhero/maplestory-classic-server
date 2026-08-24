@@ -374,3 +374,89 @@ the worst possible way to test it, through no fault of the owner's - nobody knew
 The watch now peeks the latch directly - `142caee70:peek=2330` - because `rcx` on entry is the
 context (`mov rbx, rcx` at `0x142caee97`). Non-zero on a click means the latch is stuck, and a
 stuck latch is **our** bug: something sent a request and never got its `0x0070`.
+
+
+---
+
+# Part six: it was sending all along, and this file's headline was wrong for two days
+
+2026-08-22. The owner: *"I logged in, clicked Cash Shop, then counted to 3, then clicked Cash Shop,
+then counted to 3, then clicked Cash Shop, then exited the game."*
+
+**The first line of this file - "No packet was sent" - was wrong.** `0x00D5` went out on the
+first click of that session, and it had gone out on the first click of the two sessions before
+it. This part is the retraction.
+
+## What the peek measured
+
+Three clicks, ~5.6 s apart, so the 500 ms rate limiter is out of the question: `[L]`
+
+```text
+click 1  23:19:39.284  [ctx+0x2330] = 0x00000000   -> passed every gate
+click 2  23:19:44.915  [ctx+0x2330] = 0x00000001   -> silent return
+click 3  23:19:50.866  [ctx+0x2330] = 0x00000001   -> silent return
+```
+
+And at **the same millisecond** as click 1, in `world.log`: `[L]`
+
+```text
+03:19:39.284  <- 0x0422     7 bytes
+03:19:39.293  <- 0x0421  1114 bytes
+03:19:39.293  <- 0x0420   133 bytes
+03:19:39.293  <- 0x0423   274 bytes
+03:19:39.293  <- 0x0426    20 bytes
+03:19:39.293  <- 0x00D5     5 bytes   e929ba0500
+```
+
+So the button **fires once, latches, and waits**. Every click after the first was refused by
+`[ctx+0x2330]`, exactly as the disassembly said - and the reason only one `0x00D5` ever
+appears per session is that nothing ever answered the first one.
+
+`0x00D5` is also precisely the opcode `research/msexe-send-opcodes.txt` records for the
+`COutPacket` at `0x142caf180`, inside `FUN_142caee70` - the function the watch fired on. Two
+independent readings of the same event. `[L]`
+
+## How the negative survived two sessions
+
+That burst was filed as **"shutdown telemetry"**, as a unit, because it lands near the end of
+a session. It was never separated into its opcodes. One `grep` over the archived runs breaks
+it, and it costs nothing:
+
+```text
+                                    0x00D5   0x0420
+  five runs, nobody touched it          0      0..2      <- 0x0420 really is telemetry
+  the two runs with a Cash Shop click   1        1       <- 0x00D5 only ever appears here
+```
+
+`[L]` `0x0420` appears without `0x00D5`; `0x00D5` never appears without a click.
+
+This is `CLAUDE.md`'s **"enumerate before you filter"** with a new face. The two failures that
+rule already records filtered on the wrong *shape* and the wrong *set*; this one filtered on
+**when a packet arrived** instead of **which opcode it was**, and then treated a six-opcode
+burst as one object. Parts one and two of this file both assert "no packet was sent" and both
+rest on that single unexamined grouping.
+
+**The owner was right at the start** - *"the opcode is most likely not handled"* - and the reason
+it took three sessions to agree with them is that I checked whether anything *new* arrived
+rather than whether *this* opcode did.
+
+## What shipped
+
+`0x00D5` is parsed and answered. **Not with a cash shop** - there is still no server, no
+`SetCashShop`, no wallet - but with `inventory_rejected()`, the `0x0070` that clears
+`[ctx+0x2330]`, plus a chat line saying the Cash Shop is unavailable.
+
+That is worth doing on its own, because `[ctx+0x2330]` is **not** the Cash Shop's own field:
+`research/pick-up-latch.md` §2.2.2 shows `FUN_142cc42d0` gating the **pick-up sweep** on it
+too. A player who clicked Cash Shop was leaving that latch set for the rest of the session.
+
+**The next run falsifies it in one glance**: one `0x00D5` per *click* instead of one per
+*session*. If the count still stops at one, `0x0070` does not clear this latch and the next
+candidate is whatever the real refusal packet is.
+
+## And §4 is now the live question rather than a footnote
+
+The client asks. It sends `0x00D5` and waits for a reply it never gets. So the owner's original
+reading - a migrate to a dedicated cash shop server - is no longer speculation about a step
+that may never come; it is **the next thing to build**, and the reply to `0x00D5` is where it
+starts.

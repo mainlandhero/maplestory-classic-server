@@ -4819,6 +4819,39 @@ fn organize_item_repacks_the_box_and_repeats_do_not_reshuffle() {
     assert_eq!(store.storage(account_id).unwrap().items, after.items, "clicks 2 and 3 change nothing");
 }
 
+/// **The Cash Shop button gets its latch cleared, even though there is no cash shop.**
+///
+/// `0x00D5` is an exclusive request: the client sets `[ctx+0x2330]` when it sends and only an
+/// inbound packet clears it. Measured 2026-08-22 with a peek on that field across three
+/// clicks five seconds apart - `0`, then `1`, then `1` - so an unanswered request costs every
+/// later click of the session, and the same field gates the pick-up sweep.
+///
+/// This asserts the `0x0070` **and** the notice: the packet is what frees the button, and the
+/// line is what stops "nothing happened" from being the player's whole experience.
+#[test]
+fn the_cash_shop_button_is_answered_so_it_works_more_than_once() {
+    let (mut s, _store, _id) = gm_session();
+    let body = [0xe9, 0x29, 0xba, 0x05, 0x00]; // the real capture
+
+    let out = s.on_cash_shop_request(&body);
+    assert!(
+        out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "the 0x0070 is what clears ctx+0x2330"
+    );
+    assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "and it says why");
+
+    // **An unreadable body is answered too.** The latch is set by the client's builder,
+    // before the body ever reaches us, so failing to parse it is no reason to leave the
+    // button dead for the rest of the session.
+    for bad in [vec![], vec![1u8, 2, 3], vec![0u8; 9]] {
+        let out = s.on_cash_shop_request(&bad);
+        assert!(
+            out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+            "body {bad:02x?} must still clear the latch"
+        );
+    }
+}
+
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
 /// else. This is the always-answer rule with a different field name.
 #[test]
