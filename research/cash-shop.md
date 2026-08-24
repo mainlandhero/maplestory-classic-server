@@ -460,3 +460,52 @@ The client asks. It sends `0x00D5` and waits for a reply it never gets. So the o
 reading - a migrate to a dedicated cash shop server - is no longer speculation about a step
 that may never come; it is **the next thing to build**, and the reply to `0x00D5` is where it
 starts.
+
+
+---
+
+# Part seven: the prediction held, and the latch clears
+
+2026-08-22. The owner: *"I see the message 'Cash Shop is not available on this server'."*
+
+Part six predicted one thing that could come back false: **three clicks should produce three
+`0x00D5` requests instead of one.** They did. `[L]`
+
+```text
+world.log                             hook.log, [ctx+0x2330] on entry
+03:30:06.112  <- 0x00D5               23:30:06.104   0x00000000
+03:30:06.112  -> 0x0070  (clears)
+03:30:10.964  <- 0x00D5               23:30:10.954   0x00000000
+03:30:10.964  -> 0x0070  (clears)
+03:30:16.265  <- 0x00D5               23:30:16.256   0x00000000
+03:30:16.265  -> 0x0070  (clears)
+```
+
+**Zero, zero, zero**, where the unanswered run read **zero, one, one**. So `inventory_rejected()`
+- a `0x0070` with `nCount = 0` - does clear `[ctx+0x2330]`, and the Cash Shop button is no
+longer a once-per-session button. The chat line reaches the screen. Clean exit, code 1.
+
+That closes the mechanism completely:
+
+| | |
+|---|---|
+| the request | `0x00D5`, `u32 tick, u8`, built by `FUN_142caee70` |
+| it is an exclusive request | latches `[ctx+0x2330]`, 500 ms stamp at `+0x2334`, flag at `+0x2338` |
+| what clears the latch | an inbound `0x0070` with `nCount = 0` - **measured, not assumed** |
+| what the six exits do | three show a named string, three return silently |
+
+**Still not tested**: the pick-up half. `[ctx+0x2330]` gates the pick-up sweep as well
+(`research/pick-up-latch.md` §2.2.2), so before this fix a player who clicked Cash Shop was
+leaving that latch set for the rest of the session - which would have killed every later
+pick-up. The 29-second run had no drops in it, so that implication is reasoned rather than
+seen. It is one kill and one step to confirm.
+
+## What is now unblocked
+
+§4 stops being a footnote. The client sends a request and waits for an answer, and the answer
+a real server gives is a **migrate**. Everything that needs is already here - the `0x0011`
+builder, single-use seed minting, claim-by-channel, a second listener, and the channel
+teardown that took three passes. What is missing is `SetCashShop`'s body (a candidate range,
+`0x01A1`..`0x01AA`, **not** a read), a cash inventory, a wallet and a purchase flow.
+
+That is a real build rather than a fix, and it is not started.

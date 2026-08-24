@@ -1096,6 +1096,25 @@ are the allocator refusing a bad free. The damaged pool slot was present in this
 Whether the map itself is fatal or the session was is the same one-command experiment as
 yesterday, and it is step 1 of the plan.
 
+#### The Cash Shop latch is cleared, and `0x00D5` is closed as a mechanism
+
+2026-08-22, the owner: *"I see the message 'Cash Shop is not available on this server'."*
+
+The falsifiable half held. Three clicks produced **three** `0x00D5` requests and three `0x0070`
+replies, and the peek read `[ctx+0x2330]` as **0, 0, 0** where the unanswered run read
+**0, 1, 1**. So `inventory_rejected()` really does clear that latch, and the button has stopped
+being a once-per-session button. `research/cash-shop.md` part seven.
+
+**Still unseen**: the pick-up implication. That latch gates the pick-up sweep too, so before
+this a player who clicked Cash Shop was killing every later pick-up in the session. The 29-second
+run had no drops, so that is reasoned rather than measured - one kill and one step to confirm.
+
+**Unblocked, not built**: the client asks and waits, so the migrate architecture the owner proposed
+in their first message is now the next real piece of work rather than a maybe. The pieces already
+here are the `0x0011` builder, seed minting, claim-by-channel and a second listener; the pieces
+missing are `SetCashShop`'s body (a candidate range, not a read), a cash inventory, a wallet and
+a purchase flow.
+
 #### RETRACTION: the Cash Shop was sending all along, and it is `0x00D5`
 
 2026-08-22, the owner: *"I logged in, clicked Cash Shop, then counted to 3, then clicked Cash Shop,
