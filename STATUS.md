@@ -98,16 +98,39 @@ all sent as-is and none of them mattered.
 ## NEXT GOALS - set by the owner, 2026-08-19 onward
 
 Login and world entry are done. Each goal carries what is already established, so nobody
-re-derives it, and the **one concrete next step**. Goals A (quests) and F (shops) are
-wired as of 2026-08-20, and I (inventory persistence) is confirmed on screen; the rest
-stand as written.
+re-derives it, and the **one concrete next step**.
+
+**Where the lettered goals stand, 2026-08-22.** A (quests), B (NPC chatter), F (NPC shops -
+the *keeper* side; Mina's classic counter window is a separate thing and is still unbuilt),
+I (inventory persistence) and the combat/drops/EXP chain are all wired and confirmed on
+screen. E (job advancement) has its packet and a `!job` command but not its NPC conversation.
+The rest stand as written below.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-22: four answers from the evening run, one new bug fixed, and death
-opened as a research thread.** Read this section and nothing else to know where the project
-is. Everything under it is older and
-kept for its working, not its verdicts.
+**Last updated 2026-08-22, after the Cash Shop run.** Read this section and nothing else to
+know where the project is. Everything under it is older and kept **for its working, not its
+verdicts** - the log below is reverse-chronological and a claim in it may have been retracted
+further up.
+
+**What changed most recently, newest first:**
+
+* **The Cash Shop is being built.** `0x00D5` is the request and it is answered; the shop
+  itself - a migrate, `SetCashShop`, a wallet, a locker, a purchase flow - is in progress.
+  `crates/store/src/cash.rs` and `!nx` exist; the wire does not yet.
+* **Buffs are closed both ways**, storage is closed including Organize, and the pick-up latch
+  bug is fixed and confirmed.
+* **Two crash families are open**, and they are not the same bug: a heap one with four dumps
+  and a rate of about one damaged pool slot per 250 s, and a **null dereference during a map
+  load** that has been seen once.
+
+**The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
+`.NOTES` block and the `Write-Host` dialogue the launcher prints on screen - and both must be
+kept current. `CLAUDE.md` has the section on why.
+
+**The next-steps table is further down**, under "What to do next, in order". It is rewritten
+whenever a row closes, because a list that still names finished work is how a launch gets
+spent re-testing.
 
 **The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
 `.NOTES` block and the `Write-Host` dialogue the launcher prints on screen - and both must be
@@ -132,6 +155,16 @@ kept current. `CLAUDE.md` has the section on why.
 | **the quest-finish fanfare** | *"the quest completion SFX is now working"* - `0x02D1` effect 15, sound and no picture as predicted |
 | **Roger's quest opens** | the authored overlay: their real opening, a **Next**, then an Accept/Decline box |
 | **THE CHANNEL MIGRATE OPCODE IS `0x001A`** | measured 2026-08-21. The client tore down, connected to **127.0.0.1:8486** and sent a migration hello - so `u32 ip` network-order and `u16 port` little-endian are confirmed too |
+| **death and revive** | the dialog appears, including for a character who logged in **already dead**; revive warps to the town, 50 HP, -10% EXP above level 10, and they could move and fight afterwards |
+| **channel change** | claimed by channel, a real `SetField`, and inventory and mesos carried over |
+| **bulk skill points** | `0x013B` carries a **count**, and adding three at once now adds three |
+| **fresh spawns are spread across the map** | the per-type quota was already balanced; which points inside each type was not |
+| **the blue recovery number** | *"I do see 10 in blue above the character"* - `0x02D1` effect `0x41`, and **not** the `0x007C` recovery trailer, which drew nothing across three ticks |
+| **a full Equip tab no longer blocks other bags** | the full bag only *triggered* it; a refusal that sent a chat line and no `0x0070` left the client's latch set and it stopped asking for **everything** |
+| **buffs, both directions** | Nimble Feet grants and a right-click cancels it. One screen settled `0x007D`, the 124-byte mask, bit 92 = Speed, the **`i16`** value width (unreadable statically - the deciding constant is in Themida-packed `.data`) and milliseconds |
+| **Three Snails** | works and deals damage |
+| **storage, end to end** | the window, 30 slots, mesos both ways, items in **and** out, the 100-meso deposit fee (ten deposits, ten fees), and Organize Item repacking the box |
+| **the Cash Shop button is answered** | `0x00D5` is an **exclusive request**: unanswered it fired once per session and left `[ctx+0x2330]` set. Three clicks now give three requests, latch `0/0/0`. **The shop itself is not built** |
 
 #### The 2026-08-22 run: four answers, two of them negative and both useful
 
@@ -1180,6 +1213,9 @@ five.
 
 #### The Cash Shop button is live, both of my readings are dead, and two watches are armed
 
+> **PARTLY SUPERSEDED.** The watches were right and the reasoning about the gate was not:
+> the sender IS entered and it sent `0x00D5`. See the RETRACTION above.
+
 2026-08-22, the owner: *"The button can be highlighted, does depress when clicked, and does make a
 click sound."*
 
@@ -1205,6 +1241,9 @@ Two watches are armed in the default `-SetFieldProbe` set - `1411ab7b0` and `142
 and one run splits it three ways. `research/cash-shop.md` part three.
 
 #### Storage is done bar Organize, and five Cash Shop clicks sent nothing
+
+> **SUPERSEDED.** "Sent nothing" is wrong - `0x00D5` was in that log too. See the
+> RETRACTION above. Organize and the storage half of this entry stand.
 
 2026-08-22, the owner: *"The storage fees are working, but I tried hitting the 'Organize Item' 3
 times, but it did not perform anything. I also clicked on the Cash Shop button 5 times before
@@ -1234,6 +1273,9 @@ thing only the owner can see: does it react to the click - depress, highlight, a
 `research/cash-shop.md` part two.
 
 #### Buffs are done, and the Cash Shop click never became a packet
+
+> **SUPERSEDED.** The click *did* become a packet - `0x00D5`. See the RETRACTION above.
+> The buff half of this entry stands.
 
 2026-08-22, the owner: *"I confirmed that the buff now works. Three Snails also works as intended
 and dealt damage. I tried entering Cash Shop but was unfortunately not able to because the
@@ -1344,32 +1386,39 @@ refused, because 18 has already killed a client once. `research/buffs-underflow.
 
 #### What to do next, in order
 
-**Rewritten 2026-08-22, twice.** The morning run closed three more rows - storage item
-movement is built, the pick-up latch is fixed, and the heap dump got the third sample §10 of
-`heap-wild-write.md` asked for in advance. A next-steps list that still names finished work is
-how a launch gets spent re-testing.
+**Rewritten 2026-08-22, after the Cash Shop run.** Rows close fast at the moment - buffs both
+directions, storage end to end including Organize, the pick-up latch, and the Cash Shop
+button's latch have all closed since the last rewrite - and a list that still names finished
+work is how a launch gets spent re-testing.
 
-Two of these are **decoded and deliberately not built**, each with a byte-level body an
-implementation can be diffed against rather than re-derived.
+Two rows are **decoded and deliberately not built**, each with a byte-level body an
+implementation can be diffed against rather than re-derived. One is **in progress**.
 
 | # | do this | state |
 |---|---|---|
-| 1 | **The Henesys Park null dereference** | **New, and a different family from the heap one.** `0xC0000005` reading `[0 + 0x3530]`, 328 ms into the `0x01A0` handler, no dispatch line. The damaged pool slot in that dump was a **bystander**. Whether map `10001050` is fatal or the 389-second session was is **not established**, and one GM command settles it - `research/henesys-park-null-deref.md` §3. `tools/check_map_resources.py` has already ruled out a missing tile, object, background or map mark, with a positive control |
-| 2 | **The classic shop** | **Decoded, not built**, and the price is settled: **`row+0x38`, a u64**, from three independent sites. The row is **42 reads**, not thirteen fields. Request opcode is **`0x00F5`**, not `0x0104`. Buy-back is the same array tagged by a per-row `u8`. **Three traps**: `row+0xa4` is a FILETIME with no sentinel and `0` hides every row; `row+0x10c = 0` fails purchases silently; a dropped row desynchronises the byte stream. `research/classic-shop-rows.md` |
-| 3 | **The heap wild write** | **Four dumps now** (three of this family), and the third answered all three questions `heap-wild-write.md` §10 wrote down in advance: the value is `1` **seven for seven**, the class is `0x20` seven for seven (7 of 309 152 there, **0 of 472 760** elsewhere), and the count tracks session length at about **one damaged slot per 250 s** - a rate, which says the writer fires on something repeated. The **writer is still not found**, and §8 names the blind spot that makes a static sweep for it impossible. The 3-byte patch is now **built and off by default**: `-HeapFix` on the launcher, `crates/grap-stub/src/heapfix.rs`, nothing on disk in `client-patched/` changes. `research/heap-third-dump.md` |
-| 4 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither parsed out of the attack header. `research/damage-formula.md` |
-| 5 | **The grey item line** | The packet goes out - `0x02D1` effect 8, category 6 - and nobody has reported what it looks like. It went out **five more times** on 2026-08-22 (every successful pick-up sends one) and is still undescribed. One glance, no setup |
-| 6 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; the NPC path is not. Instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
-| 7 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry `attackSpeed` and `attack` on 203 weapons each, neither in `equips.txt` |
-| 8 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
-| 9 | **The NPC first draw** | Every server-side cause is eliminated: not the creation packet, not the appear-effect object, not a preload, not the timing - and it is **not a fade**, it is a late first draw. What has never existed is a **control**: one mob and one NPC created in the same batch on a settled map. `research/npc-preload.md` §8 |
+| 1 | **The Cash Shop** | **IN PROGRESS.** The request is `0x00D5` and it is answered - an exclusive request that latches `[ctx+0x2330]`, so unanswered it fired once per session. `crates/store/src/cash.rs` has a per-account NX wallet and a locker, with a purchase that debits and places in **one transaction**; `!nx` grants. **Nothing is on the wire yet**: the migrate reply, `SetCashShop`, the item list and the purchase flow are all open. `research/cash-shop.md` parts one to seven |
+| 2 | **The Henesys Park null dereference** | **A different family from the heap crash.** `0xC0000005` reading `[0 + 0x3530]`, 328 ms into the `0x01A0` handler, no dispatch line - and the damaged pool slot in that dump was a **bystander**. Whether map `10001050` is fatal or the 389-second session was is **still not established**, and one GM command settles it. `tools/check_map_resources.py` has already ruled out a missing tile, object, background or map mark, with a positive control. `research/henesys-park-null-deref.md` §3 |
+| 3 | **The classic shop counter** | **Decoded, not built**, and the price is settled: **`row+0x38`, a u64**, from three independent sites. The row is **42 reads**, not thirteen fields. Request opcode is **`0x00F5`**, not `0x0104`. **Three traps**: `row+0xa4` is a FILETIME with no sentinel and `0` hides every row; `row+0x10c = 0` fails purchases silently; a dropped row desynchronises the byte stream. `research/classic-shop-rows.md` |
+| 4 | **The heap wild write** | **Four dumps**, three of that family. The value is `1` **seven for seven**, the class is `0x20` seven for seven (7 of 309 152 there, **0 of 472 760** elsewhere), and the count tracks session length at about **one damaged slot per 250 s**. The **writer is still not found**, and `heap-wild-write.md` §8 names the blind spot that makes a static sweep for it impossible. The 3-byte patch is **built and off**: `-HeapFix`, `crates/grap-stub/src/heapfix.rs`, nothing on disk in `client-patched/` changes |
+| 5 | **The pick-up after a Cash Shop click** | Ten seconds, no setup. `[ctx+0x2330]` gates the pick-up sweep as well, so before the fix one click killed every later pick-up in the session. That implication is **reasoned, not seen** - the 29-second run had no drops in it |
+| 6 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither parsed out of the attack header. `research/damage-formula.md` |
+| 7 | **The grey item line** | The packet goes out - `0x02D1` effect 8, category 6 - on every successful pick-up, and nobody has reported what it looks like. One glance, no setup |
+| 8 | **Job advancement, the conversation** | The *packet* is done and `!job` tests it; the NPC path is not. Instructors are **not in the towns** - 511 on map 10004003, 313 on 10002003, 221 on 10001051, 411 on 10003003, pinned by a test |
+| 9 | **`tools/dump_equips.py` hard-codes its columns** | Its docstring claims the set is enumerated and it is not. All 1760 equip images carry `attackSpeed` and `attack` on 203 weapons each, neither in `equips.txt` |
+| 10 | **The other script quests** | 1002 and the four `Proof of Qualification` closes are authored. The `Test of Qualification` four are the **second** advancement at level 30 |
+| 11 | **The NPC first draw** | Every server-side cause is eliminated: not the creation packet, not the appear-effect object, not a preload, not the timing - and it is **not a fade**, it is a late first draw. What has never existed is a **control**: one mob and one NPC created in the same batch on a settled map. `research/npc-preload.md` §8 |
 
 **Two refusal paths still send a packet the client cannot dispatch.** `change_channel_refused`
 answers with `0x0011`, and so does the no-such-channel case - both undispatchable on a channel
 socket, so neither clears the `0x00D2` latch. Nothing decoded can. Said out loud rather than
 left to be rediscovered.
 
-**Three contradictions in this repo, found 2026-08-21 and none adjudicated** (the heading said "two" over three bullets for a day, which is the same drift this file keeps catching elsewhere):
+**Two contradictions still open**, of three found 2026-08-21 - the third is struck through
+below. The heading has now been wrong twice: it said "two" over three bullets for a day, then
+"none adjudicated" over a bullet that had been adjudicated. **A count in a heading drifts from
+the list under it unless something makes them agree**, which is the same failure this file
+keeps catching elsewhere, and it is why the resolved bullet is struck through rather than
+deleted.
 
 * **The `white` EXP byte.** `STATUS.md` above says `white = 1` was *confirmed on screen*;
   `research/exp-sharing.md` marks it **[I]**. Only `white = 0` -> yellow is [L] (from the owner's

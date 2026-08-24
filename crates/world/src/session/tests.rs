@@ -4852,6 +4852,32 @@ fn the_cash_shop_button_is_answered_so_it_works_more_than_once() {
     }
 }
 
+/// **`!nx` grants and reports, and a refused debit does not clamp.**
+///
+/// A new account starts at zero on purpose: a test server that hands out currency by existing
+/// makes every later "did the purchase deduct?" question unanswerable.
+#[test]
+fn the_nx_command_grants_reports_and_refuses() {
+    let (mut s, store, _id) = gm_session();
+    let account_id = 1i64;
+
+    let out = s.gm_nx("");
+    assert!(notice_text(&out[0]).contains("0 NX"), "a new account is empty: {}", notice_text(&out[0]));
+
+    s.gm_nx("10000");
+    assert_eq!(store.cash_wallet(account_id).unwrap().nx, 10_000);
+
+    // A debit larger than the balance is refused, and refusing is not flooring at zero.
+    s.gm_nx("-99999");
+    assert_eq!(store.cash_wallet(account_id).unwrap().nx, 10_000, "unchanged, not clamped");
+
+    s.gm_nx("-10000");
+    assert_eq!(store.cash_wallet(account_id).unwrap().nx, 0, "and exactly enough is allowed");
+
+    let out = s.gm_nx("not a number");
+    assert!(notice_text(&out[0]).contains("is not an amount"));
+}
+
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
 /// else. This is the always-answer rule with a different field name.
 #[test]

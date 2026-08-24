@@ -307,16 +307,29 @@ username and password. Designs: **`docs/deployment.md`** and **`docs/launcher.md
   below the channel switch's `0x70` floor, so a channel connection cannot dispatch it at all.
   Answering `0x00D2` with it was worse than not answering, because `0x00D2` latches on send.
 
-### Stage 5 — Cash shop server
+### Stage 5 — Cash shop server  ← **the active build, 2026-08-22**
 The cash shop is a **separate server with its own connection**: the client disconnects
 from the channel, migrates to the cash shop, and migrates back on exit. It needs its own
 handler set, not a menu inside the channel server.
-- [ ] `crates/cashshop`: accept the migration, serve the shop UI's item catalogue from
-      `Item/Cash` + `String/Cash.img`, and migrate the client back to a channel.
-- [ ] Wallet (NX/maple points) in `crates/store`; purchase → cash inventory grant.
-- [ ] Cash inventory as a distinct storage area from the normal inventory.
 
-### Stage 6+ — Gameplay systems  ← **current**
+**The request is `0x00D5`**, measured on the wire, and it is answered today only with the
+`0x0070` that clears its latch plus a "not available" line. `research/cash-shop.md`.
+
+- [x] Wallet (NX/maple points) in `crates/store` - `crates/store/src/cash.rs`, per **account**
+      like storage, two balances kept separate because the UI shows two and prices are quoted
+      against one. `!nx` grants; a new account starts at **zero** on purpose.
+- [x] Cash inventory as a distinct storage area - the **locker**, which is not the Cash tab.
+      A purchase lands in the locker; moving it into the tab is a separate action. Buying
+      debits and places in one transaction and reads the row back before committing.
+- [ ] The migrate reply to `0x00D5`, so the client actually leaves the channel.
+- [ ] `crates/cashshop`: accept the migration, answer with the cash-shop stage packet, serve
+      the catalogue, and migrate the client back to a channel.
+- [ ] The catalogue itself. **The client ships it**: `Etc_000.wz` carries `Commodity.img`,
+      `CashShopCategory.img`, `CashPackage.img` and `CommodityLimit.img`, so the item list is
+      this build's own data rather than a website's.
+- [ ] The purchase flow on the wire, and moving an item from the locker into the Cash tab.
+
+### Stage 6+ — Gameplay systems  ← **ongoing, and where most rows close**
 **`STATUS.md` is authoritative for what is confirmed, what is merely wired, and what is
 next.** This list is deliberately coarse so the two cannot drift; do not duplicate detail here.
 

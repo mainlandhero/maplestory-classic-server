@@ -22,6 +22,7 @@
 //! * **A meso balance cannot go negative**, and every read-modify-write of one is a single
 //!   transaction, so two concurrent spends cannot both see the same balance.
 
+pub mod cash;
 pub mod character;
 pub mod db;
 pub mod inventory;

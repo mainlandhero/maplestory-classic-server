@@ -75,6 +75,7 @@ impl Session {
             "npcfx" => self.gm_npc_effect(arg),
             "buff" => self.gm_buff(arg),
             "unbuff" => self.gm_unbuff(arg),
+            "nx" => self.gm_nx(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -587,6 +588,49 @@ impl Session {
             )),
         );
         out
+    }
+
+    /// `!nx [amount]` - grant NX to this account, or report the balance with no argument.
+    ///
+    /// # Why a new account starts at zero
+    ///
+    /// A test server that hands out currency by existing makes every later "did the purchase
+    /// deduct?" question unanswerable, because the balance moves for reasons nobody is
+    /// tracking. `store::cash::DEFAULT_NX` is 0 and this command is the only way in, so every
+    /// credit has a cause and a log line.
+    ///
+    /// The wallet is per **account**, like storage, so this credits every character on it.
+    pub(super) fn gm_nx(&mut self, arg: &str) -> Vec<Reply> {
+        let Some(claimed) = self.claimed() else {
+            return self.gm_ack("!nx REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let account_id = claimed.account_id;
+
+        let amount = match arg.split_whitespace().next() {
+            None => {
+                let w = self.store.cash_wallet(account_id).unwrap_or_default();
+                return self.gm_ack(format!(
+                    "Account {account_id} holds {} NX and {} maple points. \
+                     `!nx 10000` grants some.",
+                    w.nx, w.maple_points
+                ));
+            }
+            Some(t) => match t.parse::<i64>() {
+                Ok(v) => v,
+                Err(_) => return self.gm_ack(format!("!nx: {t:?} is not an amount.")),
+            },
+        };
+
+        match self.store.add_nx(account_id, amount) {
+            Ok(nx) => self.gm_ack(format!(
+                "Account {account_id} now holds {nx} NX. The wallet is per ACCOUNT, so every \
+                 character on it sees this."
+            )),
+            // A refusal is reported rather than clamped: `add_nx` refuses a debit that would
+            // go negative instead of flooring at zero, because a silent clamp is how a
+            // purchase succeeds for free.
+            Err(e) => self.gm_ack(format!("!nx FAILED and the balance is unchanged: {e}")),
+        }
     }
 
     /// `!item <itemId> [count]` - put an item in the bag, in the tab its id belongs to.
