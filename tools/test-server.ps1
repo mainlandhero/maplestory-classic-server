@@ -64,66 +64,107 @@
     --------------------------------------------------------------
     NOTHING in the cash shop has ever been on a wire. 0x01A0 is the only member of the stage
     block with a live confirmation; 0x01A3 is DERIVED from three discriminators, not read off
-    a capture. So step 2a is the load-bearing observation of this run, and if the window does
-    not draw, that opcode number is the first thing to doubt.
+    a capture. Step 1a is the load-bearing observation of this run.
 
-     1. TYPE  !map 10001050  AS THE FIRST THING AFTER LOGIN. Still the oldest open question,
-        and still ten seconds. Do it FIRST, at ~40 s of client life, so that a death cannot
-        be blamed on a long session.
-        That teleport crashed the client on 2026-08-22, 328 ms into the map load, with an
-        ACCESS VIOLATION reading [0 + 0x3530] - a null pointer, and a DIFFERENT fault from
-        the heap dumps.
-          it dies again -> map 10001050 really is fatal. Relaunch, skip step 1, do the rest
-          it loads      -> it was the session, not the map. Carry straight on
-        Then either way try  !map 10001000 , Henesys town, also never loaded.
+    THE ORDER CHANGED, AND HERE IS THE COST. The map test used to be first, so that a death
+    could not be blamed on a long session. It is now second, because the cash shop is the
+    whole active build and a death in step 1 would otherwise cost both. Step 2 still lands at
+    about two minutes of client life, and the heap family damages about one pool slot per 250
+    seconds, so it is still early enough to discriminate - just less cleanly than at 40 s.
 
-     2. THE CASH SHOP.  TYPE  !nx 10000  FIRST, THEN CLICK CASH SHOP.
+    IF THE CLIENT DIES AT ANY POINT, THAT IS A RESULT. Say WHEN and WHAT YOU HAD JUST DONE,
+    then relaunch and carry on from the next step. Logs are archived into previous-runs/, not
+    deleted, so nothing from the first half is lost.
+
+     0. TYPE  !nx 10000  BEFORE YOU TOUCH THE CASH SHOP BUTTON.
         THE ORDER MATTERS. The balance rides in on the entry packet, and the client's own
         request for it is throttled to once every 60 s, so a grant made after the shop is
-        already open will not show until the shop is next opened.
+        already open will not show until the shop is next opened. 10000 is deliberately not a
+        round screenful - it is distinctive enough to recognise if it lands in the wrong field.
 
-        a) DOES A WINDOW DRAW AT ALL?
+     1. THE CASH SHOP.
+
+        a) CLICK CASH SHOP. DOES A WINDOW DRAW AT ALL?
              it draws          -> 0x01A3 is the right opcode. Everything below is worth doing
-             nothing happens   -> the number is wrong. Say whether the button depressed and
-                                  whether the client is still alive afterwards
-             the client DIES   -> the packet reached the stage and the BODY is wrong, which
-                                  is a different and much more findable problem
+             nothing happens   -> say whether the button DEPRESSED and whether the client is
+                                  still alive. maplecw-hook.log settles it without guessing:
+                                  a WATCH line on 14209ad60 means the packet arrived and was
+                                  dispatched, and no line means the opcode number is wrong
+             the client DIES   -> the packet reached the stage and the BODY is wrong, which is
+                                  a different and much more findable problem
 
-        b) WHAT NUMBER IS IN THE BALANCE CORNER? Expect 10,000.
-             10000  -> the wallet packet is right: both fields, right order, right unit
-             0      -> the two u32s are swapped, or the unit is not what we think. This is
-                       the third time this month a field has been correct and mis-united
+        b) WHAT DO THE BALANCE FIELDS READ? There are TWO of them and both matter.
+             10000 and 0  -> the wallet packet is right: both fields, right order, right unit
+             0 and 10000  -> the two u32s are swapped
+             0 and 0      -> the wallet never arrived, or it arrived and was rejected. A
+                             negative value in any of its three fields EJECTS the player, so
+                             if you are thrown out here that is what happened
 
-        c) CLICK BUY ON ANYTHING. The cheapest row is 100 NX - nothing in this client is
-           free, the 21 rows priced at 0 are exactly the 21 that are switched off.
+        c) CLICK BUY ON ONE NAMED ITEM, AND SAY WHICH ONE YOU CLICKED.
+           The Main tab is all 100 NX; Brown Puppy, Red Hat and Water of Life are easy to
+           recognise. NAMING IT IS THE WHOLE POINT: it turns the log line into a check against
+           a known answer instead of an unverifiable number. Brown Puppy is SN 160000000, Red
+           Hat is 160100000, Water of Life is 160300001.
+
            EXPECT AN ERROR MESSAGE AND NO PURCHASE. That is not a failure, it is the
-           measurement: no 0x03E1 has ever been captured, so the server does not know which
-           field of the payload carries the item's serial. It reads EVERY offset and checks
-           each against the client's own sale list, and writes the answer into world.log.
-             an error, and the shop still works -> exactly right, and the layout is now known
-             THE PLAYER IS EJECTED from the shop -> the refusal sub-op is wrong (0x1A vs 0x05)
-             the shop FREEZES                    -> the click sent a sub-op we do not answer.
-                                                    Say what you clicked
-             IT ACTUALLY BUYS SOMETHING          -> stop and say so. Nothing may be debited
+           measurement. No 0x03E1 has ever been captured, so the server does not know which
+           field of the payload carries the serial; it reads a u32 at EVERY offset, checks
+           each against the client's own sale list, and writes the answer to world.log.
 
-        d) CLICK BUY TWICE MORE. All three must behave identically.
+           READ THE EXACT WORDING BACK. Three different messages mean three different things
+           and you can tell them apart without opening a log:
+             "Due to an unknown error, the Cash Shop request has failed."
+                  -> BEST CASE. The serial was found, the row was priced, and the wallet
+                     could afford it. The entire chain worked
+             "You don't have enough cash."
+                  -> the serial was found but the server thinks the wallet is empty. The
+                     !nx landed on a different account, or step 0 was skipped
+             "You cannot buy this item because it is sold out."
+                  -> no serial was found anywhere in the payload. The buy body is not shaped
+                     the way its builder reads, and world.log now lists every candidate
+             ANY OTHER WORDING -> write it down exactly. It is not one of ours
+
+           And watch what happens to the WINDOW:
+             the shop stays usable -> the refusal sub-op 0x1A is right
+             YOU ARE EJECTED       -> it is behaving like 0x05, which ejects. Say so
+             the shop FREEZES      -> the click sent a sub-op we do not answer
+
+        d) CLICK BUY TWICE MORE, on the same item. All three must behave identically.
              click 2 or 3 does nothing -> the in-flight latch [stage+0x74] is not being
                                           cleared, or [stage+0x120] is re-arming the purchase
 
-        e) CLICK EXIT. The field should come back where you left it.
+        e) STAY IN THE SHOP, DOING NOTHING, FOR A SLOW COUNT OF 70. This costs nothing and
+           answers a question no click can: the client polls for its balance at most once a
+           minute, and the reply is what clears the poll's own latch. world.log will show
+           either one 0x03E0 or two.
+             (nothing to watch on screen - this one is read out of the log afterwards)
+
+        f) CLICK EXIT. The field should come back where you left it.
              a black screen -> the SetField sent in answer to an empty 0x00D1 is wrong
 
-        f) CLICK CASH SHOP A SECOND TIME. Nothing on this path writes [ctx+0x31fc], and that
-           is one of the six gates the button itself checks. A value > 1 there reads on
-           screen as "You cannot go into the cash shop. Please try again later."
+        g) CLICK CASH SHOP A SECOND TIME. Nothing on this path writes [ctx+0x31fc], and that
+           is one of the six gates the button itself checks.
+             it opens again -> the whole loop is closed
+             "You cannot go into the cash shop. Please try again later." -> that gate, and
+                               the hook log's +0x2330 peek says whether the latch is also stuck
+
+     2. TYPE  !map 10001050 . Ten seconds, and the oldest open question.
+        It crashed the client on 2026-08-22, 328 ms into the map load, with an ACCESS
+        VIOLATION reading [0 + 0x3530] - a null pointer, and a DIFFERENT fault from the heap
+        dumps.
+          it dies again -> the map really is fatal. Relaunch and carry on at step 3
+          it loads      -> it was the session, not the map
+        Then either way try  !map 10001000 , Henesys town, also never loaded.
 
      3. THE TRANSACTION THAT WORKS TODAY - from the field, no shop window needed:
              !nx 1000
-             !buy 130200000        one Megaphone, 100 NX. It is a SALE SERIAL, not an item id
+             !buy 160000000        Brown Puppy, 100 NX. A SALE SERIAL, not an item id
              !locker               lists what you bought
              !locker 1             moves it into the Cash tab
-        Every one of those prints what it did. The Cash tab should end up holding one
-        Megaphone and the balance should read 900.
+        Every one of those prints what it did. Expect the Cash tab to end up holding a Brown
+        Puppy and the balance to read 900 - and if you did step 1c, buying the SAME item here
+        that you clicked there is worth more than buying a different one, because the two
+        paths then differ in exactly one thing.
           it works             -> the store half of a purchase is closed end to end
           an item goes missing -> say which line was the last one you saw
 
@@ -552,25 +593,38 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140305e48:peek=24:hits=20,140304100:hits=200:dump=143AC2400/968'
     } else {
-        # THE CASH SHOP QUESTION IS CLOSED, so its watch is kept for one more run as a
-        # REGRESSION CHECK and nothing else.
+        # THE CASH SHOP IS THE RUN, so the free slots point at the two addresses that make
+        # a blank screen readable. All six slots are in use.
         #
-        # Settled 2026-08-22: 0x00D5 is the request, it is an exclusive request, it latches
-        # [ctx+0x2330], and an inbound 0x0070 clears it. Three clicks now give three requests
-        # and the peek reads 0/0/0 where the unanswered run read 0/1/1.
+        # The watch line already prints "while dispatching opcode 0x%04X" and rdx, so these
+        # cost nothing to read and pair directly with world.log - CLAUDE.md, "count the same
+        # event in two logs".
         #
-        # 142caee70:peek=2330:hits=60 - if that ever reads non-zero again, the answer stopped
-        #   clearing the latch and the button is back to once per session.
-        #
-        # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE CONTROL: no lines
-        #   at all means the hook never armed and the log proves nothing.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,142caee70:peek=2330:hits=60,140304100:hits=200:dump=143AC2400/968'
+        # 14209ad60:hits=10 - the 0x01A3 ARM ITSELF, not the forwarder. Watching the
+        #   forwarder 142097ee0 would be useless: !map's 0x01A0 enters it too, so it is hit
+        #   on every map change and a hit would prove nothing. This address is reached by
+        #   0x01A3 and by nothing else.
+        #     a line   -> the packet arrived AND the stage forwarder dispatched it. If the
+        #                 screen is still blank the BODY is wrong, which is findable
+        #     no line  -> 0x01A3 is the wrong opcode number. It is [D], from three
+        #                 discriminators; this is the run that could falsify it
+        # 140d734e0:hits=40 - the cash shop stage's OWN OnPacket. A line means a stage object
+        #   exists and is receiving, and rdx names which of 0x5AD/0x5AE/0x5B9/0x5BA arrived.
+        #     rdx=0x5ad -> the wallet was accepted. Read the balance off the screen
+        #     rdx=0x5ae -> our refusal was accepted, so the 0x1A reasoning holds
+        #     silent, but 14209ad60 fired -> the handler ran and built no stage: the body
+        # 142caee70:peek=2330:hits=60 - the button's exclusive-request latch, one line per
+        #   click. It answers step 1f for free: a second click reading 1 means entering the
+        #   shop stopped clearing it.
+        # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE
+        #   CONTROL: no lines at all means the hook never armed and the log proves nothing.
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,14209ad60:hits=10,140d734e0:hits=40,142caee70:peek=2330:hits=60,140304100:hits=200:dump=143AC2400/968'
     }
     # Announce which pair actually got armed. The old line said "mobs" for 141c532ab, which
     # is the mob SPAWN decoder - now that -MobTargets arms a mob TARGETING watch, one word
     # would have covered two different runs. Same precedence as the if/elseif above, and
     # written as three statements because 5.1 has no ternary.
-    $pair = "THE CASH SHOP SENDER (142caee70, peeking the exclusive-request latch at +0x2330)"
+    $pair = "THE CASH SHOP (14209ad60 = the 0x01A3 arm, 140d734e0 = the stage OnPacket, 142caee70 = the button latch)"
     if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
     if ($MobTargets) { $pair = "MOB TARGETING (mob+0xa88 and mob+0x42c in the collector loop)" }
     if ($UserState) { $pair = "THE USER STATE FIELD (140f810e0, rdx is the value)" }
@@ -867,7 +921,8 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  4 steps. STEP 1 MUST BE FIRST - the order is the experiment.' -ForegroundColor Yellow
+    Write-Host '  Steps 0 and 1 are the run. !nx BEFORE the button - the order' -ForegroundColor Yellow
+    Write-Host '  is the experiment.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -921,43 +976,61 @@ if ($SetFieldProbe) {
     Write-Host '  --- the point of this run -------------------------------------------'
     Write-Host '  THE CASH SHOP, FOR THE FIRST TIME EVER. Nothing in it has been on a' -ForegroundColor Yellow
     Write-Host '  wire. 0x01A0 is the only stage packet ever confirmed; 0x01A3 is'
-    Write-Host '  DERIVED. Step 2a is the load-bearing observation of this run.'
+    Write-Host '  DERIVED. Step 1a is the load-bearing observation of this run.'
     Write-Host ''
-    Write-Host '  1. TYPE  !map 10001050  AS THE FIRST THING AFTER LOGIN.' -ForegroundColor Cyan
-    Write-Host '     Ten seconds, and the oldest open question. Do it FIRST, at ~40s'
-    Write-Host '     of client life, so a death cannot be blamed on a long session.'
-    Write-Host '     It crashed the client 328ms into the map load with an ACCESS'
-    Write-Host '     VIOLATION reading [0 + 0x3530] - a NULL pointer.'
-    Write-Host '       it dies again -> the map really is fatal. Relaunch, skip 1'
-    Write-Host '       it loads      -> it was the session. Carry straight on'
-    Write-Host '     Then try  !map 10001000 , Henesys town, also never loaded.'
+    Write-Host '  IF THE CLIENT DIES, THAT IS A RESULT. Say WHEN and WHAT YOU HAD'
+    Write-Host '  JUST DONE, then relaunch and carry on from the next step. Logs are'
+    Write-Host '  archived into previous-runs/, so the first half is never lost.'
     Write-Host ''
-    Write-Host '  2. THE CASH SHOP.  !nx 10000  FIRST, THEN CLICK CASH SHOP.' -ForegroundColor Cyan
+    Write-Host '  0. TYPE  !nx 10000  BEFORE TOUCHING THE CASH SHOP BUTTON.' -ForegroundColor Cyan
     Write-Host '     ORDER MATTERS: the balance rides in on the entry packet and the'
-    Write-Host '     client only re-asks once a minute.'
-    Write-Host '     a) DOES A WINDOW DRAW?'
+    Write-Host '     client only re-asks once a minute. 10000 is deliberately odd-'
+    Write-Host '     looking so it is recognisable if it lands in the wrong field.'
+    Write-Host ''
+    Write-Host '  1. THE CASH SHOP.' -ForegroundColor Cyan
+    Write-Host '     a) CLICK IT. DOES A WINDOW DRAW?'
     Write-Host '          it draws        -> 0x01A3 is right; do the rest'
-    Write-Host '          nothing happens -> wrong opcode. Say if the button depressed'
+    Write-Host '          nothing happens -> say if the button DEPRESSED. A WATCH line'
+    Write-Host '                             on 14209ad60 in maplecw-hook.log means the'
+    Write-Host '                             packet arrived; no line means wrong opcode'
     Write-Host '          the client DIES -> it reached the stage and the BODY is wrong'
-    Write-Host '     b) WHAT IS IN THE BALANCE CORNER? Expect 10,000.'
-    Write-Host '          0 -> the two u32s are swapped, or the unit is wrong'
-    Write-Host '     c) CLICK BUY ON ANYTHING (cheapest is 100 NX; nothing is free).'
-    Write-Host '        EXPECT AN ERROR AND NO PURCHASE - that IS the measurement.'
-    Write-Host '        No 0x03E1 has ever been captured, so the server searches every'
-    Write-Host '        offset for the serial and writes what it found to world.log.'
-    Write-Host '          error, shop still usable -> right; the layout is now known'
-    Write-Host '          YOU GET EJECTED          -> refusal sub-op wrong (0x1A/0x05)'
-    Write-Host '          the shop FREEZES         -> a sub-op we do not answer'
-    Write-Host '          IT ACTUALLY BUYS         -> stop and say so'
-    Write-Host '     d) CLICK BUY TWICE MORE. All three must behave the same.'
-    Write-Host '     e) CLICK EXIT. The field should come back where you left it.'
-    Write-Host '     f) CLICK CASH SHOP AGAIN. [ctx+0x31fc] is never written on this'
+    Write-Host '     b) WHAT DO THE TWO BALANCE FIELDS READ?'
+    Write-Host '          10000 and 0 -> the wallet is right: order and unit'
+    Write-Host '          0 and 10000 -> the two u32s are swapped'
+    Write-Host '          both 0      -> it never arrived. If you are EJECTED here, a'
+    Write-Host '                         field went negative'
+    Write-Host '     c) CLICK BUY ON ONE NAMED ITEM AND SAY WHICH. Main tab is all'
+    Write-Host '        100 NX: Brown Puppy 160000000, Red Hat 160100000, Water of'
+    Write-Host '        Life 160300001. NAMING IT turns the log into a check against a'
+    Write-Host '        known answer. EXPECT AN ERROR AND NO PURCHASE - that IS the'
+    Write-Host '        measurement. READ THE EXACT WORDING BACK:'
+    Write-Host '          "...unknown error..."      -> BEST CASE. Serial found, row'
+    Write-Host '                                        priced, wallet could afford it'
+    Write-Host '          "...not enough cash."      -> serial found, wallet empty'
+    Write-Host '          "...it is sold out."       -> NO serial found in the payload'
+    Write-Host '          anything else              -> write it down exactly'
+    Write-Host '        And the window: stays usable -> sub-op 0x1A is right;'
+    Write-Host '        EJECTED -> it behaved like 0x05; FREEZES -> unanswered sub-op.'
+    Write-Host '     d) CLICK BUY TWICE MORE, same item. All three must match.'
+    Write-Host '     e) STAY IN THE SHOP DOING NOTHING FOR A SLOW COUNT OF 70.'
+    Write-Host '        Free, and answers a question no click can - world.log will'
+    Write-Host '        show either one 0x03E0 poll or two.'
+    Write-Host '     f) CLICK EXIT. The field should come back where you left it.'
+    Write-Host '     g) CLICK CASH SHOP AGAIN. [ctx+0x31fc] is never written on this'
     Write-Host '        path - "You cannot go into the cash shop" is what >1 looks like.'
     Write-Host ''
+    Write-Host '  2. TYPE  !map 10001050 . Ten seconds, oldest open question.' -ForegroundColor Cyan
+    Write-Host '     It crashed the client 328ms into the map load with an ACCESS'
+    Write-Host '     VIOLATION reading [0 + 0x3530] - a NULL pointer.'
+    Write-Host '       it dies again -> the map really is fatal. Relaunch, go to 3'
+    Write-Host '       it loads      -> it was the session, not the map'
+    Write-Host '     Then try  !map 10001000 , Henesys town, also never loaded.'
+    Write-Host ''
     Write-Host '  3. THE TRANSACTION THAT WORKS TODAY, from the field:' -ForegroundColor Cyan
-    Write-Host '       !nx 1000  /  !buy 130200000  /  !locker  /  !locker 1'
-    Write-Host '     130200000 is a SALE SERIAL, not an item id. Expect one Megaphone'
-    Write-Host '     in the Cash tab and a balance of 900. Every step prints what it did.'
+    Write-Host '       !nx 1000  /  !buy 160000000  /  !locker  /  !locker 1'
+    Write-Host '     160000000 is a SALE SERIAL, not an item id - and it is the same'
+    Write-Host '     Brown Puppy as step 1c, so the two paths differ in one thing.'
+    Write-Host '     Expect it in the Cash tab and a balance of 900.'
     Write-Host ''
     Write-Host '  4. ORGANIZE ITEM, never yet seen working.' -ForegroundColor Cyan
     Write-Host '     Put a few things in storage, take one from the middle to leave'
@@ -966,7 +1039,7 @@ if ($SetFieldProbe) {
     Write-Host '       items VANISH  -> stop and say so'
     Write-Host '     HIT IT THREE TIMES - clicks 2 and 3 must change nothing.'
     Write-Host ''
-    Write-Host '  OPTIONAL: -HeapFix (off by default, NOT on the same run as step 1)' -ForegroundColor DarkGray
+    Write-Host '  OPTIONAL: -HeapFix (off by default, NOT on the same run as step 2)' -ForegroundColor DarkGray
     Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
     Write-Host '     A damaged pool header goes back to the free list instead of to'
     Write-Host '     HeapFree. SEVEN damaged slots over four dumps, ~1 per 250s.'
