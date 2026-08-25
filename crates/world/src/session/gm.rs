@@ -76,6 +76,8 @@ impl Session {
             "buff" => self.gm_buff(arg),
             "unbuff" => self.gm_unbuff(arg),
             "nx" => self.gm_nx(arg),
+            "buy" => self.gm_buy(arg),
+            "locker" => self.gm_locker(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -611,7 +613,7 @@ impl Session {
                 let w = self.store.cash_wallet(account_id).unwrap_or_default();
                 return self.gm_ack(format!(
                     "Account {account_id} holds {} NX and {} maple points. \
-                     `!nx 10000` grants some.",
+                     `!nx 10000` grants some. NX is what this client's UI calls LEAF POINTS.",
                     w.nx, w.maple_points
                 ));
             }
@@ -622,15 +624,206 @@ impl Session {
         };
 
         match self.store.add_nx(account_id, amount) {
+            // **Type this BEFORE clicking Cash Shop.** The balance reaches the screen in the
+            // `0x05AD` that goes out with `SetCashShop`, and the client's own poll for it is
+            // throttled to once every 60 s - so a grant made while the shop is already open
+            // is not visible until it next opens. Nothing pushes a wallet update, deliberately:
+            // the `0x05AD` arm re-triggers a pending purchase (`net::cashshop`).
             Ok(nx) => self.gm_ack(format!(
-                "Account {account_id} now holds {nx} NX. The wallet is per ACCOUNT, so every \
-                 character on it sees this."
+                "Account {account_id} now holds {nx} NX - the LEAF POINTS the shop spends. \
+                 The wallet is per ACCOUNT, so every character on it sees this. Grant it \
+                 BEFORE you click Cash Shop: the balance is carried in by the entry packet."
             )),
             // A refusal is reported rather than clamped: `add_nx` refuses a debit that would
             // go negative instead of flooring at zero, because a silent clamp is how a
             // purchase succeeds for free.
             Err(e) => self.gm_ack(format!("!nx FAILED and the balance is unchanged: {e}")),
         }
+    }
+
+    /// `!buy <sn>` - **perform a real cash-shop purchase from the field.**
+    ///
+    /// # Why this exists at all
+    ///
+    /// The owner, 2026-08-24: *"we need a way to add Leaf Points (NX) in our server so we can
+    /// attempt to make purchases in the Cash Shop so we can finish that entire transaction
+    /// flow."* `!nx` is the first half. This is the second, and it is here rather than on the
+    /// `0x03E1` path for one reason: **inside the shop there is no way to report a success.**
+    /// Every `0x05AE` arm that clears the client's in-flight latch also puts a message on
+    /// screen, and the wallet packet re-triggers the purchase. `session/cashshop.rs` has the
+    /// addresses. So the shop refuses, and the sale happens here, where the answer is a chat
+    /// line that has been on a wire hundreds of times.
+    ///
+    /// # The argument is an SN, not an item id, and that is not pedantry
+    ///
+    /// `Commodity.img` sells the same item at several counts and prices - `130200000` is one
+    /// Megaphone for 100 NX and `130200001` is eleven for 1000, both item `5070000`. An item
+    /// id cannot name a sale. `gm-handbook/commodity.txt` lists all 159.
+    ///
+    /// **Every effect hangs off the transition.** `store::buy_cash_item` checks the balance,
+    /// debits it and places the item in one transaction; nothing here reports success unless
+    /// that returns `Ok`, and nothing here reports a price that was not actually taken.
+    pub(super) fn gm_buy(&mut self, arg: &str) -> Vec<Reply> {
+        let Some(claimed) = self.claimed() else {
+            return self
+                .gm_ack("!buy REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let account_id = claimed.account_id;
+
+        let Some(Ok(sn)) = arg.split_whitespace().next().map(str::parse::<u32>) else {
+            return self.gm_ack(format!(
+                "!buy: {arg:?} is not a commodity serial. It is an SN, NOT an item id - the \
+                 same item is sold at several prices. gm-handbook/commodity.txt has all {}. \
+                 Try !buy 130200000 (1 Megaphone, 100 NX).",
+                self.config.commodity.len()
+            ));
+        };
+
+        let Some(row) = self.config.commodity.get(sn).cloned() else {
+            return self.gm_ack(format!(
+                "!buy REFUSED: SN {sn} is not a sale row. {} rows are loaded{}",
+                self.config.commodity.len(),
+                if self.config.commodity.is_empty() {
+                    " - regenerate with: python tools/dump_commodity.py"
+                } else {
+                    ""
+                }
+            ));
+        };
+        if !row.on_sale {
+            return self.gm_ack(format!(
+                "!buy REFUSED: SN {sn} ({}) has onSale 0 in the client's own data.",
+                row.name
+            ));
+        }
+        let Some(inv) = store::InventoryType::for_item(row.item_id) else {
+            return self.gm_ack(format!(
+                "!buy REFUSED: item {} is in no inventory tab, so nothing could hold it.",
+                row.item_id
+            ));
+        };
+
+        let item = if inv == store::InventoryType::Equip {
+            store::Item::equip(row.item_id)
+        } else {
+            store::Item::bundle(row.item_id, row.count)
+        };
+
+        match self.store.buy_cash_item(account_id, &item, row.price) {
+            Ok(placed) => {
+                let nx = self.store.cash_wallet(account_id).unwrap_or_default().nx;
+                self.gm_ack(format!(
+                    "Bought SN {sn}: {}x {} ({}) for {} NX. Locker slot {}, {nx} NX left. \
+                     Period {} day(s). `!locker` lists it, `!locker {}` moves it into the \
+                     {inv:?} tab.",
+                    row.count,
+                    row.name,
+                    row.item_id,
+                    row.price,
+                    placed.slot,
+                    row.period_days,
+                    placed.slot
+                ))
+            }
+            // The refusal is reported rather than swallowed. `add_nx` and `buy_cash_item`
+            // both refuse instead of clamping, and a refusal nobody is told about is the
+            // exact shape of the repeated-quest bug.
+            Err(e) => self.gm_ack(format!(
+                "!buy FAILED and NOTHING changed - no NX taken, no item placed: {e}"
+            )),
+        }
+    }
+
+    /// `!locker` - list the cash locker. `!locker <slot>` - move that slot into the bag.
+    ///
+    /// # The move is two transactions, so it needs an undo
+    ///
+    /// The locker and the bag are separate stores. Taking an item out of one and failing to
+    /// put it in the other would simply destroy it, so the failure path puts it back with
+    /// `store::put_cash_item`, which costs nothing. If **that** fails too the item really is
+    /// gone, and the message says so in those words rather than reporting a tidy error - a
+    /// player who loses an item needs to know immediately, not on the next login.
+    pub(super) fn gm_locker(&mut self, arg: &str) -> Vec<Reply> {
+        let Some(claimed) = self.claimed() else {
+            return self
+                .gm_ack("!locker REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let account_id = claimed.account_id;
+        let Some(chr) = self.claimed_character() else {
+            return self.gm_ack("!locker REFUSED: no character is claimed.".to_string());
+        };
+
+        let held = self.store.cash_locker(account_id).unwrap_or_default();
+        let Some(token) = arg.split_whitespace().next() else {
+            if held.is_empty() {
+                return self.gm_ack(
+                    "The cash locker is empty. `!nx 10000` then `!buy 130200000` puts \
+                     something in it."
+                        .to_string(),
+                );
+            }
+            let list = held
+                .iter()
+                .map(|l| {
+                    format!(
+                        "{}: {}x {} ({})",
+                        l.slot,
+                        l.item.kind.quantity(),
+                        self.item_name(l.item.item_id),
+                        l.item.item_id
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let nx = self.store.cash_wallet(account_id).unwrap_or_default().nx;
+            return self.gm_ack(format!("Cash locker ({nx} NX): {list}. `!locker <slot>` takes one."));
+        };
+        let Ok(slot) = token.parse::<u16>() else {
+            return self.gm_ack(format!("!locker: {token:?} is not a slot number."));
+        };
+
+        let item = match self.store.take_cash_item(account_id, slot) {
+            Ok(i) => i,
+            Err(e) => return self.gm_ack(format!("!locker REFUSED and nothing moved: {e}")),
+        };
+        let Some(inv) = store::InventoryType::for_item(item.item_id) else {
+            // Cannot happen for anything `!buy` placed, but the undo runs anyway rather than
+            // leaving the item in a variable that is about to go out of scope.
+            let _ = self.store.put_cash_item(account_id, &item);
+            return self.gm_ack(format!(
+                "!locker REFUSED: item {} is in no inventory tab. Put back in the locker.",
+                item.item_id
+            ));
+        };
+        let max_stack = self.config.shops.max_stack(item.item_id);
+
+        let placed = match self.store.add_item(chr.id, inv, &item, max_stack) {
+            Ok(rows) => rows,
+            Err(e) => {
+                return match self.store.put_cash_item(account_id, &item) {
+                    Ok(back) => self.gm_ack(format!(
+                        "!locker REFUSED: the {inv:?} tab would not take it ({e}). It is back \
+                         in the locker, slot {}.",
+                        back.slot
+                    )),
+                    Err(worse) => self.gm_ack(format!(
+                        "!locker: the bag refused it ({e}) AND THE LOCKER WOULD NOT TAKE IT \
+                         BACK ({worse}). ITEM {} IS LOST - say so.",
+                        item.item_id
+                    )),
+                };
+            }
+        };
+
+        let name = self.item_name(item.item_id);
+        let mut out = self.gm_ack(format!(
+            "Took locker slot {slot}: {}x {name} ({}) -> {inv:?} tab, slot {}",
+            item.kind.quantity(),
+            item.item_id,
+            placed.iter().map(|r| r.slot.to_string()).collect::<Vec<_>>().join(", ")
+        ));
+        out.extend(self.inventory_added_replies(inv, &placed, "GM !locker"));
+        out
     }
 
     /// `!item <itemId> [count]` - put an item in the bag, in the tab its id belongs to.

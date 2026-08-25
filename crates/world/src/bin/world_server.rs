@@ -37,6 +37,10 @@ maplecw-world - one channel of the MapleCW game world
                       142097f80 or the run measures nothing.
   --footholds PATH  map floor geometry, from tools/dump_portals.py
   --consumables PATH  what potions restore, from tools/dump_itemdata.py
+  --commodity PATH  the cash shop's sale list keyed by SN, from
+                   tools/dump_commodity.py. Missing means every purchase is
+                   refused as sold out - the client draws its catalogue from
+                   its own copy either way, so the shop still looks stocked
   --shops PATH     the authored NPC shop file      (default data/shops.txt)
   --quest-scripts PATH  authored openings for the 12 quests whose bodies the
                       client does NOT ship (default data/quest-scripts.txt).
@@ -56,6 +60,7 @@ fn main() -> ExitCode {
     let mut fields_path = PathBuf::from("gm-handbook/fields.txt");
     let mut footholds_path = PathBuf::from("gm-handbook/footholds.txt");
     let mut consumables_path = PathBuf::from("gm-handbook/consumables.txt");
+    let mut commodity_path = PathBuf::from("gm-handbook/commodity.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
@@ -105,6 +110,7 @@ fn main() -> ExitCode {
             "--fields" => value().map(|v| fields_path = PathBuf::from(v)),
             "--footholds" => value().map(|v| footholds_path = PathBuf::from(v)),
             "--consumables" => value().map(|v| consumables_path = PathBuf::from(v)),
+            "--commodity" => value().map(|v| commodity_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
@@ -223,6 +229,12 @@ fn main() -> ExitCode {
     // What a potion does. Loud in both directions on stdout, same reasoning as the floor.
     config.consumables = world::consumables::Consumables::load(&consumables_path);
     println!("{}", config.consumables.banner());
+
+    // What the cash shop sells, and for how much. Loud in both directions for the same reason
+    // the floor is: an empty table here is invisible on screen, because the client draws the
+    // catalogue from its own copy of the very same file.
+    config.commodity = world::commodity::CommodityTable::load(&commodity_path);
+    println!("{}", config.commodity.banner());
 
     config.npcs = world::config::Config::load_npcs(&npcs_path);
     if config.npcs.is_empty() {

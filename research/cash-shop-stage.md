@@ -437,7 +437,7 @@ anything**; the other 63 land on the common exit and are silently ignored. [L]
 | `0x13` | `140d7e0ac` → `FUN_140D81590` | `str`, `u32`, `u16` | |
 | `0x14` | `140d7e0b9` | `u8`, `u32` | |
 | `0x19` | `140d7de71` → `FUN_140D7F8A0` | `u8`, `u16` | |
-| `0x1A`, `0x1C` | `140d7de81` | **nothing** | UI-only |
+| `0x1A`, `0x1C` | `140d7de81` | **`u8 nReason`, same as `0x1E`** | see the correction below |
 | `0x1B` | `140d7deaf` → `FUN_140D80410` | `u8`, `raw`, `u32`, `u16` | |
 | `0x1D` | `140d7debf` | `raw[8]` | `-1` is a sentinel (`cmp qword,-1`) |
 | `0x1E` | `140d7de93` | **`u8 nReason`** | message only, stage survives |
@@ -453,6 +453,49 @@ anything**; the other 63 land on the common exit and are silently ignored. [L]
 
 Read shapes are `tools/reads.py` at depth 4, so **any of them that crosses `0x1406E8FB0` is
 8 bytes short** — `FUN_1402D0950` does, and its corrected layout is in §6.5.
+
+### 6.2.1 CORRECTION, 2026-08-24: `0x1A` is not "nothing", and it is the one to use
+
+The row above said `0x1A` and `0x1C` consume nothing and are UI-only. **They consume a
+`u8 nReason` exactly like `0x1E`**, because `0x140D7DE81` has no terminating jump - it falls
+straight through into `0x140D7DE93`. A `0x05AE` sub-op `0x1A` sent *without* a reason byte
+would read past the end of the packet.
+
+Both tables were dumped rather than inferred (`tools/dump_va.py 0x140D7E194 96` for the byte
+index and `0x140D7E13C 88` for the 22 targets), and decoding the index at `sub-op - 3` gives
+`0x1A -> slot 9`, `0x1C -> slot 9`, `0x1E -> slot 12`, i.e. `0x140D7DE81`, `0x140D7DE81`,
+`0x140D7DE93`. **[L]** The whole body:
+
+```asm
+140d7de81  mov  ecx, 2 ; call 0x142aa2810      ; a UI call
+140d7de8b  call 0x140d74c70                    ; CANCEL THE PENDING PURCHASE
+140d7de93  mov  byte [rdi+0x74], 0             ; clear the in-flight latch  <- 0x1E enters here
+140d7de97  READ u8 nReason
+140d7dea5  call 0x140d7c7f0                    ; show the message
+```
+
+`FUN_140D74C70` empties a vector at `[stage+0x128]` and writes `[stage+0x120] = 0`
+(`0x140D74DDB`, found with `tools/rangescan.py 0x120 0x140d70000 0x140d90000`). That field is
+the whole difference, and section 11.4's recommendation of `0x1E` is **wrong because of it**:
+
+* the buy builder sets `[stage+0x120] = 1` at `0x140D7A500`, at its send site;
+* the `0x05AD` arm reads it and, when it is 1, **calls the buy builder again**
+  (`0x140D736E6 cmp eax, 1` -> `0x140D736F6 call 0x140d785f0`).
+
+So a `0x1E` refusal leaves the pending-purchase mode armed, and the client's own unprompted
+60-second `0x03E0` poll - answered with `0x05AD`, as it must be - then makes the client buy
+again on its own. `0x1A` clears it first and the same poll is inert. **[L]**
+
+The same chain kills the tempting shortcut of answering a purchase with `0x05AD` alone: it
+does clear the latch, and it is precisely the packet that re-triggers the buy.
+
+**And there is no silent refusal.** `FUN_140D7C7F0` does `dec edx` then `cmp edx, 0x7e / ja`
+(`0x140D7C811`), and everything outside `1..=0x7F` - `0` included - lands at `0x140D7D3A3`,
+which loads string `0x295` = 661, the generic error. Every `0x05AE` arm that clears the latch
+puts a message on screen. That is why this server cannot yet report a *successful* purchase
+and refuses instead of debiting: `crates/world/src/session/cashshop.rs`.
+
+---
 
 ### 6.3 The failure-reason table — how to say "no"
 
@@ -727,6 +770,11 @@ The client stores fields 1 and 2 and clears its in-flight latch. If the account 
 `"@--"` the client zeroes field 1 on its own — a quirk, not something to work around.
 
 ### 11.4 Refusing a purchase
+
+> **Superseded by section 6.2.1.** Use `nResult = 0x1A`, not `0x1E`. `0x1E` leaves
+> `[stage+0x120]` armed and the next wallet reply re-sends the purchase. The rest of this
+> section - that a refusal is the cheapest correct answer, and that `0x05`/`0x07` eject the
+> player - still stands.
 
 Every `0x03E1` sub-op sets `[this+0x74] = 1` and the UI blocks until something clears it. The
 cheapest correct answer is a failure:

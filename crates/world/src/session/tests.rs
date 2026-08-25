@@ -4911,6 +4911,216 @@ fn an_empty_transfer_field_leaves_the_cash_shop_and_a_full_one_is_a_portal() {
     );
 }
 
+
+/// A session whose config carries three real sale rows, so a purchase can be priced.
+///
+/// The first two are the same item id at two counts and two prices - `130200000` is one
+/// Megaphone for 100 NX, `130200001` is eleven for 1000 - because that pair is the reason the
+/// shop's key is the SN and not the item id. **All three rows are copied verbatim from
+/// `gm-handbook/commodity.txt`**, including the third, which really does have `onSale = 0` -
+/// a fixture that quietly contradicts the data it stands in for is worse than no fixture.
+///
+/// Worth knowing while reading these: the 21 rows priced at 0 NX are **exactly** the 21 rows
+/// that are not on sale, so nothing buyable in this client is free.
+fn cash_shop_session() -> (Session, Arc<Store>, u32) {
+    let dir = std::env::temp_dir().join(format!("maplecw-shop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("commodity.txt");
+    std::fs::write(
+        &path,
+        "# sn, itemId, count, price, ...\n\
+         130200000, 5070000, 1, 100, 100, , 0, 2, 1, , 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 302, Megaphone\n\
+         130200001, 5070000, 11, 1000, 1100, 1, 0, 2, 1, , 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2, 302, Megaphone\n\
+         92000000, 5000054, 1, 0, 0, , 0, 2, 0, , 100, 0, 0, 0, 0, , , , 0, 0, -1, 20, -80, Snail\n",
+    )
+    .unwrap();
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut item_names = std::collections::HashMap::new();
+    item_names.insert(5070000u32, "Megaphone".to_string());
+    let config = Config {
+        item_names,
+        set_field_probe: true,
+        commodity: crate::commodity::CommodityTable::load(&path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    assert!(s.claim_for_character(id).contains("claimed the migration"));
+    (s, store, id)
+}
+
+/// The short buy payload: `u8`, `u32 sn`, then two `u32`s. **Which offset really holds the
+/// serial is the thing this server does not know**, so the tests build one deliberately and
+/// the handler finds it by searching rather than by trusting this shape.
+fn buy_body(sn: u32) -> Vec<u8> {
+    let mut body = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
+    body.push(net::cashshop::ACTION_BUY);
+    body.push(0);
+    body.extend_from_slice(&sn.to_le_bytes());
+    body.extend_from_slice(&[0u8; 8]);
+    body
+}
+
+/// **Every `0x03E1` is answered, and never with the sub-op that ejects.**
+///
+/// This is the always-answer rule where it costs the most: all six builders set the shop's
+/// in-flight latch `[stage+0x74]` before they send, so one unanswered click kills every later
+/// one for the session - the same failure `0x00D5` had. The reply sub-op is asserted too:
+/// `0x05` shows the very same message and then throws the player out of the shop, and the
+/// two differ by one byte.
+#[test]
+fn every_cash_shop_action_is_answered_and_none_of_them_ejects() {
+    let (mut s, store, _id) = cash_shop_session();
+    store.add_nx(1, 50_000).unwrap();
+
+    let mut bodies = vec![
+        net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec(), // empty: no sub-op
+        buy_body(130200000),
+        buy_body(999_999), // no such sale row
+    ];
+    for sub in [net::cashshop::ACTION_GIFT, net::cashshop::ACTION_ONE_ID, 0x77] {
+        let mut b = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
+        b.push(sub);
+        bodies.push(b);
+    }
+
+    for body in bodies {
+        let out = s.handle(&body);
+        let r = out
+            .iter()
+            .find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT)
+            .unwrap_or_else(|| panic!("0x03E1 {body:02x?} went unanswered"));
+        assert_eq!(r.body.len(), net::cashshop::CASH_SHOP_REFUSAL_LEN);
+        assert_eq!(
+            r.body[0],
+            net::cashshop::RESULT_CANCEL_AND_STAY,
+            "sub-op 0x1A: it clears [stage+0x120] as well as the latch, so the next wallet \
+             reply does not resume the purchase"
+        );
+        assert_ne!(
+            r.body[0],
+            net::cashshop::RESULT_MESSAGE_AND_EJECT,
+            "0x05 would throw the player out of the shop"
+        );
+        // And no wallet goes with it: 0x05AD is exactly the packet that re-triggers a buy.
+        assert!(
+            !out.iter().any(|x| x.opcode == net::cashshop::CASH_SHOP_WALLET),
+            "a refusal must not carry a wallet"
+        );
+    }
+}
+
+/// **The reason byte says which thing went wrong**, and the affordable case still refuses.
+///
+/// The last block is the one worth having: a sale this server *could* make is refused and
+/// **nothing is debited**, because there is no packet that tells the client a purchase
+/// succeeded. Every effect hangs off the transition, and this transition does not happen.
+#[test]
+fn a_buy_is_priced_against_the_real_sale_row_and_still_takes_nothing() {
+    let (mut s, store, _id) = cash_shop_session();
+
+    // Nothing in the wallet: "You don't have enough cash."
+    let out = s.handle(&buy_body(130200000));
+    let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
+    assert_eq!(r.body[1], net::cashshop::reason::NOT_ENOUGH_CASH);
+    assert!(r.what.contains("SN 130200000"), "the log names the row: {}", r.what);
+    assert!(r.what.contains("OFFSET 1"), "and where the serial was found: {}", r.what);
+
+    // onSale = 0: "sold out", whatever the balance is.
+    store.add_nx(1, 50_000).unwrap();
+    let out = s.handle(&buy_body(92000000));
+    let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
+    assert_eq!(r.body[1], net::cashshop::reason::SOLD_OUT);
+
+    // No serial anywhere in the payload: also sold out, and the log shows what it read.
+    let mut junk = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
+    junk.push(net::cashshop::ACTION_BUY);
+    junk.extend_from_slice(&[7u8; 12]);
+    let out = s.handle(&junk);
+    let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
+    assert_eq!(r.body[1], net::cashshop::reason::SOLD_OUT);
+    assert!(r.what.contains("NO commodity serial"), "{}", r.what);
+
+    // Affordable, and STILL refused - with nothing taken.
+    let out = s.handle(&buy_body(130200000));
+    let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
+    assert_eq!(r.body[1], net::cashshop::reason::UNKNOWN_ERROR);
+    assert!(r.what.contains("AFFORDABLE, AND STILL REFUSED"), "{}", r.what);
+    assert_eq!(store.cash_wallet(1).unwrap().nx, 50_000, "NOT ONE NX was taken");
+    assert!(store.cash_locker(1).unwrap().is_empty(), "and nothing was placed");
+}
+
+/// **`!nx`, `!buy`, `!locker` is the whole transaction**, and each step moves the number it is
+/// supposed to move.
+///
+/// Both sides of every step are asserted - balance and locker, locker and bag - because a
+/// test that checks one of several effects gives false confidence about the rest. That is the
+/// quest turn-in test that counted fanfares while the experience doubled beside it.
+#[test]
+fn the_gm_path_buys_debits_and_hands_the_item_over() {
+    let (mut s, store, id) = cash_shop_session();
+
+    s.handle(&gm_chat("!nx 1000"));
+    assert_eq!(store.cash_wallet(1).unwrap().nx, 1_000);
+
+    // An SN, not an item id - and the refusal says so rather than buying something else.
+    let out = s.handle(&gm_chat("!buy 5070000"));
+    assert!(notice_text(&out[0]).contains("not a sale row"), "{}", notice_text(&out[0]));
+    assert_eq!(store.cash_wallet(1).unwrap().nx, 1_000, "a refusal costs nothing");
+
+    // The 100 NX row, not the 1000 NX one, even though they share an item id.
+    let out = s.handle(&gm_chat("!buy 130200000"));
+    assert!(notice_text(&out[0]).contains("Bought SN 130200000"), "{}", notice_text(&out[0]));
+    assert_eq!(store.cash_wallet(1).unwrap().nx, 900, "100 NX came out");
+    let locker = store.cash_locker(1).unwrap();
+    assert_eq!(locker.len(), 1);
+    assert_eq!(locker[0].item.item_id, 5070000);
+    assert_eq!(locker[0].item.kind.quantity(), 1, "one, not eleven");
+
+    // 900 will not cover the 1000 row. The refusal must not clamp, and must not half-place.
+    let out = s.handle(&gm_chat("!buy 130200001"));
+    assert!(notice_text(&out[0]).contains("NOTHING changed"), "{}", notice_text(&out[0]));
+    assert_eq!(store.cash_wallet(1).unwrap().nx, 900, "not clamped to zero");
+    assert_eq!(store.cash_locker(1).unwrap().len(), 1, "and nothing was placed");
+
+    // Now it is affordable, and the SAME item id arrives at the other count.
+    s.handle(&gm_chat("!nx 200"));
+    s.handle(&gm_chat("!buy 130200001"));
+    let locker = store.cash_locker(1).unwrap();
+    assert_eq!(locker.len(), 2);
+    assert_eq!(locker[1].item.kind.quantity(), 11, "the bundle row, chosen by its SN");
+    assert_eq!(store.cash_wallet(1).unwrap().nx, 100, "1100 - 1000");
+
+    // Hand one over. The locker loses it and the bag gains it - both sides, one command.
+    let out = s.handle(&gm_chat("!locker 1"));
+    assert!(notice_text(&out[0]).contains("Took locker slot 1"), "{}", notice_text(&out[0]));
+    assert_eq!(store.cash_locker(1).unwrap().len(), 1, "the locker gave it up");
+    let placed = store
+        .inventory_slot(id, store::InventoryType::Cash, 1)
+        .unwrap()
+        .expect("and the Cash tab has it");
+    assert_eq!(placed.item_id, 5070000);
+
+    // Taking the same slot twice is refused, not duplicated.
+    let out = s.handle(&gm_chat("!locker 1"));
+    assert!(notice_text(&out[0]).contains("nothing moved"), "{}", notice_text(&out[0]));
+    assert_eq!(store.cash_locker(1).unwrap().len(), 1);
+}
+
+/// `!locker` with no argument lists what is in it, and says so plainly when it is empty.
+#[test]
+fn an_empty_locker_says_so_and_points_at_the_two_commands_that_fill_it() {
+    let (mut s, _store, _id) = cash_shop_session();
+    let out = s.handle(&gm_chat("!locker"));
+    let text = notice_text(&out[0]);
+    assert!(text.contains("empty"), "{text}");
+    assert!(text.contains("!nx") && text.contains("!buy"), "and how to fill it: {text}");
+}
+
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing
 /// else. This is the always-answer rule with a different field name.
 #[test]

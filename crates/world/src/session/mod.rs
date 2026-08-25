@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level] [tailBytes], !unbuff [tailBytes], !nx [amount], !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level] [tailBytes], !unbuff [tailBytes], !nx [amount], !buy <commoditySN>, !locker [slot], !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -578,6 +578,13 @@ impl Session {
             }
             // "What is my balance." Empty body, and the client throttles it to once a minute.
             net::cashshop::CLIENT_CASH_SHOP_QUERY => return self.on_cash_shop_query(),
+            // Everything else done inside the shop - Buy above all. Each of the six builders
+            // sets [stage+0x74] before it sends and the shop's UI blocks until something
+            // clears it, so this is one of the packets "always answer" is really about: the
+            // first Buy click would otherwise kill every later click of the session.
+            net::cashshop::CLIENT_CASH_SHOP_ACTION => {
+                return self.on_cash_shop_action(body.get(2..).unwrap_or(&[]))
+            }
             // **Two AP opcodes, not one.** 0x0138 is a single + click and 0x0139 is the
             // bulk dialog; answering only the second still looks broken to anyone using the
             // button, which is what happened. Both latch ctx+0x2330 on send and only a

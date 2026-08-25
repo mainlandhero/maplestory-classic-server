@@ -108,25 +108,30 @@ The rest stand as written below.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-22, after the Cash Shop run.** Read this section and nothing else to
+**Last updated 2026-08-24, after the cash shop was wired end to end.** Read this section and nothing else to
 know where the project is. Everything under it is older and kept **for its working, not its
 verdicts** - the log below is reverse-chronological and a claim in it may have been retracted
 further up.
 
 **What changed most recently, newest first:**
 
-* **The Cash Shop is being built.** `0x00D5` is the request and it is answered; the shop
-  itself - a migrate, `SetCashShop`, a wallet, a locker, a purchase flow - is in progress.
-  `crates/store/src/cash.rs` and `!nx` exist; the wire does not yet.
+* **The Cash Shop opens, and NONE of it has been on a wire yet.** Entry (`0x01A3` on the same
+  socket - there is no migrate), the wallet (`0x05AD`), Exit (empty `0x00D1`) and a refusal
+  for every in-shop click (`0x05AE`) are all built. `0x01A0` remains the only member of the
+  stage block with a live confirmation, so **`0x01A3` is derived, not read** - if the window
+  draws nothing, that is the first thing to doubt.
+* **Leaf Points and a real purchase, but only from the field.** `!nx <amount>` grants NX -
+  what this client's UI calls Leaf Points - and `!buy <commoditySN>` performs a genuine sale:
+  it prices the row out of the client's own `Commodity.img`, debits the wallet and fills a
+  locker slot in one transaction. `!locker [slot]` moves it into the Cash tab.
+  **A Buy click inside the shop window is refused and nothing is debited**, because no packet
+  in this client reports a purchase *succeeded* without also putting a message on screen -
+  and the one that looked like it, the wallet, re-triggers the purchase. See below.
 * **Buffs are closed both ways**, storage is closed including Organize, and the pick-up latch
   bug is fixed and confirmed.
 * **Two crash families are open**, and they are not the same bug: a heap one with four dumps
   and a rate of about one damaged pool slot per 250 s, and a **null dereference during a map
   load** that has been seen once.
-
-**The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
-`.NOTES` block and the `Write-Host` dialogue the launcher prints on screen - and both must be
-kept current. `CLAUDE.md` has the section on why.
 
 **The next-steps table is further down**, under "What to do next, in order". It is rewritten
 whenever a row closes, because a list that still names finished work is how a launch gets
@@ -164,7 +169,64 @@ kept current. `CLAUDE.md` has the section on why.
 | **buffs, both directions** | Nimble Feet grants and a right-click cancels it. One screen settled `0x007D`, the 124-byte mask, bit 92 = Speed, the **`i16`** value width (unreadable statically - the deciding constant is in Themida-packed `.data`) and milliseconds |
 | **Three Snails** | works and deals damage |
 | **storage, end to end** | the window, 30 slots, mesos both ways, items in **and** out, the 100-meso deposit fee (ten deposits, ten fees), and Organize Item repacking the box |
-| **the Cash Shop button is answered** | `0x00D5` is an **exclusive request**: unanswered it fired once per session and left `[ctx+0x2330]` set. Three clicks now give three requests, latch `0/0/0`. **The shop itself is not built** |
+| **the Cash Shop button is answered** | `0x00D5` is an **exclusive request**: unanswered it fired once per session and left `[ctx+0x2330]` set. Three clicks now give three requests, latch `0/0/0`. **That is the button, not the shop** - nothing past the click has been on a wire |
+
+#### Leaf Points, a real purchase from the field, and why the shop window still refuses
+
+2026-08-24, the owner: *"we need a way to add Leaf Points (NX) in our server so we can attempt to
+make purchases in the Cash Shop so we can finish that entire transaction flow."*
+
+`!nx` already existed and works. What was missing was everything after it, and one piece of
+it turns out to be genuinely unavailable in this client.
+
+**The server now knows what things cost.** `gm-handbook/commodity.txt` - 159 sale rows out of
+the client's own `Etc/Commodity.img` - is loaded at start-up into `world::commodity`, keyed by
+**SN**, not item id. That distinction is load-bearing: `130200000` is one Megaphone for 100 NX
+and `130200001` is eleven for 1000, and both are item `5070000`. The banner prints the row
+count in both directions, because the client draws its catalogue from its own copy of the same
+file - so an empty table here looks exactly like a fully stocked shop.
+
+A measurement that fell out of loading it: **the 21 rows priced at 0 NX are exactly the 21
+rows that are switched off.** Nothing buyable in this client is free, so no purchase can be
+tested without `!nx` first.
+
+**`!buy <sn>` performs the sale for real** - `store::buy_cash_item` checks the balance, debits
+it and fills a locker slot in one transaction - and `!locker [slot]` lists the locker or hands
+an item to the Cash tab. The hand-over is two stores and therefore two transactions, so the
+failure path puts the item back with `store::put_cash_item`; an item that left the locker and
+failed to reach the bag would simply cease to exist.
+
+**And a Buy click inside the shop window is refused, deliberately.** Three things were read
+out of the image and each one closes a door:
+
+* every `0x05AE` arm that clears the shop's in-flight latch also calls `FUN_140D7C7F0`, which
+  shows a message. **There is no silent one**: `0x140D7C818 cmp edx, 0x7e / ja` sends every
+  reason outside `1..=0x7F` - including `0` - to string 661, the generic error.
+* answering with the **wallet** would clear the latch and *re-trigger the purchase*. The buy
+  builder sets `[stage+0x120] = 1` at its send site (`0x140D7A500`) and the `0x05AD` arm calls
+  that same builder back when it sees a 1 (`0x140D736E6` -> `0x140D736F6`). That is a farming
+  loop, not a purchase.
+* the remaining candidate needs `FUN_1402D0950`'s **71-byte** cash-item record, whose field
+  meanings past the serial are explicitly not established. This project has shipped a packet
+  short twice this month.
+
+So nothing is debited on that path. **Every effect hangs off the transition** - the Heena rule
+- and a purchase the client is never told about is not a transition.
+
+**A correction to `research/cash-shop-stage.md`, section 11.4.** It recommended refusing with
+`0x05AE` sub-op `0x1E`. That is wrong, and the reason is the same `[stage+0x120]`: `0x1E`
+leaves the pending purchase armed, so the client's own unprompted 60-second wallet poll makes
+it buy again by itself. Sub-op **`0x1A`** enters the identical body one call earlier, at
+`FUN_140D74C70`, which clears that field first. Both the byte index table at `0x140D7E194` and
+the 22-entry jump table at `0x140D7E13C` were dumped rather than inferred; the same dump also
+corrects the file's claim that `0x1A` consumes nothing - it falls through into `0x1E`'s
+`u8 nReason` read, so a `0x1A` sent without a reason byte reads past the end of the packet.
+
+**The instrument for the next run.** No real `0x03E1` has ever been captured, so which field
+of the buy payload carries the serial is unknown. Rather than pick one, the handler reads a
+`u32` at **every** offset and checks each against the client's own sale list, reports
+`Several` rather than guessing if two match, and writes the answer to `world.log`. It cannot
+invent a serial: it can only return one that is really in `Commodity.img`.
 
 #### The 2026-08-22 run: four answers, two of them negative and both useful
 
@@ -1396,7 +1458,7 @@ implementation can be diffed against rather than re-derived. One is **in progres
 
 | # | do this | state |
 |---|---|---|
-| 1 | **The Cash Shop** | **IN PROGRESS.** The request is `0x00D5` and it is answered - an exclusive request that latches `[ctx+0x2330]`, so unanswered it fired once per session. `crates/store/src/cash.rs` has a per-account NX wallet and a locker, with a purchase that debits and places in **one transaction**; `!nx` grants. **Nothing is on the wire yet**: the migrate reply, `SetCashShop`, the item list and the purchase flow are all open. `research/cash-shop.md` parts one to seven |
+| 1 | **The Cash Shop** | **BUILT, ENTIRELY UNCONFIRMED.** Entry is `0x01A3` on the same channel socket - four arms of one stage forwarder, **no migrate and no second server** - plus `0x05AD` for the balance, an empty `0x00D1` to leave, and a non-ejecting `0x05AE` refusal for every in-shop click. `crates/store/src/cash.rs` holds a per-account NX wallet and a locker; `world::commodity` prices 159 sale rows by SN; `!nx`, `!buy` and `!locker` drive the whole transaction from the field. **`0x01A3` is derived, not read** - `0x01A0` is the only stage packet ever confirmed on a wire. Next: does the window draw, and what does a real `0x03E1` look like. `research/cash-shop-stage.md`, and `research/cash-shop.md` parts one to seven |
 | 2 | **The Henesys Park null dereference** | **A different family from the heap crash.** `0xC0000005` reading `[0 + 0x3530]`, 328 ms into the `0x01A0` handler, no dispatch line - and the damaged pool slot in that dump was a **bystander**. Whether map `10001050` is fatal or the 389-second session was is **still not established**, and one GM command settles it. `tools/check_map_resources.py` has already ruled out a missing tile, object, background or map mark, with a positive control. `research/henesys-park-null-deref.md` §3 |
 | 3 | **The classic shop counter** | **Decoded, not built**, and the price is settled: **`row+0x38`, a u64**, from three independent sites. The row is **42 reads**, not thirteen fields. Request opcode is **`0x00F5`**, not `0x0104`. **Three traps**: `row+0xa4` is a FILETIME with no sentinel and `0` hides every row; `row+0x10c = 0` fails purchases silently; a dropped row desynchronises the byte stream. `research/classic-shop-rows.md` |
 | 4 | **The heap wild write** | **Four dumps**, three of that family. The value is `1` **seven for seven**, the class is `0x20` seven for seven (7 of 309 152 there, **0 of 472 760** elsewhere), and the count tracks session length at about **one damaged slot per 250 s**. The **writer is still not found**, and `heap-wild-write.md` §8 names the blind spot that makes a static sweep for it impossible. The 3-byte patch is **built and off**: `-HeapFix`, `crates/grap-stub/src/heapfix.rs`, nothing on disk in `client-patched/` changes |

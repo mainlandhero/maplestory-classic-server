@@ -307,13 +307,18 @@ username and password. Designs: **`docs/deployment.md`** and **`docs/launcher.md
   below the channel switch's `0x70` floor, so a channel connection cannot dispatch it at all.
   Answering `0x00D2` with it was worse than not answering, because `0x00D2` latches on send.
 
-### Stage 5 — Cash shop server  ← **the active build, 2026-08-22**
-The cash shop is a **separate server with its own connection**: the client disconnects
-from the channel, migrates to the cash shop, and migrates back on exit. It needs its own
-handler set, not a menu inside the channel server.
+### Stage 5 — Cash shop  ← **built 2026-08-24, entirely unconfirmed on a client**
 
-**The request is `0x00D5`**, measured on the wire, and it is answered today only with the
-`0x0070` that clears its latch plus a "not available" line. `research/cash-shop.md`.
+**REVERSED, 2026-08-22.** This section used to open *"the cash shop is a separate server with
+its own connection"* and list a `crates/cashshop` to build. It is not, and there is no such
+crate. `0x01A0..0x01A3` are the four arms of **one stage forwarder**, `FUN_142097EE0`, and
+`CField::OnPacket` chains into it - which is exactly why `!map`'s `0x01A0` already works
+mid-session on a live channel socket. `0x001A`, the socket-level migrate, has no cash-shop
+branch at all. Two research passes reached this independently.
+`research/cash-shop-stage.md`.
+
+**The request is `0x00D5`**, measured on the wire. It is an exclusive request, so leaving it
+unanswered cost every later click of the session.
 
 - [x] Wallet (NX/maple points) in `crates/store` - `crates/store/src/cash.rs`, per **account**
       like storage, two balances kept separate because the UI shows two and prices are quoted
@@ -321,13 +326,22 @@ handler set, not a menu inside the channel server.
 - [x] Cash inventory as a distinct storage area - the **locker**, which is not the Cash tab.
       A purchase lands in the locker; moving it into the tab is a separate action. Buying
       debits and places in one transaction and reads the row back before committing.
-- [ ] The migrate reply to `0x00D5`, so the client actually leaves the channel.
-- [ ] `crates/cashshop`: accept the migration, answer with the cash-shop stage packet, serve
-      the catalogue, and migrate the client back to a channel.
-- [ ] The catalogue itself. **The client ships it**: `Etc_000.wz` carries `Commodity.img`,
-      `CashShopCategory.img`, `CashPackage.img` and `CommodityLimit.img`, so the item list is
-      this build's own data rather than a website's.
-- [ ] The purchase flow on the wire, and moving an item from the locker into the Cash tab.
+- [x] Entry: `0x01A3 SetCashShop` on the connection the client is already using, then `0x05AD`
+      with the balance unprompted. Exit: an **empty** `0x00D1` answered with `SetField`.
+- [x] The catalogue. **The client ships it and reads it itself**, so `SetCashShop`'s
+      modified-commodity list is a *delta* and goes out empty. `world::commodity` loads the
+      same 159 rows server-side from `gm-handbook/commodity.txt` so a purchase can be priced,
+      keyed by **SN** - the same item is sold at several counts and prices.
+- [x] A purchase, from the field: `!buy <commoditySN>` debits and lockers in one transaction,
+      `!locker [slot]` hands the item to the Cash tab with a rollback if the bag refuses it.
+- [x] Every in-shop click (`0x03E1`) answered, with the refusal sub-op that clears the pending
+      purchase and keeps the player in the shop.
+- [ ] **Anything at all confirmed on a client.** `0x01A0` is still the only member of the
+      stage block that has been on a wire.
+- [ ] Reporting a purchase as a *success* inside the shop window, which needs
+      `FUN_1402D0950`'s 71-byte cash-item record - decoded to offsets, not to meanings - and a
+      real captured `0x03E1` to say which field carries the serial.
+- [ ] Moving an item from the locker into the Cash tab **on the wire**, rather than by `!locker`.
 
 ### Stage 6+ — Gameplay systems  ← **ongoing, and where most rows close**
 **`STATUS.md` is authoritative for what is confirmed, what is merely wired, and what is

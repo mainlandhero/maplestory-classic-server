@@ -310,3 +310,233 @@ mod reply_tests {
         assert_eq!(b.len(), 8 + record.len() + CASH_SHOP_TAIL_LEN + CASH_SHOP_MARGIN);
     }
 }
+
+
+// ===========================================================================================
+// Inside the shop: 0x03E1 in, 0x05AE out
+// ===========================================================================================
+
+/// `0x03E1` - **everything the player does inside the shop except asking for the balance.**
+///
+/// One `u8` sub-op and then a payload whose shape depends on it. Twenty-two builders carry
+/// this opcode; six of them live in the reachable class (`0x140D7xxxx`) and are the only ones
+/// on the live path. `research/cash-shop-stage.md` section 5.2. **[L]** for the sub-op bytes,
+/// which were re-read off the listing by hand.
+///
+/// # Leaving this unanswered wedges the shop
+///
+/// Every one of the six builders sets the in-flight latch `[stage+0x74] = 1` before it sends,
+/// and the shop's UI blocks until something clears it. So this is one of the packets
+/// `CLAUDE.md`'s "always answer" is actually about: the first Buy click of a session would
+/// otherwise kill every later click, exactly the way `0x00D5` did before it was answered.
+pub const CLIENT_CASH_SHOP_ACTION: u16 = 0x03E1;
+
+/// `0x03E1` sub-op **buy**, short form. The builder is `FUN_140D785F0`.
+///
+/// The sub-op is a `cmov` - `mov edx,2 / mov eax,0x1f / cmovb edx,eax` - selected by whether a
+/// computed id falls inside a 10 000-wide window at `0x08ADDAE0`, and the two forms differ in
+/// length because two `u8 0` writes hang off the same test. **Both are a buy.** [L]
+pub const ACTION_BUY: u8 = 0x02;
+
+/// `0x03E1` sub-op **buy**, the other arm of the same `cmov`. See [`ACTION_BUY`].
+pub const ACTION_BUY_ALT: u8 = 0x1F;
+
+/// `0x03E1` sub-op **gift**: `u32, str, str` - id, recipient, message. `FUN_140D7B240`. [I]
+pub const ACTION_GIFT: u8 = 0x03;
+
+/// The three sub-ops that carry a cash item's `u64` serial and operate on it - moving one
+/// between the locker and the Cash tab is the obvious candidate, and none of the three has
+/// been seen. `0x0A` and `0x0B` take arguments, `0x1C` takes none. [I] on the meaning,
+/// **[L]** on the numbers and the payload shapes.
+pub const ACTION_ON_SERIAL: [u8; 3] = [0x0A, 0x0B, 0x1C];
+
+/// `0x03E1` sub-op taking one bare `u32`. `FUN_140D7ADC0`. [I]
+pub const ACTION_ONE_ID: u8 = 0x2B;
+
+/// `0x05AE` - the multiplexed result. One `u8` sub-op, then a payload chosen by a byte index
+/// table at `0x140D7E194` into a 22-entry jump table at `0x140D7E13C`.
+pub const CASH_SHOP_RESULT: u16 = 0x05AE;
+
+/// **The refusal that clears everything and keeps the player in the shop.**
+///
+/// This is not what `research/cash-shop-stage.md` section 11.4 recommended, and the
+/// difference is load-bearing. Both tables were dumped from the image
+/// (`tools/dump_va.py 0x140D7E194` and `0x140D7E13C`), so the case addresses below are read,
+/// not inferred: **[L]**
+///
+/// ```text
+///   sub-op 0x1A -> 0x140D7DE81      sub-op 0x1C -> 0x140D7DE81 (the same body)
+///   sub-op 0x1E -> 0x140D7DE93
+/// ```
+///
+/// and `0x140D7DE81` falls straight through into `0x140D7DE93`, so `0x1A` does everything
+/// `0x1E` does **plus one call first**:
+///
+/// ```asm
+/// 140d7de81  mov  ecx, 2 ; call 0x142aa2810      ; a UI call
+/// 140d7de8b  call 0x140d74c70                    ; CANCEL THE PENDING PURCHASE
+/// 140d7de93  mov  byte [rdi+0x74], 0             ; clear the in-flight latch <- 0x1E starts here
+/// 140d7de97  READ u8 nReason
+/// 140d7dea5  call 0x140d7c7f0                    ; show the message
+/// ```
+///
+/// `FUN_140D74C70` empties a vector at `[stage+0x128]` and writes **`[stage+0x120] = 0`**
+/// (`0x140D74DDB`), and that field is why `0x1E` is the wrong choice. The buy builder sets
+/// `[stage+0x120] = 1` at `0x140D7A500`, and the **`0x05AD` arm resumes the purchase when it
+/// sees a 1**:
+///
+/// ```asm
+/// 140d736e0  mov  eax, [rbx+0x120]
+/// 140d736e6  cmp  eax, 1 ; jne ...
+/// 140d736eb  mov  [rbx+0x120], esi   ; = 0
+/// 140d736f6  call 0x140d785f0        ; THE BUY BUILDER - the client re-sends the purchase
+/// ```
+///
+/// So refusing with `0x1E` leaves the pending-purchase mode armed, and the **next wallet
+/// reply** - the client polls `0x03E0` once a minute unprompted - makes the client buy again
+/// on its own. `0x1A` clears it first and the same poll is then inert. **[L]**
+///
+/// The same chain rules out the tempting shortcut of answering a purchase with `0x05AD`
+/// alone: it clears the latch, but it is precisely the packet that re-triggers the buy.
+pub const RESULT_CANCEL_AND_STAY: u8 = 0x1A;
+
+/// `0x05AE` sub-op that shows the message and **leaves the pending purchase armed**. See
+/// [`RESULT_CANCEL_AND_STAY`] for why that matters; this is here to be named, not used.
+pub const RESULT_MESSAGE_ONLY: u8 = 0x1E;
+
+/// `0x05AE` sub-op that shows the message and then **sends `0x00D1` and drops the stage** -
+/// the player is thrown out of the shop. `0x140D7DE31`, which ends `call 0x140d73bf0`. [L]
+/// Named so it is recognisable, and deliberately not used.
+pub const RESULT_MESSAGE_AND_EJECT: u8 = 0x05;
+
+/// Reason bytes for [`cash_shop_refusal`]. `FUN_140D7C7F0` indexes `reason - 1` into a
+/// 127-entry jump table at `0x140D7D95C` and shows the message it names; the mapping is not
+/// linear and was decrypted with `tools/dump_stringids.py`. **[L]**
+///
+/// **Reason 0 is not silent.** `0x140D7C811 dec edx` then `cmp edx, 0x7e / ja` sends anything
+/// outside `1..=0x7F` to `0x140D7D3A3`, which loads string 661 - the generic error. There is
+/// no reason byte that shows nothing, which is why this server cannot yet report a
+/// *successful* purchase: every `0x05AE` arm that clears the latch also puts a message on
+/// screen, and taking a player's money behind an error message is worse than refusing.
+pub mod reason {
+    /// 600 - "Request timed out. Please try again."
+    pub const TIMED_OUT: u8 = 0x01;
+    /// 661 - "Due to an unknown error, the Cash Shop request has failed." The generic no,
+    /// and what the client's own abort path uses.
+    pub const UNKNOWN_ERROR: u8 = 0x02;
+    /// 601 - "You don't have enough cash."
+    pub const NOT_ENOUGH_CASH: u8 = 0x03;
+    /// 614 - "You have too many Cash Items. Please clear Cash slot and try again."
+    pub const TOO_MANY_CASH_ITEMS: u8 = 0x0A;
+    /// 1194 - "Please check if your inventory is full or not."
+    pub const CHECK_INVENTORY: u8 = 0x1A;
+    /// 1832 - "You cannot buy this item because it is sold out."
+    pub const SOLD_OUT: u8 = 0x20;
+    /// 616 - "You have reached the daily maximum purchase limit for the Cash Shop."
+    pub const DAILY_LIMIT: u8 = 0x2B;
+}
+
+/// Body length of a [`cash_shop_refusal`]: the sub-op and the reason.
+pub const CASH_SHOP_REFUSAL_LEN: usize = 2;
+
+/// Build the refusal: cancel the pending purchase, clear the in-flight latch, show `reason`,
+/// and leave the player standing in the shop. See [`RESULT_CANCEL_AND_STAY`].
+pub fn cash_shop_refusal(reason: u8) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(RESULT_CANCEL_AND_STAY);
+    w.u8(reason);
+    w.into_vec()
+}
+
+/// A decoded [`CLIENT_CASH_SHOP_ACTION`]: the sub-op, and everything after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CashShopAction<'a> {
+    pub sub_op: u8,
+    pub rest: &'a [u8],
+}
+
+impl CashShopAction<'_> {
+    /// Is this one of the two buy arms?
+    pub fn is_buy(&self) -> bool {
+        self.sub_op == ACTION_BUY || self.sub_op == ACTION_BUY_ALT
+    }
+}
+
+/// Parse a `0x03E1` body (opcode already stripped). `None` only if it is empty.
+pub fn parse_cash_shop_action(body: &[u8]) -> Option<CashShopAction<'_>> {
+    let (sub_op, rest) = body.split_first()?;
+    Some(CashShopAction { sub_op: *sub_op, rest })
+}
+
+/// **Every `u32` that could be hiding in a payload, at every byte offset.**
+///
+/// This exists because nothing in this project has ever seen a real `0x03E1`. The buy
+/// builder's payload was read off the listing as `u8, u32, [u8, u8], u32, u32` - two forms of
+/// different length - and **which of those `u32`s is the commodity SN is not established**.
+///
+/// Rather than pick one and be quietly wrong, the caller walks every offset and asks the
+/// commodity table which candidates are real serials. The SNs this client ships run
+/// `92000000..160300005` out of a 4-billion-wide space, so a spurious match is not a
+/// realistic worry, and a payload that produces **two** matches is a finding the caller can
+/// report rather than a coin to flip. `CLAUDE.md`'s "enumerate before you filter".
+pub fn u32_candidates(rest: &[u8]) -> Vec<(usize, u32)> {
+    (0..rest.len().saturating_sub(3))
+        .map(|i| (i, u32::from_le_bytes([rest[i], rest[i + 1], rest[i + 2], rest[i + 3]])))
+        .collect()
+}
+
+#[cfg(test)]
+mod action_tests {
+    use super::*;
+
+    /// The refusal is two bytes and both of them are the ones the listing needs.
+    #[test]
+    fn the_refusal_is_the_sub_op_that_cancels_the_pending_purchase() {
+        let b = cash_shop_refusal(reason::NOT_ENOUGH_CASH);
+        assert_eq!(b.len(), CASH_SHOP_REFUSAL_LEN);
+        assert_eq!(b[0], 0x1A, "0x140D7DE81 - cancels [stage+0x120] before clearing the latch");
+        assert_eq!(b[1], 0x03, "601, you don't have enough cash");
+
+        // The two that must NOT be used by accident, pinned so a swap is a test failure and
+        // not a run spent wondering why the player got ejected or bought twice.
+        assert_ne!(RESULT_CANCEL_AND_STAY, RESULT_MESSAGE_AND_EJECT);
+        assert_ne!(RESULT_CANCEL_AND_STAY, RESULT_MESSAGE_ONLY);
+    }
+
+    /// The sub-op splits off and the rest is handed on whole.
+    #[test]
+    fn an_action_is_a_sub_op_and_a_tail() {
+        let a = parse_cash_shop_action(&[0x02, 1, 2, 3]).expect("one byte is enough");
+        assert!(a.is_buy());
+        assert_eq!(a.rest, &[1, 2, 3]);
+
+        assert!(parse_cash_shop_action(&[ACTION_BUY_ALT]).expect("no tail").is_buy());
+        assert!(!parse_cash_shop_action(&[ACTION_GIFT]).expect("gift").is_buy());
+        assert!(parse_cash_shop_action(&[]).is_none(), "an empty body names no sub-op");
+    }
+
+    /// **The serial walk finds a value at its true offset whichever form the buy takes.**
+    ///
+    /// Both candidate layouts are built here around the same SN and the walk has to find it
+    /// in each, because the whole point is that we do not know which one the client sends.
+    #[test]
+    fn the_serial_walk_finds_the_sn_at_whatever_offset_it_sits() {
+        let sn: u32 = 130000000; // Regular Store Permit, gm-handbook/commodity.txt
+
+        // u8, u32 sn, u32, u32
+        let mut short = vec![0u8];
+        short.extend_from_slice(&sn.to_le_bytes());
+        short.extend_from_slice(&[0u8; 8]);
+        assert!(u32_candidates(&short).contains(&(1, sn)), "found at offset 1");
+
+        // u8, u32 sn, u8, u8, u32, u32 - two bytes longer
+        let mut long = vec![0u8];
+        long.extend_from_slice(&sn.to_le_bytes());
+        long.extend_from_slice(&[0u8; 10]);
+        assert!(u32_candidates(&long).contains(&(1, sn)));
+
+        // A payload too short to hold a u32 yields nothing rather than reading past the end.
+        assert!(u32_candidates(&[1, 2, 3]).is_empty());
+        assert_eq!(u32_candidates(&[1, 2, 3, 4]).len(), 1);
+    }
+}

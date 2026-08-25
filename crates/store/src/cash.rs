@@ -128,6 +128,27 @@ fn read_locker(conn: &Connection, account_id: i64) -> Result<Vec<LockerItem>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Insert one occupied locker row. Shared by the purchase and by the rollback so the two
+/// cannot drift on the column list - the same reason `create_tables` borrows
+/// `inventory::equip_stat_declarations` rather than re-typing it.
+fn insert_locker_row(
+    conn: &Connection,
+    account_id: i64,
+    slot: u16,
+    item: &Item,
+) -> rusqlite::Result<usize> {
+    let cols = item_columns();
+    let placeholders: Vec<String> = (3..3 + cols.len()).map(|i| format!("?{i}")).collect();
+    let sql = format!(
+        "INSERT INTO cash_locker (account_id, slot, {}) VALUES (?1, ?2, {})",
+        cols.join(", "),
+        placeholders.join(", ")
+    );
+    let mut values = vec![Value::Integer(account_id), Value::Integer(i64::from(slot))];
+    values.extend(item_values(item));
+    conn.execute(&sql, params_from_iter(values))
+}
+
 fn lowest_free(locker: &[LockerItem]) -> Option<u16> {
     let taken: std::collections::HashSet<u16> = locker.iter().map(|i| i.slot).collect();
     (1..=LOCKER_SLOTS).find(|s| !taken.contains(s))
@@ -193,16 +214,7 @@ impl Store {
             rusqlite::params![account_id, i64::from(wallet.nx - price)],
         )?;
 
-        let cols = item_columns();
-        let placeholders: Vec<String> = (3..3 + cols.len()).map(|i| format!("?{i}")).collect();
-        let sql = format!(
-            "INSERT INTO cash_locker (account_id, slot, {}) VALUES (?1, ?2, {})",
-            cols.join(", "),
-            placeholders.join(", ")
-        );
-        let mut values = vec![Value::Integer(account_id), Value::Integer(i64::from(slot))];
-        values.extend(item_values(item));
-        tx.execute(&sql, params_from_iter(values))?;
+        insert_locker_row(&tx, account_id, slot, item)?;
 
         // Read it back before committing. An INSERT that collided would leave the balance
         // debited and no item, which is the one outcome this function must never produce.
@@ -214,6 +226,28 @@ impl Store {
             .ok_or(StoreError::SlotEmpty { slot })?;
         tx.commit()?;
         Ok(placed)
+    }
+
+    /// Put an item into the lowest free locker slot **without charging for it**.
+    ///
+    /// This is the rollback half of moving an item out of the locker and into a bag. Those
+    /// are two stores with two transactions, so the move cannot be one - and an item that
+    /// leaves the locker and then fails to reach the bag would simply cease to exist.
+    /// `CLAUDE.md`'s Heena rule from the other side: the caller must be able to undo the
+    /// half that did happen.
+    ///
+    /// It does **not** restore the original slot number. The slot is not an identity - the
+    /// locker is a bag of items in slot order - and demanding the old one back could fail
+    /// where the lowest free one succeeds, which is the wrong direction for a rollback.
+    pub fn put_cash_item(&self, account_id: i64, item: &Item) -> Result<LockerItem> {
+        let conn = self.conn();
+        let locker = read_locker(&conn, account_id)?;
+        let slot = lowest_free(&locker).ok_or(StoreError::StorageFull { slots: LOCKER_SLOTS })?;
+        insert_locker_row(&conn, account_id, slot, item)?;
+        read_locker(&conn, account_id)?
+            .into_iter()
+            .find(|l| l.slot == slot)
+            .ok_or(StoreError::SlotEmpty { slot })
     }
 
     /// Take an item out of the locker. The caller places it in a bag.
@@ -306,6 +340,28 @@ mod tests {
         assert_eq!(item.item_id, 1302000);
         assert!(st.cash_locker(account).unwrap().is_empty());
         assert!(st.take_cash_item(account, 1).is_err(), "and it is gone, not duplicable");
+    }
+
+    /// **An item taken out and put back is not lost, and is not charged for twice.**
+    ///
+    /// This is the rollback path for moving a cash item into a bag, and the thing it has to
+    /// guarantee is that the undo costs nothing: `put_cash_item` must not touch the wallet.
+    /// Both halves are asserted, because a test that only counted the item would pass while
+    /// the balance quietly moved.
+    #[test]
+    fn an_item_can_be_put_back_without_paying_for_it_again() {
+        let (st, account) = store();
+        st.add_nx(account, 1_000).unwrap();
+        st.buy_cash_item(account, &Item::equip(1302000), 700).unwrap();
+        assert_eq!(st.cash_wallet(account).unwrap().nx, 300);
+
+        let item = st.take_cash_item(account, 1).unwrap();
+        assert!(st.cash_locker(account).unwrap().is_empty());
+
+        let back = st.put_cash_item(account, &item).unwrap();
+        assert_eq!(back.item.item_id, 1302000);
+        assert_eq!(st.cash_locker(account).unwrap().len(), 1);
+        assert_eq!(st.cash_wallet(account).unwrap().nx, 300, "the undo is free");
     }
 
     /// **The wallet is shared by every character on the account**, like storage.

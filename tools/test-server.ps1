@@ -60,54 +60,79 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - three steps, and none of them is the Cash Shop
-    -----------------------------------
-    THE CASH SHOP IS BEING BUILT AND IS NOT READY. Clicking it will say "The Cash Shop is not
-    available on this server" and that is the whole of it today - the button is answered, the
-    shop is not written. Do not spend the run on it.
+    THE POINT OF THIS RUN - THE CASH SHOP, FOR THE FIRST TIME EVER
+    --------------------------------------------------------------
+    NOTHING in the cash shop has ever been on a wire. 0x01A0 is the only member of the stage
+    block with a live confirmation; 0x01A3 is DERIVED from three discriminators, not read off
+    a capture. So step 2a is the load-bearing observation of this run, and if the window does
+    not draw, that opcode number is the first thing to doubt.
 
      1. TYPE  !map 10001050  AS THE FIRST THING AFTER LOGIN. Still the oldest open question,
-        and still ten seconds.
+        and still ten seconds. Do it FIRST, at ~40 s of client life, so that a death cannot
+        be blamed on a long session.
         That teleport crashed the client on 2026-08-22, 328 ms into the map load, with an
-        ACCESS VIOLATION reading [0 + 0x3530] - a null pointer, and a DIFFERENT fault from the
-        three heap dumps. The damaged pool slot was present in that dump and never touched.
-          (a) map 10001050 (Henesys Park) is fatal to load. It is the only map of its group
-              this client has ever been sent to
-          (b) it was the FOURTH map load of a 389-second session, and something accumulates
-        At ~40 s of client life:
-          it dies again -> (a). Relaunch, do steps 2-3, and the crash is then worth one Ghidra
-                       pass at an address we already know
-          it loads      -> (b). Carry straight on
-        Then either way try  !map 10001000 , Henesys town, also never loaded. Park dies and
-        town loads means that ONE map; both dying means that part of the world.
+        ACCESS VIOLATION reading [0 + 0x3530] - a null pointer, and a DIFFERENT fault from
+        the heap dumps.
+          it dies again -> map 10001050 really is fatal. Relaunch, skip step 1, do the rest
+          it loads      -> it was the session, not the map. Carry straight on
+        Then either way try  !map 10001000 , Henesys town, also never loaded.
 
-     2. TEN SECONDS: CLICK CASH SHOP ONCE, THEN KILL SOMETHING AND WALK OVER THE DROP.
-        Not to test the Cash Shop - that mechanism is closed. To test the LATCH.
-        [ctx+0x2330] is not the Cash Shop's own field: it gates the PICK-UP SWEEP too. So
-        before the fix, clicking Cash Shop once killed every pick-up for the rest of the
-        session, and that is REASONED, NOT SEEN - the run that proved the fix was 29 seconds
-        long and had no drops in it.
-          the item comes up normally -> the whole latch story closes end to end
-          the drop will not come up  -> the 0x0070 clears the latch for the Cash Shop's own
-                       check but not for FUN_142cc42d0's. Worth knowing, and not obvious
+     2. THE CASH SHOP.  TYPE  !nx 10000  FIRST, THEN CLICK CASH SHOP.
+        THE ORDER MATTERS. The balance rides in on the entry packet, and the client's own
+        request for it is throttled to once every 60 s, so a grant made after the shop is
+        already open will not show until the shop is next opened.
 
-     3. ORGANIZE ITEM, WHICH HAS NEVER BEEN SEEN WORKING. Put three or four things in storage,
-        take one out from the middle to leave a hole, then hit Organize.
-        It repacks to slots 1..n, grouped by tab and then by item id.
+        a) DOES A WINDOW DRAW AT ALL?
+             it draws          -> 0x01A3 is the right opcode. Everything below is worth doing
+             nothing happens   -> the number is wrong. Say whether the button depressed and
+                                  whether the client is still alive afterwards
+             the client DIES   -> the packet reached the stage and the BODY is wrong, which
+                                  is a different and much more findable problem
+
+        b) WHAT NUMBER IS IN THE BALANCE CORNER? Expect 10,000.
+             10000  -> the wallet packet is right: both fields, right order, right unit
+             0      -> the two u32s are swapped, or the unit is not what we think. This is
+                       the third time this month a field has been correct and mis-united
+
+        c) CLICK BUY ON ANYTHING. The cheapest row is 100 NX - nothing in this client is
+           free, the 21 rows priced at 0 are exactly the 21 that are switched off.
+           EXPECT AN ERROR MESSAGE AND NO PURCHASE. That is not a failure, it is the
+           measurement: no 0x03E1 has ever been captured, so the server does not know which
+           field of the payload carries the item's serial. It reads EVERY offset and checks
+           each against the client's own sale list, and writes the answer into world.log.
+             an error, and the shop still works -> exactly right, and the layout is now known
+             THE PLAYER IS EJECTED from the shop -> the refusal sub-op is wrong (0x1A vs 0x05)
+             the shop FREEZES                    -> the click sent a sub-op we do not answer.
+                                                    Say what you clicked
+             IT ACTUALLY BUYS SOMETHING          -> stop and say so. Nothing may be debited
+
+        d) CLICK BUY TWICE MORE. All three must behave identically.
+             click 2 or 3 does nothing -> the in-flight latch [stage+0x74] is not being
+                                          cleared, or [stage+0x120] is re-arming the purchase
+
+        e) CLICK EXIT. The field should come back where you left it.
+             a black screen -> the SetField sent in answer to an empty 0x00D1 is wrong
+
+        f) CLICK CASH SHOP A SECOND TIME. Nothing on this path writes [ctx+0x31fc], and that
+           is one of the six gates the button itself checks. A value > 1 there reads on
+           screen as "You cannot go into the cash shop. Please try again later."
+
+     3. THE TRANSACTION THAT WORKS TODAY - from the field, no shop window needed:
+             !nx 1000
+             !buy 130200000        one Megaphone, 100 NX. It is a SALE SERIAL, not an item id
+             !locker               lists what you bought
+             !locker 1             moves it into the Cash tab
+        Every one of those prints what it did. The Cash tab should end up holding one
+        Megaphone and the balance should read 900.
+          it works             -> the store half of a purchase is closed end to end
+          an item goes missing -> say which line was the last one you saw
+
+     4. ORGANIZE ITEM, WHICH HAS NEVER BEEN SEEN WORKING. Put three or four things in
+        storage, take one out from the middle to leave a hole, then hit Organize.
           the gap closes and the items group by tab -> done
-          nothing moves -> the database sorted and the client is not redrawing from mode 15.
-                       Mode 19 preserves the scroll instead of recalculating it, and that is
-                       the next thing to try
-          the order looks arbitrary -> say what order you expected. Equips first by id, then
-                       Use, then Etc is what this does
-          items VANISH -> stop and say so immediately. The sort re-reads the box inside the
-                       transaction and refuses to commit if the count changed
-        HIT IT THREE TIMES. It is a pure function of the contents, so clicks two and three
-        must change nothing; anything that keeps shuffling is a different bug.
-
-     AND ONE GLANCE, NO SETUP: when you pick something up, does a grey "<item> x<n> earned."
-     line appear in the SCREEN MESSAGE AREA - the strip above the chat box? It has gone out on
-     every successful pick-up for three runs and nobody has described it.
+          nothing moves -> the database sorted and the client is not redrawing from mode 15
+          items VANISH  -> stop and say so immediately
+        HIT IT THREE TIMES. Clicks two and three must change nothing.
 
     REGRESSION GLANCES - seconds each
     ---------------------------------
@@ -121,9 +146,11 @@
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
-      - THE CASH SHOP ITSELF. The BUTTON is answered - 0x00D5 is an exclusive request and it
-        no longer fires once per session - but clicking it will only ever say "The Cash Shop
-        is not available on this server." No window will open. The shop is being built.
+      - BUYING FROM THE CASH SHOP WINDOW. Entry, the balance and Exit are built; a Buy click
+        is answered with a refusal and nothing is debited. There is no packet in this client
+        that reports a purchase SUCCEEDED without also putting a message on screen, and the
+        one that looked like it - the wallet - re-triggers the purchase. Use !buy from the
+        field instead. Step 2c is what unblocks this.
       - The classic shop counter, which is a DIFFERENT window from the cash shop. DECODED
         including the price (row+0x38), and deliberately not built - three of its fields fail
         silently or desynchronise the stream if they are wrong, and it has killed the client
@@ -136,11 +163,18 @@
       - Two refusal paths still answer 0x00D2 with 0x0011, which a channel socket cannot
         dispatch. Nothing decoded can.
 
-    COMMANDS: !map, !item, !exp, !heal, !job, !buff, !unbuff, !nx, !npcecho, !npcfx,
+    COMMANDS: !map, !item, !exp, !heal, !job, !buff, !unbuff, !nx, !buy, !locker,
+    !npcecho, !npcfx,
     !migsweep, !exprate, !mesorate, !droprate, !setrates, !rates. !help lists them all.
       !buff [skillId] [level] [tailBytes]   cast with no skill check, MP or cooldown
       !unbuff [tailBytes]                   send the 0x007E that removes a held stat
-      !nx [amount]                          grant NX, or report the balance with no argument
+      !nx [amount]                          grant NX - the LEAF POINTS the shop spends - or
+                                            report the balance with no argument
+      !buy <commoditySN>                    buy a cash-shop sale row for real: debits NX and
+                                            puts the item in the cash locker. An SN, NOT an
+                                            item id - gm-handbook/commodity.txt lists all 159
+      !locker [slot]                        list the cash locker, or move one slot into the
+                                            Cash tab
 
     THE FREE MEASUREMENT NOBODY HAS TAKEN
     -------------------------------------
@@ -833,7 +867,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  3 steps. STEP 1 MUST BE FIRST - the order is the experiment.' -ForegroundColor Yellow
+    Write-Host '  4 steps. STEP 1 MUST BE FIRST - the order is the experiment.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -870,7 +904,9 @@ if ($SetFieldProbe) {
     Write-Host '  and I called it telemetry for three sessions - you said "the opcode'
     Write-Host '  is most likely not handled" on day one and you were right. It is an'
     Write-Host '  exclusive request; unanswered it fired ONCE per session. Now three'
-    Write-Host '  clicks give three requests. THE SHOP ITSELF IS NOT BUILT.'
+    Write-Host '  clicks give three requests. The shop now OPENS on that same'
+    Write-Host '  socket - no migrate, no second server - and step 2 is the first'
+    Write-Host '  time anyone will have seen whether it draws.'
     Write-Host '  Also closed: create on second login, consumables and their cap,'
     Write-Host '  Sera''s chatter, the damage model at STR 35, quest EXP in the chat'
     Write-Host '  log, the quest fanfare, and two NEGATIVES worth as much: the blue'
@@ -883,47 +919,52 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  THE CASH SHOP IS BEING BUILT AND IS NOT READY. Clicking it says' -ForegroundColor DarkGray
-    Write-Host '  "not available on this server" and that is all it does today.' -ForegroundColor DarkGray
-    Write-Host '  Do not spend the run on it.' -ForegroundColor DarkGray
+    Write-Host '  THE CASH SHOP, FOR THE FIRST TIME EVER. Nothing in it has been on a' -ForegroundColor Yellow
+    Write-Host '  wire. 0x01A0 is the only stage packet ever confirmed; 0x01A3 is'
+    Write-Host '  DERIVED. Step 2a is the load-bearing observation of this run.'
     Write-Host ''
     Write-Host '  1. TYPE  !map 10001050  AS THE FIRST THING AFTER LOGIN.' -ForegroundColor Cyan
-    Write-Host '     The oldest open question, and still ten seconds.'
-    Write-Host '     That teleport crashed the client 328ms into the map load with an'
-    Write-Host '     ACCESS VIOLATION reading [0 + 0x3530] - a NULL pointer, and a'
-    Write-Host '     different fault from the three heap dumps.'
-    Write-Host '       (a) map 10001050 is fatal to load - never tried before'
-    Write-Host '       (b) it was the 4th map load of a 389s session'
-    Write-Host '     At ~40s of client life:'
-    Write-Host '       it dies again -> (a). Relaunch and do 2-3; the crash is then'
-    Write-Host '                        worth one Ghidra pass at a known address'
-    Write-Host '       it loads      -> (b). Carry straight on'
+    Write-Host '     Ten seconds, and the oldest open question. Do it FIRST, at ~40s'
+    Write-Host '     of client life, so a death cannot be blamed on a long session.'
+    Write-Host '     It crashed the client 328ms into the map load with an ACCESS'
+    Write-Host '     VIOLATION reading [0 + 0x3530] - a NULL pointer.'
+    Write-Host '       it dies again -> the map really is fatal. Relaunch, skip 1'
+    Write-Host '       it loads      -> it was the session. Carry straight on'
     Write-Host '     Then try  !map 10001000 , Henesys town, also never loaded.'
     Write-Host ''
-    Write-Host '  2. CLICK CASH SHOP ONCE, THEN KILL SOMETHING AND PICK IT UP.' -ForegroundColor Cyan
-    Write-Host '     Not to test the Cash Shop - that mechanism is closed. To test'
-    Write-Host '     the LATCH. [ctx+0x2330] gates the PICK-UP SWEEP too, so before'
-    Write-Host '     the fix one click killed every pick-up for the session. That is'
-    Write-Host '     reasoned, not seen: the run that proved the fix had no drops.'
-    Write-Host '       the item comes up normally -> closes end to end'
-    Write-Host '       the drop will not come up  -> the 0x0070 clears the Cash Shop'
-    Write-Host '                        check but not the pick-up gate'
+    Write-Host '  2. THE CASH SHOP.  !nx 10000  FIRST, THEN CLICK CASH SHOP.' -ForegroundColor Cyan
+    Write-Host '     ORDER MATTERS: the balance rides in on the entry packet and the'
+    Write-Host '     client only re-asks once a minute.'
+    Write-Host '     a) DOES A WINDOW DRAW?'
+    Write-Host '          it draws        -> 0x01A3 is right; do the rest'
+    Write-Host '          nothing happens -> wrong opcode. Say if the button depressed'
+    Write-Host '          the client DIES -> it reached the stage and the BODY is wrong'
+    Write-Host '     b) WHAT IS IN THE BALANCE CORNER? Expect 10,000.'
+    Write-Host '          0 -> the two u32s are swapped, or the unit is wrong'
+    Write-Host '     c) CLICK BUY ON ANYTHING (cheapest is 100 NX; nothing is free).'
+    Write-Host '        EXPECT AN ERROR AND NO PURCHASE - that IS the measurement.'
+    Write-Host '        No 0x03E1 has ever been captured, so the server searches every'
+    Write-Host '        offset for the serial and writes what it found to world.log.'
+    Write-Host '          error, shop still usable -> right; the layout is now known'
+    Write-Host '          YOU GET EJECTED          -> refusal sub-op wrong (0x1A/0x05)'
+    Write-Host '          the shop FREEZES         -> a sub-op we do not answer'
+    Write-Host '          IT ACTUALLY BUYS         -> stop and say so'
+    Write-Host '     d) CLICK BUY TWICE MORE. All three must behave the same.'
+    Write-Host '     e) CLICK EXIT. The field should come back where you left it.'
+    Write-Host '     f) CLICK CASH SHOP AGAIN. [ctx+0x31fc] is never written on this'
+    Write-Host '        path - "You cannot go into the cash shop" is what >1 looks like.'
     Write-Host ''
-    Write-Host '  3. ORGANIZE ITEM, never yet seen working.' -ForegroundColor Cyan
+    Write-Host '  3. THE TRANSACTION THAT WORKS TODAY, from the field:' -ForegroundColor Cyan
+    Write-Host '       !nx 1000  /  !buy 130200000  /  !locker  /  !locker 1'
+    Write-Host '     130200000 is a SALE SERIAL, not an item id. Expect one Megaphone'
+    Write-Host '     in the Cash tab and a balance of 900. Every step prints what it did.'
+    Write-Host ''
+    Write-Host '  4. ORGANIZE ITEM, never yet seen working.' -ForegroundColor Cyan
     Write-Host '     Put a few things in storage, take one from the middle to leave'
-    Write-Host '     a hole, then hit Organize. It repacks to 1..n, grouped by tab'
-    Write-Host '     then item id.'
-    Write-Host '       the gap closes, items group by tab -> done'
-    Write-Host '       nothing moves   -> the DB sorted and the client is not'
-    Write-Host '                          redrawing from mode 15. Mode 19 next'
-    Write-Host '       order looks odd -> say what you expected'
-    Write-Host '       items VANISH    -> stop and say so. The sort re-reads and'
-    Write-Host '                          refuses to commit if the count changed'
+    Write-Host '     a hole, then hit Organize. It repacks to 1..n, grouped by tab.'
+    Write-Host '       nothing moves -> the DB sorted, the client is not redrawing'
+    Write-Host '       items VANISH  -> stop and say so'
     Write-Host '     HIT IT THREE TIMES - clicks 2 and 3 must change nothing.'
-    Write-Host ''
-    Write-Host '  GLANCE, no setup: when you pick something up, does a grey' -ForegroundColor Cyan
-    Write-Host '  "<item> x<n> earned." line appear in the SCREEN MESSAGE AREA above'
-    Write-Host '  the chat box? Three runs of it going out, never described.'
     Write-Host ''
     Write-Host '  OPTIONAL: -HeapFix (off by default, NOT on the same run as step 1)' -ForegroundColor DarkGray
     Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
@@ -944,9 +985,11 @@ if ($SetFieldProbe) {
     Write-Host '  the chat log; level-up +16 HP / +12 MP; relog keeps Etc and mesos;'
     Write-Host '  ores stack; !setrates 2 3 5 -> one banner.'
     Write-Host ''
-    Write-Host '  COMMANDS: !map !item !exp !heal !job !buff !unbuff !nx !npcecho'
-    Write-Host '  !npcfx !migsweep !exprate !mesorate !droprate !setrates !rates.'
-    Write-Host '  !nx grants cash-shop currency; !help lists them all.'
+    Write-Host '  COMMANDS: !map !item !exp !heal !job !buff !unbuff !npcecho'
+    Write-Host '  !npcfx !migsweep !exprate !mesorate !droprate !setrates !rates'
+    Write-Host '  !nx !buy !locker.'
+    Write-Host '  !nx grants LEAF POINTS; !buy <SN> buys a sale row for real;'
+    Write-Host '  !locker moves it into the Cash tab. !help lists them all.'
 } else {
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'

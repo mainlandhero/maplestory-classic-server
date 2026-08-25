@@ -119,3 +119,144 @@ impl Session {
         self.go_to_map(&mut chr, here, portal, "leaving the Cash Shop".to_string())
     }
 }
+
+impl Session {
+    /// `0x03E1` - **a click inside the shop**, and today every one of them is refused.
+    ///
+    /// # Why a refusal rather than a purchase
+    ///
+    /// The store side of a purchase is built and tested (`store::buy_cash_item` debits and
+    /// places in one transaction), and this handler can price a real sale row. What is
+    /// missing is the packet that tells the client a purchase **succeeded** - and there is
+    /// no way to fake it:
+    ///
+    /// * `0x05AE`'s live sub-ops were enumerated from the client's own index and jump tables.
+    ///   Every arm that clears the in-flight latch also calls `FUN_140D7C7F0`, which puts a
+    ///   message on screen. **There is no silent one** - `reason = 0` is out of range and
+    ///   lands on string 661, the generic error (`0x140D7C818 cmp edx, 0x7e / ja`).
+    /// * answering with `0x05AD` - the wallet - would clear the latch *and* re-trigger the
+    ///   purchase, because the `0x05AD` arm calls the buy builder when `[stage+0x120] == 1`
+    ///   and the buy builder is what set it. That is a farming loop, not a purchase.
+    /// * the remaining candidate, a `0x05AE` carrying a cash-item record, needs
+    ///   `FUN_1402D0950`'s **71-byte** record, whose field *meanings* past the serial are
+    ///   explicitly not established. `CLAUDE.md` records two client deaths this month from
+    ///   shipping a packet built on a read count that turned out to be short.
+    ///
+    /// So: take nothing, say no, and keep the shop alive. **Every effect hangs off the
+    /// transition** - the Heena quest rule - and a purchase the client is never told about is
+    /// not a transition. `!buy <sn>` performs the same sale from the field, where the result
+    /// can be reported with packets that have been on a wire.
+    ///
+    /// # What this run is actually for
+    ///
+    /// No real `0x03E1` has ever been captured, so the buy payload's layout is known only
+    /// from its builder. Rather than pick an offset for the serial, every offset is read and
+    /// checked against the client's own sale list - see
+    /// [`crate::commodity::CommodityTable::identify_serial`]. One click puts the answer in
+    /// `world.log`, and the instrument cannot invent one: it can only return an SN that is
+    /// really in `Commodity.img`.
+    pub(super) fn on_cash_shop_action(&mut self, body: &[u8]) -> Vec<Reply> {
+        use net::cashshop::reason;
+
+        let Some(action) = net::cashshop::parse_cash_shop_action(body) else {
+            // An empty body still latched before it was sent, so it still has to be answered.
+            return self.refuse_cash_shop(
+                reason::UNKNOWN_ERROR,
+                "an EMPTY 0x03E1 - no sub-op byte. Answered anyway: the builder set \
+                 [stage+0x74] before it sent, and the shop blocks until that is cleared"
+                    .to_string(),
+            );
+        };
+
+        if !action.is_buy() {
+            let known = action.sub_op == net::cashshop::ACTION_GIFT
+                || net::cashshop::ACTION_ON_SERIAL.contains(&action.sub_op)
+                || action.sub_op == net::cashshop::ACTION_ONE_ID;
+            return self.refuse_cash_shop(
+                reason::UNKNOWN_ERROR,
+                format!(
+                    "0x03E1 sub-op 0x{:02X} ({}), {} byte payload {:02x?} - not built. \
+                     Refused rather than ignored",
+                    action.sub_op,
+                    if known { "a reachable builder" } else { "NOT one of the six reachable builders" },
+                    action.rest.len(),
+                    action.rest
+                ),
+            );
+        }
+
+        let Some(claimed) = self.claimed() else { return Vec::new() };
+        let account_id = claimed.account_id;
+        let nx = self.store.cash_wallet(account_id).unwrap_or_default().nx;
+
+        // Which u32 in the payload is the commodity serial. See the module doc.
+        let found = self.config.commodity.identify_serial(action.rest);
+        let seen = format!(
+            "0x03E1 sub-op 0x{:02X} BUY, {} byte payload {:02x?}",
+            action.sub_op,
+            action.rest.len(),
+            action.rest
+        );
+
+        match found {
+            crate::commodity::SerialMatch::One { offset, sn } => {
+                // Cloned out because `self` is borrowed mutably below.
+                let row = self.config.commodity.get(sn).cloned();
+                let Some(row) = row else { return self.refuse_cash_shop(reason::SOLD_OUT, seen) };
+                let what = format!(
+                    "{seen}. THE SERIAL IS AT OFFSET {offset}: SN {sn} = {}x {} ({}), \
+                     {} NX, {} days, on sale {}. Wallet holds {nx} NX",
+                    row.count, row.name, row.item_id, row.price, row.period_days, row.on_sale
+                );
+                if !row.on_sale {
+                    return self.refuse_cash_shop(reason::SOLD_OUT, format!("{what} - NOT on sale"));
+                }
+                if nx < row.price {
+                    return self.refuse_cash_shop(
+                        reason::NOT_ENOUGH_CASH,
+                        format!("{what} - CANNOT AFFORD IT. `!nx {}` would cover it", row.price),
+                    );
+                }
+                self.refuse_cash_shop(
+                    reason::UNKNOWN_ERROR,
+                    format!(
+                        "{what} - AFFORDABLE, AND STILL REFUSED. Nothing was debited: this \
+                         server has no way to tell the client a purchase succeeded, so taking \
+                         the price would leave an error on screen and the money gone. \
+                         `!buy {sn}` performs exactly this sale from the field"
+                    ),
+                )
+            }
+            crate::commodity::SerialMatch::None => self.refuse_cash_shop(
+                reason::SOLD_OUT,
+                format!(
+                    "{seen} - NO commodity serial anywhere in it. Candidates read at every \
+                     offset: {:?}. Either the payload does not carry an SN, or \
+                     gm-handbook/commodity.txt is not loaded ({} rows)",
+                    net::cashshop::u32_candidates(action.rest),
+                    self.config.commodity.len()
+                ),
+            ),
+            crate::commodity::SerialMatch::Several(hits) => self.refuse_cash_shop(
+                reason::UNKNOWN_ERROR,
+                format!(
+                    "{seen} - TWO OR MORE offsets hold a real serial: {hits:?}. Refused rather \
+                     than resolved; picking the first would be a guess wearing a decode"
+                ),
+            ),
+        }
+    }
+
+    /// One `0x05AE`: cancel the pending purchase, clear the in-flight latch, show `reason`,
+    /// and leave the player in the shop. See [`net::cashshop::RESULT_CANCEL_AND_STAY`] for
+    /// why it is sub-op `0x1A` and not the `0x1E` the research file recommended.
+    fn refuse_cash_shop(&self, reason: u8, why: String) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::cashshop::CASH_SHOP_RESULT,
+            body: net::cashshop::cash_shop_refusal(reason),
+            what: format!(
+                "CashShopResult: refusing with sub-op 0x1A reason 0x{reason:02X}. {why}"
+            ),
+        }]
+    }
+}

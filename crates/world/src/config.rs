@@ -266,6 +266,14 @@ pub struct Config {
     /// - see [`crate::consumables`] for why that direction was chosen.
     pub consumables: crate::consumables::Consumables,
 
+    /// The cash shop's sale list, keyed by **SN**, from `gm-handbook/commodity.txt`.
+    ///
+    /// Empty means every purchase is refused with "sold out" rather than priced from a guess.
+    /// The client draws its catalogue from its own copy of the same file either way, so an
+    /// empty table here looks like a fully stocked shop where nothing can be bought - which is
+    /// why [`crate::commodity::CommodityTable::banner`] says so unconditionally at start-up.
+    pub commodity: crate::commodity::CommodityTable,
+
     /// `mapId -> name`, from `gm-handbook/maps.txt`.
     ///
     /// **Only ever used to say something on screen.** Nothing routes on it, so a missing
@@ -1324,6 +1332,7 @@ impl Default for Config {
             revive_maps: HashMap::new(),
             footholds: crate::footholds::Footholds::default(),
             consumables: crate::consumables::Consumables::default(),
+            commodity: crate::commodity::CommodityTable::default(),
         }
     }
 }
