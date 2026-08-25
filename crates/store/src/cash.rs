@@ -182,12 +182,55 @@ impl Store {
         Ok(next as u32)
     }
 
+    /// Add to (or take from) the **Leaf Points** balance - the second `u32` of `0x05AD`, the
+    /// one `research/cash-shop-stage.md` calls `maplePoint`.
+    ///
+    /// # This is the currency the shop actually charges
+    ///
+    /// Measured on a client, 2026-08-25. `!nx 10000` put **10,000** in the field the UI labels
+    /// **NX**, and `0` in the one it labels **Leaf Points** - so the two `u32`s are in the
+    /// right order and neither is misread. But every item in the shop is priced in **LP**, and
+    /// with `LP = 0` the client **refused the purchase locally and sent no `0x03E1` at all**.
+    /// Zero of them in a 103-second visit. If it had been checking the NX field it would have
+    /// sent, because that field held 10,000.
+    ///
+    /// So `Commodity.img`'s `Price` column - which `research/cash-shop-items.md` labels "NX"
+    /// off the WZ property name - is charged against **this** balance. The property name and
+    /// the screen disagree, and `CLAUDE.md` is explicit about which wins.
+    ///
+    /// Structurally identical to [`Store::add_nx`], including refusing rather than clamping:
+    /// a silent clamp to zero is how a purchase succeeds for free.
+    pub fn add_maple_points(&self, account_id: i64, delta: i64) -> Result<u32> {
+        let conn = self.conn();
+        let have = read_wallet(&conn, account_id)?.maple_points;
+        let next = i64::from(have) + delta;
+        if next < 0 {
+            return Err(StoreError::NotEnoughMesos {
+                have,
+                want: delta.unsigned_abs().min(u64::from(u32::MAX)) as u32,
+            });
+        }
+        conn.execute(
+            "INSERT INTO cash_wallet (account_id, nx, maple_points) VALUES (?1, 0, ?2)
+             ON CONFLICT(account_id) DO UPDATE SET maple_points = ?2",
+            rusqlite::params![account_id, next],
+        )?;
+        Ok(next as u32)
+    }
+
     /// The account's locker, occupied slots only, in slot order.
     pub fn cash_locker(&self, account_id: i64) -> Result<Vec<LockerItem>> {
         read_locker(&self.conn(), account_id)
     }
 
     /// **Buy: take the price and place the item, or do neither.**
+    ///
+    /// # The price comes out of LEAF POINTS, not NX
+    ///
+    /// Changed 2026-08-25, on evidence rather than on the WZ property name. Every item in the
+    /// shop is priced in **LP**, and a client holding 10,000 NX and 0 LP **refused the
+    /// purchase itself and sent no `0x03E1`** - see [`Store::add_maple_points`] for the
+    /// measurement. `!lp` funds this; `!nx` fills the other field and is untouched.
     ///
     /// One transaction, for the reason `crate::storage::store_item` is one: an item that is
     /// briefly bought-but-not-placed is an item a crash loses, and a price taken without an
@@ -202,16 +245,16 @@ impl Store {
         let tx = conn.transaction()?;
 
         let wallet = read_wallet(&tx, account_id)?;
-        if wallet.nx < price {
-            return Err(StoreError::NotEnoughMesos { have: wallet.nx, want: price });
+        if wallet.maple_points < price {
+            return Err(StoreError::NotEnoughMesos { have: wallet.maple_points, want: price });
         }
         let mut locker = read_locker(&tx, account_id)?;
         let slot = lowest_free(&locker).ok_or(StoreError::StorageFull { slots: LOCKER_SLOTS })?;
 
         tx.execute(
-            "INSERT INTO cash_wallet (account_id, nx, maple_points) VALUES (?1, ?2, 0)
-             ON CONFLICT(account_id) DO UPDATE SET nx = ?2",
-            rusqlite::params![account_id, i64::from(wallet.nx - price)],
+            "INSERT INTO cash_wallet (account_id, nx, maple_points) VALUES (?1, 0, ?2)
+             ON CONFLICT(account_id) DO UPDATE SET maple_points = ?2",
+            rusqlite::params![account_id, i64::from(wallet.maple_points - price)],
         )?;
 
         insert_locker_row(&tx, account_id, slot, item)?;
@@ -294,28 +337,37 @@ mod tests {
     #[test]
     fn buying_debits_the_wallet_and_fills_a_locker_slot() {
         let (st, account) = store();
-        st.add_nx(account, 5_000).unwrap();
+        st.add_maple_points(account, 5_000).unwrap();
+        st.add_nx(account, 999).unwrap();
 
         let placed = st.buy_cash_item(account, &Item::equip(1302000), 1_200).unwrap();
         assert_eq!(placed.slot, 1);
         assert_eq!(placed.item.item_id, 1302000);
-        assert_eq!(st.cash_wallet(account).unwrap().nx, 3_800, "the price came out");
+        assert_eq!(
+            st.cash_wallet(account).unwrap().maple_points,
+            3_800,
+            "the price came out of LEAF POINTS - every price tag in the shop reads LP"
+        );
+        assert_eq!(st.cash_wallet(account).unwrap().nx, 999, "and NX was not touched");
         assert_eq!(st.cash_locker(account).unwrap().len(), 1);
 
         let second = st.buy_cash_item(account, &Item::bundle(5000000, 1), 800).unwrap();
         assert_eq!(second.slot, 2, "the next free slot");
-        assert_eq!(st.cash_wallet(account).unwrap().nx, 3_000);
+        assert_eq!(st.cash_wallet(account).unwrap().maple_points, 3_000);
     }
 
     /// **An unaffordable purchase changes nothing at all.**
     #[test]
     fn a_purchase_that_cannot_be_afforded_leaves_both_sides_untouched() {
         let (st, account) = store();
-        st.add_nx(account, 500).unwrap();
+        st.add_maple_points(account, 500).unwrap();
+        // A full NX balance must NOT rescue a purchase priced in LP. This is the assertion
+        // that would have caught the currency being wrong before the owner saw it on screen.
+        st.add_nx(account, 1_000_000).unwrap();
 
         let e = st.buy_cash_item(account, &Item::equip(1302000), 1_200).unwrap_err();
         assert!(matches!(e, StoreError::NotEnoughMesos { have: 500, want: 1_200 }), "{e:?}");
-        assert_eq!(st.cash_wallet(account).unwrap().nx, 500, "not debited");
+        assert_eq!(st.cash_wallet(account).unwrap().maple_points, 500, "not debited");
         assert!(st.cash_locker(account).unwrap().is_empty(), "and nothing placed");
     }
 
@@ -333,7 +385,7 @@ mod tests {
     #[test]
     fn taking_from_the_locker_empties_the_slot() {
         let (st, account) = store();
-        st.add_nx(account, 5_000).unwrap();
+        st.add_maple_points(account, 5_000).unwrap();
         st.buy_cash_item(account, &Item::equip(1302000), 100).unwrap();
 
         let item = st.take_cash_item(account, 1).unwrap();
@@ -351,9 +403,9 @@ mod tests {
     #[test]
     fn an_item_can_be_put_back_without_paying_for_it_again() {
         let (st, account) = store();
-        st.add_nx(account, 1_000).unwrap();
+        st.add_maple_points(account, 1_000).unwrap();
         st.buy_cash_item(account, &Item::equip(1302000), 700).unwrap();
-        assert_eq!(st.cash_wallet(account).unwrap().nx, 300);
+        assert_eq!(st.cash_wallet(account).unwrap().maple_points, 300);
 
         let item = st.take_cash_item(account, 1).unwrap();
         assert!(st.cash_locker(account).unwrap().is_empty());
@@ -361,7 +413,39 @@ mod tests {
         let back = st.put_cash_item(account, &item).unwrap();
         assert_eq!(back.item.item_id, 1302000);
         assert_eq!(st.cash_locker(account).unwrap().len(), 1);
-        assert_eq!(st.cash_wallet(account).unwrap().nx, 300, "the undo is free");
+        assert_eq!(st.cash_wallet(account).unwrap().maple_points, 300, "the undo is free");
+    }
+
+    /// **The two balances are separate pots and `!nx` cannot buy anything.**
+    ///
+    /// Measured on a client 2026-08-25: `!nx 10000` showed 10,000 in the field the UI labels
+    /// NX and 0 in the one it labels Leaf Points, every price tag read `LP`, and the client
+    /// **refused the purchase itself and sent no `0x03E1` at all**. So a full NX balance is
+    /// not a substitute here, and this pins that in both directions.
+    #[test]
+    fn nx_and_leaf_points_are_separate_pots_and_only_leaf_points_buy() {
+        let (st, account) = store();
+        st.add_nx(account, 10_000).unwrap();
+        assert_eq!(st.cash_wallet(account).unwrap().maple_points, 0, "!nx fills neither field twice");
+
+        let e = st.buy_cash_item(account, &Item::equip(1302000), 100).unwrap_err();
+        assert!(matches!(e, StoreError::NotEnoughMesos { have: 0, want: 100 }), "{e:?}");
+        assert_eq!(st.cash_wallet(account).unwrap().nx, 10_000, "and NX is untouched by a refusal");
+
+        st.add_maple_points(account, 100).unwrap();
+        st.buy_cash_item(account, &Item::equip(1302000), 100).unwrap();
+        let w = st.cash_wallet(account).unwrap();
+        assert_eq!((w.maple_points, w.nx), (0, 10_000), "only the LP pot moved");
+    }
+
+    /// Leaf Points refuse rather than clamp, exactly as NX does.
+    #[test]
+    fn leaf_points_cannot_go_negative() {
+        let (st, account) = store();
+        st.add_maple_points(account, 100).unwrap();
+        assert!(st.add_maple_points(account, -200).is_err());
+        assert_eq!(st.cash_wallet(account).unwrap().maple_points, 100, "a refused debit is not a clamp");
+        assert_eq!(st.add_maple_points(account, -100).unwrap(), 0, "and exactly enough is allowed");
     }
 
     /// **The wallet is shared by every character on the account**, like storage.
@@ -378,7 +462,7 @@ mod tests {
     #[test]
     fn deleting_an_account_takes_its_cash() {
         let (st, account) = store();
-        st.add_nx(account, 1_000).unwrap();
+        st.add_maple_points(account, 1_000).unwrap();
         st.buy_cash_item(account, &Item::equip(1302000), 100).unwrap();
         st.conn().execute("DELETE FROM accounts WHERE id = ?1", [account]).unwrap();
         assert!(st.cash_locker(account).unwrap().is_empty());

@@ -187,7 +187,11 @@ impl Session {
 
         let Some(claimed) = self.claimed() else { return Vec::new() };
         let account_id = claimed.account_id;
-        let nx = self.store.cash_wallet(account_id).unwrap_or_default().nx;
+        // **Leaf Points, not NX.** Measured 2026-08-25: every price tag in the shop reads LP,
+        // and a client holding 10,000 NX and 0 LP refused the purchase itself and sent no
+        // 0x03E1 at all. The affordability gate is client-side and it reads this balance, so
+        // the server has to agree with it or the two disagree about what "afford" means.
+        let lp = self.store.cash_wallet(account_id).unwrap_or_default().maple_points;
 
         // Which u32 in the payload is the commodity serial. See the module doc.
         let found = self.config.commodity.identify_serial(action.rest);
@@ -205,16 +209,16 @@ impl Session {
                 let Some(row) = row else { return self.refuse_cash_shop(reason::SOLD_OUT, seen) };
                 let what = format!(
                     "{seen}. THE SERIAL IS AT OFFSET {offset}: SN {sn} = {}x {} ({}), \
-                     {} NX, {} days, on sale {}. Wallet holds {nx} NX",
+                     {} LP, {} days, on sale {}. Wallet holds {lp} LP",
                     row.count, row.name, row.item_id, row.price, row.period_days, row.on_sale
                 );
                 if !row.on_sale {
                     return self.refuse_cash_shop(reason::SOLD_OUT, format!("{what} - NOT on sale"));
                 }
-                if nx < row.price {
+                if lp < row.price {
                     return self.refuse_cash_shop(
                         reason::NOT_ENOUGH_CASH,
-                        format!("{what} - CANNOT AFFORD IT. `!nx {}` would cover it", row.price),
+                        format!("{what} - CANNOT AFFORD IT. `!lp {}` would cover it", row.price),
                     );
                 }
                 self.refuse_cash_shop(

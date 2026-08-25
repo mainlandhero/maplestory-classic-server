@@ -60,11 +60,18 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - THE CASH SHOP, FOR THE FIRST TIME EVER
-    --------------------------------------------------------------
-    NOTHING in the cash shop has ever been on a wire. 0x01A0 is the only member of the stage
-    block with a live confirmation; 0x01A3 is DERIVED from three discriminators, not read off
-    a capture. Step 1a is the load-bearing observation of this run.
+    THE POINT OF THIS RUN - ONE PURCHASE. THE SHOP ITSELF IS NOW CONFIRMED.
+    -----------------------------------------------------------------------
+    The 2026-08-25 run settled the whole of the entry path in one launch. 0x01A3 was DERIVED,
+    from three discriminators, and it is now READ: the hook log has exactly one
+    "0x14209ad60 ENTERED while dispatching opcode 0x01A3" and the window drew. The stage's own
+    OnPacket took both wallets (rdx=0x5ad twice), both balance fields read back correctly,
+    the 0x03E0 poll fired twice in 103 seconds - so 0x05AD really does clear its latch - and
+    an empty 0x00D1 brought the field back with its NPCs. NONE OF THAT NEEDS RE-TESTING.
+
+    What is left is the one thing that has never happened: a PURCHASE. Last run produced
+    ZERO 0x03E1 packets, because every price is in LP and LP was 0, so the client refused
+    before sending. Step 0 is the fix and step 1c is the measurement.
 
     THE ORDER CHANGED, AND HERE IS THE COST. The map test used to be first, so that a death
     could not be blamed on a long session. It is now second, because the cash shop is the
@@ -76,32 +83,28 @@
     then relaunch and carry on from the next step. Logs are archived into previous-runs/, not
     deleted, so nothing from the first half is lost.
 
-     0. TYPE  !nx 10000  BEFORE YOU TOUCH THE CASH SHOP BUTTON.
+     0. TYPE  !lp 10000  BEFORE YOU TOUCH THE CASH SHOP BUTTON.
+        **!lp, NOT !nx.** The 2026-08-25 run settled this: the shop shows TWO balances,
+        !nx 10000 correctly filled the one labelled NX, and every price tag reads LP. With
+        LP at 0 the client REFUSED THE PURCHASE ITSELF and sent no 0x03E1 at all - zero of
+        them in a 103-second visit. So NX is real, displayed, and buys nothing.
         THE ORDER MATTERS. The balance rides in on the entry packet, and the client's own
         request for it is throttled to once every 60 s, so a grant made after the shop is
         already open will not show until the shop is next opened. 10000 is deliberately not a
         round screenful - it is distinctive enough to recognise if it lands in the wrong field.
 
-     1. THE CASH SHOP.
+     1. THE CASH SHOP. Entry, the wallet, the poll and Exit are all CONFIRMED as of
+        2026-08-25 - the window drew, 0x01A3 reached its handler, both balance fields read
+        back correctly and Exit returned to the field. DO NOT RE-TEST THOSE. The one thing
+        that has never happened is a purchase.
 
-        a) CLICK CASH SHOP. DOES A WINDOW DRAW AT ALL?
-             it draws          -> 0x01A3 is the right opcode. Everything below is worth doing
-             nothing happens   -> say whether the button DEPRESSED and whether the client is
-                                  still alive. maplecw-hook.log settles it without guessing:
-                                  a WATCH line on 14209ad60 means the packet arrived and was
-                                  dispatched, and no line means the opcode number is wrong
-             the client DIES   -> the packet reached the stage and the BODY is wrong, which is
-                                  a different and much more findable problem
+        a) CLICK CASH SHOP and check the balance corner reads 10,000 LEAF POINTS this time,
+           with NX whatever you left it at.
+             LP 10000 -> good, carry on
+             LP 0     -> !lp did not land. Say what the chat line said
 
-        b) WHAT DO THE BALANCE FIELDS READ? There are TWO of them and both matter.
-             10000 and 0  -> the wallet packet is right: both fields, right order, right unit
-             0 and 10000  -> the two u32s are swapped
-             0 and 0      -> the wallet never arrived, or it arrived and was rejected. A
-                             negative value in any of its three fields EJECTS the player, so
-                             if you are thrown out here that is what happened
-
-        c) CLICK BUY ON ONE NAMED ITEM, AND SAY WHICH ONE YOU CLICKED.
-           The Main tab is all 100 NX; Brown Puppy, Red Hat and Water of Life are easy to
+        b) CLICK BUY ON ONE NAMED ITEM, AND SAY WHICH ONE YOU CLICKED.
+           The Main tab is all 100 LP; Brown Puppy, Red Hat and Water of Life are easy to
            recognise. NAMING IT IS THE WHOLE POINT: it turns the log line into a check against
            a known answer instead of an unverifiable number. Brown Puppy is SN 160000000, Red
            Hat is 160100000, Water of Life is 160300001.
@@ -117,8 +120,8 @@
                   -> BEST CASE. The serial was found, the row was priced, and the wallet
                      could afford it. The entire chain worked
              "You don't have enough cash."
-                  -> the serial was found but the server thinks the wallet is empty. The
-                     !nx landed on a different account, or step 0 was skipped
+                  -> the serial was found but the server thinks the LP balance is empty.
+                     Step 0 was skipped, or !nx was typed instead of !lp
              "You cannot buy this item because it is sold out."
                   -> no serial was found anywhere in the payload. The buy body is not shaped
                      the way its builder reads, and world.log now lists every candidate
@@ -129,21 +132,13 @@
              YOU ARE EJECTED       -> it is behaving like 0x05, which ejects. Say so
              the shop FREEZES      -> the click sent a sub-op we do not answer
 
-        d) CLICK BUY TWICE MORE, on the same item. All three must behave identically.
+        c) CLICK BUY TWICE MORE, on the same item. All three must behave identically.
              click 2 or 3 does nothing -> the in-flight latch [stage+0x74] is not being
                                           cleared, or [stage+0x120] is re-arming the purchase
 
-        e) STAY IN THE SHOP, DOING NOTHING, FOR A SLOW COUNT OF 70. This costs nothing and
-           answers a question no click can: the client polls for its balance at most once a
-           minute, and the reply is what clears the poll's own latch. world.log will show
-           either one 0x03E0 or two.
-             (nothing to watch on screen - this one is read out of the log afterwards)
-
-        f) CLICK EXIT. The field should come back where you left it.
-             a black screen -> the SetField sent in answer to an empty 0x00D1 is wrong
-
-        g) CLICK CASH SHOP A SECOND TIME. Nothing on this path writes [ctx+0x31fc], and that
-           is one of the six gates the button itself checks.
+        d) CLICK EXIT, THEN CLICK CASH SHOP A SECOND TIME. Exit itself is confirmed, so this
+           is about the RE-ENTRY: nothing on the 0x01A3 path writes [ctx+0x31fc], and that is
+           one of the six gates the button itself checks.
              it opens again -> the whole loop is closed
              "You cannot go into the cash shop. Please try again later." -> that gate, and
                                the hook log's +0x2330 peek says whether the latch is also stuck
@@ -157,7 +152,7 @@
         Then either way try  !map 10001000 , Henesys town, also never loaded.
 
      3. THE TRANSACTION THAT WORKS TODAY - from the field, no shop window needed:
-             !nx 1000
+             !lp 1000
              !buy 160000000        Brown Puppy, 100 NX. A SALE SERIAL, not an item id
              !locker               lists what you bought
              !locker 1             moves it into the Cash tab
@@ -204,13 +199,15 @@
       - Two refusal paths still answer 0x00D2 with 0x0011, which a channel socket cannot
         dispatch. Nothing decoded can.
 
-    COMMANDS: !map, !item, !exp, !heal, !job, !buff, !unbuff, !nx, !buy, !locker,
+    COMMANDS: !map, !item, !exp, !heal, !job, !buff, !unbuff, !nx, !lp, !buy, !locker,
     !npcecho, !npcfx,
     !migsweep, !exprate, !mesorate, !droprate, !setrates, !rates. !help lists them all.
       !buff [skillId] [level] [tailBytes]   cast with no skill check, MP or cooldown
       !unbuff [tailBytes]                   send the 0x007E that removes a held stat
-      !nx [amount]                          grant NX - the LEAF POINTS the shop spends - or
-                                            report the balance with no argument
+      !nx [amount]                          grant NX. Real and displayed, but it buys
+                                            NOTHING - every price tag reads LP
+      !lp [amount]                          grant LEAF POINTS, the currency the shop
+                                            actually charges. This is the one that buys
       !buy <commoditySN>                    buy a cash-shop sale row for real: debits NX and
                                             puts the item in the cash locker. An SN, NOT an
                                             item id - gm-handbook/commodity.txt lists all 159
@@ -974,49 +971,47 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  THE CASH SHOP, FOR THE FIRST TIME EVER. Nothing in it has been on a' -ForegroundColor Yellow
-    Write-Host '  wire. 0x01A0 is the only stage packet ever confirmed; 0x01A3 is'
-    Write-Host '  DERIVED. Step 1a is the load-bearing observation of this run.'
+    Write-Host '  ONE PURCHASE. THE SHOP ITSELF IS NOW CONFIRMED.' -ForegroundColor Yellow
+    Write-Host '  Last run settled the whole entry path: 0x01A3 was DERIVED and is'
+    Write-Host '  now READ (one hook line, and the window drew), both balance fields'
+    Write-Host '  read back, the poll fired twice in 103s, and Exit brought the field'
+    Write-Host '  back with its NPCs. NONE of that needs re-testing. What has never'
+    Write-Host '  happened is a PURCHASE: last run sent ZERO 0x03E1, because every'
+    Write-Host '  price is in LP and LP was 0, so the client refused before sending.'
     Write-Host ''
     Write-Host '  IF THE CLIENT DIES, THAT IS A RESULT. Say WHEN and WHAT YOU HAD'
     Write-Host '  JUST DONE, then relaunch and carry on from the next step. Logs are'
     Write-Host '  archived into previous-runs/, so the first half is never lost.'
     Write-Host ''
-    Write-Host '  0. TYPE  !nx 10000  BEFORE TOUCHING THE CASH SHOP BUTTON.' -ForegroundColor Cyan
+    Write-Host '  0. TYPE  !lp 10000  BEFORE TOUCHING THE CASH SHOP BUTTON.' -ForegroundColor Cyan
+    Write-Host '     !lp, NOT !nx. The shop shows TWO balances. !nx correctly fills'
+    Write-Host '     the one labelled NX - and every price tag reads LP. With LP at 0'
+    Write-Host '     the client REFUSED THE PURCHASE ITSELF and sent no 0x03E1 at all.'
     Write-Host '     ORDER MATTERS: the balance rides in on the entry packet and the'
-    Write-Host '     client only re-asks once a minute. 10000 is deliberately odd-'
-    Write-Host '     looking so it is recognisable if it lands in the wrong field.'
+    Write-Host '     client only re-asks once a minute.'
     Write-Host ''
-    Write-Host '  1. THE CASH SHOP.' -ForegroundColor Cyan
-    Write-Host '     a) CLICK IT. DOES A WINDOW DRAW?'
-    Write-Host '          it draws        -> 0x01A3 is right; do the rest'
-    Write-Host '          nothing happens -> say if the button DEPRESSED. A WATCH line'
-    Write-Host '                             on 14209ad60 in maplecw-hook.log means the'
-    Write-Host '                             packet arrived; no line means wrong opcode'
-    Write-Host '          the client DIES -> it reached the stage and the BODY is wrong'
-    Write-Host '     b) WHAT DO THE TWO BALANCE FIELDS READ?'
-    Write-Host '          10000 and 0 -> the wallet is right: order and unit'
-    Write-Host '          0 and 10000 -> the two u32s are swapped'
-    Write-Host '          both 0      -> it never arrived. If you are EJECTED here, a'
-    Write-Host '                         field went negative'
-    Write-Host '     c) CLICK BUY ON ONE NAMED ITEM AND SAY WHICH. Main tab is all'
-    Write-Host '        100 NX: Brown Puppy 160000000, Red Hat 160100000, Water of'
+    Write-Host '  1. THE CASH SHOP. Entry, wallet, poll and Exit are CONFIRMED.' -ForegroundColor Cyan
+    Write-Host '     Do NOT re-test those. The one thing that has never happened is'
+    Write-Host '     a PURCHASE.'
+    Write-Host '     a) CLICK IT and check the corner reads 10,000 LEAF POINTS.'
+    Write-Host '          LP 10000 -> good, carry on'
+    Write-Host '          LP 0     -> !lp did not land; say what the chat line said'
+    Write-Host '     b) CLICK BUY ON ONE NAMED ITEM AND SAY WHICH. Main tab is all'
+    Write-Host '        100 LP: Brown Puppy 160000000, Red Hat 160100000, Water of'
     Write-Host '        Life 160300001. NAMING IT turns the log into a check against a'
     Write-Host '        known answer. EXPECT AN ERROR AND NO PURCHASE - that IS the'
     Write-Host '        measurement. READ THE EXACT WORDING BACK:'
     Write-Host '          "...unknown error..."      -> BEST CASE. Serial found, row'
     Write-Host '                                        priced, wallet could afford it'
-    Write-Host '          "...not enough cash."      -> serial found, wallet empty'
+    Write-Host '          "...not enough cash."      -> serial found, LP empty. !nx'
+    Write-Host '                                        was typed instead of !lp'
     Write-Host '          "...it is sold out."       -> NO serial found in the payload'
     Write-Host '          anything else              -> write it down exactly'
     Write-Host '        And the window: stays usable -> sub-op 0x1A is right;'
     Write-Host '        EJECTED -> it behaved like 0x05; FREEZES -> unanswered sub-op.'
-    Write-Host '     d) CLICK BUY TWICE MORE, same item. All three must match.'
-    Write-Host '     e) STAY IN THE SHOP DOING NOTHING FOR A SLOW COUNT OF 70.'
-    Write-Host '        Free, and answers a question no click can - world.log will'
-    Write-Host '        show either one 0x03E0 poll or two.'
-    Write-Host '     f) CLICK EXIT. The field should come back where you left it.'
-    Write-Host '     g) CLICK CASH SHOP AGAIN. [ctx+0x31fc] is never written on this'
+    Write-Host '     c) CLICK BUY TWICE MORE, same item. All three must match.'
+    Write-Host '     d) CLICK EXIT, THEN CLICK CASH SHOP AGAIN. Exit is confirmed;'
+    Write-Host '        this is about RE-ENTRY. Nothing writes [ctx+0x31fc] on that'
     Write-Host '        path - "You cannot go into the cash shop" is what >1 looks like.'
     Write-Host ''
     Write-Host '  2. TYPE  !map 10001050 . Ten seconds, oldest open question.' -ForegroundColor Cyan
@@ -1027,9 +1022,9 @@ if ($SetFieldProbe) {
     Write-Host '     Then try  !map 10001000 , Henesys town, also never loaded.'
     Write-Host ''
     Write-Host '  3. THE TRANSACTION THAT WORKS TODAY, from the field:' -ForegroundColor Cyan
-    Write-Host '       !nx 1000  /  !buy 160000000  /  !locker  /  !locker 1'
+    Write-Host '       !lp 1000  /  !buy 160000000  /  !locker  /  !locker 1'
     Write-Host '     160000000 is a SALE SERIAL, not an item id - and it is the same'
-    Write-Host '     Brown Puppy as step 1c, so the two paths differ in one thing.'
+    Write-Host '     Brown Puppy as step 1b, so the two paths differ in one thing.'
     Write-Host '     Expect it in the Cash tab and a balance of 900.'
     Write-Host ''
     Write-Host '  4. ORGANIZE ITEM, never yet seen working.' -ForegroundColor Cyan
@@ -1060,8 +1055,9 @@ if ($SetFieldProbe) {
     Write-Host ''
     Write-Host '  COMMANDS: !map !item !exp !heal !job !buff !unbuff !npcecho'
     Write-Host '  !npcfx !migsweep !exprate !mesorate !droprate !setrates !rates'
-    Write-Host '  !nx !buy !locker.'
-    Write-Host '  !nx grants LEAF POINTS; !buy <SN> buys a sale row for real;'
+    Write-Host '  !nx !lp !buy !locker.'
+    Write-Host '  !lp grants LEAF POINTS and is the one that BUYS; !nx fills the'
+    Write-Host '  other field and buys nothing. !buy <SN> buys a sale row for real;'
     Write-Host '  !locker moves it into the Cash tab. !help lists them all.'
 } else {
     # THIS BRANCH IS A TRAP UNLESS IT SAYS SO. Without -SetFieldProbe the LOGIN server is

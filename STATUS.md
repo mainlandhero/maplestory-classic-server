@@ -108,22 +108,30 @@ The rest stand as written below.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-24, after the cash shop was wired end to end.** Read this section and nothing else to
+**Last updated 2026-08-25, after the cash shop opened on a real client.** Read this section and nothing else to
 know where the project is. Everything under it is older and kept **for its working, not its
 verdicts** - the log below is reverse-chronological and a claim in it may have been retracted
 further up.
 
 **What changed most recently, newest first:**
 
-* **The Cash Shop opens, and NONE of it has been on a wire yet.** Entry (`0x01A3` on the same
-  socket - there is no migrate), the wallet (`0x05AD`), Exit (empty `0x00D1`) and a refusal
-  for every in-shop click (`0x05AE`) are all built. `0x01A0` remains the only member of the
-  stage block with a live confirmation, so **`0x01A3` is derived, not read** - if the window
-  draws nothing, that is the first thing to doubt.
+* **THE CASH SHOP OPENS. Confirmed on a client 2026-08-25, and `0x01A3` is no longer `[D]`.**
+  The window drew; the hook log has exactly one `0x14209ad60 ENTERED ... opcode 0x01A3`; the
+  stage's own `OnPacket` took both wallets (`rdx=0x5ad`, twice); both balance fields read back
+  in the right order; the `0x03E0` poll fired **twice in 103 seconds**, so `0x05AD` really does
+  clear its own latch; and an empty `0x00D1` brought the field back with its NPCs. There is no
+  migrate and no second server. `research/fixtures/cash-shop-opens-0x01A3-confirmed-*.log`.
+* **The shop charges LEAF POINTS, not NX, and that is why nothing could be bought.** The two
+  `u32`s of `0x05AD` are both correct and in the right order - `!nx 10000` put 10,000 in the
+  field labelled **NX** and 0 in the one labelled **Leaf Points**. But every price tag reads
+  **LP**, and with LP at 0 the client **refused the purchase itself and sent no `0x03E1` at
+  all** - zero across the whole visit, grepped for that specific opcode. So the affordability
+  gate is client-side and reads the second field. `!lp <amount>` grants it; `!nx` is unchanged
+  and still fills the first field, which is real, displayed, and buys nothing.
 * **Leaf Points and a real purchase, but only from the field.** `!nx <amount>` grants NX -
   what this client's UI calls Leaf Points - and `!buy <commoditySN>` performs a genuine sale:
-  it prices the row out of the client's own `Commodity.img`, debits the wallet and fills a
-  locker slot in one transaction. `!locker [slot]` moves it into the Cash tab.
+  it prices the row out of the client's own `Commodity.img`, debits **Leaf Points** and
+  fills a locker slot in one transaction. `!locker [slot]` moves it into the Cash tab.
   **A Buy click inside the shop window is refused and nothing is debited**, because no packet
   in this client reports a purchase *succeeded* without also putting a message on screen -
   and the one that looked like it, the wallet, re-triggers the purchase. See below.
@@ -169,7 +177,55 @@ kept current. `CLAUDE.md` has the section on why.
 | **buffs, both directions** | Nimble Feet grants and a right-click cancels it. One screen settled `0x007D`, the 124-byte mask, bit 92 = Speed, the **`i16`** value width (unreadable statically - the deciding constant is in Themida-packed `.data`) and milliseconds |
 | **Three Snails** | works and deals damage |
 | **storage, end to end** | the window, 30 slots, mesos both ways, items in **and** out, the 100-meso deposit fee (ten deposits, ten fees), and Organize Item repacking the box |
-| **the Cash Shop button is answered** | `0x00D5` is an **exclusive request**: unanswered it fired once per session and left `[ctx+0x2330]` set. Three clicks now give three requests, latch `0/0/0`. **That is the button, not the shop** - nothing past the click has been on a wire |
+| **the Cash Shop button is answered** | `0x00D5` is an **exclusive request**: unanswered it fired once per session and left `[ctx+0x2330]` set. Three clicks give three requests, latch `0/0/0` |
+| **THE CASH SHOP OPENS** | `0x01A3` on the same channel socket, **no migrate**. One `0x14209ad60` hook line dispatching `0x01A3`; the stage's `OnPacket` took both `0x05AD`s; both balance fields right, in order; the `0x03E0` poll fired twice in 103 s; an empty `0x00D1` brought the field back with its NPCs. The opcode was `[D]` from three discriminators and is now **read** |
+| **the shop's currency is LEAF POINTS** | every price tag reads `LP`, and a client holding 10,000 NX and 0 LP **refused the purchase itself and sent zero `0x03E1`**. `!lp` funds it; `!nx` fills the other field and buys nothing |
+
+#### The cash shop opens, and the currency is Leaf Points
+
+2026-08-25. One launch settled the entire entry path, and every prediction in the plan came
+back the way it was written down - which is worth saying, because the opcode was a `[D]`
+derived from three discriminators and this was the run that could have falsified it.
+
+```text
+04:23:23.355  <- 0x00D5                            the button
+04:23:23.355  -> 0x01A3 SetCashShop                and the window DREW
+     hook     ***** 0x14209ad60 ENTERED ... while dispatching opcode 0x01A3   <- exactly once
+     hook     ***** 0x140d734e0 ENTERED ... rdx=0x5ad                         <- twice
+04:23:53.419  <- 0x03E0  ... 04:24:53  <- 0x03E0   two polls in 103 s: the 60 s throttle
+04:25:06.603  <- 0x00D1  EMPTY BODY                the Exit button
+04:25:06.611  -> 0x01A0 SetField                   the field came back, NPCs and all
+```
+
+`0x01A3` is no longer `[D]`. There is no migrate and no second server, and
+`crates/cashshop` was never needed. `research/fixtures/cash-shop-opens-0x01A3-confirmed-*.log`.
+
+**The balance fields are both right, and neither is the one that buys.** `!nx 10000` put
+10,000 in the field the UI labels **NX** and 0 in the one it labels **Leaf Points** - so the
+two `u32`s are in the right order and the right unit. But every price tag in the shop reads
+**LP**.
+
+**The decisive observation is a negative, and it is the specific-opcode kind.** With LP at 0
+the client sent **zero `0x03E1`** across the whole 103-second visit. Not "nothing new arrived"
+- a grep for that one opcode, which is the control `CLAUDE.md` records the cash shop itself
+teaching this project the hard way. Had the gate been reading the NX field it would have sent,
+because that field held 10,000. So the affordability check is **client-side** and it reads the
+second balance.
+
+`!lp <amount>` grants it. `!nx` is deliberately unchanged - the owner asked for a second command,
+not a changed one - and the field it fills is real and displayed. It simply buys nothing.
+
+`store::buy_cash_item` and the shop's own affordability check now debit Leaf Points, and the
+tests moved with them: `a_purchase_that_cannot_be_afforded_leaves_both_sides_untouched` now
+funds a million NX first, so a purchase that leans on the wrong pot fails the suite rather
+than the run. **`Commodity.img`'s `Price` column is labelled "NX" in
+`research/cash-shop-items.md`, off the WZ property name.** The screen disagrees with the
+property name, and the screen wins.
+
+One thing worth keeping for later: the stage's `OnPacket` also logged **38 hits with
+`rdx=0x453`** - NPC idle chatter, sent to a player standing in the cash shop. The stage has
+four arms and ignores everything else, so it is harmless, but the server is still treating a
+shopping player as though they were on the field.
 
 #### Leaf Points, a real purchase from the field, and why the shop window still refuses
 

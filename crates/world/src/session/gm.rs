@@ -76,6 +76,8 @@ impl Session {
             "buff" => self.gm_buff(arg),
             "unbuff" => self.gm_unbuff(arg),
             "nx" => self.gm_nx(arg),
+            // The shop prices in LP, so this is the one that buys. See gm_lp.
+            "lp" | "leafpoints" => self.gm_lp(arg),
             "buy" => self.gm_buy(arg),
             "locker" => self.gm_locker(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
@@ -638,6 +640,59 @@ impl Session {
             // go negative instead of flooring at zero, because a silent clamp is how a
             // purchase succeeds for free.
             Err(e) => self.gm_ack(format!("!nx FAILED and the balance is unchanged: {e}")),
+        }
+    }
+
+    /// `!lp [amount]` - grant **Leaf Points**, the currency the shop actually charges.
+    ///
+    /// # Why this exists beside `!nx` rather than replacing it
+    ///
+    /// The owner, 2026-08-25, from inside the shop: *"NX and Leaf Points are separate fields. All of
+    /// the items are priced in leaf points, so I was not able to purchase using NX."*
+    ///
+    /// `0x05AD` carries two `u32`s and the run confirmed **both**, in order: `!nx 10000` put
+    /// 10,000 in the field the UI labels **NX** and 0 in the one it labels **Leaf Points**.
+    /// Neither is misread and neither is swapped - they are simply two different pots, and
+    /// every price tag in the shop reads `LP`.
+    ///
+    /// The decisive part is a **negative**: with `LP = 0` the client refused the purchase
+    /// **itself** and sent **no `0x03E1` at all** - zero of them across a 103-second visit,
+    /// grepped for that specific opcode rather than eyeballed. Had it been checking the NX
+    /// field it would have sent, because that field held 10,000. So the affordability gate is
+    /// client-side and it reads this balance.
+    ///
+    /// `!nx` is deliberately untouched. It fills the other field, which is real and displayed,
+    /// and the owner asked for a second command rather than a changed one.
+    pub(super) fn gm_lp(&mut self, arg: &str) -> Vec<Reply> {
+        let Some(claimed) = self.claimed() else {
+            return self
+                .gm_ack("!lp REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let account_id = claimed.account_id;
+
+        let amount = match arg.split_whitespace().next() {
+            None => {
+                let w = self.store.cash_wallet(account_id).unwrap_or_default();
+                return self.gm_ack(format!(
+                    "Account {account_id} holds {} Leaf Points and {} NX. The shop prices \
+                     everything in LP, so LP is the one that buys. `!lp 10000` grants some.",
+                    w.maple_points, w.nx
+                ));
+            }
+            Some(t) => match t.parse::<i64>() {
+                Ok(v) => v,
+                Err(_) => return self.gm_ack(format!("!lp: {t:?} is not an amount.")),
+            },
+        };
+
+        match self.store.add_maple_points(account_id, amount) {
+            Ok(lp) => self.gm_ack(format!(
+                "Account {account_id} now holds {lp} Leaf Points - the LP every price tag in \
+                 the shop is quoted in. Per ACCOUNT, like storage. Grant it BEFORE you click \
+                 Cash Shop: the balance is carried in by the entry packet, and the client only \
+                 re-asks once a minute."
+            )),
+            Err(e) => self.gm_ack(format!("!lp FAILED and the balance is unchanged: {e}")),
         }
     }
 

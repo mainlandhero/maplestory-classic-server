@@ -4975,7 +4975,7 @@ fn buy_body(sn: u32) -> Vec<u8> {
 #[test]
 fn every_cash_shop_action_is_answered_and_none_of_them_ejects() {
     let (mut s, store, _id) = cash_shop_session();
-    store.add_nx(1, 50_000).unwrap();
+    store.add_maple_points(1, 50_000).unwrap();
 
     let mut bodies = vec![
         net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec(), // empty: no sub-op
@@ -5031,7 +5031,7 @@ fn a_buy_is_priced_against_the_real_sale_row_and_still_takes_nothing() {
     assert!(r.what.contains("OFFSET 1"), "and where the serial was found: {}", r.what);
 
     // onSale = 0: "sold out", whatever the balance is.
-    store.add_nx(1, 50_000).unwrap();
+    store.add_maple_points(1, 50_000).unwrap();
     let out = s.handle(&buy_body(92000000));
     let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
     assert_eq!(r.body[1], net::cashshop::reason::SOLD_OUT);
@@ -5050,7 +5050,7 @@ fn a_buy_is_priced_against_the_real_sale_row_and_still_takes_nothing() {
     let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
     assert_eq!(r.body[1], net::cashshop::reason::UNKNOWN_ERROR);
     assert!(r.what.contains("AFFORDABLE, AND STILL REFUSED"), "{}", r.what);
-    assert_eq!(store.cash_wallet(1).unwrap().nx, 50_000, "NOT ONE NX was taken");
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 50_000, "NOT ONE LP was taken");
     assert!(store.cash_locker(1).unwrap().is_empty(), "and nothing was placed");
 }
 
@@ -5064,18 +5064,21 @@ fn a_buy_is_priced_against_the_real_sale_row_and_still_takes_nothing() {
 fn the_gm_path_buys_debits_and_hands_the_item_over() {
     let (mut s, store, id) = cash_shop_session();
 
-    s.handle(&gm_chat("!nx 1000"));
-    assert_eq!(store.cash_wallet(1).unwrap().nx, 1_000);
+    s.handle(&gm_chat("!lp 1000"));
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 1_000);
+    // A full NX balance must not be able to stand in for it. Every price tag reads LP.
+    s.handle(&gm_chat("!nx 999999"));
 
     // An SN, not an item id - and the refusal says so rather than buying something else.
     let out = s.handle(&gm_chat("!buy 5070000"));
     assert!(notice_text(&out[0]).contains("not a sale row"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_wallet(1).unwrap().nx, 1_000, "a refusal costs nothing");
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 1_000, "a refusal costs nothing");
 
     // The 100 NX row, not the 1000 NX one, even though they share an item id.
     let out = s.handle(&gm_chat("!buy 130200000"));
     assert!(notice_text(&out[0]).contains("Bought SN 130200000"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_wallet(1).unwrap().nx, 900, "100 NX came out");
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 900, "100 LP came out");
+    assert_eq!(store.cash_wallet(1).unwrap().nx, 999_999, "and NX paid for none of it");
     let locker = store.cash_locker(1).unwrap();
     assert_eq!(locker.len(), 1);
     assert_eq!(locker[0].item.item_id, 5070000);
@@ -5084,16 +5087,16 @@ fn the_gm_path_buys_debits_and_hands_the_item_over() {
     // 900 will not cover the 1000 row. The refusal must not clamp, and must not half-place.
     let out = s.handle(&gm_chat("!buy 130200001"));
     assert!(notice_text(&out[0]).contains("NOTHING changed"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_wallet(1).unwrap().nx, 900, "not clamped to zero");
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 900, "not clamped to zero");
     assert_eq!(store.cash_locker(1).unwrap().len(), 1, "and nothing was placed");
 
     // Now it is affordable, and the SAME item id arrives at the other count.
-    s.handle(&gm_chat("!nx 200"));
+    s.handle(&gm_chat("!lp 200"));
     s.handle(&gm_chat("!buy 130200001"));
     let locker = store.cash_locker(1).unwrap();
     assert_eq!(locker.len(), 2);
     assert_eq!(locker[1].item.kind.quantity(), 11, "the bundle row, chosen by its SN");
-    assert_eq!(store.cash_wallet(1).unwrap().nx, 100, "1100 - 1000");
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 100, "1100 - 1000");
 
     // Hand one over. The locker loses it and the bag gains it - both sides, one command.
     let out = s.handle(&gm_chat("!locker 1"));
