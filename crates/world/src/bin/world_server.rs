@@ -29,12 +29,15 @@ maplecw-world - one channel of the MapleCW game world
                    so a bigger number looks the same as a fixed viewport
   --no-mobs        do NOT send monsters. On by default since 2026-08-19; this is for
                    eliminating mobs as a variable, not for ordinary use
-  --set-field-probe   answer the migration hello with the fixed head of a SetField
-                      and nothing after it. OFF by default. It cannot put a character
-                      in a map; it exists so a run can tell an ignored packet apart
-                      from one that never arrived, which the handler's two silent
-                      early returns otherwise make identical. Arm a watch on
-                      142097f80 or the run measures nothing.
+  --set-field-probe   NOT OPTIONAL, and NOT a probe any more. OFF by default, and
+                      with it off Session::handle and Session::tick return nothing
+                      for EVERY packet - the migration hello included - so the
+                      client sits on Connecting... forever. The name dates from
+                      2026-08-20, when this really did answer the hello with a
+                      truncated SetField to see whether the client accepted it; it
+                      now gates the whole channel. Renaming it would break the
+                      launch line in STATUS.md and in every fixture note.
+                      tools/test-server.ps1 -SetFieldProbe passes it.
   --footholds PATH  map floor geometry, from tools/dump_portals.py
   --consumables PATH  what potions restore, from tools/dump_itemdata.py
   --commodity PATH  the cash shop's sale list keyed by SN, from

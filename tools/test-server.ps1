@@ -1064,6 +1064,18 @@ if ($SetFieldProbe) {
     Write-Host '  !nx grants LEAF POINTS; !buy <SN> buys a sale row for real;'
     Write-Host '  !locker moves it into the Cash tab. !help lists them all.'
 } else {
+    # THIS BRANCH IS A TRAP UNLESS IT SAYS SO. Without -SetFieldProbe the LOGIN server is
+    # fine - character list, create, delete all work - but the CHANNEL answers nothing at
+    # all, so picking a character hangs on "Connecting...". That looked like a server bug
+    # for a whole launch on 2026-08-20. The steps below are a real run; they are just not
+    # THIS run, and today's plan lives entirely in the other branch.
+    Write-Host '  NO -SetFieldProbe, SO THE WORLD IS OFF.' -ForegroundColor Red
+    Write-Host '  Login, character list, create and delete all work. But the CHANNEL' -ForegroundColor Red
+    Write-Host '  answers NOTHING - Session::handle returns empty for every packet -' -ForegroundColor Red
+    Write-Host '  so picking a character will hang on "Connecting...". That is this' -ForegroundColor Red
+    Write-Host '  flag, not a bug. The cash shop plan is NOT printed on this branch.' -ForegroundColor Red
+    Write-Host '  Relaunch with -SetFieldProbe to get into the world.' -ForegroundColor Red
+    Write-Host ''
     Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
     Write-Host '  2. create one. Check the name first - a name already used is now refused'
     Write-Host '     by the server rather than always accepted.'
