@@ -222,6 +222,17 @@ the 22-entry jump table at `0x140D7E13C` were dumped rather than inferred; the s
 corrects the file's claim that `0x1A` consumes nothing - it falls through into `0x1E`'s
 `u8 nReason` read, so a `0x1A` sent without a reason byte reads past the end of the packet.
 
+**The v214 reference was checked against all of this afterwards, and it closed a door rather
+than opening one.** Its `CashItemType` enum names both halves of the pair. Where it agrees it
+agrees exactly - `Req_Buy(2)` and `Req_Gift(3)` are the numbers already read off the client's
+own `cmov`, and all four of its `_Failed` entries that are live here land on our `u8 nReason`
+arms. But **`Res_Buy_Done(14)` maps to sub-op `0x0E`, which is dead in this build** - the byte
+index table gives `0x0E..0x12` the default slot. The surviving candidate is
+`Res_AddedCashItem_Done(3)`, and our `0x03` does read `u16 count` then that many cash-item
+records - but its arm never touches `[stage+0x74]` or `[stage+0x120]`, so it cannot release the
+UI on its own, and it still needs the 71-byte record. **[I]** throughout;
+`research/cash-shop-stage.md` section 6.6.
+
 **The instrument for the next run.** No real `0x03E1` has ever been captured, so which field
 of the buy payload carries the serial is unknown. Rather than pick one, the handler reads a
 `u32` at **every** offset and checks each against the client's own sale list, reports

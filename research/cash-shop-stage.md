@@ -575,6 +575,39 @@ established — the offsets are.
 
 ---
 
+### 6.6 What the v214 reference contributes, and the one thing it settles
+
+`ModernMapleSource/v214 src/.../enums/CashItemType.java` carries both halves of this opcode
+pair as a named enum. `CLAUDE.md` scores that tree **1 of 8** against a held-out control, so
+everything here is **[I]** - but it is checkable against section 5.2's sub-op bytes and
+section 6.2's dumped jump table, and the check is informative in both directions.
+
+**Where it agrees, it agrees exactly.** `Req_Buy(2)` and `Req_Gift(3)` are the same numbers
+read independently off the client's own `cmov` and CTOR immediates. And every `_Failed` in the
+enum whose number is live here lands on one of our `u8 nReason` arms - `Res_LoadLocker_Failed(5)`,
+`Res_LoadGift_Failed(7)`, `Res_IncSlotCount_Failed(26 = 0x1A)`, `Res_IncTrunkCount_Failed(30 =
+0x1E)`. Four for four. `Res_IncSlotCount_Done(25 = 0x19)` reading `u8, u16` is a slot type and
+a count, which is what our shape says too.
+
+**Where it disagrees, it disagrees usefully.** `Res_Buy_Done(14)` maps to sub-op `0x0E`, and
+`0x0E` is **dead in this build** - the byte index table at `0x140D7E194` gives `0x0E..0x12` the
+default slot `0x15`, i.e. silently ignored. So the obvious shortcut is closed: **this client
+has no `Buy_Done` at the v263 number.** Note that every entry the enum marks `// v263` is the
+set that transfers badly; the unmarked ones are the older, stable numbering.
+
+**The candidate that survives both checks is `Res_AddedCashItem_Done(3)`** - unmarked, and our
+`0x03` really does read `u16 count` then that many cash-item records. "Here are the cash items
+that just appeared" is what a purchase produces. **[I]**
+
+It does not unblock the purchase, and the reason is worth stating so nobody re-walks this:
+the `0x03` arm at `0x140D7DCFD` allocates a `0x76`-byte object per entry and reads a record
+through `FUN_1402D0950`, and **never touches `[stage+0x74]` or `[stage+0x120]`**. It cannot
+release the UI on its own. A success would be `0x03` *plus* a latch-clearing packet, and it
+still needs the 71-byte record whose field meanings past the serial are not established
+(section 6.5). The blocker was never the sub-op number.
+
+---
+
 ## 7. Getting back out
 
 `FUN_140D73BF0` — 132 bytes, the whole thing: [L]
