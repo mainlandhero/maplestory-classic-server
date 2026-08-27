@@ -104,6 +104,9 @@
              LP 0     -> !lp did not land. Say what the chat line said
 
         b) CLICK BUY ON ONE NAMED ITEM, AND SAY WHICH ONE YOU CLICKED.
+           TWO THINGS HAPPEN HERE THAT HAVE NEVER HAPPENED BEFORE: the client sends its first
+           0x03E1, and the server sends its first 0x05AE. Either could misbehave, so read the
+           outcomes below rather than assuming a failure means the SN decode was wrong.
            The Main tab is all 100 LP; Brown Puppy, Red Hat and Water of Life are easy to
            recognise. NAMING IT IS THE WHOLE POINT: it turns the log line into a check against
            a known answer instead of an unverifiable number. Brown Puppy is SN 160000000, Red
@@ -162,6 +165,10 @@
         paths then differ in exactly one thing.
           it works             -> the store half of a purchase is closed end to end
           an item goes missing -> say which line was the last one you saw
+
+     IGNORE THE 0x0453 NOISE. While you stand in the cash shop the server keeps sending NPC
+     idle chatter for the field you left - 38 of them last run. The shop stage ignores it and
+     nothing breaks; it is on the list to stop sending. It is not a symptom of anything.
 
      4. ORGANIZE ITEM, WHICH HAS NEVER BEEN SEEN WORKING. Put three or four things in
         storage, take one out from the middle to leave a hole, then hit Organize.
@@ -597,31 +604,37 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         # cost nothing to read and pair directly with world.log - CLAUDE.md, "count the same
         # event in two logs".
         #
-        # 14209ad60:hits=10 - the 0x01A3 ARM ITSELF, not the forwarder. Watching the
-        #   forwarder 142097ee0 would be useless: !map's 0x01A0 enters it too, so it is hit
-        #   on every map change and a hit would prove nothing. This address is reached by
-        #   0x01A3 and by nothing else.
-        #     a line   -> the packet arrived AND the stage forwarder dispatched it. If the
-        #                 screen is still blank the BODY is wrong, which is findable
-        #     no line  -> 0x01A3 is the wrong opcode number. It is [D], from three
-        #                 discriminators; this is the run that could falsify it
+        # 14209ad60:hits=10 - the 0x01A3 ARM ITSELF, not the forwarder (!map's 0x01A0 enters
+        #   the forwarder too, so a hit there would prove nothing). It fired exactly once
+        #   last run and the window drew, which is what promoted 0x01A3 from [D] to read.
+        #   It is kept for the RE-ENTRY step: a second entry must produce a SECOND line.
         # 140d734e0:hits=40 - the cash shop stage's OWN OnPacket. A line means a stage object
         #   exists and is receiving, and rdx names which of 0x5AD/0x5AE/0x5B9/0x5BA arrived.
         #     rdx=0x5ad -> the wallet was accepted. Read the balance off the screen
-        #     rdx=0x5ae -> our refusal was accepted, so the 0x1A reasoning holds
+        #     rdx=0x5ae -> OUR REFUSAL WAS ACCEPTED. No 0x05AE has ever been on this wire,
+        #                  so this line is the first evidence the 0x1A sub-op is right
+        #     rdx=0x453 -> NPC chatter, sent to a player standing in the shop. 38 of them
+        #                  last run. The stage ignores it; it is noise, and it is on the
+        #                  list to stop sending
         #     silent, but 14209ad60 fired -> the handler ran and built no stage: the body
-        # 142caee70:peek=2330:hits=60 - the button's exclusive-request latch, one line per
-        #   click. It answers step 1f for free: a second click reading 1 means entering the
-        #   shop stopped clearing it.
+        # 140d785f0:hits=20 - THE BUY BUILDER, and the aim of this run. Last run produced
+        #   ZERO 0x03E1 because every price is in LP and LP was 0, so the client refused
+        #   before sending. This says WHERE it refuses:
+        #     a line, and a 0x03E1 in world.log -> the click went all the way through
+        #     a line, and NO 0x03E1            -> the builder ran and bailed on a later gate
+        #     no line at all                   -> the click never reached the builder, so
+        #                                         the refusal is above it in the UI
+        #   It replaced 142caee70:peek=2330. That latch question is closed twice over now,
+        #   and 14209ad60 answers the re-entry step better than a peek would.
         # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE
         #   CONTROL: no lines at all means the hook never armed and the log proves nothing.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,14209ad60:hits=10,140d734e0:hits=40,142caee70:peek=2330:hits=60,140304100:hits=200:dump=143AC2400/968'
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,14209ad60:hits=10,140d734e0:hits=60,140d785f0:hits=20,140304100:hits=200:dump=143AC2400/968'
     }
     # Announce which pair actually got armed. The old line said "mobs" for 141c532ab, which
     # is the mob SPAWN decoder - now that -MobTargets arms a mob TARGETING watch, one word
     # would have covered two different runs. Same precedence as the if/elseif above, and
     # written as three statements because 5.1 has no ternary.
-    $pair = "THE CASH SHOP (14209ad60 = the 0x01A3 arm, 140d734e0 = the stage OnPacket, 142caee70 = the button latch)"
+    $pair = "THE PURCHASE (140d785f0 = the buy builder, 140d734e0 = the stage OnPacket, 14209ad60 = the 0x01A3 arm)"
     if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
     if ($MobTargets) { $pair = "MOB TARGETING (mob+0xa88 and mob+0x42c in the collector loop)" }
     if ($UserState) { $pair = "THE USER STATE FIELD (140f810e0, rdx is the value)" }
@@ -996,7 +1009,9 @@ if ($SetFieldProbe) {
     Write-Host '     a) CLICK IT and check the corner reads 10,000 LEAF POINTS.'
     Write-Host '          LP 10000 -> good, carry on'
     Write-Host '          LP 0     -> !lp did not land; say what the chat line said'
-    Write-Host '     b) CLICK BUY ON ONE NAMED ITEM AND SAY WHICH. Main tab is all'
+    Write-Host '     b) TWO FIRSTS HERE: the client sends its first 0x03E1 and the'
+    Write-Host '        server sends its first 0x05AE. Either could misbehave.'
+    Write-Host '        CLICK BUY ON ONE NAMED ITEM AND SAY WHICH. Main tab is all'
     Write-Host '        100 LP: Brown Puppy 160000000, Red Hat 160100000, Water of'
     Write-Host '        Life 160300001. NAMING IT turns the log into a check against a'
     Write-Host '        known answer. EXPECT AN ERROR AND NO PURCHASE - that IS the'
@@ -1026,6 +1041,10 @@ if ($SetFieldProbe) {
     Write-Host '     160000000 is a SALE SERIAL, not an item id - and it is the same'
     Write-Host '     Brown Puppy as step 1b, so the two paths differ in one thing.'
     Write-Host '     Expect it in the Cash tab and a balance of 900.'
+    Write-Host ''
+    Write-Host '  IGNORE THE 0x0453 NOISE: the server keeps sending NPC chatter' -ForegroundColor DarkGray
+    Write-Host '  for the field you left while you stand in the shop. 38 last run.' -ForegroundColor DarkGray
+    Write-Host '  The stage ignores it. On the list to stop; not a symptom.' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  4. ORGANIZE ITEM, never yet seen working.' -ForegroundColor Cyan
     Write-Host '     Put a few things in storage, take one from the middle to leave'

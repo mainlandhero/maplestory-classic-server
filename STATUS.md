@@ -222,10 +222,16 @@ than the run. **`Commodity.img`'s `Price` column is labelled "NX" in
 `research/cash-shop-items.md`, off the WZ property name.** The screen disagrees with the
 property name, and the screen wins.
 
-One thing worth keeping for later: the stage's `OnPacket` also logged **38 hits with
-`rdx=0x453`** - NPC idle chatter, sent to a player standing in the cash shop. The stage has
-four arms and ignores everything else, so it is harmless, but the server is still treating a
-shopping player as though they were on the field.
+**TO FIX: NPC chatter follows the player into the cash shop.** The stage's `OnPacket` logged
+**38 hits with `rdx=0x453`** in 103 seconds - idle chatter for the field they left. The stage
+has four arms and returns for everything else, so it is **harmless**; it is log noise and a
+server that is still treating a shopping player as though they were on the field. The owner asked
+for it to be fixed, deliberately not in the same change as the purchase work.
+
+The fix wants a `Session` flag for "which stage am I on", set in `on_cash_shop_request` and
+cleared in `on_cash_shop_exit`, gating the chatter in `tick()`. **That flag is wanted twice
+over**: nothing on the `0x01A3` path writes `[ctx+0x31fc]`, one of the six gates the Cash Shop
+button checks, and a stage flag is what would let the server reason about re-entry at all.
 
 #### Leaf Points, a real purchase from the field, and why the shop window still refuses
 
