@@ -38,8 +38,15 @@ pub struct Commodity {
     pub item_id: u32,
     /// How many of it. `1` on 149 of the 159 rows; the others are 3, 5, 10 and 11.
     pub count: u16,
-    /// **NX**, which this client's UI calls Leaf Points. `0`, `100`, `700` or `1000` here -
-    /// so a `!nx 10000` grant buys ten of almost anything in the shop.
+    /// **LEAF POINTS**, whatever the WZ property name says.
+    ///
+    /// `research/cash-shop-items.md` labels this column "NX" because that is what
+    /// `Commodity.img` calls it. The screen disagrees: every price tag in the shop reads
+    /// `LP`, and a client holding 10,000 NX and 0 LP refused a purchase itself and sent no
+    /// `0x03E1` at all. `!lp` funds it; `!nx` fills a different, displayed, unspendable field.
+    ///
+    /// `0`, `100`, `700` or `1000` here - and the 21 rows priced `0` are **exactly** the 21
+    /// that are switched off, so nothing buyable in this client is free.
     pub price: u32,
     /// **DAYS** the item lasts, not minutes and not hours. `0` means no expiry.
     ///
@@ -150,16 +157,30 @@ impl CommodityTable {
 
     /// **Which offset in this payload holds a commodity SN.**
     ///
-    /// The buy payload's shape is known (`u8, u32, [u8, u8], u32, u32`) but *which* of its
-    /// `u32`s is the serial is not, and no real `0x03E1` has ever been captured. So rather
-    /// than pick, every byte offset is read as a `u32` and checked against the table. The SNs
-    /// occupy a few hundred values out of four billion, so a false positive is not a realistic
-    /// worry - and if two offsets do match, [`SerialMatch::Several`] says so instead of
-    /// guessing.
+    /// **This settled the layout, and it is kept because it is still the fallback.**
     ///
-    /// This is the instrument that makes one client run settle the layout, and it verifies
-    /// itself: it can only ever return a serial that is really in the client's own data.
+    /// It was written when no real `0x03E1` had ever been captured: rather than pick one of
+    /// the payload's `u32`s and be quietly wrong, it read a `u32` at every byte offset and
+    /// asked the client's own sale list which were real serials. One run answered it - three
+    /// clicks, three different items, all at offset 7, each resolving to the item the owner said
+    /// they had clicked. `net::cashshop::BUY_SERIAL_OFFSET` now holds that.
+    ///
+    /// The walk stays for two reasons. The builder has a **short arm** that has never been
+    /// seen and would put the serial elsewhere; and if the layout ever moves, this is what
+    /// notices instead of decoding garbage. It cannot invent an answer - it only ever returns
+    /// a serial that is really in `Commodity.img` - and two matches are reported rather than
+    /// resolved.
     pub fn identify_serial(&self, rest: &[u8]) -> SerialMatch {
+        // **The measured offset first.** Three captured buy requests put the serial at
+        // `BUY_SERIAL_OFFSET` and each resolved to the item the owner said they had clicked, so the
+        // walk below is no longer the primary decoder - it is the fallback for the short arm
+        // of the builder's `cmov`, which has never been seen, and the cross-check that would
+        // notice if the layout ever moved.
+        if let Some(sn) = net::cashshop::parse_buy_serial(rest) {
+            if self.rows.contains_key(&sn) {
+                return SerialMatch::One { offset: net::cashshop::BUY_SERIAL_OFFSET, sn };
+            }
+        }
         let hits: Vec<(usize, u32)> = net::cashshop::u32_candidates(rest)
             .into_iter()
             .filter(|(_, v)| self.rows.contains_key(v))
@@ -243,6 +264,28 @@ mod tests {
         assert_eq!(t.len(), 1, "only the good row survived");
         assert_eq!(t.get(130200000).unwrap().period_days, 0, "an empty period cell is 0 days");
         assert!(t.banner().contains("unreadable"), "and the banner says so: {}", t.banner());
+    }
+
+    /// **A real captured buy resolves at the measured offset**, and the fallback still works.
+    #[test]
+    fn a_real_buy_resolves_at_the_measured_offset() {
+        let t = table("real-buy", &format!("{HEADER}{ONE}{ELEVEN}"));
+        // Brown Puppy's shape, with a serial this fixture actually sells.
+        let mut real = vec![0x01u8, 0x02, 0, 0, 0, 0, 0];
+        real.extend_from_slice(&130200000u32.to_le_bytes());
+        real.extend_from_slice(&[0u8; 4]);
+        assert_eq!(real.len(), net::cashshop::BUY_PAYLOAD_LEN);
+        assert_eq!(
+            t.identify_serial(&real),
+            SerialMatch::One { offset: net::cashshop::BUY_SERIAL_OFFSET, sn: 130200000 }
+        );
+
+        // A payload that does NOT carry a serial at the measured offset still gets walked -
+        // that is the fallback for the short cmov arm, which has never been captured.
+        let mut short = vec![0u8];
+        short.extend_from_slice(&130200001u32.to_le_bytes());
+        short.extend_from_slice(&[0u8; 4]);
+        assert_eq!(t.identify_serial(&short), SerialMatch::One { offset: 1, sn: 130200001 });
     }
 
     /// **The serial walk finds the SN wherever it sits, and refuses to guess when two match.**

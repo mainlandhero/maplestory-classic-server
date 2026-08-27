@@ -108,12 +108,34 @@ The rest stand as written below.
 
 ### START HERE - what to do next, in order
 
-**Last updated 2026-08-25, after the cash shop opened on a real client.** Read this section and nothing else to
+**Last updated 2026-08-27, after the first buy request was captured and the purchase was wired.** Read this section and nothing else to
 know where the project is. Everything under it is older and kept **for its working, not its
 verdicts** - the log below is reverse-chronological and a claim in it may have been retracted
 further up.
 
 **What changed most recently, newest first:**
+
+* **The client's first-ever BUY request is captured, and the layout is settled.** Three clicks
+  on three different items, `0x03E1` sub-op `0x02`, and the commodity serial is at **payload
+  offset 7** - each one resolving to the item the owner said they had clicked, which is what makes it
+  a check rather than a recording. The offset-walk that found it is kept as the fallback for
+  the builder's short arm, which has never been seen.
+* **A purchase now completes**, and the thing that was blocking it was **my mistake**. This
+  file said no `0x05AE` arm could report success without putting a message on screen. That is
+  true of the six arms whose bodies are **inline** in the dispatcher and false for the two
+  that **delegate to sub-functions**: `0x19` is silent, hands the item over, and releases both
+  latches. Searching a known list instead of enumerating the space - the same failure
+  `CLAUDE.md` has recorded three times.
+* **The client exit is explained, and it was the Brown Puppy.** `5000001` is a **pet**, and
+  this client classifies an item **twice**: the factory believes the type byte on the wire,
+  the tooltip re-derives the class from the **item id**. A pet sent as a bundle gets a
+  126-byte bundle allocation, and the pet tooltip then reads its integrity checksum **four
+  bytes past the end of it** and throws. Deterministic, an out-of-bounds *read*, and **not**
+  the heap family. Pets are refused everywhere until a type-3 body exists.
+* **The non-buy sub-ops are one QUEUE**, so refusals now route by family: `0x1A` for a buy or
+  a gift, **`0x3D`** for the queue (because `0x1A` empties the queue vector and would silently
+  discard whatever else was pending), and **nothing at all** for `0x2B`, the one builder that
+  does not latch.
 
 * **THE CASH SHOP OPENS. Confirmed on a client 2026-08-25, and `0x01A3` is no longer `[D]`.**
   The window drew; the hook log has exactly one `0x14209ad60 ENTERED ... opcode 0x01A3`; the
@@ -180,6 +202,67 @@ kept current. `CLAUDE.md` has the section on why.
 | **the Cash Shop button is answered** | `0x00D5` is an **exclusive request**: unanswered it fired once per session and left `[ctx+0x2330]` set. Three clicks give three requests, latch `0/0/0` |
 | **THE CASH SHOP OPENS** | `0x01A3` on the same channel socket, **no migrate**. One `0x14209ad60` hook line dispatching `0x01A3`; the stage's `OnPacket` took both `0x05AD`s; both balance fields right, in order; the `0x03E0` poll fired twice in 103 s; an empty `0x00D1` brought the field back with its NPCs. The opcode was `[D]` from three discriminators and is now **read** |
 | **the shop's currency is LEAF POINTS** | every price tag reads `LP`, and a client holding 10,000 NX and 0 LP **refused the purchase itself and sent zero `0x03E1`**. `!lp` funds it; `!nx` fills the other field and buys nothing |
+
+#### The purchase, the pet, and a mistake of mine that cost two days
+
+2026-08-26/27. The owner bought three items in the shop and then ran `!buy` / `!locker` from the
+field; the client exited shortly after. Three agents were fanned out on it.
+
+**The buy request, captured for the first time.** `0x03E1` sub-op `0x02`, 15-byte payload,
+matching the builder's read shape exactly - the long arm of the `cmov` pair:
+
+```text
+02 | 01 | 02 00 00 00 | 00 00 | 00 68 89 09 | 00 00 00 00   SN 160000000 Brown Puppy
+02 | 01 | 02 00 00 00 | 00 00 | a0 ee 8a 09 | 00 00 00 00   SN 160100000 Red Hat
+02 | 01 | 02 00 00 00 | 00 00 | e1 fb 8d 09 | 00 00 00 00   SN 160300001 Water of Life
+                                ^ payload offset 7
+```
+
+All three resolved to the item the owner named, through the offset-walk, without being told where
+to look. `net::cashshop::BUY_SERIAL_OFFSET`. **[L]**
+
+**The refusal worked exactly as designed** - three clicks, three `0x1A` messages, no ejection,
+the shop stayed usable and Exit was fine. That is the first `0x05AE` ever on this wire.
+
+**RETRACTION: "there is no silent arm" was wrong, and it was mine.** `research/cash-shop-stage.md`
+§6.2.1 enumerated the six `0x05AE` arms whose bodies are inline in `FUN_140D7DCA0` and
+concluded every arm that clears the latch shows a message. Two arms **delegate to
+sub-functions** and are not in that set. `0x19` is silent: it clears `[stage+0x74]` when
+`bRelease` is non-zero (`0x140D7F8F8 je` skips it on zero) and clears `[stage+0x120]` through
+`FUN_140D74A70`'s cancel path at `0x140D74B40`. I read both branches myself, because two
+agents described that arm differently and the difference decides whether a buy leaves the shop
+wedged. So the purchase is now `0x05AE 0x19` then `0x05AD`, **in that order** - a wallet sent
+first re-triggers the buy. `research/cash-shop-buy-done.md`.
+
+**The client exit was the Brown Puppy, and the control is clean.** `5000001` is in
+`5000000..=5009999`, which `FUN_1401B1040` classifies as type 3. The factory `FUN_1403095E0`
+believes the **wire's type byte**; the tooltip `FUN_142694130` re-derives the class from the
+**item id**. We sent a pet as a bundle, so a 126-byte bundle object was allocated and the pet
+tooltip read its `0xBAADF00D`-verified checksum at `item+0x7e`, four bytes past the end, and
+threw `ZException` - process exit `0xE06D7363`. A grep of **every** archived log for
+`ADD: item 5xxxxxx` returns exactly one hit: that run. The first time a pet id ever reached
+this client's bag is the run that died. `research/cash-item-throw.md`.
+
+Note what this was *not*: the `0x0070` handler **returned** cleanly in 149 us, and the throw
+came 3.4 s later out of the client's own loop. The packet parsed; the **draw** killed it. A
+guard now refuses pets in `!item`, `!locker` and the purchase path, and `!locker` puts the pet
+**back in the locker** rather than losing it. Only 4 of 159 sale rows are pets; drops and
+shops cannot reach one at all.
+
+**The other sub-ops are a queue.** `FUN_140D74A70` pops 32-byte records and `[stage+0x120]`
+holds the **in-flight kind**, not a boolean. `FUN_140D74C70` - what makes `0x1A` better than
+`0x1E` - empties the vector at `[stage+0x128]`, and that vector **is** the queue. So `0x1A` is
+right for a buy and wrong for `0x0A`/`0x0B`/`0x1C`; those get `0x3D` with a `u16` reason.
+`0x2B` does not latch at all and is now deliberately unanswered, which is the one documented
+exception to "always answer" - measured with a positive control, and explained on the inbound
+log label because `Session` has no logger by design. `research/cash-shop-actions.md`.
+
+Also worth keeping: **`0x0A` is the locker to Cash-tab move**, answered with `0x19` - the real
+version of what `!locker` fakes today. And `0x1B` is a trap: with `bToSlot = 0` it reaches
+`FUN_1401ABD80(tabArray + 0)`, whose first instruction dereferences with no null check.
+
+**The reference source scored 0 of 5 on numbers this pass** (1 of 8 lifetime). Every candidate
+was killed against the client rather than aligned to.
 
 #### The cash shop opens, and the currency is Leaf Points
 

@@ -497,6 +497,36 @@ and refuses instead of debiting: `crates/world/src/session/cashshop.rs`.
 
 ---
 
+### 6.2.2 SCOPE CORRECTION, 2026-08-27: `0x1A` is right for a BUY and wrong for the queue
+
+Section 6.2.1 above says to refuse with `0x1A` rather than `0x1E`, and that is correct - it
+has since been **confirmed on a client**: three buy clicks, three `0x1A` refusals, the player
+was not ejected and the shop stayed usable. But it was written as though `0x03E1` were one
+kind of request, and it is not.
+
+`research/cash-shop-actions.md` found that `0x0A`, `0x0B` and `0x1C` are a **queue**.
+`FUN_140D74A70` pops 32-byte request records whose `kind` sits at offset 0, and
+**`[stage+0x120]` holds the in-flight KIND rather than a boolean** - `1` buy, `2` gift, `4`/`5`/`6`
+for the three queued ops. Each success arm gates on its own kind and then pumps the next
+request.
+
+`FUN_140D74C70` - the call that makes `0x1A` better than `0x1E` - empties the vector at
+`[stage+0x128]`, and **that vector is the queue**. So refusing a queued operation with `0x1A`
+discards every other pending request silently, and the delete UI enqueues one per selected
+item. Use **`0x3D`** there, which takes a **`u16`** reason rather than a `u8`.
+
+Three smaller corrections from the same pass, all **[L]**:
+
+* §5.1's "every `0x03E1` builder sets the `[0x74]` latch" - **`0x2B` does not.** The same
+  search found both sites inside `0x0A`, in the same call, as a positive control. So `0x2B`
+  is the one sub-op that may be left unanswered, and answering it with `0x1A` would cost the
+  queue for nothing.
+* §6.2's `0x19` = "`u8`, `u16`" is short: it also reads **a whole item slot and a trailing
+  `u8`**. That shape came from a depth-limited walk.
+* §6.2's `0x1B` ends in a **`u32`**, not a `u16`.
+
+---
+
 ### 6.3 The failure-reason table — how to say "no"
 
 `FUN_140D7C7F0(this, u8 reason)`, 4968 bytes, `reason-1` indexed into a 127-entry jump table

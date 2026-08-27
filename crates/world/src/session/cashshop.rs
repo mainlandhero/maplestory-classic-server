@@ -121,40 +121,36 @@ impl Session {
 }
 
 impl Session {
-    /// `0x03E1` - **a click inside the shop**, and today every one of them is refused.
+    /// `0x03E1` - **a click inside the shop.** A buy now completes; the rest are refused.
     ///
-    /// # Why a refusal rather than a purchase
+    /// # The claim this used to make was wrong, and it blocked the feature for two days
     ///
-    /// The store side of a purchase is built and tested (`store::buy_cash_item` debits and
-    /// places in one transaction), and this handler can price a real sale row. What is
-    /// missing is the packet that tells the client a purchase **succeeded** - and there is
-    /// no way to fake it:
+    /// This block said a purchase could not be reported at all, because *"every arm that
+    /// clears the in-flight latch also calls `FUN_140D7C7F0`, which puts a message on screen.
+    /// There is no silent one."* The first sentence is true of the six arms whose bodies are
+    /// **inline** in `FUN_140D7DCA0`. It is false for the two that **delegate to
+    /// sub-functions**, and those two - `0x19` and `0x1B` - are silent.
     ///
-    /// * `0x05AE`'s live sub-ops were enumerated from the client's own index and jump tables.
-    ///   Every arm that clears the in-flight latch also calls `FUN_140D7C7F0`, which puts a
-    ///   message on screen. **There is no silent one** - `reason = 0` is out of range and
-    ///   lands on string 661, the generic error (`0x140D7C818 cmp edx, 0x7e / ja`).
-    /// * answering with `0x05AD` - the wallet - would clear the latch *and* re-trigger the
-    ///   purchase, because the `0x05AD` arm calls the buy builder when `[stage+0x120] == 1`
-    ///   and the buy builder is what set it. That is a farming loop, not a purchase.
-    /// * the remaining candidate, a `0x05AE` carrying a cash-item record, needs
-    ///   `FUN_1402D0950`'s **71-byte** record, whose field *meanings* past the serial are
-    ///   explicitly not established. `CLAUDE.md` records two client deaths this month from
-    ///   shipping a packet built on a read count that turned out to be short.
+    /// That is `CLAUDE.md`'s oldest failure wearing new clothes: a **known list** was searched
+    /// instead of the space being enumerated, and it produced a clean, confident, wrong
+    /// negative that a whole design was then built around. `research/cash-shop-buy-done.md`
+    /// broke it with `tools/callers.py` over `FUN_140D7C7F0` whole-image, in all three modes.
     ///
-    /// So: take nothing, say no, and keep the shop alive. **Every effect hangs off the
-    /// transition** - the Heena quest rule - and a purchase the client is never told about is
-    /// not a transition. `!buy <sn>` performs the same sale from the field, where the result
-    /// can be reported with packets that have been on a wire.
+    /// # What each family gets
     ///
-    /// # What this run is actually for
+    /// ```text
+    /// 0x02 / 0x1F  buy      -> 0x05AE 0x19 + 0x05AD, in that order   (or 0x1A + u8 reason)
+    /// 0x0A/0x0B/0x1C queue  -> 0x05AE 0x3D + u16 reason  - 0x1A would EMPTY the queue
+    /// 0x03 gift, unknown    -> 0x05AE 0x1A + u8 reason
+    /// 0x2B                  -> nothing. It is the one builder that does not latch
+    /// ```
     ///
-    /// No real `0x03E1` has ever been captured, so the buy payload's layout is known only
-    /// from its builder. Rather than pick an offset for the serial, every offset is read and
-    /// checked against the client's own sale list - see
-    /// [`crate::commodity::CommodityTable::identify_serial`]. One click puts the answer in
-    /// `world.log`, and the instrument cannot invent one: it can only return an SN that is
-    /// really in `Commodity.img`.
+    /// # The serial's offset is measured now
+    ///
+    /// Three captures, 2026-08-26, all at payload offset 7, each resolving to the item the owner
+    /// said they had clicked. The offset-walk that found it is kept as the fallback for the
+    /// builder's short arm, which has never been seen -
+    /// [`crate::commodity::CommodityTable::identify_serial`].
     pub(super) fn on_cash_shop_action(&mut self, body: &[u8]) -> Vec<Reply> {
         use net::cashshop::reason;
 
@@ -168,21 +164,53 @@ impl Session {
             );
         };
 
-        if !action.is_buy() {
-            let known = action.sub_op == net::cashshop::ACTION_GIFT
-                || net::cashshop::ACTION_ON_SERIAL.contains(&action.sub_op)
-                || action.sub_op == net::cashshop::ACTION_ONE_ID;
-            return self.refuse_cash_shop(
-                reason::UNKNOWN_ERROR,
-                format!(
-                    "0x03E1 sub-op 0x{:02X} ({}), {} byte payload {:02x?} - not built. \
-                     Refused rather than ignored",
-                    action.sub_op,
-                    if known { "a reachable builder" } else { "NOT one of the six reachable builders" },
-                    action.rest.len(),
-                    action.rest
-                ),
-            );
+        // **Not every sub-op takes the same refusal, and using one for all of them destroys
+        // work.** `research/cash-shop-actions.md`: `0x0A`/`0x0B`/`0x1C` are a QUEUE of 32-byte
+        // records, and `0x1A` empties the queue vector - so refusing the first of five queued
+        // deletes with it would silently drop the other four.
+        match net::cashshop::action_family(action.sub_op) {
+            net::cashshop::ActionFamily::Buy => {}
+            net::cashshop::ActionFamily::Queued => {
+                return self.refuse_cash_shop_queue(
+                    reason::UNKNOWN_ERROR as u16,
+                    format!(
+                        "0x03E1 sub-op 0x{:02X}, a QUEUED operation (move or delete), {} byte \
+                         payload {:02x?} - not built. Refused with 0x3D rather than 0x1A, which \
+                         would empty the whole queue and lose whatever else is pending",
+                        action.sub_op,
+                        action.rest.len(),
+                        action.rest
+                    ),
+                )
+            }
+            // **The documented exception to "always answer".** This one does not latch, and
+            // the only refusal available would discard the queue. Measured, with a positive
+            // control - see net::cashshop::ACTION_NO_LATCH.
+            //
+            // **There is nowhere to log this from, so the label carries it instead.**
+            // `Session` is a pure state machine with no socket and no logger - the only text
+            // that reaches `world.log` is a `Reply`'s `what`, and this path sends no reply.
+            // So the explanation lives on the INBOUND line: `net::names` labels `0x03E1` with
+            // "0x2B the ONE that does not latch, so it is deliberately unanswered", which puts
+            // it in front of whoever reads the log without needing them to find this comment.
+            // A deliberate silence that is explained nowhere becomes a bug report later.
+            net::cashshop::ActionFamily::NoLatch => return Vec::new(),
+            net::cashshop::ActionFamily::Other => {
+                return self.refuse_cash_shop(
+                    reason::UNKNOWN_ERROR,
+                    format!(
+                        "0x03E1 sub-op 0x{:02X}{}, {} byte payload {:02x?} - not built. 0x1A is \
+                         right here even though it costs the queue: it is the only arm that \
+                         clears [stage+0x120], and a gift sets that to 2, a value nothing in \
+                         the reachable class compares against - so an unanswered gift blocks \
+                         every later buy, move and delete while the UI still looks alive",
+                        action.sub_op,
+                        if action.sub_op == net::cashshop::ACTION_GIFT { " GIFT" } else { "" },
+                        action.rest.len(),
+                        action.rest
+                    ),
+                )
+            }
         }
 
         let Some(claimed) = self.claimed() else { return Vec::new() };
@@ -221,15 +249,7 @@ impl Session {
                         format!("{what} - CANNOT AFFORD IT. `!lp {}` would cover it", row.price),
                     );
                 }
-                self.refuse_cash_shop(
-                    reason::UNKNOWN_ERROR,
-                    format!(
-                        "{what} - AFFORDABLE, AND STILL REFUSED. Nothing was debited: this \
-                         server has no way to tell the client a purchase succeeded, so taking \
-                         the price would leave an error on screen and the money gone. \
-                         `!buy {sn}` performs exactly this sale from the field"
-                    ),
-                )
+                self.complete_purchase(account_id, &row, what)
             }
             crate::commodity::SerialMatch::None => self.refuse_cash_shop(
                 reason::SOLD_OUT,
@@ -249,6 +269,127 @@ impl Session {
                 ),
             ),
         }
+    }
+
+    /// **Take the price and hand the item over**, or change nothing at all.
+    ///
+    /// # The pair, and why the order is the whole safety argument
+    ///
+    /// ```text
+    /// 0x05AE 0x19   the item, and the release of BOTH latches
+    /// 0x05AD        the debited balance - INERT only because 0x19 went first
+    /// ```
+    ///
+    /// While `[stage+0x120]` is still `1` the wallet arm calls the buy builder back, so a
+    /// wallet sent first would make the client buy again, and again. `0x19` zeroes it. See
+    /// [`net::cashshop::RESULT_ITEM_GRANTED`], where both branches are read out of the
+    /// listing rather than taken on report.
+    ///
+    /// # Two stores, so a compensating transaction rather than one
+    ///
+    /// The wallet and the bag are different tables with different invariants, so this debits
+    /// first - `add_maple_points` **refuses** a negative balance rather than clamping, which
+    /// makes the debit the affordability check too - and refunds if the bag will not take the
+    /// item. Every effect hangs off the transition: nothing is reported unless both halves
+    /// succeeded, and a refund that itself fails is said out loud rather than swallowed.
+    ///
+    /// # Pets are refused here, not sent
+    ///
+    /// `net::inventory::is_pet`. Sending a pet as a bundle kills this client - measured
+    /// 2026-08-26 - and four of the 159 sale rows are pets.
+    fn complete_purchase(
+        &mut self,
+        account_id: i64,
+        row: &crate::commodity::Commodity,
+        what: String,
+    ) -> Vec<Reply> {
+        use net::cashshop::reason;
+
+        if net::inventory::is_pet(row.item_id) {
+            return self.refuse_cash_shop(
+                reason::UNKNOWN_ERROR,
+                format!(
+                    "{what} - REFUSED: {} is a PET and this server cannot build a type-3 item \
+                     body yet. Sending one as a bundle killed the client on 2026-08-26",
+                    row.item_id
+                ),
+            );
+        }
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Some(inv) = store::InventoryType::for_item(row.item_id) else {
+            return self.refuse_cash_shop(
+                reason::UNKNOWN_ERROR,
+                format!("{what} - REFUSED: item {} is in no inventory tab", row.item_id),
+            );
+        };
+
+        // The debit IS the affordability check - it refuses rather than clamping.
+        if let Err(e) = self.store.add_maple_points(account_id, -i64::from(row.price)) {
+            return self.refuse_cash_shop(
+                reason::NOT_ENOUGH_CASH,
+                format!("{what} - the debit was refused, so nothing else ran: {e}"),
+            );
+        }
+
+        let item = if inv == store::InventoryType::Equip {
+            store::Item::equip(row.item_id)
+        } else {
+            store::Item::bundle(row.item_id, row.count)
+        };
+        let max_stack = self.config.shops.max_stack(row.item_id);
+        let placed = match self.store.add_item(chr.id, inv, &item, max_stack) {
+            Ok(rows) => rows,
+            Err(e) => {
+                // Refund. If THIS fails the player is out of pocket, and that is the one
+                // outcome that must never be reported as an ordinary error.
+                let refund = self.store.add_maple_points(account_id, i64::from(row.price));
+                return self.refuse_cash_shop(
+                    reason::CHECK_INVENTORY,
+                    match refund {
+                        Ok(lp) => format!("{what} - the {inv:?} tab refused it ({e}). Refunded, {lp} LP"),
+                        Err(worse) => format!(
+                            "{what} - the bag refused it ({e}) AND THE REFUND FAILED ({worse}). \
+                             THE PLAYER IS OUT {} LP. Say so",
+                            row.price
+                        ),
+                    },
+                );
+            }
+        };
+        let Some(first) = placed.first() else {
+            return self.refuse_cash_shop(
+                reason::UNKNOWN_ERROR,
+                format!("{what} - add_item reported success and placed nothing"),
+            );
+        };
+
+        let blob = self.item_blob(&first.item);
+        let mut out = vec![Reply {
+            opcode: net::cashshop::CASH_SHOP_RESULT,
+            body: net::cashshop::cash_shop_item_granted(first.slot, &blob),
+            what: format!(
+                "CashShopResult 0x19 BOUGHT: {}x {} ({}) for {} LP -> {inv:?} slot {}, {} byte \
+                 blob. bRelease=1 clears [stage+0x74]; [stage+0x120] is cleared through \
+                 FUN_140D74A70's cancel path. {what}",
+                row.count, row.name, row.item_id, row.price, first.slot, blob.len()
+            ),
+        }];
+        // **Second, never first.** See the doc block.
+        out.extend(self.cash_wallet_reply(account_id, "the debited balance, AFTER the 0x19"));
+        out
+    }
+
+    /// One `0x05AE` sub-op `0x3D`: refuse a **queued** operation without emptying the queue.
+    ///
+    /// The reason is a `u16` here, not the `u8` [`Session::refuse_cash_shop`] sends.
+    fn refuse_cash_shop_queue(&self, reason: u16, why: String) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::cashshop::CASH_SHOP_RESULT,
+            body: net::cashshop::cash_shop_queue_refusal(reason),
+            what: format!(
+                "CashShopResult: refusing with sub-op 0x3D reason 0x{reason:04X}. {why}"
+            ),
+        }]
     }
 
     /// One `0x05AE`: cancel the pending purchase, clear the in-flight latch, show `reason`,

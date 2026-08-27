@@ -766,9 +766,13 @@ impl Session {
 
         match self.store.buy_cash_item(account_id, &item, row.price) {
             Ok(placed) => {
-                let nx = self.store.cash_wallet(account_id).unwrap_or_default().nx;
+                // **Leaf Points, not NX.** This line said "for 100 NX ... 10000 NX left" on
+                // 2026-08-26 while the database correctly went 99,000 -> 98,900 LP. The
+                // purchase was right and only the sentence was wrong, which is the worst
+                // direction: a reader would have concluded the debit had not happened.
+                let lp = self.store.cash_wallet(account_id).unwrap_or_default().maple_points;
                 self.gm_ack(format!(
-                    "Bought SN {sn}: {}x {} ({}) for {} NX. Locker slot {}, {nx} NX left. \
+                    "Bought SN {sn}: {}x {} ({}) for {} LP. Locker slot {}, {lp} LP left. \
                      Period {} day(s). `!locker` lists it, `!locker {}` moves it into the \
                      {inv:?} tab.",
                     row.count,
@@ -830,8 +834,8 @@ impl Session {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let nx = self.store.cash_wallet(account_id).unwrap_or_default().nx;
-            return self.gm_ack(format!("Cash locker ({nx} NX): {list}. `!locker <slot>` takes one."));
+            let lp = self.store.cash_wallet(account_id).unwrap_or_default().maple_points;
+            return self.gm_ack(format!("Cash locker ({lp} LP): {list}. `!locker <slot>` takes one."));
         };
         let Ok(slot) = token.parse::<u16>() else {
             return self.gm_ack(format!("!locker: {token:?} is not a slot number."));
@@ -841,6 +845,20 @@ impl Session {
             Ok(i) => i,
             Err(e) => return self.gm_ack(format!("!locker REFUSED and nothing moved: {e}")),
         };
+        // **The guard that would have saved a client launch.** A pet id sent as a bundle
+        // kills this client - see net::inventory::is_pet. Put it back rather than hand it
+        // over; the locker is server-side and the client never sees what is in it.
+        if net::inventory::is_pet(item.item_id) {
+            let back = self.store.put_cash_item(account_id, &item);
+            return self.gm_ack(format!(
+                "!locker REFUSED: {} is a PET, and this server cannot build a pet item body                  yet - sending one as a bundle kills the client (it did, on 2026-08-26).                  It is back in the locker{}.",
+                item.item_id,
+                match back {
+                    Ok(l) => format!(", slot {}", l.slot),
+                    Err(e) => format!(" - EXCEPT IT WOULD NOT GO BACK: {e}. Say so"),
+                }
+            ));
+        }
         let Some(inv) = store::InventoryType::for_item(item.item_id) else {
             // Cannot happen for anything `!buy` placed, but the undo runs anyway rather than
             // leaving the item in a variable that is about to go out of scope.
@@ -902,6 +920,11 @@ impl Session {
         };
         let count: u16 = parts.next().and_then(|c| c.parse().ok()).unwrap_or(1).max(1);
 
+        if net::inventory::is_pet(item_id) {
+            return self.gm_ack(format!(
+                "!item REFUSED: {item_id} is a PET. This server cannot build a pet item body                  yet, and sending one as a bundle kills the client - measured 2026-08-26,                  net::inventory::is_pet has the mechanism."
+            ));
+        }
         let Some(inv) = store::InventoryType::for_item(item_id) else {
             return self.gm_ack(format!(
                 "!item REFUSED: {item_id} is not in any inventory tab - ids start 1..5."

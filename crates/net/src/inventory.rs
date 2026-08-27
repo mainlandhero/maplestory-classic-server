@@ -179,6 +179,34 @@ pub fn inventory_move_result(inv_type: i8, old_pos: i16, new_pos: i16) -> Vec<u8
     w.into_vec()
 }
 
+/// **Pet ids, which this server cannot yet put in a bag without killing the client.**
+///
+/// `5000000..=5009999`, read out of `FUN_1401B1040` - the client's own id-to-class function,
+/// which returns **3** for this range. `research/cash-item-throw.md`, 2026-08-26.
+///
+/// # Why a range check is load-bearing
+///
+/// The client has **two** dispatches on an item's class and they consult different things.
+/// The factory `FUN_1403095E0` believes the **type byte on the wire**; the tooltip
+/// `FUN_142694130` re-derives the class from the **item id**. Send a pet as a bundle and they
+/// disagree: the factory allocates a 126-byte bundle object, and the pet tooltip then reads
+/// its integrity checksum at `item+0x7e` - **four bytes past the end of that allocation** -
+/// fails the `0xBAADF00D / ror 5 / add` verify, and throws `ZException`. The process exits
+/// with `0xE06D7363`.
+///
+/// That is measured, not reasoned: the owner's `!locker 1` moved a Brown Puppy (`5000001`) into
+/// the Cash tab on 2026-08-26 and the client died 3.4 s later. The control is clean - a grep
+/// of **every** archived log for `ADD: item 5xxxxxx` returns exactly one hit, that run. The
+/// first time a pet id ever reached this client's bag is the run that died.
+///
+/// The real fix is a **67-byte type-3 body** (base 18 + a 48-byte pet block, with the pet's
+/// `char[13]` name at `+0x4d`); ours is 41 and every field past the base is misplaced.
+/// `store::ItemKind` has only `Equip` and `Bundle`, so that is a change with a shape, not a
+/// one-liner. Until it exists, callers refuse rather than send.
+pub fn is_pet(item_id: u32) -> bool {
+    (5_000_000..=5_009_999).contains(&item_id)
+}
+
 /// Entry mode 0: **put a new item in a slot**, carrying the whole item body.
 ///
 /// `research/msexe-setfield.md`'s mode table: mode 0's tail is the **item blob**, read at
@@ -314,6 +342,24 @@ pub const INVENTORY_ADD_HEAD_LEN: usize = 7 + 4;
 /// byte that is wrong, and this is a packet where being one byte out has cost two sessions.
 pub fn move_changes_the_avatar(inv_type: i8, old_pos: i16, new_pos: i16) -> bool {
     (inv_type == INV_EQUIP || inv_type == INV_DECO) && (old_pos < 0 || new_pos < 0)
+}
+
+#[cfg(test)]
+mod pet_tests {
+    use super::*;
+
+    /// The window is the client's own, and its EDGES are what matter - one digit outside it
+    /// and the client's tooltip takes the bundle path, which is the shape we do send.
+    #[test]
+    fn the_pet_window_is_the_clients_own() {
+        assert!(is_pet(5_000_000), "the first");
+        assert!(is_pet(5_000_001), "Brown Puppy - the one that killed the client");
+        assert!(is_pet(5_009_999), "the last");
+        assert!(!is_pet(4_999_999));
+        assert!(!is_pet(5_010_000), "one past the end");
+        assert!(!is_pet(5_070_000), "a Megaphone is a plain cash bundle");
+        assert!(!is_pet(0));
+    }
 }
 
 #[cfg(test)]

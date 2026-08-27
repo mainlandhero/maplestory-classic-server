@@ -4953,82 +4953,117 @@ fn cash_shop_session() -> (Session, Arc<Store>, u32) {
     (s, store, id)
 }
 
-/// The short buy payload: `u8`, `u32 sn`, then two `u32`s. **Which offset really holds the
-/// serial is the thing this server does not know**, so the tests build one deliberately and
-/// the handler finds it by searching rather than by trusting this shape.
+/// **The real buy payload, byte for byte off the wire.** `u8, u32, u8, u8, u32 SN, u32`, with
+/// the serial at offset 7 - captured three times on 2026-08-26, each resolving to the item
+/// The owner said they had clicked. Building the shape the client really sends is what makes these
+/// tests exercise the same path a run does.
 fn buy_body(sn: u32) -> Vec<u8> {
     let mut body = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
     body.push(net::cashshop::ACTION_BUY);
-    body.push(0);
-    body.extend_from_slice(&sn.to_le_bytes());
-    body.extend_from_slice(&[0u8; 8]);
+    body.extend_from_slice(&[0x01, 0x02, 0, 0, 0, 0, 0]); // the constant head, as captured
+    body.extend_from_slice(&sn.to_le_bytes()); // payload offset 7
+    body.extend_from_slice(&[0u8; 4]);
+    assert_eq!(body.len(), 2 + 1 + net::cashshop::BUY_PAYLOAD_LEN, "the captured shape");
     body
 }
 
-/// **Every `0x03E1` is answered, and never with the sub-op that ejects.**
+/// **Every `0x03E1` that latches is answered, with the refusal its family needs.**
 ///
-/// This is the always-answer rule where it costs the most: all six builders set the shop's
-/// in-flight latch `[stage+0x74]` before they send, so one unanswered click kills every later
-/// one for the session - the same failure `0x00D5` had. The reply sub-op is asserted too:
-/// `0x05` shows the very same message and then throws the player out of the shop, and the
-/// two differ by one byte.
+/// This assertion has been replaced once. It used to demand `0x1A` for every sub-op, which
+/// was right for the buy and wrong for the rest: `research/cash-shop-actions.md` found that
+/// `0x0A`/`0x0B`/`0x1C` are a **queue** of 32-byte records and `0x1A` empties the queue
+/// vector, so refusing the first of five queued deletes with it would silently discard four.
+///
+/// Three things are pinned: that a latching sub-op is always answered, that the answer is
+/// never the arm which **ejects** the player, and that the queue family gets `0x3D` instead.
 #[test]
-fn every_cash_shop_action_is_answered_and_none_of_them_ejects() {
+fn every_cash_shop_action_is_answered_with_the_refusal_its_family_needs() {
     let (mut s, store, _id) = cash_shop_session();
     store.add_maple_points(1, 50_000).unwrap();
 
-    let mut bodies = vec![
-        net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec(), // empty: no sub-op
-        buy_body(130200000),
-        buy_body(999_999), // no such sale row
-    ];
-    for sub in [net::cashshop::ACTION_GIFT, net::cashshop::ACTION_ONE_ID, 0x77] {
+    let action = |sub: u8, tail: &[u8]| {
         let mut b = net::cashshop::CLIENT_CASH_SHOP_ACTION.to_le_bytes().to_vec();
         b.push(sub);
-        bodies.push(b);
+        b.extend_from_slice(tail);
+        b
+    };
+
+    // A buy that CANNOT go through - no such sale row, and a body with no serial at all -
+    // still gets the refusal measured on a client.
+    for body in [buy_body(999_999), action(net::cashshop::ACTION_BUY, &[])] {
+        let r = s
+            .handle(&body)
+            .into_iter()
+            .find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT)
+            .unwrap_or_else(|| panic!("buy {body:02x?} went unanswered"));
+        assert_eq!(r.body[0], net::cashshop::RESULT_CANCEL_AND_STAY, "the measured one");
+        assert_eq!(r.body.len(), net::cashshop::CASH_SHOP_REFUSAL_LEN, "u8 reason");
     }
 
-    for body in bodies {
-        let out = s.handle(&body);
-        let r = out
-            .iter()
+    // The QUEUE family: 0x3D, and a u16 reason rather than a u8.
+    for sub in net::cashshop::ACTION_ON_SERIAL {
+        let r = s
+            .handle(&action(sub, &[0u8; 8]))
+            .into_iter()
             .find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT)
-            .unwrap_or_else(|| panic!("0x03E1 {body:02x?} went unanswered"));
-        assert_eq!(r.body.len(), net::cashshop::CASH_SHOP_REFUSAL_LEN);
+            .unwrap_or_else(|| panic!("queued sub-op 0x{sub:02X} went unanswered"));
         assert_eq!(
             r.body[0],
-            net::cashshop::RESULT_CANCEL_AND_STAY,
-            "sub-op 0x1A: it clears [stage+0x120] as well as the latch, so the next wallet \
-             reply does not resume the purchase"
+            net::cashshop::RESULT_QUEUE_REFUSED,
+            "sub-op 0x{sub:02X} is queued - 0x1A would empty the queue"
         );
-        assert_ne!(
-            r.body[0],
-            net::cashshop::RESULT_MESSAGE_AND_EJECT,
-            "0x05 would throw the player out of the shop"
-        );
-        // And no wallet goes with it: 0x05AD is exactly the packet that re-triggers a buy.
+        assert_eq!(r.body.len(), net::cashshop::CASH_SHOP_QUEUE_REFUSAL_LEN);
+    }
+
+    // The gift and anything unknown: 0x1A, because it is the only arm that clears
+    // [stage+0x120], and a gift sets that to a value nothing else compares against.
+    for sub in [net::cashshop::ACTION_GIFT, 0x77] {
+        let r = s
+            .handle(&action(sub, &[0u8; 4]))
+            .into_iter()
+            .find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT)
+            .unwrap_or_else(|| panic!("sub-op 0x{sub:02X} went unanswered"));
+        assert_eq!(r.body[0], net::cashshop::RESULT_CANCEL_AND_STAY);
+    }
+
+    // **The one deliberate silence**, and it is deliberate: 0x2B does not set the in-flight
+    // latch, so nothing blocks - and the only refusal available would discard the queue.
+    assert!(
+        s.handle(&action(net::cashshop::ACTION_NO_LATCH, &[0u8; 4])).is_empty(),
+        "0x2B is the documented exception to always-answer"
+    );
+
+    // And NOTHING in any family ejects the player, or carries a wallet on a REFUSAL - a
+    // wallet is only ever legal behind a 0x19, because before one it re-triggers the buy.
+    for sub in [0x02u8, 0x0A, 0x03, 0x77] {
+        let out = s.handle(&action(sub, &[0u8; 8]));
         assert!(
-            !out.iter().any(|x| x.opcode == net::cashshop::CASH_SHOP_WALLET),
-            "a refusal must not carry a wallet"
+            !out.iter().any(|r| r.opcode == net::cashshop::CASH_SHOP_WALLET),
+            "sub-op 0x{sub:02X}: a refusal must not carry a wallet"
         );
+        for r in out.iter().filter(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT) {
+            assert_ne!(r.body[0], net::cashshop::RESULT_MESSAGE_AND_EJECT);
+        }
     }
 }
 
-/// **The reason byte says which thing went wrong**, and the affordable case still refuses.
+/// **The reason byte says which thing went wrong, and an affordable buy goes through.**
 ///
-/// The last block is the one worth having: a sale this server *could* make is refused and
-/// **nothing is debited**, because there is no packet that tells the client a purchase
-/// succeeded. Every effect hangs off the transition, and this transition does not happen.
+/// The last block is the one that changed on 2026-08-27. It used to assert that a purchase
+/// this server *could* make was refused anyway and nothing debited, because no packet was
+/// known that reported success without an error message on screen. `0x05AE 0x19` is that
+/// packet; it was missed because a known list was searched instead of the space enumerated.
 #[test]
-fn a_buy_is_priced_against_the_real_sale_row_and_still_takes_nothing() {
-    let (mut s, store, _id) = cash_shop_session();
+fn a_buy_is_priced_against_the_real_sale_row_and_then_completes() {
+    let (mut s, store, id) = cash_shop_session();
 
     // Nothing in the wallet: "You don't have enough cash."
     let out = s.handle(&buy_body(130200000));
     let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
     assert_eq!(r.body[1], net::cashshop::reason::NOT_ENOUGH_CASH);
     assert!(r.what.contains("SN 130200000"), "the log names the row: {}", r.what);
-    assert!(r.what.contains("OFFSET 1"), "and where the serial was found: {}", r.what);
+    assert!(r.what.contains("OFFSET 7"), "and where the serial was: {}", r.what);
+    assert!(store.cash_locker(1).unwrap().is_empty(), "and nothing was placed");
 
     // onSale = 0: "sold out", whatever the balance is.
     store.add_maple_points(1, 50_000).unwrap();
@@ -5045,13 +5080,65 @@ fn a_buy_is_priced_against_the_real_sale_row_and_still_takes_nothing() {
     assert_eq!(r.body[1], net::cashshop::reason::SOLD_OUT);
     assert!(r.what.contains("NO commodity serial"), "{}", r.what);
 
-    // Affordable, and STILL refused - with nothing taken.
+    // **Affordable: the item arrives and the price comes out.**
+    let out = s.handle(&buy_body(130200000));
+    let grant = out
+        .iter()
+        .find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT)
+        .expect("a result comes back");
+    assert_eq!(grant.body[0], net::cashshop::RESULT_ITEM_GRANTED, "0x19, not a refusal");
+    assert_ne!(grant.body[1], 0, "bRelease - a zero would leave the shop blocked");
+
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 49_900, "100 LP came out");
+    let placed = store
+        .inventory_slot(id, store::InventoryType::Cash, 1)
+        .unwrap()
+        .expect("and the item is in the Cash tab");
+    assert_eq!(placed.item_id, 5070000);
+
+    // **The wallet goes SECOND.** Before the 0x19 it would re-trigger the purchase, because
+    // the 0x05AD arm calls the buy builder back while [stage+0x120] is still 1.
+    let grant_at = out.iter().position(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).unwrap();
+    let wallet_at = out
+        .iter()
+        .position(|r| r.opcode == net::cashshop::CASH_SHOP_WALLET)
+        .expect("the debited balance follows");
+    assert!(wallet_at > grant_at, "0x05AD must come AFTER 0x19, never before");
+    assert_eq!(
+        u32::from_le_bytes(out[wallet_at].body[4..8].try_into().unwrap()),
+        49_900,
+        "and it carries the DEBITED balance, not the old one"
+    );
+}
+
+/// **A purchase that the bag will not take is refunded, not swallowed.**
+#[test]
+fn a_purchase_the_bag_refuses_is_refunded() {
+    let (mut s, store, id) = cash_shop_session();
+    store.add_maple_points(1, 50_000).unwrap();
+    // Fill the Cash tab completely. `set_inventory_slots` CLAMPS to the client's minimum, so
+    // asking for one slot does not give one slot - read the real capacity back and fill that
+    // many, with distinct ids so nothing stacks. The first version of this test asked for a
+    // one-slot tab, got the minimum, and the purchase succeeded into the room left over.
+    store.set_inventory_slots(id, store::InventoryType::Cash, 1).unwrap();
+    let capacity = store.inventory_slots(id, store::InventoryType::Cash).unwrap();
+    for n in 0..capacity {
+        store
+            .add_item(
+                id,
+                store::InventoryType::Cash,
+                &store::Item::bundle(5_072_000 + u32::from(n), 1),
+                1,
+            )
+            .unwrap();
+    }
+
+    let before = store.cash_wallet(1).unwrap().maple_points;
     let out = s.handle(&buy_body(130200000));
     let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
-    assert_eq!(r.body[1], net::cashshop::reason::UNKNOWN_ERROR);
-    assert!(r.what.contains("AFFORDABLE, AND STILL REFUSED"), "{}", r.what);
-    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 50_000, "NOT ONE LP was taken");
-    assert!(store.cash_locker(1).unwrap().is_empty(), "and nothing was placed");
+    assert_eq!(r.body[0], net::cashshop::RESULT_CANCEL_AND_STAY, "a refusal, not a grant");
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, before, "REFUNDED in full");
+    assert!(r.what.contains("Refunded"), "and it says so: {}", r.what);
 }
 
 /// **`!nx`, `!buy`, `!locker` is the whole transaction**, and each step moves the number it is
@@ -5112,6 +5199,49 @@ fn the_gm_path_buys_debits_and_hands_the_item_over() {
     let out = s.handle(&gm_chat("!locker 1"));
     assert!(notice_text(&out[0]).contains("nothing moved"), "{}", notice_text(&out[0]));
     assert_eq!(store.cash_locker(1).unwrap().len(), 1);
+}
+
+/// **A pet is refused rather than handed over, and it goes back in the locker.**
+///
+/// The owner's `!locker 1` moved a Brown Puppy (`5000001`) into the Cash tab on 2026-08-26 and the
+/// client died 3.4 seconds later: the factory believes the wire's type byte and allocated a
+/// 126-byte bundle, while the tooltip re-derives the class from the ITEM ID, decided it was a
+/// pet, and read its checksum four bytes past the end of that allocation.
+///
+/// Both halves are asserted. A test that only checked the refusal would pass while the item
+/// quietly vanished - and vanishing is worse than the crash, because it is silent.
+#[test]
+fn a_pet_is_refused_and_stays_in_the_locker() {
+    let (mut s, store, id) = cash_shop_session();
+    store.add_maple_points(1, 1_000).unwrap();
+    // 92000000 sells item 5000054 - a pet, and one of the four pet rows in the real data.
+    store.buy_cash_item(1, &store::Item::bundle(5_000_054, 1), 0).unwrap();
+    assert_eq!(store.cash_locker(1).unwrap().len(), 1);
+
+    let out = s.handle(&gm_chat("!locker 1"));
+    let text = notice_text(&out[0]);
+    assert!(text.contains("PET"), "{text}");
+    assert!(text.contains("back in the locker"), "{text}");
+    assert_eq!(store.cash_locker(1).unwrap().len(), 1, "AND IT IS STILL THERE");
+    assert!(
+        store.inventory_slot(id, store::InventoryType::Cash, 1).unwrap().is_none(),
+        "and nothing reached the bag"
+    );
+    // No 0x0070 went out either - that is the packet that kills the client.
+    assert!(
+        !out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
+        "no inventory add may be sent for a pet"
+    );
+
+    // The same guard on the other way in.
+    let out = s.handle(&gm_chat("!item 5000001"));
+    assert!(notice_text(&out[0]).contains("PET"), "{}", notice_text(&out[0]));
+
+    // And a NON-pet cash item still works, or the guard is too wide.
+    store.buy_cash_item(1, &store::Item::bundle(5_070_000, 1), 0).unwrap();
+    let slot = store.cash_locker(1).unwrap().iter().map(|l| l.slot).max().unwrap();
+    let out = s.handle(&gm_chat(&format!("!locker {slot}")));
+    assert!(notice_text(&out[0]).contains("Took locker slot"), "{}", notice_text(&out[0]));
 }
 
 /// `!locker` with no argument lists what is in it, and says so plainly when it is empty.

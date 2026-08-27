@@ -102,6 +102,10 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x01A3 => "SET_CASH_SHOP (FILETIME, the character record, u8 u8 u8, u16 u16 u32 list counts)",
         0x05AD => "CASH_SHOP_WALLET (u32 nxCredit, u32 maplePoint, u32 discarded) - the ONLY packet carrying a balance",
         0x03E0 => "CLIENT_CASH_SHOP_QUERY (empty; the client throttles it to 60s)",
+        // The buy layout is MEASURED - three captures, 2026-08-26, serial at payload offset 7.
+        // The rest of the sub-ops are one queue of 32-byte records; see research/cash-shop-actions.md.
+        0x03E1 => "CLIENT_CASH_SHOP_ACTION (u8 sub-op: 0x02/0x1F buy = u8,u32,u8,u8,u32 SN,u32; 0x03 gift; 0x0A/0x0B/0x1C the QUEUED move and delete; 0x2B the ONE that does not latch, so it is deliberately unanswered)",
+        0x05AE => "CASH_SHOP_RESULT (u8 sub-op; 0x1A + u8 reason refuses a BUY and empties the queue, 0x3D + u16 reason refuses a QUEUED op without emptying it, 0x05/0x07 EJECT the player)",
         0x007E => "TEMPORARY_STAT_RESET (u8,u8,u8, raw[124] mask, tail)",
         0x0572 => "STORAGE_RESULT (u8 mode: 24 open, 13 put ok, 15 refresh, 10/11/16/17 refusals)",
         0x01BE => "CLIENT_LOG_OUT (empty body; POISONS SetField until 0x0106 answers it)",

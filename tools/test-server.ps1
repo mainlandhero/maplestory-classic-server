@@ -60,128 +60,81 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - ONE PURCHASE. THE SHOP ITSELF IS NOW CONFIRMED.
-    -----------------------------------------------------------------------
-    The 2026-08-25 run settled the whole of the entry path in one launch. 0x01A3 was DERIVED,
-    from three discriminators, and it is now READ: the hook log has exactly one
-    "0x14209ad60 ENTERED while dispatching opcode 0x01A3" and the window drew. The stage's own
-    OnPacket took both wallets (rdx=0x5ad twice), both balance fields read back correctly,
-    the 0x03E0 poll fired twice in 103 seconds - so 0x05AD really does clear its latch - and
-    an empty 0x00D1 brought the field back with its NPCs. NONE OF THAT NEEDS RE-TESTING.
+    THE POINT OF THIS RUN - THE PURCHASE NOW COMPLETES. DOES IT?
+    ------------------------------------------------------------
+    Last run captured the client's first-ever BUY request and settled its layout: the
+    commodity serial sits at payload offset 7, confirmed three times, each resolving to the
+    item you said you had clicked. The refusal worked exactly as designed - three clicks,
+    three messages, no ejection, the shop stayed usable and Exit was fine.
 
-    What is left is the one thing that has never happened: a PURCHASE. Last run produced
-    ZERO 0x03E1 packets, because every price is in LP and LP was 0, so the client refused
-    before sending. Step 0 is the fix and step 1c is the measurement.
+    Since then the thing that was blocking a real purchase turned out to be a MISTAKE OF MINE.
+    I told you no packet could report success without an error message on screen. That was
+    true of the six 0x05AE arms whose bodies sit inline in the dispatcher, and FALSE for the
+    two that delegate to sub-functions. 0x05AE sub-op 0x19 is silent, hands the item over and
+    releases both of the shop's latches. So this run has a purchase in it.
 
-    THE ORDER CHANGED, AND HERE IS THE COST. The map test used to be first, so that a death
-    could not be blamed on a long session. It is now second, because the cash shop is the
-    whole active build and a death in step 1 would otherwise cost both. Step 2 still lands at
-    about two minutes of client life, and the heap family damages about one pool slot per 250
-    seconds, so it is still early enough to discriminate - just less cleanly than at 40 s.
+    AND THE CLIENT EXIT IS EXPLAINED. It was the Brown Puppy. 5000001 is a PET, and this
+    client classifies items TWICE - the factory believes the type byte on the wire, the
+    tooltip re-derives the class from the ITEM ID. We sent a pet as a bundle, so the factory
+    built a 126-byte bundle and the pet tooltip then read its checksum four bytes past the end
+    of that allocation and threw. Pets are now REFUSED everywhere rather than sent, so you
+    cannot hit it by accident - and !locker puts the pet back rather than losing it.
 
-    IF THE CLIENT DIES AT ANY POINT, THAT IS A RESULT. Say WHEN and WHAT YOU HAD JUST DONE,
-    then relaunch and carry on from the next step. Logs are archived into previous-runs/, not
-    deleted, so nothing from the first half is lost.
+     0. TYPE  !lp  WITH NO ARGUMENT AND READ THE NUMBER BACK. You had 98,900 after last run's
+        purchase. Top up only under a thousand. WRITE IT DOWN; step 1a checks the shop
+        against it.
 
-     0. TYPE  !lp  WITH NO ARGUMENT, AND READ THE NUMBER IT GIVES YOU BACK.
-        **You almost certainly do not need to grant any.** The wallet is per ACCOUNT and it
-        lives in the database, so it survives a client restart: the 2026-08-26 run left
-        **99,000 Leaf Points and 10,000 NX** on account 1 and they are still there. Top up
-        only if `!lp` reports under a thousand; the dearest thing in the shop is 1000 LP.
-        **!lp, NOT !nx.** The 2026-08-25 run settled why: the shop shows TWO balances,
-        !nx 10000 correctly filled the one labelled NX, and every price tag reads LP. With
-        LP at 0 the client REFUSED THE PURCHASE ITSELF and sent no 0x03E1 at all - zero of
-        them in a 103-second visit. So NX is real, displayed, and buys nothing.
-        WRITE THE NUMBER DOWN. Step 1a checks the shop against it.
-        THE ORDER MATTERS. The balance rides in on the entry packet, and the client's own
-        request for it is throttled to once every 60 s, so a grant made after the shop is
-        already open will not show until the shop is next opened. 10000 is deliberately not a
-        round screenful - it is distinctive enough to recognise if it lands in the wrong field.
+     1. THE CASH SHOP. Entry, the wallet, the poll, Exit and the REFUSAL are all confirmed.
+        Do not re-test them. The new thing is a purchase that goes through.
 
-     1. THE CASH SHOP. Entry, the wallet, the poll and Exit are all CONFIRMED as of
-        2026-08-25 - the window drew, 0x01A3 reached its handler, both balance fields read
-        back correctly and Exit returned to the field. DO NOT RE-TEST THOSE. The one thing
-        that has never happened is a purchase.
+        a) CLICK CASH SHOP. The Leaf Points corner must read the same number step 0 gave you.
 
-        a) CLICK CASH SHOP. **The Leaf Points corner must read the SAME number step 0 just
-           told you** - 99,000 unless you topped up. That is the check, not a fixed value:
-           it compares two independent readings of one number, the server's own database
-           through the chat line and the client's UI through 0x05AD.
-             they match      -> good, carry on
-             they disagree   -> say BOTH numbers. The database and the packet have diverged,
-                                which is a different bug from either one being wrong
-             LP reads 0      -> the balance is not reaching the field it is displayed in
+        b) BUY THE  MYSTERY HAIR COUPON  - Main tab, 100 LP, SN 150000000, item 5150000.
+           **NOT Brown Puppy and NOT Red Hat.** Brown Puppy is the pet that killed the client
+           and is refused now; Red Hat is 1802002, which is PET EQUIPMENT, so its tab is a
+           prediction rather than a known. The coupon is an ordinary cash bundle whose item
+           body has been on this wire for months.
+           THREE THINGS SHOULD HAPPEN AT ONCE, and each is worth reporting separately:
+             the coupon appears in the CASH tab of your inventory
+             the Leaf Points corner drops by exactly 100
+             NO error message
+           Outcomes:
+             all three            -> the purchase is closed, end to end. This is the goal
+             item but no message, and the balance does NOT move
+                                  -> the 0x05AD went out and was ignored, or it went first
+             message appears      -> we sent a refusal, not a grant. Say the exact wording
+             THE SHOP GOES DEAD - the buy button stops responding
+                                  -> bRelease or [stage+0x120] is not being cleared. This is
+                                     the specific failure 0x19 is supposed to prevent
+             THE CLIENT DIES      -> say so immediately, and DO NOT BUY ANYTHING ELSE
+             it buys TWICE, or the balance drops by 200
+                                  -> the wallet packet re-triggered the buy, which means the
+                                     order of the two replies is wrong
 
-        b) CLICK BUY ON ONE NAMED ITEM, AND SAY WHICH ONE YOU CLICKED.
-           TWO THINGS HAPPEN HERE THAT HAVE NEVER HAPPENED BEFORE: the client sends its first
-           0x03E1, and the server sends its first 0x05AE. Either could misbehave, so read the
-           outcomes below rather than assuming a failure means the SN decode was wrong.
-           The Main tab is all 100 LP; Brown Puppy, Red Hat and Water of Life are easy to
-           recognise. NAMING IT IS THE WHOLE POINT: it turns the log line into a check against
-           a known answer instead of an unverifiable number. Brown Puppy is SN 160000000, Red
-           Hat is 160100000, Water of Life is 160300001.
+        c) BUY IT AGAIN, TWICE. The balance should go 100 lower each time and you should end
+           up with three coupons (or one stack of three). Anything that buys once and then
+           stops is the latch.
 
-           EXPECT AN ERROR MESSAGE AND NO PURCHASE. That is not a failure, it is the
-           measurement. No 0x03E1 has ever been captured, so the server does not know which
-           field of the payload carries the serial; it reads a u32 at EVERY offset, checks
-           each against the client's own sale list, and writes the answer to world.log.
+        d) BUY THE  WATER OF LIFE  - SN 160300001, item 5180000, also 100 LP. A different
+           item id through the same path; if the coupon works and this does not, the
+           difference is the item, not the mechanism.
 
-           READ THE EXACT WORDING BACK. Three different messages mean three different things
-           and you can tell them apart without opening a log:
-             "Due to an unknown error, the Cash Shop request has failed."
-                  -> BEST CASE. The serial was found, the row was priced, and the wallet
-                     could afford it. The entire chain worked
-             "You don't have enough cash."
-                  -> the serial was found but the server thinks the LP balance is empty.
-                     Step 0 was skipped, or !nx was typed instead of !lp
-             "You cannot buy this item because it is sold out."
-                  -> no serial was found anywhere in the payload. The buy body is not shaped
-                     the way its builder reads, and world.log now lists every candidate
-             ANY OTHER WORDING -> write it down exactly. It is not one of ours
+        e) CLICK EXIT, THEN CLICK CASH SHOP AGAIN. Re-entry, which has never been tested.
 
-           And watch what happens to the WINDOW:
-             the shop stays usable -> the refusal sub-op 0x1A is right
-             YOU ARE EJECTED       -> it is behaving like 0x05, which ejects. Say so
-             the shop FREEZES      -> the click sent a sub-op we do not answer
+     2. TYPE  !map 10001050 . Ten seconds, still the oldest open question, still untested.
 
-        c) CLICK BUY TWICE MORE, on the same item. All three must behave identically.
-             click 2 or 3 does nothing -> the in-flight latch [stage+0x74] is not being
-                                          cleared, or [stage+0x120] is re-arming the purchase
-
-        d) CLICK EXIT, THEN CLICK CASH SHOP A SECOND TIME. Exit itself is confirmed, so this
-           is about the RE-ENTRY: nothing on the 0x01A3 path writes [ctx+0x31fc], and that is
-           one of the six gates the button itself checks.
-             it opens again -> the whole loop is closed
-             "You cannot go into the cash shop. Please try again later." -> that gate, and
-                               the hook log's +0x2330 peek says whether the latch is also stuck
-
-     2. TYPE  !map 10001050 . Ten seconds, and the oldest open question.
-        It crashed the client on 2026-08-22, 328 ms into the map load, with an ACCESS
-        VIOLATION reading [0 + 0x3530] - a null pointer, and a DIFFERENT fault from the heap
-        dumps.
-          it dies again -> the map really is fatal. Relaunch and carry on at step 3
-          it loads      -> it was the session, not the map
-        Then either way try  !map 10001000 , Henesys town, also never loaded.
-
-     3. THE TRANSACTION THAT WORKS TODAY - from the field, no shop window needed:
-             !buy 160000000        Brown Puppy, 100 NX. A SALE SERIAL, not an item id
-             !locker               lists what you bought
-             !locker 1             moves it into the Cash tab
-        Every one of those prints what it did. Expect the Cash tab to end up holding a Brown
-        Puppy and the LP balance to be exactly 100 lower - and buying the SAME item here
-        that you clicked there is worth more than buying a different one, because the two
-        paths then differ in exactly one thing.
-          it works             -> the store half of a purchase is closed end to end
-          an item goes missing -> say which line was the last one you saw
+     3. FROM THE FIELD:  !buy 150000000  then  !locker  then  !locker 1 .
+        Same coupon, other path. Expect the LP balance 100 lower and the coupon in the Cash
+        tab. Then try  !locker  after  !buy 160000000  - the Brown Puppy - and expect a
+        REFUSAL naming it as a pet, with the puppy still listed in the locker afterwards.
 
      IGNORE THE 0x0453 NOISE. While you stand in the cash shop the server keeps sending NPC
-     idle chatter for the field you left - 38 of them last run. The shop stage ignores it and
-     nothing breaks; it is on the list to stop sending. It is not a symptom of anything.
+     idle chatter for the field you left - about 40 a visit. The shop stage ignores it and
+     nothing breaks; it is on the list to stop sending. It is not a symptom.
 
      4. ORGANIZE ITEM, WHICH HAS NEVER BEEN SEEN WORKING. Put three or four things in
         storage, take one out from the middle to leave a hole, then hit Organize.
           the gap closes and the items group by tab -> done
-          nothing moves -> the database sorted and the client is not redrawing from mode 15
           items VANISH  -> stop and say so immediately
         HIT IT THREE TIMES. Clicks two and three must change nothing.
 
@@ -939,8 +892,8 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  Steps 0 and 1 are the run. !nx BEFORE the button - the order' -ForegroundColor Yellow
-    Write-Host '  is the experiment.' -ForegroundColor Yellow
+    Write-Host '  Step 1b is the run: BUY THE MYSTERY HAIR COUPON and say whether' -ForegroundColor Yellow
+    Write-Host '  all three things happened. NOT the puppy - it is a pet.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -992,79 +945,54 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  ONE PURCHASE. THE SHOP ITSELF IS NOW CONFIRMED.' -ForegroundColor Yellow
-    Write-Host '  Last run settled the whole entry path: 0x01A3 was DERIVED and is'
-    Write-Host '  now READ (one hook line, and the window drew), both balance fields'
-    Write-Host '  read back, the poll fired twice in 103s, and Exit brought the field'
-    Write-Host '  back with its NPCs. NONE of that needs re-testing. What has never'
-    Write-Host '  happened is a PURCHASE: last run sent ZERO 0x03E1, because every'
-    Write-Host '  price is in LP and LP was 0, so the client refused before sending.'
+    Write-Host '  THE PURCHASE NOW COMPLETES. DOES IT?' -ForegroundColor Yellow
+    Write-Host '  Last run captured the first-ever BUY request and settled its layout.'
+    Write-Host '  What was blocking a real purchase was a MISTAKE OF MINE: I said no'
+    Write-Host '  packet could report success silently. True of the six inline 0x05AE'
+    Write-Host '  arms, FALSE for the two that delegate. 0x19 is silent, hands the item'
+    Write-Host '  over and releases both latches.'
     Write-Host ''
-    Write-Host '  IF THE CLIENT DIES, THAT IS A RESULT. Say WHEN and WHAT YOU HAD'
-    Write-Host '  JUST DONE, then relaunch and carry on from the next step. Logs are'
-    Write-Host '  archived into previous-runs/, so the first half is never lost.'
+    Write-Host '  AND THE CLIENT EXIT IS EXPLAINED: the Brown Puppy. 5000001 is a PET,' -ForegroundColor DarkGray
+    Write-Host '  and this client classifies items TWICE - the factory trusts the wire'  -ForegroundColor DarkGray
+    Write-Host '  type byte, the tooltip re-derives it from the ITEM ID. A pet sent as'  -ForegroundColor DarkGray
+    Write-Host '  a bundle reads its checksum past the end of the allocation and throws.' -ForegroundColor DarkGray
+    Write-Host '  Pets are REFUSED everywhere now, so you cannot hit it by accident.'     -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '  0. TYPE  !lp  WITH NO ARGUMENT AND READ THE NUMBER BACK.' -ForegroundColor Cyan
-    Write-Host '     You probably do NOT need to grant any. The wallet is per account'
-    Write-Host '     and lives in the DB, so it survives a restart: 99,000 LP and'
-    Write-Host '     10,000 NX are still on account 1 from the 08-26 run. Top up only'
-    Write-Host '     if it reports under a thousand - the dearest item is 1000 LP.'
-    Write-Host '     !lp, NOT !nx: every price tag reads LP, and with LP at 0 the'
-    Write-Host '     client refuses the purchase ITSELF and sends no 0x03E1 at all.'
-    Write-Host '     WRITE THE NUMBER DOWN - step 1a checks the shop against it.'
+    Write-Host '     You had 98,900 after last run. Top up only under a thousand.'
+    Write-Host '     WRITE IT DOWN - step 1a checks the shop against it.'
     Write-Host ''
-    Write-Host '  1. THE CASH SHOP. Entry, wallet, poll and Exit are CONFIRMED.' -ForegroundColor Cyan
-    Write-Host '     Do NOT re-test those. The one thing that has never happened is'
-    Write-Host '     a PURCHASE.'
-    Write-Host '     a) CLICK IT. The Leaf Points corner must read the SAME number'
-    Write-Host '        step 0 gave you - two readings of one value, the DB through'
-    Write-Host '        chat and the client UI through 0x05AD.'
-    Write-Host '          they match    -> carry on'
-    Write-Host '          they disagree -> say BOTH numbers'
-    Write-Host '          LP reads 0    -> not reaching the field it is displayed in'
-    Write-Host '     b) TWO FIRSTS HERE: the client sends its first 0x03E1 and the'
-    Write-Host '        server sends its first 0x05AE. Either could misbehave.'
-    Write-Host '        CLICK BUY ON ONE NAMED ITEM AND SAY WHICH. Main tab is all'
-    Write-Host '        100 LP: Brown Puppy 160000000, Red Hat 160100000, Water of'
-    Write-Host '        Life 160300001. NAMING IT turns the log into a check against a'
-    Write-Host '        known answer. EXPECT AN ERROR AND NO PURCHASE - that IS the'
-    Write-Host '        measurement. READ THE EXACT WORDING BACK:'
-    Write-Host '          "...unknown error..."      -> BEST CASE. Serial found, row'
-    Write-Host '                                        priced, wallet could afford it'
-    Write-Host '          "...not enough cash."      -> serial found, LP empty. !nx'
-    Write-Host '                                        was typed instead of !lp'
-    Write-Host '          "...it is sold out."       -> NO serial found in the payload'
-    Write-Host '          anything else              -> write it down exactly'
-    Write-Host '        And the window: stays usable -> sub-op 0x1A is right;'
-    Write-Host '        EJECTED -> it behaved like 0x05; FREEZES -> unanswered sub-op.'
-    Write-Host '     c) CLICK BUY TWICE MORE, same item. All three must match.'
-    Write-Host '     d) CLICK EXIT, THEN CLICK CASH SHOP AGAIN. Exit is confirmed;'
-    Write-Host '        this is about RE-ENTRY. Nothing writes [ctx+0x31fc] on that'
-    Write-Host '        path - "You cannot go into the cash shop" is what >1 looks like.'
+    Write-Host '  1. THE CASH SHOP. Entry, wallet, poll, Exit and the REFUSAL are' -ForegroundColor Cyan
+    Write-Host '     confirmed. Do not re-test. The new thing is a purchase.'
+    Write-Host '     a) CLICK IT. The LP corner must match step 0.'
+    Write-Host '     b) BUY THE MYSTERY HAIR COUPON - Main tab, 100 LP, SN 150000000.'
+    Write-Host '        NOT Brown Puppy (the pet that killed it) and NOT Red Hat'
+    Write-Host '        (1802002 is PET EQUIPMENT, so its tab is a prediction).'
+    Write-Host '        THREE THINGS AT ONCE, report each:'
+    Write-Host '          the coupon appears in the CASH tab'
+    Write-Host '          the LP corner drops by exactly 100'
+    Write-Host '          NO error message'
+    Write-Host '        all three         -> the purchase is CLOSED, end to end'
+    Write-Host '        item, no drop     -> the wallet was ignored or sent first'
+    Write-Host '        a message         -> we sent a refusal. Say the wording'
+    Write-Host '        THE SHOP GOES DEAD-> bRelease/[0x120] not cleared'
+    Write-Host '        THE CLIENT DIES   -> say so, and buy nothing else'
+    Write-Host '        buys TWICE / -200 -> the two replies are in the wrong order'
+    Write-Host '     c) BUY IT TWICE MORE. 100 lower each time, three coupons.'
+    Write-Host '     d) BUY WATER OF LIFE, SN 160300001. A different id, same path.'
+    Write-Host '     e) CLICK EXIT, THEN CASH SHOP AGAIN. Re-entry, never tested.'
     Write-Host ''
     Write-Host '  2. TYPE  !map 10001050 . Ten seconds, oldest open question.' -ForegroundColor Cyan
-    Write-Host '     It crashed the client 328ms into the map load with an ACCESS'
-    Write-Host '     VIOLATION reading [0 + 0x3530] - a NULL pointer.'
-    Write-Host '       it dies again -> the map really is fatal. Relaunch, go to 3'
-    Write-Host '       it loads      -> it was the session, not the map'
-    Write-Host '     Then try  !map 10001000 , Henesys town, also never loaded.'
     Write-Host ''
-    Write-Host '  3. THE TRANSACTION THAT WORKS TODAY, from the field:' -ForegroundColor Cyan
-    Write-Host '       !buy 160000000  /  !locker  /  !locker 1   (no !lp needed)'
-    Write-Host '     160000000 is a SALE SERIAL, not an item id - and it is the same'
-    Write-Host '     Brown Puppy as step 1b, so the two paths differ in one thing.'
-    Write-Host '     Expect it in the Cash tab and the LP balance 100 LOWER.'
+    Write-Host '  3. FROM THE FIELD: !buy 150000000 / !locker / !locker 1' -ForegroundColor Cyan
+    Write-Host '     Then !buy 160000000 and !locker - expect a REFUSAL naming the'
+    Write-Host '     puppy as a pet, with it STILL in the locker afterwards.'
     Write-Host ''
-    Write-Host '  IGNORE THE 0x0453 NOISE: the server keeps sending NPC chatter' -ForegroundColor DarkGray
-    Write-Host '  for the field you left while you stand in the shop. 38 last run.' -ForegroundColor DarkGray
-    Write-Host '  The stage ignores it. On the list to stop; not a symptom.' -ForegroundColor DarkGray
+    Write-Host '  IGNORE THE 0x0453 NOISE: NPC chatter follows you into the shop,' -ForegroundColor DarkGray
+    Write-Host '  about 40 a visit. Harmless, on the list to stop. Not a symptom.'  -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  4. ORGANIZE ITEM, never yet seen working.' -ForegroundColor Cyan
-    Write-Host '     Put a few things in storage, take one from the middle to leave'
-    Write-Host '     a hole, then hit Organize. It repacks to 1..n, grouped by tab.'
-    Write-Host '       nothing moves -> the DB sorted, the client is not redrawing'
-    Write-Host '       items VANISH  -> stop and say so'
-    Write-Host '     HIT IT THREE TIMES - clicks 2 and 3 must change nothing.'
+    Write-Host '  4. ORGANIZE ITEM, never yet seen working. Hit it THREE times;' -ForegroundColor Cyan
+    Write-Host '     clicks 2 and 3 must change nothing. Items VANISH -> say so.'
     Write-Host ''
     Write-Host '  OPTIONAL: -HeapFix (off by default, NOT on the same run as step 2)' -ForegroundColor DarkGray
     Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
