@@ -83,11 +83,16 @@
     then relaunch and carry on from the next step. Logs are archived into previous-runs/, not
     deleted, so nothing from the first half is lost.
 
-     0. TYPE  !lp 10000  BEFORE YOU TOUCH THE CASH SHOP BUTTON.
-        **!lp, NOT !nx.** The 2026-08-25 run settled this: the shop shows TWO balances,
+     0. TYPE  !lp  WITH NO ARGUMENT, AND READ THE NUMBER IT GIVES YOU BACK.
+        **You almost certainly do not need to grant any.** The wallet is per ACCOUNT and it
+        lives in the database, so it survives a client restart: the 2026-08-26 run left
+        **99,000 Leaf Points and 10,000 NX** on account 1 and they are still there. Top up
+        only if `!lp` reports under a thousand; the dearest thing in the shop is 1000 LP.
+        **!lp, NOT !nx.** The 2026-08-25 run settled why: the shop shows TWO balances,
         !nx 10000 correctly filled the one labelled NX, and every price tag reads LP. With
         LP at 0 the client REFUSED THE PURCHASE ITSELF and sent no 0x03E1 at all - zero of
         them in a 103-second visit. So NX is real, displayed, and buys nothing.
+        WRITE THE NUMBER DOWN. Step 1a checks the shop against it.
         THE ORDER MATTERS. The balance rides in on the entry packet, and the client's own
         request for it is throttled to once every 60 s, so a grant made after the shop is
         already open will not show until the shop is next opened. 10000 is deliberately not a
@@ -98,10 +103,14 @@
         back correctly and Exit returned to the field. DO NOT RE-TEST THOSE. The one thing
         that has never happened is a purchase.
 
-        a) CLICK CASH SHOP and check the balance corner reads 10,000 LEAF POINTS this time,
-           with NX whatever you left it at.
-             LP 10000 -> good, carry on
-             LP 0     -> !lp did not land. Say what the chat line said
+        a) CLICK CASH SHOP. **The Leaf Points corner must read the SAME number step 0 just
+           told you** - 99,000 unless you topped up. That is the check, not a fixed value:
+           it compares two independent readings of one number, the server's own database
+           through the chat line and the client's UI through 0x05AD.
+             they match      -> good, carry on
+             they disagree   -> say BOTH numbers. The database and the packet have diverged,
+                                which is a different bug from either one being wrong
+             LP reads 0      -> the balance is not reaching the field it is displayed in
 
         b) CLICK BUY ON ONE NAMED ITEM, AND SAY WHICH ONE YOU CLICKED.
            TWO THINGS HAPPEN HERE THAT HAVE NEVER HAPPENED BEFORE: the client sends its first
@@ -155,12 +164,11 @@
         Then either way try  !map 10001000 , Henesys town, also never loaded.
 
      3. THE TRANSACTION THAT WORKS TODAY - from the field, no shop window needed:
-             !lp 1000
              !buy 160000000        Brown Puppy, 100 NX. A SALE SERIAL, not an item id
              !locker               lists what you bought
              !locker 1             moves it into the Cash tab
         Every one of those prints what it did. Expect the Cash tab to end up holding a Brown
-        Puppy and the balance to read 900 - and if you did step 1c, buying the SAME item here
+        Puppy and the LP balance to be exactly 100 lower - and buying the SAME item here
         that you clicked there is worth more than buying a different one, because the two
         paths then differ in exactly one thing.
           it works             -> the store half of a purchase is closed end to end
@@ -996,19 +1004,24 @@ if ($SetFieldProbe) {
     Write-Host '  JUST DONE, then relaunch and carry on from the next step. Logs are'
     Write-Host '  archived into previous-runs/, so the first half is never lost.'
     Write-Host ''
-    Write-Host '  0. TYPE  !lp 10000  BEFORE TOUCHING THE CASH SHOP BUTTON.' -ForegroundColor Cyan
-    Write-Host '     !lp, NOT !nx. The shop shows TWO balances. !nx correctly fills'
-    Write-Host '     the one labelled NX - and every price tag reads LP. With LP at 0'
-    Write-Host '     the client REFUSED THE PURCHASE ITSELF and sent no 0x03E1 at all.'
-    Write-Host '     ORDER MATTERS: the balance rides in on the entry packet and the'
-    Write-Host '     client only re-asks once a minute.'
+    Write-Host '  0. TYPE  !lp  WITH NO ARGUMENT AND READ THE NUMBER BACK.' -ForegroundColor Cyan
+    Write-Host '     You probably do NOT need to grant any. The wallet is per account'
+    Write-Host '     and lives in the DB, so it survives a restart: 99,000 LP and'
+    Write-Host '     10,000 NX are still on account 1 from the 08-26 run. Top up only'
+    Write-Host '     if it reports under a thousand - the dearest item is 1000 LP.'
+    Write-Host '     !lp, NOT !nx: every price tag reads LP, and with LP at 0 the'
+    Write-Host '     client refuses the purchase ITSELF and sends no 0x03E1 at all.'
+    Write-Host '     WRITE THE NUMBER DOWN - step 1a checks the shop against it.'
     Write-Host ''
     Write-Host '  1. THE CASH SHOP. Entry, wallet, poll and Exit are CONFIRMED.' -ForegroundColor Cyan
     Write-Host '     Do NOT re-test those. The one thing that has never happened is'
     Write-Host '     a PURCHASE.'
-    Write-Host '     a) CLICK IT and check the corner reads 10,000 LEAF POINTS.'
-    Write-Host '          LP 10000 -> good, carry on'
-    Write-Host '          LP 0     -> !lp did not land; say what the chat line said'
+    Write-Host '     a) CLICK IT. The Leaf Points corner must read the SAME number'
+    Write-Host '        step 0 gave you - two readings of one value, the DB through'
+    Write-Host '        chat and the client UI through 0x05AD.'
+    Write-Host '          they match    -> carry on'
+    Write-Host '          they disagree -> say BOTH numbers'
+    Write-Host '          LP reads 0    -> not reaching the field it is displayed in'
     Write-Host '     b) TWO FIRSTS HERE: the client sends its first 0x03E1 and the'
     Write-Host '        server sends its first 0x05AE. Either could misbehave.'
     Write-Host '        CLICK BUY ON ONE NAMED ITEM AND SAY WHICH. Main tab is all'
@@ -1037,10 +1050,10 @@ if ($SetFieldProbe) {
     Write-Host '     Then try  !map 10001000 , Henesys town, also never loaded.'
     Write-Host ''
     Write-Host '  3. THE TRANSACTION THAT WORKS TODAY, from the field:' -ForegroundColor Cyan
-    Write-Host '       !lp 1000  /  !buy 160000000  /  !locker  /  !locker 1'
+    Write-Host '       !buy 160000000  /  !locker  /  !locker 1   (no !lp needed)'
     Write-Host '     160000000 is a SALE SERIAL, not an item id - and it is the same'
     Write-Host '     Brown Puppy as step 1b, so the two paths differ in one thing.'
-    Write-Host '     Expect it in the Cash tab and a balance of 900.'
+    Write-Host '     Expect it in the Cash tab and the LP balance 100 LOWER.'
     Write-Host ''
     Write-Host '  IGNORE THE 0x0453 NOISE: the server keeps sending NPC chatter' -ForegroundColor DarkGray
     Write-Host '  for the field you left while you stand in the shop. 38 last run.' -ForegroundColor DarkGray
