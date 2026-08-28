@@ -515,6 +515,9 @@ pub unsafe fn install() {
     // long since unpacked .text by now - the detour above is written to the same
     // section and has never been checksummed.
     crate::heapfix::install();
+    // Same window, same reason: Themida has unpacked .text by now. Gated on
+    // `hitnumber=off` in the marker; see crates/grap-stub/src/hitnumber.rs.
+    crate::hitnumber::install();
 
     log("install: hook active");
 }

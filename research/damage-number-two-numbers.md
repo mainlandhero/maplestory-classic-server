@@ -121,7 +121,44 @@ the code path does not.
 
 ---
 
-## 3. The experiment, and it needs one mob nobody has fought
+## 3. RESULT, 2026-08-28 evening: the prediction was wrong, and the finding is firmer
+
+The experiment ran on map 20000094. **Template 1003 has attack nodes and hit with its body
+anyway** - `attack index -1`, claiming 1, twice. So section 2's prediction was not tested, and
+it was wrong for a reason I had not considered: *a mob having an attack node does not mean it
+uses one.*
+
+Enumerating every mob-to-player hit across **160 distinct archived world logs**:
+
+```text
+attack index seen:           {-1: 198}
+client-claimed damage seen:  {1: 198}
+```
+
+**198 of 198, no exceptions.** Perfect correlation - and zero variance in the thing that was
+supposed to vary. The attack path has **never once been on a wire in this project**.
+
+So the honest statement is narrower than section 2's and better supported: **for contact
+damage this client always computes 1**, by the mechanism at `14288b405`/`14288b40b` - it reads
+the damage from an attack record that a contact hit does not have. Whether an attack-skill hit
+would produce a real number is still **unobserved**, and now looks hard to observe: no mob has
+ever used one against us, which is its own open question.
+
+## 4. What was done about it, and it is a patch
+
+The client cannot compute the number, and no packet can stop it drawing the wrong one - §1.
+`crates/grap-stub/src/hitnumber.rs` therefore writes five `nop`s over `0x1428aca14`, the only
+renderer call in `FUN_1428aa0a0`, on by default and off with `-KeepClientHitNumber`. The bytes
+are verified against the image before the write and read back after, and every outcome is
+logged.
+
+Ours survives: the `0x02D1` drain is one of fifteen renderer callers with no `0x544a` gate.
+
+**This removes a wrong number rather than making a right one.** Making the client's number
+correct needs the server to supply contact damage in some packet, and which packet that is has
+not been found. That is the honest state of it.
+
+## 5. The superseded experiment, kept for the method
 
 **Fight a mob that HAS an attack node.** It discriminates in one hit and needs no new code:
 
@@ -144,7 +181,7 @@ point: **1 versus 243 is not a number anyone has to squint at.**
 
 ---
 
-## 4. The second number is ours, and that is the other half of the owner's point
+## 6. The second number is ours, and that is the other half of the owner's point
 
 On a real server there is **one** number because the server does not draw one. The client draws
 what it computed; the server sends only the consequence.

@@ -93,56 +93,43 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
 
-     1. THE 1: FIGHT A MOB WITH AN ATTACK NODE. One hit settles it, and it needs no code.
+     1. THE 1 IS PATCHED OUT. There should be ONE number now.
 
-        The owner, 2026-08-28: *"this is the official client and this behavior does not exist ...
-        something is wrong with our implementation."* Right on both counts, and it retracts
-        two things I said.
+        THE 2026-08-28 RUN SETTLED IT, AND NOT THE WAY I PREDICTED. I said a mob with an
+        attack node would produce a real number. Template 1003 HAS attack nodes and hit them
+        with its BODY - `attack index -1`, claiming 1. So the hypothesis was not tested and
+        the prediction was wrong for a reason I had not considered: a mob having an attack
+        node does not mean it uses one.
 
-        "The 1 cannot be turned off by packet" was too strong: what is measured is that ONE
-        lever failed, not that no cause exists.
+        Enumerated over 160 distinct archived world logs: **198 hits, every single one
+        `attack index -1`, every single one claiming damage 1.** Perfect correlation with
+        zero variance - the attack path has NEVER been on a wire in this project. So what is
+        established is narrower and firmer than what I claimed: **for contact damage the
+        client always computes 1**, and the mechanism is that it reads the damage from an
+        attack record it does not have (`14288b405 mov edi,[r13+0x50]` / `14288b40b mov edi,
+        r14d`).
 
-        "The client draws its own STUB" is worse, and it was inherited rather than checked.
-        Both halves of the gate on that draw are CONSTANTS. Option 0xAE is read at ELEVEN
-        sites in .text and written at NONE - byte-scanned, with the two already-known sites
-        as the positive control - so GetOption(0xAE,0) is 0 for the life of the process and
-        no packet can change it. The other half is a hardcoded 1 from
-        `mov qword [rsi+0x5448], 0x10001`. So that block is not a debug mode we switched on.
-        It is the only path this client has, and /hitdamagetest 0 would merely have sent the
-        code down the OTHER branch - which might be better, and which nobody established.
+        AND NO PACKET CAN STOP IT DRAWING THAT. Option 0xAE is read at eleven sites in .text
+        and written at none; the console command that clears the other half of the gate is
+        refused. Both halves are constants.
 
-        WHY IT SAYS 1. Four instructions before the gate:
-            14288b405  mov edi, [r13 + 0x50]   ; from the attack record
-            14288b40b  mov edi, r14d           ; ...or ZERO, when there is none
-        and `edi` goes into the struct the damage function receives. touch-damage.md 3
-        already had it: a body/touch attack has no attack node. Enumerated over all 193 mob
-        images in this client's Mob_000.wz: 65 HAVE an attack node, 128 do NOT - and every
-        mob the owner has fought is in the 128. So the 224 captures behind "mobs rated 3 to 287,
-        all 1" are 224 observations of ONE case; the ratings vary, the code path does not.
+        SO IT IS A CLIENT PATCH, and this file should say that plainly rather than dress it
+        up: five nops over 0x1428aca14, the only renderer call in FUN_1428aa0a0. The bytes
+        are checked against the image before the write and read back after, and the hook logs
+        every outcome. Ours survives - the 0x02D1 drain is one of fifteen renderer callers
+        with no 0x544a gate.
 
-        THIS TEST DID NOT ACTUALLY RUN ON 2026-08-28, and the reason was mine. I named map
-        1014 from a mis-indexed column - `gm-handbook/mobs.txt` is `map, template, x, ...`
-        and I read field 3, which is an x coordinate. 1014 really holds templates 2, 3, 5
-        and 9, every one of them attack-node-less; only 3 and 5 hit them, both `attack index
-        -1`, both claiming 1. So the run measured the same case as before.
+        It removes a wrong number rather than making it right. Making it right needs the
+        server to supply contact damage in some packet, and WHICH packet has not been found.
 
-          !map 20000094   Orbis Tower 12th Floor. 24 spawns of template 1003, level 30,
-          PADamage 149, and it is the ONLY mob on the map - so whatever hits you has an
-          attack node. Alternative: !map 20000050 Cloud Park I, 35x template 1019, pad 154,
-          also a single-mob map. Let it hit you ONCE, then !heal.
-
-            a real number near 149 -> the missing attack record is the cause. Body-attack
-                       damage is what the server owes the client and we can act on it
-            still 1                -> the attack record is not the variable and my reading is
-                       wrong. That is a real result, not a failed test
-            no number from us      -> say so; ours is a separate packet
-
-        AND THE SECOND NUMBER IS OURS. On a real server there is one number because the
-        server does not draw one. Ours is the CORRECT one - it runs the real formula over the
-        mob's PADamage and the player's defence. Removing it is one line and would leave
-        exactly the official behaviour, but not before this test: deleting the right number to
-        match a wrong one is the wrong order to do it in.
-        research/damage-number-two-numbers.md.
+          Fight anything.
+            ONE number matching the HP drop -> done
+            ONE number and it is the 1      -> the patch took and OURS vanished instead
+            NO numbers                      -> both went
+            still TWO                       -> the patch did not take; grep HITNUMBER in
+                                               client-patched\maplecw-hook.log
+          -KeepClientHitNumber restores the old behaviour.
+          research/damage-number-two-numbers.md.
 
      2. WARRIOR - FIRST OF THE FOUR BRANCHES, after step 7. Do step 3 in the MIDDLE of it.
         It is the only branch whose weapon is FREE (Sword 1302000: reqLevel 0, no stat, no
@@ -376,6 +363,16 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
       mode=2            leave the client's mode-5 auto-login so the button gets a turn.
       create=on         set the protected flag that gates "Create a character", re-armed on
                         every login result because the handshake zeroes it.
+      hitnumber=off     ON BY DEFAULT. Five nops over 0x1428aca14, the only renderer call in
+                        FUN_1428aa0a0, so the client stops drawing its own hit number. It
+                        computes 1 for ALL contact damage - 198 captures across 160 logs, every
+                        one attack index -1, every one claiming 1 - because a contact hit has no
+                        attack record for it to read the damage from. No packet can turn the
+                        draw off: option 0xAE is read at 11 sites and written at none, and the
+                        console command that clears the other half is refused. OURS is untouched,
+                        so one number should remain and it should be the right one.
+                        -KeepClientHitNumber to see both again.
+                        research/damage-number-two-numbers.md.
       heapfix=on        ONLY with -HeapFix, off by default, and TRIED AND FOUND USELESS on
                         2026-08-28. The three bytes at 14019b504 still do exactly what they
                         say; the TARGET was wrong. A second pooled free at 14019bb50 has the
@@ -506,6 +503,10 @@ param(
     # 0xC0000374 with this on, research/heap-wild-write.md is wrong somewhere - which is
     # exactly what makes it worth running.
     [switch]$HeapFix,
+    # Stop the CLIENT drawing its own hit number. On by default: for contact damage the
+    # client always computes 1 - 198 captures across 160 logs, no exceptions - and no packet
+    # can turn that draw off. -KeepClientHitNumber leaves it alone.
+    [switch]$KeepClientHitNumber,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -1001,6 +1002,7 @@ New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.dumpdir') -Value $dumpDir -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Encoding ascii
 if ($HeapFix) { $Session = "$Session,heapfix=on" }
+if (-not $KeepClientHitNumber) { $Session = "$Session,hitnumber=off" }
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
@@ -1117,35 +1119,27 @@ if ($SetFieldProbe) {
     Write-Host '     !kit          the weapon and ammunition that job needs, and it'
     Write-Host '                   WARNS if you cannot equip what it just gave you.'
     Write-Host ''
-    Write-Host '  1. THE 1: FIGHT A MOB THAT HAS AN ATTACK NODE. ONE HIT SETTLES IT.' -ForegroundColor White
-    Write-Host '     You were right and I was wrong. Two numbers on the official client'
-    Write-Host '     means WE are adding one, and the "stub" story was wrong too:'
-    Write-Host '     BOTH halves of the gate on that draw are CONSTANTS. Option 0xAE is'
-    Write-Host '     read at 11 sites and WRITTEN AT NONE - no packet can set it - and'
-    Write-Host '     the other half is a hardcoded 1. So that block is not a debug mode'
-    Write-Host '     we switched on; it is the only path this client has.'
-    Write-Host '     WHY IT SAYS 1: four instructions earlier the client reads a field'
-    Write-Host '     from the mob ATTACK RECORD, or ZERO if there is no attack record.'
-    Write-Host '     128 of this client 193 mobs have no attack node - INCLUDING EVERY'
-    Write-Host '     MOB YOU HAVE EVER FOUGHT. Snails have none. So the 224 captures of'
-    Write-Host '     "always 1" are 224 observations of the same case, not a range.'
-    Write-Host '     LAST RUN THIS TEST DID NOT ACTUALLY HAPPEN. I sent you to map'
-    Write-Host '     1014 off a mis-indexed column: mobs.txt is map,template,x and I'
-    Write-Host '     read field 3, which is an x coordinate. 1014 holds templates 2,'
-    Write-Host '     3, 5 and 9 - all attack-node-less. Only 3 and 5 hit you, both'
-    Write-Host '     touch damage, both claiming 1. My error, not a failed test.'
-    Write-Host '       !map 20000094    Orbis Tower 12th Floor'
-    Write-Host '     24 spawns, template 1003, level 30, PADamage 149, and it is the'
-    Write-Host '     ONLY mob on that map - so whatever hits you HAS an attack node.'
-    Write-Host '     Alternative: !map 20000050 Cloud Park I, template 1019, pad 154.'
-    Write-Host '     Let it hit you ONCE. It hits hard; !heal after.'
-    Write-Host '       a real number near 149 -> that is the cause. Body-attack damage'
-    Write-Host '                     is what the server owes the client, and we can fix it'
-    Write-Host '       still 1               -> the attack record is not the variable and'
-    Write-Host '                     my section 2 is wrong. Say so; it is a real result'
-    Write-Host '     Ours is still the second number, and ours is the CORRECT one. It is'
-    Write-Host '     one line to remove, but not before this test - deleting the right'
-    Write-Host '     number to match a wrong one is the wrong order.'
+    Write-Host '  1. THE 1 IS PATCHED OUT. THERE SHOULD BE ONE NUMBER NOW.' -ForegroundColor White
+    Write-Host '     Last run settled it, and not the way I predicted. Template 1003'
+    Write-Host '     HAS an attack node and still hit you with its BODY - attack index'
+    Write-Host '     -1, claiming 1. Across 160 archived logs every one of 198 hits is'
+    Write-Host '     attack index -1 claiming 1. The client has never once been seen'
+    Write-Host '     using a mob attack skill, so it has no attack record to read the'
+    Write-Host '     damage from, and it floors at 1. It cannot compute contact damage.'
+    Write-Host '     No packet can stop it drawing that: option 0xAE is read at 11'
+    Write-Host '     sites and written at none, and the console command that clears'
+    Write-Host '     the other half of the gate is refused. So this is a CLIENT PATCH:'
+    Write-Host '     five nops over the one renderer call in that function, verified'
+    Write-Host '     against the image bytes before writing and read back after.'
+    Write-Host '     Ours is on a different path with no such gate, so it survives.'
+    Write-Host '     Just fight anything.'
+    Write-Host '       ONE number, and it matches the HP drop -> done'
+    Write-Host '       ONE number, but it is the 1  -> the patch took and OURS is the'
+    Write-Host '                     one that vanished. Say so; they are on separate paths'
+    Write-Host '       NO numbers at all            -> both went. Say so'
+    Write-Host '       still TWO                    -> the patch did not take. The hook'
+    Write-Host '                     log says which: grep HITNUMBER in maplecw-hook.log'
+    Write-Host '     -KeepClientHitNumber puts the old behaviour back.'
     Write-Host ''
     Write-Host '  2. WARRIOR - THE WHOLE BRANCH, AND THE CHEAPEST ONE.' -ForegroundColor White
     Write-Host '     FIRST OF THE FOUR BRANCHES (step 7 comes before all of them).'
