@@ -92,6 +92,8 @@ impl Session {
             // destination map has mobs, they should show up instantly. Currently I see those
             // mobs fade in."*
             mob.appear_type = net::mob::APPEAR_ALREADY_THERE;
+            // What the client needs to compute a contact hit at all. See `forced_stat_for`.
+            mob.forced_stat = self.forced_stat_for(mob.template_id);
             out.push(Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(&mob),

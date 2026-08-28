@@ -109,6 +109,14 @@ Two habits:
 
 * **Deduplicate by content hash before counting anything across those two directories.**
   `tools/extract_attack_bodies.py` does it and exits non-zero on an empty result.
+* **And a content hash is not enough either.** Found the same day, by an agent re-deriving the
+  mob-move counts: `research/fixtures/skill-window-close-faults-world.log` and
+  `previous-runs/world-20260820-181822.log` are **the same run**, and hash differently - they
+  differ at character 74 of line 1 and by 41 KB of tail, because a fixture is copied while the
+  run is still being written. **Eleven such pairs.** File-level deduplication called that two
+  observations; deduplicating on `(timestamp, opcode, body)` gives **131 003** mob-move
+  reports where the file-level count said 243 418, and **257** user-hits where it said 435.
+  The rule is: **deduplicate the EVENTS, not the files.**
 * **A fixture's name says what its author was looking at, not everything the file contains.**
   Both captures that settled the skill id had been sitting in `fixtures/` for days, under
   `magic-claw-1-damage-and-heapfix-armed-` and `cash-shop-click-sent-nothing-`. Grep the

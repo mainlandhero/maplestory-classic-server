@@ -36,6 +36,7 @@ pub mod inventory;
 pub mod jobbuffs;
 pub mod message;
 pub mod mob;
+pub mod mobdamage;
 pub mod mobmove;
 pub mod names;
 pub mod notice;

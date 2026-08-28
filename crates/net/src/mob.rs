@@ -302,6 +302,13 @@ pub struct FieldMob {
     /// at `140480979` right after the `lea` of the name at `14048094f`. **No mob image in this
     /// client sets `targetFromSvr`**, so `None` is right for all 193. **[L]**
     pub target_from_server: Option<u32>,
+    /// **The mob's stats, forced onto the client.** `None` sends the single `0` byte this
+    /// packet always sent, so a mob without one is byte-identical to before.
+    ///
+    /// This is the only way the client learns a mob's **attack power**, and therefore the only
+    /// way a contact hit can draw a number other than the floor of `1`. See
+    /// `research/mob-to-player-damage-packet.md` and [`crate::mobdamage`].
+    pub forced_stat: Option<crate::mobdamage::MobForcedStat>,
 }
 
 /// `appear_type` for a mob that is **already standing on the field** when you arrive.
@@ -358,6 +365,9 @@ impl FieldMob {
             hp_scale_percent: 100,
             patrol: None,
             target_from_server: None,
+            // `None` keeps this packet byte-identical to every one sent before 2026-08-28.
+            // The caller opts in per mob; see `FieldMob::forced_stat`.
+            forced_stat: None,
         }
     }
 
@@ -379,6 +389,9 @@ impl FieldMob {
             + usize::from(self.has_special_template_byte())
             + if self.patrol.is_some() { 16 } else { 0 }
             + if self.target_from_server.is_some() { 4 } else { 0 }
+            // The forced-stat block is INSIDE the body, so a wrong length here desynchronises
+            // everything after it rather than merely losing the stats.
+            + if self.forced_stat.is_some() { crate::mobdamage::MOB_FORCED_STAT_LEN } else { 0 }
     }
 }
 
@@ -435,7 +448,29 @@ pub fn mob_enter_field(mob: &FieldMob) -> Vec<u8> {
     b.extend_from_slice(&mob.object_id.to_le_bytes()); //   1   u32 141d3368e pool key
     b.push(1); //                                          5   u8  141d336f3 calcDamageIndex
     b.extend_from_slice(&mob.template_id.to_le_bytes()); // 6   u32 141d33701 Mob/%07d.img
-    b.push(0); //                                         10   u8  141d33734 forced stat: NO
+    // **The forced stat block, and it is how the client learns a mob's attack power.**
+    //
+    // `research/mob-to-player-damage-packet.md`: there is **no inbound packet that carries a
+    // damage number** for the local player. The client computes contact damage itself -
+    // `damage = clamp((rand*0.4 + 1.1) * pad * defenceTerm, 1.0, 5e7)` in `FUN_140265f00` -
+    // and reports it in the outbound `0x00E5`. What the server owes is the **`pad`**.
+    //
+    // The live chain is `WZ PADamage -> template+0x34 -> *(mob+0x3c8)+0x58 -> FUN_14025e540`,
+    // and this block writes into the same place. `damage-number-suppress.md` §5.3 concluded
+    // the client had no live reader for a mob's attack power; that was wrong twice over - the
+    // fields are read by direct offset rather than through the accessors it counted, and one
+    // reader is reached by a **tail `jmp`**, which is the `tools/callers.py` blind spot that
+    // section had itself named before concluding past it.
+    //
+    // `None` writes the single `0` byte this line always wrote, so a mob without one is
+    // byte-identical to before.
+    match &mob.forced_stat {
+        None => b.push(0), //                             10   u8  141d33734 forced stat: NO
+        Some(fs) => {
+            b.push(crate::mobdamage::FORCED_STAT_PRESENT);
+            b.extend_from_slice(&fs.encode()); //          +57, parsed by FUN_14085acd0
+        }
+    }
 
     // -- temporary stats: FUN_141c76190, 20 bytes -------------------------------------
     b.extend_from_slice(&[0u8; MOB_TEMP_STAT_MASK_LEN]); //   141c76276 mask, no bits set

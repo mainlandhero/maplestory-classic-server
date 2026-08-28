@@ -272,6 +272,9 @@ fn main() -> ExitCode {
             mob_templates_path.display()
         );
     }
+    // Kept whole, so a forced-stat block can be built from the mob's own WZ row rather than
+    // from zeros. See Config::mob_templates.
+    config.mob_templates = mob_templates.clone();
     let (mob_fields, mob_respawn) = world::config::Config::load_mobs(&mobs_path, &mob_templates);
     config.mobs = mob_fields;
     config.mob_respawn_s = mob_respawn;

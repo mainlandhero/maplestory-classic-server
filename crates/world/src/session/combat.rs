@@ -56,7 +56,27 @@ impl Session {
         }
         vec![Reply {
             opcode: net::mobmove::MOB_CTRL_ACK,
-            body: net::mobmove::mob_ctrl_ack(req.object_id, req.move_id, false),
+            // **The one bool that lets a mob attack at all.**
+            //
+            // `research/mob-attack-skills.md`: this was a hard-coded `false` from the day the
+            // packet was written. Body offset 6 is the only server-driven way to put a mob
+            // into controller state **4**, and `CMob::Update` skips its entire attack- and
+            // skill-selection block - 1594 bytes, containing the only `GetAttack` and
+            // `GetSkill` calls in the function - unless the state is exactly that. **[L]**
+            //
+            // Three independent measurements agreed that it never happened: 131 003 distinct
+            // mob-move reports with zero in the attack or skill range, 257 user-hits all
+            // `attackIndex -1`, and `0x0313` never once arriving. Not a sample-size problem -
+            // a branch never taken.
+            //
+            // **Unconditional, deliberately.** The client owns every other precondition - the
+            // attack count, the per-attack cooldown, range, target - and the state survives
+            // only until the next move report, so a grant buys **one action**, not a mode.
+            body: net::mobmove::mob_ctrl_ack(
+                req.object_id,
+                req.move_id,
+                crate::mobattack::grant_attack(),
+            ),
             what: format!(
                 "MobCtrlAck: mob {} move {} acknowledged. Without this the client runs one \
                  simulation step and stops - measured twice, 30 grants and 30 reports all \
@@ -130,6 +150,35 @@ impl Session {
                 }
             ),
         }]
+    }
+
+    /// **Tell the client what this mob's stats are**, so it can compute a contact hit.
+    ///
+    /// `research/mob-to-player-damage-packet.md`: there is **no inbound packet carrying a
+    /// damage number** for the local player. The client computes contact damage itself and
+    /// reports it in the outbound `0x00E5`. What the server owes is the mob's **attack
+    /// power** - and until this existed we never sent one, so `[rdi+0xe8]`-style reads found
+    /// nothing and the client's own formula floored at `1.0`. 198 captured hits, all `1`.
+    ///
+    /// **Built from the mob's own WZ row so exactly nothing else changes.** The block forces
+    /// *every* stat at once, so sending zeros for the ones we do not mean to touch would make
+    /// every mob defenceless and unable to miss - a far bigger change than the intended one.
+    /// `Config::mob_templates` carries the real columns for that reason.
+    ///
+    /// `None` when the template is unknown, which writes the single `0` byte this packet has
+    /// always written. A mob we have no data for behaves exactly as it did before.
+    pub(super) fn forced_stat_for(&self, template: u32) -> Option<net::mobdamage::MobForcedStat> {
+        let t = self.config.mob_templates.get(&template)?;
+        Some(net::mobdamage::MobForcedStat::from_template(
+            u64::from(t.max_hp),
+            t.level,
+            t.pa_damage,
+            t.ma_damage,
+            t.pd_damage,
+            t.md_damage,
+            t.accuracy,
+            t.evasion,
+        ))
     }
 
     /// The player swung at something.
@@ -391,6 +440,9 @@ impl Session {
             // effect. The pair of these two lines IS the feature - one value for "was already
             // here", another for "just turned up".
             mob.appear_type = net::mob::APPEAR_SPAWNING;
+            // Same as on field entry: without this the client has no attack power for the mob
+            // and its own contact-damage formula floors at 1. See `forced_stat_for`.
+            mob.forced_stat = self.forced_stat_for(mob.template_id);
             out.push(Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(&mob),

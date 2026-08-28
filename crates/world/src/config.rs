@@ -173,6 +173,12 @@ pub struct Config {
     /// whatever damage the client reported, which is the behaviour that shipped before this
     /// existed - and which had every snail hitting for 1.
     pub mob_attack: HashMap<u32, u32>,
+    /// Every mob template's full stat row, for building a **forced stat** block.
+    ///
+    /// `mob_attack` above is the same `PADamage` in a flatter shape and predates this. Both
+    /// are kept because they answer different questions: that one is "what does the SERVER
+    /// think this hit for", this one is "what should the CLIENT be told the mob is".
+    pub mob_templates: HashMap<u32, MobTemplate>,
     /// What each quest requires: mobs to kill and items to hold. `gm-handbook/questreq.txt`.
     ///
     /// Generated from the client's own `Quest.wz`, so this is the client's data rather than
@@ -1238,6 +1244,18 @@ pub struct MobTemplate {
     /// was reporting **1** for every snail hit and nothing server-side had a number to
     /// disagree with it.
     pub pa_damage: u32,
+    /// `PDDamage`, `MADamage`, `MDDamage`, `acc` and `eva` - columns 7, 8, 9, 10 and 11.
+    ///
+    /// Carried only so that a **forced stat** block can be built from the mob's own WZ row.
+    /// `net::mobdamage::MobForcedStat` overrides every stat at once, so sending it with the
+    /// real values for everything except the one being changed is what keeps the mob behaving
+    /// as the client's own data says it should. Zeroing them would make every mob defenceless
+    /// and unable to miss, which is a much bigger change than the one intended.
+    pub pd_damage: u32,
+    pub ma_damage: u32,
+    pub md_damage: u32,
+    pub accuracy: u32,
+    pub evasion: u32,
 }
 
 /// Every mob template's stats, from `tools/dump_mobs.py`'s `mobtemplates.txt`.
@@ -1277,6 +1295,13 @@ pub fn load_mob_templates(path: &std::path::Path) -> HashMap<u32, MobTemplate> {
                 level: level.max(0) as u32,
                 exp: exp.max(0) as u32,
                 pa_damage,
+                // Optional for the same reason `pa_damage` is: a short row should lose a
+                // column, not the whole mob.
+                pd_damage: n(6).unwrap_or(0).max(0) as u32,
+                ma_damage: n(7).unwrap_or(0).max(0) as u32,
+                md_damage: n(8).unwrap_or(0).max(0) as u32,
+                accuracy: n(9).unwrap_or(0).max(0) as u32,
+                evasion: n(10).unwrap_or(0).max(0) as u32,
             },
         );
     }
@@ -1341,6 +1366,7 @@ impl Default for Config {
             exp_curve: crate::expcurve::ExpCurve::default(),
             mob_exp: HashMap::new(),
             mob_attack: HashMap::new(),
+            mob_templates: HashMap::new(),
             quest_reqs: net::quest::QuestRequirementTable::default(),
             chatter_off: false,
             equips: HashMap::new(),

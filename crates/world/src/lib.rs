@@ -40,6 +40,7 @@ pub mod footholds;
 pub mod jobs;
 pub mod loadout;
 pub mod magic;
+pub mod mobattack;
 pub mod secondjob;
 pub mod server;
 pub mod session;
