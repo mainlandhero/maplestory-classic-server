@@ -88,8 +88,8 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
 
     THE STEPS, 1-7 plus 5b. Each is a claim that can come back false; report them
     separately.
-    ORDER: 7 (selling - it killed the client last run), then 1 (the 1 damage, one hit
-    and it is settled), then 2 and the branches.
+    ORDER: 1 first - the one the owner pushed twice on, and one hit settles it. Then 2 and the
+    branches. 7 last.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
 
@@ -233,46 +233,16 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
           balance keeps dropping, or several coupons from one click -> the re-entry is
                      SENDING rather than completing. CLOSE THE CLIENT and say so
 
-     7. SELLING TO AN NPC. THE COUNTER DRAWS; SELLING KILLED THE CLIENT. DO THIS FIRST.
+     7. BUYING FROM AN NPC SHOP - the only half of the counter never tested.
 
-        WHAT LAST RUN SETTLED. The classic counter works: 0x055D, Lucy the Grocer, 12 rows,
-        1905 bytes - exactly 21 + 12x157, so the head and the row width are both confirmed on
-        a wire. Six days of static decode, right the first time it was sent.
-
-        THEN SELLING KILLED IT, AND THE CLIENT NAMED THE PACKET ITSELF. The sale was fine -
-        0x055E success, the inventory remove and the meso change all went out and were
-        accepted. Then our 0x055E TYPE 10 list refresh went out, and the client replied with
-        a 2075-byte 0x009E and faulted. That 0x009E is the offending packet handed straight
-        back: 14 bytes of header, then the opcode, then our exact 2059-byte body. It is now
-        named CLIENT_PACKET_REJECTED in net::names.
-
-        WHY, AND IT COST NO CLIENT RUN TO FIND. Type 10's documented effect is "refill, then
-        select the Buy Back tab". UI/UIShop.img/Shop in THIS client has 16 nodes: backgrnd,
-        select, disabledBack, icon, checkBox, TabSell, TabBuy, meso, arrow, BtBuy, BtSell,
-        BtExit, BtRecharge, mesoBox, mesoBox2, citizenshipBackgrnd. There is NO
-        repurchaseInfo, and there are exactly TWO tabs. Read with wz-dump, BtBuy as the
-        positive control.
-
-        So this is the SHOP2 FAILURE ONE LEVEL DOWN: a window reaching for art this client
-        does not ship, _com_issue_errorex throwing, and the unwinder faulting - at
-        0x140ce89d6, which research/npc-shop-crash2.md already records for the Shop2 crash.
-        The hook log shows C++ throw #9 in the same millisecond as the fault, and nothing had
-        thrown for the 218 seconds before it.
-
-        The Buy Back row and the type-10 refresh are both gone. Type 35 is the survivor if a
-        refill is ever wanted - it selects tab 0, which exists.
-
-          a) sell something to Lucy. Does it work, and does the client live?
-               works and lives -> selling is done
-               still dies      -> it was not the refresh. Say WHAT you sold and whether the
-                                  item and the mesos moved before it died
-          b) buy something. Item AND mesos both move? Then click Buy AGAIN:
+        Selling is done and the window draws. Buying has never been on a wire.
+          a) buy something from Lucy. Do the ITEM and the MESOS both move?
+          b) click Buy AGAIN.
+               works twice -> buying is done
                the second click does nothing, silently -> the 0x055E never went out and
-                                  shopUI+0x4b0 is latched. Close and re-click the NPC; a
-                                  fresh 0x055D alone will NOT recover it
+                          shopUI+0x4b0 is latched. Close and re-click the NPC; a fresh
+                          0x055D alone will NOT recover it, because of the modal guard
           c) do the prices match data/shops.txt?
-
-        THERE IS NO BUY BACK TAB AND THERE NEVER WILL BE. Not a bug; the art is not here.
 
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
@@ -1090,12 +1060,13 @@ Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
     Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 1-7, plus 5b.' -ForegroundColor Yellow
-    Write-Host '  ORDER: 7 (selling - it killed the client last run), then 1 (the' -ForegroundColor Yellow
-    Write-Host '  1 damage, one hit and it is settled), then 2 and the branches.' -ForegroundColor Yellow
+    Write-Host '  ORDER: 1 first - it is the one you pushed twice on, and one hit' -ForegroundColor Yellow
+    Write-Host '  settles it. Then 2 and the branches. 7 last.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
-    Write-Host '  SELLING WORKS. The shop opens, sells, and the client lives.'
+    Write-Host '  SELLING WORKS and the counter DRAWS - 0x055D, Lucy, 12 rows,'
+    Write-Host '  1905 bytes = 21 + 12x157 exactly.'
     Write-Host '  There is NO Buy Back tab and there never will be - this client'
     Write-Host '  ships no repurchaseInfo node and exactly two tabs. Not a bug.'
     Write-Host '  WARRIOR WORKS. Skills cast, and the client refuses at 0 MP.'
@@ -1104,8 +1075,6 @@ if ($SetFieldProbe) {
     Write-Host '  while the SERVER never did, so our stale 181/181 rode along on the'
     Write-Host '  potion stat change and the client believed it. FIXED: attack skills'
     Write-Host '  now cost MP server-side - the first thing the skill id bought.'
-    Write-Host '  THE SHOP WINDOW DRAWS. 0x055D, Lucy, 12 rows, 1905 bytes = 21 +'
-    Write-Host '  12x157 exactly. Six days of decode, right first time on the wire.'
     Write-Host '  (The /hitdamagetest route is dead: no 0x0189 came back, so the'
     Write-Host '  permission gate refused it. But that was one lever failing, not the'
     Write-Host '  answer - see step 1, which you were right to push back on.)'
@@ -1275,28 +1244,15 @@ if ($SetFieldProbe) {
     Write-Host '       BALANCE KEEPS DROPPING, or several coupons from one click ->'
     Write-Host '                   CLOSE THE CLIENT and say so. One line to disarm'
     Write-Host ''
-    Write-Host '  7. SELLING TO AN NPC. THE SHOP OPENS; SELLING KILLED IT.' -ForegroundColor White
-    Write-Host '     Last run the counter DREW - 0x055D, Lucy, 12 rows, 1905 bytes, which'
-    Write-Host '     is exactly 21 + 12x157. The head and the row width are confirmed.'
-    Write-Host '     Then selling one item killed the client, and the client told us how:'
-    Write-Host '     it handed the offending packet straight back in a 2075-byte 0x009E'
-    Write-Host '     and faulted. The sale itself was fine - success, bag and mesos all'
-    Write-Host '     went out and were accepted. What killed it was the list refresh'
-    Write-Host '     that followed, which SELECTS A BUY BACK TAB.'
-    Write-Host '     UI/UIShop.img/Shop in this client has 16 nodes, no repurchaseInfo,'
-    Write-Host '     and exactly TabBuy and TabSell. There is no Buy Back tab to select.'
-    Write-Host '     Same failure as the old Shop2 crash, same fault address, one level'
-    Write-Host '     down - art this client does not ship. Both are gone now.'
-    Write-Host '       a) sell something to Lucy. Does it work, and does the client live?'
-    Write-Host '            works, lives  -> selling is done'
-    Write-Host '            still dies    -> it was not the refresh. Say what you sold and'
-    Write-Host '                             whether the item and mesos moved first'
-    Write-Host '       b) buy something. Item AND mesos both move? Then click Buy AGAIN:'
-    Write-Host '            second click does nothing, silently -> the result never went'
-    Write-Host '                             out and the window is latched. Close and'
-    Write-Host '                             re-click the NPC; a fresh 0x055D will NOT fix it'
+    Write-Host '  7. BUYING FROM AN NPC SHOP. The only half never tested.' -ForegroundColor White
+    Write-Host '     Selling is done and the counter draws. Buying never has been.'
+    Write-Host '       a) buy something from Lucy. Do the ITEM and the MESOS both move?'
+    Write-Host '       b) then click Buy AGAIN.'
+    Write-Host '            it works twice     -> buying is done'
+    Write-Host '            the second click does nothing, silently -> the result never'
+    Write-Host '                          went out and the window is latched. Close and'
+    Write-Host '                          re-click the NPC; a fresh 0x055D will NOT fix it'
     Write-Host '       c) do the prices match data/shops.txt?'
-    Write-Host '       There is NO Buy Back tab and there never will be. Not a bug.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
     Write-Host '     Damage VALIDATION on attack skills. MP cost is wired now; the'
