@@ -672,7 +672,23 @@ pub fn cash_item_record(serial: u64, item_id: u32, commodity_sn: u32, quantity: 
     w.u32(commodity_sn); // +20  nCommodityID    [L] read
     w.u16(quantity); // +24  nNumber         [I], NO READER
     w.bytes(&[0u8; 13]); // +26  sBuyCharacterName [I], no reader
-    w.bytes(&[0u8; 8]); // +39  expiry FILETIME [I], NO READER
+    // +39 expiry FILETIME. **Was eight zero bytes and that is the prime suspect.**
+    //
+    // The owner, 2026-08-28: *"I got the dialogue that the purchase was successful, but I do not
+    // see it in my Cash Inventory."* The record reached the stage - the hook logged the
+    // dispatch with `rdx=0x5ae` - and the success message appeared, but the message comes
+    // from the WALLET re-entering the buy builder, so it never proved `0x0C` did anything.
+    //
+    // `research/cash-shop-cash-inventory.md` established this field has **no reader anywhere
+    // in the cash shop**, and that is still true - but "no reader in the cash shop" is not
+    // "no reader", and a locker PANEL that hides expired items would live in the UI code that
+    // scan did not cover. Eight zeros is 1601-01-01, which is expired by four centuries.
+    //
+    // So it now carries the same never-expires sentinel `crate::bag::bundle_item` puts in an
+    // ordinary item, which HAS been on a wire for months. **[I]** that this is the cause; the
+    // run says so, and if the item still does not appear the field is exonerated rather than
+    // suspected.
+    w.bytes(&crate::opcode::ITEM_NEVER_EXPIRES.to_le_bytes());
     w.u32(0); // +47
     w.bytes(&0f64.to_le_bytes()); // +51  f64
     w.u32(0); // +59

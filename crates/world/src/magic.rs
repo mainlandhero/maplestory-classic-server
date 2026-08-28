@@ -894,3 +894,61 @@ mod tests {
         );
     }
 }
+#[cfg(test)]
+mod cobalt {
+    use super::*;
+
+    /// **The real observation, 2026-08-28: Magic Claw at level 7 dealt exactly 1.**
+    ///
+    /// The owner: *"I added all of the points into Magic Claw, but the skill only deals 1 damage,
+    /// which is definitely not correct."* It is correct, and this test is why - the character
+    /// is a **Rogue wearing a Magician's job id**. `!job 200` changed the number; it did not
+    /// move a single ability point.
+    ///
+    /// ```text
+    /// Cobalt, level 12, job 200:  STR 4  DEX 24  INT 6  LUK 36
+    /// Magic Claw level 7:         mad 51   mastery 3   attackCount 2
+    /// ```
+    ///
+    /// `MagicTotal` seeds from `floor(INT/2)` = **3**, and a Rogue's equipment carries no
+    /// `incMAD`. So the whole window lands between 1 and 2 and `finish`'s truncation makes it
+    /// **1** before the mob's magic defence has even been applied.
+    ///
+    /// This is the anchor that stops the next reader "fixing" a formula that is right. If this
+    /// test ever fails, either the formula changed or the client's own data did.
+    #[test]
+    fn josiahs_magic_claw_predicts_the_1_he_saw() {
+        let attacker = MagicAttacker {
+            magic_total: magic_total_seed(6), // no wand, no incMAD
+            intelligence: 6,
+            mastery: 3,
+            skill_magic_percent: 51,
+        };
+        assert_eq!(magic_total_seed(6), 3, "floor(INT/2)");
+
+        let (lo, hi) = magic_window(&attacker);
+        assert!(lo > 1.0 && hi < 2.5, "the RAW window is {lo}..{hi} - between 1 and 2");
+
+        // Even against a defenceless, same-level target the whole window is 1..2.
+        //
+        // **The low end is 1 for a reason worth knowing**, and it is not the truncation: with
+        // `element_code: None` the element bound spans 0.00..1.50, because an unknown target
+        // might be immune. So the LOW end of any unknown-element window is 1 by construction,
+        // and only the high end carries information here.
+        let soft = MagicTarget { magic_defence: 0, element_code: None, level: 12 };
+        let (win_lo, win_hi) = magic_hit_window(&attacker, &soft, 12, CritStats::NONE);
+        assert_eq!(
+            (win_lo, win_hi),
+            (1, 2),
+            "even the CEILING is 2 against a defenceless target - which is why every hit the owner              saw read 1 once a real mob's magic defence was applied"
+        );
+
+        // **And the skill is not the problem: INT is.** A Magician who had actually spent
+        // their points hits for real, which makes this a diagnosis rather than an excuse.
+        // Compared on the CEILING, since the floor is 1 whenever the element is unknown.
+        let magician =
+            MagicAttacker { magic_total: magic_total_seed(60), intelligence: 60, ..attacker };
+        let (_, real_hi) = magic_hit_window(&magician, &soft, 12, CritStats::NONE);
+        assert!(real_hi > 10 * win_hi, "60 INT ceilings at {real_hi} against Cobalt's {win_hi}");
+    }
+}

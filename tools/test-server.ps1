@@ -256,6 +256,7 @@
         dispatch. Nothing decoded can.
 
     COMMANDS: !map, !item, !exp, !heal, !job, !buff, !unbuff, !nx, !lp, !buy, !locker,
+    !resetap, !resetsp,
     !npcecho, !npcfx,
     !migsweep, !exprate, !mesorate, !droprate, !setrates, !rates. !help lists them all.
       !buff [skillId] [level] [tailBytes]   cast with no skill check, MP or cooldown
@@ -269,6 +270,13 @@
                                             item id - gm-handbook/commodity.txt lists all 159
       !locker [slot]                        list the cash locker, or move one slot into the
                                             Cash tab
+      !resetap                              put every spent ability point back in the pool.
+                                            Conserves the total - it refunds the difference
+                                            from a fresh character rather than recomputing a
+                                            per-level number nothing here knows
+      !resetsp                              forget every skill. The points come back on their
+                                            own: the pool is computed from your LEVEL, so a
+                                            forgotten skill IS the refund
 
     THE FREE MEASUREMENT NOBODY HAS TAKEN
     -------------------------------------
@@ -1177,7 +1185,7 @@ if ($SetFieldProbe) {
     Write-Host ''
     Write-Host '  COMMANDS: !map !item !exp !heal !job !buff !unbuff !npcecho'
     Write-Host '  !npcfx !migsweep !exprate !mesorate !droprate !setrates !rates'
-    Write-Host '  !nx !lp !buy !locker.'
+    Write-Host '  !nx !lp !buy !locker !resetap !resetsp.'
     Write-Host '  !lp grants LEAF POINTS and is the one that BUYS; !nx fills the'
     Write-Host '  other field and buys nothing. !buy <SN> buys a sale row for real;'
     Write-Host '  !locker moves it into the Cash tab. !help lists them all.'

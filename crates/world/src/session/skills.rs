@@ -118,6 +118,31 @@ impl Session {
         let room = ceiling - level;
         let granted = req.count.min(room);
         let next = level + granted;
+        // **Say when a point will buy almost nothing.** The owner put seven points into Magic
+        // Claw and it dealt 1, because they were a Rogue with 6 INT wearing a Magician's job id.
+        // The skill was working; the character had no INT. Nothing on screen said so, and
+        // "the skill only deals 1 damage" is what that silence produces.
+        //
+        // The warning rides on the acknowledgement rather than refusing the point: the stat
+        // can be raised afterwards, so a refusal would be wrong as well as annoying.
+        let scaling_warning = self
+            .config
+            .skills
+            .level(req.skill_id, next)
+            .filter(|l| l.mad.is_some())
+            .and_then(|_| {
+                let stat = crate::jobs::FIRST_JOBS.iter().find(|j| j.job == chr.job)?.stat;
+                let have = stat.of(&chr);
+                (have < crate::jobs::STAT_MINIMUM).then(|| {
+                    format!(
+                        " *** WARNING: this is an attack skill and you have only {have} {}.                          Its damage scales on that stat, so it will land on the floor of 1                          however many points go in. Raise {} first. ***",
+                        stat.label(),
+                        stat.label()
+                    )
+                })
+            })
+            .unwrap_or_default();
+
         if let Err(e) = self.store.set_skill_level(chr.id, req.skill_id, next) {
             return vec![self.skill_reply(
                 net::skills::skill_up_refused(net::skills::SkillUpRefusal::NotYours),
@@ -129,19 +154,25 @@ impl Session {
             req.skill_id,
             next,
         ));
-        vec![self.skill_reply(
+        let mut out = vec![self.skill_reply(
             net::skills::change_skill_record_result(true, true, &[change]),
             format!(
-                "skill {} raised {level} -> {next} (asked for {}, granted {granted}{})",
+                "skill {} raised {level} -> {next} (asked for {}, granted {granted}{}){scaling_warning}",
                 req.skill_id,
                 req.count,
                 if granted < req.count { ", clamped by the level table" } else { "" }
             ),
-        )]
+        )];
+        // **Only when there is something to say.** A chat line on every point would be noise,
+        // and noise is how a warning stops being read.
+        if !scaling_warning.is_empty() {
+            out.extend(self.notice(scaling_warning.trim().trim_matches('*').trim().to_string()));
+        }
+        out
     }
 
     /// Every reply on this path is the same opcode, and every one of them clears the latch.
-    fn skill_reply(&self, body: Vec<u8>, why: String) -> Reply {
+    pub(super) fn skill_reply(&self, body: Vec<u8>, why: String) -> Reply {
         Reply {
             opcode: net::skills::CHANGE_SKILL_RECORD_RESULT,
             body,

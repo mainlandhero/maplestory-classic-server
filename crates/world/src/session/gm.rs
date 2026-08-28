@@ -78,6 +78,10 @@ impl Session {
             "nx" => self.gm_nx(arg),
             // The shop prices in LP, so this is the one that buys. See gm_lp.
             "lp" | "leafpoints" => self.gm_lp(arg),
+            // Put spent points back in the pool. See gm_reset_ap for why the AP one
+            // conserves the total rather than recomputing it from the level.
+            "resetap" => self.gm_reset_ap(),
+            "resetsp" => self.gm_reset_sp(),
             "buy" => self.gm_buy(arg),
             "locker" => self.gm_locker(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
@@ -128,8 +132,32 @@ impl Session {
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.gm_ack(format!("!job FAILED: {e}"));
         }
+        // **Warn when the job does not match the stats.** The owner, 2026-08-28, after putting
+        // seven points into Magic Claw: *"the skill only deals 1 damage, which is definitely
+        // not correct."* It was correct. They were a Rogue - LUK 36, DEX 24, INT 6 - and `!job
+        // 200` changes the job number without moving a single ability point. `MagicTotal`
+        // seeds from `floor(INT/2)`, so their whole damage window sat between 1 and 2 before
+        // the mob's magic defence was even applied.
+        //
+        // The formula was right and the character was wrong, and there was nothing on screen
+        // to say so. `!job` is a debug command and deliberately skips `jobs::advancement_for`,
+        // which would have refused - so it warns instead of refusing, because refusing would
+        // break the command's whole purpose.
+        let mismatch = crate::jobs::FIRST_JOBS
+            .iter()
+            .find(|j| j.job == job)
+            .map(|j| (j.stat, j.stat.of(&chr)))
+            .filter(|(_, have)| *have < crate::jobs::STAT_MINIMUM);
+        let warning = match mismatch {
+            Some((stat, have)) => format!(
+                " *** WARNING: you have {have} {} and this job wants {}. !job does NOT move                  ability points, so its skills will compute almost no damage - a magic attack                  with {have} INT lands on the damage floor of 1 whatever level the skill is.                  That is the formula being right, not a bug. ***",
+                stat.label(),
+                crate::jobs::STAT_MINIMUM
+            ),
+            None => String::new(),
+        };
         let mut out = self.gm_ack(format!(
-            "{} is now job {job} (was {was}). Expect the JobChanged effect AND its sound - unless job is 0, which the client's own gate suppresses.",
+            "{} is now job {job} (was {was}). Expect the JobChanged effect AND its sound - unless job is 0, which the client's own gate suppresses.{warning}",
             chr.name
         ));
         // **The skill points, in the same packet as the job.**
@@ -752,6 +780,158 @@ impl Session {
             )),
             Err(e) => self.gm_ack(format!("!lp FAILED and the balance is unchanged: {e}")),
         }
+    }
+
+    /// `!resetap` - put every spent ability point back in the pool.
+    ///
+    /// The owner, 2026-08-28, after `!job 200` left a Rogue's stats on a Magician: *"Please
+    /// implement two more GM commands to reset the ability points and the skill points."*
+    ///
+    /// # It conserves the total rather than recomputing it
+    ///
+    /// The obvious implementation is "work out how many points a level-N character should
+    /// have and set that". It is also the wrong one: **nothing here knows the per-level AP
+    /// award**, and inventing a number would either create points or destroy them, silently,
+    /// in a command whose whole job is to be safe to run.
+    ///
+    /// So this does arithmetic that cannot be wrong in either direction. Every stat goes back
+    /// to the value a **fresh character** has, and the difference lands in the pool:
+    ///
+    /// ```text
+    /// refund = (str + dex + int + luk) - (12 + 5 + 4 + 4)
+    /// ap     = ap + refund
+    /// ```
+    ///
+    /// Total points in and total points out are equal by construction. Run it twice and the
+    /// second run refunds zero, because the stats are already at the floor.
+    ///
+    /// **A stat below the floor is left alone rather than "corrected" upward.** That would be
+    /// creating points out of a character this server had already got wrong, and a reset that
+    /// can hand out free stats is worse than one that occasionally refunds nothing.
+    pub(super) fn gm_reset_ap(&mut self) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else {
+            return self
+                .gm_ack("!resetap REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let base = net::opcode::Character::default();
+        let (was_str, was_dex, was_int, was_luk) =
+            (chr.strength, chr.dexterity, chr.intelligence, chr.luck);
+
+        // `saturating_sub` on each stat separately, so one stat already under the floor
+        // cannot eat another stat's refund.
+        let refund = was_str.saturating_sub(base.strength)
+            + was_dex.saturating_sub(base.dexterity)
+            + was_int.saturating_sub(base.intelligence)
+            + was_luk.saturating_sub(base.luck);
+
+        chr.strength = if was_str > base.strength { base.strength } else { was_str };
+        chr.dexterity = if was_dex > base.dexterity { base.dexterity } else { was_dex };
+        chr.intelligence = if was_int > base.intelligence { base.intelligence } else { was_int };
+        chr.luck = if was_luk > base.luck { base.luck } else { was_luk };
+        chr.ap = chr.ap.saturating_add(refund);
+
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.gm_ack(format!("!resetap FAILED and nothing changed: {e}"));
+        }
+
+        let mut out = self.gm_ack(format!(
+            "Ability points reset. STR {was_str}->{}, DEX {was_dex}->{}, INT {was_int}->{}, \
+             LUK {was_luk}->{} - {refund} points back, {} to spend. The totals match by \
+             construction: nothing was created or destroyed.",
+            chr.strength, chr.dexterity, chr.intelligence, chr.luck, chr.ap
+        ));
+        // **One packet with all five fields.** The stat window reads them together, and five
+        // packets would let it redraw against a half-applied state.
+        out.push(Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange {
+                strength: Some(chr.strength),
+                dexterity: Some(chr.dexterity),
+                intelligence: Some(chr.intelligence),
+                luck: Some(chr.luck),
+                ap: Some(chr.ap),
+                ..Default::default()
+            }
+            .build(),
+            what: format!(
+                "StatChanged: ability reset - STR/DEX/INT/LUK back to a fresh character's \
+                 {}/{}/{}/{} and {refund} points refunded into AP, now {}",
+                base.strength, base.dexterity, base.intelligence, base.luck, chr.ap
+            ),
+        });
+        out
+    }
+
+    /// `!resetsp` - unlearn every skill, so the points can go somewhere else.
+    ///
+    /// # Why this gives the points back without touching a counter
+    ///
+    /// It does not refund anything, and that is deliberate. `world::skillpoints` computes an
+    /// **entitlement** - a total owed at the character's level - rather than tracking a
+    /// balance, so the pool the client is shown is already "everything you have ever earned".
+    /// Erasing the skills is therefore the whole reset: the points were never subtracted from
+    /// a stored number, so there is nothing to add back.
+    ///
+    /// That also means this is honest about the limitation rather than papering over it: with
+    /// spending unpersisted, a skill's level **is** the only record that a point was spent.
+    ///
+    /// **The client is told, or it keeps drawing the old levels.** `SkillChange::Forget`
+    /// encodes as a negative level, which `net::skills` records as the only thing that reaches
+    /// the client's erase arm - a `Learn` at level 0 would not.
+    pub(super) fn gm_reset_sp(&mut self) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self
+                .gm_ack("!resetsp REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let learned = self.store.skills(chr.id).unwrap_or_default();
+        if learned.is_empty() {
+            return self.gm_ack("!resetsp: no skills to forget.".to_string());
+        }
+
+        let mut forgotten = Vec::new();
+        let mut failed = Vec::new();
+        for skill in &learned {
+            match self.store.set_skill_level(chr.id, skill.id, 0) {
+                Ok(()) => forgotten.push(net::skills::SkillChange::Forget { id: skill.id }),
+                // **Reported, not swallowed.** A reset that silently half-ran would leave the
+                // client and the database disagreeing about what is learned, and the player
+                // would find out by clicking a skill that no longer exists.
+                Err(e) => failed.push(format!("{} ({e})", skill.id)),
+            }
+        }
+
+        let named: Vec<String> = learned
+            .iter()
+            .map(|s| format!("{} lv{}", self.skill_name(s.id), s.level))
+            .collect();
+        let mut out = self.gm_ack(format!(
+            "Forgot {} skill(s): {}. The points come back on their own - this server computes \
+             the pool from your LEVEL rather than tracking a balance, so a forgotten skill is \
+             the whole refund.{}",
+            forgotten.len(),
+            named.join(", "),
+            if failed.is_empty() {
+                String::new()
+            } else {
+                format!(" *** BUT THESE FAILED and are still learned: {} ***", failed.join(", "))
+            }
+        ));
+        if !forgotten.is_empty() {
+            out.push(self.skill_reply(
+                net::skills::change_skill_record_result(true, true, &forgotten),
+                format!("!resetsp forgot {} skill(s)", forgotten.len()),
+            ));
+        }
+        out
+    }
+
+    /// A skill's name, for a line a person reads. The id alone if the table is not loaded.
+    pub(super) fn skill_name(&self, skill_id: u32) -> String {
+        self.config
+            .skills
+            .get(skill_id)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| format!("skill {skill_id}"))
     }
 
     /// `!buy <sn>` - **perform a real cash-shop purchase from the field.**

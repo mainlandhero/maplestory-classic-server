@@ -5340,6 +5340,135 @@ fn a_job_advancement_carries_its_skill_points() {
     let _ = id;
 }
 
+/// **A point into an attack skill warns when the stat behind it is missing.**
+///
+/// The owner, 2026-08-28: *"I added all of the points into Magic Claw, but the skill only deals 1
+/// damage, which is definitely not correct."* It was correct - they were a Rogue with **6 INT**
+/// wearing a Magician's job id, and `magic::cobalt` pins that the formula predicts exactly the
+/// 1 they saw. What was missing was anything on screen saying so.
+///
+/// Both directions are asserted. A warning that fired on every point would be noise, and noise
+/// is how a warning stops being read.
+#[test]
+fn spending_a_point_on_an_attack_skill_warns_when_the_stat_is_missing() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return;
+    }
+    const MAGIC_CLAW: u32 = 2001003;
+    let ask = |count: u32| {
+        let mut b = net::skills::CLIENT_USER_SKILL_UP_REQUEST.to_le_bytes().to_vec();
+        b.extend_from_slice(&0x1187_0e94u32.to_le_bytes());
+        b.extend_from_slice(&MAGIC_CLAW.to_le_bytes());
+        b.extend_from_slice(&count.to_le_bytes());
+        b
+    };
+    let build = |int: u16| {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
+        let mut made = store.create_character(account_id, 0, &chr).unwrap();
+        made.job = 200;
+        made.intelligence = int;
+        store.save_character_progress(&made).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        let config = Config {
+            set_field_probe: true,
+            skills: crate::skilltable::SkillTable::load(path),
+            ..Config::default()
+        };
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(made.id);
+        s
+    };
+
+    // Cobalt's INT. The point is still granted - the stat can be raised afterwards, so a
+    // refusal would be wrong as well as annoying - but they are told.
+    let mut s = build(6);
+    let out = s.handle(&ask(1));
+    let warned = out.iter().any(|r| {
+        r.opcode == net::notice::CHAT_NOTICE && notice_text(r).contains("INT")
+    });
+    assert!(warned, "a 6-INT Magician must be told why Magic Claw will hit for 1");
+
+    // A real Magician gets no chat line at all.
+    let mut s = build(60);
+    let out = s.handle(&ask(1));
+    assert!(
+        !out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
+        "60 INT must NOT be nagged - a warning on every point is noise"
+    );
+}
+
+/// **`!resetap` conserves the total, in both directions and twice over.**
+///
+/// The invariant is the whole design: nothing here knows the per-level AP award, so the reset
+/// refunds the difference from a fresh character's stats rather than recomputing a number it
+/// would have to invent. Points in equals points out, and a second run is a no-op.
+#[test]
+fn resetap_gives_back_exactly_what_was_spent() {
+    let (mut s, store, _id) = gm_session();
+    let base = net::opcode::Character::default();
+    let mut chr = s.claimed_character().unwrap();
+    // Cobalt's real spread, from the 2026-08-28 run.
+    chr.strength = 4;
+    chr.dexterity = 24;
+    chr.intelligence = 6;
+    chr.luck = 36;
+    chr.ap = 10;
+    store.save_character_progress(&chr).unwrap();
+    let before_total = 4 + 24 + 6 + 36 + 10;
+
+    let out = s.handle(&gm_chat("!resetap"));
+    let after = s.claimed_character().unwrap();
+    let after_total = after.strength + after.dexterity + after.intelligence + after.luck + after.ap;
+    assert_eq!(after_total, before_total, "not one point created or destroyed");
+    assert_eq!(after.dexterity, base.dexterity, "DEX back to the floor");
+    assert_eq!(after.luck, base.luck, "LUK back to the floor");
+    // **STR was BELOW the floor and must be left alone**, not topped up - a reset that hands
+    // out free stats is worse than one that occasionally refunds nothing.
+    assert_eq!(after.strength, 4, "a stat under the floor is not corrected upward");
+    assert!(after.ap > 10, "and the difference is in the pool: {}", after.ap);
+
+    // One packet, carrying all five fields - the stat window reads them together.
+    let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("sent");
+    assert!(stat.what.contains("ability reset"), "{}", stat.what);
+    assert_eq!(out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED).count(), 1);
+
+    // **Idempotent.** Running it again refunds nothing.
+    let ap_now = after.ap;
+    s.handle(&gm_chat("!resetap"));
+    assert_eq!(s.claimed_character().unwrap().ap, ap_now, "a second reset is a no-op");
+}
+
+/// **`!resetsp` forgets every skill and tells the client**, or the client keeps drawing them.
+#[test]
+fn resetsp_forgets_every_skill_and_says_so() {
+    let (mut s, store, id) = gm_session();
+    store.set_skill_level(id, 1002, 3).unwrap();
+    store.set_skill_level(id, 1000, 1).unwrap();
+    assert_eq!(store.skills(id).unwrap().len(), 2);
+
+    let out = s.handle(&gm_chat("!resetsp"));
+    assert!(store.skills(id).unwrap().is_empty(), "every skill is gone from the database");
+
+    // The client is told, and with the FORGET encoding - a Learn at level 0 does not reach
+    // the client's erase arm.
+    let reply = out
+        .iter()
+        .find(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT)
+        .expect("the client must be told, or it keeps drawing the old levels");
+    assert!(reply.what.contains("forgot 2"), "{}", reply.what);
+
+    // With nothing learned it says so rather than sending an empty change list.
+    let out = s.handle(&gm_chat("!resetsp"));
+    assert!(notice_text(&out[0]).contains("no skills to forget"), "{}", notice_text(&out[0]));
+    assert!(
+        !out.iter().any(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT),
+        "and sends no empty change list"
+    );
+}
+
 /// **Magic Guard sends part of a hit to MP, and that is the server's arithmetic.**
 ///
 /// The client computes the split and then **never writes HP** - only `0x007C` moves either
