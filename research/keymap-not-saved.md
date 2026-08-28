@@ -72,6 +72,45 @@ captured run*. So this is "no keymap packet was ever captured", which is a weake
 "the client does not send one". `CLAUDE.md` is explicit that those are different sentences.
 See the measurement below, which settles it for free.
 
+## No builder in the client writes a keymap-shaped loop - with three blind spots
+
+`tools/loop_builders.py` (written for this) reports the encode calls that sit inside a
+backward branch, i.e. the fields written once per list element. `research/msexe-packet-fields.txt`
+cannot answer this: it lists encodes in address order, which flattens a loop, so a packet
+carrying `count` entries of `{u32,u8,u32}` is indistinguishable there from three fixed fields.
+
+Swept all 1793 builders at depth 2. **421 have a looping encode; not one loops on the keymap
+shape.** `u32,u8,u32` and `u8,u32` both return **zero** builders.
+
+The nearest thing is `u32,u32` (21 builders), and the best-shaped of those was chased to the
+end because it looked exactly right - `0x0139 FUN_142d4bbc0`, header `CTOR,u32,u32,SEND`,
+loop `u32,u32`, and it is an opcode we have actually captured, at 16 bytes = two header
+`u32`s plus one pair. Its thirteen archived bodies kill it:
+
+```text
+08944c11  01000000  40000000  1e000000
+0f8eda19  01000000  00020000  1e000000
+9f94da19  01000000  80000000  0f000000
+0fcb411d  01000000  00010000  3f000000
+```
+
+field 1 is a tick, field 2 is always `1`, **field 3 is always a single bit** - `0x40`, `0x80`,
+`0x100`, `0x200` - and field 4 is 10..65. A bitmask and a magnitude, one at a time. A keymap
+sends many entries and its index is a key code, not a power of two.
+
+**The blind spots, and the third one matters:**
+
+* an **unrolled** loop - implausible for 74 keys, but it would be invisible;
+* a loop **more than one call deep** - depth 2 follows direct callees only, and at depth 2 the
+  attribution is already noisy (a builder that calls a shared helper inherits that helper's
+  loops, which is why several rows carry multiple `CTOR`/`SEND` pairs);
+* **a whole-array blob.** A client that writes the mapping as one `w_raw` of `74 * 8` bytes
+  has no loop at all and this sweep cannot see it. That is a normal way to encode a fixed-size
+  table and it is not a remote possibility.
+
+So this is **not** "the client sends no keymap". It is "no builder loops over key entries",
+which is a narrower sentence and the only one the instrument supports.
+
 ## No handler in the channel stage's switch decodes a key table
 
 `FUN_142cbaa80` has 273 labels / 272 bodies; **179 have an out-of-line `FUN_` handler** and
@@ -90,10 +129,23 @@ a count and then loop over `(u8 type, u32 action)` pairs, so the shape to look f
 | `0x0172` | `FUN_142db6e10` | gated on skill id `0x188b4` = 100532 |
 | `0x018C` | `FUN_142cd94e0` | two fields, no loop |
 
-**The blind spot, stated rather than hidden: 94 of the 273 cases have inline bodies** and the
-sweep did not cover them. The case table lists at most three calls for an inline body, so it
-cannot rule them out either. This negative therefore covers 179/273 of the switch and no
-more.
+**This negative is much weaker than it first looked, and the reason is worth keeping.** Two
+blind spots, and the second one means it was close to answering the wrong question entirely:
+
+* 94 of the 273 cases have **inline bodies** and the sweep did not cover them. The case table
+  lists at most three calls for an inline body, so it cannot rule them out either.
+* **`FUN_142cbaa80` is `CWvsContext::OnPacket` and covers the `CHARACTERDATA` block only** -
+  mscw `0x0070..0x019F`. In the v214 reference, `CHARACTERDATA` is `0x37..0x166` and
+  `BEGIN_FUNCKEYMAPPED` is at **`0x4C3`**, past `STAGE`, `FIELD`, `USERPOOL`, `MOBPOOL`,
+  `NPCPOOL`, `FIELDSTATE` and `BATTLEUSERPOOL`. `FuncKeyMappedInit` was **never going to be
+  in this switch**, so sweeping it is close to searching the wrong set - the exact mistake
+  `CLAUDE.md` names twice, once for the wrong *shape* and once for the wrong *set*.
+
+  mscw's inbound space is known to run past `0x055D` (the classic shop) and `0x05AD` (the
+  cash shop), so if the block order holds, a keymap init sits somewhere around `0x58x..0x5Dx`
+  and is dispatched by something other than `CWvsContext::OnPacket`. `tools/dispatchers.py`
+  ranks 19 candidates with 8+ handlers; a `CFuncKeyMappedMan::OnPacket` has **three** arms
+  and is below that floor, so it needs a different filter, not a lower one.
 
 ## Two instruments to distrust
 

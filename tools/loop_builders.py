@@ -50,7 +50,13 @@ print a sweep whose control failed.
   list-shaped packet".
 * **A loop more than one call deep.** `--depth 2` (the default) follows a builder's direct
   callees and no further, so a builder that delegates twice is still missed. Raising it
-  costs precision: a deep helper's loop gets attributed to whatever packet reached it.
+  costs precision: a deep helper's loop gets attributed to whatever packet reached it. Even
+  at 2 the attribution is visibly noisy - a row carrying several `CTOR`/`SEND` pairs has
+  swallowed sibling builders through a shared helper, and its shape means nothing.
+* **A fixed-size table written as one blob.** `w_raw` of `count * stride` bytes has no
+  backward branch, so a packet that carries a whole array in one call looks like a single
+  header field. This is the blind spot that matters: a negative from this tool is "nothing
+  **loops** on that shape", never "no packet carries that list".
 * Anything Themida virtualised. `0x032C`'s builder is inside `.themida` and has no bytes.
 """
 import argparse
