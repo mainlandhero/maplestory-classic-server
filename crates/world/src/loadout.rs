@@ -1338,9 +1338,10 @@ mod tests {
 // WIRE IT LIKE THIS - `!kit`, and it is NOT wired
 // =======================================================================================
 //
-// `CLAUDE.md`: "Built is not wired." Nothing above is reachable from a running server. This
-// section is the whole of what a coordinator has to add, and it belongs to whoever owns
-// `crates/world/src/session/` - this module deliberately does not touch it.
+// **WIRED on 2026-08-28 - this section is kept as the record of what was done.** `!kit` in
+// `session::gm` calls `loadout_for`, hands each piece over through the shared `give_item`, and
+// reports what the character cannot equip. The paragraph below said "nothing above is
+// reachable from a running server", which was true when the agent wrote it and is not now.
 //
 // ## 1. `gm_item`'s body wants extracting first, and there is a precedent for saying so
 //

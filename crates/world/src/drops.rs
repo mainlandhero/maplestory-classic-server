@@ -7,11 +7,14 @@
 //! about the client is written up in `research/item-drop.md`, tagged **[L]** for read off the
 //! listing and **[I]** for inferred.
 //!
-//! # BUILT AND NOT WIRED
+//! # WIRED since 2026-08-19. This header used to say the opposite.
 //!
-//! **Nothing calls any of this.** On screen it is identical to not existing, which is the
-//! failure mode `CLAUDE.md` names: quest state and the channel-list fix both sat in exactly
-//! this state for a day while `STATUS.md` called them done.
+//! It read *"Nothing calls any of this"*, and that was true on the day it was written.
+//! `crate::fields` owns a `DropTable` per map, `session::combat` rolls drops on the death
+//! branch, and `session::mod` routes the pick-up range. Drops arc out of corpses on screen.
+//!
+//! **Left as a correction rather than deleted**, because a stale "not wired" banner is its own
+//! hazard: it invites the next reader to go and wire something twice.
 //!
 //! What unblocks each half:
 //!
