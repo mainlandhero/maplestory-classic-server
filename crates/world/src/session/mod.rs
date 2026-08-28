@@ -584,7 +584,7 @@ impl Session {
                 return self.on_quest_request(body.get(2..).unwrap_or(&[]))
             }
             op if net::combat::is_attack_opcode(op) => {
-                return self.on_attack(body.get(2..).unwrap_or(&[]))
+                return self.on_attack(op, body.get(2..).unwrap_or(&[]))
             }
             net::inventory::CLIENT_INVENTORY_MOVE => {
                 return self.on_inventory_move(body.get(2..).unwrap_or(&[]))

@@ -252,6 +252,10 @@ fn main() -> ExitCode {
     // until someone clicks + on a skill and is told it is not theirs.
     config.skills = world::skilltable::SkillTable::load(&skills_path);
     println!("{}", config.skills.banner());
+    // The per-level cast numbers, from the same file. Loaded separately because the two
+    // tables answer different questions - see Config::firstjob.
+    config.firstjob = world::firstjob::CombatTable::load(&skills_path);
+    println!("{}", config.firstjob.banner());
 
     config.npcs = world::config::Config::load_npcs(&npcs_path);
     if config.npcs.is_empty() {

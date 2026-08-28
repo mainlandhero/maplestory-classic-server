@@ -1367,6 +1367,117 @@ fn a_row_index_naming_the_wrong_item_is_refused() {
     assert_eq!(store.mesos(id).unwrap(), before, "nothing was charged");
 }
 
+/// Current MP straight out of the database, by character id. (`mp_of` is taken.)
+fn stored_mp(store: &Arc<Store>, id: u32) -> u32 {
+    store
+        .characters_for(1, 0)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == id)
+        .expect("the character is in the store")
+        .mp
+}
+
+/// **An attack skill costs MP, and a potion afterwards does not hand it back.**
+///
+/// The owner, 2026-08-28: *"Using the Red Potion when my MP is depleted incorrectly recovered my
+/// MP?"* It did not. Red Potion's `spec` is `hp 100, mp 0` and the handler added `+0 mp` -
+/// `world.log` says so in as many words. The **client** had been spending MP locally on every
+/// Power Strike while the **server** never did, so `chr.mp` was still full; the potion's
+/// `0x007C` carries the MP field like every stat change, and the client believed it.
+///
+/// The bug was a stale number, and it surfaced through an unrelated packet. So this test
+/// asserts the *whole* shape rather than the deduction alone: the cast spends, the total is
+/// what the WZ says, and the potion afterwards reports the LOWERED total. A test of only the
+/// first would pass while the symptom the owner saw was untouched.
+#[test]
+fn an_attack_skill_costs_mp_and_a_potion_does_not_undo_it() {
+    let skills = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !skills.exists() {
+        return; // generated, gitignored - python tools/dump_skills.py
+    }
+    const POWER_STRIKE: u32 = 1_001_001;
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Fighter".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 100;
+    made.mp = 100;
+    made.max_mp = 100;
+    store.save_character_progress(&made).unwrap();
+    store.set_skill_level(made.id, POWER_STRIKE, 5).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        firstjob: crate::firstjob::CombatTable::load(skills),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    // What the client's own data says a level-5 Power Strike costs.
+    let cost = s
+        .config
+        .firstjob
+        .level(POWER_STRIKE, 5)
+        .and_then(|l| l.mp_con)
+        .expect("Power Strike has an mpCon");
+    assert!(cost > 0, "a zero cost would make this test vacuous");
+
+    // **A REAL captured swing**, from `research/fixtures/melee-collector-runs-once-per-swing`,
+    // with the skill id and level patched into the two fields
+    // `research/attack-skill-id.md` measured: the `u32` at body offset 2 and the `u8` at 6.
+    // A hand-built header will not do - the parser checks the length and the trailer, and a
+    // body it rejects would make this test pass for the wrong reason.
+    const SWING: &str = concat!(
+        "0000000000000000000000000000000000050000009fae34080104000000e6a81f08f7018b0100000000f7018b010000",
+        "0000000000000000000000000000000000000000000000000100000001000000000a0055736572204d656c6565890100",
+        "000000000000000000000000000000000000000000000000000080e8da8f00",
+    );
+    let mut payload: Vec<u8> = {
+        let hex: String = SWING.chars().filter(|c| !c.is_whitespace()).collect();
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    };
+    payload[2..6].copy_from_slice(&POWER_STRIKE.to_le_bytes());
+    payload[6] = 5;
+    // It must parse, or the deduction below is testing the early return.
+    assert!(
+        net::attack::parse(net::combat::USER_MELEE_ATTACK, &payload).is_ok(),
+        "the captured body must still parse after patching"
+    );
+    let mut body = net::combat::USER_MELEE_ATTACK.to_le_bytes().to_vec();
+    body.extend_from_slice(&payload);
+
+    let out = s.handle(&body);
+    let mp_now = stored_mp(&store, made.id);
+    assert_eq!(mp_now, 100 - cost, "the cast must spend exactly mpCon");
+    assert!(
+        out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "and the client must be told, or its own count and ours drift again"
+    );
+
+    // **The symptom, not just the cause.** A Red Potion is hp 100 / mp 0; the stat change it
+    // sends must carry the LOWERED MP, not the total the server used to be holding.
+    store
+        .add_item(made.id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 1), 200)
+        .unwrap();
+    let before = stored_mp(&store, made.id);
+    let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_000_000, 1));
+    let after = stored_mp(&store, made.id);
+    assert_eq!(after, before, "a Red Potion restores no MP: its spec is hp 100, mp 0");
+    for r in out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED) {
+        assert!(
+            !r.what.contains(&format!("{}/{}", 100, 100)),
+            "the potion must not report full MP: {}",
+            r.what
+        );
+    }
+}
+
 /// **Selling works, and sends NO buy-back row and NO type-10 refresh.**
 ///
 /// The owner, 2026-08-28: *"Selling an item to Lucy crashed the client."* The sale itself was fine -

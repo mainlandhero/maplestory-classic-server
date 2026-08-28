@@ -29,6 +29,17 @@
 
     WHAT THE LAST RUN CLOSED - none of this needs testing again
     ----------------------------------------------------------
+    SELLING WORKS, and the Buy Back tab is not coming. Removing the type-10 refresh fixed
+    the crash. This client's UIShop.img/Shop has no repurchaseInfo node and exactly TabBuy
+    and TabSell, so there is no third tab to draw. Not a bug and not a gap.
+    WARRIOR WORKS - skills cast, and the client refuses at 0 MP.
+    THE RED POTION NEVER RESTORED MP. The owner: *"Using the Red Potion when my MP is depleted
+    incorrectly recovered my MP?"* It did not. Its spec is hp 100, mp 0, and the log line
+    reads "+0 mp (now 181/181)". The CLIENT had been spending MP locally on every swing
+    while the SERVER never did, so our stale 181/181 rode along on the potion's 0x007C and
+    the client believed it. Any 0x007C would have done it - idle regen a few seconds later
+    would have. FIXED: attack skills now cost MP server-side, keyed by (skill id, level),
+    which is the first thing research/attack-skill-id.md actually bought.
     THE CLASSIC SHOP WINDOW DRAWS. See step 7.
 THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
     No 0x0189 came back, so the permission gate refused it; the echo happens BEFORE the
@@ -109,11 +120,18 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
         mob the owner has fought is in the 128. So the 224 captures behind "mobs rated 3 to 287,
         all 1" are 224 observations of ONE case; the ratings vary, the code path does not.
 
-          !map 1014   Snail Field of Flowers, template 41, level 46, PADamage 243.
-          Let it hit you ONCE, then !heal. Alternatives: map 41 (template 53, pad 410) or
-          map 10001012 (template 50, pad 306).
+        THIS TEST DID NOT ACTUALLY RUN ON 2026-08-28, and the reason was mine. I named map
+        1014 from a mis-indexed column - `gm-handbook/mobs.txt` is `map, template, x, ...`
+        and I read field 3, which is an x coordinate. 1014 really holds templates 2, 3, 5
+        and 9, every one of them attack-node-less; only 3 and 5 hit them, both `attack index
+        -1`, both claiming 1. So the run measured the same case as before.
 
-            a real number near 243 -> the missing attack record is the cause. Body-attack
+          !map 20000094   Orbis Tower 12th Floor. 24 spawns of template 1003, level 30,
+          PADamage 149, and it is the ONLY mob on the map - so whatever hits you has an
+          attack node. Alternative: !map 20000050 Cloud Park I, 35x template 1019, pad 154,
+          also a single-mob map. Let it hit you ONCE, then !heal.
+
+            a real number near 149 -> the missing attack record is the cause. Body-attack
                        damage is what the server owes the client and we can act on it
             still 1                -> the attack record is not the variable and my reading is
                        wrong. That is a real result, not a failed test
@@ -1070,6 +1088,15 @@ if ($SetFieldProbe) {
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
+    Write-Host '  SELLING WORKS. The shop opens, sells, and the client lives.'
+    Write-Host '  There is NO Buy Back tab and there never will be - this client'
+    Write-Host '  ships no repurchaseInfo node and exactly two tabs. Not a bug.'
+    Write-Host '  WARRIOR WORKS. Skills cast, and the client refuses at 0 MP.'
+    Write-Host '  AND THE RED POTION NEVER RESTORED MP. Its spec is hp 100, mp 0'
+    Write-Host '  and the log says "+0 mp". The CLIENT had been spending MP locally'
+    Write-Host '  while the SERVER never did, so our stale 181/181 rode along on the'
+    Write-Host '  potion stat change and the client believed it. FIXED: attack skills'
+    Write-Host '  now cost MP server-side - the first thing the skill id bought.'
     Write-Host '  THE SHOP WINDOW DRAWS. 0x055D, Lucy, 12 rows, 1905 bytes = 21 +'
     Write-Host '  12x157 exactly. Six days of decode, right first time on the wire.'
     Write-Host '  (The /hitdamagetest route is dead: no 0x0189 came back, so the'
@@ -1102,9 +1129,17 @@ if ($SetFieldProbe) {
     Write-Host '     128 of this client 193 mobs have no attack node - INCLUDING EVERY'
     Write-Host '     MOB YOU HAVE EVER FOUGHT. Snails have none. So the 224 captures of'
     Write-Host '     "always 1" are 224 observations of the same case, not a range.'
-    Write-Host '       !map 1014      Snail Field of Flowers - template 41, PADamage 243'
+    Write-Host '     LAST RUN THIS TEST DID NOT ACTUALLY HAPPEN. I sent you to map'
+    Write-Host '     1014 off a mis-indexed column: mobs.txt is map,template,x and I'
+    Write-Host '     read field 3, which is an x coordinate. 1014 holds templates 2,'
+    Write-Host '     3, 5 and 9 - all attack-node-less. Only 3 and 5 hit you, both'
+    Write-Host '     touch damage, both claiming 1. My error, not a failed test.'
+    Write-Host '       !map 20000094    Orbis Tower 12th Floor'
+    Write-Host '     24 spawns, template 1003, level 30, PADamage 149, and it is the'
+    Write-Host '     ONLY mob on that map - so whatever hits you HAS an attack node.'
+    Write-Host '     Alternative: !map 20000050 Cloud Park I, template 1019, pad 154.'
     Write-Host '     Let it hit you ONCE. It hits hard; !heal after.'
-    Write-Host '       a real number near 243 -> that is the cause. Body-attack damage'
+    Write-Host '       a real number near 149 -> that is the cause. Body-attack damage'
     Write-Host '                     is what the server owes the client, and we can fix it'
     Write-Host '       still 1               -> the attack record is not the variable and'
     Write-Host '                     my section 2 is wrong. Say so; it is a real result'
@@ -1258,9 +1293,9 @@ if ($SetFieldProbe) {
     Write-Host '       There is NO Buy Back tab and there never will be. Not a bug.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
-    Write-Host '     MP cost and damage validation on ATTACK skills. The skill id is'
-    Write-Host '     now readable so both are finally possible, but neither is'
-    Write-Host '     connected - attacks still cost no MP. Only BUFF casts spend it.'
+    Write-Host '     Damage VALIDATION on attack skills. MP cost is wired now; the'
+    Write-Host '     hit check is still not - the client authors the number and we'
+    Write-Host '     do not argue with it.'
     Write-Host '     Spent skill points still come back; !learn grants directly.'
     Write-Host '     The Shop2 window (0x0560). Its art is not in this client and it'
     Write-Host '     can no longer be sent at all. --shop is now a no-op that says so.'

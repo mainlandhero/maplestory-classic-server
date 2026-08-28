@@ -280,6 +280,16 @@ pub struct Config {
     /// Empty means only the three beginner skills are grantable - exactly the behaviour that
     /// shipped before the table existed, so a missing file degrades to something known.
     pub skills: crate::skilltable::SkillTable,
+    /// What a cast COSTS and what it does, per skill level, from the same generated file.
+    ///
+    /// Separate from [`Self::skills`] because they answer different questions: that one is
+    /// "may this job learn it, and how far", this one is "what does level `n` cost". The
+    /// attack path needs the second and nothing else.
+    ///
+    /// Empty means an attack skill costs no MP - which is exactly the behaviour that produced
+    /// The owner's *"the Red Potion recovered my MP"* on 2026-08-28, so a missing file degrades to
+    /// a known bug rather than an unknown one. `banner()` says so at start-up.
+    pub firstjob: crate::firstjob::CombatTable,
 
     /// `mapId -> name`, from `gm-handbook/maps.txt`.
     ///
@@ -1348,6 +1358,7 @@ impl Default for Config {
             consumables: crate::consumables::Consumables::default(),
             commodity: crate::commodity::CommodityTable::default(),
             skills: crate::skilltable::SkillTable::default(),
+            firstjob: crate::firstjob::CombatTable::default(),
         }
     }
 }

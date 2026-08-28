@@ -67,6 +67,71 @@ impl Session {
     }
 
 
+    /// Spend the MP an attack skill costs, and tell the client the new total.
+    ///
+    /// # Why this did not exist until now
+    ///
+    /// The cost is `mpCon`, keyed by **(skill id, skill level)**, and until 2026-08-28 this
+    /// server could not read either off the wire. `research/attack-skill-id.md` found both -
+    /// the id is the `u32` at body offset 2 and the level the `u8` at offset 6 - so this is
+    /// the first thing that finding paid for.
+    ///
+    /// # The level comes from the STORE, not from the packet
+    ///
+    /// The client tells us which level it thinks it cast, and nothing on this socket
+    /// authenticates anybody. A crafted body claiming level 1 would buy a level-20 cast at
+    /// the level-1 price. The packet's level is only used when the store has no row, which
+    /// means the skill was never granted through us.
+    ///
+    /// # It never refuses
+    ///
+    /// The swing has already happened on screen. Refusing here cannot un-play the animation,
+    /// and would recreate the very desynchronisation this exists to fix - so an overdraw
+    /// spends what is there, floors at zero, and says so in the log line.
+    fn spend_attack_mp(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        // The full parser rather than a hand-rolled offset read: it checks the length and the
+        // trailer, so a body it accepts is one whose head we have actually understood.
+        let Ok(parsed) = net::attack::parse(opcode, payload) else { return Vec::new() };
+        let Some((skill_id, claimed_level)) = parsed.skill() else {
+            return Vec::new(); // an ordinary swing costs nothing
+        };
+        let level = self
+            .store
+            .skill_level(chr.id, skill_id)
+            .ok()
+            .filter(|l| *l > 0)
+            .unwrap_or(u32::from(claimed_level));
+        let Some(cost) = self.config.firstjob.level(skill_id, level).and_then(|l| l.mp_con) else {
+            return Vec::new(); // no cost column, or a skill this table does not describe
+        };
+        if cost == 0 {
+            return Vec::new();
+        }
+        let short = cost.saturating_sub(chr.mp);
+        chr.mp = chr.mp.saturating_sub(cost);
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            return self.notice(format!("Could not spend the MP for skill {skill_id}: {e}"));
+        }
+        vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange { mp: Some(chr.mp), ..Default::default() }.build(),
+            what: format!(
+                "StatChanged: skill {skill_id} level {level} cost {cost} mp -> {}/{}{}. The \
+                 CLIENT already spent this locally; before 2026-08-28 the server did not, and \
+                 the stale total came back the next time any 0x007C carried the MP field - \
+                 which is what looked like a Red Potion restoring MP",
+                chr.mp,
+                chr.max_mp,
+                if short > 0 {
+                    format!(" (SHORT by {short}, floored at 0 rather than refused)")
+                } else {
+                    String::new()
+                }
+            ),
+        }]
+    }
+
     /// The player swung at something.
     ///
     /// **The client has already worked out the damage.** Each target block in `0x00DF` carries
@@ -83,10 +148,31 @@ impl Session {
     /// when it swings at empty air, and on 2026-08-19 it was also - wrongly - reported as
     /// proof that the client would not target our mobs at all. That claim came from combining
     /// two different sessions and is retracted; `research/mob-combat.md` §17.
-    pub(super) fn on_attack(&mut self, payload: &[u8]) -> Vec<Reply> {
+    pub(super) fn on_attack(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
         let Ok(attack) = net::combat::parse_attack(payload) else {
             return Vec::new();
         };
+        // **The MP the skill cost, before anything else this swing does.**
+        //
+        // The owner, 2026-08-28: *"Using the Red Potion when my MP is depleted incorrectly
+        // recovered my MP?"* It did not. The potion's own `spec` is `hp 100, mp 0` and the
+        // handler added `+0 mp` - the log line says so. What happened is that the **client**
+        // had been spending MP locally on every Power Strike while the **server** never did,
+        // so `chr.mp` here was still 181/181. The potion's `0x007C` carries the MP field
+        // like every other stat change, and the client believed it.
+        //
+        // So the bug was never in the potion; it was a stale number finally being spoken
+        // aloud. Any `0x007C` would have done it - idle regen would have done it a few
+        // seconds later.
+        //
+        // This is the fix, and it is the first thing the skill id unblocked
+        // (`research/attack-skill-id.md`): the id is the `u32` at body offset 2 and the
+        // level the `u8` at offset 6, so the cost is a lookup away.
+        //
+        // **Log only, never refuse.** The client has already played the animation and
+        // computed its damage; rejecting the swing here would desynchronise the very thing
+        // this is fixing. If the MP does not cover it we spend what there is and say so.
+        let mut out = self.spend_attack_mp(opcode, payload);
         // **The only coordinate pair this server reads from the client.** The attack body
         // carries the player's own position (fields 13/14), which is how the zero-target
         // captures were paired against mob positions in `research/mob-target-gates.md` §1.
@@ -98,7 +184,6 @@ impl Session {
         // Read once rather than per target: it is a database round trip, and a swing can
         // legitimately kill several mobs at once.
         let killer = self.claimed_character().map(|c| (c.id, c.map_id));
-        let mut out = Vec::new();
         let Some((chr_id, map)) = killer else { return out };
         for target in &attack.targets {
             let Some(hp_before) = self.fields.mob_hp(map, target.object_id) else {
