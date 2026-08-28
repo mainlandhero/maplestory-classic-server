@@ -115,6 +115,28 @@ further up.
 
 **What changed most recently, newest first:**
 
+* **`-HeapFix` was tried, it armed, and it cannot work. RETRACTION of what this file said two
+  entries ago.** It said the patch *"would have prevented the 2026-08-27 death"* because the
+  fault address sat in the function it edits. The patch **held** - `0x14019b504` reads
+  `8b 07 90` in the new dump - and the client died anyway. There is a **second pooled free** at
+  `0x14019bb50` with the identical qword header load, the route to it is fixed at **compile
+  time**, and a client died there **unpatched on 2026-08-20**, two days before the patch
+  existed. Across every archived run: **10 deaths, 8 at one site, 2 at the other.** Fifty-six
+  sites carry that ladder image-wide. The fault address said which function *died*, not which
+  function the block would have been *freed through* - and one check surviving is not a
+  measurement.
+* **And the flag costs a measurement every run it is on.** The only constraint anyone has on
+  *when* the stray `1` is written is that a damaged slot was found **on the free list**, which
+  is an argument only while that free is unpatched. Every dump taken with `-HeapFix` on is
+  unusable for it. The flag is **off**.
+* **The damage is the same shape for the tenth time** - `0x0000000100000020`, `0x20` class,
+  0 damaged in 693 272 slots outside it.
+* **Magic Claw's 1 damage was the formula being right.** INT 6 on a Rogue-turned-Magician:
+  `MagicTotal` seeds from `floor(INT/2)`, so the window sits at 1..2 before any defence.
+  `magic::cobalt` pins it. `!job` and the skill-up now warn when the stat does not match.
+* **`!resetap` and `!resetsp`.** The AP one **conserves the total** rather than recomputing a
+  per-level award nothing here knows, and leaves a stat already below the floor alone.
+
 * **The magic damage formula is decoded**, `FUN_14025FFD0` - the sibling of the physical one,
   found because the two are called from the same four sites with byte-identical setup on the
   two arms of one `if`, and because it reads the one stat slot the physical builder ignores.

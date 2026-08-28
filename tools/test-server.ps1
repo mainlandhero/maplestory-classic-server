@@ -60,8 +60,34 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    RUN THIS ONE WITH  -HeapFix .  IT IS NO LONGER A GUESS.
-    -------------------------------------------------------
+    DO NOT USE -HeapFix.  IT WAS TRIED, IT ARMED, AND IT CANNOT WORK.
+    ------------------------------------------------------------------
+    2026-08-28: the flag armed - the marker reads heapfix=on and the patch verified its own
+    write - and the client died of 0xC0000374 anyway, at 270 s. Read the dump and the patch
+    HELD: 0x14019b504 is 8b 07 90, not 48 8b 07. It simply had nothing to do with this death.
+
+    THERE IS A SECOND POOLED FREE, 0x14019bb50, for the identical pool, with the identical
+    qword header load at 0x14019bb63 and the identical ladder - unpatched. The route to it is
+    fixed at COMPILE time (an operator delete that hardcodes the same pool context), so the
+    block could never have reached the patched function. And the decisive part: a client died
+    at that same address on 2026-08-20, UNPATCHED, two days before heapfix.rs existed.
+
+    Across every archived run: 10 deaths of this family, 8 at 0x14019b58e and 2 at
+    0x14019bbf3. Patching one site of the FIFTY-SIX that carry this ladder was never going to
+    settle anything.
+
+    AND IT COSTS A MEASUREMENT EVERY RUN. The one constraint anyone has on WHEN the stray 1 is
+    written comes from finding a damaged slot on the free list - which is only an argument
+    while the free is unpatched. Every dump taken with the flag on is unusable for that.
+
+    THE OLD NOTE SAID THE OPPOSITE AND IT IS KEPT HERE ON PURPOSE
+    ------------------------------------------------------------
+    It said "it is no longer a guess" because 0x14019b58e sits in the function the patch
+    edits. That was true and it was not enough: the fault address said which function died,
+    not which function the block would have been freed through. A prediction that survives one
+    check is not a measurement.
+
+
     Two dumps from 2026-08-27 were analysed and the fault address is now pinned three ways:
     0x14019b58e is the RETURN ADDRESS of `call rbx` = HeapFree(heap, 0, ptr-8) at +0xac of the
     288-byte function whose +0x24 is the -HeapFix patch site. That branch is reached only when
@@ -294,9 +320,13 @@
       mode=2            leave the client's mode-5 auto-login so the button gets a turn.
       create=on         set the protected flag that gates "Create a character", re-armed on
                         every login result because the handshake zeroes it.
-      heapfix=on        ONLY with -HeapFix, off by default. Three bytes at 14019b504 so a
-                        damaged pool header goes back to the free list instead of to
-                        HeapFree. research/heap-third-dump.md section 5 states the risk.
+      heapfix=on        ONLY with -HeapFix, off by default, and TRIED AND FOUND USELESS on
+                        2026-08-28. The three bytes at 14019b504 still do exactly what they
+                        say; the TARGET was wrong. A second pooled free at 14019bb50 has the
+                        identical qword header load, the route to it is fixed at compile
+                        time, and a client died there UNPATCHED two days before this patch
+                        existed. Fifty-six sites carry that ladder.
+                        research/heapfix-did-not-hold.md.
 
     NOTHING AUTHENTICATES. The game socket carries no credentials at all.
 
@@ -1154,23 +1184,21 @@ if ($SetFieldProbe) {
     Write-Host '  IGNORE THE 0x0453 NOISE in the shop - NPC chatter follows you in,' -ForegroundColor DarkGray
     Write-Host '  about 40 a visit. Harmless, on the list. Not a symptom.' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  USE -HeapFix ON THIS RUN. It is no longer a guess.' -ForegroundColor Yellow
-    Write-Host '  0x14019b58e is the RETURN ADDRESS of the HeapFree call at +0xac of'
-    Write-Host '  the very function the patch edits at +0x24. Read as a DWORD - all'
-    Write-Host '  the patch changes - the damaged header becomes 0x20 and the block'
-    Write-Host '  goes to the pool free list instead. It would have stopped THIS one.'
-    Write-Host '  Both crashed runs were UNPATCHED, so nothing has tested it yet.'
-    Write-Host '    lives past 1046s      -> the chain is confirmed end to end'
-    Write-Host '    dies of 0xC0000374    -> the chain is wrong; worth MORE than a pass'
-    Write-Host '    dies of something new -> say the exit code'
-    Write-Host '  It is still a BANDAID: the stray write is untouched. Nine damaged'
-    Write-Host '  slots in 962112, all the identical value, all one size class.'
-    Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
-    Write-Host '     A damaged pool header goes back to the free list instead of to'
-    Write-Host '     HeapFree. NINE damaged slots over six dumps, all the same value.'
-    Write-Host '       stops dying with 0xC0000374 -> the chain is confirmed'
-    Write-Host '       dies anyway                 -> the chain is wrong somewhere,'
-    Write-Host '                                      which is worth more'
+    Write-Host '  DO NOT USE -HeapFix. Tried 08-28: it ARMED, the patch HELD' -ForegroundColor Red
+    Write-Host '  (0x14019b504 reads 8b 07 90 in the dump), and the client died of'
+    Write-Host '  0xC0000374 anyway at 270s. There is a SECOND pooled free at'
+    Write-Host '  0x14019bb50 with the same qword header load, and the route to it is'
+    Write-Host '  fixed at COMPILE time - the block could never have reached the'
+    Write-Host '  patched one. A client died at that address UNPATCHED on 08-20.'
+    Write-Host '  10 deaths of this family: 8 at one site, 2 at the other. FIFTY-SIX'
+    Write-Host '  sites carry this ladder; patching one was never going to settle it.'
+    Write-Host '  It also COSTS a measurement: the only constraint on WHEN the stray'
+    Write-Host '  1 is written needs the free UNPATCHED to be an argument at all.'
+    Write-Host '     The patch still does what it says; the TARGET was wrong.'
+    Write-Host '     Widening it to 0x14019bb63 is four bytes for four - but the'
+    Write-Host '     read-before-write guard is much weaker there, because the'
+    Write-Host '     identical instruction sits at both sites and only the address'
+    Write-Host '     tells them apart. research/heapfix-did-not-hold.md.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - decoded but deliberately NOT built:' -ForegroundColor DarkGray
     Write-Host '     Mina''s classic shop counter, which is NOT the cash shop. The'
