@@ -82,6 +82,7 @@ impl Session {
             // conserves the total rather than recomputing it from the level.
             "resetap" => self.gm_reset_ap(),
             "resetsp" => self.gm_reset_sp(),
+            "learn" => self.gm_learn(arg),
             "buy" => self.gm_buy(arg),
             "locker" => self.gm_locker(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
@@ -921,6 +922,186 @@ impl Session {
                 net::skills::change_skill_record_result(true, true, &forgotten),
                 format!("!resetsp forgot {} skill(s)", forgotten.len()),
             ));
+        }
+        out
+    }
+
+    /// `!learn [level]` or `!learn <skillId> <level>` - put every skill of this job's book on
+    /// the bar, without spending a single skill point.
+    ///
+    /// # Why this exists
+    ///
+    /// The owner, 2026-08-28: *"I need all 1st job skills of all branches to have their damage
+    /// calculation ready and their skills available to test next session."* That is **24
+    /// skills across four branches**, and reaching them through `0x013B` means levelling to
+    /// earn the points, four times over, inside one run that costs a manual launch.
+    ///
+    /// `!resetsp`'s own report already says why the points are not the obstacle worth
+    /// engineering around: *"this server computes the pool from your LEVEL rather than
+    /// tracking a balance"*. So a bulk grant is not a cheat against a balance that exists -
+    /// there is no balance yet. It is the same `0x0081` the `+` button produces, sent for
+    /// several skills at once.
+    ///
+    /// # It refuses exactly what `0x013B` refuses, by calling the same predicate
+    ///
+    /// [`crate::skilltable::SkillTable::book`] filters on `may_learn`, the function
+    /// `on_skill_up` uses. Two copies of one rule is how one of them ends up wrong - the
+    /// Heena quest paid for that lesson with a farming loop - so there is deliberately not a
+    /// second list of "what a Bowman may have" anywhere in this file.
+    ///
+    /// # The clamp is the skill's own ceiling, not one constant
+    ///
+    /// `BEGINNER_SKILL_MAX_LEVEL` is 3, right for Three Snails and wrong for all 24 of these:
+    /// the first-job books run to 15 and 20. Each skill is clamped to its **own** `maxLevel`,
+    /// so `!learn 20` gives Magic Guard 15 and Magic Claw 20 in the same breath.
+    pub(super) fn gm_learn(&mut self, arg: &str) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self
+                .gm_ack("!learn REFUSED: no character is claimed on this connection.".to_string());
+        };
+        // **A missing table is a refusal with a fix in it, not a silent no-op.** The file is
+        // gitignored and regenerable, so the one thing this must never do is look like the
+        // job has no skills.
+        if self.config.skills.is_empty() {
+            return self.gm_ack(
+                "!learn REFUSED: no skill table is loaded, so this server does not know what \
+                 any job may learn. Regenerate it from the repo root with: python \
+                 tools/dump_skills.py - then restart the world server."
+                    .to_string(),
+            );
+        }
+
+        let mut fields = arg.split_whitespace();
+        let (targets, asked): (Vec<u32>, Option<u32>) = match (fields.next(), fields.next()) {
+            // `!learn` - the whole book, each at its own maximum.
+            (None, _) => (self.config.skills.book(chr.job).iter().map(|s| s.id).collect(), None),
+            // `!learn <level>` - the whole book, capped.
+            (Some(one), None) => match one.parse::<u32>() {
+                Ok(level) => {
+                    (self.config.skills.book(chr.job).iter().map(|s| s.id).collect(), Some(level))
+                }
+                Err(_) => {
+                    return self.gm_ack(format!(
+                        "!learn: {one:?} is not a level. Try !learn (whole book at maximum), \
+                         !learn 5, or !learn 2001003 7."
+                    ))
+                }
+            },
+            // `!learn <skillId> <level>` - one skill.
+            (Some(id), Some(level)) => match (id.parse::<u32>(), level.parse::<u32>()) {
+                (Ok(id), Ok(level)) => (vec![id], Some(level)),
+                _ => {
+                    return self.gm_ack(format!(
+                        "!learn: {id:?} {level:?} is not a skill id and a level."
+                    ))
+                }
+            },
+        };
+
+        if targets.is_empty() {
+            return self.gm_ack(format!(
+                "!learn: job {} has no skill book in this client's Skill.wz. The four first \
+                 jobs are 100, 200, 300 and 400 - try !job 300 first.",
+                chr.job
+            ));
+        }
+
+        let mut changes = Vec::new();
+        let mut granted = Vec::new();
+        let mut refused = Vec::new();
+        let mut failed = Vec::new();
+        for id in targets {
+            if !self.config.skills.may_learn(chr.job, id) {
+                refused.push(match self.config.skills.get(id) {
+                    Some(s) => format!("{} ({}) is in job book {}", id, s.name, s.job),
+                    None => format!("{id} is not in this client's Skill.wz"),
+                });
+                continue;
+            }
+            // **Clamped to this skill's ceiling, and `0` is not a level.** A `!learn 0` is a
+            // forget, which `!resetsp` already does properly with `SkillChange::Forget`;
+            // sending `Learn` at level 0 would tell the client to draw a skill it cannot.
+            let Some(ceiling) = self.config.skills.max_level(id) else {
+                refused.push(format!("{id} has no level rows in the table"));
+                continue;
+            };
+            let level = asked.unwrap_or(ceiling).min(ceiling);
+            if level == 0 {
+                refused.push(format!("{id}: level 0 is a forget - use !resetsp"));
+                continue;
+            }
+            match self.store.set_skill_level(chr.id, id, level) {
+                Ok(()) => {
+                    changes.push(net::skills::SkillChange::Learn(net::skills::Skill::at_level(
+                        id, level,
+                    )));
+                    granted.push(format!("{} lv{level}", self.skill_name(id)));
+                }
+                // Reported, never swallowed - same reason as `!resetsp`. A half-run grant
+                // leaves the client and the database disagreeing about what exists.
+                Err(e) => failed.push(format!("{id} ({e})")),
+            }
+        }
+
+        if changes.is_empty() {
+            return self.gm_ack(format!(
+                "!learn granted nothing. {}{}",
+                if refused.is_empty() {
+                    String::new()
+                } else {
+                    format!("Refused: {}. ", refused.join("; "))
+                },
+                if failed.is_empty() {
+                    String::new()
+                } else {
+                    format!("Failed: {}.", failed.join("; "))
+                }
+            ));
+        }
+
+        // **Say when the stats will make every one of these land on the damage floor.** This
+        // is the same warning `!job` and `on_skill_up` carry, and it is repeated here because
+        // this is the command that will be typed immediately before the owner swings. They spent a
+        // session concluding Magic Claw was broken when they were a Rogue with 6 INT.
+        let warning = crate::jobs::FIRST_JOBS
+            .iter()
+            .find(|j| j.job == chr.job)
+            .map(|j| (j.stat, j.stat.of(&chr)))
+            .filter(|(_, have)| *have < crate::jobs::STAT_MINIMUM)
+            .map(|(stat, have)| {
+                format!(
+                    " *** WARNING: you have {have} {}. Every attack skill here scales on it, \
+                     so they will all land on the damage floor of 1 whatever level they are. \
+                     That is the formula being right. Raise {} first. ***",
+                    stat.label(),
+                    stat.label()
+                )
+            })
+            .unwrap_or_default();
+
+        let mut out = self.gm_ack(format!(
+            "Learned {} skill(s) for job {}: {}.{}{}{}",
+            changes.len(),
+            chr.job,
+            granted.join(", "),
+            if refused.is_empty() {
+                String::new()
+            } else {
+                format!(" Refused: {}.", refused.join("; "))
+            },
+            if failed.is_empty() {
+                String::new()
+            } else {
+                format!(" *** FAILED: {} ***", failed.join("; "))
+            },
+            warning
+        ));
+        out.push(self.skill_reply(
+            net::skills::change_skill_record_result(true, true, &changes),
+            format!("!learn granted {} skill(s) to job {}", changes.len(), chr.job),
+        ));
+        if !warning.is_empty() {
+            out.extend(self.notice(warning.trim().trim_matches('*').trim().to_string()));
         }
         out
     }

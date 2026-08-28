@@ -3,26 +3,38 @@
 //! Full working, with every address: **`research/magic-damage.md`**. The physical sibling is
 //! [`crate::damage`] and this module leans on it deliberately - see *What is shared* below.
 //!
-//! # Read this first: nothing here has a caller, and that is not an oversight
+//! # RETRACTED 2026-08-28: the attack packet does carry the skill id
 //!
-//! **The attack packet carries no skill id.** `research/mob-combat.md` §7 counted thirty
-//! header fields in `0x00DF`, five of them non-zero, and explained none; the skill is not
-//! among the ones that have been identified. So the server cannot tell Energy Bolt
-//! (`2001002`, `mad` 90..130) from Magic Claw (`2001003`, `mad` 45..65) from an ordinary
-//! swing - and for magic the skill *is* the whole formula: both `skill_magic_percent` and
-//! `mastery` come from it.
+//! This header said, for nine days:
 //!
-//! There is no neutral default to fall back on either. A physical plain swing is
-//! `skill_damage_percent = 100`; the client pre-sets the **magic** local to **`0`**
-//! (`research/magic-damage.md` §4.2), because a magician's plain swing is *physical* and goes
-//! down the other path entirely. Guessing `100` here would invent a ceiling out of nothing.
+//! > **The attack packet carries no skill id.** [...] So the server cannot tell Energy Bolt
+//! > from Magic Claw from an ordinary swing - and for magic the skill *is* the whole formula.
 //!
-//! So: [`check_magic_hit`] exists, takes an `Option`, and every caller today would have to
-//! pass `None`. **Wiring it is blocked on finding the skill field in the `0x00DF` header**
-//! (`research/damage-formula.md` §11), and until then this module is decoded-and-unwired in
-//! exactly the way `CLAUDE.md`'s "Built is not wired" section says to record loudly.
+//! **It is the `u32` at body offset 2, and its level is the `u8` at offset 6.**
+//! `research/attack-skill-id.md` has the enumeration: every archived `0x00DF`/`0x00E1` body,
+//! grouped by that field. 689 melee swings carry `0`; two Three Snails carry `1000` at level
+//! **3**, and Three Snails' `maxLevel` is exactly 3; fourteen Magic Claws carry `2001003` at
+//! level **7**, and the owner had put exactly 7 points in. Two skills, two levels each known from
+//! an unrelated source.
 //!
-//! Same rule as [`crate::damage`] when it *is* wired: **log only, never refuse.** An
+//! **The evidence for the old claim was an absence in captures that could not have contained
+//! the thing.** Every body this module was written against was an ordinary swing, where the
+//! field is legitimately `0` - and `research/mob-combat.md` §1.3 duly listed it as
+//! "0, unexplained". A zero field explains nothing about itself. This is `CLAUDE.md`'s
+//! *"nothing new arrived is a different claim from this thing did not arrive"*, and it cost
+//! the same nine days the cash-shop opcode cost for the same reason: nobody asked the
+//! specific question.
+//!
+//! So [`check_magic_hit`]'s `Option` can now be filled in. Both inputs it needed are
+//! available: the skill id comes off the wire, and `skill_magic_percent` is the `mad` node,
+//! keyed by (skill id, level) in [`crate::skilltable`].
+//!
+//! What has **not** changed: there is still no neutral default for a non-skill swing. The
+//! client pre-sets the magic local to **`0`** (`research/magic-damage.md` §4.2), because a
+//! magician's plain swing is *physical* and goes down the other path entirely. A skill id of
+//! `0` on `0x00E1` means exactly that, and `100` must not be invented in its place.
+//!
+//! Same rule as [`crate::damage`] now that it *is* wirable: **log only, never refuse.** An
 //! unanswered or rejected packet freezes the client's UI.
 //!
 //! # The formula

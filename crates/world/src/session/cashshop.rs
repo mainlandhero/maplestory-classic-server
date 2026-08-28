@@ -65,6 +65,9 @@ impl Session {
             None => format!("unreadable {}-byte body {body:02x?}", body.len()),
         };
 
+        // The client stops drawing the field from here until the Exit button. See
+        // `Session::in_cash_shop` - this suppresses the idle chatter and nothing else.
+        self.in_cash_shop = true;
         let (quests, _) = self.quest_book(chr.id);
         let skills = self.store.skills(chr.id).unwrap_or_default();
         let mut out = vec![Reply {
@@ -126,6 +129,7 @@ impl Session {
         // `go_to_map` to the map they are already on: it is the one path that sends a DRESSED
         // record with quests and skills, and using it rather than hand-rolling a SetField is
         // what stopped equips losing their stats on every portal in 2026-08-19.
+        self.in_cash_shop = false;
         let (here, portal) = (chr.map_id, chr.portal);
         self.go_to_map(&mut chr, here, portal, "leaving the Cash Shop".to_string())
     }

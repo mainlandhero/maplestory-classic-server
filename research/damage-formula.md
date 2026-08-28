@@ -649,7 +649,20 @@ workspace still needs a run once everyone has reported.
 
 **Two of the four pieces should not be wired at all today, and saying so is the answer.**
 
-### 9.1 Outgoing damage — DO NOT WIRE. Nothing to connect it to.
+### 9.1 Outgoing damage — SUPERSEDED 2026-08-28. The skill field was found; wire it as logging.
+
+> **Retraction.** This section said DO NOT WIRE because two of the four validator inputs were
+> missing. **One of them is now measured**: the skill id is the `u32` at body offset 2 and its
+> level is the `u8` at offset 6 - `research/attack-skill-id.md`, corroborated by two skills
+> whose levels were known independently. The *action* field is still unfound, so the paragraph
+> below about `max_plausible_hit` still describes the fallback; it is no longer the only
+> option. With the skill id in hand `check_hit` gets a real per-skill ceiling, and
+> `magic::check_magic_hit` - which needed both the id *and* `skill_magic_percent` - becomes
+> callable for the first time, since `mad` is keyed by (skill id, level) in `skilltable`.
+>
+> The evidence for the old claim was **an absence in captures that could not have contained
+> the thing**: every archived body was an ordinary swing, where the field is legitimately `0`.
+> That is not a negative result, and it should not have been written as one.
 
 The client computes and sends the number. The only server-side use is validation, and
 validation needs three inputs:
@@ -680,9 +693,10 @@ if let damage::HitVerdict::TooHigh { ceiling } =
 **Never refuse the packet.** A validator that returns an error in place of a reply is the
 always-answer rule broken, and the mob would stop dying.
 
-The genuinely useful first step is not this at all: it is **finding the action and skill fields
-in the `0x00DF` header**, which turns the ceiling from 25 into a real window of 15–21 and makes
-the check discriminating. `research/mob-combat.md` §7 lists the five non-zero header fields.
+The genuinely useful first step was **finding the action and skill fields in the `0x00DF`
+header**, which turns the ceiling from 25 into a real window of 15–21 and makes the check
+discriminating. **The skill half is done** (`research/attack-skill-id.md`); the action half is
+not. `research/mob-combat.md` §1.3 now names fields 2 and 3 and §7 lists what is still open.
 
 ### 9.2 Mob → player damage — READY, but it is a behaviour change on working code
 

@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level] [tailBytes], !unbuff [tailBytes], !nx [amount], !lp [amount], !buy <commoditySN>, !locker [slot], !resetap, !resetsp, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level] [tailBytes], !unbuff [tailBytes], !nx [amount], !lp [amount], !buy <commoditySN>, !locker [slot], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +148,23 @@ pub struct Session {
     asked_to_hide_hit_damage: bool,
     /// The NPC conversation in progress, if any.
     conversation: Option<Conversation>,
+    /// **Is the client showing the Cash Shop rather than the field?**
+    ///
+    /// The owner, 2026-08-26: *"we should fix NPC idle chatter when player is in cash shop."* The
+    /// chatter tick is the server's only unsolicited path and it does not know what the client
+    /// is looking at, so about forty `0x0453`s per visit were going out addressed to NPC object
+    /// ids on a field the client had stopped drawing.
+    ///
+    /// Set when `0x01A3` goes out and cleared when the Exit button's `SetField` does, plus
+    /// again on any field entry - a field entry means the client is in the field stage
+    /// whatever route it took there, so that clear is the one that cannot be forgotten.
+    ///
+    /// **It gates the chatter and nothing else.** Drops still sweep, mobs still respawn and
+    /// buffs still expire while the shop is open: those are properties of the world, not of
+    /// what is on screen, and stopping them here would make a bug in the drop table look like
+    /// a bug in the shop. That is the same reasoning `chatter_off` already carries in
+    /// [`Session::tick`].
+    in_cash_shop: bool,
     /// Where each NPC on the current field is in its idle chatter.
     chatter: Vec<Chatter>,
     /// Drives the chatter cadence. Seeded per session so two connections do not speak in
@@ -366,6 +383,7 @@ impl Session {
             claimed: None,
             asked_to_hide_hit_damage: false,
             conversation: None,
+            in_cash_shop: false,
             chatter: Vec::new(),
             rng: Xorshift(seed),
             clock_ms: 0,
@@ -433,6 +451,12 @@ impl Session {
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
         if self.config.chatter_off {
+            return out;
+        }
+        // **Nobody in the Cash Shop wants forty balloons a visit.** The client is not drawing
+        // the field, so every one of these is addressed to an object it has put away. See
+        // `Session::in_cash_shop`.
+        if self.in_cash_shop {
             return out;
         }
         for c in &mut self.chatter {

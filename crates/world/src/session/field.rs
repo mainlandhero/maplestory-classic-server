@@ -18,6 +18,11 @@ impl Session {
     /// `research/npc-spawn.md` has the working, including how the routing was found.
     pub(super) fn on_field_entered(&mut self) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else { return Vec::new() };
+        // **A field entry means the client is in the field stage, whatever route it took.**
+        // `on_cash_shop_exit` already clears this before its `SetField`; clearing it here as
+        // well is the one that cannot be forgotten, because it does not depend on the Exit
+        // button being the way out. See `Session::in_cash_shop`.
+        self.in_cash_shop = false;
         // The NPC pool is destroyed and rebuilt on every field entry, so the chatter cursors
         // go with it: an object id from the previous map addresses nothing here, or worse,
         // addresses a different NPC.

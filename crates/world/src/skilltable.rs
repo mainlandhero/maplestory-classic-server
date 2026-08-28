@@ -368,6 +368,27 @@ impl SkillTable {
         }
     }
 
+    /// **Every skill of `job`'s own books**, id order - what `!learn` hands out.
+    ///
+    /// The filter is [`Self::may_learn`] itself rather than a second rule written beside it,
+    /// so a command that grants in bulk and a handler that grants one point can never
+    /// disagree about what a job may have. `CLAUDE.md`'s Heena lesson in miniature: two
+    /// copies of one predicate is how one of them gets missed.
+    ///
+    /// **The three beginner skills are excluded**, and that is the one place this differs
+    /// from `may_learn`. Book `0` is not part of any branch - every character already has
+    /// Three Snails, Recovery and Nimble Feet - so folding them in would make `!learn` on a
+    /// Bowman silently re-grant Nimble Feet and report nine skills where the branch has six.
+    ///
+    /// Sorted by id because a `HashMap` walk is not stable, and an unstable order turns a
+    /// chat report into something nobody can diff against the last run.
+    pub fn book(&self, job: u16) -> Vec<&Skill> {
+        let mut out: Vec<&Skill> =
+            self.by_id.values().filter(|s| s.job != 0 && self.may_learn(job, s.id)).collect();
+        out.sort_by_key(|s| s.id);
+        out
+    }
+
     /// The ceiling for one skill, or `None` if the table does not describe it.
     pub fn max_level(&self, skill_id: u32) -> Option<u32> {
         self.get(skill_id).map(|s| s.max_level)

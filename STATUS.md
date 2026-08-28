@@ -49,6 +49,18 @@ enumerating rather than searching a neighbourhood. `tools/reads.py` carries the 
 the history. A tail `jmp` into one of them **is** a read; missing one shipped a short
 packet that killed the client twice.
 
+**The attack packet DOES carry the skill id — retracted 2026-08-28.** For nine days
+`world::magic`, `research/damage-formula.md` §9.1 and `research/mob-combat.md` §7 all said the
+server cannot tell which skill was cast, and every damage validator in the repo was left
+unwired because of it. It is the **`u32` at body offset 2**, with the **level as the `u8` at
+offset 6** — `research/attack-skill-id.md`. The evidence for the old claim was an absence in
+captures that could not have contained the thing: every archived body was an ordinary swing,
+where the field is legitimately `0`, and a zero field explains nothing about itself. One grep
+over `previous-runs/` settled it, with 689 swings at `0`, two Three Snails at `1000` level **3**
+(its maxLevel is 3) and fourteen Magic Claws at `2001003` level **7** (the owner had put in 7).
+Same shape as the cash-shop opcode that sat in the log for three sessions while being reported
+absent: **nobody asked the specific question.**
+
 Where the answers land:
 
 | file | what is in it |

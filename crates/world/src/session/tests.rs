@@ -5441,6 +5441,256 @@ fn resetap_gives_back_exactly_what_was_spent() {
     assert_eq!(s.claimed_character().unwrap().ap, ap_now, "a second reset is a no-op");
 }
 
+/// **The Cash Shop silences idle chatter, and only the chatter.**
+///
+/// The owner, 2026-08-26: *"we should fix NPC idle chatter when player is in cash shop."* About
+/// forty `0x0453`s per visit were going out addressed to NPC object ids on a field the client
+/// had put away.
+///
+/// Three states are asserted, not one. A test that only checked "silent while in the shop"
+/// would pass just as happily if the gate never cleared and the field went quiet for the rest
+/// of the session - which is the more annoying bug of the two, and the one that would take a
+/// client run to notice.
+///
+/// The fourth assertion is the one `CLAUDE.md`'s Heena rule asks for: the gate must **not**
+/// take the rest of `tick` with it. Drop sweeps, respawns and buff expiry are properties of
+/// the world rather than of what is on screen, and a gate placed one line too early would stop
+/// all three while looking exactly like this test passing.
+#[test]
+fn the_cash_shop_silences_idle_chatter_and_the_field_gets_it_back() {
+    let npcs = vec![net::opcode::FieldNpc {
+        object_id: 1000, template_id: 8, x: 69, cy: 275, fh: 30,
+        rx0: 19, rx1: 119, f: 0,
+    }];
+    let mut strings = std::collections::HashMap::new();
+    strings.insert(
+        8u32,
+        crate::config::NpcStrings {
+            name: "Robin".into(),
+            info: (0..4).map(|i| format!("line {i}")).collect(),
+            ..Default::default()
+        },
+    );
+    let config = Config {
+        set_field_probe: true,
+        npcs: [(40u32, npcs)].into_iter().collect(),
+        npc_strings: strings,
+        ..Config::default()
+    };
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character {
+        name: "Shopper".to_string(), map_id: 40, ..Default::default()
+    };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(id);
+    s.on_field_entered();
+
+    // How many balloons a 60-second stretch produces, starting from `from`.
+    let balloons = |s: &mut Session, from: u64| {
+        let mut n = 0;
+        for now in (from..from + 60_000).step_by(250) {
+            n += s.tick(now).iter().filter(|r| r.opcode == net::npcchat::NPC_CHAT).count();
+        }
+        n
+    };
+
+    // 1. On the field, Robin talks.
+    assert!(balloons(&mut s, 0) > 0, "an NPC with four lines must speak on the field");
+
+    // 2. The Cash Shop button, and then silence. `0x00D5` with the real body shape.
+    let mut open = net::cashshop::CLIENT_CASH_SHOP_REQUEST.to_le_bytes().to_vec();
+    open.extend_from_slice(&[0u8; 5]);
+    let out = s.handle(&open);
+    assert!(
+        out.iter().any(|r| r.opcode == net::cashshop::SET_CASH_SHOP),
+        "the shop must actually open, or this test is measuring nothing"
+    );
+    assert_eq!(balloons(&mut s, 60_000), 0, "no balloons while the field is not being drawn");
+
+    // 3. Exit - `0x00D1` with an EMPTY body is the button, not a portal - and Robin is back.
+    let out = s.handle(&super::CLIENT_TRANSFER_FIELD.to_le_bytes().to_vec());
+    assert!(
+        !out.is_empty(),
+        "the Exit button must be answered; an unanswered one freezes the whole UI"
+    );
+    s.on_field_entered();
+    assert!(balloons(&mut s, 130_000) > 0, "leaving the shop must give the field its voice back");
+
+    // 4. The gate is chatter-only. With the shop open again, a tick still carries the rest of
+    //    the world - here, the regeneration that `regen_tick` produces for a damaged
+    //    character. If this ever fails, the `in_cash_shop` return moved too far up `tick`.
+    let mut hurt = s.claimed_character().unwrap();
+    hurt.hp = 1;
+    store.save_character_progress(&hurt).unwrap();
+    s.handle(&open);
+    let mut healed = false;
+    for now in (200_000..320_000).step_by(250) {
+        if s.tick(now).iter().any(|r| r.opcode == net::stats::STAT_CHANGED) {
+            healed = true;
+            break;
+        }
+    }
+    assert!(healed, "the Cash Shop must not stop regeneration - it gates the chatter only");
+}
+
+/// **`!learn` puts a whole branch on the bar, and all four of its effects are asserted.**
+///
+/// The owner, 2026-08-28: *"I need all 1st job skills of all branches to have their damage
+/// calculation ready and their skills available to test next session."* Reaching 24 skills
+/// through `0x013B` means levelling four times inside one run that costs a manual launch.
+///
+/// `CLAUDE.md`'s Heena rule: *"when a handler produces N effects, the test has to say something
+/// about N of them"* - the turn-in test counted fanfares, the one effect that was correctly
+/// gated, and passed on every run while the experience doubled beside it. This handler produces
+/// **four**: the database rows, the `0x0081` the client draws from, the chat report, and the
+/// low-stat warning. All four are below.
+#[test]
+fn learn_grants_a_whole_job_book_at_once() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return; // generated, gitignored - python tools/dump_skills.py
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Ranger".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 300;
+    made.dexterity = 60; // a real Bowman, so the warning must stay silent
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        skills: crate::skilltable::SkillTable::load(path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    assert!(s.claim_for_character(made.id).contains("claimed the migration"));
+
+    let out = s.handle(&gm_chat("!learn 5"));
+
+    // 1. The database. Six skills is the Bowman first-job book: 3000000, 3000001, 3001000,
+    //    3001001, 3001002, 3001003. The count is asserted against the table rather than
+    //    hard-coded, so regenerating `skills.txt` cannot silently make this test wrong.
+    let expected: Vec<u32> =
+        s.config.skills.book(300).iter().map(|sk| sk.id).collect();
+    assert_eq!(expected.len(), 6, "the Bowman first-job book is six skills: {expected:?}");
+    let learned = store.skills(made.id).unwrap();
+    assert_eq!(learned.len(), 6, "every skill in the book must persist");
+    for sk in &learned {
+        assert!(expected.contains(&sk.id), "{} is not in the Bowman book", sk.id);
+        assert_eq!(sk.level, 5, "skill {} should be level 5", sk.id);
+    }
+
+    // 2. The client is told, in ONE packet. Six separate `0x0081`s would each clear the latch
+    //    and five of them would be answering nothing.
+    let records: Vec<_> =
+        out.iter().filter(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT).collect();
+    assert_eq!(records.len(), 1, "one skill record, not one per skill");
+    assert!(records[0].what.contains("6 skill(s)"), "{}", records[0].what);
+
+    // 3. The chat report names them, or nothing on screen says what just happened.
+    assert!(notice_text(&out[0]).contains("Arrow Blow"), "{}", notice_text(&out[0]));
+
+    // 4. A real Bowman is NOT nagged. The warning fires on the stat, not on the command.
+    assert!(
+        !notice_text(&out[0]).contains("WARNING"),
+        "60 DEX must not be warned: {}",
+        notice_text(&out[0])
+    );
+}
+
+/// **`!learn` clamps to each skill's own ceiling, not to one constant.**
+///
+/// The Magician book runs to 15 *and* 20 - Magic Guard stops at 15, Magic Claw at 20 - so a
+/// single clamp is wrong for half the book whichever number it is. This is the same mistake
+/// `on_skill_up` made with `BEGINNER_SKILL_MAX_LEVEL`, which is 3 and right only for the three
+/// beginner skills.
+///
+/// The low-stat warning's other direction is asserted here too: this character has the default
+/// INT, so it must fire.
+#[test]
+fn learn_clamps_each_skill_to_its_own_maximum() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return;
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Cobalt".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 200;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        skills: crate::skilltable::SkillTable::load(path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    // Ask for 99 - far above every ceiling in the book.
+    let out = s.handle(&gm_chat("!learn 99"));
+    let levels: std::collections::HashMap<u32, u32> =
+        store.skills(made.id).unwrap().iter().map(|sk| (sk.id, sk.level)).collect();
+    assert_eq!(levels.get(&2001000), Some(&15), "Magic Guard stops at 15");
+    assert_eq!(levels.get(&2001003), Some(&20), "Magic Claw stops at 20");
+    for (id, level) in &levels {
+        let ceiling = s.config.skills.max_level(*id).expect("in the table");
+        assert_eq!(*level, ceiling, "skill {id} must sit on its own ceiling");
+    }
+
+    // The warning fires: default INT with a Magician job id is exactly Cobalt's situation.
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE
+            && notice_text(r).contains("INT")),
+        "a Magician with no INT must be told the attack skills will hit for 1"
+    );
+}
+
+/// **`!learn` refuses another branch's skill by asking the same predicate `0x013B` asks.**
+///
+/// Two copies of "what may this job have" is how one of them ends up wrong. This asserts the
+/// bulk command and the single-point handler agree, rather than asserting a second list.
+#[test]
+fn learn_refuses_a_skill_from_another_branch() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return;
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Ranger".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 300;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        skills: crate::skilltable::SkillTable::load(path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    // Magic Claw, on a Bowman.
+    let out = s.handle(&gm_chat("!learn 2001003 5"));
+    assert!(store.skills(made.id).unwrap().is_empty(), "nothing may be granted");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::skills::CHANGE_SKILL_RECORD_RESULT),
+        "and no empty change list is sent"
+    );
+    let said = notice_text(&out[0]);
+    assert!(said.contains("job book 200"), "the refusal must name the book: {said}");
+
+    // The single-point handler refuses it too. Same predicate, so this is a check that the
+    // two paths cannot drift, not a duplicate of the assertion above.
+    assert!(!s.config.skills.may_learn(300, 2001003));
+}
+
 /// **`!resetsp` forgets every skill and tells the client**, or the client keeps drawing them.
 #[test]
 fn resetsp_forgets_every_skill_and_says_so() {

@@ -113,14 +113,14 @@ offset in the source object, which is what pins the field boundaries.
 |---:|---:|---|---|---|---|
 | 0 | 0 | u8 | `+0x00` | 0 | |
 | 1 | 1 | u8 | `+0x04` | 0 | |
-| 2 | 2 | u32 | `+0x08` | 0 | |
-| 3 | 6 | u8 | `+0x0c` | 0 | |
+| 2 | 2 | u32 | `+0x08` | 0 | **the SKILL ID.** `0` here means "no skill". **[L]**, `research/attack-skill-id.md` |
+| 3 | 6 | u8 | `+0x0c` | 0 | **the SKILL LEVEL.** **[L]**, same measurement |
 | 4 | 7 | u8 | bool | 0 | `setne dl` |
 | 5 | 8 | u32 | `+0x14` | 0 | |
 | 6 | 12 | u32 | `+0x18` | 0 | |
 | 7 | 16 | u8 | bool | **1** | `setne dl` |
 | 8 | 17 | u32 | `+0x20` | **5** | |
-| 9 | 21 | u32 | `+0x24` | `0x0834ae9f` | looks like a per-attack serial / nonce **[I]** |
+| 9 | 21 | u32 | `+0x24` | `0x0834ae9f` | ~~serial / nonce~~ **a CONSTANT.** Byte-identical in all three captures - a melee swing 2026-08-19, a Three Snails 2026-08-22, a Magic Claw 2026-08-28, three sessions and three characters apart. The `[I]` is refuted; what it *is* remains open |
 | 10 | 25 | u8 | `+0x28` | **1** | |
 | 11 | 26 | u32 | `+0x2c` | **4** | |
 | 12 | 30 | u32 | `+0x30` | `0x06eeac37` | **the tick** - see 1.5 |
@@ -151,6 +151,14 @@ offset in the source object, which is what pins the field boundaries.
 | 37 | 105 | u16 | `+0x98` | 0 | |
 | 38 | 107 | u16 | `+0x9c` | 0 | |
 | 39 | 109 | u8 | `+0xa4` | 0 | **the tail jump** |
+
+> **Fields 2 and 3 were explained on 2026-08-28, and the reason they took nine days is
+> worth keeping.** Both are `0` in every capture this table was built from, because every
+> one of those captures was an ordinary swing - and a zero field explains nothing about
+> itself. Nobody asked what a *skill* attack looks like until the owner cast Magic Claw fourteen
+> times. One grep over `previous-runs/` then settled it, with Three Snails as an independent
+> control. See `research/attack-skill-id.md`; this is the same shape as the cash-shop opcode
+> that sat in the log for three sessions while being reported as absent.
 
 **12 x `u8`, 11 x `u16`, 16 x `u32`, one `str`** = `12 + 22 + 64 = 98` fixed bytes plus
 `2 + len`. For `"User Melee"`, **110**. [D]
