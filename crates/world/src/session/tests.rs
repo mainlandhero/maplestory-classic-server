@@ -5105,65 +5105,69 @@ fn a_buy_is_priced_against_the_real_sale_row_and_then_completes() {
     assert_eq!(r.body[1], net::cashshop::reason::SOLD_OUT);
     assert!(r.what.contains("NO commodity serial"), "{}", r.what);
 
-    // **Affordable: the item arrives and the price comes out.**
+    // **Affordable: the item arrives in the CASH INVENTORY and the price comes out.**
     let out = s.handle(&buy_body(130200000));
     let grant = out
         .iter()
         .find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT)
         .expect("a result comes back");
-    assert_eq!(grant.body[0], net::cashshop::RESULT_ITEM_GRANTED, "0x19, not a refusal");
-    assert_ne!(grant.body[1], 0, "bRelease - a zero would leave the shop blocked");
+    assert_eq!(
+        grant.body[0],
+        net::cashshop::RESULT_ITEM_TO_LOCKER,
+        "0x0C, the CASH INVENTORY. 0x19 is the reply to a locker->bag MOVE, and using it here          is what made the owner's coupon land in the Item Inventory"
+    );
+    assert_eq!(grant.body.len(), 1 + net::cashshop::CASH_ITEM_RECORD_LEN + 4 + 1);
 
     assert_eq!(store.cash_wallet(1).unwrap().maple_points, 49_900, "100 LP came out");
-    let placed = store
-        .inventory_slot(id, store::InventoryType::Cash, 1)
-        .unwrap()
-        .expect("and the item is in the Cash tab");
-    assert_eq!(placed.item_id, 5070000);
+    let locker = store.cash_locker(1).unwrap();
+    assert_eq!(locker.len(), 1, "and it is in the LOCKER");
+    assert_eq!(locker[0].item.item_id, 5070000);
+    assert!(
+        store.inventory_slot(id, store::InventoryType::Cash, 1).unwrap().is_none(),
+        "and NOT in the bag - that was the bug"
+    );
 
-    // **The wallet goes SECOND.** Before the 0x19 it would re-trigger the purchase, because
-    // the 0x05AD arm calls the buy builder back while [stage+0x120] is still 1.
+    // The record must name the item and carry a usable serial, or every later move fails.
+    let rec = &grant.body[1..1 + net::cashshop::CASH_ITEM_RECORD_LEN];
+    assert_eq!(u32::from_le_bytes(rec[16..20].try_into().unwrap()), 5070000, "nItemID at +16");
+    assert_eq!(u32::from_le_bytes(rec[20..24].try_into().unwrap()), 130200000, "the SN at +20");
+    let serial = u64::from_le_bytes(rec[0..8].try_into().unwrap());
+    assert_ne!(serial, 0, "a zero serial is not a usable map key");
+    assert_ne!(serial, u64::MAX, "and -1 is dropped by FUN_140D75850");
+
+    // **The wallet goes SECOND, and here it is load-bearing in a new way.** It clears
+    // [stage+0x74], then sees the buy's [stage+0x120] == 1 and re-enters the buy builder on
+    // its COMPLETION path - which is what shows "You have successfully made the purchase."
     let grant_at = out.iter().position(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).unwrap();
     let wallet_at = out
         .iter()
         .position(|r| r.opcode == net::cashshop::CASH_SHOP_WALLET)
         .expect("the debited balance follows");
-    assert!(wallet_at > grant_at, "0x05AD must come AFTER 0x19, never before");
+    assert!(wallet_at > grant_at, "0x05AD must come AFTER 0x0C, never before");
     assert_eq!(
         u32::from_le_bytes(out[wallet_at].body[4..8].try_into().unwrap()),
         49_900,
-        "and it carries the DEBITED balance, not the old one"
+        "and it carries the DEBITED balance"
     );
 }
 
-/// **A purchase that the bag will not take is refunded, not swallowed.**
+/// **A purchase that cannot be placed changes nothing** - and needs no compensating undo,
+/// because `buy_cash_item` checks, debits and places in ONE transaction.
 #[test]
-fn a_purchase_the_bag_refuses_is_refunded() {
-    let (mut s, store, id) = cash_shop_session();
+fn a_purchase_that_cannot_be_placed_leaves_the_wallet_alone() {
+    let (mut s, store, _id) = cash_shop_session();
     store.add_maple_points(1, 50_000).unwrap();
-    // Fill the Cash tab completely. `set_inventory_slots` CLAMPS to the client's minimum, so
-    // asking for one slot does not give one slot - read the real capacity back and fill that
-    // many, with distinct ids so nothing stacks. The first version of this test asked for a
-    // one-slot tab, got the minimum, and the purchase succeeded into the room left over.
-    store.set_inventory_slots(id, store::InventoryType::Cash, 1).unwrap();
-    let capacity = store.inventory_slots(id, store::InventoryType::Cash).unwrap();
-    for n in 0..capacity {
-        store
-            .add_item(
-                id,
-                store::InventoryType::Cash,
-                &store::Item::bundle(5_072_000 + u32::from(n), 1),
-                1,
-            )
-            .unwrap();
-    }
 
+    // Fill every locker slot.
+    for n in 0..store::cash::LOCKER_SLOTS {
+        store.put_cash_item(1, &store::Item::bundle(5_072_000 + u32::from(n), 1)).unwrap();
+    }
     let before = store.cash_wallet(1).unwrap().maple_points;
+
     let out = s.handle(&buy_body(130200000));
     let r = out.iter().find(|r| r.opcode == net::cashshop::CASH_SHOP_RESULT).expect("answered");
-    assert_eq!(r.body[0], net::cashshop::RESULT_CANCEL_AND_STAY, "a refusal, not a grant");
-    assert_eq!(store.cash_wallet(1).unwrap().maple_points, before, "REFUNDED in full");
-    assert!(r.what.contains("Refunded"), "and it says so: {}", r.what);
+    assert_ne!(r.body[0], net::cashshop::RESULT_ITEM_TO_LOCKER, "a refusal, not a grant");
+    assert_eq!(store.cash_wallet(1).unwrap().maple_points, before, "not a leaf point taken");
 }
 
 /// **`!nx`, `!buy`, `!locker` is the whole transaction**, and each step moves the number it is

@@ -585,11 +585,113 @@ pub fn cash_shop_item_granted(slot: u16, item_blob: &[u8]) -> Vec<u8> {
     w.into_vec()
 }
 
-/// **`0x05AE` sub-op `0x1B`, named so nobody reaches for it.** The other silent arm - and a
-/// trap. With `bToSlot = 0` its tail looks the serial up in the character's inventory, gets
-/// `0`, and calls `FUN_1401ABD80(tabArray + 0)`, whose first instruction is `mov rbx,[rcx+8]`
-/// with no null check. It either wipes slot 0 of the player's cash tab or faults at address
-/// `8`. Which of the two was not established. Do not send this.
+/// **`0x05AE` sub-op `0x0C` - the bought item appears in the CASH INVENTORY.**
+///
+/// # This replaces `0x19`, and `0x19` was my error
+///
+/// The owner, 2026-08-27: *"Buying the Mystery Hair Coupon is fine, but it automatically goes into
+/// the 'Item Inventory', when it should go into the 'Cash Inventory'."* They are right, and the
+/// packet was doing exactly what it says: [`RESULT_ITEM_GRANTED`] is the reply to `0x03E1`
+/// sub-op `0x0A`, *move a locker item into inventory slot N*. Using it for a purchase asked
+/// the client to put the coupon in the bag, and it did.
+///
+/// `0x0C` is `FUN_140D7E5E0`. It decodes **one** 71-byte cash-item record, inserts it into the
+/// locker map at `[stage+0x150]`, repaints the Cash Inventory panel at `[stage+0xc8]`, and
+/// drops the commodity from the cart. **[L]**
+///
+/// ```text
+/// u8            0x0C
+/// <71 bytes>    the cash-item record - see `cash_item_record`
+/// u32           0
+/// u8            0
+/// ```
+///
+/// # It clears NEITHER latch, and that is correct
+///
+/// The previous pass went looking for an arm that cleared both, and the premise was wrong. A
+/// purchase does not need one: the **wallet** does it. `0x05AD`'s handler writes
+/// `[stage+0x74] = 0` **unconditionally** at `0x140D736DC`, then reads `[stage+0x120]`, sees
+/// the buy's `1`, zeroes it and calls the buy builder back - and that re-entry lands on the
+/// builder's *completion* path, which fetches **string 590, "You have successfully made the
+/// purchase."** at `0x140D78DE1`. Verified here: `0x140D78DD8 mov edx, 0x24e` is 590.
+///
+/// So send `0x0C` **then** [`CASH_SHOP_WALLET`], and the client supplies its own success
+/// message. That also explains the symptom the owner reported alongside the wrong panel - *"it also
+/// did not have a success message and sound effect"*. With `0x19` we cleared `[stage+0x120]`
+/// ourselves, so the wallet never re-entered the builder and the completion path never ran.
+/// **The missing message was a consequence of the wrong packet, not a second bug.**
+///
+/// # The risk, named
+///
+/// If that re-entry *sends* rather than completes, the client buys again and the loop only
+/// stops when the wallet or the bag runs out. It is bounded and server-authoritative, but the
+/// run must watch for a balance that keeps dropping.
+pub const RESULT_ITEM_TO_LOCKER: u8 = 0x0C;
+
+/// The cash-item record `FUN_1402D0950` reads: **71 bytes**, trailing flag zero.
+pub const CASH_ITEM_RECORD_LEN: usize = 71;
+
+/// Build one cash-item record.
+///
+/// # Four of fifteen fields have a reader, and the rest are written anyway
+///
+/// `research/cash-shop-cash-inventory.md` §6 re-ran the displacement scan in **both** shapes -
+/// record-relative as well as object-relative, which is what the previous pass got wrong,
+/// because the code reaches the record through a pointer to `obj+0x20`. Result: only wire
+/// `+0`, `+16`, `+20` and `+67` are read anywhere in the cash shop. The quantity at `+24` and
+/// the expiry at `+39` have **no reader at all** - a stronger negative than the previous pass
+/// reached, and it still names three blind spots rather than claiming the field is unused.
+///
+/// The rest are written as zero. That is deliberate: a value invented for a field nothing
+/// reads is a claim, and this project has paid for those.
+///
+/// * `serial` - the map key. Must be non-zero and must not be `-1`; `FUN_140D75850` drops
+///   `-1`, and a duplicate collides in the map. Every later `0x0A`/`0x0B`/`0x1C` names the
+///   item by this. **[L]**
+/// * `item_id` - drives `FUN_1403E8AF0` on every later move. **[L]**
+/// * `commodity_sn` - keeps `0x0C` on the string-590 branch. `0x140D7E70B` gates a *meso*
+///   message on the 80-90 M band, and every commodity in this build is 92 M-160 M, so the
+///   branch is inert either way - but the SN is the value that is probably right. **[L]** for
+///   the branch, **[I]** for the name.
+/// * `refundable` - `+67`, read by the delete builder's refundable gate (string 651). Zero.
+pub fn cash_item_record(serial: u64, item_id: u32, commodity_sn: u32, quantity: u16) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.bytes(&serial.to_le_bytes()); // +0   liSN            [L] read
+    w.u32(0); // +8   dwAccountID     [I], no reader
+    w.u32(0); // +12  dwCharacterID   [I], no reader
+    w.u32(item_id); // +16  nItemID         [L] read
+    w.u32(commodity_sn); // +20  nCommodityID    [L] read
+    w.u16(quantity); // +24  nNumber         [I], NO READER
+    w.bytes(&[0u8; 13]); // +26  sBuyCharacterName [I], no reader
+    w.bytes(&[0u8; 8]); // +39  expiry FILETIME [I], NO READER
+    w.u32(0); // +47
+    w.bytes(&0f64.to_le_bytes()); // +51  f64
+    w.u32(0); // +59
+    w.u32(0); // +63
+    w.u8(0); // +67  refundable      [D] read
+    w.u8(0); // +68
+    w.u8(0); // +69
+    w.u8(0); // +70  trailing flag - 0 ENDS the record
+    w.into_vec()
+}
+
+/// Build a [`RESULT_ITEM_TO_LOCKER`]. Send [`cash_shop_wallet`] straight after it.
+pub fn cash_shop_item_to_locker(record: &[u8]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(RESULT_ITEM_TO_LOCKER);
+    w.bytes(record);
+    w.u32(0);
+    w.u8(0);
+    w.into_vec()
+}
+
+/// **`0x05AE` sub-op `0x1B`, and it is a trap in BOTH of its forms.** Named so nobody uses it.
+///
+/// Its first `u8` is a form selector, which neither earlier file had: **zero** carries the full
+/// record, non-zero carries SN, item id and a `u32` slot whose *sign* picks the verify path.
+/// Both forms end at `0x140D81125` calling `FUN_1401ABD80(tabArray + slot * 16)` with **no null
+/// check** - the out-of-range test above it only logs. **Never use it for a purchase**:
+/// `FUN_140230CB0` returns 0 and the tail then resets index 0 of a possibly-null array.
 pub const RESULT_MOVED_TO_LOCKER: u8 = 0x1B;
 
 /// Body length of a [`cash_shop_refusal`]: the sub-op and the reason.
@@ -742,6 +844,41 @@ mod action_tests {
 
         // The trap arm must never be what we build.
         assert_ne!(RESULT_ITEM_GRANTED, RESULT_MOVED_TO_LOCKER);
+    }
+
+    /// **The record is 71 bytes and the trailing flag is what ends it.**
+    ///
+    /// A non-zero flag there would tell the client a whole `GW_ItemSlot` follows, and it would
+    /// read one out of whatever came next.
+    #[test]
+    fn the_cash_item_record_is_seventy_one_bytes_and_terminates() {
+        let r = cash_item_record(0x1234_5678_9abc_def0, 5150000, 150000000, 1);
+        assert_eq!(r.len(), CASH_ITEM_RECORD_LEN);
+        assert_eq!(u64::from_le_bytes(r[0..8].try_into().unwrap()), 0x1234_5678_9abc_def0);
+        assert_eq!(u32::from_le_bytes(r[16..20].try_into().unwrap()), 5150000, "nItemID at +16");
+        assert_eq!(u32::from_le_bytes(r[20..24].try_into().unwrap()), 150000000, "SN at +20");
+        assert_eq!(u16::from_le_bytes(r[24..26].try_into().unwrap()), 1, "quantity at +24");
+        assert_eq!(r[70], 0, "the trailing flag MUST be zero or a GW_ItemSlot is read next");
+
+        // The two serials the client rejects outright.
+        assert_ne!(u64::from_le_bytes(r[0..8].try_into().unwrap()), 0);
+        assert_ne!(u64::from_le_bytes(r[0..8].try_into().unwrap()), u64::MAX, "-1 is dropped");
+    }
+
+    /// The locker packet wraps the record and nothing else moves.
+    #[test]
+    fn the_locker_packet_is_the_sub_op_then_the_record_then_five_zeros() {
+        let r = cash_item_record(7, 5150000, 150000000, 1);
+        let b = cash_shop_item_to_locker(&r);
+        assert_eq!(b[0], RESULT_ITEM_TO_LOCKER);
+        assert_eq!(&b[1..1 + CASH_ITEM_RECORD_LEN], &r[..], "the record, verbatim");
+        assert_eq!(b.len(), 1 + CASH_ITEM_RECORD_LEN + 4 + 1);
+        assert!(b[1 + CASH_ITEM_RECORD_LEN..].iter().all(|x| *x == 0));
+
+        // 0x19 puts an item in the BAG and 0x0C puts it in the LOCKER. Confusing them is the
+        // bug the owner reported, so they are pinned apart.
+        assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_ITEM_GRANTED);
+        assert_ne!(RESULT_ITEM_TO_LOCKER, RESULT_MOVED_TO_LOCKER, "1B is a trap in both forms");
     }
 
     /// The sub-op splits off and the rest is handed on whole.

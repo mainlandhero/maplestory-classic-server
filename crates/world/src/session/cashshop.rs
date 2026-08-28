@@ -315,67 +315,57 @@ impl Session {
                 ),
             );
         }
-        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        // **Into the LOCKER, which is the shop's Cash Inventory panel** - not the bag.
+        // `store::buy_cash_item` checks the balance, debits Leaf Points and places the item in
+        // one transaction, which is what it was written to do before the wrong packet sent the
+        // purchase down the bag path.
         let Some(inv) = store::InventoryType::for_item(row.item_id) else {
             return self.refuse_cash_shop(
                 reason::UNKNOWN_ERROR,
                 format!("{what} - REFUSED: item {} is in no inventory tab", row.item_id),
             );
         };
-
-        // The debit IS the affordability check - it refuses rather than clamping.
-        if let Err(e) = self.store.add_maple_points(account_id, -i64::from(row.price)) {
-            return self.refuse_cash_shop(
-                reason::NOT_ENOUGH_CASH,
-                format!("{what} - the debit was refused, so nothing else ran: {e}"),
-            );
-        }
-
         let item = if inv == store::InventoryType::Equip {
             store::Item::equip(row.item_id)
         } else {
-            store::Item::bundle(row.item_id, row.count)
+            store::Item::bundle(row.item_id, row.count.max(1))
         };
-        let max_stack = self.config.shops.max_stack(row.item_id);
-        let placed = match self.store.add_item(chr.id, inv, &item, max_stack) {
-            Ok(rows) => rows,
+        let placed = match self.store.buy_cash_item(account_id, &item, row.price) {
+            Ok(l) => l,
             Err(e) => {
-                // Refund. If THIS fails the player is out of pocket, and that is the one
-                // outcome that must never be reported as an ordinary error.
-                let refund = self.store.add_maple_points(account_id, i64::from(row.price));
                 return self.refuse_cash_shop(
-                    reason::CHECK_INVENTORY,
-                    match refund {
-                        Ok(lp) => format!("{what} - the {inv:?} tab refused it ({e}). Refunded, {lp} LP"),
-                        Err(worse) => format!(
-                            "{what} - the bag refused it ({e}) AND THE REFUND FAILED ({worse}). \
-                             THE PLAYER IS OUT {} LP. Say so",
-                            row.price
-                        ),
-                    },
-                );
+                    reason::NOT_ENOUGH_CASH,
+                    format!("{what} - the purchase was refused and NOTHING changed: {e}"),
+                )
             }
         };
-        let Some(first) = placed.first() else {
-            return self.refuse_cash_shop(
-                reason::UNKNOWN_ERROR,
-                format!("{what} - add_item reported success and placed nothing"),
-            );
-        };
 
-        let blob = self.item_blob(&first.item);
+        // The serial the client will name this item by in every later move or delete.
+        //
+        // **Derived, not stored, and that is a limitation worth stating.** It must be non-zero
+        // and must never be `-1` (`FUN_140D75850` drops that), and it must not collide in the
+        // stage's locker map. `(account, slot)` satisfies all three and survives a relog - but
+        // it changes if the item ever changes slot, so the moment `0x0A`/`0x0B` are built this
+        // wants a real column on `cash_locker` instead.
+        let serial = (account_id as u64) << 32 | u64::from(placed.slot);
+        let record =
+            net::cashshop::cash_item_record(serial, row.item_id, row.sn, row.count.max(1));
+
         let mut out = vec![Reply {
             opcode: net::cashshop::CASH_SHOP_RESULT,
-            body: net::cashshop::cash_shop_item_granted(first.slot, &blob),
+            body: net::cashshop::cash_shop_item_to_locker(&record),
             what: format!(
-                "CashShopResult 0x19 BOUGHT: {}x {} ({}) for {} LP -> {inv:?} slot {}, {} byte \
-                 blob. bRelease=1 clears [stage+0x74]; [stage+0x120] is cleared through \
-                 FUN_140D74A70's cancel path. {what}",
-                row.count, row.name, row.item_id, row.price, first.slot, blob.len()
+                "CashShopResult 0x0C BOUGHT -> CASH INVENTORY: {}x {} ({}) for {} LP, locker slot {}, serial {serial:#x}. NOT 0x19 - that is the reply to a locker->bag MOVE, and putting a purchase through it is what put the owner's coupon in the Item Inventory. {what}",
+                row.count, row.name, row.item_id, row.price, placed.slot
             ),
         }];
-        // **Second, never first.** See the doc block.
-        out.extend(self.cash_wallet_reply(account_id, "the debited balance, AFTER the 0x19"));
+        // **The wallet, second, and it does three things.** It writes [stage+0x74] = 0
+        // unconditionally at 0x140D736DC, then sees the buy's [stage+0x120] == 1, zeroes it,
+        // and re-enters the buy builder on its COMPLETION path - which is what fetches string
+        // 590, "You have successfully made the purchase." So the success message the owner found
+        // missing is the client's own, and it was missing because 0x19 had already cleared
+        // [stage+0x120] and the re-entry never happened.
+        out.extend(self.cash_wallet_reply(account_id, "the debited balance, AFTER the 0x0C"));
         out
     }
 

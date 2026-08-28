@@ -805,9 +805,19 @@ pub struct StatChange {
     ///
     /// `1402cbd99` reads the job back out of the client's own object (`+0x33`) and hands it
     /// to `FUN_1403024c0` - the same predicate the character record uses,
-    /// [`crate::opcode::uses_extended_sp`]. It does **not** use a job sent in this packet,
-    /// so if a packet changes both job and SP the client decodes SP with the **old** job.
-    /// **[L]**
+    /// [`crate::opcode::uses_extended_sp`].
+    ///
+    /// # CORRECTED 2026-08-27. This block used to say the opposite, and it was labelled [L]
+    ///
+    /// It said a packet carrying **both** job and SP decodes the SP with the **OLD** job. That
+    /// is wrong: the JOB arm **stores** `charstat+0x33` at `0x1402CBC04`, and the SP fork
+    /// **loads** it at `0x1402CBD99` - 405 bytes later, straight-line, in the same handler. So
+    /// a combined packet decodes SP with the **new** job, which is what makes a one-packet job
+    /// advancement possible at all. `research/skill-points.md`.
+    ///
+    /// `crate::stats::Sp::matches_job` already said this and was right; two places in this
+    /// crate disagreed and the wrong one carried the stronger label. **A claim that reads the
+    /// listing in one direction and never checks the other is exactly what [L] must not mean.**
     pub job_for_sp: u16,
 }
 
