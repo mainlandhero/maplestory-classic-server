@@ -1,0 +1,655 @@
+maplecw-world: revive: 426 maps have a respawn destination
+maplecw-world: footholds: 94089 segments across 426 maps (62869 floors, 31220 walls which are never landed on)
+maplecw-world: consumables: 44 items restore something, from gm-handbook/consumables.txt
+maplecw-world: cash shop: 159 sale rows from gm-handbook/commodity.txt, 138 on sale, 21 priced at 0 NX
+maplecw-world: skills: 176 skills, 4164 skill-levels from gm-handbook/skills.txt
+maplecw-world: quests: 322 loaded, 5 of them carrying an authored script overlay from data/quest-scripts.txt
+maplecw-world: exp curve: 119 levels; 180 mob templates carry an EXP value
+maplecw-world: fields: 426 maps have a field image
+maplecw-world: drops: 993 rows over 170 mobs, 0 global (event) rows
+maplecw-world: shops: shop "Sam": 2 templates share that name (9, 211) - all of them get it
+maplecw-world: shops: shop "Harry": 2 templates share that name (900016, 508) - all of them get it
+maplecw-world: 39 NPC shops, 932 item rows, 0 unresolved
+14:48:38.824 world 0 channel 0 listening on 127.0.0.1:8485
+14:48:38.824 database C:\MapleCW\maplecw.db
+14:48:38.824 NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending
+14:48:38.824   migration rather than proving who is on the far end. It is single-use.
+14:48:38.824 SET-FIELD PROBE IS ON - which by now means 'the channel answers at all'. The
+14:48:38.824   flag is a misnomer kept for the launch line: without it Session::handle
+14:48:38.825   returns nothing for every packet, so the migration hello goes unanswered and
+14:48:38.825   the client freezes on 'Connecting...'.
+14:48:38.825   With it on, this channel answers: the migration hello with a SetField
+14:48:38.825   carrying the character's real record (presence[0] the stat block, presence[2]
+14:48:38.825   the equipped list), 0x00DC with that field's NPCs and mobs, 0x00D1 with the
+14:48:38.825   portal's destination, 0x00E7 with the !map GM command, and 0x0151 with a
+14:48:38.825   script Say, 0x0104 with the NPC shop, and 0x00D2 with a channel migration.
+14:48:38.825   CONFIRMED on a real client: the dressed character, the bag and its 125 slots,
+14:48:38.825   NPC dialogue, mobs spawning and moving, an unequip that survives a map change.
+14:48:38.825   NOT yet seen on screen: the shop counter, the quest journal, the channel
+14:48:38.825   switch. Dropping an item is refused on purpose - there is nowhere to put it.
+14:48:52.419 connection from ch0 #1 127.0.0.1:51472
+14:48:52.419 -> channel greeting, 22 bytes (no A..F, no version block)
+14:48:52.419 cipher: ASYMMETRIC - the client SENDS AES-256-OFB and RECEIVES a byte subtract,
+14:48:52.419   so we decrypt with AES and encrypt by adding iv[0]. Measured 2026-08-19.
+14:48:52.420 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 45 byte body 02640000000000000000000000020000001ec967725579c6cdbd94bb0f336239029649572d0000000000000000
+14:48:52.421    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session/
+14:48:52.422 <- 0x007D CLIENT_MIGRATION_HELLO (character id at offset 8, then MAC and machine id), 99 byte body 0000000000000000d5000000aabbccddeeffdeadbeef00000000764d00002300000001000000c5afff81c1afff817bebc8d21e00000028947d75402c352840462c2c32522899b5857d64704954524757544a54700064000000937d0000000000...(+3 bytes, known opcode so capped)
+14:48:52.422    MIGRATION HELLO: character id 213
+14:48:52.422    claimed the migration for character 213 of account 1 (world 0 channel 0)
+14:48:52.423 -> 0x01A0 SET_FIELD SetField, characterData=1, presence[0] set so the character-stat block decodes, carrying map 10000000 for character 213 (Cobalt). presence[0] is gate entry 7, settled in research/charrecord-presence-map.md; the map id sits at stat-block offset 84, settled in research/charstat-layout.md, quests: 2 started / 6 completed. Nothing here authenticates anybody.
+14:48:52.423    body 00a29457fc36dd0100000000000000000000000000000000000000000000010000000000000000000000000000010001000000000101010000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d5000000d500000000000000436f62616c7400000000000000000000000000224e0000497500000c000000c800040018000600240046000000ee00000093000000930000000a0000d90200000000000000000000809698000000000000000000000000000000000000000000000000001e001e001e001e001e001e000005000183de0f0000008005bb46e6170200000000000004000006000100040007ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060001a22c100000008005bb46e6170200000000000004000004000100040007ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000070001805b100000008005bb46e6170200000000000004000002000100040005ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b0001f0dd130000008005bb46e6170200000000000000010011000100040007ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010001114a0f0000008005bb46e6170200000000000004000006000100040007ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010500e8030000030000000000000000000000e9030000030000000000000000000000ea0300000300000000000000000000006a881e000100000000000000000000006b881e00070000000000000000000000010200ee030000030030313090b807000000010600e80300008029741b8936dd01e90300008056a51c8936dd01ea030000002896258936dd01eb0300000063ee2d8936dd01ec0300008026b82f8936dd01ed03000000c8bb4b8936dd010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+14:48:52.847 <- 0x0238 CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField), 0 byte body 
+14:48:52.854    0x0238 CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField) is not answered yet - see crates/world/src/session/
+14:48:52.854 <- 0x024D CLIENT_FIRST_FIELD_ENTRY_2 (empty; built by FUN_142caa4e0 alongside 0x0238), 0 byte body 
+14:48:52.854    0x024D CLIENT_FIRST_FIELD_ENTRY_2 (empty; built by FUN_142caa4e0 alongside 0x0238) is not answered yet - see crates/world/src/session/
+14:48:52.960 <- 0x00DC CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body), 0 byte body 
+14:48:52.960 -> 0x00EA UNKNOWN RunConsoleCommand "/hitdamagetest 0": the client runs its OWN slash command, which writes user+0x544a = 0 and skips the 0x356-byte block holding the only renderer call that draws its stub damage number. It ECHOES the line into the chat window first. Watch for an inbound 0x0189 carrying u32 0x13D - that is the client saying the permission gate passed, and it is the ONLY proof. No 0x0189 means the gate refused and the 1 is still drawn
+14:48:52.961    body 10002f68697464616d616765746573742030
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 100 at (2214, 497) on foothold 101, object id 1000 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body e803000064000000a608f101ffffffffffffffff000165007408d808f101f10101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 101 at (666, 347) on foothold 190, object id 1001 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body e9030000650000009a025b01ffffffffffffffff0001be006802cc025b015b0101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 102 at (3241, 527) on foothold 229, object id 1002 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body ea03000066000000a90c0f02ffffffffffffffff0000e500770cdb0c0f020f0201000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 103 at (954, 347) on foothold 192, object id 1003 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body eb03000067000000ba035b01ffffffffffffffff0001c0008803ec035b015b0101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 104 at (1957, -133) on foothold 340, object id 1004 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body ec03000068000000a5077bffffffffffffffffff000154017307d7077bff7bff01000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 105 at (4737, 317) on foothold 126, object id 1005 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body ed0300006900000081123d01ffffffffffffffff00017e006912b3123d013d0101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 106 at (1095, -133) on foothold 330, object id 1006 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body ee0300006a00000047047bffffffffffffffffff00014a01150479047bff7bff01000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 107 at (4100, 437) on foothold 110, object id 1007 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body ef0300006b0000000410b501ffffffffffffffff00016e00d20f3610b501b50101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 111 at (2741, 527) on foothold 220, object id 1008 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body f00300006f000000b50a0f02ffffffffffffffff0001dc00830ae70a0f020f0201000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.961 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 112 at (1800, 647) on foothold 200, object id 1009 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.961    body f10300007000000008078702ffffffffffffffff0001c800d6063a078702870201000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.962 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 900010 at (2206, -433) on foothold 313, object id 1010 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.962    body f2030000aabb0d009e084ffeffffffffffffffff000139016c08d0084ffe4ffe01000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.962 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 900003 at (804, 316) on foothold 166, object id 1011 - the client cannot spawn this itself, it only preloads the art.
+14:48:52.962    body f3030000a3bb0d0024033c01ffffffffffffffff0001a600f90249033c013c0101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:48:52.962 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 2000000 into Use slot 1 - 41 byte blob. restored on field entry.
+14:48:52.962    body 01000100000000000201000280841e0000008005bb46e61702000000000001000000000000000000000000000000000000000000
+14:48:52.962 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 2060000 into Use slot 2 - 41 byte blob. restored on field entry.
+14:48:52.962    body 010001000000000002020002e06e1f0000008005bb46e61702000000000014000000000000000000000000000000000000000000
+14:48:52.962 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 4020000 into Etc slot 1 - 41 byte blob. restored on field entry.
+14:48:52.962    body 01000100000000000401000220573d0000008005bb46e61702000000000001000000000000000000000000000000000000000000
+14:48:52.962 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 4000001 into Etc slot 2 - 41 byte blob. restored on field entry.
+14:48:52.962    body 01000100000000000402000201093d0000008005bb46e61702000000000003000000000000000000000000000000000000000000
+14:48:52.962 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 5150000 into Cash slot 1 - 41 byte blob. restored on field entry.
+14:48:52.962    body 01000100000000000501000230954e0000008005bb46e61702000000000003000000000000000000000000000000000000000000
+14:48:52.962 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: 24 mesos restored on field entry - bit 18 is the only way this client is ever told a balance
+14:48:52.962    body 0100010000040018000000000000000000
+14:48:52.962 <- 0x02DE UNKNOWN, 1 byte body 01
+14:48:52.962    0x02DE UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:52.962 <- 0x00ED UNKNOWN, 8 byte body 0000000000000000
+14:48:52.962    0x00ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:52.963 <- 0x02B2 UNKNOWN, 8 byte body 0000000000000000
+14:48:52.963    0x02B2 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:52.981 <- 0x02EB UNKNOWN, 173 byte body 010000001500000000010000000100000001000000020000000100000003000000010000000400000001000000050000000100000006000000010000000700000001000000080000000100000009000000010000000a000000010000000b000000010000000c000000010000000d000000010000000e000000000000000f00000000000000100000000a000000110000000a000000120000000100000013000000000000001400000000000000
+14:48:52.981    0x02EB UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:52.983 <- 0x0184 UNKNOWN, 12 byte body 080000000400040004000000
+14:48:52.983    0x0184 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:52.983 <- 0x0194 UNKNOWN, 1 byte body 01
+14:48:52.983    0x0194 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:53.203 <- 0x02EB UNKNOWN, 109 byte body 000000000d00000000070000000100000000000000020000000f00000003000000000000000400000001000000050000000f0000000600000000000000070000000f000000080000000000000009000000130000000a000000000000000b0000000f0000000c00000000000000
+14:48:53.203    0x02EB UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:53.204 <- 0x01ED UNKNOWN, 80 byte body 0100000006000000e8030000010000000bccceb9e8030000030000002cadaa3ce9030000030000001f7b52ffea030000030000008a326c9d6a881e00010000006f0a170c6b881e0007000000b01862eb
+14:48:53.204    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:53.204 <- 0x01ED UNKNOWN, 48 byte body 0200000005000000e80300006987f2ebe90300004a50dd2eea030000d78ec0e46a881e00679f8ac56b881e00c1a13ab7
+14:48:53.204    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:53.204 <- 0x013D UNKNOWN, 9 byte body 010000000000000000
+14:48:53.205    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:53.205 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 46 byte body 016400000082fd8ee482fd8ee40200000000668d947d2d3d35c2c5d048009b26ca07fe0de8320000000000000000
+14:48:53.205    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session/
+14:48:53.207 <- 0x0408 UNKNOWN, 18 byte body 5cf30600000000000000000000dd00000000
+14:48:53.207    0x0408 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:53.207 <- 0x00B8 UNKNOWN, 1 byte body 01
+14:48:53.207    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:53.459 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 97 byte body 0020506a3ae0a9ca1c000000000011fe88ff0000000003000011feb4ff0000a401000000000000ffff06d200000011fec2ff00000000000000000000ffff061e00000011fec2ff00000000970000000000ffff040e010011000000000000000000
+14:48:53.467    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:48:54.209 <- 0x01A5 UNKNOWN, 108 byte body 05000000e80300006987f2ebe90300004a50dd2eea030000d78ec0e46a881e00679f8ac56b881e00c1a13ab705000000e8030000030000002cadaa3ce9030000030000001f7b52ffea030000030000008a326c9d6a881e00010000006f0a170c6b881e0007000000b01862eb
+14:48:54.209    0x01A5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:55.734 -> 0x0453 UNKNOWN NpcChat: object id 1006, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:48:55.742    body ee030000ff0000000000
+14:48:56.246 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:48:56.254    body e9030000ff0000000000
+14:48:57.268 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:48:57.268    body f1030000ff0000000000
+14:48:58.291 -> 0x0453 UNKNOWN NpcChat: object id 1011, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:48:58.299    body f3030000ff0000000000
+14:48:58.299 <- 0x00B8 UNKNOWN, 1 byte body 00
+14:48:58.299    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:48:58.803 -> 0x0453 UNKNOWN NpcChat: object id 1005, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:48:58.811    body ed030000ff0000000000
+14:48:59.313 -> 0x0453 UNKNOWN NpcChat: object id 1010, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:48:59.321    body f2030000ff0000000000
+14:49:00.337 -> 0x0453 UNKNOWN NpcChat: object id 1003, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:00.345    body eb030000ff0000000000
+14:49:00.847 -> 0x0453 UNKNOWN NpcChat: object id 1000, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:00.847    body e8030000ff0000000000
+14:49:00.847 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:00.847    body ea030000ff0000000000
+14:49:01.354 -> 0x0453 UNKNOWN NpcChat: object id 1007, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:01.355    body ef030000ff0000000000
+14:49:01.355 -> 0x0453 UNKNOWN NpcChat: object id 1008, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:01.355    body f0030000ff0000000000
+14:49:02.904 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 80/238 hp, 147/147 mp - MP is full, so the packet does not mention it
+14:49:02.904    body 01000100040000500000000000
+14:49:02.904 -> 0x02D1 UNKNOWN UserEffectLocal effect 0x41: the blue +10 over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run
+14:49:02.904    body 410a0000000000000000000000
+14:49:02.904 -> 0x0453 UNKNOWN NpcChat: object id 1005, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:02.904    body ed030000ff0100000000
+14:49:03.271 <- 0x02F4 UNKNOWN, 12 byte body 0200000011feffffc2ffffff
+14:49:03.278    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:04.230 <- 0x01A5 UNKNOWN, 20 byte body 0000000001000000e8030000010000000bccceb9
+14:49:04.239    0x01A5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:04.750 -> 0x0453 UNKNOWN NpcChat: object id 1006, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:04.750    body ee030000ff0100000000
+14:49:04.750 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:04.750    body f1030000ff0100000000
+14:49:04.750 -> 0x0453 UNKNOWN NpcChat: object id 1010, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:04.750    body f2030000ff0100000000
+14:49:05.263 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:05.271    body e9030000ff0100000000
+14:49:05.773 -> 0x0453 UNKNOWN NpcChat: object id 1003, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:05.782    body eb030000ff0100000000
+14:49:06.284 -> 0x0453 UNKNOWN NpcChat: object id 1000, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:06.292    body e8030000ff0100000000
+14:49:06.292 -> 0x0453 UNKNOWN NpcChat: object id 1005, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:06.292    body ed030000ff0000000000
+14:49:06.292 -> 0x0453 UNKNOWN NpcChat: object id 1011, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:06.292    body f3030000ff0100000000
+14:49:06.799 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:06.800    body ea030000ff0100000000
+14:49:07.309 -> 0x0453 UNKNOWN NpcChat: object id 1007, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:07.317    body ef030000ff0100000000
+14:49:09.512 <- 0x00B8 UNKNOWN, 1 byte body 01
+14:49:09.512    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:09.672 <- 0x01ED UNKNOWN, 4 byte body 60000000
+14:49:09.680    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:09.781 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 76 byte body 0020506a3aa0e9ca1c000000000011fec2ff0000000002000011fec2ff00000000970000000000ffff04860100001bfec2ff96000000970000000000ffff0278000011000000000000404404
+14:49:09.782    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:10.292 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 97 byte body 0020506a3a9eebca1c00000000001bfec2ff960000000300005afec2ff96000000970000000000ffff02a40100005bfec2ff95000e00970000000000ffff020600000068fec3ff97000e00980000000000ffff0254000011444444444444444404
+14:49:10.300    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:10.802 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 127 byte body 0020506a3a9cedca1c000000000068fec3ff97000e000500006dfec2ff96000e00980000000000ffff021e0000006dfec2ff96000e00000000000000ffff06000000019600d5fd060000000095fe75ff9600f1ff000000000000ffff060e010000b5fe9eff97009501000000000000ffff06d2000011444444444444444404
+14:49:10.811    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:11.312 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 169 byte body 0020506a3a9aefca1c0000000000b5fe9eff97009501070000c5fed0ff4d000000000000000000ffff0662000000c7fed0ff4d0000009a0000000000ffff0216000000cafed0ff770000009a0000000000ffff021e000000dbfecfff960001009a0000000000ffff0278000000dbfecfff96000100000000000000ffff06000000019600d5fd0600000000fffe83ff9600b5ff000000000000ffff06f0000011444444444444444404
+14:49:11.319    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:11.822 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 160 byte body 0020506a3a98f1ca1c0000000000fffe83ff9600b5ff06000004ff82ff9600f1ff000000000000ffff061e00000030ffd1ff4d000000000000000000ffff062001000031ffd1ff4d0000009a0000000000ffff020c00000034ffd1ff770000009a0000000000ffff021e00000044ffd1ff960001009a0000000000ffff026e0000004affd2ff96003d00000000000000ffff0628000011444444444444444404
+14:49:11.830    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:12.332 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 97 byte body 0020506a3a96f3ca1c00000000004affd2ff96003d0003000065fffdff9600a501000000000000ffff06b400000066fffeff4b000000000000000000ffff060200000093fffeff960000009c0000000000ffff0248010011444444444444444404
+14:49:12.340    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:12.843 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 55 byte body 0020506a3a94f5ca1c000000000093fffeff96000000010000e0fffeff960000009c0000000000ffff02fe010011444444444444444404
+14:49:12.851    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:13.353 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 127 byte body 0020506a3a92f7ca1c0000000000e0fffeff96000000050000e0fffdff960000009c0000000000ffff0200000000e0fffdff96000000000000000000ffff06000000019600d5fd06000000000900b0ff9600f1ff000000000000ffff060e0100002d00e6ff9600d101000000000000ffff06f0000011444444444444444404
+14:49:13.361    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:13.863 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 169 byte body 0020506a3a90f9ca1c00000000002d00e6ff9600d1010700003b00180096008502000000000000ffff065a0000003b001b004b000000000000000000ffff060400000040001a00750000009e0000000000ffff023800000040001a0075000000000000000000ffff06000000019600d5fd06000000006800cdff9600f1ff000000000000ffff060e0100007600d4ff9600a500000000000000ffff065a000011444444444444444404
+14:49:13.870    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:14.373 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 160 byte body 0020506a3a8efbca1c00000000007600d4ff9600a5000600009100120096000d02000000000000ffff06b400000093001b004b000000000000000000ffff060f0000009b001b00960000009e0000000000ffff024b0000009c001b007400a2ff9e0000000000ffff0206000000a60013007400a2ff9f0000000000ffff0254000000b0000a001700edff9f0000000000ffff0496000011444444444444000000
+14:49:14.373    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:14.880 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.889    body e9030000ff0200000000
+14:49:14.889 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.889    body ea030000ff0200000000
+14:49:14.890 -> 0x0453 UNKNOWN NpcChat: object id 1003, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.890    body eb030000ff0000000000
+14:49:14.890 -> 0x0453 UNKNOWN NpcChat: object id 1005, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.890    body ed030000ff0100000000
+14:49:14.890 -> 0x0453 UNKNOWN NpcChat: object id 1006, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.891    body ee030000ff0000000000
+14:49:14.891 -> 0x0453 UNKNOWN NpcChat: object id 1007, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.891    body ef030000ff0000000000
+14:49:14.891 -> 0x0453 UNKNOWN NpcChat: object id 1008, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.891    body f0030000ff0100000000
+14:49:14.891 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.891    body f1030000ff0000000000
+14:49:14.891 -> 0x0453 UNKNOWN NpcChat: object id 1010, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.891    body f2030000ff0000000000
+14:49:14.891 -> 0x0453 UNKNOWN NpcChat: object id 1011, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:14.891    body f3030000ff0000000000
+14:49:14.891 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 76 byte body 0020506a3a8cfdca1c0000000000b0000a001700edff020000b0000a000400fdff9f0000000000ffff041e000000b0000a00000000009f0000000000ffff04e0010011000000000000000000
+14:49:14.891    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:15.393 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 55 byte body 0020506a3a8affca1c0000000000b0000a0000000000010000b0000b00000000009f0000000000ffff04fe010011000000000000000000
+14:49:15.401    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:15.903 -> 0x0453 UNKNOWN NpcChat: object id 1000, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:15.911    body e8030000ff0200000000
+14:49:18.465 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:18.474    body f1030000ff0100000000
+14:49:19.486 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:19.494    body e9030000ff0000000000
+14:49:19.495 -> 0x0453 UNKNOWN NpcChat: object id 1007, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:19.495    body ef030000ff0100000000
+14:49:19.715 <- 0x00B8 UNKNOWN, 1 byte body 00
+14:49:19.723    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:20.229 -> 0x0453 UNKNOWN NpcChat: object id 1010, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:20.238    body f2030000ff0100000000
+14:49:20.739 -> 0x0453 UNKNOWN NpcChat: object id 1003, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:20.747    body eb030000ff0100000000
+14:49:20.748 -> 0x0453 UNKNOWN NpcChat: object id 1005, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:20.748    body ed030000ff0000000000
+14:49:22.273 -> 0x0453 UNKNOWN NpcChat: object id 1006, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:22.281    body ee030000ff0100000000
+14:49:22.281 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:22.281    body f1030000ff0000000000
+14:49:22.783 -> 0x0453 UNKNOWN NpcChat: object id 1008, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:22.792    body f0030000ff0000000000
+14:49:23.045 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+14:49:23.052    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:23.556 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:23.565    body ea030000ff0000000000
+14:49:23.565 -> 0x0453 UNKNOWN NpcChat: object id 1011, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:23.565    body f3030000ff0100000000
+14:49:24.581 -> 0x0453 UNKNOWN NpcChat: object id 1000, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:24.582    body e8030000ff0000000000
+14:49:24.582 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:24.582    body e9030000ff0100000000
+14:49:24.994 <- 0x02F4 UNKNOWN, 12 byte body 02000000b00000000b000000
+14:49:25.002    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:25.525 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 90/238 hp, 147/147 mp - MP is full, so the packet does not mention it
+14:49:25.525    body 010001000400005a0000000000
+14:49:25.525 -> 0x02D1 UNKNOWN UserEffectLocal effect 0x41: the blue +10 over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run
+14:49:25.525    body 410a0000000000000000000000
+14:49:26.039 -> 0x0453 UNKNOWN NpcChat: object id 1007, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:26.047    body ef030000ff0000000000
+14:49:26.549 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:26.558    body f1030000ff0100000000
+14:49:27.567 -> 0x0453 UNKNOWN NpcChat: object id 1006, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:27.575    body ee030000ff0000000000
+14:49:27.575 -> 0x0453 UNKNOWN NpcChat: object id 1008, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:27.575    body f0030000ff0100000000
+14:49:28.092 -> 0x0453 UNKNOWN NpcChat: object id 1010, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:28.101    body f2030000ff0000000000
+14:49:28.604 -> 0x0453 UNKNOWN NpcChat: object id 1003, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:28.605    body eb030000ff0000000000
+14:49:29.114 -> 0x0453 UNKNOWN NpcChat: object id 1005, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:29.122    body ed030000ff0100000000
+14:49:29.916 <- 0x00B8 UNKNOWN, 1 byte body 01
+14:49:29.916    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:30.428 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:30.436    body ea030000ff0100000000
+14:49:31.451 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:31.458    body e9030000ff0200000000
+14:49:31.964 -> 0x0453 UNKNOWN NpcChat: object id 1011, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:31.972    body f3030000ff0000000000
+14:49:32.474 -> 0x0453 UNKNOWN NpcChat: object id 1003, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:32.482    body eb030000ff0100000000
+14:49:32.482 -> 0x0453 UNKNOWN NpcChat: object id 1010, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:32.482    body f2030000ff0100000000
+14:49:33.500 -> 0x0453 UNKNOWN NpcChat: object id 1000, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:33.509    body e8030000ff0100000000
+14:49:33.509 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:33.509    body f1030000ff0000000000
+14:49:33.574 <- 0x00E7 CLIENT_CHAT (u32 tick, u16-length text, u8 tab), 20 byte body 8e46cb1c0d00216d617020313030303130303003
+14:49:33.575 -> 0x00BB CHAT_NOTICE ChatNotice: Teleporting Cobalt to map 10001000, Henesys
+14:49:33.575    body 012b0054656c65706f7274696e67204a6f7369616820746f206d61702031303030313030302c2048656e65737973
+14:49:33.575 -> 0x01A0 SET_FIELD SetField, GM !map 10001000, for character 213 (Cobalt), quests: 2 started / 6 completed
+14:49:33.575    body 80bc0470fc36dd0100000000000000000000000000000000000000000000010000000000000000000000000000010001000000000101010000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d5000000d500000000000000436f62616c7400000000000000000000000000224e0000497500000c000000c80004001800060024005a000000ee00000093000000930000000a0000d90200000000000000000000689a98000000000000000000000000000000000000000000000000001e001e001e001e001e001e000005000183de0f0000008005bb46e6170200000000000004000006000100040007ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060001a22c100000008005bb46e6170200000000000004000004000100040007ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000070001805b100000008005bb46e6170200000000000004000002000100040005ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b0001f0dd130000008005bb46e6170200000000000000010011000100040007ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010001114a0f0000008005bb46e6170200000000000004000006000100040007ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010500e8030000030000000000000000000000e9030000030000000000000000000000ea0300000300000000000000000000006a881e000100000000000000000000006b881e00070000000000000000000000010200ee030000030030313090b807000000010600e80300008029741b8936dd01e90300008056a51c8936dd01ea030000002896258936dd01eb0300000063ee2d8936dd01ec0300008026b82f8936dd01ed03000000c8bb4b8936dd010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+14:49:34.055 <- 0x00DC CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body), 0 byte body 
+14:49:34.055 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 200 at (127, 274) on foothold 143, object id 1000 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.055    body e8030000c80000007f001201ffffffffffffffff00018f004d00b1001201120101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.055 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 201 at (1574, 334) on foothold 124, object id 1001 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.055    body e9030000c900000026064e01ffffffffffffffff00017c00f40558064e014e0101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.055 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 202 at (3486, 124) on foothold 28, object id 1002 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body ea030000ca0000009e0d7c00ffffffffffffffff00011c006c0dd00d7c007c0001000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 203 at (4160, 124) on foothold 35, object id 1003 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body eb030000cb00000040107c00ffffffffffffffff000123000e1072107c007c0001000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 204 at (5176, -116) on foothold 55, object id 1004 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body ec030000cc00000038148cffffffffffffffffff0001370006146a148cff8cff01000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 205 at (2618, 334) on foothold 154, object id 1005 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body ed030000cd0000003a0a4e01ffffffffffffffff00019a00080a6c0a4e014e0101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 206 at (4206, 454) on foothold 158, object id 1006 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body ee030000ce0000006e10c601ffffffffffffffff00019e003c10a010c601c60101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 235 at (2153, 334) on foothold 132, object id 1007 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body ef030000eb00000069084e01ffffffffffffffff0001840037089b084e014e0101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 231 at (3855, 454) on foothold 115, object id 1008 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body f0030000e70000000f0fc601ffffffffffffffff00007300dd0e410fc601c60101000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 9010000 at (-48, 94) on foothold 169, object id 1009 - the client cannot spawn this itself, it only preloads the art.
+14:49:34.056    body f1030000507b8900d0ff5e00ffffffffffffffff0001a9009eff02005e005e0001000000000000000000ffffffff000000000000000000000000ff0000000000
+14:49:34.056 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 2000000 into Use slot 1 - 41 byte blob. restored on field entry.
+14:49:34.056    body 01000100000000000201000280841e0000008005bb46e61702000000000001000000000000000000000000000000000000000000
+14:49:34.056 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 2060000 into Use slot 2 - 41 byte blob. restored on field entry.
+14:49:34.056    body 010001000000000002020002e06e1f0000008005bb46e61702000000000014000000000000000000000000000000000000000000
+14:49:34.056 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 4020000 into Etc slot 1 - 41 byte blob. restored on field entry.
+14:49:34.056    body 01000100000000000401000220573d0000008005bb46e61702000000000001000000000000000000000000000000000000000000
+14:49:34.057 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 4000001 into Etc slot 2 - 41 byte blob. restored on field entry.
+14:49:34.057    body 01000100000000000402000201093d0000008005bb46e61702000000000003000000000000000000000000000000000000000000
+14:49:34.057 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 5150000 into Cash slot 1 - 41 byte blob. restored on field entry.
+14:49:34.057    body 01000100000000000501000230954e0000008005bb46e61702000000000003000000000000000000000000000000000000000000
+14:49:34.057 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: 24 mesos restored on field entry - bit 18 is the only way this client is ever told a balance
+14:49:34.057    body 0100010000040018000000000000000000
+14:49:34.057 <- 0x02DE UNKNOWN, 1 byte body 01
+14:49:34.057    0x02DE UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:34.057 <- 0x0184 UNKNOWN, 12 byte body 080000000400040004000000
+14:49:34.058    0x0184 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:34.058 <- 0x0194 UNKNOWN, 1 byte body 01
+14:49:34.058    0x0194 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:34.507 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 139 byte body 002218445c5048cb1c00000000007000bb00000000000500007000bc0000003c00000000000000ffff061e0000007200f5000800e001000000000000ffff06d20000007200040102001c02000000000000ffff071e00000072001201ffff0000000000000000ffff07180000005b0012016aff00008f0000000000ffff03d8000011404444048888888808
+14:49:34.515    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:35.027 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 76 byte body 002218445c4e4acb1c00000000005b0012016aff00000200005a0012016aff00008f0000000000ffff03060000000e0012016aff00008a0000000000ffff03f8010011888888888888888808
+14:49:35.035    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:35.536 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 169 byte body 002218445c4c4ccb1c00000000000e0012016aff0000070000090011016aff00008a0000000000ffff031e000000090011016aff0000000000000000ffff07000000016affd5fd0700000000e1ffc4006afff1ff000000000000ffff070e010000cbffd8006bff1d01000000000000ffff0796000000caffda00b6ff0000000000000000ffff0706000000c6ffda00cdff0000f30000000000ffff0536000011888888888888000000
+14:49:35.544    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:36.047 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 76 byte body 002218445c4a4ecb1c0000000000c6ffda00cdff0000020000c4ffda00fdff0000f30000000000ffff053c000000c4ffda0000000000f30000000000ffff05c2010011000000000000000000
+14:49:36.055    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:38.287 <- 0x010E UNKNOWN, 14 byte body 1457cb1c010080841e0001000000
+14:49:38.297 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: used item 2000000 from Use slot 1 - +100 hp (now 190/238), +0 mp (now 147/147). No recovery trailer: that number is for idle regeneration and chairs, not for items. Byte 0 also clears the client's request latch
+14:49:38.297    body 01000100140000be000000930000000000
+14:49:38.297 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation REMOVE: Use slot 1 is empty now
+14:49:38.297    body 0100010000000003020100
+14:49:40.808 <- 0x01A5 UNKNOWN, 24 byte body 0200000000cf7b051611a5ac10f67b051611a5ac00000000
+14:49:40.808    0x01A5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:40.808 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 46 byte body 0164000000a23e07aea23e07ae02000000005a33b102118310bdf96e6d7f6face652d293047e0000000000000000
+14:49:40.808    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session/
+14:49:41.825 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:41.833    body ea030000ff0000000000
+14:49:42.337 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:42.345    body f1030000ff0000000000
+14:49:42.488 <- 0x0107 CLIENT_INVENTORY_MOVE (u32 tick, u8 invType, i16 src, i16 dst, i16 count), 11 byte body 7c67cb1c010100ffffffff
+14:49:42.489 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation: move invType 1 slot 1 -> -1. equipped item 1002001 from Equip bag slot 1 into slot 1. The first byte is 1, which clears the client's +0x2330 request latch; a 0 there would block every later inventory action.
+14:49:42.489    body 0100010000000002010100ffff00
+14:49:42.668 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 78 byte body 002218445c3068cb1c0000000000c4ffda0000000000030000c4ffda0000000000f30000000000ffff054a01000c0000c4ffda0000000000f30000000000ffff05b4000011000000000000000000
+14:49:42.676    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:43.178 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:43.187    body e9030000ff0000000000
+14:49:45.220 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:45.229    body ea030000ff0100000000
+14:49:45.668 <- 0x02F4 UNKNOWN, 12 byte body 02000000c4ffffffda000000
+14:49:45.676    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:47.715 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:47.715    body e9030000ff0100000000
+14:49:50.272 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:50.280    body f1030000ff0100000000
+14:49:50.829 <- 0x01A5 UNKNOWN, 112 byte body 0400000080841e00cf2527f881841e00cf2527f868881e000421aa6a69881e00f5b57d080600000080841e000100000084d9621f81841e00010000008ccf927268881e0001000000baedb7b469881e000100000018a17bc16a881e00020000006f0a170c6b881e000800000086c92e4b
+14:49:50.837    0x01A5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:51.341 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:51.349    body ea030000ff0000000000
+14:49:52.051 <- 0x00E7 CLIENT_CHAT (u32 tick, u16-length text, u8 tab), 13 byte body de8ccb1c0600216c6561726e03
+14:49:52.062 -> 0x00BB CHAT_NOTICE ChatNotice: Learned 6 skill(s) for job 200: Improved MP Recovery lv15, Max MP Increase lv15, Magic Guard lv15, Magic Armor lv20, Energy Bolt lv20, Magic Claw lv20. *** WARNING: you have 6 INT. Every attack skill here scales on it, so they will all land on the damage floor of 1 whatever level they are. That is the formula being right. Raise INT first. ***
+14:49:52.062    body 0158014c6561726e6564203620736b696c6c28732920666f72206a6f62203230303a20496d70726f766564204d50205265636f76657279206c7631352c204d6178204d5020496e637265617365206c7631352c204d6167696320477561726420...(+251 bytes, known opcode so capped)
+14:49:52.062 -> 0x0081 CLIENT_CHECK_NAME_REQUEST ChangeSkillRecordResult: !learn granted 6 skill(s) to job 200. The first byte clears user+0x2330 - without it the client will not send another request from that family at all.
+14:49:52.062    body 010100060080841e000f00000000000000008005bb46e6170281841e000f00000000000000008005bb46e6170268881e000f00000000000000008005bb46e6170269881e001400000000000000008005bb46e617026a881e0014000000000000...(+30 bytes, known opcode so capped)
+14:49:52.062 -> 0x00BB CHAT_NOTICE ChatNotice: WARNING: you have 6 INT. Every attack skill here scales on it, so they will all land on the damage floor of 1 whatever level they are. That is the formula being right. Raise INT first.
+14:49:52.062    body 01b8005741524e494e473a20796f752068617665203620494e542e2045766572792061747461636b20736b696c6c2068657265207363616c6573206f6e2069742c20736f20746865792077696c6c20616c6c206c616e64206f6e207468652064...(+91 bytes, known opcode so capped)
+14:49:52.071 <- 0x0226 UNKNOWN, 10 byte body 83020000fc8ccb1c0000
+14:49:52.071    0x0226 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:52.090 <- 0x01A5 UNKNOWN, 80 byte body 000000000600000080841e000f0000000a61d2bb81841e000f0000008ccf927268881e000f00000056c77bfa69881e0014000000130f81116a881e0014000000f1d976696b881e0014000000181a4f2e
+14:49:52.090    0x01A5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:52.359 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 78 byte body 002218445c0a8ecb1c0000000000c4ffda0000000000030000c4ffda0000000000f30000000000ffff05d200000c0000c4ffda0000000000f30000000000ffff052c010011000000000000000000
+14:49:52.367    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:49:52.873 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:52.881    body e9030000ff0200000000
+14:49:53.560 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+14:49:53.568    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:54.593 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:54.593    body f1030000ff0000000000
+14:49:55.690 <- 0x02F4 UNKNOWN, 12 byte body 02000000c4ffffffda000000
+14:49:55.698    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:57.611 <- 0x00B8 UNKNOWN, 1 byte body 00
+14:49:57.619    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:49:58.126 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:58.133    body ea030000ff0100000000
+14:49:58.635 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:49:58.635    body e9030000ff0000000000
+14:50:00.170 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:00.177    body f1030000ff0100000000
+14:50:01.693 <- 0x00B8 UNKNOWN, 1 byte body 01
+14:50:01.702    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:02.111 <- 0x02F5 UNKNOWN, 0 byte body 
+14:50:02.119    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:02.629 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 200/238 hp, 147/147 mp - MP is full, so the packet does not mention it
+14:50:02.629    body 01000100040000c80000000000
+14:50:02.629 -> 0x02D1 UNKNOWN UserEffectLocal effect 0x41: the blue +10 over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run
+14:50:02.629    body 410a0000000000000000000000
+14:50:03.583 <- 0x00E7 CLIENT_CHAT (u32 tick, u16-length text, u8 tab), 11 byte body deb9cb1c0400216b697403
+14:50:03.591 -> 0x00BB CHAT_NOTICE ChatNotice: !kit: Magician needs NOTHING. None of its six skills carries a weapon column in this client's Skill.wz, so every one of them casts bare-handed. That is measured, not an empty table.
+14:50:03.591    body 01b500216b69743a204d6167696369616e206e65656473204e4f5448494e472e204e6f6e65206f66206974732073697820736b696c6c732063617272696573206120776561706f6e20636f6c756d6e20696e207468697320636c69656e742773...(+88 bytes, known opcode so capped)
+14:50:05.122 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:05.130    body ea030000ff0000000000
+14:50:05.631 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:05.631    body e9030000ff0100000000
+14:50:05.712 <- 0x02F4 UNKNOWN, 12 byte body 02000000c4ffffffda000000
+14:50:05.712    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:08.778 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:08.786    body f1030000ff0000000000
+14:50:09.289 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:09.297    body ea030000ff0100000000
+14:50:12.133 <- 0x02F5 UNKNOWN, 0 byte body 
+14:50:12.141    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:12.654 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 210/238 hp, 147/147 mp - MP is full, so the packet does not mention it
+14:50:12.654    body 01000100040000d20000000000
+14:50:12.654 -> 0x02D1 UNKNOWN UserEffectLocal effect 0x41: the blue +10 over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run
+14:50:12.654    body 410a0000000000000000000000
+14:50:14.192 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:14.200    body e9030000ff0200000000
+14:50:15.722 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:15.729    body f1030000ff0100000000
+14:50:15.734 <- 0x02F4 UNKNOWN, 12 byte body 02000000c4ffffffda000000
+14:50:15.734    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:15.975 <- 0x00B8 UNKNOWN, 1 byte body 00
+14:50:15.983    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:16.498 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:16.505    body ea030000ff0000000000
+14:50:21.094 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:21.102    body e9030000ff0000000000
+14:50:21.603 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:21.603    body ea030000ff0100000000
+14:50:22.165 <- 0x02F5 UNKNOWN, 0 byte body 
+14:50:22.173    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:22.686 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 220/238 hp, 147/147 mp - MP is full, so the packet does not mention it
+14:50:22.686    body 01000100040000dc0000000000
+14:50:22.686 -> 0x02D1 UNKNOWN UserEffectLocal effect 0x41: the blue +10 over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run
+14:50:22.686    body 410a0000000000000000000000
+14:50:23.605 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+14:50:23.613    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:24.127 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:24.134    body f1030000ff0000000000
+14:50:25.766 <- 0x02F4 UNKNOWN, 12 byte body 02000000c4ffffffda000000
+14:50:25.773    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:25.773 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 46 byte body 016400000084cb94ff84cb94ff02000000000b16bf2f40a61e90a84b63523e8fe035a176fe600000000000000000
+14:50:25.773    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session/
+14:50:28.325 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:28.325    body e9030000ff0100000000
+14:50:30.868 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:30.868    body ea030000ff0000000000
+14:50:31.893 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:31.900    body f1030000ff0100000000
+14:50:32.167 <- 0x02F5 UNKNOWN, 0 byte body 
+14:50:32.175    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:33.201 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +10 hp +0 mp -> 230/238 hp, 147/147 mp - MP is full, so the packet does not mention it
+14:50:33.201    body 01000100040000e60000000000
+14:50:33.201 -> 0x02D1 UNKNOWN UserEffectLocal effect 0x41: the blue +10 over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run
+14:50:33.201    body 410a0000000000000000000000
+14:50:35.768 <- 0x02F4 UNKNOWN, 12 byte body 02000000c4ffffffda000000
+14:50:35.776    0x02F4 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:36.787 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:36.788    body e9030000ff0200000000
+14:50:38.326 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:38.334    body f1030000ff0000000000
+14:50:39.858 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:39.865    body ea030000ff0100000000
+14:50:42.189 <- 0x02F5 UNKNOWN, 0 byte body 
+14:50:42.189    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:42.696 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:42.703    body f1030000ff0100000000
+14:50:43.215 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: idle regen +8 hp +0 mp -> 238/238 hp, 147/147 mp - MP is full, so the packet does not mention it
+14:50:43.215    body 01000100040000ee0000000000
+14:50:43.215 -> 0x02D1 UNKNOWN UserEffectLocal effect 0x41: the blue +8 over the player's head. NOT the 0x007C recovery trailer - that one reaches a statistics counter, not a renderer, and drew nothing across three ticks of a real run
+14:50:43.215    body 41080000000000000000000000
+14:50:43.215 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:43.215    body e9030000ff0000000000
+14:50:46.269 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:46.270    body ea030000ff0000000000
+14:50:49.333 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:49.334    body e9030000ff0100000000
+14:50:51.886 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:51.894    body f1030000ff0000000000
+14:50:52.211 <- 0x02F5 UNKNOWN, 0 byte body 
+14:50:52.219    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:53.531 <- 0x01ED UNKNOWN, 224 byte body 0100000012000000e8030000010000000bccceb9e8030000030000002cadaa3ce9030000030000001f7b52ffea030000030000008a326c9d80841e000100000084d9621f80841e000f0000000a61d2bb81841e00010000008ccf927281841e000f0000008ccf927268881e0001000000baedb7b468881e000f00000056c77bfa69881e000100000018a17bc169881e0014000000130f81116a881e00010000006f0a170c6a881e00020000006f0a170c6a881e0014000000f1d976696b881e0007000000b01862eb6b881e000800000086c92e4b6b881e0014000000181a4f2e
+14:50:53.539    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:53.540 <- 0x01ED UNKNOWN, 80 byte body 0200000009000000e80300006987f2ebe90300004a50dd2eea030000d78ec0e480841e00cf2527f881841e00cf2527f868881e000421aa6a69881e00f5b57d086a881e00679f8ac56b881e00c1a13ab7
+14:50:53.540    0x01ED UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:53.621 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+14:50:53.621    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:50:54.124 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:54.132    body e9030000ff0200000000
+14:50:54.133 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:54.133    body ea030000ff0100000000
+14:50:55.149 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:55.157    body f1030000ff0100000000
+14:50:59.745 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:59.753    body ea030000ff0000000000
+14:50:59.753 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:50:59.755    body f1030000ff0000000000
+14:51:01.278 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:01.278    body e9030000ff0000000000
+14:51:02.232 <- 0x02F5 UNKNOWN, 0 byte body 
+14:51:02.241    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:03.263 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:03.271    body ea030000ff0100000000
+14:51:07.863 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:07.871    body f1030000ff0100000000
+14:51:08.882 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:08.890    body ea030000ff0000000000
+14:51:09.900 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:09.908    body e9030000ff0100000000
+14:51:10.414 -> 0x00AC UNKNOWN BroadcastMsg type 4: banner UP - [Event] The Server's EXP rate has been set to 100x
+14:51:10.422    body 040132005b4576656e745d2054686520536572766572277320455850207261746520686173206265656e2073657420746f2031303078
+14:51:12.254 <- 0x02F5 UNKNOWN, 0 byte body 
+14:51:12.255    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:14.808 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:14.808    body ea030000ff0100000000
+14:51:14.808 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:14.808    body f1030000ff0000000000
+14:51:16.851 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:16.859    body e9030000ff0200000000
+14:51:18.886 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:18.893    body f1030000ff0100000000
+14:51:20.932 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:20.940    body e9030000ff0000000000
+14:51:22.276 <- 0x02F5 UNKNOWN, 0 byte body 
+14:51:22.284    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:22.790 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:22.798    body ea030000ff0000000000
+14:51:23.299 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:23.307    body f1030000ff0000000000
+14:51:23.657 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+14:51:23.664    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:27.748 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:27.749    body e9030000ff0100000000
+14:51:28.259 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:28.259    body ea030000ff0100000000
+14:51:31.325 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:31.325    body e9030000ff0200000000
+14:51:32.288 <- 0x02F5 UNKNOWN, 0 byte body 
+14:51:32.295    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:32.797 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:32.798    body f1030000ff0100000000
+14:51:35.358 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:35.358    body e9030000ff0000000000
+14:51:35.358 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:35.358    body ea030000ff0000000000
+14:51:40.469 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:40.477    body e9030000ff0100000000
+14:51:42.001 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:42.002    body f1030000ff0000000000
+14:51:42.310 <- 0x02F5 UNKNOWN, 0 byte body 
+14:51:42.317    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:43.848 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:43.855    body ea030000ff0100000000
+14:51:46.913 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:46.921    body e9030000ff0200000000
+14:51:47.436 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:47.444    body ea030000ff0000000000
+14:51:49.997 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:50.005    body f1030000ff0100000000
+14:51:52.342 <- 0x02F5 UNKNOWN, 0 byte body 
+14:51:52.350    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:53.692 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+14:51:53.700    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:51:54.202 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:54.211    body e9030000ff0000000000
+14:51:54.713 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:54.714    body ea030000ff0100000000
+14:51:55.735 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:51:55.742    body f1030000ff0000000000
+14:52:00.333 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:00.341    body ea030000ff0000000000
+14:52:02.363 <- 0x02F5 UNKNOWN, 0 byte body 
+14:52:02.371    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:02.878 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 2 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:02.878    body e9030000ff0100000000
+14:52:03.390 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:03.391    body f1030000ff0100000000
+14:52:06.115 <- 0x00B8 UNKNOWN, 1 byte body 01
+14:52:06.123    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:06.633 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:06.641    body ea030000ff0100000000
+14:52:07.525 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 76 byte body 002218445cf89dcd1c0000000000c4ffda0000000000020000c4ffda0000000000f30000000000ffff05d2000000e9ffda0096000000f30000000000ffff022c010011000000404444444404
+14:52:07.532    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:52:08.035 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 97 byte body 002218445cf69fcd1c0000000000e9ffda00960000000300002900da0096000000f30000000000ffff02aa0100002d00da0096000000000000000000ffff06180000003600de0096007800000000000000ffff063c000011444444444444444404
+14:52:08.035    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:52:08.545 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 139 byte body 002218445cf4a1cd1c00000000003600de00960078000500004d0007019600a401000000000000ffff0696000000500012014b000000000000000000ffff06190000005a001201960000008a0000000000ffff025300000065001201960000008f0000000000ffff024800000073001201060000008f0000000000ffff04b4000011444444444404000000
+14:52:08.552    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:52:09.045 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 55 byte body 002218445cf2a3cd1c0000000000730012010600000001000073001201000000008f0000000000ffff04fe010011000000000000000000
+14:52:09.053    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:52:10.583 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 3 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:10.591    body e9030000ff0200000000
+14:52:11.607 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:11.615    body f1030000ff0000000000
+14:52:12.376 <- 0x02F5 UNKNOWN, 0 byte body 
+14:52:12.384    0x02F5 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:13.412 -> 0x0453 UNKNOWN NpcChat: object id 1002, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:13.412    body ea030000ff0000000000
+14:52:14.266 <- 0x00B8 UNKNOWN, 1 byte body 00
+14:52:14.275    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:17.328 <- 0x00B8 UNKNOWN, 1 byte body 01
+14:52:17.336    0x00B8 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:17.848 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 3 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:17.848    body e9030000ff0000000000
+14:52:19.381 -> 0x0453 UNKNOWN NpcChat: object id 1009, line 2 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:19.389    body f1030000ff0100000000
+14:52:20.388 <- 0x00E7 CLIENT_CHAT (u32 tick, u16-length text, u8 tab), 20 byte body 3ed0cd1c0d00216d617020313030303230303103
+14:52:20.389 -> 0x00BB CHAT_NOTICE ChatNotice: Teleporting Cobalt to map 10002001, Ellinia Weapon Store
+14:52:20.389    body 01380054656c65706f7274696e67204a6f7369616820746f206d61702031303030323030312c20456c6c696e696120576561706f6e2053746f7265
+14:52:20.389 -> 0x01A0 SET_FIELD SetField, GM !map 10002001, for character 213 (Cobalt), quests: 2 started / 6 completed
+14:52:20.390    body 00ea8ed3fc36dd0100000000000000000000000000000000000000000000010000000000000000000000000000010001000000000101010000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d5000000d500000000000000436f62616c7400000000000000000000000000224e0000497500000c000000c8000400180006002400ee000000ee00000093000000930000000a0000d90200000000000000000000519e98000000000000000000000000000000000000000000000000001e001e001e001e001e001e0000010001114a0f0000008005bb46e6170200000000000004000006000100040007ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005000183de0f0000008005bb46e6170200000000000004000006000100040007ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060001a22c100000008005bb46e6170200000000000004000004000100040007ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000070001805b100000008005bb46e6170200000000000004000002000100040005ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b0001f0dd130000008005bb46e6170200000000000000010011000100040007ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010900e8030000030000000000000000000000e9030000030000000000000000000000ea03000003000000000000000000000080841e000f000000000000000000000081841e000f000000000000000000000068881e000f000000000000000000000069881e001400000000000000000000006a881e001400000000000000000000006b881e00140000000000000000000000010200ee030000030030313090b807000000010600e80300008029741b8936dd01e90300008056a51c8936dd01ea030000002896258936dd01eb0300000063ee2d8936dd01ec0300008026b82f8936dd01ed03000000c8bb4b8936dd010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+14:52:20.819 <- 0x00DC CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body), 0 byte body 
+14:52:20.829 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 310 at (-302, 140) on foothold 11, object id 1000 - the client cannot spawn this itself, it only preloads the art.
+14:52:20.829    body e803000036010000d2fe8c00ffffffffffffffff00000b00c2fe04ff8c008c0001000000000000000000ffffffff000000000000000000000000ff0000000000
+14:52:20.829 -> 0x044F NPC_ENTER_FIELD NpcEnterField: template 311 at (-252, 140) on foothold 11, object id 1001 - the client cannot spawn this itself, it only preloads the art.
+14:52:20.829    body e90300003701000004ff8c00ffffffffffffffff00000b00d2fe36ff8c008c0001000000000000000000ffffffff000000000000000000000000ff0000000000
+14:52:20.829 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 2060000 into Use slot 2 - 41 byte blob. restored on field entry.
+14:52:20.829    body 010001000000000002020002e06e1f0000008005bb46e61702000000000014000000000000000000000000000000000000000000
+14:52:20.829 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 4020000 into Etc slot 1 - 41 byte blob. restored on field entry.
+14:52:20.829    body 01000100000000000401000220573d0000008005bb46e61702000000000001000000000000000000000000000000000000000000
+14:52:20.829 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 4000001 into Etc slot 2 - 41 byte blob. restored on field entry.
+14:52:20.829    body 01000100000000000402000201093d0000008005bb46e61702000000000003000000000000000000000000000000000000000000
+14:52:20.829 -> 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) InventoryOperation ADD: item 5150000 into Cash slot 1 - 41 byte blob. restored on field entry.
+14:52:20.829    body 01000100000000000501000230954e0000008005bb46e61702000000000003000000000000000000000000000000000000000000
+14:52:20.830 -> 0x007C STAT_CHANGED (u8 excl, u8 quiet, u8 1, u32 mask, fields in bit order) StatChanged: 24 mesos restored on field entry - bit 18 is the only way this client is ever told a balance
+14:52:20.830    body 0100010000040018000000000000000000
+14:52:20.830 <- 0x02DE UNKNOWN, 1 byte body 01
+14:52:20.830    0x02DE UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:20.830 <- 0x0184 UNKNOWN, 12 byte body 080000000400040004000000
+14:52:20.830    0x0184 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:20.830 <- 0x0194 UNKNOWN, 1 byte body 01
+14:52:20.830    0x0194 UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:21.297 <- 0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head), 97 byte body 00964885561ed2cd1c00000000008eff6900000000000300008eff890000006801000000000000ffff06b40000008eff8b0000000000000000000000ffff06050000008eff8b0000000000080000000000ffff0445010011000000000000000000
+14:52:21.304    0x00D9 CLIENT_USER_MOVE (the client's own movement; x/y are the path's END, not its head) is not answered yet - see crates/world/src/session/
+14:52:23.088 <- 0x00F2 CLIENT_NPC_CLICK (u32 npcObjectId, i16 charX, i16 charY, u32; the NO-QUEST click path), 12 byte body e80300008eff8b00ffffffff
+14:52:23.088 -> 0x055B SCRIPT_MESSAGE ScriptMessage Say from NPC template 310, line 1 of 1 on path ""
+14:52:23.088    body 0000000000360100000000000000000000003500546869732073657276657220686173206e6f206469616c6f67756520666f72204e50432074656d706c61746520333130207965742e000000000000
+14:52:23.088 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 46 byte body 0164000000d208abd8d208abd80200000000580c0c1e13bcada1fb51d0636da55166d08c6f910000000000000000
+14:52:23.088    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered yet - see crates/world/src/session/
+14:52:24.147 <- 0x013D UNKNOWN, 9 byte body 000000000000000000
+14:52:24.156    0x013D UNKNOWN is not answered yet, and it is UNKNOWN, so the full body is above - see crates/world/src/session/
+14:52:24.508 <- 0x00F3 CLIENT_SCRIPT_REPLY (u32 handle, u8 msgType, u32 echo, str the box's own text, i8 action), 65 byte body 0000000000000000003500546869732073657276657220686173206e6f206469616c6f67756520666f72204e50432074656d706c61746520333130207965742e01
+14:52:24.508    0x00F3 CLIENT_SCRIPT_REPLY (u32 handle, u8 msgType, u32 echo, str the box's own text, i8 action) is not answered yet - see crates/world/src/session/
+14:52:26.048 -> 0x0453 UNKNOWN NpcChat: object id 1000, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:26.056    body e8030000ff0000000000
+14:52:28.093 -> 0x0453 UNKNOWN NpcChat: object id 1001, line 1 of 2 - idle chatter. The client holds the text; only the index goes on the wire.
+14:52:28.093    body e9030000ff0000000000
+14:52:28.483 ch0 #1 127.0.0.1:51472 ended: An existing connection was forcibly closed by the remote host. (os error 10054)

@@ -486,10 +486,18 @@ impl Config {
                 continue;
             }
             let f: Vec<&str> = line.split(',').map(str::trim).collect();
-            if f.len() != 19 {
+            // **At least the 19 this needs, and ignore whatever follows.** The generator grew
+            // six requirement columns and a NAME on 2026-08-28, so the file is 26 fields wide
+            // now. An `!= 19` here skipped every row of the new file, and the symptom would
+            // have been the 2026-08-19 bug returning exactly: a shirt with no defence and no
+            // upgrade slots, from a parser that silently agreed with itself.
+            //
+            // The name is last and is not numeric, which is why the parse below is scoped to
+            // the leading fields rather than applied to all of them.
+            if f.len() < 19 {
                 continue;
             }
-            let n: Vec<Option<u32>> = f.iter().map(|x| x.parse::<u32>().ok()).collect();
+            let n: Vec<Option<u32>> = f[..19].iter().map(|x| x.parse::<u32>().ok()).collect();
             if n.iter().any(Option::is_none) {
                 continue;
             }
@@ -1577,6 +1585,24 @@ mod spawn_tests {
         // "that should only apply to some items".
         let blocked = equips.values().filter(|e| e.trade_block).count();
         assert!(blocked > 0 && blocked < 20, "{blocked} equips carry tradeBlock");
+
+        // **The file grew six requirement columns and a NAME on 2026-08-28, and this loader
+        // must ignore them rather than skip the row.** The old `f.len() != 19` skipped every
+        // row of the wider file, and the symptom would have been indistinguishable from the
+        // 2026-08-19 bug this whole table exists to fix: a shirt with no defence and no
+        // upgrade slots. The assertions above only catch it because they read real rows -
+        // `equips.len() > 1000` on its own would have caught it too, which is why it is there.
+        let text = std::fs::read_to_string(path).unwrap();
+        let row = text
+            .lines()
+            .find(|l| l.starts_with("1302000,"))
+            .expect("the starter sword is in the file");
+        let fields: Vec<&str> = row.split(',').map(str::trim).collect();
+        assert_eq!(fields.len(), 26, "19 numeric + 6 requirement + name: {row}");
+        assert_eq!(fields[25], "Sword", "the name is the last column: {row}");
+        // reqLevel is field 19 and the starter sword needs nothing at all - it is the one
+        // weapon in this client with a completely free entry, which is why `!kit` uses it.
+        assert_eq!(fields[19], "0", "the Sword has no level requirement: {row}");
     }
 
     /// Quest 1000's tree, read back out of the generated table.

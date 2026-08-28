@@ -511,11 +511,28 @@ pub const WARRIOR: Loadout = Loadout {
 ///
 /// So this row exists to say *"this branch needs no weapon, and that is measured"* rather
 /// than to leave a hole someone fills in later with a wand.
+/// # CORRECTED 2026-08-28: the wand is in the kit
+///
+/// This row used to carry `pieces: &[]` and a caveat reading *"the weapon-attack argument that
+/// puts a Sword in the Warrior kit does not apply"*. **It does apply, through a different
+/// field.** The owner asked for a Magician kit and got told they needed nothing:
+/// *"The !kit command is not useful right now since I don't get a wand on my character."*
+///
+/// `crate::magic`'s own header has it: `MagicTotal` is `floor(INT / 2)` **plus equipment
+/// `incMAD`**. The Wooden Wand's `incMAD` is **27** - the row read `incWAT 18` and stopped
+/// there, which is the wrong column for the magic path. A wandless Magician runs the whole
+/// formula on `floor(INT / 2)` alone, and that is precisely the arithmetic that made Magic
+/// Claw draw a 1 on 2026-08-27.
+///
+/// The distinction the old row missed is the same one the Warrior row missed in the other
+/// direction: **"carries no weapon column" is about whether the client REFUSES the cast, not
+/// about whether the damage is any good.** No Magician skill is gated. Every Magician skill
+/// is scaled.
 pub const MAGICIAN: Loadout = Loadout {
     job: 200,
     job_name: "Magician",
-    pieces: &[],
-    alternative: &[WOODEN_WAND],
+    pieces: &[WOODEN_WAND],
+    alternative: &[WOODEN_STAFF],
     skills: &[
         SkillGate { skill_id: 2_000_000, name: "Improved MP Recovery", weapon_codes: &[], bullet_consume: None, bullet_count: None },
         SkillGate { skill_id: 2_000_001, name: "Max MP Increase", weapon_codes: &[], bullet_consume: None, bullet_count: None },
@@ -525,24 +542,59 @@ pub const MAGICIAN: Loadout = Loadout {
         SkillGate { skill_id: 2_001_003, name: "Magic Claw", weapon_codes: &[], bullet_consume: None, bullet_count: None },
     ],
     caveat: Some(
-        "Needs nothing. Energy Bolt and Magic Claw are magic attacks - crate::magic, not \
-         crate::damage - so the weapon-attack argument that puts a Sword in the Warrior kit \
-         does not apply, and the wand below is optional and NOT free (reqLevel 10, INT 20).",
+        "NO Magician skill is gated on a weapon, so all six cast bare-handed - but every \
+         attack among them SCALES on the wand. MagicTotal is floor(INT/2) plus equipment \
+         incMAD, and the Wooden Wand's incMAD is 27. Without it the whole formula runs on \
+         floor(INT/2) alone, which is how Magic Claw drew a 1. The wand is not free: \
+         reqLevel 10 and INT 20, so raise INT before expecting to equip it.",
     ),
 };
 
-/// `1372000` **Wooden Wand**, `gm-handbook/items.txt`. Optional. `reqLevel 10, reqINT 20,
-/// reqJob 0`, `incWAT 18`, `attackSpeed 6`. **[L]** The cheapest wand in the client; there is
-/// no free one, and `reqLevel 10` is met by anyone who has a first job at all.
+/// `1372000` **Wooden Wand**, `gm-handbook/items.txt`. `reqLevel 10, reqINT 20, reqJob 0`,
+/// **`incMAD 27`**, `incWAT 18`, `attackSpeed 6`. **[L]**
+///
+/// The cheapest wand in this client. Every wand and staff was enumerated to establish that
+/// and that **there is no free one**: the ladder starts at level 10 / INT 20 and the next rung
+/// is level 15 / INT 30. `reqLevel 10` is met by anyone who has a first job at all, so INT is
+/// the only real gate.
+///
+/// **`incMAD`, not `incWAT`, is the column that matters here.** `crate::magic` reads
+/// `MagicTotal`; `crate::damage`'s weapon multiplier never enters the magic path.
 const WOODEN_WAND: Piece = Piece {
     item_id: 1_372_000,
     name: "Wooden Wand",
     kind: PieceKind::Weapon(WeaponClass::Wand),
     quantity: 1,
     req: Requirements { level: 10, intelligence: 20, ..Requirements::NONE },
+    // **Empty, and that is the field's meaning rather than an oversight.** `unlocks` is
+    // "skills whose `weapon` column this class satisfies", and no Magician skill has one.
+    // The wand's contribution is `incMAD`, which is scaling, not gating. A test asserts that
+    // every `unlocks` entry really is gated, and it caught this being filled in.
     unlocks: &[],
-    why: "Gates nothing. Listed only so the Magician row is explicitly 'nothing is needed' \
-          rather than 'nobody looked'. The cheapest wand in this client still asks INT 20.",
+    why: "Gates nothing, scales everything: incMAD 27 against a bare-handed MagicTotal of \
+          floor(INT/2). This is the Magician's equivalent of the Warrior's sword.",
+};
+
+/// `1382000` **Wooden Staff**, `gm-handbook/items.txt`. `reqLevel 10, reqINT 20, reqJob 2`,
+/// `incMAD 24`, `incWAT 20`. **[L]**
+///
+/// The alternative, and it is strictly worse for magic - 24 `incMAD` against the wand's 27 -
+/// **and** it carries `reqJob 2`, so unlike the wand it cannot be worn by a character who has
+/// not actually advanced. Listed because a staff is what a player expects to reach for.
+const WOODEN_STAFF: Piece = Piece {
+    item_id: 1_382_000,
+    name: "Wooden Staff",
+    kind: PieceKind::Weapon(WeaponClass::Staff),
+    quantity: 1,
+    req: Requirements {
+        level: 10,
+        intelligence: 20,
+        job_mask: JOB_BIT_MAGICIAN,
+        ..Requirements::NONE
+    },
+    unlocks: &[],
+    why: "Lower incMAD than the wand (24 vs 27) and adds a reqJob bit. Kept as the second \
+          option because a staff is the obvious thing to reach for.",
 };
 
 // ---------------------------------------------------------------------------------------
@@ -964,14 +1016,24 @@ mod tests {
 
     /// The Magician row is an explicit measurement, so assert it as one.
     #[test]
-    fn the_magician_needs_nothing_and_says_so() {
-        assert!(MAGICIAN.needs_nothing());
-        assert!(MAGICIAN.gm_lines().is_empty());
-        assert_eq!(MAGICIAN.gated_skills().count(), 0);
+    fn the_magician_gates_nothing_but_still_needs_the_wand() {
+        // **This test used to assert `needs_nothing()`, and that assertion was the bug.**
+        // The owner, 2026-08-28: *"The !kit command is not useful right now since I don't get a
+        // wand on my character."* Nothing is GATED - all six cast bare-handed - but
+        // `crate::magic` reads `MagicTotal = floor(INT/2) + equipment incMAD`, and the wand's
+        // incMAD is 27. "No weapon column" and "no weapon needed" are different claims, and
+        // the row had collapsed them into one.
+        assert!(!MAGICIAN.needs_nothing(), "the Magician needs a wand to do any damage");
+        assert_eq!(MAGICIAN.gated_skills().count(), 0, "and yet nothing is gated");
         assert_eq!(MAGICIAN.ungated_skills().count(), 6);
-        // and the optional wand is genuinely not free, which is why it is not a `piece`
+        assert_eq!(MAGICIAN.pieces.len(), 1, "one wand, no ammunition");
+        assert_eq!(MAGICIAN.pieces[0].item_id, WOODEN_WAND.item_id);
+        // Not free, so `!kit` warns a low-INT character - which is the whole point of the
+        // warning, since !job does not move ability points.
         assert!(!WOODEN_WAND.req.is_free());
         assert_eq!(WOODEN_WAND.req.intelligence, 20);
+        // The staff is strictly worse for magic, so it must not have become the default.
+        assert_eq!(MAGICIAN.alternative[0].item_id, WOODEN_STAFF.item_id);
     }
 
     /// The Thief is the only branch needing two different weapon classes.
@@ -982,7 +1044,10 @@ mod tests {
                 l.pieces.iter().filter_map(Piece::weapon_class).collect();
             classes.sort();
             classes.dedup();
-            let want = if l.job == 400 { 2 } else { usize::from(l.job != 200) };
+            // One weapon class per branch - the Magician included, since the wand joined the
+            // kit - except the Thief, which needs a dagger AND a claw because no item in this
+            // client is both.
+            let want = if l.job == 400 { 2 } else { 1 };
             assert_eq!(classes.len(), want, "job {} weapon classes {:?}", l.job, classes);
         }
         assert_eq!(THIEF.pieces.len(), 3, "dagger, claw, stars");

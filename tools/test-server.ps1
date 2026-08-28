@@ -70,7 +70,8 @@
                   so a !job character can end up holding something it cannot wear, which on
                   screen is indistinguishable from a broken skill.
 
-    THE SIX STEPS. Each is a claim that can come back false; report them separately.
+    THE SEVEN STEPS. Each is a claim that can come back false; report them separately.
+    DO STEP 7 FIRST: it is a discriminator that only works in a young session.
 
      0. TOP UP. !lp with no argument. Only if under 1000, !lp 99000. Step 6 needs it.
 
@@ -163,6 +164,27 @@
           balance keeps dropping, or several coupons from one click -> the re-entry is
                      SENDING rather than completing. CLOSE THE CLIENT and say so
 
+     7. FLORA THE FAIRY - ONE OBSERVATION, AND THE FIRST THING TO DO IS TELL IT APART
+        FROM THE SESSION. 2026-08-28: clicking the Ellinia weapon-store NPC (template 310,
+        Flora the Fairy) ended the client with an ACCESS VIOLATION, 0xC0000005, at
+        0x1426e4be9 - a fault address that appears nowhere else in 68 archived hook logs.
+        The fault is in the same MILLISECOND as the inbound 0x00F3 script reply.
+
+        THE UNANSWERED 0x00F3 IS NOT THE CAUSE, and that is measured rather than argued:
+        it appears 168 times across 23 archived runs, unanswered every time, with no death.
+        Their shop is not wired either, so what they give is our placeholder Say box.
+
+        DO THIS AT ABOUT 40 SECONDS OF CLIENT LIFE, BEFORE ANYTHING ELSE. The client had
+        been up 229 s when it died, and the two readings need opposite work:
+          it dies again, early -> Flora, or the script-reply path, really is fatal. That is
+                     a repeatable bug with a 1.3 GB dump already on disk next to it
+          it does NOT die      -> the session had been running long enough for something
+                     else to fire, and Flora is innocent. This is the same discriminator
+                     that cleared character GoodTest in one login on 2026-08-22, and it
+                     went the OTHER way that time, so neither answer is the safe default
+        Either way, say WHEN it happened. Do not click them a second time in a long session
+        and report that as a repeat.
+
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
     MP cost and damage validation on ATTACK skills. The skill id is readable now so both are
@@ -234,8 +256,12 @@
                                             job needs, and WARN about anything the character
                                             cannot equip. Five of the 24 first-job skills
                                             carry a weapon column: 45/46 bow or crossbow,
-                                            33 dagger, 47 claw. The Magician needs nothing,
-                                            and that is measured rather than missing
+                                            33 dagger, 47 claw. The Magician is gated on
+                                            NOTHING and still needs a wand: MagicTotal is
+                                            floor(INT/2) + equipment incMAD, and the
+                                            Wooden Wand's incMAD is 27. No weapon
+                                            column and no weapon needed are different
+                                            claims - this row had them confused
 
     THE FREE MEASUREMENT NOBODY HAS TAKEN
     -------------------------------------
@@ -959,8 +985,9 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. Six steps. Step 2 is' -ForegroundColor Yellow
-    Write-Host '  the cheapest and isolates the most; do it before 4 and 5.' -ForegroundColor Yellow
+    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. Seven steps.' -ForegroundColor Yellow
+    Write-Host '  DO STEP 7 FIRST - it only means anything in a young session.' -ForegroundColor Yellow
+    Write-Host '  Then step 2, which is the cheapest and isolates the most.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
@@ -1106,6 +1133,20 @@ if ($SetFieldProbe) {
     Write-Host '       BALANCE KEEPS DROPPING, or several coupons from one click ->'
     Write-Host '                   CLOSE THE CLIENT and say so. One line to disarm'
     Write-Host ''
+    Write-Host '  7. FLORA THE FAIRY - DO THIS AT ~40 SECONDS, BEFORE ANYTHING ELSE.' -ForegroundColor White
+    Write-Host '     Clicking the Ellinia weapon-store NPC killed the client last run:'
+    Write-Host '     an ACCESS VIOLATION at 0x1426e4be9, an address that appears nowhere'
+    Write-Host '     else in 68 archived hook logs. There is a 1.3 GB dump of it on disk.'
+    Write-Host '     THE UNANSWERED SCRIPT REPLY IS NOT THE CAUSE - that packet appears'
+    Write-Host '     168 times across 23 archived runs with no death. Their shop is not'
+    Write-Host '     wired either, so you get our placeholder text box, not a shop.'
+    Write-Host '     THE POINT IS TO SEPARATE THE NPC FROM THE SESSION. The client had'
+    Write-Host '     been up 229 s when it died. So click their EARLY:'
+    Write-Host '       it dies again, early -> Flora really is fatal. Repeatable bug'
+    Write-Host '       it does NOT die      -> the session was long, and they are innocent'
+    Write-Host '     Say WHEN it happened either way. Clicking them once in a long session'
+    Write-Host '     and calling it a repeat proves nothing.'
+    Write-Host ''
     Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
     Write-Host '     MP cost and damage validation on ATTACK skills. The skill id is'
     Write-Host '     now readable so both are finally possible, but neither is'
@@ -1123,6 +1164,9 @@ if ($SetFieldProbe) {
     Write-Host '  COMMANDS: !map !item !exp !heal !job !learn !kit !buff !unbuff'
     Write-Host '  !npcecho !npcfx !migsweep !exprate !mesorate !droprate !setrates'
     Write-Host '  !rates !nx !lp !buy !locker !resetap !resetsp.'
+    Write-Host '  gm-handbook/equips.txt NOW HAS NAMES - and reqLevel, reqSTR, reqDEX,'
+    Write-Host '  reqINT, reqLUK and reqJob. 1759 rows, name is the LAST column. That is'
+    Write-Host '  the file to read when picking something to !item in.'
     Write-Host '  !learn and !kit are NEW and do this run setup for you. !lp grants'
     Write-Host '  LEAF POINTS and is the one that BUYS; !nx buys nothing. !help'
     Write-Host '  lists them all.'
