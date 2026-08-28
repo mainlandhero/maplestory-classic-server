@@ -39,6 +39,7 @@ pub mod footholds;
 pub mod jobs;
 pub mod server;
 pub mod session;
+pub mod skillpoints;
 pub mod shops;
 
 pub use config::Config;

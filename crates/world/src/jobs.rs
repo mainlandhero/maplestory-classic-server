@@ -67,6 +67,12 @@ pub const LEVEL_MINIMUM: u32 = 10;
 /// the internet. Magician 35 INT, Warrior 35 STR, Thief 35 LUK, Bowman 35 DEX."* They flagged
 /// it as fan-site sourced themself.
 ///
+/// **Revisited 2026-08-27 and left at 35.** The owner asked for 25 - *"at least 25 ability points
+/// in that job branch's main stat"* - and then, told where the 35 came from, said *"If the fan
+/// site says 35, let's go with 35."* Written down because the number has now been questioned
+/// once, cannot be arbitrated by anything on this machine, and would otherwise be questioned
+/// again.
+///
 /// # Why it is a constant and not four literals
 ///
 /// A scan of every `Check` node in all 322 quests finds **no `int`, `str`, `dex` or `luk`

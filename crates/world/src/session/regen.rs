@@ -69,6 +69,25 @@ impl Session {
             return Vec::new();
         }
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        // **The dead do not regenerate.** The owner, 2026-08-27: *"If the player is dead, they
+        // should no longer have passive regeneration. Currently I can actually passive
+        // regenerate out of death, which is not okay."*
+        //
+        // They are right, and it was worse than a cosmetic wrong: `hp == 0` is the ONLY thing
+        // that makes a character dead here - `combat.rs`'s revive dialog gates on
+        // `before > 0 && chr.hp == 0` - so a regen tick lifting HP to 10 quietly *undid the
+        // death*. The dialog had already been shown and will not be shown again, because it
+        // fires on the transition rather than the state, so the player ends up alive, in the
+        // map they died in, with a revive dialog that no longer means anything.
+        //
+        // The timer is cleared as well as skipped. Leaving it armed would pay out the instant
+        // the player revived, which is the same "already due the moment they stop" bug
+        // `note_activity` exists to prevent; the revive path calls `note_activity` itself so
+        // the countdown restarts from the revive.
+        if chr.hp == 0 {
+            self.next_regen_ms = None;
+            return Vec::new();
+        }
         // Nothing to restore: do not send, and do not arm a timer. A player who sits at full
         // health for an hour should cost exactly nothing.
         if chr.hp >= chr.max_hp && chr.mp >= chr.max_mp {
@@ -330,6 +349,67 @@ mod tests {
         assert!(s.regen_tick(10_000).is_empty());
         assert!(s.regen_tick(18_999).is_empty(), "still inside the idle window");
         assert!(ticked(&s.regen_tick(19_000)), "ten seconds after the ACTIVITY");
+    }
+
+    /// **The dead do not regenerate, and that is not cosmetic.**
+    ///
+    /// The owner, 2026-08-27: *"Currently I can actually passive regenerate out of death, which is
+    /// not okay."* `hp == 0` is the only thing that makes a character dead here, and the
+    /// revive dialog fires on the TRANSITION (`before > 0 && hp == 0`), so a regen tick that
+    /// lifted HP off zero silently un-killed the player and the dialog never came back.
+    #[test]
+    fn a_dead_player_does_not_regenerate_out_of_death() {
+        let (mut s, store) = hurt_session();
+        let mut chr = s.claimed_character().unwrap();
+        chr.hp = 0;
+        store.save_character_progress(&chr).unwrap();
+
+        // Half an hour of perfect stillness must not restore a single point.
+        for t in (10_000..1_800_000).step_by(10_000) {
+            assert!(s.regen_tick(t).is_empty(), "a tick fired at {t} ms on a dead character");
+        }
+        assert_eq!(s.claimed_character().unwrap().hp, 0, "still dead");
+
+        // And the timer was not left armed, so reviving does not pay out instantly.
+        assert!(s.next_regen_ms.is_none(), "a dead character must not hold an armed timer");
+    }
+
+    /// Once revived, regeneration works again - or the gate above is a permanent off switch.
+    #[test]
+    fn reviving_restores_regeneration() {
+        let (mut s, store) = hurt_session();
+        let mut chr = s.claimed_character().unwrap();
+        chr.hp = 0;
+        store.save_character_progress(&chr).unwrap();
+        assert!(s.regen_tick(20_000).is_empty());
+
+        chr.hp = 50;
+        store.save_character_progress(&chr).unwrap();
+        // Reviving is doing something, so the countdown restarts FROM the revive. The clock
+        // has to be moved first: `note_activity` stamps `clock_ms`, which the harness never
+        // advances on its own.
+        s.clock_ms = 20_000;
+        s.note_activity();
+        assert!(s.regen_tick(25_000).is_empty(), "five seconds after reviving is too soon");
+        assert!(ticked(&s.regen_tick(30_000)), "and ten seconds after it, regen resumes");
+    }
+
+    /// **Combat resets the countdown, from both directions.**
+    ///
+    /// The owner: *"If the player gets hit or attacks another monster, the 10 second is reset."*
+    /// Both were already wired - `combat.rs` calls `note_activity` on the swing and on the
+    /// hit - but nothing asserted it, and an untested reset is one refactor away from being
+    /// gone. This pins the property at the level the owner stated it.
+    #[test]
+    fn combat_in_either_direction_restarts_the_countdown() {
+        for who in ["the player swings", "the mob connects"] {
+            let (mut s, _) = hurt_session();
+            s.clock_ms = 9_000;
+            s.note_activity(); // what both combat paths do
+            assert!(s.regen_tick(10_000).is_empty(), "{who}: one second after acting");
+            assert!(s.regen_tick(18_999).is_empty(), "{who}: still inside the window");
+            assert!(ticked(&s.regen_tick(19_000)), "{who}: ten seconds after acting");
+        }
     }
 
     #[test]
