@@ -41,13 +41,36 @@ impl Session {
             )];
         };
 
-        // Only the beginner skills exist for a job-0 character, and this server has no job
-        // advancement yet. Refusing anything else is not a rule of the game - it is a refusal
-        // to invent one, since what a job may learn is `Skill.wz` data nobody has read.
-        if !net::skills::BEGINNER_SKILLS.contains(&req.skill_id) {
+        // **That data has now been read.** This used to refuse everything outside the three
+        // beginner ids, saying so was "a refusal to invent a rule, since what a job may learn
+        // is `Skill.wz` data nobody has read". `tools/dump_skills.py` reads it -
+        // `gm-handbook/skills.txt`, 176 skills - and `world::skilltable` loads the two columns
+        // a grant needs. The refusal is now the client's own table talking.
+        //
+        // **The old behaviour survives an empty table**, deliberately: with no file loaded
+        // `may_learn` is false for everything, so the fallback below keeps the three beginner
+        // skills working exactly as they did before. A missing generated file degrades to
+        // something known rather than to something untested.
+        let known = !self.config.skills.is_empty();
+        let allowed = if known {
+            self.config.skills.may_learn(chr.job, req.skill_id)
+        } else {
+            net::skills::BEGINNER_SKILLS.contains(&req.skill_id)
+        };
+        if !allowed {
             return vec![self.skill_reply(
                 net::skills::skill_up_refused(net::skills::SkillUpRefusal::NotYours),
-                format!("skill {} is not one this server knows how to grant", req.skill_id),
+                match self.config.skills.get(req.skill_id) {
+                    Some(sk) => format!(
+                        "skill {} ({}) belongs to job book {}, and this character is job {}",
+                        req.skill_id, sk.name, sk.job, chr.job
+                    ),
+                    None => format!(
+                        "skill {} is not in this client's Skill.wz{}",
+                        req.skill_id,
+                        if known { "" } else { " - and no skill table is loaded, so only the three beginner skills are grantable. Regenerate with: python tools/dump_skills.py" }
+                    ),
+                },
             )];
         }
 
@@ -65,12 +88,21 @@ impl Session {
         // **Clamped to the level table's own length**, not to the count. A body claiming
         // 4 000 000 000 must not overflow a level into something the client cannot draw, and
         // the client's own `Skill.wz` says these three stop at 3.
+        // **The ceiling is the SKILL's own, not one constant.** `BEGINNER_SKILL_MAX_LEVEL`
+        // is 3, which is right for the three beginner skills and wrong for every other skill
+        // in the game - the Magician book runs to 15 and 20. Clamping a Magic Claw to 3 would
+        // look exactly like the client refusing the click.
+        let ceiling = self
+            .config
+            .skills
+            .max_level(req.skill_id)
+            .unwrap_or(net::skills::BEGINNER_SKILL_MAX_LEVEL);
         let level = self.store.skill_level(chr.id, req.skill_id).unwrap_or(0);
-        if level >= net::skills::BEGINNER_SKILL_MAX_LEVEL {
+        if level >= ceiling {
             return vec![self.skill_reply(
                 net::skills::skill_up_refused(net::skills::SkillUpRefusal::AtMaxLevel),
                 format!(
-                    "skill {} is already at {level}, the maximum this client's Skill.wz describes",
+                    "skill {} is already at {level}, the maximum ({ceiling}) this client's Skill.wz describes",
                     req.skill_id
                 ),
             )];
@@ -83,7 +115,7 @@ impl Session {
                 format!("skill {} asked for 0 points; nothing to do", req.skill_id),
             )];
         }
-        let room = net::skills::BEGINNER_SKILL_MAX_LEVEL - level;
+        let room = ceiling - level;
         let granted = req.count.min(room);
         let next = level + granted;
         if let Err(e) = self.store.set_skill_level(chr.id, req.skill_id, next) {

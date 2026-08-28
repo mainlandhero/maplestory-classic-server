@@ -5230,6 +5230,66 @@ fn the_gm_path_buys_debits_and_hands_the_item_over() {
     assert_eq!(store.cash_locker(1).unwrap().len(), 1);
 }
 
+/// **A Magician can put points in Magic Claw, and a beginner cannot.**
+///
+/// The owner, 2026-08-27: *"I want to verify that all Magician 1st job skills are working first."*
+/// The handler used to refuse every id outside the three beginner skills, and its comment said
+/// why: *"what a job may learn is Skill.wz data nobody has read."* It has been read now.
+///
+/// Two things are asserted that a single-direction test would miss: that the ceiling is the
+/// **skill's own** 20 rather than the beginner constant 3, and that the gate still refuses the
+/// same skill for a character who has not advanced.
+#[test]
+fn a_magician_may_raise_magic_claw_and_a_beginner_may_not() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return; // generated, gitignored - python tools/dump_skills.py
+    }
+    const MAGIC_CLAW: u32 = 2001003;
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration(account_id, id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        skills: crate::skilltable::SkillTable::load(path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    assert!(s.claim_for_character(id).contains("claimed the migration"));
+
+    // Still a beginner: refused, and the refusal names the book rather than shrugging.
+    // The real 0x013B shape: u32 tick, u32 skillId, u32 count.
+    let ask = |count: u32| {
+        let mut b = net::skills::CLIENT_USER_SKILL_UP_REQUEST.to_le_bytes().to_vec();
+        b.extend_from_slice(&0x1187_0e94u32.to_le_bytes());
+        b.extend_from_slice(&MAGIC_CLAW.to_le_bytes());
+        b.extend_from_slice(&count.to_le_bytes());
+        b
+    };
+    let out = s.handle(&ask(1));
+    assert!(
+        out[0].what.contains("job book 200"),
+        "a beginner must be told WHY: {}",
+        out[0].what
+    );
+    assert_eq!(store.skill_level(id, MAGIC_CLAW).unwrap_or(0), 0, "and nothing was granted");
+
+    // Advance, then it is allowed - and the ceiling is Magic Claw's own 20, not the
+    // beginner constant 3. A bulk request for 99 must clamp to 20, not to 3.
+    let mut chr = s.claimed_character().unwrap();
+    chr.job = 200;
+    store.save_character_progress(&chr).unwrap();
+    s.handle(&ask(99));
+    assert_eq!(
+        store.skill_level(id, MAGIC_CLAW).unwrap_or(0),
+        20,
+        "Magic Claw stops at 20 - clamping to the beginner 3 would look like a refused click"
+    );
+}
+
 /// **A job advancement carries the skill points with it, in one packet.**
 ///
 /// The owner, 2026-08-27: *"Once I became a Magician (or any job at level 10), I should immediately

@@ -40,6 +40,9 @@ maplecw-world - one channel of the MapleCW game world
                       tools/test-server.ps1 -SetFieldProbe passes it.
   --footholds PATH  map floor geometry, from tools/dump_portals.py
   --consumables PATH  what potions restore, from tools/dump_itemdata.py
+  --skills PATH    what each job may learn and how far, from
+                   tools/dump_skills.py. Missing means only the three beginner
+                   skills can be raised - the behaviour before the table existed
   --commodity PATH  the cash shop's sale list keyed by SN, from
                    tools/dump_commodity.py. Missing means every purchase is
                    refused as sold out - the client draws its catalogue from
@@ -64,6 +67,7 @@ fn main() -> ExitCode {
     let mut footholds_path = PathBuf::from("gm-handbook/footholds.txt");
     let mut consumables_path = PathBuf::from("gm-handbook/consumables.txt");
     let mut commodity_path = PathBuf::from("gm-handbook/commodity.txt");
+    let mut skills_path = PathBuf::from("gm-handbook/skills.txt");
     let mut mobs_path = PathBuf::from("gm-handbook/mobs.txt");
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
@@ -114,6 +118,7 @@ fn main() -> ExitCode {
             "--footholds" => value().map(|v| footholds_path = PathBuf::from(v)),
             "--consumables" => value().map(|v| consumables_path = PathBuf::from(v)),
             "--commodity" => value().map(|v| commodity_path = PathBuf::from(v)),
+            "--skills" => value().map(|v| skills_path = PathBuf::from(v)),
             "--mobs-file" => value().map(|v| mobs_path = PathBuf::from(v)),
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
@@ -238,6 +243,11 @@ fn main() -> ExitCode {
     // catalogue from its own copy of the very same file.
     config.commodity = world::commodity::CommodityTable::load(&commodity_path);
     println!("{}", config.commodity.banner());
+
+    // What each job may learn. Loud in both directions: an empty table is invisible on screen
+    // until someone clicks + on a skill and is told it is not theirs.
+    config.skills = world::skilltable::SkillTable::load(&skills_path);
+    println!("{}", config.skills.banner());
 
     config.npcs = world::config::Config::load_npcs(&npcs_path);
     if config.npcs.is_empty() {

@@ -274,6 +274,12 @@ pub struct Config {
     /// why [`crate::commodity::CommodityTable::banner`] says so unconditionally at start-up.
     pub commodity: crate::commodity::CommodityTable,
 
+    /// What each job may learn and how far, from `gm-handbook/skills.txt`.
+    ///
+    /// Empty means only the three beginner skills are grantable - exactly the behaviour that
+    /// shipped before the table existed, so a missing file degrades to something known.
+    pub skills: crate::skilltable::SkillTable,
+
     /// `mapId -> name`, from `gm-handbook/maps.txt`.
     ///
     /// **Only ever used to say something on screen.** Nothing routes on it, so a missing
@@ -1333,6 +1339,7 @@ impl Default for Config {
             footholds: crate::footholds::Footholds::default(),
             consumables: crate::consumables::Consumables::default(),
             commodity: crate::commodity::CommodityTable::default(),
+            skills: crate::skilltable::SkillTable::default(),
         }
     }
 }
