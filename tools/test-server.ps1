@@ -121,7 +121,14 @@
 
         e) CLICK EXIT, THEN CLICK CASH SHOP AGAIN. Re-entry, which has never been tested.
 
-     2. TYPE  !map 10001050 . Ten seconds, still the oldest open question, still untested.
+     2. HENESYS PARK IS CLOSED - DO NOT TEST IT AGAIN. Map 10001050 is NOT fatal, and the
+        proof was sitting in previous-runs/ unread the whole time. On 2026-08-22 a portal walk
+        put a character there 52 seconds into the connection; the client sent 0x00DC back,
+        drew all four NPCs, ran on for another fifty seconds and the socket ended "closed".
+        Both deaths blamed on it ended "forcibly closed by the remote host" instead, at 389 s
+        and 404 s - and the second was exit code 0xC0000374, the accumulating HEAP family,
+        not the 0xC0000005 null read of the first. Two different faults, both at ~400 s, on a
+        map that loads fine early. It was the session, every time.
 
      3. FROM THE FIELD:  !buy 150000000  then  !locker  then  !locker 1 .
         Same coupon, other path. Expect the LP balance 100 lower and the coupon in the Cash
@@ -990,7 +997,15 @@ if ($SetFieldProbe) {
     Write-Host '     d) BUY WATER OF LIFE, SN 160300001. A different id, same path.'
     Write-Host '     e) CLICK EXIT, THEN CASH SHOP AGAIN. Re-entry, never tested.'
     Write-Host ''
-    Write-Host '  2. TYPE  !map 10001050 . Ten seconds, oldest open question.' -ForegroundColor Cyan
+    Write-Host '  2. HENESYS PARK IS CLOSED. Do NOT test map 10001050 again.' -ForegroundColor Green
+    Write-Host '     It is NOT fatal, and the proof sat unread in previous-runs/:'
+    Write-Host '     on 08-22 a portal put a character there 52s into the connection,'
+    Write-Host '     the client answered 0x00DC, drew all four NPCs, ran 50s more and'
+    Write-Host '     the socket ended "closed". Both deaths blamed on it ended'
+    Write-Host '     "forcibly closed" at 389s and 404s - and the second was'
+    Write-Host '     0xC0000374, the HEAP family - a different fault from the'
+    Write-Host '     0xC0000005 null read that killed the first one.'
+    Write-Host '     Two different faults, both at ~400s. It was the session.'
     Write-Host ''
     Write-Host '  3. FROM THE FIELD: !buy 150000000 / !locker / !locker 1' -ForegroundColor Cyan
     Write-Host '     Then !buy 160000000 and !locker - expect a REFUSAL naming the'

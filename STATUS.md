@@ -115,6 +115,24 @@ further up.
 
 **What changed most recently, newest first:**
 
+* **HENESYS PARK IS NOT FATAL, and the proof had been sitting in `previous-runs/` unread.**
+  Map `10001050` has been at the top of the test plan for four runs. On 2026-08-22 a portal
+  walk put a character there **52 seconds into the connection**; the client answered `0x00DC`,
+  all four NPCs drew, the session ran another fifty seconds and the socket ended **`closed`**.
+  Both deaths blamed on the map ended `forcibly closed by the remote host` instead, at **389 s
+  and 404 s** - and they were **different faults**: `0xC0000005`, a null read, the first time;
+  `0xC0000374`, the accumulating **heap** family, the second. Two different exceptions, both at
+  ~400 s, on a map that loads fine early. It was the session every time, and the discriminator
+  the plan kept asking for was never actually run at 40 s.
+* **Passive regeneration no longer resurrects the dead.** `hp == 0` is the only thing that
+  makes a character dead, and the revive dialog fires on the **transition**, so a regen tick
+  lifting HP off zero silently undid the death and the dialog could never return.
+* **The floating damage number is confirmed a client-side stub**, by the discriminator
+  `STATUS.md` set days ago: a Drake emptied a 238-HP bar and the number still read **1**. A
+  computed value cannot be constant across snail-to-Drake. What is still open is whether the
+  renderer that draws the **blue** recovery number - server-driven, and confirmed on screen -
+  can be made to draw a damage number instead.
+
 * **The client's first-ever BUY request is captured, and the layout is settled.** Three clicks
   on three different items, `0x03E1` sub-op `0x02`, and the commodity serial is at **payload
   offset 7** - each one resolving to the item the owner said they had clicked, which is what makes it
