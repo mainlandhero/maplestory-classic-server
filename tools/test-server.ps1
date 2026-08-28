@@ -70,11 +70,10 @@
                   so a !job character can end up holding something it cannot wear, which on
                   screen is indistinguishable from a broken skill.
 
-    THE EIGHT STEPS. Each is a claim that can come back false; report them separately.
+    THE STEPS, 1-7 plus 5b. Each is a claim that can come back false; report them
+    separately.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
-
-     0. TOP UP. !lp with no argument. Only if under 1000, !lp 99000. Step 6 needs it.
 
      1. THE DAMAGE NUMBER - IS THE 1 GONE? Built last run, never seen.
         The server asks the CLIENT to stop drawing its own number, on field entry, using the
@@ -170,7 +169,11 @@
              writes HP, so this is the one buff whose effect we compute
           d) does the wand go in the hand, or does !kit warn that it cannot?
 
-     6. THE PURCHASE - carried over, still unconfirmed. Last run the coupon bought fine and
+     6. THE PURCHASE - carried over, still unconfirmed.
+        (If leaf points are under 1000, !lp 99000 first. A PREREQUISITE, not a test: !lp has
+        been confirmed on several runs and was struck from this plan on 2026-08-28 when the owner
+        said "we tested 0 quite a few times".)
+        Last run the coupon bought fine and
         landed in the ITEM inventory: 0x19 is the reply to "move a locker item into a bag",
         so it did what it says. The purchase reply is 0x05AE sub-op 0x0C.
         Buy the MYSTERY HAIR COUPON - Main tab, 100 LP, SN 150000000. NOT Brown Puppy (a
@@ -1041,7 +1044,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. Eight steps.' -ForegroundColor Yellow
+    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 1-7, plus 5b.' -ForegroundColor Yellow
     Write-Host '  DO STEP 7 FIRST - NPC SHOPS, never once on a wire.' -ForegroundColor Yellow
     Write-Host '  Then step 2, which is the cheapest and isolates the most.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
@@ -1069,9 +1072,6 @@ if ($SetFieldProbe) {
     Write-Host '                   No skill points needed. !learn 5 caps them at 5.'
     Write-Host '     !kit          the weapon and ammunition that job needs, and it'
     Write-Host '                   WARNS if you cannot equip what it just gave you.'
-    Write-Host ''
-    Write-Host '  0. TOP UP. Type  !lp  with no argument. Only if it is under 1000,' -ForegroundColor White
-    Write-Host '     type  !lp 99000 . Thirty seconds; step 6 needs it.'
     Write-Host ''
     Write-Host '  1. THE DAMAGE NUMBER - IS THE 1 GONE?' -ForegroundColor White
     Write-Host '     Hit anything at all. This was built last run and never seen.'
@@ -1197,6 +1197,8 @@ if ($SetFieldProbe) {
     Write-Host '       d) does the wand actually go in the hand, or does !kit warn?'
     Write-Host ''
     Write-Host '  6. THE PURCHASE - CARRIED OVER, STILL UNCONFIRMED.' -ForegroundColor White
+    Write-Host '     (If leaf points are under 1000, !lp 99000 first. That is a'
+    Write-Host '     prerequisite, not a test - it has been confirmed several times.)'
     Write-Host '     Last run the coupon bought fine and landed in the ITEM inventory.'
     Write-Host '     0x19 is the reply to "move a locker item into a bag", so it did'
     Write-Host '     what it says. The purchase reply is 0x05AE sub-op 0x0C.'
