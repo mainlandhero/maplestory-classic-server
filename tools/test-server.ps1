@@ -70,7 +70,7 @@
                   so a !job character can end up holding something it cannot wear, which on
                   screen is indistinguishable from a broken skill.
 
-    THE SEVEN STEPS. Each is a claim that can come back false; report them separately.
+    THE EIGHT STEPS. Each is a claim that can come back false; report them separately.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
 
@@ -88,7 +88,7 @@
           NO numbers -> we suppressed ours too; ours is on a different, ungated renderer
           the client dies -> 0x00EA has never been sent before. Say when
 
-     2. WARRIOR - DO THIS BRANCH FIRST. And do step 3 in the MIDDLE of it.
+     2. WARRIOR - FIRST OF THE FOUR BRANCHES, after step 7. Do step 3 in the MIDDLE of it.
         It is the only branch whose weapon is FREE (Sword 1302000: reqLevel 0, no stat, no
         job bit) and none of its skills carries a weapon column. So it separates "does a
         skill attack work at all" from "am I holding the right thing", which 4 and 5 cannot.
@@ -153,6 +153,22 @@
              the off-path cleared one bit of the two, which is a fixed hazard being checked
           d) Disorder will say it grants nothing. Correct and deliberate: it is a debuff on
              the MOB and this server has no packet for that. Check it freezes nothing
+
+     5b. MAGICIAN - the wand, which is the bug the owner hit on 2026-08-28.
+        !kit said "the Magician needs nothing". That was my error and it is the same one I
+        made about the Warrior an hour earlier, in the other direction: no Magician skill is
+        GATED on a weapon, and I read that as no weapon NEEDED. MagicTotal is floor(INT/2)
+        plus equipment incMAD, the Wooden Wand's incMAD is 27, and the row had read its
+        incWAT of 18 and concluded weapons do not matter on the magic path.
+          !resetap, points into INT to 35+, !job 200, !kit, !learn, EQUIP THE WAND.
+        Wooden Wand 1372000 needs level 10 and INT 20; there is no free wand or staff, and
+        the staff is strictly worse for magic (incMAD 24) and adds a reqJob bit.
+          a) does Magic Claw do real damage now? Roughly what number?
+          b) Magic Claw is attackCount 2 - two numbers per cast?
+          c) Magic Guard: cast, then get hit. Does the damage come off MP instead of HP?
+             That split is the SERVER's arithmetic, not the client's - the client never
+             writes HP, so this is the one buff whose effect we compute
+          d) does the wand go in the hand, or does !kit warn that it cannot?
 
      6. THE PURCHASE - carried over, still unconfirmed. Last run the coupon bought fine and
         landed in the ITEM inventory: 0x19 is the reply to "move a locker item into a bag",
@@ -1025,7 +1041,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. Seven steps.' -ForegroundColor Yellow
+    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. Eight steps.' -ForegroundColor Yellow
     Write-Host '  DO STEP 7 FIRST - NPC SHOPS, never once on a wire.' -ForegroundColor Yellow
     Write-Host '  Then step 2, which is the cheapest and isolates the most.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
@@ -1074,7 +1090,8 @@ if ($SetFieldProbe) {
     Write-Host '       the client dies    -> 0x00EA has never been sent before. Say when'
     Write-Host ''
     Write-Host '  2. WARRIOR - THE WHOLE BRANCH, AND THE CHEAPEST ONE.' -ForegroundColor White
-    Write-Host '     Do this one FIRST. It is the only branch whose weapon has NO'
+    Write-Host '     FIRST OF THE FOUR BRANCHES (step 7 comes before all of them).'
+    Write-Host '     It is the only branch whose weapon has NO'
     Write-Host '     requirement at all, and none of its skills is gated on a weapon,'
     Write-Host '     so it separates "does a skill attack work" from "am I holding'
     Write-Host '     the right thing" - which is exactly what steps 4 and 5 cannot.'
@@ -1159,6 +1176,25 @@ if ($SetFieldProbe) {
     Write-Host '       d) Disorder will say it grants nothing. That is correct and'
     Write-Host '          deliberate - it is a debuff on the MOB and we have no packet'
     Write-Host '          for that. Just check it does not freeze anything'
+    Write-Host ''
+    Write-Host '  5b. MAGICIAN - THE WAND, WHICH IS THE BUG YOU HIT.' -ForegroundColor White
+    Write-Host '     !kit told you the Magician needs nothing. Wrong, and it was my'
+    Write-Host '     error: no Magician skill is GATED on a weapon, and I read that as'
+    Write-Host '     no weapon needed. MagicTotal is floor(INT/2) + equipment incMAD,'
+    Write-Host '     and the Wooden Wand incMAD is 27. Without it the whole formula'
+    Write-Host '     runs on floor(INT/2) alone - which is how Magic Claw drew a 1.'
+    Write-Host '       !resetap        then put points into INT until it reads 35+'
+    Write-Host '       !job 200'
+    Write-Host '       !kit            Wooden Wand 1372000. Needs level 10 and INT 20'
+    Write-Host '       !learn'
+    Write-Host '     EQUIP THE WAND.'
+    Write-Host '       a) does Magic Claw now do REAL damage? Say roughly what.'
+    Write-Host '          It should be far above the 1 you saw'
+    Write-Host '       b) Magic Claw is TWO hits per cast. Do you see two numbers'
+    Write-Host '          per swing?'
+    Write-Host '       c) MAGIC GUARD: cast it, then get hit. Does the damage come'
+    Write-Host '          off MP instead of HP? That split is the SERVER arithmetic'
+    Write-Host '       d) does the wand actually go in the hand, or does !kit warn?'
     Write-Host ''
     Write-Host '  6. THE PURCHASE - CARRIED OVER, STILL UNCONFIRMED.' -ForegroundColor White
     Write-Host '     Last run the coupon bought fine and landed in the ITEM inventory.'
