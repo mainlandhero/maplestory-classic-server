@@ -60,6 +60,30 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
+    RUN THIS ONE WITH  -HeapFix .  IT IS NO LONGER A GUESS.
+    -------------------------------------------------------
+    Two dumps from 2026-08-27 were analysed and the fault address is now pinned three ways:
+    0x14019b58e is the RETURN ADDRESS of `call rbx` = HeapFree(heap, 0, ptr-8) at +0xac of the
+    288-byte function whose +0x24 is the -HeapFix patch site. That branch is reached only when
+    the 64-bit header exceeds 0x80. Read as a DWORD - which is all the patch changes - the
+    damaged header 0x0000000100000020 becomes 0x20, selects bucket 1, and the block goes to the
+    pool free list. The HeapFree call is never made. So the patch would have prevented THIS
+    death. [D]
+
+    AND BOTH RUNS WERE UNPATCHED: the session marker in both hook logs reads
+    "mode=2,create=on" with no heapfix=on, and the patch logs on every outcome once armed. So
+    nothing so far has tested it, and neither dump falsifies anything.
+
+    IT IS STILL A BANDAID AND THAT IS THE POINT. It does not stop the stray write - nine
+    damaged slots across 962 112 enumerated, every one the identical 0x0000000100000020, every
+    one in the 0x20 class, 0 of 579 008 elsewhere. It stops the damage from being FATAL.
+      the client lives much longer than 1 046 s -> the chain is confirmed end to end, and every
+                   other test in this file gets a longer run to happen in
+      it dies of 0xC0000374 anyway              -> the chain is wrong somewhere and we learn
+                   which half. Worth more than the first outcome
+      it dies of something NEW                  -> say the exit code. The patch discards a
+                   one's-complement header path that 0 of 481 000 slots have ever used
+
     THE POINT OF THIS RUN - THE PURCHASE LANDS IN THE RIGHT PLACE
     -------------------------------------------------------------
     Last run bought a coupon and it went into the ITEM Inventory with no success message.
@@ -1017,10 +1041,17 @@ if ($SetFieldProbe) {
     Write-Host '  IGNORE THE 0x0453 NOISE in the shop - NPC chatter follows you in,' -ForegroundColor DarkGray
     Write-Host '  about 40 a visit. Harmless, on the list. Not a symptom.' -ForegroundColor DarkGray
     Write-Host ''
-    Write-Host '  OPTIONAL: -HeapFix, and it just got MORE interesting. Both deaths' -ForegroundColor DarkGray
-    Write-Host '  blamed on Henesys Park were ~400s, and the second was 0xC0000374 -' -ForegroundColor DarkGray
-    Write-Host '  this family. Use it on a SEPARATE run, not this one: it changes a' -ForegroundColor DarkGray
-    Write-Host '  variable and this run already has five.' -ForegroundColor DarkGray
+    Write-Host '  USE -HeapFix ON THIS RUN. It is no longer a guess.' -ForegroundColor Yellow
+    Write-Host '  0x14019b58e is the RETURN ADDRESS of the HeapFree call at +0xac of'
+    Write-Host '  the very function the patch edits at +0x24. Read as a DWORD - all'
+    Write-Host '  the patch changes - the damaged header becomes 0x20 and the block'
+    Write-Host '  goes to the pool free list instead. It would have stopped THIS one.'
+    Write-Host '  Both crashed runs were UNPATCHED, so nothing has tested it yet.'
+    Write-Host '    lives past 1046s      -> the chain is confirmed end to end'
+    Write-Host '    dies of 0xC0000374    -> the chain is wrong; worth MORE than a pass'
+    Write-Host '    dies of something new -> say the exit code'
+    Write-Host '  It is still a BANDAID: the stray write is untouched. Nine damaged'
+    Write-Host '  slots in 962112, all the identical value, all one size class.'
     Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
     Write-Host '     A damaged pool header goes back to the free list instead of to'
     Write-Host '     HeapFree. SEVEN damaged slots over four dumps, ~1 per 250s.'

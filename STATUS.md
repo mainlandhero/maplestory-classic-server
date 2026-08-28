@@ -115,6 +115,27 @@ further up.
 
 **What changed most recently, newest first:**
 
+* **`-HeapFix` would have prevented the 2026-08-27 death, and both crashed runs were
+  UNPATCHED.** `0x14019b58e` - the fault address the hook recorded - is the **return address**
+  of `call rbx` = `HeapFree(heap, 0, ptr-8)` at `+0xac` of the same 288-byte function the patch
+  edits at `+0x24`. That branch is reached only when the 64-bit header exceeds `0x80`; read as
+  a **dword**, which is all the patch changes, `0x0000000100000020` becomes `0x20`, selects
+  bucket 1, and the block goes to the pool free list instead. The session marker in both hook
+  logs reads `mode=2,create=on` with no `heapfix=on`, so **nothing has tested it yet** and
+  neither dump falsifies anything. **It remains a bandaid**: the stray write is untouched.
+* **The damage is the same shape for the ninth time.** Nine damaged slots across **962 112**
+  enumerated, every one the identical `0x0000000100000020`, every one in the `0x20` class,
+  **0 of 579 008** elsewhere.
+* **A damaged slot was found ON THE POOL'S FREE LIST**, and that kills a hypothesis. A damaged
+  slot can never be *pushed* there - the free reads the header first and diverts to `HeapFree`,
+  which is the death - so in every surviving history that slot was **unowned when the `1` was
+  written**. "The object in the slot underruns its own buffer" is out; overrun-from-predecessor
+  and stale-pointer stand.
+* **The one-slot-per-250-s rate does not survive contact with a longer session.** 1 046 s gave
+  **2**, not four. Damage tracks session age (rank correlation 0.80) and **not** map loads
+  (0.05, n = 5, neither significant): the 17-minute run was almost pure idle with two map loads
+  and took two slots, against ten map loads in 403 s for one.
+
 * **HENESYS PARK IS NOT FATAL, and the proof had been sitting in `previous-runs/` unread.**
   Map `10001050` has been at the top of the test plan for four runs. On 2026-08-22 a portal
   walk put a character there **52 seconds into the connection**; the client answered `0x00DC`,
