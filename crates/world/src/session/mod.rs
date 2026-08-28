@@ -143,9 +143,10 @@ pub struct Session {
     config: Arc<Config>,
     /// The migration this connection claimed, once it has claimed one.
     claimed: Option<ClaimedMigration>,
-    /// Whether this connection has already asked the client to stop drawing its own damage
-    /// number. **Once per session**, because `0x00EA` echoes the command into the chat window.
-    asked_to_hide_hit_damage: bool,
+    // `asked_to_hide_hit_damage` was removed 2026-08-28 with the packet it gated. `0x00EA`
+    // carrying "/hitdamagetest 0" reached the client and was ECHOED into chat, and no
+    // `0x0189` ever came back - so the command's permission gate refused it and the stub
+    // number is still drawn. See `session::field::on_field_entered`.
     /// The NPC conversation in progress, if any.
     conversation: Option<Conversation>,
     /// **Is the client showing the Cash Shop rather than the field?**
@@ -193,12 +194,13 @@ pub struct Session {
     /// The rows are kept verbatim because a request names a **row index**, and the only
     /// defensible reading of that index is the list we actually sent.
     open_shop: Option<(u32, Vec<net::classicshop::ClassicShopRow>)>,
-    /// What the player has sold at this counter, newest first - the Buy Back tab.
-    ///
-    /// **Fifteen entries**, the client's own list length. Session-scoped and deliberately not
-    /// persisted: a buy-back list that survived a relog would be offering items out of a
-    /// counter the player has not opened.
-    buy_back: Vec<net::classicshop::ClassicShopRow>,
+    // **The Buy Back ring was removed on 2026-08-28, the day it first went out.** It held
+    // what the player had sold, 15 deep, and it existed to fill the Buy Back tab.
+    //
+    // `UI/UIShop.img/Shop` in this client has **16 nodes and no `repurchaseInfo`**, and
+    // carries exactly `TabBuy` and `TabSell`. The `0x055E` type 10 that presented the ring
+    // *selects the Buy Back tab*, so it reached for art that is not here, threw, and faulted
+    // the unwinder - the same failure as Shop2, at the same address. See `session::shop`.
 
     /// The storage keeper whose window is open, by **template** id.
     ///
@@ -395,7 +397,6 @@ impl Session {
             store,
             config,
             claimed: None,
-            asked_to_hide_hit_damage: false,
             conversation: None,
             in_cash_shop: false,
             chatter: Vec::new(),
@@ -403,7 +404,6 @@ impl Session {
             clock_ms: 0,
             fields,
             open_shop: None,
-            buy_back: Vec::new(),
             open_storage: None,
             buffs: Vec::new(),
             skill_ready_ms: std::collections::HashMap::new(),

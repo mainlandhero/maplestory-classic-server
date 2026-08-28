@@ -1367,18 +1367,26 @@ fn a_row_index_naming_the_wrong_item_is_refused() {
     assert_eq!(store.mesos(id).unwrap(), before, "nothing was charged");
 }
 
-/// **Selling puts the item in the Buy Back tab, and buying it back takes it out again.**
+/// **Selling works, and sends NO buy-back row and NO type-10 refresh.**
 ///
-/// Four effects, all asserted, because `CLAUDE.md`'s Heena rule says a test of one gives false
-/// confidence about the rest: the result, the meso change, the ring, and the **type-10 list
-/// refresh** - the tab only ever changes when the whole list is re-sent, so without that last
-/// one the sale works and the tab stays empty.
+/// The owner, 2026-08-28: *"Selling an item to Lucy crashed the client."* The sale itself was fine -
+/// `world.log` shows the success, the inventory remove and the meso change all going out and
+/// being accepted. What killed it was the `0x055E` **type 10** that followed, and the client
+/// handed the packet straight back in a 2075-byte `0x009E` before it died.
+///
+/// **`UI/UIShop.img/Shop` has 16 nodes and `repurchaseInfo` is not one of them** - read with
+/// `wz-dump`, with `BtBuy` as the positive control - and it carries exactly `TabBuy` and
+/// `TabSell`. Type 10 *selects the Buy Back tab*, so it reached for art this client does not
+/// ship. Same failure as Shop2, same fault address, one level down.
+///
+/// This test is the inverted form of the one it replaces, which asserted the tab filled. That
+/// test passed while the feature killed the client, because it checked our bytes rather than
+/// what the client could draw with them.
 #[test]
-fn selling_fills_the_buy_back_tab_and_buying_back_empties_it() {
+fn selling_never_sends_a_buy_back_row_or_a_list_refresh() {
     let (mut s, store, id) = shop_session();
     store.set_mesos(id, 1000).unwrap();
     s.handle(&npc_click(1000));
-    // Buy three potions so there is something to sell back.
     s.handle(&classic_buy(0, 2000000, 3));
 
     let slot = store
@@ -1388,38 +1396,41 @@ fn selling_fills_the_buy_back_tab_and_buying_back_empties_it() {
         .next()
         .expect("three potions are in the Use tab")
         .slot;
+    let before = store.mesos(id).unwrap();
 
     let out = s.handle(&classic_sell(slot, 2000000, 3));
-    assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT);
-    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "the sale succeeded");
-    assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the meso count moved");
 
-    // The refresh, and the row that must be in it.
-    let refresh = out
-        .iter()
-        .rfind(|r| r.opcode == net::classicshop::CLASSIC_SHOP_RESULT)
-        .expect("a list refresh");
-    assert_eq!(
-        refresh.body[0],
-        net::classicshop::RESULT_REFRESH_LIST,
-        "the Buy Back tab only changes when the list is re-sent"
-    );
-    assert!(refresh.what.contains("1 buy-back"), "{}", refresh.what);
-
-    // Buy it back. Row 3 is the buy-back row: three shop rows then the ring.
-    let before = store.mesos(id).unwrap();
-    let out = s.handle(&classic_buy(3, 2000000, 3));
+    // The sale still happens, and all three of its effects go out.
     assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
-    assert!(out[0].what.contains("bought BACK"), "{}", out[0].what);
-    assert!(store.mesos(id).unwrap() < before, "buying back costs mesos");
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the bag");
+    assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the meso count");
+    assert!(store.mesos(id).unwrap() > before, "selling pays");
 
-    // And it leaves the tab, which again only happens via a refresh.
-    let refresh = out
-        .iter()
-        .rfind(|r| r.opcode == net::classicshop::CLASSIC_SHOP_RESULT)
-        .expect("a second list refresh");
-    assert_eq!(refresh.body[0], net::classicshop::RESULT_REFRESH_LIST);
-    assert!(refresh.what.contains("0 buy-back"), "{}", refresh.what);
+    // **And nothing selects a tab that has no art.**
+    assert!(
+        !out.iter().any(|r| r.opcode == net::classicshop::CLASSIC_SHOP_RESULT
+            && r.body[0] == net::classicshop::RESULT_REFRESH_LIST),
+        "type 10 selects the Buy Back tab, whose art this client does not have"
+    );
+
+    // Re-opening the counter must not smuggle a buy-back row in either.
+    let out = s.handle(&npc_click(1000));
+    let body = &out[0].body;
+    let rows = u16::from_le_bytes([body[19], body[20]]) as usize;
+    for i in 0..rows {
+        let at = net::classicshop::CLASSIC_HEAD_LEN + i * net::classicshop::CLASSIC_ROW_LEN;
+        assert_eq!(
+            body[at + net::classicshop::CLASSIC_ROW_LEN - 1],
+            0,
+            "row {i} carries the Buy Back flag"
+        );
+    }
+    // The length identity proves it independently: a buy-back row is 158, not 157.
+    assert_eq!(
+        body.len(),
+        net::classicshop::CLASSIC_HEAD_LEN + rows * net::classicshop::CLASSIC_ROW_LEN,
+        "every row must be the ordinary 157 bytes"
+    );
 }
 
 /// **Every `0x00F5` arm is answered except Close, which latches nothing.**

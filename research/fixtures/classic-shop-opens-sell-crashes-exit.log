@@ -1,0 +1,88 @@
+12:57:18.540 watching MapleStory pid 304008, started 12:57:18.278, 17 threads, 300 handles
+12:57:18.544 this shell is elevated
+12:57:18.550 threads at start: 300888:Wait/Unknown 271828:Wait/EventPairLow 301612:Wait/EventPairLow 309172:Wait/EventPairLow 308860:Wait/UserRequest 308804:Wait/EventPairLow 308556:Wait/UserRequest 274292:Wait/EventPairLow 290812:Wait/UserRequest 308892:Wait/LpcReply 273864:Wait/EventPairLow 308924:Wait/UserRequest 308952:Wait/EventPairLow 309008:Wait/UserRequest 301784:Wait/EventPairLow 309116:Wait/Unknown 307384:Wait/Unknown
+12:57:18.646 in a job object: False (common, and true for both controls - only a lead if the lifetime is also constant)
+12:57:18.795 protection/nexon processes at start: cncmd#20436@09:23:52 maplecw-login#307660@12:57:17 maplecw-world#297792@12:57:17 maplecw-world#306252@12:57:17 MapleStory#304008@12:57:18
+12:57:19.084 threads 17 -> 29 started=309288,309292,309296,309336,309340,309344,309348,309360,309364,309368,309372,309400
+12:57:19.193 handles on the client: lsass#1140 svchost#4268 [examined 1434 process handles, 361 unreachable]
+12:57:19.732 threads 29 -> 31 started=309428,309432
+12:57:20.267 threads 31 -> 56 started=309744,309752,309756,309760,309764,309776,309780,309784,309788,309792,309796,309800,309804,309808,309812,309816,309820,309824,309828,309832,309836,309840,309844,309848,309852
+12:57:20.540 threads 56 -> 58 started=309876,309880
+12:57:20.810 threads 58 -> 61 started=310176,310204,310208
+12:57:21.076 threads 61 -> 76 started=310224,310232,310240,310244,310248,310252,310256,310260,310264,310268,309332,309328,309324,309312,305928
+12:57:23.385 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1460 process handles, 366 unreachable]
+12:57:23.673 threads 76 -> 74 ended=308860,310224
+12:57:23.942 +5.7s threads=74 handles=1435 cpu=4.67s ws=416MB
+12:57:26.316 threads 74 -> 75 started=308136
+12:57:29.141 +10.9s threads=75 handles=1449 cpu=5.56s ws=394MB
+12:57:34.333 +16.1s threads=75 handles=1453 cpu=6.14s ws=419MB
+12:57:39.533 +21.3s threads=75 handles=1453 cpu=6.66s ws=405MB
+12:57:44.702 +26.4s threads=75 handles=1455 cpu=7.23s ws=417MB
+12:57:45.398 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1462 process handles, 366 unreachable]
+12:57:49.610 threads 75 -> 74 ended=309432
+12:57:50.066 +31.8s threads=74 handles=1452 cpu=7.67s ws=412MB
+12:57:54.200 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1463 process handles, 366 unreachable]
+12:57:55.264 +37.0s threads=74 handles=1453 cpu=7.91s ws=410MB
+12:57:58.602 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1461 process handles, 366 unreachable]
+12:58:00.456 +42.2s threads=74 handles=1451 cpu=8.06s ws=410MB
+12:58:03.016 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1460 process handles, 366 unreachable]
+12:58:05.657 +47.4s threads=74 handles=1453 cpu=8.23s ws=409MB
+12:58:10.847 +52.6s threads=74 handles=1453 cpu=8.50s ws=410MB
+12:58:16.042 +57.8s threads=74 handles=1453 cpu=8.92s ws=415MB
+12:58:18.326 threads 74 -> 71 ended=271828,301612,309172
+12:58:21.142 +62.9s threads=71 handles=1447 cpu=9.23s ws=416MB
+12:58:26.332 +68.1s threads=71 handles=1451 cpu=9.64s ws=415MB
+12:58:31.507 +73.2s threads=71 handles=1451 cpu=9.92s ws=414MB
+12:58:36.719 +78.4s threads=71 handles=1451 cpu=10.28s ws=414MB
+12:58:41.898 +83.6s threads=71 handles=1451 cpu=10.55s ws=413MB
+12:58:47.257 +89.0s threads=71 handles=1451 cpu=10.92s ws=414MB
+12:58:52.440 +94.2s threads=71 handles=1452 cpu=11.23s ws=415MB
+12:58:57.627 +99.3s threads=71 handles=1449 cpu=11.58s ws=415MB
+12:59:02.817 +104.5s threads=71 handles=1449 cpu=11.92s ws=416MB
+12:59:08.004 +109.7s threads=71 handles=1451 cpu=12.27s ws=399MB
+12:59:13.216 +114.9s threads=71 handles=1451 cpu=12.81s ws=402MB
+12:59:18.325 +120.0s threads=71 handles=1451 cpu=13.31s ws=401MB
+12:59:23.515 +125.2s threads=71 handles=1450 cpu=14.05s ws=398MB
+12:59:28.697 +130.4s threads=71 handles=1450 cpu=14.56s ws=398MB
+12:59:32.557 threads 71 -> 68 ended=308804,309288,309296
+12:59:33.876 +135.6s threads=68 handles=1446 cpu=15.02s ws=402MB
+12:59:35.367 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1457 process handles, 364 unreachable]
+12:59:39.061 +140.8s threads=68 handles=1446 cpu=15.33s ws=402MB
+12:59:44.436 +146.2s threads=68 handles=1446 cpu=15.80s ws=400MB
+12:59:48.572 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1449 process handles, 362 unreachable]
+12:59:49.622 +151.3s threads=68 handles=1451 cpu=16.34s ws=404MB
+12:59:54.818 +156.5s threads=68 handles=1444 cpu=16.86s ws=402MB
+12:59:59.991 +161.7s threads=68 handles=1445 cpu=17.25s ws=402MB
+13:00:05.174 +166.9s threads=68 handles=1445 cpu=17.84s ws=402MB
+13:00:10.358 +172.1s threads=68 handles=1448 cpu=18.41s ws=418MB
+13:00:15.449 +177.2s threads=68 handles=1447 cpu=19.06s ws=420MB
+13:00:20.627 +182.3s threads=68 handles=1448 cpu=19.58s ws=412MB
+13:00:24.755 threads 68 -> 67 ended=309008
+13:00:25.809 +187.5s threads=67 handles=1443 cpu=20.11s ws=410MB
+13:00:30.994 +192.7s threads=67 handles=1442 cpu=20.58s ws=409MB
+13:00:32.478 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1457 process handles, 364 unreachable]
+13:00:36.179 +197.9s threads=67 handles=1444 cpu=21.00s ws=408MB
+13:00:39.525 threads 67 -> 66 ended=309292
+13:00:41.285 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1468 process handles, 372 unreachable]
+13:00:41.547 +203.3s threads=66 handles=1438 cpu=21.52s ws=409MB
+13:00:46.731 +208.5s threads=66 handles=1440 cpu=22.09s ws=409MB
+13:00:51.899 +213.6s threads=66 handles=1438 cpu=22.52s ws=409MB
+13:00:57.083 threads 66 -> 67 started=297660
+13:00:57.084 +218.8s threads=67 handles=1442 cpu=23.05s ws=409MB
+13:01:02.265 +224.0s threads=67 handles=1442 cpu=23.50s ws=407MB
+13:01:07.438 +229.2s threads=67 handles=1442 cpu=23.94s ws=407MB
+13:01:11.997 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1462 process handles, 367 unreachable]
+13:01:12.530 +234.3s threads=67 handles=1442 cpu=24.44s ws=409MB
+13:01:17.726 +239.4s threads=67 handles=1442 cpu=24.92s ws=417MB
+13:01:20.823 handles on the client: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1460 process handles, 366 unreachable]
+13:01:22.952 +244.7s threads=67 handles=1495 cpu=26.48s ws=1,260MB
+13:01:24.795 EXIT code 0xC0000005 (-1073741819) after 246.5s of life, 26.48s of CPU
+13:01:24.796 last sample was 0.21s before the exit: threads=67 (peak 76) handles=1495
+13:01:24.797 threads in that sample (data, not a verdict - see the header): 300888:Wait/UserRequest 308556:Wait/UserRequest 274292:Wait/EventPairLow 290812:Wait/UserRequest 308892:Wait/Unknown 273864:Wait/EventPairLow 308924:Wait/UserRequest 308952:Wait/EventPairLow 301784:Wait/EventPairLow 309116:Wait/Unknown 307384:Wait/Unknown 309336:Wait/UserRequest 309340:Wait/UserRequest 309344:Wait/EventPairLow 309348:Wait/EventPairLow 309360:Wait/EventPairLow 309364:Wait/UserRequest 309368:Wait/UserRequest 309372:Wait/UserRequest 309400:Wait/EventPairLow 309428:Wait/UserRequest 309744:Wait/EventPairLow 309752:Wait/Unknown 309756:Wait/Unknown 309760:Wait/UserRequest 309764:Wait/UserRequest 309776:Wait/UserRequest 309780:Wait/UserRequest 309784:Wait/UserRequest 309788:Wait/UserRequest 309792:Wait/UserRequest 309796:Wait/UserRequest 309800:Wait/UserRequest 309804:Wait/UserRequest 309808:Wait/UserRequest 309812:Wait/UserRequest 309816:Wait/UserRequest 309820:Wait/UserRequest 309824:Wait/UserRequest 309828:Wait/UserRequest 309832:Wait/UserRequest 309836:Wait/UserRequest 309840:Wait/UserRequest 309844:Wait/UserRequest 309848:Wait/Unknown 309852:Wait/Unknown 309876:Wait/ExecutionDelay 309880:Wait/Unknown 310176:Wait/Executive 310204:Wait/UserRequest 310208:Wait/UserRequest 310232:Wait/UserRequest 310240:Wait/UserRequest 310244:Wait/UserRequest 310248:Wait/UserRequest 310252:Wait/UserRequest 310256:Wait/UserRequest 310260:Wait/UserRequest 310264:Wait/UserRequest 310268:Wait/UserRequest 309332:Wait/UserRequest 309328:Wait/UserRequest 309324:Wait/UserRequest 309312:Wait/UserRequest 305928:Wait/UserRequest 308136:Wait/UserRequest 297660:Wait/EventPairLow
+13:01:24.797 handles on the client, last scan: lsass#1140 svchost#1264 svchost#4268 svchost#5400 RadeonSoftware#16960 audiodg#191908 [examined 1460 process handles, 366 unreachable]
+13:01:24.801 READ: an access violation reached the top. A vectored handler should have seen this - if none did, it happened on a thread with no handler, or after ours was removed.
+13:01:24.802 READ: the decisive line is in client-patched\maplecw-hook.log, not here - a WATCH on ntdll!RtlExitUserThread or ntdll!NtTerminateThread means the client ended itself; silence on both means it did not.
+13:01:24.815 protection/nexon processes at exit: cncmd#20436@09:23:52 maplecw-login#307660@12:57:17 maplecw-world#297792@12:57:17 maplecw-world#306252@12:57:17 MapleStory#304008@12:57:18
+13:01:24.836 processes that started after the client did: conhost#13572 DwarfAxe#309916 DwarfAxe#310008 DwarfAxe#310104 SearchFilterHost#308544 SearchProtocolHost#306296 svchost#297184 svchost#305560
+13:01:25.037 event: 12:57:44 System/Microsoft-Windows-DistributedCOM Warning - The machine-default permission settings do not grant Local Activation permission for the COM Server application with CLSID 
+13:01:25.038 event: 12:57:20 System/Microsoft-Windows-DistributedCOM Error - The server Windows.Gaming.GameBar.PresenceServer.Internal.PresenceWriter did not register with DCOM within the required timeout.

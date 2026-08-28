@@ -60,6 +60,16 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x0073 => "CLIENT_SESSION_IDENTITY (never answered)",
         0x007D => "CLIENT_MIGRATION_HELLO (character id at offset 8, then MAC and machine id)",
         0x008F..=0x0091 => "CLIENT_ELOG (the client's own error log; decode_elog.py)",
+        // **The client handing back a packet it could not process, and it is worth its
+        // weight.** Named 2026-08-28: a `0x055E` type 10 went out, the client replied with a
+        // 2075-byte `0x009E` and then faulted. The body is a 14-byte header, then the
+        // **rejected packet in full, opcode included** - 14 + 2 + 2059 = 2075, checked
+        // against the exact bytes we had sent.
+        //
+        // That echo is what localised the crash to one packet in one reading of one log,
+        // with no client run of its own. Anything appearing here is a packet the client
+        // refused; the header's meaning is **not** decoded.
+        0x009E => "CLIENT_PACKET_REJECTED (14-byte header, then the offending packet with its opcode)",
 
         // Established 2026-08-19 by finding each builder in the client. Five of the eight
         // names previously here were WRONG - they had been inferred from the shape of the

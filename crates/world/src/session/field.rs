@@ -27,42 +27,25 @@ impl Session {
         // go with it: an object id from the previous map addresses nothing here, or worse,
         // addresses a different NPC.
         self.reset_chatter(chr.map_id, self.clock_ms);
-        // **Turn off the client's own damage number, once per session.**
+        // **MEASURED AND REFUSED, 2026-08-28. The packet is no longer sent.**
         //
-        // The owner, 2026-08-28: *"I really need this 1 to go away."* The stub is drawn at one
-        // instruction, inside a block gated on `user+0x544a`, and the client's own
-        // `/hitdamagetest` command writes that byte. `0x00EA` runs a console command, so the
-        // server can clear it without patching anything.
+        // The owner: *"The 1 damage from mobs still show up, I do see /hitdamagetest 0 echoed in
+        // chat."* Both halves matter, and the plan had already written down what they mean
+        // together: the echo happens **before** the dispatch, so seeing it proves only that
+        // the string arrived. The proof that the command *ran* is an inbound `0x0189`
+        // carrying `u32 0x13D`, and `world.log` for that run has **none** - the two matches
+        // for "0189" in it are our own outbound log line and a coincidence inside a move
+        // packet's hex.
         //
-        // **Here rather than on the migration**, because the command's permission context is
-        // built from fields that arrive with `SetField`, and field entry is the first moment
-        // after one that this session hears about.
+        // So the client's permission gate refused `/hitdamagetest`, which was always the
+        // `[D]` in this chain. Continuing to send it would put a line in the owner's chat window
+        // every session and change nothing, and a visible no-op is worse than no attempt:
+        // next session somebody sees the echo and concludes it worked.
         //
-        // **Once**, because the client ECHOES every line into the chat window as `> <line>`.
-        // Sending it per field would put a line in the chat on every portal.
-        //
-        // **The permission gate is [D], not [L]** - it needs `ctx[6]` and one of `ctx[0..2]`,
-        // and which wire field feeds which bit was not decoded. So this is a request, not a
-        // guarantee: `0x0189` coming back is the only proof it ran, and if it does not come
-        // back the number is still drawn and the five-byte hook patch in
-        // `research/damage-number-suppress.md` is the fallback.
+        // **The fallback is a five-byte hook patch** at `0x1428aca14`, written up in
+        // `research/damage-number-suppress.md`. That is a client patch rather than a packet,
+        // so it belongs to the hook and the launcher, not here.
         let mut out = Vec::new();
-        if !self.asked_to_hide_hit_damage {
-            self.asked_to_hide_hit_damage = true;
-            out.push(Reply {
-                opcode: net::revive::RUN_CONSOLE_COMMAND,
-                body: net::revive::run_console_command(net::revive::HIDE_HIT_DAMAGE),
-                what: format!(
-                    "RunConsoleCommand {:?}: the client runs its OWN slash command, which \
-                     writes user+0x544a = 0 and skips the 0x356-byte block holding the only \
-                     renderer call that draws its stub damage number. It ECHOES the line into \
-                     the chat window first. Watch for an inbound 0x0189 carrying u32 0x13D - \
-                     that is the client saying the permission gate passed, and it is the ONLY \
-                     proof. No 0x0189 means the gate refused and the 1 is still drawn",
-                    net::revive::HIDE_HIT_DAMAGE
-                ),
-            });
-        }
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
         out.extend(self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()

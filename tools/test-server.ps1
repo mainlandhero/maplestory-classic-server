@@ -29,6 +29,17 @@
 
     WHAT THE LAST RUN CLOSED - none of this needs testing again
     ----------------------------------------------------------
+    THE CLASSIC SHOP WINDOW DRAWS. See step 7.
+    AND THE STUB 1 CANNOT BE TURNED OFF BY ANY PACKET. The owner: "The 1 damage from mobs still
+    show up, I do see /hitdamagetest 0 echoed in chat." Both halves together are the answer,
+    and the plan had already written it down: the echo happens BEFORE the dispatch, so it
+    proves only that the string arrived. The proof that the command RAN is an inbound 0x0189,
+    and world.log has none - the two "0189" matches in it are our own log line and a
+    coincidence inside a move packet's hex. The permission gate refused, which was the [D] in
+    that chain all along. The server no longer sends 0x00EA: a line in the chat window every
+    session that changes nothing is worse than no attempt, because the next person to see the
+    echo will conclude it worked. The remaining route is the five-byte hook patch at
+    0x1428aca14 - a client patch, not a packet. research/damage-number-suppress.md.
     YOU STAY DEAD. You could previously regenerate out of death, and because the revive
     dialog fires on the TRANSITION it would never have come back.
     THE CASH SHOP OPENS and the wallet reads both fields. Exit works. !lp works.
@@ -70,22 +81,11 @@
                   so a !job character can end up holding something it cannot wear, which on
                   screen is indistinguishable from a broken skill.
 
-    THE STEPS, 1-7 plus 5b. Each is a claim that can come back false; report them
+    THE STEPS, 2-7 plus 5b. Each is a claim that can come back false; report them
     separately.
+    DO STEP 7 FIRST: selling killed the client last run.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
-
-     1. THE DAMAGE NUMBER - IS THE 1 GONE? Built last run, never seen.
-        The server asks the CLIENT to stop drawing its own number, on field entry, using the
-        client's own console command: 0x00EA carrying "/hitdamagetest 0", which writes the
-        byte gating the only renderer call that draws it.
-        EXPECT "> /hitdamagetest 0" IN THE CHAT - the client echoing before it runs, once.
-          ONE number, the real damage -> done
-          still TWO numbers -> the command was refused. Its permission gate is [D]. Check
-                     world.log for an inbound 0x0189: the client sends one ONLY if the
-                     command ran. Fallback is a five-byte hook patch, already written up
-          NO numbers -> we suppressed ours too; ours is on a different, ungated renderer
-          the client dies -> 0x00EA has never been sent before. Say when
 
      2. WARRIOR - FIRST OF THE FOUR BRANCHES, after step 7. Do step 3 in the MIDDLE of it.
         It is the only branch whose weapon is FREE (Sword 1302000: reqLevel 0, no stat, no
@@ -184,65 +184,46 @@
           balance keeps dropping, or several coupons from one click -> the re-entry is
                      SENDING rather than completing. CLOSE THE CLIENT and say so
 
-     7. NPC SHOPS ARE ON - AND THIS IS THE ONE THAT WAS NEVER ON A WIRE. DO IT FIRST.
-        Clicking a shopkeeper now opens a counter instead of saying a line. Nothing about
-        this has ever been sent to a client, so it is the highest-risk step in the file.
+     7. SELLING TO AN NPC. THE COUNTER DRAWS; SELLING KILLED THE CLIENT. DO THIS FIRST.
 
-        WHY IT WAS OFF: we were sending 0x0560, the Shop2 window, and this client does not
-        ship its art (UI/UIWindow2.img/Shop2/backgrnd). The constructor's resource call
-        fails, a C++ exception is thrown and the unwinder faults - BEFORE a single row byte
-        is read, which is why one correctly-formed row killed it exactly as twelve did.
-        It was never our bytes.
+        WHAT LAST RUN SETTLED. The classic counter works: 0x055D, Lucy the Grocer, 12 rows,
+        1905 bytes - exactly 21 + 12x157, so the head and the row width are both confirmed on
+        a wire. Six days of static decode, right the first time it was sent.
 
-        THIS CLIENT HAS TWO SHOP WINDOWS. The classic one, UI/UIShop.img/Shop, IS in the WZ
-        and opens on 0x055D. That was found on 2026-08-20, its body was decoded on
-        2026-08-22 down to the price and the five gates that can silently drop a row, and
-        both sat unimplemented until today. crates/net/src/classicshop.rs builds it and its
-        test diffs the bytes against the research file's own golden vector - 336 bytes,
-        matched first try. All 39 authored shops build length-correct packets.
+        THEN SELLING KILLED IT, AND THE CLIENT NAMED THE PACKET ITSELF. The sale was fine -
+        0x055E success, the inventory remove and the meso change all went out and were
+        accepted. Then our 0x055E TYPE 10 list refresh went out, and the client replied with
+        a 2075-byte 0x009E and faulted. That 0x009E is the offending packet handed straight
+        back: 14 bytes of header, then the opcode, then our exact 2059-byte body. It is now
+        named CLIENT_PACKET_REJECTED in net::names.
 
-        AND THE FLORA CRASH FROM LAST RUN IS NO LONGER REPRODUCIBLE BY THIS ROUTE. Clicking
-        their took the DIALOGUE path, because shops were off; they now take the shop path
-        instead. So a click that does not crash proves nothing about that access violation -
-        it is a different code path. Do not read it as fixed. The 1.3 GB dump is still on
-        disk and the fault address 0x1426e4be9 is still in none of the 68 archived hook logs.
+        WHY, AND IT COST NO CLIENT RUN TO FIND. Type 10's documented effect is "refill, then
+        select the Buy Back tab". UI/UIShop.img/Shop in THIS client has 16 nodes: backgrnd,
+        select, disabledBack, icon, checkBox, TabSell, TabBuy, meso, arrow, BtBuy, BtSell,
+        BtExit, BtRecharge, mesoBox, mesoBox2, citizenshipBackgrnd. There is NO
+        repurchaseInfo, and there are exactly TWO tabs. Read with wz-dump, BtBuy as the
+        positive control.
 
-        Lucy is template 21 on map 1013: !map 1010, then the in02 portal into Amherst
-        Department Store. Flora is the Ellinia weapon seller. Either will do.
-          a) does a shop window appear, with the classic art?
-               a window            -> 0x055D, the head and the 157-byte row are all right
-               the old dialogue box -> no packet went out; the NPC-to-shop join is missing
-               nothing at all, and the hook log shows 0x055D dispatched and returning
-                                   -> the modal guard fired; a dialog was already on screen
-               a freeze or a fault  -> the row width is wrong. world.log's last outbound
-                                       length should be 21 + 157n. SAY THE LENGTH
-          b) are all the NPC's items there, at data/shops.txt prices?
-               right count          -> the price at row+0x38 and the row width are right
-               ZERO rows            -> a gate dropped every row. First suspect is row+0xa4,
-                                       the sale end: it is compared to the wall clock with
-                                       no sentinel, so a wrong value empties the shop and
-                                       says nothing anywhere
-               fewer than sent      -> count them; that names which row first tripped a gate
-          c) buy one item. Does the item arrive AND the meso count drop? Then click Buy
-             again.
-               both move            -> the whole loop works
-               nothing visible, but the second click still opens the quantity box
-                                   -> the 0x055E went out and the inventory/meso packets
-                                       did not
-               the second click does NOTHING, silently
-                                   -> the 0x055E never went out and shopUI+0x4b0 is latched.
-                                       Close the shop and re-click the NPC to recover; a
-                                       fresh 0x055D alone will NOT, because of the modal
-                                       guard
-          d) sell something back. Does a BUY BACK tab appear with it in?
-               yes                  -> the sell flag, the ring and the type-10 refresh work
-               it sells but no tab  -> the refresh did not go out, or the tab byte is wrong
-          e) buy it back off that tab. Does it leave the tab?
+        So this is the SHOP2 FAILURE ONE LEVEL DOWN: a window reaching for art this client
+        does not ship, _com_issue_errorex throwing, and the unwinder faulting - at
+        0x140ce89d6, which research/npc-shop-crash2.md already records for the Shop2 crash.
+        The hook log shows C++ throw #9 in the same millisecond as the fault, and nothing had
+        thrown for the 218 seconds before it.
 
-        IF THE CLIENT DIES ANYWHERE IN 7, STOP AND SAY WHICH STEP. Then relaunch with
-        -ShopRows 1 if that switch is wired, or say so and I will send one row: a bad row
-        and too many rows look identical on screen and that flag tells them apart in one
-        launch.
+        The Buy Back row and the type-10 refresh are both gone. Type 35 is the survivor if a
+        refill is ever wanted - it selects tab 0, which exists.
+
+          a) sell something to Lucy. Does it work, and does the client live?
+               works and lives -> selling is done
+               still dies      -> it was not the refresh. Say WHAT you sold and whether the
+                                  item and the mesos moved before it died
+          b) buy something. Item AND mesos both move? Then click Buy AGAIN:
+               the second click does nothing, silently -> the 0x055E never went out and
+                                  shopUI+0x4b0 is latched. Close and re-click the NPC; a
+                                  fresh 0x055D alone will NOT recover it
+          c) do the prices match data/shops.txt?
+
+        THERE IS NO BUY BACK TAB AND THERE NEVER WILL BE. Not a bug; the art is not here.
 
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
@@ -1044,12 +1025,19 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 1-7, plus 5b.' -ForegroundColor Yellow
-    Write-Host '  DO STEP 7 FIRST - NPC SHOPS, never once on a wire.' -ForegroundColor Yellow
+    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 2-7, plus 5b.' -ForegroundColor Yellow
+    Write-Host '  DO STEP 7 FIRST - selling, which killed the client last run.' -ForegroundColor Yellow
     Write-Host '  Then step 2, which is the cheapest and isolates the most.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
+    Write-Host '  THE SHOP WINDOW DRAWS. 0x055D, Lucy, 12 rows, 1905 bytes = 21 +'
+    Write-Host '  12x157 exactly. Six days of decode, right first time on the wire.'
+    Write-Host '  AND THE 1 CANNOT BE TURNED OFF BY PACKET. /hitdamagetest was echoed'
+    Write-Host '  into your chat and NO 0x0189 came back, which is the only proof it'
+    Write-Host '  ran - so the permission gate refused it. The echo happens BEFORE the'
+    Write-Host '  dispatch, so seeing it meant nothing. The server no longer sends it;'
+    Write-Host '  the remaining route is a five-byte hook patch, not a packet.'
     Write-Host '  YOU STAY DEAD - no more regenerating out of death. The wallet, the'
     Write-Host '  cash shop window, Exit, and the leaf-point balance. !lp. THE JOB'
     Write-Host '  CHANGE, THE SKILL POINTS AND THE MAGICIAN BOOK - !job 200 gave the'
@@ -1072,22 +1060,6 @@ if ($SetFieldProbe) {
     Write-Host '                   No skill points needed. !learn 5 caps them at 5.'
     Write-Host '     !kit          the weapon and ammunition that job needs, and it'
     Write-Host '                   WARNS if you cannot equip what it just gave you.'
-    Write-Host ''
-    Write-Host '  1. THE DAMAGE NUMBER - IS THE 1 GONE?' -ForegroundColor White
-    Write-Host '     Hit anything at all. This was built last run and never seen.'
-    Write-Host '     The server now asks the CLIENT to stop drawing its own number,'
-    Write-Host '     using a console command the client already has, on field entry.'
-    Write-Host '     YOU WILL SEE "> /hitdamagetest 0" IN THE CHAT. That is the'
-    Write-Host '     client echoing the command before running it. Not a stray GM'
-    Write-Host '     command, and it appears once per session.'
-    Write-Host '       ONE number, the real damage -> done. This is perfect'
-    Write-Host '       still TWO numbers  -> the command was refused. Its permission'
-    Write-Host '                   gate is [D]. Check world.log for an inbound 0x0189:'
-    Write-Host '                   the client sends one ONLY if the command ran, so no'
-    Write-Host '                   0x0189 means the gate said no. Fallback is a'
-    Write-Host '                   five-byte hook patch, already written up'
-    Write-Host '       NO numbers at all -> we suppressed ours too. Say so'
-    Write-Host '       the client dies    -> 0x00EA has never been sent before. Say when'
     Write-Host ''
     Write-Host '  2. WARRIOR - THE WHOLE BRANCH, AND THE CHEAPEST ONE.' -ForegroundColor White
     Write-Host '     FIRST OF THE FOUR BRANCHES (step 7 comes before all of them).'
@@ -1211,36 +1183,28 @@ if ($SetFieldProbe) {
     Write-Host '       BALANCE KEEPS DROPPING, or several coupons from one click ->'
     Write-Host '                   CLOSE THE CLIENT and say so. One line to disarm'
     Write-Host ''
-    Write-Host '  7. NPC SHOPS ARE ON. NEVER BEEN ON A WIRE. DO THIS FIRST.' -ForegroundColor White
-    Write-Host '     Clicking a shopkeeper now opens a counter instead of saying a line.'
-    Write-Host '     WHY IT WAS OFF: we sent 0x0560, the Shop2 window, and this client does'
-    Write-Host '     not ship its art. The constructor faults BEFORE reading a single row'
-    Write-Host '     byte - which is why one row killed it exactly as twelve did. It was'
-    Write-Host '     never our bytes. This client has TWO shop windows; the classic one IS'
-    Write-Host '     in the WZ and opens on 0x055D. Decoded 6 days ago, unimplemented until'
-    Write-Host '     today. The builder matches the research golden vector byte for byte.'
-    Write-Host '     THE FLORA CRASH IS NOT REPRODUCIBLE THIS WAY ANY MORE. They took the'
-    Write-Host '     DIALOGUE path last run because shops were off; they take the SHOP path'
-    Write-Host '     now. A click that does not crash proves NOTHING about that access'
-    Write-Host '     violation - different code path. Do not read it as fixed.'
-    Write-Host '     Lucy is template 21: !map 1010, in02 portal. Or Flora in Ellinia.'
-    Write-Host '       a) does a shop window appear, with the classic art?'
-    Write-Host '            a window      -> 0x055D and the 157-byte row are right'
-    Write-Host '            old dialogue  -> no packet went out; the join is missing'
-    Write-Host '            freeze/fault  -> the row width is wrong. SAY THE LAST OUTBOUND'
-    Write-Host '                             LENGTH from world.log; it should be 21 + 157n'
-    Write-Host '       b) are all the items there at the data/shops.txt prices?'
-    Write-Host '            ZERO rows     -> a gate dropped every row. First suspect is the'
-    Write-Host '                             sale end: no sentinel, so a wrong value empties'
-    Write-Host '                             the shop and says nothing anywhere'
-    Write-Host '            fewer         -> count them; that names which row tripped first'
-    Write-Host '       c) buy one. Item AND mesos both move? Then click Buy AGAIN:'
-    Write-Host '            second click does nothing, silently -> the result never went out'
-    Write-Host '                             and the window is latched. Close and re-click'
-    Write-Host '                             the NPC; a fresh 0x055D alone will NOT recover it'
-    Write-Host '       d) sell something. Does a BUY BACK tab appear with it in?'
-    Write-Host '       e) buy it back off that tab. Does it leave?'
-    Write-Host '     IF THE CLIENT DIES, STOP AND SAY WHICH STEP.'
+    Write-Host '  7. SELLING TO AN NPC. THE SHOP OPENS; SELLING KILLED IT.' -ForegroundColor White
+    Write-Host '     Last run the counter DREW - 0x055D, Lucy, 12 rows, 1905 bytes, which'
+    Write-Host '     is exactly 21 + 12x157. The head and the row width are confirmed.'
+    Write-Host '     Then selling one item killed the client, and the client told us how:'
+    Write-Host '     it handed the offending packet straight back in a 2075-byte 0x009E'
+    Write-Host '     and faulted. The sale itself was fine - success, bag and mesos all'
+    Write-Host '     went out and were accepted. What killed it was the list refresh'
+    Write-Host '     that followed, which SELECTS A BUY BACK TAB.'
+    Write-Host '     UI/UIShop.img/Shop in this client has 16 nodes, no repurchaseInfo,'
+    Write-Host '     and exactly TabBuy and TabSell. There is no Buy Back tab to select.'
+    Write-Host '     Same failure as the old Shop2 crash, same fault address, one level'
+    Write-Host '     down - art this client does not ship. Both are gone now.'
+    Write-Host '       a) sell something to Lucy. Does it work, and does the client live?'
+    Write-Host '            works, lives  -> selling is done'
+    Write-Host '            still dies    -> it was not the refresh. Say what you sold and'
+    Write-Host '                             whether the item and mesos moved first'
+    Write-Host '       b) buy something. Item AND mesos both move? Then click Buy AGAIN:'
+    Write-Host '            second click does nothing, silently -> the result never went'
+    Write-Host '                             out and the window is latched. Close and'
+    Write-Host '                             re-click the NPC; a fresh 0x055D will NOT fix it'
+    Write-Host '       c) do the prices match data/shops.txt?'
+    Write-Host '       There is NO Buy Back tab and there never will be. Not a bug.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
     Write-Host '     MP cost and damage validation on ATTACK skills. The skill id is'

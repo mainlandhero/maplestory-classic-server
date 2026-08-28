@@ -6,8 +6,8 @@
 
 use super::*;
 
-/// How many sold items the Buy Back tab remembers. **Fifteen**, the client's own list length.
-const BUY_BACK_DEPTH: usize = 15;
+// `BUY_BACK_DEPTH` was 15, the client's own list length. Removed with the Buy Back feature:
+// this client's shop window has no `repurchaseInfo` node and exactly two tabs.
 
 impl Session {
 
@@ -92,9 +92,8 @@ impl Session {
                 i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
             ));
         }
-        // The Buy Back tab, newest first - what this player has sold at any counter this
-        // session. Appended last so a buy-back row can never shift the index of a buy row.
-        rows.extend(self.buy_back.iter().copied());
+        // **No Buy Back rows.** This client's `UI/UIShop.img/Shop` has no `repurchaseInfo`
+        // node and exactly two tabs, `TabBuy` and `TabSell`. See `classic_sell`.
 
         if rows.is_empty() {
             return None; // a zero-row shop is a different client arm, not an empty counter
@@ -239,12 +238,10 @@ impl Session {
                 // the purchase worked while the item and the mesos stay where they were.
                 out.extend(self.inventory_added_replies(inv, &changed, "bought"));
                 out.extend(self.meso_reply(chr.id));
-                // A bought-back row leaves the Buy Back tab, and the tab only changes when the
-                // whole list is re-sent.
-                if row.buy_back {
-                    self.buy_back.retain(|b| b.item_id != row.item_id);
-                    out.extend(self.classic_refresh("a buy-back row was bought"));
-                }
+                // No buy-back rows are ever sent, so `row.buy_back` cannot be set here.
+                // Kept as a debug assertion rather than a branch, because the reason is a
+                // property of this client's WZ and not of the protocol.
+                debug_assert!(!row.buy_back, "this client cannot draw a Buy Back tab");
                 out
             }
             Err(store::StoreError::BagFull { .. }) => {
@@ -288,20 +285,27 @@ impl Session {
                     what: format!("InventoryOperation REMOVE: {inv:?} slot {slot}"),
                 });
                 out.extend(self.meso_reply(chr.id));
-                // **Onto the Buy Back ring, newest first, fifteen deep** - the client's own
-                // list length. Session-scoped: a buy-back list that survived a relog would
-                // offer items out of a counter the player has not opened.
-                self.buy_back.retain(|b| b.item_id != item_id);
-                self.buy_back.insert(
-                    0,
-                    net::classicshop::ClassicShopRow::buy_back(
-                        item_id,
-                        u64::from(unit),
-                        i16::try_from(quantity).unwrap_or(1),
-                    ),
-                );
-                self.buy_back.truncate(BUY_BACK_DEPTH);
-                out.extend(self.classic_refresh("an item was sold"));
+                // **NO Buy Back, and NO type-10 refresh. Both kill this client.**
+                //
+                // The owner, 2026-08-28: *"Selling an item to Lucy crashed the client."* The sale
+                // itself worked - the success, the inventory remove and the meso change all
+                // went out and were accepted. What killed it was the `0x055E` type 10 that
+                // followed, and the client handed the packet straight back to us in a
+                // 2075-byte `0x009E` before dying.
+                //
+                // **`UI/UIShop.img/Shop` has 16 nodes and `repurchaseInfo` is not one of
+                // them.** Read with `wz-dump`, with `BtBuy` as the positive control. The
+                // node list also carries exactly `TabBuy` and `TabSell` - **two** tabs. Type
+                // 10's documented effect is *refill, then select the Buy Back tab*
+                // (`research/classic-shop-rows.md` §8), so it reaches for art this client
+                // does not ship, `_com_issue_errorex` throws, and the unwinder faults at
+                // `0x140ce89d6`.
+                //
+                // That is the **same failure as Shop2**, one level down and for the same
+                // reason - `research/npc-shop-crash2.md` records `0x140ce89d6` for that crash
+                // too. The client's own art is the authority on what its windows have.
+                //
+                // If a refresh is ever needed, **type 35 selects tab 0**, which exists.
                 out
             }
             Err(store::StoreError::ItemMayNotBeSold { .. }) => self.classic_refused(
@@ -313,24 +317,15 @@ impl Session {
         }
     }
 
-    /// `0x055E` type 10 - re-send the list without reopening the window.
-    ///
-    /// The rows held in `open_shop` are rebuilt so the Buy Back tab reflects the ring, and the
-    /// stored list is updated with them: a later request names an index into **this** list.
-    fn classic_refresh(&mut self, why: &str) -> Vec<Reply> {
-        let Some((template, rows)) = self.open_shop.clone() else { return Vec::new() };
-        let mut fresh: Vec<net::classicshop::ClassicShopRow> =
-            rows.into_iter().filter(|r| !r.buy_back).collect();
-        fresh.extend(self.buy_back.iter().copied());
-        let body = net::classicshop::classic_shop_refresh(&fresh);
-        let what = format!(
-            "ClassicShopResult type 10: list re-sent, {} rows ({} buy-back) - {why}",
-            fresh.len(),
-            fresh.iter().filter(|r| r.buy_back).count()
-        );
-        self.open_shop = Some((template, fresh));
-        vec![Reply { opcode: net::classicshop::CLASSIC_SHOP_RESULT, body, what }]
-    }
+    // **`classic_refresh` was removed on 2026-08-28, the day it first went out.**
+    //
+    // It sent `0x055E` type 10, whose documented effect is *refill, then select the Buy Back
+    // tab*. `UI/UIShop.img/Shop` has no `repurchaseInfo` node - 16 nodes, `BtBuy` as the
+    // positive control - and carries exactly `TabBuy` and `TabSell`. Selecting a tab whose
+    // art is missing throws, and the unwinder faults at `0x140ce89d6`, the same address the
+    // Shop2 crash produced for the same reason.
+    //
+    // **Type 35 is the survivor** if a refill is ever wanted: it selects tab 0.
 
     /// A `0x055E` refusal. **Never skip one**: the window latches on send.
     fn classic_refused(&self, result_type: u8, why: &str) -> Vec<Reply> {
