@@ -8,6 +8,16 @@ A local, testing-only server emulator for the MapleStory **`mscw`** client
 > is never pointed at official servers. The original install at
 > `C:\Nexon\Library\maplestorycw` is treated as **read-only reference** — all client
 > patching happens on a separate copy.
+>
+> **No game content is in this repository.** No client binary, no `.wz` archive, no extracted
+> asset — `.gitignore` keeps `client-patched/` and `gm-handbook/` out, and the latter is
+> regenerated from the reader's own install. What is here is source, protocol notes, and
+> packet captures against a private localhost server.
+>
+> Captured logs have the capturing machine's **MAC address and machine id redacted**, with
+> length-preserving placeholders. See
+> [`research/fixtures/README.md`](research/fixtures/README.md) — those particular bytes are
+> not data.
 
 **Start here:** [STATUS.md](STATUS.md) — current state and next steps.
 [ROADMAP.md](ROADMAP.md) has the staged plan.
@@ -18,12 +28,22 @@ A local, testing-only server emulator for the MapleStory **`mscw`** client
 |---|---|---|
 | 0 | Foundation: recon, WZ parser, protection map | **done** — 9,994/9,994 images parse |
 | 1 | Patched client that launches and talks to localhost | **done** — `-NXLDEBUG 127.0.0.1 8484` connects, GameGuard never loads |
-| 2 | Handshake | **in progress** — framing confirmed, client parses our body, rejection cause open |
-| 2.5 | Auth server + our own launcher | auth server **done**; launcher blocked on the `WEBSTART` session fields |
-| 3 | Login server → character select | not started |
-| 4 | Channel server → walk a map | not started |
-| 5 | Cash shop server | not started |
-| 6+ | Mobs, drops, skills, NPCs, inventory | not started |
+| 2 | Handshake | **done** — framing, the AES key, and the asymmetric channel cipher |
+| 2.5 | Auth server | **done** |
+| 3 | Login server → character select | **done** — list, create, delete, persistence |
+| 4 | Channel server → walk a map | **done** — portals, footholds, NPCs, chat |
+| 5 | Cash shop | **done** — the window, the wallet, a purchase into the locker |
+| 6 | Mobs, drops, EXP, levelling, inventory, storage, quests | **done** — all seen on screen |
+| 7 | Skills | first job for all four branches; buffs, SP and the skill book work |
+| 8 | NPC shops | the classic `0x055D` counter draws and sells |
+
+**Open**, and each written up rather than hand-waved: attack skills cost no MP and no hit is
+validated yet; a heap wild-write kills a long session; and the client draws its own damage
+number as `1` for any mob without an attack node.
+
+Claims are tagged **[L]** read off the listing or a capture, **[D]** derived, **[I]** inferred.
+The distinction is load-bearing, and [`CLAUDE.md`](CLAUDE.md) is largely a catalogue of the
+times it was got wrong.
 
 ## Layout
 
