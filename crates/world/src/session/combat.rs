@@ -619,7 +619,28 @@ impl Session {
         // attack column - a mob we have no data for should still hurt.
         let claimed = hit.damage;
         let computed = self.incoming_damage_for(hit.mob_template_id, &chr);
-        let applied = computed.unwrap_or(claimed);
+        // **When the client sends a real number, take it - that is the whole point.**
+        //
+        // The owner, 2026-08-28: *"try harder to see how the client can compute its own mob damage
+        // and then sending that to the server instead. This is one of the ways that both the
+        // server and client can agree."*
+        //
+        // They are right, and the client can. `FUN_14288ac30`'s contact path computes
+        // `mobAttack * x / 100` at `0x14288b337` and then **discards it** four instructions
+        // later, in a block gated on `user+0x544a` - which is why 198 of 198 captured hits
+        // claimed `1`. `crates/grap-stub/src/hitnumber.rs` clears that byte, and the client
+        // then keeps what it worked out.
+        //
+        // So the rule: **a claim above the floor is the client's own arithmetic and we apply
+        // it.** The number it draws and the number the HP bar moves by are then the same
+        // number, by construction rather than by our two models happening to agree.
+        //
+        // `1` is the floor the discarded path produces, so it means "the patch is not on, or
+        // the mob's attack power at `mob+0xe8` was zero and the client bailed before
+        // computing". Then the server's own model stands in, exactly as it did before - which
+        // is what keeps an unpatched client behaving the way it always has.
+        let client_computed_it = claimed > 1;
+        let applied = if client_computed_it { claimed } else { computed.unwrap_or(claimed) };
 
         // **Magic Guard sends part of the damage to MP, and that split is the SERVER's job.**
         //
@@ -674,9 +695,22 @@ impl Session {
                     String::new()
                 },
                 match computed {
-                    Some(_) if claimed != applied => " and the server overrode it",
-                    Some(_) => " and the server agreed",
-                    None => " and the server had no template to check it against",
+                    // **The client did its own arithmetic and we took it.** This is the state
+                    // worth reaching: one number, drawn by the client and applied by us. Our
+                    // model is still run and still printed, as a check rather than an
+                    // authority - if the two drift far apart that is worth seeing.
+                    Some(c) if client_computed_it => format!(
+                        " and the server APPLIED IT (our own model says {c}); the number drawn \
+                         and the number applied are now the same"
+                    ),
+                    Some(_) if claimed != applied => {
+                        " and the server overrode it - a claim of 1 is the floor the discarded \
+                         path produces, so either hitnumber=off is not armed or the mob's \
+                         attack power at mob+0xe8 is zero"
+                    }
+                    .to_string(),
+                    Some(_) => " and the server agreed".to_string(),
+                    None => " and the server had no template to check it against".to_string(),
                 }
             ),
         }];

@@ -144,19 +144,59 @@ the damage from an attack record that a contact hit does not have. Whether an at
 would produce a real number is still **unobserved**, and now looks hard to observe: no mob has
 ever used one against us, which is its own open question.
 
-## 4. What was done about it, and it is a patch
+## 4. RESULT, after the owner pushed a second time: the client CAN compute it
 
-The client cannot compute the number, and no packet can stop it drawing the wrong one - §1.
-`crates/grap-stub/src/hitnumber.rs` therefore writes five `nop`s over `0x1428aca14`, the only
-renderer call in `FUN_1428aa0a0`, on by default and off with `-KeepClientHitNumber`. The bytes
-are verified against the image before the write and read back after, and every outcome is
-logged.
+The owner: *"try harder to see how the client can compute its own mob damage and then sending that
+to the server instead. This is one of the ways that both the server and client can agree."*
 
-Ours survives: the `0x02D1` drain is one of fifteen renderer callers with no `0x544a` gate.
+**It already computes it.** Section 2 said the contact path had no damage to work with; that
+was wrong, and reading `FUN_14288ac30`'s no-attack-record branch shows why: **[L]**
 
-**This removes a wrong number rather than making a right one.** Making the client's number
-correct needs the server to supply contact damage in some packet, and which packet that is has
-not been found. That is the honest state of it.
+```text
+14288b2dc  cmp  dword [rdi+0xe8], 0     ; the mob's attack power
+14288b2e3  jle  0x14288ca17             ; zero -> bail out entirely
+14288b312  movd xmm1, dword [rdi+0xe8]
+14288b326  mulsd xmm0, xmm1
+14288b32a  divsd xmm0, [0x143277e78]    ; = 100.0, read off .rdata
+14288b337  cvttsd2si r12d, xmm0         ; a REAL damage, in r12d
+```
+
+`r12d` then survives untouched to the gate at `0x14288b3f0`, and the gated block **replaces
+it**. So the `1` was never the client failing to compute - it was the client computing and
+then discarding.
+
+**The gate's reachable half is a constant the client writes on itself:**
+
+```text
+142883687  48 c7 86 48 54 00 00  01 00 01 00
+           mov qword ptr [rsi+0x5448], 0x00010001
+```
+
+`0x00010001` -> `0x00000001` clears `+0x544a` and leaves `+0x5448`, which
+`damage-number-suppress.md` §8 records as written once and never read. **One byte.**
+
+The byte is compared in **eight** functions - the `0x00E5` builder and the drawer among them -
+so they move together: the number **computed**, the number **sent** and the number **drawn**
+become one number. `crates/grap-stub/src/hitnumber.rs`, on by default, `-KeepClientHitNumber`
+to disable.
+
+And `world::session::combat::on_user_hit` now **defers to the client** when it claims more than
+`1`; our own `incoming_damage` still runs and still prints, as a check rather than an authority.
+A claim of exactly `1` is the floor the discarded path produces, so it falls back to the
+server's model and an unpatched client behaves as it always has.
+
+### What this replaced, and why it was wrong
+
+The first attempt nopped the renderer at `0x1428aca14` - it **hid** the wrong number. Written
+before the contact path had been read, it left the client still *sending* `1`, so the two sides
+still disagreed and the disagreement was merely off screen. The owner's instinct that this was the
+wrong shape of fix was right both times.
+
+### Still open
+
+**Whether `mob+0xe8` is non-zero for our mobs.** If it is zero the client bails at
+`0x14288b2e3` and this changes nothing - a real possible outcome, and the test plan says so
+rather than assuming success.
 
 ## 5. The superseded experiment, kept for the method
 

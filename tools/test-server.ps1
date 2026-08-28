@@ -93,41 +93,46 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
 
-     1. THE 1 IS PATCHED OUT. There should be ONE number now.
+     1. THE CLIENT COMPUTES ITS OWN MOB DAMAGE AND SENDS IT. One number, both sides agree.
 
-        THE 2026-08-28 RUN SETTLED IT, AND NOT THE WAY I PREDICTED. I said a mob with an
-        attack node would produce a real number. Template 1003 HAS attack nodes and hit them
-        with its BODY - `attack index -1`, claiming 1. So the hypothesis was not tested and
-        the prediction was wrong for a reason I had not considered: a mob having an attack
-        node does not mean it uses one.
+        The owner: *"try harder to see how the client can compute its own mob damage and then
+        sending that to the server instead. This is one of the ways that both the server and
+        client can agree."* They were right, and the previous patch - which merely HID the
+        client's number - was the wrong fix, made before the contact path had been read. It
+        left the client still SENDING 1, so the two sides still disagreed, just off screen.
 
-        Enumerated over 160 distinct archived world logs: **198 hits, every single one
-        `attack index -1`, every single one claiming damage 1.** Perfect correlation with
-        zero variance - the attack path has NEVER been on a wire in this project. So what is
-        established is narrower and firmer than what I claimed: **for contact damage the
-        client always computes 1**, and the mechanism is that it reads the damage from an
-        attack record it does not have (`14288b405 mov edi,[r13+0x50]` / `14288b40b mov edi,
-        r14d`).
+        THE CLIENT ALREADY COMPUTES IT. FUN_14288ac30's no-attack-record branch:
+            14288b2dc  cmp  dword [rdi+0xe8], 0     ; the mob's attack power
+            14288b2e3  jle  0x14288ca17             ; zero -> bail out entirely
+            14288b312  movd xmm1, dword [rdi+0xe8]
+            14288b326  mulsd xmm0, xmm1
+            14288b32a  divsd xmm0, [0x143277e78]    ; = 100.0, read off .rdata
+            14288b337  cvttsd2si r12d, xmm0         ; a REAL damage
+        and r12d survives untouched to the gate at 14288b3f0, where a block conditioned on
+        user+0x544a REPLACES it. That is why 198 of 198 captures said 1: the number was
+        computed and then discarded.
 
-        AND NO PACKET CAN STOP IT DRAWING THAT. Option 0xAE is read at eleven sites in .text
-        and written at none; the console command that clears the other half of the gate is
-        refused. Both halves are constants.
+        ONE BYTE. The client sets the flag on itself with an immediate:
+            142883687  48 c7 86 48 54 00 00  01 00 01 00
+                       mov qword ptr [rsi+0x5448], 0x00010001
+        and 0x00010001 -> 0x00000001 clears +0x544a while leaving +0x5448 (never read
+        anywhere) as it was. The byte is compared in EIGHT functions, the 0x00E5 builder and
+        the drawer among them, so they all move together - computed, sent and drawn become
+        one number.
 
-        SO IT IS A CLIENT PATCH, and this file should say that plainly rather than dress it
-        up: five nops over 0x1428aca14, the only renderer call in FUN_1428aa0a0. The bytes
-        are checked against the image before the write and read back after, and the hook logs
-        every outcome. Ours survives - the 0x02D1 drain is one of fifteen renderer callers
-        with no 0x544a gate.
+        AND THE SERVER DEFERS TO IT. `on_user_hit` now applies a claim above 1 as-is; our own
+        incoming_damage still runs and still prints, as a check rather than an authority. A
+        claim of exactly 1 is the floor the discarded path produces, so it falls back to the
+        server's model - which keeps an unpatched client behaving as it always has.
 
-        It removes a wrong number rather than making it right. Making it right needs the
-        server to supply contact damage in some packet, and WHICH packet has not been found.
-
-          Fight anything.
-            ONE number matching the HP drop -> done
-            ONE number and it is the 1      -> the patch took and OURS vanished instead
-            NO numbers                      -> both went
-            still TWO                       -> the patch did not take; grep HITNUMBER in
-                                               client-patched\maplecw-hook.log
+          Fight anything and get hit.
+            ONE number matching the HP drop -> done, and the two sides agree by construction
+            still TWO                       -> our own 0x02D1 is still drawing; one line
+            ONE number, still 1             -> the client bailed at 14288b2e3, so mob+0xe8 is
+                                               zero and THAT is the next thing to chase. A
+                                               real result, not a failure
+            NO number                       -> say so
+          grep HITNUMBER in client-patched\maplecw-hook.log for whether it armed.
           -KeepClientHitNumber restores the old behaviour.
           research/damage-number-two-numbers.md.
 
@@ -1119,27 +1124,34 @@ if ($SetFieldProbe) {
     Write-Host '     !kit          the weapon and ammunition that job needs, and it'
     Write-Host '                   WARNS if you cannot equip what it just gave you.'
     Write-Host ''
-    Write-Host '  1. THE 1 IS PATCHED OUT. THERE SHOULD BE ONE NUMBER NOW.' -ForegroundColor White
-    Write-Host '     Last run settled it, and not the way I predicted. Template 1003'
-    Write-Host '     HAS an attack node and still hit you with its BODY - attack index'
-    Write-Host '     -1, claiming 1. Across 160 archived logs every one of 198 hits is'
-    Write-Host '     attack index -1 claiming 1. The client has never once been seen'
-    Write-Host '     using a mob attack skill, so it has no attack record to read the'
-    Write-Host '     damage from, and it floors at 1. It cannot compute contact damage.'
-    Write-Host '     No packet can stop it drawing that: option 0xAE is read at 11'
-    Write-Host '     sites and written at none, and the console command that clears'
-    Write-Host '     the other half of the gate is refused. So this is a CLIENT PATCH:'
-    Write-Host '     five nops over the one renderer call in that function, verified'
-    Write-Host '     against the image bytes before writing and read back after.'
-    Write-Host '     Ours is on a different path with no such gate, so it survives.'
-    Write-Host '     Just fight anything.'
-    Write-Host '       ONE number, and it matches the HP drop -> done'
-    Write-Host '       ONE number, but it is the 1  -> the patch took and OURS is the'
-    Write-Host '                     one that vanished. Say so; they are on separate paths'
-    Write-Host '       NO numbers at all            -> both went. Say so'
-    Write-Host '       still TWO                    -> the patch did not take. The hook'
-    Write-Host '                     log says which: grep HITNUMBER in maplecw-hook.log'
-    Write-Host '     -KeepClientHitNumber puts the old behaviour back.'
+    Write-Host '  1. THE CLIENT NOW COMPUTES ITS OWN MOB DAMAGE AND SENDS IT.' -ForegroundColor White
+    Write-Host '     You asked me to try harder to find how the client can compute'
+    Write-Host '     this itself and send it, so both sides agree. It CAN, and it'
+    Write-Host '     already does - it just threw the answer away.'
+    Write-Host '     The contact path computes mobAttack * x / 100 and lands a real'
+    Write-Host '     number in a register. Four instructions later a block gated on'
+    Write-Host '     ONE BYTE overwrites it with the floor. That is why every one of'
+    Write-Host '     198 captured hits across 160 logs reported 1 - not because the'
+    Write-Host '     client cannot work it out, but because it discards it.'
+    Write-Host '     The client sets that byte on itself with a constant, so it is a'
+    Write-Host '     ONE-BYTE patch: the immediate 0x00010001 becomes 0x00000001.'
+    Write-Host '     Every one of the eight sites that reads the byte moves together,'
+    Write-Host '     so the number COMPUTED, the number SENT and the number DRAWN'
+    Write-Host '     become the same number.'
+    Write-Host '     THE SERVER NOW DEFERS TO IT. A claim above 1 is applied as-is;'
+    Write-Host '     our own model still runs and still prints, as a check. So the'
+    Write-Host '     HP bar and the floating number agree BY CONSTRUCTION.'
+    Write-Host '     Just fight anything and get hit.'
+    Write-Host '       ONE number, matching the HP drop -> done, and both sides agree'
+    Write-Host '       still TWO numbers   -> our 0x02D1 is still drawing. One line to'
+    Write-Host '                     remove; say so'
+    Write-Host '       ONE number, still 1 -> the client bailed before computing,'
+    Write-Host '                     because the mob attack power at mob+0xe8 is zero.'
+    Write-Host '                     That is the next thing to chase and it is a REAL'
+    Write-Host '                     result. world.log says "the server overrode it"'
+    Write-Host '       NO number at all    -> say so'
+    Write-Host '     grep HITNUMBER in client-patched\maplecw-hook.log to see whether'
+    Write-Host '     the patch armed. -KeepClientHitNumber restores the old behaviour.'
     Write-Host ''
     Write-Host '  2. WARRIOR - THE WHOLE BRANCH, AND THE CHEAPEST ONE.' -ForegroundColor White
     Write-Host '     FIRST OF THE FOUR BRANCHES (step 7 comes before all of them).'
