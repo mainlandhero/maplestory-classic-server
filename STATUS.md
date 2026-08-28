@@ -78,6 +78,18 @@ nobody has yet changed a key *during* one, which is the whole caveat), and no ke
 decoder among the **179 of 273** channel-stage cases that have an out-of-line handler. One
 step on any future run settles which half to build first, and it is in that file.
 
+**Guilds are the Shop2 shape: every entry point ships and the window does not — 2026-08-28.**
+The client has guild classes, ~20 guild GM commands, guild chat and invite toggles,
+`button:guild` and `button:GuildCastle` on the status bar, `BtGuild` in the context menu, a
+`vector:guildName` slot in the character-info window, and a **fourth UserList tab whose
+bitmap reads "Guild"** — rendered, not guessed. `UserList.img` ships exactly three panels:
+`Buddy`, `Party`, `Blacklist`. Across **782 images in 17 archives** the only guild-named
+image is `Etc/guildCommon.img`, and it holds one number. So the guild window is in the same
+position as the Buy Back tab that killed the client, and **half the feature was never on the
+game socket at all** — `CNMGuildChatMessageEvent`, `CNMGetMyGuildListExFunc` and `WzMss.dll`'s
+SOAP endpoints own guild chat, the member list and the mark image. Server side: **zero guild
+code, and that is the right amount for now.** `research/guilds.md`.
+
 Where the answers land:
 
 | file | what is in it |

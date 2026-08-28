@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Run the client against the real login server, with characters that persist.
 
@@ -86,10 +86,11 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
                   so a !job character can end up holding something it cannot wear, which on
                   screen is indistinguishable from a broken skill.
 
-    THE STEPS, 1-7 plus 5b. Each is a claim that can come back false; report them
+    THE STEPS, 1-9 plus 5b. Each is a claim that can come back false; report them
     separately.
     ORDER: 8 FIRST - it only means anything in a young session. Then 2 with 3 inside it,
-    then 4, 5, 5b, 7. Step 1 is a READ, not a test.
+    then 4, 5, 5b, 7, and 9 whenever it suits - it rides along and costs no run of its own.
+    Step 1 is a READ, not a test.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
 
@@ -249,6 +250,36 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
           does not die      -> the session was long and the command is innocent
         Say WHEN either way. That discriminator cleared GoodTest in one login on 2026-08-22
         and has convicted nothing since, so neither answer is the safe default.
+
+     9. THE KEYBOARD LAYOUT - 20 seconds, and it decides which of two implementations.
+
+        The owner: "Upon logout then subsequent login, this customization is completely gone."
+        Correct, and it is not a broken feature: NOTHING in the seven crates has ever
+        touched a key mapping, and the client has nowhere local to keep one - its settings
+        block is sound, graphics and chat options, no key mapping in it. So it can only come
+        from us, and we have never sent it.
+
+        WHAT IS NOT KNOWN is whether the client even TELLS us when a key changes. 162
+        distinct archived captures contain no keymap-shaped packet - but nobody has ever
+        changed a key DURING a capture, so that is "never captured", not "never sent". This
+        step is the whole difference and it costs nothing.
+
+          Open the keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close the window.
+          Do it at a moment you can name, and say roughly when.
+
+        Then the answer is in world.log without another launch:
+          a NEW opcode near that moment -> the client reports changes. Its body IS the
+                     layout, and the same layout inverted is the restore packet. Both halves
+                     become measured. This is the server-side implementation and it is the
+                     right one
+          nothing new -> the client never volunteers it. The mapping can then only be
+                     recovered from the client's own memory by the hook, which is a
+                     different design and a worse one
+
+        The client does NOT freeze when a key is changed - the owner has done it several times
+        across sessions - so whatever it sends needs no reply, and our current silence is
+        already safe. That is one thing this step does not have to establish.
+        research/keymap-not-saved.md.
 
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
@@ -1075,9 +1106,9 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  STEPS 2-8, plus 5b. 1 is a read.' -ForegroundColor Yellow
+    Write-Host '  STEPS 2-9, plus 5b. 1 is a read.' -ForegroundColor Yellow
     Write-Host '  ORDER: 8 FIRST (it only means anything in a young session),' -ForegroundColor Yellow
-    Write-Host '  then 2 with 3 inside it, then 4, 5, 5b, 7. Step 1 is a READ.' -ForegroundColor Yellow
+    Write-Host '  then 2 with 3 inside it, then 4, 5, 5b, 7, 9. Step 1 is a READ.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
@@ -1280,6 +1311,28 @@ if ($SetFieldProbe) {
     Write-Host '       it does NOT die      -> the session was long; it is innocent'
     Write-Host '     Say WHEN either way. This same discriminator cleared GoodTest in'
     Write-Host '     one login and convicted nothing since, so neither is the default.'
+    Write-Host ''
+    Write-Host '  9. THE KEYBOARD LAYOUT - 20 SECONDS, AND IT PICKS AN ARCHITECTURE.' -ForegroundColor White
+    Write-Host '     You are right that it is not saved. It is not a broken feature:'
+    Write-Host '     nothing in the seven crates has EVER touched a key mapping, and'
+    Write-Host '     the client has nowhere local to keep one - I read its settings'
+    Write-Host '     block out of the exe and it is sound, graphics and chat options'
+    Write-Host '     with no key mapping in it. So it can only come from us.'
+    Write-Host '     What is NOT known is whether the client TELLS us when a key'
+    Write-Host '     changes. 162 archived captures have no keymap-shaped packet - but'
+    Write-Host '     nobody has ever changed a key DURING a capture, so that is'
+    Write-Host '     "never captured", not "never sent". This step is the difference.'
+    Write-Host '       OPEN KEYBOARD SETTINGS, DRAG ONE SKILL ONTO AN EMPTY KEY,' -ForegroundColor Magenta
+    Write-Host '       CLOSE THE WINDOW. Say roughly when you did it.' -ForegroundColor Magenta
+    Write-Host '     I read the answer out of world.log - no second launch:'
+    Write-Host '       a NEW opcode near that moment -> the client reports changes, its'
+    Write-Host '                body IS the layout, and both halves become measured.'
+    Write-Host '                That is the server-side implementation and the right one'
+    Write-Host '       nothing new -> the client never volunteers it, and the only way'
+    Write-Host '                left is the hook reading the client''s own memory'
+    Write-Host '     The client does NOT freeze when you change a key - you have done'
+    Write-Host '     it several times - so whatever it sends needs no reply and our'
+    Write-Host '     silence today is already safe. One less thing to establish.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
     Write-Host '     Damage VALIDATION on attack skills. MP cost is wired now; the'
