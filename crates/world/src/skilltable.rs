@@ -95,6 +95,9 @@ pub struct Skill {
     /// The highest level the client's own data describes.
     pub max_level: u32,
     pub name: String,
+    /// **The client cannot draw this skill.** `invisible` in the WZ, and in this client that
+    /// is exactly the set with no `String.wz` name. See [`COL_INVISIBLE`].
+    pub invisible: bool,
     /// Indexed by `level - 1`. Private so that the off-by-one lives in exactly one place:
     /// [`Skill::level`]. `None` in a slot means the file had no row for that level.
     levels: Vec<Option<SkillLevel>>,
@@ -172,6 +175,19 @@ const COL_JOB: usize = 1;
 const COL_LEVEL: usize = 2;
 const COL_MAX_LEVEL: usize = 3;
 const COL_NAME: usize = 5;
+/// The `invisible` column. **13 of the 176 skills set it, and they are exactly the 13 with no
+/// name** - both directions checked, zero counterexamples either way. `[L]`
+///
+/// They are second-job internals: `1101006`, `1101007`, `1201006`, `1201007`, `1301006`,
+/// `1301007`, `2101005`, `2111006`, `3101005`, `3101006`, `3111006`, `3201005`, `3211006`.
+/// Poison Breath's real numbers live on `2101005` and reach the tooltip through
+/// `extraSkillInfo` - but that explains only 4 of the 13, so `invisible` is the discriminator
+/// and `extraSkillInfo` is not.
+///
+/// **None of the 24 first-job skills is invisible**, which is why this never mattered until
+/// second job appeared on the horizon: `book()` would have handed a Fighter ten skills, and a
+/// skill with no `String.wz` entry is one the client cannot draw.
+const COL_INVISIBLE: usize = 24;
 const COL_MP_CON: usize = 31;
 const COL_TIME: usize = 37;
 const COL_COOLTIME: usize = 40;
@@ -303,6 +319,7 @@ impl SkillTable {
                 job,
                 max_level,
                 name: f[COL_NAME].to_string(),
+                invisible: !matches!(f[COL_INVISIBLE], "" | "0"),
                 levels: Vec::new(),
             });
             // **Placed by level rather than pushed**, so nothing here assumes the file is
@@ -383,8 +400,15 @@ impl SkillTable {
     /// Sorted by id because a `HashMap` walk is not stable, and an unstable order turns a
     /// chat report into something nobody can diff against the last run.
     pub fn book(&self, job: u16) -> Vec<&Skill> {
-        let mut out: Vec<&Skill> =
-            self.by_id.values().filter(|s| s.job != 0 && self.may_learn(job, s.id)).collect();
+        // **Invisible skills are excluded**, and that only started mattering with second job.
+        // Thirteen skills carry `invisible` and are exactly the thirteen with no `String.wz`
+        // name; none is in the first-job books, so `!learn` was correct by luck until now. A
+        // Fighter's book would otherwise hand out ten skills the client cannot draw.
+        let mut out: Vec<&Skill> = self
+            .by_id
+            .values()
+            .filter(|s| s.job != 0 && !s.invisible && self.may_learn(job, s.id))
+            .collect();
         out.sort_by_key(|s| s.id);
         out
     }

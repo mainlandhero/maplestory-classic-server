@@ -33,6 +33,7 @@ pub mod quest;
 pub mod rates;
 pub mod session;
 pub mod skills;
+pub mod skillpoints;
 pub mod storage;
 
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
@@ -40,6 +41,10 @@ pub use inventory::{
     Bag, Equipped, EquippedItem, InvItem, InventoryType, Item, ItemKind, ItemRules, MoveOutcome,
 };
 pub use quest::{QuestRow, QuestState};
+pub use skillpoints::{
+    balance, Refunded, SkillUp, SpendOutcome, SpendRefusal, SpendRow, CLIENT_COMPUTED_TIER,
+    MAX_POOL_TIER,
+};
 pub use storage::{
     StorageBox, StorageItem, DEFAULT_STORAGE_SLOTS, MAX_STORAGE_SLOTS, MIN_STORAGE_SLOTS,
 };

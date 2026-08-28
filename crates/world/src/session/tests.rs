@@ -1378,6 +1378,105 @@ fn stored_mp(store: &Arc<Store>, id: u32) -> u32 {
         .mp
 }
 
+/// **A skill point is charged, and it does not come back on its own.**
+///
+/// The farming loop this closes: spend three points into Power Strike, relog, and have the
+/// three points back **and** keep the skill. `!resetsp`'s own chat line documented it - *"the
+/// points come back on their own"* - which is how a loop gets written down instead of fixed.
+///
+/// Four things, because the Heena lesson is that a test of one effect passes while the others
+/// are wrong: the level, the ledger, the balance the client is told, and that `!resetsp`
+/// refunds rather than just erasing.
+#[test]
+fn a_skill_point_is_charged_and_only_a_forget_gives_it_back() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return;
+    }
+    const MAGIC_CLAW: u32 = 2001003;
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 200;
+    made.level = 30;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        skills: crate::skilltable::SkillTable::load(path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    let owed = crate::skillpoints::entitlement(crate::skillpoints::Tier::First, 30);
+    assert!(owed >= 3, "level 30 must have earned points for this to test anything");
+    let ask = |count: u32| {
+        let mut b = net::skills::CLIENT_USER_SKILL_UP_REQUEST.to_le_bytes().to_vec();
+        b.extend_from_slice(&0x1187_0e94u32.to_le_bytes());
+        b.extend_from_slice(&MAGIC_CLAW.to_le_bytes());
+        b.extend_from_slice(&count.to_le_bytes());
+        b
+    };
+
+    let out = s.handle(&ask(3));
+    assert_eq!(store.skill_level(made.id, MAGIC_CLAW).unwrap_or(0), 3, "three levels");
+    assert_eq!(store.skill_points_spent(made.id, 1).unwrap(), 3, "and three points charged");
+    // The client is told the new balance, or the database is right and the window is wrong.
+    let pool = out
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED && r.what.contains("skill points now"))
+        .expect("the pool must be re-sent - the client never decrements one itself");
+    assert!(pool.what.contains(&format!("tier 1 = {}", owed - 3)), "{}", pool.what);
+
+    // **The loop it closes**: the points do not return by themselves.
+    assert_eq!(store.skill_points_spent(made.id, 1).unwrap(), 3, "still charged");
+
+    // `!resetsp` refunds, in one transaction with the forget.
+    let out = s.handle(&gm_chat("!resetsp"));
+    assert_eq!(store.skill_points_spent(made.id, 1).unwrap(), 0, "the refund happened");
+    assert_eq!(store.skill_level(made.id, MAGIC_CLAW).unwrap_or(0), 0, "and the skill is gone");
+    assert!(notice_text(&out[0]).contains("Refunded 3 skill point(s)"), "{}", notice_text(&out[0]));
+    assert!(
+        out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "and the refilled pool reaches the screen"
+    );
+}
+
+/// **`!learn` grants levels without spending a point**, which is the whole reason it exists.
+///
+/// If it charged the pool, `!learn` on a Magician book would want far more points than a
+/// level-30 character has earned and the command would silently stop being free - which is why
+/// the ledger is a stored counter rather than `SUM(level)`.
+#[test]
+fn learn_grants_levels_without_charging_the_pool() {
+    let path = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !path.exists() {
+        return;
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 200;
+    made.level = 30;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        skills: crate::skilltable::SkillTable::load(path),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    s.handle(&gm_chat("!learn"));
+    let levels: u32 = store.skills(made.id).unwrap().iter().map(|s| s.level).sum();
+    assert!(levels > 60, "the whole Magician book is more levels than a pool could buy: {levels}");
+    assert_eq!(store.skill_points_spent(made.id, 1).unwrap(), 0, "and it charged nothing");
+}
+
 /// **Clicking an instructor advances the job**, and every refusal is still a sentence.
 ///
 /// `world::jobs::advancement_for` was correct from the day it was written and had **no caller
@@ -5784,6 +5883,10 @@ fn a_magician_may_raise_magic_claw_and_a_beginner_may_not() {
     // beginner constant 3. A bulk request for 99 must clamp to 20, not to 3.
     let mut chr = s.claimed_character().unwrap();
     chr.job = 200;
+    // **Level 30, because skill points are a real balance now.** Before the ledger a level-0
+    // character could raise anything; `entitlement(First, level)` gates it, and a character
+    // who has earned nothing is correctly refused. That is the feature, not a broken test.
+    chr.level = 30;
     store.save_character_progress(&chr).unwrap();
     s.handle(&ask(99));
     assert_eq!(
@@ -5872,6 +5975,7 @@ fn spending_a_point_on_an_attack_skill_warns_when_the_stat_is_missing() {
         let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
         let mut made = store.create_character(account_id, 0, &chr).unwrap();
         made.job = 200;
+        made.level = 30;
         made.intelligence = int;
         store.save_character_progress(&made).unwrap();
         store.create_migration(account_id, made.id, 0, 0).unwrap();
@@ -6384,6 +6488,7 @@ fn learn_clamps_each_skill_to_its_own_maximum() {
     let chr = net::opcode::Character { name: "Cobalt".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 200;
+    made.level = 30;
     store.save_character_progress(&made).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {

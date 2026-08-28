@@ -63,34 +63,57 @@ impl Store {
 
     /// One skill's level, or 0 if the character has never raised it.
     pub fn skill_level(&self, character_id: u32, skill_id: u32) -> Result<u32> {
-        let level: Option<i64> = self
-            .conn()
-            .query_row(
-                "SELECT level FROM character_skills WHERE character_id = ?1 AND skill_id = ?2",
-                rusqlite::params![i64::from(character_id), i64::from(skill_id)],
-                |row| row.get(0),
-            )
-            .ok();
-        Ok(level.unwrap_or(0) as u32)
+        Ok(skill_level_row(&self.conn(), character_id, skill_id).unwrap_or(0))
     }
 
     /// Set a skill's level. Level 0 **deletes** the row - see the module docs.
     pub fn set_skill_level(&self, character_id: u32, skill_id: u32, level: u32) -> Result<()> {
-        if level == 0 {
-            self.conn().execute(
-                "DELETE FROM character_skills WHERE character_id = ?1 AND skill_id = ?2",
-                rusqlite::params![i64::from(character_id), i64::from(skill_id)],
-            )?;
-            return Ok(());
-        }
-        self.conn().execute(
-            "INSERT INTO character_skills (character_id, skill_id, level)
-                  VALUES (?1, ?2, ?3)
-             ON CONFLICT(character_id, skill_id) DO UPDATE SET level = ?3",
-            rusqlite::params![i64::from(character_id), i64::from(skill_id), i64::from(level)],
-        )?;
-        Ok(())
+        set_skill_level_row(&self.conn(), character_id, skill_id, level)
     }
+}
+
+/// Read one skill's level on a caller-supplied connection.
+///
+/// Extracted from [`Store::skill_level`] so a spend can read the level and charge the pool
+/// inside **one** transaction - see [`Store::spend_and_raise_skill`], which lives in
+/// [`crate::skillpoints`]. Same query, same "no row means 0" rule.
+pub(crate) fn skill_level_row(conn: &Connection, character_id: u32, skill_id: u32) -> Result<u32> {
+    let level: Option<i64> = conn
+        .query_row(
+            "SELECT level FROM character_skills WHERE character_id = ?1 AND skill_id = ?2",
+            rusqlite::params![i64::from(character_id), i64::from(skill_id)],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(level.unwrap_or(0) as u32)
+}
+
+/// Write one skill's level on a caller-supplied connection. Level 0 deletes the row.
+///
+/// **The only copy of this statement pair.** [`Store::set_skill_level`] and the skill-up in
+/// [`crate::skillpoints`] both go through here, because two copies of one rule is how one of
+/// them ends up wrong - and the rule that a level of 0 is a *deletion* rather than a stored
+/// zero is exactly the kind that gets missed in the second copy.
+pub(crate) fn set_skill_level_row(
+    conn: &Connection,
+    character_id: u32,
+    skill_id: u32,
+    level: u32,
+) -> Result<()> {
+    if level == 0 {
+        conn.execute(
+            "DELETE FROM character_skills WHERE character_id = ?1 AND skill_id = ?2",
+            rusqlite::params![i64::from(character_id), i64::from(skill_id)],
+        )?;
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO character_skills (character_id, skill_id, level)
+              VALUES (?1, ?2, ?3)
+         ON CONFLICT(character_id, skill_id) DO UPDATE SET level = ?3",
+        rusqlite::params![i64::from(character_id), i64::from(skill_id), i64::from(level)],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

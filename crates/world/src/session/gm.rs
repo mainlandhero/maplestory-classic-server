@@ -847,28 +847,34 @@ impl Session {
             return self.gm_ack("!resetsp: no skills to forget.".to_string());
         }
 
-        let mut forgotten = Vec::new();
-        let mut failed = Vec::new();
-        for skill in &learned {
-            match self.store.set_skill_level(chr.id, skill.id, 0) {
-                Ok(()) => forgotten.push(net::skills::SkillChange::Forget { id: skill.id }),
-                // **Reported, not swallowed.** A reset that silently half-ran would leave the
-                // client and the database disagreeing about what is learned, and the player
-                // would find out by clicking a skill that no longer exists.
-                Err(e) => failed.push(format!("{} ({e})", skill.id)),
-            }
-        }
+        // **Forget and refund in ONE transaction, or this command's own chat line is a lie.**
+        //
+        // It used to loop `set_skill_level(.., 0)`, which was right while nothing tracked a
+        // balance: the pool was recomputed from LEVEL, so forgetting a skill *was* the refund.
+        // With the ledger that loop would erase the levels and leave the pool charged, and the
+        // points would NOT come back - while the line below went on promising they would.
+        //
+        // **Reported, not swallowed**, and all-or-nothing: a reset that silently half-ran
+        // would leave the client and the database disagreeing about what is learned, and the
+        // player would find out by clicking a skill that no longer exists.
+        let refunded = match self.store.forget_all_skills_and_refund(chr.id) {
+            Ok(r) => r,
+            Err(e) => return self.gm_ack(format!("!resetsp FAILED and changed nothing: {e}")),
+        };
+        let forgotten: Vec<net::skills::SkillChange> =
+            learned.iter().map(|s| net::skills::SkillChange::Forget { id: s.id }).collect();
+        let failed: Vec<String> = Vec::new();
 
         let named: Vec<String> = learned
             .iter()
             .map(|s| format!("{} lv{}", self.skill_name(s.id), s.level))
             .collect();
         let mut out = self.gm_ack(format!(
-            "Forgot {} skill(s): {}. The points come back on their own - this server computes \
-             the pool from your LEVEL rather than tracking a balance, so a forgotten skill is \
-             the whole refund.{}",
+            "Forgot {} skill(s): {}. Refunded {} skill point(s) - the forget and the refund are \
+             ONE transaction, so a forgotten skill IS the whole refund.{}",
             forgotten.len(),
             named.join(", "),
+            refunded.points,
             if failed.is_empty() {
                 String::new()
             } else {
@@ -881,6 +887,10 @@ impl Session {
                 format!("!resetsp forgot {} skill(s)", forgotten.len()),
             ));
         }
+        // **The refunded pool has to reach the screen.** The client never increments a pool
+        // itself, so without this the points are back in the database and the window still
+        // says zero - which reads as the refund not happening.
+        out.extend(self.skill_point_reply(&chr));
         out
     }
 

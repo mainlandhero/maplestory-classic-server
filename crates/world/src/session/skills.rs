@@ -143,12 +143,44 @@ impl Session {
             })
             .unwrap_or_default();
 
-        if let Err(e) = self.store.set_skill_level(chr.id, req.skill_id, next) {
+        // **The point is charged and the level raised in ONE transaction.**
+        //
+        // Until 2026-08-28 this called `set_skill_level` and nothing tracked the pool, so a
+        // player could spend three points into Power Strike, relog, and have the three points
+        // back *and* keep the skill. `gm_reset_sp`'s own chat line said so out loud - *"the
+        // points come back on their own"* - which is how a farming loop gets documented
+        // instead of fixed.
+        //
+        // `spend_and_raise_skill` raises the level by exactly the points it charged, inside
+        // one transaction, so the two cannot come apart. `CLAUDE.md` names that failure twice:
+        // the Heena payout that hung off the request rather than the transition, and the
+        // forfeit whose `DELETE` did not carry the guard its own doc block promised.
+        let tier = self.pool_tier(req.skill_id);
+        let entitlement = self.pool_entitlement(tier, chr.level);
+        let up = match self.store.spend_and_raise_skill(
+            chr.id,
+            req.skill_id,
+            tier,
+            entitlement,
+            granted,
+        ) {
+            Ok(up) => up,
+            Err(e) => {
+                return vec![self.skill_reply(
+                    net::skills::skill_up_refused(net::skills::SkillUpRefusal::NotYours),
+                    format!("could not save the skill: {e}"),
+                )];
+            }
+        };
+        // **Return early on the refusal.** Everything below is an effect of the transition,
+        // and the one way to be sure none of them runs is to leave before any of them can.
+        if let store::SpendOutcome::Refused(why) = up.spend {
             return vec![self.skill_reply(
-                net::skills::skill_up_refused(net::skills::SkillUpRefusal::NotYours),
-                format!("could not save the skill: {e}"),
+                net::skills::skill_up_refused(net::skills::SkillUpRefusal::BadCount),
+                format!("skill {} not raised: {why}", req.skill_id),
             )];
         }
+        let next = up.level;
 
         let change = net::skills::SkillChange::Learn(net::skills::Skill::at_level(
             req.skill_id,
@@ -163,12 +195,84 @@ impl Session {
                 if granted < req.count { ", clamped by the level table" } else { "" }
             ),
         )];
+        // **The pool on screen, or the database is right and the screen is wrong.** The
+        // client never decrements a pool itself.
+        out.extend(self.skill_point_reply(&chr));
         // **Only when there is something to say.** A chat line on every point would be noise,
         // and noise is how a warning stops being read.
         if !scaling_warning.is_empty() {
             out.extend(self.notice(scaling_warning.trim().trim_matches('*').trim().to_string()));
         }
         out
+    }
+
+    /// **Which pool a skill spends from.** The client's own key, not a job id.
+    ///
+    /// `FUN_1402CB030` returns 0 for any key above 10, so a job id would read an empty pool
+    /// and grey the `+` button with nothing on screen to say why. `net::stats::tier_for_job`
+    /// is the client's own arithmetic; the job is `skillId / 10000`.
+    pub(super) fn pool_tier(&self, skill_id: u32) -> u8 {
+        net::stats::tier_for_job(u16::try_from(skill_id / 10_000).unwrap_or(0))
+    }
+
+    /// **How many points that pool has ever been owed**, from the character's level.
+    ///
+    /// `world::skillpoints::entitlement` is a **total owed** rather than an increment, which
+    /// is what makes re-sending it idempotent and advancing late pay the same as advancing
+    /// early. The ledger subtracts what has been spent; this is the other half.
+    ///
+    /// Tier 0 is the beginner pool and returns `0` deliberately - the client computes that one
+    /// itself, and the store treats a tier-0 spend as a success that writes no row.
+    pub(super) fn pool_entitlement(&self, tier: u8, level: u32) -> u32 {
+        match tier {
+            1 => crate::skillpoints::entitlement(crate::skillpoints::Tier::First, level),
+            2 => crate::skillpoints::entitlement(crate::skillpoints::Tier::Second, level),
+            // Third job onward is not modelled. Saying `0` rather than guessing is the point:
+            // a made-up entitlement would hand out points this server cannot account for.
+            _ => 0,
+        }
+    }
+
+    /// **Every pool, as one `0x007C`.** Sent after anything that moves a balance.
+    ///
+    /// `research/skill-points.md` §6.2, **[L]**: the client never decrements a pool itself, and
+    /// the extended arm **clears the whole list before reading it**. So this has to carry every
+    /// pool, not the one that changed - a packet with only the spent pool would blank the
+    /// others. Without it the database is right and the screen is wrong, which is the failure
+    /// this server has shipped twice.
+    pub(super) fn skill_point_reply(&self, chr: &net::opcode::Character) -> Vec<Reply> {
+        let spent = self.store.skill_points_spent_by_tier(chr.id).unwrap_or_default();
+        let mut pools = Vec::new();
+        for tier in [1u8, 2] {
+            let owed = self.pool_entitlement(tier, chr.level);
+            let used = spent.iter().find(|(t, _)| *t == tier).map(|(_, n)| *n).unwrap_or(0);
+            let left = store::balance(owed, used);
+            if owed > 0 {
+                pools.push(net::stats::SpPool { job_level: tier, amount: left });
+            }
+        }
+        if pools.is_empty() {
+            return Vec::new();
+        }
+        let owed: Vec<String> =
+            pools.iter().map(|p| format!("tier {} = {}", p.job_level, p.amount)).collect();
+        let table = net::stats::Sp::Extended(pools);
+        if !table.matches_job(chr.job) {
+            // A job outside the explorer tree takes the plain `u16` encoding, and sending the
+            // extended shape would desynchronise the rest of the packet rather than merely
+            // lose the points.
+            return Vec::new();
+        }
+        vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange { sp: Some(table), ..Default::default() }.build(),
+            what: format!(
+                "StatChanged: skill points now [{}]. Mask bit 15, EVERY pool - the extended \
+                 arm clears the whole list before reading, so a packet carrying only the pool \
+                 that changed would blank the others",
+                owed.join(", ")
+            ),
+        }]
     }
 
     /// Every reply on this path is the same opcode, and every one of them clears the latch.

@@ -217,6 +217,10 @@ impl Store {
         crate::storage::create_tables(&conn)?;
         crate::cash::create_tables(&conn)?;
         crate::skills::create_tables(&conn)?;
+        // The spent half of a skill point. A whole new table, so `CREATE TABLE IF NOT EXISTS`
+        // is enough - see `skillpoints::create_tables` for what that means for a character who
+        // already has skills learned.
+        crate::skillpoints::create_tables(&conn)?;
         crate::rates::create_tables(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
