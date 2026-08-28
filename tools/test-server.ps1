@@ -77,7 +77,8 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
 
     THE STEPS, 1-7 plus 5b. Each is a claim that can come back false; report them
     separately.
-    DO STEP 7 FIRST: selling killed the client last run.
+    ORDER: 7 (selling - it killed the client last run), then 1 (the 1 damage, one hit
+    and it is settled), then 2 and the branches.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
 
@@ -1064,8 +1065,8 @@ Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
     Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 1-7, plus 5b.' -ForegroundColor Yellow
-    Write-Host '  DO STEP 7 FIRST - selling, which killed the client last run.' -ForegroundColor Yellow
-    Write-Host '  Then step 2, which is the cheapest and isolates the most.' -ForegroundColor Yellow
+    Write-Host '  ORDER: 7 (selling - it killed the client last run), then 1 (the' -ForegroundColor Yellow
+    Write-Host '  1 damage, one hit and it is settled), then 2 and the branches.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
@@ -1082,14 +1083,6 @@ if ($SetFieldProbe) {
     Write-Host '  AND MAGIC CLAW DEALING 1 WAS NOT A BUG. You were a Rogue with 6'
     Write-Host '  INT wearing a Magician job id. The formula predicts exactly 1.'
     Write-Host '  That is why steps 2, 4 and 5 all start by fixing the stat.'
-    Write-Host ''
-    Write-Host '  NEW SINCE LAST RUN: THE ATTACK PACKET CARRIES THE SKILL ID.' -ForegroundColor Cyan
-    Write-Host '  For nine days this server could not tell which skill you cast, so'
-    Write-Host '  every damage check was left unwired. It is the u32 at body offset'
-    Write-Host '  2, and it was in the logs the whole time - the seven Magic Claw'
-    Write-Host '  packets from your last run each say 2001003, level 7.'
-    Write-Host '  Nothing you do this run tests that directly. It is why the rest'
-    Write-Host '  of this plan is possible.'
     Write-Host ''
     Write-Host '  TWO NEW COMMANDS DO THE SETUP FOR YOU:' -ForegroundColor Cyan
     Write-Host '     !learn        every skill of your job at its own max level.'
