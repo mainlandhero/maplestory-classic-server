@@ -65,6 +65,19 @@ those two directories.)*
 Same shape as the cash-shop opcode that sat in the log for three sessions while being reported
 absent: **nobody asked the specific question.**
 
+**The keyboard layout is not saved because nothing has ever tried to save it — 2026-08-28.**
+The owner: *"Upon logout then subsequent login, this customization is completely gone."* This is
+not a broken feature; it is an absent one, on **both** halves. `keymap|funckey|quickslot`
+case-insensitive over the whole repo matches three prose files and **zero lines in any of the
+seven crates**, and none of the 14 tables stores a mapping. The client cannot cover for us:
+its local settings block — enumerated straight out of the image — holds sound, graphics, chat
+and UI options and **no key mapping**, so the mapping can only come from the server. Neither
+opcode is known yet, and the honest limit of the search so far is written down in
+`research/keymap-not-saved.md`: no keymap-shaped packet in **162 distinct captures** (and
+nobody has yet changed a key *during* one, which is the whole caveat), and no key-table
+decoder among the **179 of 273** channel-stage cases that have an out-of-line handler. One
+step on any future run settles which half to build first, and it is in that file.
+
 Where the answers land:
 
 | file | what is in it |

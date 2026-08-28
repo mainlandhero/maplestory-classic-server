@@ -18,6 +18,31 @@ MSVC x64 layout used here:
     python tools/rtti.py --list Login          # class names matching a substring
     python tools/rtti.py --vtable CLogin       # vtables + virtual method addresses
 
+## `--vtable` CANNOT work for a MapleStory class, and says so by returning nothing
+
+Measured 2026-08-28, after `--vtable CUIStatusbar` came back `0 locator(s)` and was briefly
+read as "that class has no vtable". It is not a property of the class. **Only 240 of the
+1764 type descriptors have a CompleteObjectLocator anywhere in the file at all**, and every
+one of those 240 belongs to third-party code compiled in - `std::`, `Concurrency::`, ATL,
+CryptoPP, Box2D (`b2Shape`, `b2Joint`, ...). **Not one of the game's own `C*` classes has
+one.** `CLoginQueueDlg` - the class the paragraph above uses as its example - has none, and
+neither does `CUIStatusbar`, `CUIQuickSlot` or `KeyProcessor`.
+
+So the sentence "it left the type system completely intact" above is only half true, and
+this is the half that bites: Themida kept the **name strings** in `.data` and took the
+locators and vtables with it. `--list` is sound. `--vtable` returns an empty result for
+every class you would actually want, and an empty result here is a property of the
+instrument, never a finding about the class.
+
+To reproduce the count rather than trusting this paragraph:
+
+    valid = [n for n, td in names.items() if find_col_for(data, sections, td)]
+    # 240 of 1764, all of them library code
+
+`CLAUDE.md`: prove a search can find a positive control before believing its silence. The
+positive control for `--vtable` is `--vtable exception` (a `std::` class, which does
+resolve); the useless control is any class from the game.
+
 ## `rva_to_off` raises on the BSS tail, on purpose
 
 `.data` in this image has `vsize 0xa2aa8` but `rsize 0x67400`: the last **0x3b6a8 bytes
