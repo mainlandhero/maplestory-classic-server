@@ -1378,6 +1378,92 @@ fn stored_mp(store: &Arc<Store>, id: u32) -> u32 {
         .mp
 }
 
+/// **Clicking an instructor advances the job**, and every refusal is still a sentence.
+///
+/// `world::jobs::advancement_for` was correct from the day it was written and had **no caller
+/// outside tests** - `!job` skips it deliberately - so the four instructors just said a line.
+/// `CLAUDE.md`'s "built is not wired", found by asking what has no caller.
+///
+/// Four effects are asserted, because this is the shape the Heena quest got wrong: the guard
+/// was asked and its answer ignored, because the payout sat outside the match. Here: the
+/// database row, the `0x007C`, the sentence, and that a **refusal changes nothing**.
+#[test]
+fn clicking_an_instructor_advances_the_job() {
+    // Dances with Balrog is template 511, one map inside Perion - `jobs::FIRST_JOBS`.
+    const BALROG: u32 = 511;
+    let build = |level: u32, strength: u16| {
+        let mut npcs = std::collections::HashMap::new();
+        npcs.insert(
+            net::opcode::START_MAP_ID,
+            vec![net::opcode::FieldNpc {
+                object_id: 1000, template_id: BALROG, x: 0, cy: 0, fh: 1,
+                rx0: 0, rx1: 0, f: 0,
+            }],
+        );
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Rookie".to_string(), ..Default::default() };
+        let mut made = store.create_character(account_id, 0, &chr).unwrap();
+        made.level = level;
+        made.strength = strength;
+        made.job = 0;
+        store.save_character_progress(&made).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        let config = Config { set_field_probe: true, npcs, ..Config::default() };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(made.id);
+        (s, store, made.id)
+    };
+    let job_of = |store: &Arc<Store>, id: u32| {
+        store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().job
+    };
+
+    // ---- eligible: level 10 and STR at the minimum ----
+    let (mut s, store, id) = build(crate::jobs::LEVEL_MINIMUM, crate::jobs::STAT_MINIMUM);
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(job_of(&store, id), 100, "the job must persist, not just be announced");
+    let stat = out
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("the client must be told, or it draws the old job forever");
+    assert!(stat.what.contains("job 0 -> 100"), "{}", stat.what);
+    assert!(stat.what.contains("skill points"), "and the SP, or the + button stays grey: {}", stat.what);
+    assert!(
+        out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
+        "and a sentence, or nothing on screen says what happened"
+    );
+
+    // ---- too low a level: a sentence, and NOTHING else ----
+    let (mut s, store, id) = build(crate::jobs::LEVEL_MINIMUM - 1, crate::jobs::STAT_MINIMUM);
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(job_of(&store, id), 0, "a refused advancement must change nothing");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "and must not send a job packet"
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
+        "but it is still ANSWERED - a silent click is the frozen-UI failure"
+    );
+
+    // ---- at level, short on the stat: the sentence names the STAT, not the level ----
+    let (mut s, store, id) = build(crate::jobs::LEVEL_MINIMUM, 0);
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(job_of(&store, id), 0);
+    assert!(out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE));
+
+    // ---- already advanced: one-way, so this is a refusal rather than a re-offer ----
+    let (mut s, store, id) = build(crate::jobs::LEVEL_MINIMUM, crate::jobs::STAT_MINIMUM);
+    s.handle(&npc_click(1000));
+    assert_eq!(job_of(&store, id), 100);
+    let out = s.handle(&npc_click(1000));
+    assert!(
+        !out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "a second click must not re-advance or re-grant SP"
+    );
+    assert_eq!(job_of(&store, id), 100, "and the job is unchanged");
+}
+
 /// **Iron Body actually reduces the damage taken.**
 ///
 /// The owner, 2026-08-28: *"Iron Body did not seem to reduce the damage I take."* It could not have.

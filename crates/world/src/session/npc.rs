@@ -622,6 +622,15 @@ impl Session {
             return replies;
         }
 
+        // **And an instructor advances the job instead of talking.** Same shape again, and
+        // the same failure it fixes: `world::jobs` has decided this correctly since it was
+        // written, and nothing called it - `!job` was the only way to reach a job change, so
+        // Dances with Balrog, Grendel, Athena Pierce and Dark Lord all just said a line.
+        // `CLAUDE.md`'s "built is not wired", found by asking what has no caller.
+        if let Some(replies) = self.advance_job_for(template) {
+            return replies;
+        }
+
         // A quest-less NPC is a one-line conversation: its own `d0`. Going through the
         // same state machine means its OK is handled the way a quest's is, rather than
         // leaving a stale conversation behind for the next 0x00F3 to walk into.
@@ -646,6 +655,83 @@ impl Session {
     /// draws `BtOK` and `BtClose`, so pressing it returns the same `action = 1` an OK does
     /// and the server has nothing to branch on. A type `0x10` box draws `BtQYes`/`BtQNo` and
     /// answers `1` for Yes and `0` for No, unambiguously. **[L]**, `research/script-reply.md`.
+    /// **An instructor advances the job**, or says why not. `None` for any other NPC.
+    ///
+    /// # This was decided and unreachable
+    ///
+    /// `world::jobs::advancement_for` has been correct since the day it was written and had
+    /// **no caller outside tests**: `!job` skips it deliberately (it is a debug command and
+    /// must be able to set any job), so the four instructors fell through to an ordinary
+    /// one-line conversation. On screen that is a job advancement that does not exist.
+    ///
+    /// # A refusal is still an answer, and it is said in the right order
+    ///
+    /// `jobs::refusal` puts the sentence together, and the order of its checks is the order
+    /// the refusals should be *said* in: an eighth-level beginner is told to come back at ten,
+    /// not that their LUK is short, because the second sentence is useless advice while the
+    /// first is still true.
+    ///
+    /// # Every effect hangs off the transition
+    ///
+    /// The job write, the packet and the congratulation are all reached through one `Eligible`
+    /// and one successful save. `CLAUDE.md`'s Heena section is about exactly this: the guard
+    /// was asked and its answer ignored, because the payout sat outside the match. **If the
+    /// save fails nothing else happens** - the character does not get a job packet for a job
+    /// the database does not have.
+    ///
+    /// # Advancement is one-way
+    ///
+    /// The client's own quest text says *"a job advancement cannot be undone once made"*, so
+    /// `AlreadyAdvanced` is a refusal rather than a re-offer. `!resetsp` does not undo it and
+    /// is not meant to.
+    pub(super) fn advance_job_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let mut chr = self.claimed_character()?;
+        match crate::jobs::advancement_for(&chr, template) {
+            // Not an instructor at all - fall through to whatever this NPC normally does.
+            crate::jobs::Advancement::NotAnInstructor => None,
+            crate::jobs::Advancement::Eligible { job, job_name } => {
+                let was = chr.job;
+                chr.job = job;
+                if let Err(e) = self.store.save_character_progress(&chr) {
+                    // The save is the transition. Nothing follows a failed one.
+                    return Some(self.instructor_says(
+                        template,
+                        &format!("Something went wrong and your job was not changed: {e}"),
+                    ));
+                }
+                let mut out = self.instructor_says(
+                    template,
+                    &format!(
+                        "Congratulations. You are now a {job_name}. Open your skill window - \
+                         you have skill points to spend."
+                    ),
+                );
+                out.push(self.job_change_reply(was, job));
+                Some(out)
+            }
+            // Every other arm is a refusal with a sentence already written for it.
+            other => {
+                let _ = &other;
+                let text = crate::jobs::refusal(&chr, template)?;
+                Some(self.instructor_says(template, &text))
+            }
+        }
+    }
+
+    /// One `0x055B` from an instructor, with no conversation state behind it.
+    ///
+    /// Deliberately **not** routed through [`Session::say_line`]: that walks a WZ line list and
+    /// leaves a `Conversation` for the next `0x00F3` to step through. This is a single
+    /// sentence the server composed, and leaving a stale conversation behind it is how a later
+    /// reply walks into the wrong state machine.
+    fn instructor_says(&self, template: u32, text: &str) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(template, text, false, false),
+            what: format!("ScriptMessage Say from instructor {template}: {text:?}"),
+        }]
+    }
+
     pub(super) fn say_line(&mut self, index: usize) -> Vec<Reply> {
         let Some(convo) = self.conversation.clone() else { return Vec::new() };
         let Some(lines) = self.say_lines(&convo) else {

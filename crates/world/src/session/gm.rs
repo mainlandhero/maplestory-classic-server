@@ -183,50 +183,7 @@ impl Session {
         // same as advancing early. What is missing is a record of what has been SPENT - so
         // until `0x013B` persists, points come back on the next advancement. Said out loud
         // because a player who spends and then sees them return will otherwise report a bug.
-        let mut pools = Vec::new();
-        for tier in [crate::skillpoints::Tier::First, crate::skillpoints::Tier::Second] {
-            let amount = crate::skillpoints::entitlement(tier, chr.level);
-            if amount > 0 {
-                pools.push(net::stats::SpPool {
-                    job_level: net::stats::tier_for_job(match tier {
-                        crate::skillpoints::Tier::First => 100,
-                        crate::skillpoints::Tier::Second => 110,
-                    }),
-                    amount,
-                });
-            }
-        }
-        let owed: Vec<String> =
-            pools.iter().map(|p| format!("tier {} = {}", p.job_level, p.amount)).collect();
-
-        // **The encoding forks on the job, so let the type check rather than assume.** Every
-        // first job takes the extended branch, but a job outside the explorer tree takes a
-        // plain `u16` - and sending the wrong shape would desynchronise the rest of the packet,
-        // not merely lose the points. `matches_job` is asked with the NEW job, which is the one
-        // the client holds by the time it reads this field.
-        let table = net::stats::Sp::Extended(pools);
-        let sp = table.matches_job(job).then_some(table);
-        let sp_note = match &sp {
-            Some(_) => format!("AND the skill points [{}]", owed.join(", ")),
-            None => format!(
-                "and NO SP: job {job} takes the PLAIN u16 encoding and this server only \
-                 computes the extended table. The wrong shape would desynchronise the packet"
-            ),
-        };
-        out.push(Reply {
-            opcode: net::stats::STAT_CHANGED,
-            body: net::stats::StatChange { job: Some((job, 0)), sp, ..Default::default() }
-                .build(),
-            what: format!(
-                "StatChanged: job {was} -> {job}, {sp_note}. One packet, mask bit 5 plus the SP \
-                 bit - the client picks the SP encoding from the NEW job, because the job arm \
-                 stores charstat+0x33 before the SP fork reads it, 405 bytes later and \
-                 straight-line. The pool key is a TIER, not a job id: FUN_1402CB030 returns 0 \
-                 for any key above 10, so a job id would read an empty pool and grey the + \
-                 button silently. The client plays JobChanged itself from this packet - no \
-                 0x02D1 is sent, deliberately"
-            ),
-        });
+        out.push(self.job_change_reply(was, job));
         out
     }
 
@@ -1200,6 +1157,64 @@ impl Session {
             replies.extend(self.notice(warning.trim().trim_matches('*').trim().to_string()));
         }
         replies
+    }
+
+    /// **The one packet that changes a job**, shared by `!job` and the NPC instructors.
+    ///
+    /// Extracted on 2026-08-28 when the instructors were wired. A second copy of this would
+    /// have been the third time in this project that one rule lived in two places - the Heena
+    /// quest and `may_learn` are the other two - and the failure mode is always that one copy
+    /// gets a fix and the other does not.
+    ///
+    /// It is **one** `0x007C`, mask bit 5 plus the SP bit. The client picks the SP encoding
+    /// from the **new** job, because the job arm stores `charstat+0x33` before the SP fork
+    /// reads it, 405 bytes later and straight-line. Do **not** also send `0x02D1`: this packet
+    /// fires the `JobChanged` effect and its sound by itself, and two would stack.
+    ///
+    /// The pool key is a **TIER**, not a job id - `FUN_1402CB030` returns 0 for any key above
+    /// 10, so a job id reads an empty pool and greys the `+` button with nothing on screen to
+    /// say why.
+    pub(super) fn job_change_reply(&self, was: u16, job: u16) -> Reply {
+        let level = self.claimed_character().map(|c| c.level).unwrap_or(0);
+        let mut pools = Vec::new();
+        for tier in [crate::skillpoints::Tier::First, crate::skillpoints::Tier::Second] {
+            let amount = crate::skillpoints::entitlement(tier, level);
+            if amount > 0 {
+                pools.push(net::stats::SpPool {
+                    job_level: net::stats::tier_for_job(match tier {
+                        crate::skillpoints::Tier::First => 100,
+                        crate::skillpoints::Tier::Second => 110,
+                    }),
+                    amount,
+                });
+            }
+        }
+        let owed: Vec<String> =
+            pools.iter().map(|p| format!("tier {} = {}", p.job_level, p.amount)).collect();
+
+        // **The encoding forks on the job, so let the type check rather than assume.** Every
+        // first job takes the extended branch, but a job outside the explorer tree takes a
+        // plain `u16` - and sending the wrong shape would desynchronise the rest of the
+        // packet, not merely lose the points.
+        let table = net::stats::Sp::Extended(pools);
+        let sp = table.matches_job(job).then_some(table);
+        let sp_note = match &sp {
+            Some(_) => format!("AND the skill points [{}]", owed.join(", ")),
+            None => format!(
+                "and NO SP: job {job} takes the PLAIN u16 encoding and this server only \
+                 computes the extended table. The wrong shape would desynchronise the packet"
+            ),
+        };
+        Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange { job: Some((job, 0)), sp, ..Default::default() }
+                .build(),
+            what: format!(
+                "StatChanged: job {was} -> {job}, {sp_note}. One packet, mask bit 5 plus the \
+                 SP bit. The client plays JobChanged itself from this packet - no 0x02D1 is \
+                 sent, deliberately"
+            ),
+        }
     }
 
     /// A skill's name, for a line a person reads. The id alone if the table is not loaded.
