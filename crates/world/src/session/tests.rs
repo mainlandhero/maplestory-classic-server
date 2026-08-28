@@ -5230,6 +5230,56 @@ fn the_gm_path_buys_debits_and_hands_the_item_over() {
     assert_eq!(store.cash_locker(1).unwrap().len(), 1);
 }
 
+/// **A job advancement carries the skill points with it, in one packet.**
+///
+/// The owner, 2026-08-27: *"Once I became a Magician (or any job at level 10), I should immediately
+/// get 1 skill point for 1st job. Currently I get none."* They got none because the packet
+/// carried the job bit alone, so the pool was empty and the client greys the `+` button when
+/// the pool reads zero - with nothing on screen to say why.
+///
+/// The **tier** is the assertion that matters. `FUN_1402CB030` returns 0 for any pool key
+/// above 10, so putting the job id `200` in that byte would read an empty pool and look
+/// exactly like the bug being fixed.
+#[test]
+fn a_job_advancement_carries_its_skill_points() {
+    let (mut s, store, id) = gm_session();
+    let mut chr = s.claimed_character().unwrap();
+    chr.level = 10;
+    store.save_character_progress(&chr).unwrap();
+
+    let out = s.handle(&gm_chat("!job 200"));
+    let stat = out
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("the job change goes out");
+    assert!(stat.what.contains("tier 1 = 1"), "one point, tier 1: {}", stat.what);
+    assert!(!stat.what.contains("tier 1 = 200"), "the TIER, never the job id");
+
+    // Level 11 owes four - the owner's own worked example - and it is one packet, not two.
+    let mut chr = s.claimed_character().unwrap();
+    chr.level = 11;
+    store.save_character_progress(&chr).unwrap();
+    let out = s.handle(&gm_chat("!job 200"));
+    let stat = out.iter().find(|r| r.opcode == net::stats::STAT_CHANGED).expect("sent");
+    assert!(stat.what.contains("tier 1 = 4"), "1 + 3 for the level: {}", stat.what);
+    assert_eq!(
+        out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED).count(),
+        1,
+        "ONE packet - the client reads the SP encoding from the job in this same body"
+    );
+
+    // A beginner is owed nothing, and the packet must still be legal.
+    let mut chr = s.claimed_character().unwrap();
+    chr.level = 5;
+    store.save_character_progress(&chr).unwrap();
+    let out = s.handle(&gm_chat("!job 0"));
+    assert!(
+        out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "a level-5 beginner still gets a job packet, just an empty pool"
+    );
+    let _ = id;
+}
+
 /// **A pet is refused rather than handed over, and it goes back in the locker.**
 ///
 /// The owner's `!locker 1` moved a Brown Puppy (`5000001`) into the Cash tab on 2026-08-26 and the

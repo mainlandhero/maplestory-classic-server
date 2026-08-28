@@ -213,16 +213,41 @@ impl Sp {
 /// The `u32` is the amount - `FUN_1402cbb50` sums the `u32`s into the record's SP total at
 /// `+0xef`, which is what identifies which of the two is the amount. **[L]**
 ///
-/// **What [`SpPool::job_level`] must contain is NOT established.** `charstat-layout.md` calls
-/// it a job level; nothing in this client was read to confirm what value it expects. It
-/// matters the first time the server awards SP to a beginner, because job `0` takes the
-/// extended branch. **[I]**
+/// **ESTABLISHED 2026-08-27: it is a job TIER, 0..=10, and it is NOT a job id.**
+///
+/// This note used to say the meaning was unknown. `FUN_1402CB030` - the pool lookup - returns
+/// `0` immediately for any key above 10, so a job id as the key would read zero for **every
+/// job in the game**, silently. The key comes from `FUN_140286E90(job)`, which has no `.pdata`
+/// and was disassembled by hand: see [`tier_for_job`]. **First job is tier 1, second is tier
+/// 2.** `research/skill-points.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpPool {
-    /// **Meaning not established.** See the type's own note.
+    /// The job **tier**, `0..=10`. Use [`tier_for_job`]; a job id here reads as zero.
     pub job_level: u8,
     /// Skill points in this pool.
     pub amount: u32,
+}
+
+/// Which SP pool a job spends from. `FUN_140286E90`, disassembled by hand - it has no
+/// `.pdata`, so the usual tools do not attribute it.
+///
+/// ```text
+/// job % 1000 == 0  ->  0          beginner (job 0 included)
+/// job %  100 == 0  ->  1          first job:  100 200 300 400
+/// otherwise        ->  2 + job % 10   when job % 10 <= 2
+/// ```
+///
+/// **[L]** on the arithmetic. The values above 10 are refused by the lookup itself, which is
+/// why passing a job id straight through would fail silently for every job.
+pub fn tier_for_job(job: u16) -> u8 {
+    if job.is_multiple_of(1000) {
+        0
+    } else if job.is_multiple_of(100) {
+        1
+    } else {
+        let low = job % 10;
+        if low <= 2 { (2 + low) as u8 } else { 0 }
+    }
 }
 
 /// A [`STAT_CHANGED`] body under construction: set the fields that changed, leave the rest
@@ -583,6 +608,31 @@ pub fn the_level_up_animation_is_client_side() {}
 /// `research/level-up.md` §7 item 6 records the trap that produced 120 confident wrong
 /// numbers from it.
 pub fn the_client_computes_the_exp_gain_itself() {}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+
+    /// **The four first jobs share tier 1, and a job id is not a tier.**
+    ///
+    /// The second assertion is the one that matters: the pool lookup returns 0 for any key
+    /// above 10, so handing it `200` would read an empty pool and grey the `+` button with no
+    /// error anywhere.
+    #[test]
+    fn the_tier_is_not_the_job_id() {
+        assert_eq!(tier_for_job(0), 0, "beginner");
+        for first in [100u16, 200, 300, 400] {
+            assert_eq!(tier_for_job(first), 1, "job {first} is FIRST job");
+        }
+        for second in [110u16, 120, 210, 220, 310, 410] {
+            assert_eq!(tier_for_job(second), 2, "job {second} is SECOND job");
+        }
+        for job in [0u16, 100, 200, 110, 210] {
+            assert!(tier_for_job(job) <= 10, "FUN_1402CB030 refuses anything above 10");
+            assert_ne!(u16::from(tier_for_job(job)), job.max(1), "a tier is not a job id");
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

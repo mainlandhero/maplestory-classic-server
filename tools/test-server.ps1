@@ -60,105 +60,88 @@
     0x0452 is the packet that sets the global. Its two branches identify the object: v=0
     rebuilds that same object on every NPC, v!=0 tears it down. !npcfx off, then !npcecho.
 
-    THE POINT OF THIS RUN - THE PURCHASE NOW COMPLETES. DOES IT?
-    ------------------------------------------------------------
-    Last run captured the client's first-ever BUY request and settled its layout: the
-    commodity serial sits at payload offset 7, confirmed three times, each resolving to the
-    item you said you had clicked. The refusal worked exactly as designed - three clicks,
-    three messages, no ejection, the shop stayed usable and Exit was fine.
+    THE POINT OF THIS RUN - THE PURCHASE LANDS IN THE RIGHT PLACE
+    -------------------------------------------------------------
+    Last run bought a coupon and it went into the ITEM Inventory with no success message.
+    Both were one mistake: 0x19 is the reply to "move a locker item into a bag slot", so it
+    did exactly what it says. The purchase reply is 0x05AE sub-op 0x0C, which fills the CASH
+    Inventory - and the missing message follows from the same error, because the wallet reply
+    is what re-enters the buy builder on its completion path and shows string 590. With 0x19
+    we had already cleared the field that re-entry depends on.
 
-    Since then the thing that was blocking a real purchase turned out to be a MISTAKE OF MINE.
-    I told you no packet could report success without an error message on screen. That was
-    true of the six 0x05AE arms whose bodies sit inline in the dispatcher, and FALSE for the
-    two that delegate to sub-functions. 0x05AE sub-op 0x19 is silent, hands the item over and
-    releases both of the shop's latches. So this run has a purchase in it.
+    So this run has four separate things in it and each one is a claim that can come back
+    false. Report them separately.
 
-    AND THE CLIENT EXIT IS EXPLAINED. It was the Brown Puppy. 5000001 is a PET, and this
-    client classifies items TWICE - the factory believes the type byte on the wire, the
-    tooltip re-derives the class from the ITEM ID. We sent a pet as a bundle, so the factory
-    built a 126-byte bundle and the pet tooltip then read its checksum four bytes past the end
-    of that allocation and threw. Pets are now REFUSED everywhere rather than sent, so you
-    cannot hit it by accident - and !locker puts the pet back rather than losing it.
+     0. TYPE  !lp  WITH NO ARGUMENT. You had 98,900 less whatever last run spent. Top up only
+        if it is under a thousand.
 
-     0. TYPE  !lp  WITH NO ARGUMENT AND READ THE NUMBER BACK. You had 98,900 after last run's
-        purchase. Top up only under a thousand. WRITE IT DOWN; step 1a checks the shop
-        against it.
+     1. THE PURCHASE. Buy the MYSTERY HAIR COUPON - Main tab, 100 LP, SN 150000000.
+        NOT Brown Puppy (a pet, refused now) and NOT Red Hat (1802002 is pet EQUIPMENT).
+        FOUR things should happen, and they are worth four separate sentences:
+          a) the coupon appears in the CASH INVENTORY - the upper left panel, not the lower
+          b) a success message, "You have successfully made the purchase", and its sound
+          c) the Leaf Points corner drops by exactly 100
+          d) no error message
+        Outcomes:
+          all four                 -> the cash shop is CLOSED as a feature. That is the goal
+          right panel, no message  -> 0x0C landed but the wallet did not re-enter the builder
+          message but wrong panel  -> the record was rejected and only the wallet did anything
+          THE BALANCE KEEPS DROPPING, or you get several coupons from one click
+                                   -> the re-entry is SENDING rather than completing. CLOSE
+                                      THE CLIENT and say so; it is one line to disarm
+          the client dies          -> say so at once, and buy nothing else. The record has
+                                      eleven fields with no known reader and this is the first
+                                      time one has been on a wire
 
-     1. THE CASH SHOP. Entry, the wallet, the poll, Exit and the REFUSAL are all confirmed.
-        Do not re-test them. The new thing is a purchase that goes through.
+     1b. THEN BUY IT TWICE MORE. Three coupons, 300 LP gone, three success messages.
+        Try to drag one from the Cash Inventory into the Item Inventory - it will NOT work
+        yet, and that is expected: those are 0x03E1 sub-ops 0x0A and 0x0B and they are
+        refused. Just say what the client does when you try.
 
-        a) CLICK CASH SHOP. The Leaf Points corner must read the same number step 0 gave you.
+     2. THE DAMAGE NUMBER. Go and get hit by something that hurts.
+        EXPECT TWO NUMBERS: the client's own stub 1, and the real damage in the damage colour.
+        The stub is drawn at send time before our packet exists and nothing found can suppress
+        it - 224 captured hits, mobs rated 3 to 287, all reporting 1.
+          two numbers, one right -> as designed. YOU decide whether it reads well enough to
+                       keep. One line to remove
+          only the stub 1        -> ours is not drawing. Does the blue recovery number still
+                       work? They are the same call with the sign flipped
+          the right number in BLUE -> the sign was lost
+          only our number        -> better than expected. Say so
 
-        b) BUY THE  MYSTERY HAIR COUPON  - Main tab, 100 LP, SN 150000000, item 5150000.
-           **NOT Brown Puppy and NOT Red Hat.** Brown Puppy is the pet that killed the client
-           and is refused now; Red Hat is 1802002, which is PET EQUIPMENT, so its tab is a
-           prediction rather than a known. The coupon is an ordinary cash bundle whose item
-           body has been on this wire for months.
-           THREE THINGS SHOULD HAPPEN AT ONCE, and each is worth reporting separately:
-             the coupon appears in the CASH tab of your inventory
-             the Leaf Points corner drops by exactly 100
-             NO error message
-           Outcomes:
-             all three            -> the purchase is closed, end to end. This is the goal
-             item but no message, and the balance does NOT move
-                                  -> the 0x05AD went out and was ignored, or it went first
-             message appears      -> we sent a refusal, not a grant. Say the exact wording
-             THE SHOP GOES DEAD - the buy button stops responding
-                                  -> bRelease or [stage+0x120] is not being cleared. This is
-                                     the specific failure 0x19 is supposed to prevent
-             THE CLIENT DIES      -> say so immediately, and DO NOT BUY ANYTHING ELSE
-             it buys TWICE, or the balance drops by 200
-                                  -> the wallet packet re-triggered the buy, which means the
-                                     order of the two replies is wrong
+     3. DEATH. Let something kill you, then STAND STILL FOR THIRTY SECONDS without clicking
+        Revive. You should stay dead.
+          you stay at 0 HP       -> fixed. You could previously regenerate out of death, and
+                       because the revive dialog fires on the TRANSITION it would never have
+                       come back - alive, in the map you died in, behind a dead prompt
+          HP climbs off zero     -> the gate is not holding
 
-        c) BUY IT AGAIN, TWICE. The balance should go 100 lower each time and you should end
-           up with three coupons (or one stack of three). Anything that buys once and then
-           stops is the latch.
+     4. JOB ADVANCEMENT AND SKILL POINTS - NEW, and never on a wire.
+        At level 10 or above, type  !job 200 . Then open the skill window.
+          a) does the JobChanged effect play, with its sound?
+          b) does the skill window show SKILL POINTS - 1 at level 10, 4 at level 11, and
+             3 more for every level above that?
+          c) is the + button LIVE rather than greyed?
+        Outcomes:
+          points show and + is live -> the whole SP chain works, first time
+          points show, + is greyed  -> the pool arrived but something else gates the button
+          NO points, + greyed       -> the pool key is wrong. It is a TIER (1 for first job),
+                       not a job id; a job id reads an empty pool and looks exactly like this
+          the client dies           -> the extended SP table is the wrong shape. Say when
+        SPENDING IS NOT PERSISTED YET. If you click + the point is spent on screen but the
+        server does not know, so it will come back. That is known, not a new bug.
 
-        d) BUY THE  WATER OF LIFE  - SN 160300001, item 5180000, also 100 LP. A different
-           item id through the same path; if the coupon works and this does not, the
-           difference is the item, not the mechanism.
+     5. ORGANIZE ITEM, still never seen working. Put three or four things in storage, take one
+        from the middle to leave a hole, hit Organize THREE times. Clicks two and three must
+        change nothing. If items VANISH, stop and say so.
 
-        e) CLICK EXIT, THEN CLICK CASH SHOP AGAIN. Re-entry, which has never been tested.
+     HENESYS PARK IS CLOSED - do not test map 10001050 again. It is not fatal: an archived run
+     loaded it 52 seconds into the connection, drew all four NPCs and closed cleanly. Both
+     deaths blamed on it were at ~400 s and were DIFFERENT faults - a null read the first time,
+     the accumulating heap family the second.
 
-     1.5 THE DAMAGE NUMBER - GO AND GET HIT BY SOMETHING THAT HURTS.
-        A Drake will do. You should now see the REAL damage over your head, in the damage
-        colour, because the server draws it: the same renderer as the blue recovery number,
-        with the sign flipped. Positive is blue and healing, negative is damage; that fork is
-        one instruction and it is why this works at all.
-        **EXPECT TWO NUMBERS.** The client's own `1` is drawn at SEND time, before our packet
-        exists, and nothing found reaches the flag that would suppress it. It is a stub: 224
-        captured hits, across mobs whose attack ratings run from 3 to 287, ALL report 1.
-          two numbers, one of them right -> as designed. YOU decide whether that reads well
-                       enough to keep; it is one line to remove
-          only the stub 1                -> our packet is not drawing. Say whether the blue
-                       recovery number still works, because they share a renderer
-          the right number, in BLUE      -> the sign was lost somewhere
-          only our number                -> better than expected; say so
-
-     2. HENESYS PARK IS CLOSED - DO NOT TEST IT AGAIN. Map 10001050 is NOT fatal, and the
-        proof was sitting in previous-runs/ unread the whole time. On 2026-08-22 a portal walk
-        put a character there 52 seconds into the connection; the client sent 0x00DC back,
-        drew all four NPCs, ran on for another fifty seconds and the socket ended "closed".
-        Both deaths blamed on it ended "forcibly closed by the remote host" instead, at 389 s
-        and 404 s - and the second was exit code 0xC0000374, the accumulating HEAP family,
-        not the 0xC0000005 null read of the first. Two different faults, both at ~400 s, on a
-        map that loads fine early. It was the session, every time.
-
-     3. FROM THE FIELD:  !buy 150000000  then  !locker  then  !locker 1 .
-        Same coupon, other path. Expect the LP balance 100 lower and the coupon in the Cash
-        tab. Then try  !locker  after  !buy 160000000  - the Brown Puppy - and expect a
-        REFUSAL naming it as a pet, with the puppy still listed in the locker afterwards.
-
-     IGNORE THE 0x0453 NOISE. While you stand in the cash shop the server keeps sending NPC
-     idle chatter for the field you left - about 40 a visit. The shop stage ignores it and
-     nothing breaks; it is on the list to stop sending. It is not a symptom.
-
-     4. ORGANIZE ITEM, WHICH HAS NEVER BEEN SEEN WORKING. Put three or four things in
-        storage, take one out from the middle to leave a hole, then hit Organize.
-          the gap closes and the items group by tab -> done
-          items VANISH  -> stop and say so immediately
-        HIT IT THREE TIMES. Clicks two and three must change nothing.
+     IGNORE THE 0x0453 NOISE while you are in the shop. NPC chatter follows you in, about 40 a
+     visit; the stage ignores it. On the list to stop. Not a symptom.
 
     REGRESSION GLANCES - seconds each
     ---------------------------------
@@ -608,15 +591,14 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #                  last run. The stage ignores it; it is noise, and it is on the
         #                  list to stop sending
         #     silent, but 14209ad60 fired -> the handler ran and built no stage: the body
-        # 140d785f0:hits=20 - THE BUY BUILDER, and the aim of this run. Last run produced
-        #   ZERO 0x03E1 because every price is in LP and LP was 0, so the client refused
-        #   before sending. This says WHERE it refuses:
-        #     a line, and a 0x03E1 in world.log -> the click went all the way through
-        #     a line, and NO 0x03E1            -> the builder ran and bailed on a later gate
-        #     no line at all                   -> the click never reached the builder, so
-        #                                         the refusal is above it in the UI
-        #   It replaced 142caee70:peek=2330. That latch question is closed twice over now,
-        #   and 14209ad60 answers the re-entry step better than a peek would.
+        # 140d785f0:hits=20 - THE BUY BUILDER, and it now counts something new. The wallet
+        #   reply re-enters it on its COMPLETION path - that is what fetches string 590, "You
+        #   have successfully made the purchase." So per purchase:
+        #     TWO hits  -> the click, then the completion. The success message came from us
+        #                  sending 0x0C and letting 0x05AD do the rest. This is the design
+        #     ONE hit   -> the re-entry did not happen; expect no success message
+        #     THREE OR MORE, and the balance dropping -> the re-entry SENDS rather than
+        #                  completes. That is the purchase loop. Close the client
         # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE
         #   CONTROL: no lines at all means the hook never armed and the log proves nothing.
         $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140d78070:peek=0x74:hits=20,140d734e0:hits=60,140d785f0:hits=20,140304100:hits=200:dump=143AC2400/968'
@@ -922,8 +904,8 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  Step 1b is the run: BUY THE MYSTERY HAIR COUPON and say whether' -ForegroundColor Yellow
-    Write-Host '  all three things happened. NOT the puppy - it is a pet.' -ForegroundColor Yellow
+    Write-Host '  Five things this run, each a separate answer. Step 1 is the one' -ForegroundColor Yellow
+    Write-Host '  that closes the cash shop; step 4 has never been on a wire.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -975,77 +957,70 @@ if ($SetFieldProbe) {
     Write-Host '  late first draw, and every server-side cause is now eliminated.'
     Write-Host ''
     Write-Host '  --- the point of this run -------------------------------------------'
-    Write-Host '  THE PURCHASE NOW COMPLETES. DOES IT?' -ForegroundColor Yellow
-    Write-Host '  Last run captured the first-ever BUY request and settled its layout.'
-    Write-Host '  What was blocking a real purchase was a MISTAKE OF MINE: I said no'
-    Write-Host '  packet could report success silently. True of the six inline 0x05AE'
-    Write-Host '  arms, FALSE for the two that delegate. 0x19 is silent, hands the item'
-    Write-Host '  over and releases both latches.'
+    Write-Host '  THE PURCHASE LANDS IN THE RIGHT PLACE.' -ForegroundColor Yellow
+    Write-Host '  Last run the coupon went to the ITEM Inventory with no success'
+    Write-Host '  message. Both were ONE mistake: 0x19 is the reply to "move a locker'
+    Write-Host '  item into a bag slot". The purchase reply is 0x0C, which fills the'
+    Write-Host '  CASH Inventory - and the message follows, because the WALLET reply'
+    Write-Host '  re-enters the buy builder on its completion path to show it.'
     Write-Host ''
-    Write-Host '  AND THE CLIENT EXIT IS EXPLAINED: the Brown Puppy. 5000001 is a PET,' -ForegroundColor DarkGray
-    Write-Host '  and this client classifies items TWICE - the factory trusts the wire'  -ForegroundColor DarkGray
-    Write-Host '  type byte, the tooltip re-derives it from the ITEM ID. A pet sent as'  -ForegroundColor DarkGray
-    Write-Host '  a bundle reads its checksum past the end of the allocation and throws.' -ForegroundColor DarkGray
-    Write-Host '  Pets are REFUSED everywhere now, so you cannot hit it by accident.'     -ForegroundColor DarkGray
+    Write-Host '  0. TYPE  !lp  WITH NO ARGUMENT. Top up only if under a thousand.' -ForegroundColor Cyan
     Write-Host ''
-    Write-Host '  0. TYPE  !lp  WITH NO ARGUMENT AND READ THE NUMBER BACK.' -ForegroundColor Cyan
-    Write-Host '     You had 98,900 after last run. Top up only under a thousand.'
-    Write-Host '     WRITE IT DOWN - step 1a checks the shop against it.'
+    Write-Host '  1. THE PURCHASE. Buy the MYSTERY HAIR COUPON, SN 150000000,' -ForegroundColor Cyan
+    Write-Host '     Main tab, 100 LP. NOT the puppy (a pet) and NOT Red Hat (pet'
+    Write-Host '     equipment). FOUR things, four separate sentences please:'
+    Write-Host '       a) it appears in the CASH INVENTORY, the UPPER left panel'
+    Write-Host '       b) a success message AND its sound'
+    Write-Host '       c) Leaf Points drop by exactly 100'
+    Write-Host '       d) no error message'
+    Write-Host '     all four            -> the cash shop is CLOSED as a feature'
+    Write-Host '     right panel, no msg -> 0x0C landed, the re-entry did not happen'
+    Write-Host '     msg, wrong panel    -> the record was rejected'
+    Write-Host '     BALANCE KEEPS DROPPING, or several coupons from one click' -ForegroundColor Red
+    Write-Host '                         -> the re-entry is SENDING. CLOSE THE CLIENT' -ForegroundColor Red
+    Write-Host '     the client dies     -> say at once, buy nothing else'
+    Write-Host '  1b. BUY IT TWICE MORE. Then try to drag one from Cash Inventory to' -ForegroundColor Cyan
+    Write-Host '     Item Inventory - it will NOT work yet and that is expected.'
+    Write-Host '     Just say what the client does when you try.'
     Write-Host ''
-    Write-Host '  1. THE CASH SHOP. Entry, wallet, poll, Exit and the REFUSAL are' -ForegroundColor Cyan
-    Write-Host '     confirmed. Do not re-test. The new thing is a purchase.'
-    Write-Host '     a) CLICK IT. The LP corner must match step 0.'
-    Write-Host '     b) BUY THE MYSTERY HAIR COUPON - Main tab, 100 LP, SN 150000000.'
-    Write-Host '        NOT Brown Puppy (the pet that killed it) and NOT Red Hat'
-    Write-Host '        (1802002 is PET EQUIPMENT, so its tab is a prediction).'
-    Write-Host '        THREE THINGS AT ONCE, report each:'
-    Write-Host '          the coupon appears in the CASH tab'
-    Write-Host '          the LP corner drops by exactly 100'
-    Write-Host '          NO error message'
-    Write-Host '        all three         -> the purchase is CLOSED, end to end'
-    Write-Host '        item, no drop     -> the wallet was ignored or sent first'
-    Write-Host '        a message         -> we sent a refusal. Say the wording'
-    Write-Host '        THE SHOP GOES DEAD-> bRelease/[0x120] not cleared'
-    Write-Host '        THE CLIENT DIES   -> say so, and buy nothing else'
-    Write-Host '        buys TWICE / -200 -> the two replies are in the wrong order'
-    Write-Host '     c) BUY IT TWICE MORE. 100 lower each time, three coupons.'
-    Write-Host '     d) BUY WATER OF LIFE, SN 160300001. A different id, same path.'
-    Write-Host '     e) CLICK EXIT, THEN CASH SHOP AGAIN. Re-entry, never tested.'
-    Write-Host ''
-    Write-Host '  1.5 THE DAMAGE NUMBER - GO AND GET HIT BY SOMETHING THAT HURTS.' -ForegroundColor Cyan
-    Write-Host '     You should now see the REAL damage over your head, in the damage'
-    Write-Host '     colour. Same renderer as the blue recovery number, sign flipped.'
-    Write-Host '     EXPECT TWO NUMBERS: the client draws its own 1 at SEND time and'
-    Write-Host '     nothing we found can suppress it. That 1 is a stub - 224 captured'
-    Write-Host '     hits, mobs rated 3 to 287, all reporting 1.'
-    Write-Host '       two numbers, one right -> as designed. YOU decide if that reads'
-    Write-Host '                     well enough to keep; one line to remove'
-    Write-Host '       only the stub 1        -> ours is not drawing. Does the blue'
-    Write-Host '                     recovery number still work? They share a renderer'
+    Write-Host '  2. THE DAMAGE NUMBER. Get hit by something that hurts.' -ForegroundColor Cyan
+    Write-Host '     EXPECT TWO NUMBERS: the client stub 1, and the real damage.'
+    Write-Host '     224 captured hits, mobs rated 3 to 287, all reported 1.'
+    Write-Host '       two numbers, one right -> as designed. YOU decide if it keeps'
+    Write-Host '       only the stub 1        -> ours is not drawing'
     Write-Host '       right number in BLUE   -> the sign was lost'
-    Write-Host '       only our number        -> better than expected; say so'
     Write-Host ''
-    Write-Host '  2. HENESYS PARK IS CLOSED. Do NOT test map 10001050 again.' -ForegroundColor Green
-    Write-Host '     It is NOT fatal, and the proof sat unread in previous-runs/:'
-    Write-Host '     on 08-22 a portal put a character there 52s into the connection,'
-    Write-Host '     the client answered 0x00DC, drew all four NPCs, ran 50s more and'
-    Write-Host '     the socket ended "closed". Both deaths blamed on it ended'
-    Write-Host '     "forcibly closed" at 389s and 404s - and the second was'
-    Write-Host '     0xC0000374, the HEAP family - a different fault from the'
-    Write-Host '     0xC0000005 null read that killed the first one.'
-    Write-Host '     Two different faults, both at ~400s. It was the session.'
+    Write-Host '  3. DEATH. Get killed, then STAND STILL 30s without clicking Revive.' -ForegroundColor Cyan
+    Write-Host '       you stay at 0 HP -> fixed. You could regenerate out of death'
+    Write-Host '                           before, and the dialog would never return'
+    Write-Host '       HP climbs        -> the gate is not holding'
     Write-Host ''
-    Write-Host '  3. FROM THE FIELD: !buy 150000000 / !locker / !locker 1' -ForegroundColor Cyan
-    Write-Host '     Then !buy 160000000 and !locker - expect a REFUSAL naming the'
-    Write-Host '     puppy as a pet, with it STILL in the locker afterwards.'
+    Write-Host '  4. JOB ADVANCEMENT AND SKILL POINTS - NEW, never on a wire.' -ForegroundColor Cyan
+    Write-Host '     At level 10+, type  !job 200 , then open the skill window.'
+    Write-Host '       a) does JobChanged play, with sound?'
+    Write-Host '       b) does it show SKILL POINTS? 1 at level 10, 4 at level 11,'
+    Write-Host '          3 more per level after'
+    Write-Host '       c) is the + button LIVE, not greyed?'
+    Write-Host '     points and a live +  -> the whole SP chain works, first time'
+    Write-Host '     points, + greyed     -> pool arrived, something else gates it'
+    Write-Host '     NO points, + greyed  -> the pool key is wrong. It is a TIER (1),'
+    Write-Host '                             not a job id - which looks exactly like this'
+    Write-Host '     SPENDING IS NOT PERSISTED. A spent point comes back. Known.'
     Write-Host ''
-    Write-Host '  IGNORE THE 0x0453 NOISE: NPC chatter follows you into the shop,' -ForegroundColor DarkGray
-    Write-Host '  about 40 a visit. Harmless, on the list to stop. Not a symptom.'  -ForegroundColor DarkGray
+    Write-Host '  5. ORGANIZE ITEM, still never seen working. THREE times; clicks 2' -ForegroundColor Cyan
+    Write-Host '     and 3 must change nothing. Items VANISH -> stop and say so.'
     Write-Host ''
-    Write-Host '  4. ORGANIZE ITEM, never yet seen working. Hit it THREE times;' -ForegroundColor Cyan
-    Write-Host '     clicks 2 and 3 must change nothing. Items VANISH -> say so.'
+    Write-Host '  HENESYS PARK IS CLOSED - do not test map 10001050 again. Not fatal:' -ForegroundColor Green
+    Write-Host '  an archived run loaded it 52s in, drew all four NPCs, closed cleanly.'
+    Write-Host '  Both deaths blamed on it were ~400s and were DIFFERENT faults.'
     Write-Host ''
-    Write-Host '  OPTIONAL: -HeapFix (off by default, NOT on the same run as step 2)' -ForegroundColor DarkGray
+    Write-Host '  IGNORE THE 0x0453 NOISE in the shop - NPC chatter follows you in,' -ForegroundColor DarkGray
+    Write-Host '  about 40 a visit. Harmless, on the list. Not a symptom.' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '  OPTIONAL: -HeapFix, and it just got MORE interesting. Both deaths' -ForegroundColor DarkGray
+    Write-Host '  blamed on Henesys Park were ~400s, and the second was 0xC0000374 -' -ForegroundColor DarkGray
+    Write-Host '  this family. Use it on a SEPARATE run, not this one: it changes a' -ForegroundColor DarkGray
+    Write-Host '  variable and this run already has five.' -ForegroundColor DarkGray
     Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
     Write-Host '     A damaged pool header goes back to the free list instead of to'
     Write-Host '     HeapFree. SEVEN damaged slots over four dumps, ~1 per 250s.'

@@ -132,11 +132,69 @@ impl Session {
             "{} is now job {job} (was {was}). Expect the JobChanged effect AND its sound - unless job is 0, which the client's own gate suppresses.",
             chr.name
         ));
+        // **The skill points, in the same packet as the job.**
+        //
+        // The owner, 2026-08-27: *"Once I became a Magician (or any job at level 10), I should
+        // immediately get 1 skill point for 1st job. Currently I get none."*
+        //
+        // They got none because this packet used to carry **bit 5 alone**. `FUN_1407E4D70` is
+        // what prints the number beside `sp` and what greys the `+` button (`test r14,r14 /
+        // jle` at `0x142584E4F` disables `BtSpUp`), and its extended path looks the pool up by
+        // TIER. No pool, no number, dead button - with nothing on screen to say why.
+        //
+        // **One packet, not two.** `crates/net/src/combat.rs` used to claim a combined packet
+        // decodes SP with the OLD job, labelled [L]; it is wrong and now says so. The job arm
+        // stores `charstat+0x33` at `0x1402CBC04` and the SP fork loads it 405 bytes later,
+        // straight-line, so the new job is what picks the encoding.
+        //
+        // **The amount is computed from the LEVEL, and nothing is persisted yet.** That is a
+        // real limitation, not an oversight: `world::skillpoints::entitlement` is a total owed
+        // rather than an increment, so re-sending it is idempotent and advancing late pays the
+        // same as advancing early. What is missing is a record of what has been SPENT - so
+        // until `0x013B` persists, points come back on the next advancement. Said out loud
+        // because a player who spends and then sees them return will otherwise report a bug.
+        let mut pools = Vec::new();
+        for tier in [crate::skillpoints::Tier::First, crate::skillpoints::Tier::Second] {
+            let amount = crate::skillpoints::entitlement(tier, chr.level);
+            if amount > 0 {
+                pools.push(net::stats::SpPool {
+                    job_level: net::stats::tier_for_job(match tier {
+                        crate::skillpoints::Tier::First => 100,
+                        crate::skillpoints::Tier::Second => 110,
+                    }),
+                    amount,
+                });
+            }
+        }
+        let owed: Vec<String> =
+            pools.iter().map(|p| format!("tier {} = {}", p.job_level, p.amount)).collect();
+
+        // **The encoding forks on the job, so let the type check rather than assume.** Every
+        // first job takes the extended branch, but a job outside the explorer tree takes a
+        // plain `u16` - and sending the wrong shape would desynchronise the rest of the packet,
+        // not merely lose the points. `matches_job` is asked with the NEW job, which is the one
+        // the client holds by the time it reads this field.
+        let table = net::stats::Sp::Extended(pools);
+        let sp = table.matches_job(job).then_some(table);
+        let sp_note = match &sp {
+            Some(_) => format!("AND the skill points [{}]", owed.join(", ")),
+            None => format!(
+                "and NO SP: job {job} takes the PLAIN u16 encoding and this server only \
+                 computes the extended table. The wrong shape would desynchronise the packet"
+            ),
+        };
         out.push(Reply {
             opcode: net::stats::STAT_CHANGED,
-            body: net::stats::StatChange { job: Some((job, 0)), ..Default::default() }.build(),
+            body: net::stats::StatChange { job: Some((job, 0)), sp, ..Default::default() }
+                .build(),
             what: format!(
-                "StatChanged: job {was} -> {job}, mask bit 5. The client plays Effect/BasicEff.img/JobChanged and the JobChanged sound ITSELF from this packet - no 0x02D1 is sent, deliberately"
+                "StatChanged: job {was} -> {job}, {sp_note}. One packet, mask bit 5 plus the SP \
+                 bit - the client picks the SP encoding from the NEW job, because the job arm \
+                 stores charstat+0x33 before the SP fork reads it, 405 bytes later and \
+                 straight-line. The pool key is a TIER, not a job id: FUN_1402CB030 returns 0 \
+                 for any key above 10, so a job id would read an empty pool and grey the + \
+                 button silently. The client plays JobChanged itself from this packet - no \
+                 0x02D1 is sent, deliberately"
             ),
         });
         out
