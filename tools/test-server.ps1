@@ -252,13 +252,19 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
 
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
-    MP cost and damage validation on ATTACK skills. The skill id is readable now so both are
-    finally possible, but neither is connected: attack skills cost NO MP. Only buff casts
-    spend it, which is why step 2d asks about buffs and not about Power Strike.
-    Spent skill points still come back - the pool is computed from LEVEL, not tracked as a
-    balance. !learn grants directly and sidesteps it.
-    Mina's classic shop counter is decoded and deliberately not built: three of its fields
-    fail silently or desynchronise the byte stream, and it has killed the client twice.
+    DAMAGE VALIDATION. world::damage::check_hit and world::magic::check_magic_hit are written
+    and tested and have NO caller. The skill id unblocked them; nothing else was done. Log-only
+    when wired - the client authors the number.
+    MOB -> PLAYER CONTACT DAMAGE is the server's to supply, and which packet tells the CLIENT
+    the number is NOT FOUND. That is why two numbers are on screen.
+    JOB ADVANCEMENT through an NPC. world::jobs decides it and only !job reaches it, so the
+    four instructors still just talk.
+    SPENT SKILL POINTS are not persisted - the pool is computed from LEVEL, so points come
+    back. !learn grants directly and sidesteps it.
+    DISORDER is a debuff on the MOB and this server has no packet for that.
+    QUEST COMPLETION cannot TAKE an item (Act.n.item with a negative count).
+    The Shop2 window (0x0560): its art is not in this client and it can no longer be sent.
+    MP COST on attack skills and the CLASSIC SHOP counter were on this list and are now WIRED.
 
     REGRESSION GLANCES - seconds each
     ---------------------------------
