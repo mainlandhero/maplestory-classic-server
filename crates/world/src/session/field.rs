@@ -22,18 +22,53 @@ impl Session {
         // go with it: an object id from the previous map addresses nothing here, or worse,
         // addresses a different NPC.
         self.reset_chatter(chr.map_id, self.clock_ms);
+        // **Turn off the client's own damage number, once per session.**
+        //
+        // The owner, 2026-08-28: *"I really need this 1 to go away."* The stub is drawn at one
+        // instruction, inside a block gated on `user+0x544a`, and the client's own
+        // `/hitdamagetest` command writes that byte. `0x00EA` runs a console command, so the
+        // server can clear it without patching anything.
+        //
+        // **Here rather than on the migration**, because the command's permission context is
+        // built from fields that arrive with `SetField`, and field entry is the first moment
+        // after one that this session hears about.
+        //
+        // **Once**, because the client ECHOES every line into the chat window as `> <line>`.
+        // Sending it per field would put a line in the chat on every portal.
+        //
+        // **The permission gate is [D], not [L]** - it needs `ctx[6]` and one of `ctx[0..2]`,
+        // and which wire field feeds which bit was not decoded. So this is a request, not a
+        // guarantee: `0x0189` coming back is the only proof it ran, and if it does not come
+        // back the number is still drawn and the five-byte hook patch in
+        // `research/damage-number-suppress.md` is the fallback.
+        let mut out = Vec::new();
+        if !self.asked_to_hide_hit_damage {
+            self.asked_to_hide_hit_damage = true;
+            out.push(Reply {
+                opcode: net::revive::RUN_CONSOLE_COMMAND,
+                body: net::revive::run_console_command(net::revive::HIDE_HIT_DAMAGE),
+                what: format!(
+                    "RunConsoleCommand {:?}: the client runs its OWN slash command, which \
+                     writes user+0x544a = 0 and skips the 0x356-byte block holding the only \
+                     renderer call that draws its stub damage number. It ECHOES the line into \
+                     the chat window first. Watch for an inbound 0x0189 carrying u32 0x13D - \
+                     that is the client saying the permission gate passed, and it is the ONLY \
+                     proof. No 0x0189 means the gate refused and the 1 is still drawn",
+                    net::revive::HIDE_HIT_DAMAGE
+                ),
+            });
+        }
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
-        let out: Vec<Reply> = self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
+        out.extend(self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()
             .map(|npc| Reply {
                 opcode: net::opcode::NPC_ENTER_FIELD,
                 body: net::opcode::npc_enter_field(npc),
                 what: format!(
-                    "NpcEnterField: template {} at ({}, {}) on foothold {}, object id {} -                      the client cannot spawn this itself, it only preloads the art.",
+                    "NpcEnterField: template {} at ({}, {}) on foothold {}, object id {} - the client cannot spawn this itself, it only preloads the art.",
                     npc.template_id, npc.x, npc.cy, npc.fh, npc.object_id
                 ),
-            })
-            .collect();
+            }));
 
         // Mobs, from the same WZ `life` walk that produced the NPCs and for the same
         // reason: the client's field loader only preloads `Mob/%07d.img` art, and the pool
@@ -53,7 +88,6 @@ impl Session {
         // NPCs went through. Mobs are the only thing that changed the outcome.
         //
         // Turn back on with `--mobs` when the body is the variant under test.
-        let mut out = out;
 
         // **The field belongs to the channel, not to this visit.** Registering it is a
         // no-op after the first time, and a brand-new field is EMPTY: every spawn point
@@ -74,7 +108,7 @@ impl Session {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(&mob),
                 what: format!(
-                    "MobEnterField: template {} at ({}, {}) - its CURRENT position, object id                      {}, hp {}. The client cannot spawn this itself.",
+                    "MobEnterField: template {} at ({}, {}) - its CURRENT position, object id {}, hp {}. The client cannot spawn this itself.",
                     mob.template_id, mob.x, mob.y, mob.object_id, mob.hp
                 ),
             });
@@ -87,7 +121,7 @@ impl Session {
                 opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
                 body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
                 what: format!(
-                    "MobChangeController: object id {} to this client. The client runs the                      mob's movement and reports it as 0x02FF.",
+                    "MobChangeController: object id {} to this client. The client runs the mob's movement and reports it as 0x02FF.",
                     mob.object_id
                 ),
             });
@@ -299,9 +333,9 @@ impl Session {
     /// dispatch line per inbound opcode, on handler return:
     ///
     /// ```text
-    /// 100 opcode=0x0019 elapsed_us=64.0       ret=1            <- dispatched, no-op
+    /// 100 opcode=0x0019 elapsed_us=64.0       ret=1 <- dispatched, no-op
     /// 101 opcode=0x001A elapsed_us=354121.0   ret=1036749576   <- 354 ms, then the socket
-    ///                                                              closed. This is it.
+    /// closed. This is it.
     /// ```
     ///
     /// **The body decode is confirmed by the same run**: the client tore its connection
@@ -474,7 +508,7 @@ impl Session {
             return vec![Reply {
                 opcode: net::opcode::SET_FIELD,
                 body: net::opcode::set_field_minimal(self.clock_base(), self.config.channel_id),
-                what: "transfer-field request, but the character could not be loaded -                        answered with the minimal record rather than dropped, because an unanswered packet freezes the client's whole UI."
+                what: "transfer-field request, but the character could not be loaded - answered with the minimal record rather than dropped, because an unanswered packet freezes the client's whole UI."
                     .to_string(),
             }];
         };

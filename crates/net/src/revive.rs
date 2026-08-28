@@ -194,9 +194,85 @@ pub fn recovery_number(amount: i32, delay_ms: i32) -> Vec<u8> {
     w.into_vec()
 }
 
+// ===========================================================================================
+// Making the client run its own console command
+// ===========================================================================================
+
+/// `0x00EA` - **a string the client splits on carriage returns and runs as console commands.**
+///
+/// # The name in the opcode table is a claim, and it is not what the code does
+///
+/// `research/msexe-gamestage-opcodes.md` calls this *ScriptProgressMessage*. `FUN_142D9FA90`
+/// reads one string, splits it on `"\r"`, echoes each line into the chat log as `> <line>` -
+/// that is the "message" the name saw - and then hands **each line to the slash-command
+/// dispatcher** at `0x1418CD030` -> `0x14202E460`. The dispatch is not in the name.
+/// `CLAUDE.md`'s *"a table row written from a quick read is a claim"*, again. **[L]**
+///
+/// # What this is for
+///
+/// The owner, 2026-08-28: *"I really need this 1 to go away to make this portion perfect."*
+///
+/// The client draws its own stub damage number at **one instruction**, `0x1428ACA14`, the only
+/// renderer call in a 14 497-byte function - and that call sits inside a `0x356`-byte block
+/// gated on `user+0x544a`. Clear the byte and the block is skipped whole.
+///
+/// The byte has a **second writer** nobody had found: `0x142883687` stores a `qword` at
+/// `[rsi+0x5448]`, and `0x5448 + 2` is `0x544a`. An earlier pass looked for stores whose
+/// displacement *equalled* `0x544a` and honestly reported "one writer" with three named blind
+/// spots. All three were real and none of them was this: a **wider store at a lower
+/// displacement**. The fix was to stop asking *which operand equals this address* and start
+/// asking *which operand's byte range covers it*.
+///
+/// The command is **`/hitdamagetest`**, name string at `0x1434262A8`, description *"Test hit
+/// damage"*, and its handler writes `user+0x544a = (atoi(argv[0]) != 0)`.
+pub const RUN_CONSOLE_COMMAND: u16 = 0x00EA;
+
+/// The command that turns the client's own damage number off. See [`RUN_CONSOLE_COMMAND`].
+pub const HIDE_HIT_DAMAGE: &str = "/hitdamagetest 0";
+
+/// Build a `0x00EA`. The body is one string; the client splits it on `"\r"` itself.
+///
+/// **Every line is echoed into the chat window as `> <line>` before it is dispatched**, so
+/// this is not silent and should not be sent repeatedly.
+pub fn run_console_command(command: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.str(command);
+    w.into_vec()
+}
+
+/// `0x0189` - what the client sends back after `/hitdamagetest` has run.
+///
+/// `u32 0x13D`, then the `u8` flag it just stored. **This is the positive control**: the
+/// command's permission gate is `[D]`, not `[L]`, so the only way to know it passed is that
+/// the client tells us. No `0x0189` means the gate refused and the number is still drawn.
+pub const CONSOLE_COMMAND_RESULT: u16 = 0x0189;
+
+/// The `u32` that identifies a `/hitdamagetest` result inside [`CONSOLE_COMMAND_RESULT`].
+pub const HIT_DAMAGE_TEST_ID: u32 = 0x13D;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The console packet is one string and the command is the one that clears the flag.**
+    ///
+    /// The command text is pinned because it is the whole packet: `/hitdamagetest` with a
+    /// **zero** argument. Its handler stores `atoi(argv[0]) != 0`, so `/hitdamagetest 1` would
+    /// switch the client's stub damage number back ON - the opposite of what the owner asked for,
+    /// from a one-character difference.
+    #[test]
+    fn the_console_command_turns_the_stub_number_off_not_on() {
+        assert_eq!(HIDE_HIT_DAMAGE, "/hitdamagetest 0");
+        assert!(HIDE_HIT_DAMAGE.ends_with(" 0"), "a 1 here would turn the number ON");
+
+        let b = run_console_command(HIDE_HIT_DAMAGE);
+        assert_eq!(u16::from_le_bytes([b[0], b[1]]) as usize, HIDE_HIT_DAMAGE.len());
+        assert_eq!(&b[2..], HIDE_HIT_DAMAGE.as_bytes(), "one string, nothing else");
+
+        // The client splits on carriage returns, so a command must not contain one - it would
+        // become two commands, and the second would be whatever followed.
+        assert!(!HIDE_HIT_DAMAGE.as_bytes().contains(&13u8), "one line, one command");
+    }
 
     /// Twenty-three bytes, and the two fields that matter carry what the handler tests for.
     ///

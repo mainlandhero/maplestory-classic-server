@@ -150,7 +150,23 @@
         yet, and that is expected: those are 0x03E1 sub-ops 0x0A and 0x0B and they are
         refused. Just say what the client does when you try.
 
-     2. THE DAMAGE NUMBER. Go and get hit by something that hurts.
+     2. THE DAMAGE NUMBER - AND THE 1 SHOULD BE GONE THIS TIME.
+        The server now asks the CLIENT to stop drawing its own number, using the client's own
+        console command. On field entry it sends a 0x00EA carrying "/hitdamagetest 0", which
+        writes the byte that gates the only renderer call drawing that 1.
+        YOU WILL SEE A LINE IN THE CHAT: "> /hitdamagetest 0". That is the client echoing the
+        command before it runs it, once per session. It is not a stray GM command.
+          ONE number, the real damage -> done. This is what perfect looks like
+          still TWO numbers            -> the command was refused. Its permission gate is [D]:
+                       it needs fields whose wire source was never decoded. Check world.log for
+                       an inbound 0x0189 - the client sends one ONLY if the command ran, so no
+                       0x0189 means the gate said no, and the fallback is a five-byte hook
+                       patch that is already written up
+          NO numbers at all            -> we suppressed ours too. Say so; ours is on a
+                       different, ungated renderer path so it should have survived
+          the client dies              -> 0x00EA has never been sent before. Say when
+
+     2b. THE OLD STEP 2, if two numbers are still there. Go and get hit by something that hurts.
         EXPECT TWO NUMBERS: the client's own stub 1, and the real damage in the damage colour.
         The stub is drawn at send time before our packet exists and nothing found can suppress
         it - 224 captured hits, mobs rated 3 to 287, all reporting 1.
@@ -1105,12 +1121,18 @@ if ($SetFieldProbe) {
     Write-Host '     Item Inventory - it will NOT work yet and that is expected.'
     Write-Host '     Just say what the client does when you try.'
     Write-Host ''
-    Write-Host '  2. THE DAMAGE NUMBER. Get hit by something that hurts.' -ForegroundColor Cyan
-    Write-Host '     EXPECT TWO NUMBERS: the client stub 1, and the real damage.'
-    Write-Host '     224 captured hits, mobs rated 3 to 287, all reported 1.'
-    Write-Host '       two numbers, one right -> as designed. YOU decide if it keeps'
-    Write-Host '       only the stub 1        -> ours is not drawing'
-    Write-Host '       right number in BLUE   -> the sign was lost'
+    Write-Host '  2. THE DAMAGE NUMBER - THE 1 SHOULD BE GONE THIS TIME.' -ForegroundColor Cyan
+    Write-Host '     The server now asks the CLIENT to stop drawing its own number,'
+    Write-Host '     using a console command the CLIENT already has: a 0x00EA'
+    Write-Host '     carrying "/hitdamagetest 0", sent on field entry.'
+    Write-Host '     YOU WILL SEE  > /hitdamagetest 0  IN THE CHAT. That is the'
+    Write-Host '     client echoing it before running it, once per session.'
+    Write-Host '       ONE number, the real damage -> done'
+    Write-Host '       still TWO numbers -> refused. The gate is derived, not'
+    Write-Host '                     measured. No inbound 0x0189 in world.log means'
+    Write-Host '                     it said no; a 5-byte hook patch is the fallback'
+    Write-Host '       NO numbers at all -> we suppressed ours too. Say so'
+    Write-Host '       the client dies   -> 0x00EA has never been sent. Say when'
     Write-Host ''
     Write-Host '  3. DEATH. Get killed, then STAND STILL 30s without clicking Revive.' -ForegroundColor Cyan
     Write-Host '       you stay at 0 HP -> fixed. You could regenerate out of death'

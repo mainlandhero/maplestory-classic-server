@@ -143,6 +143,9 @@ pub struct Session {
     config: Arc<Config>,
     /// The migration this connection claimed, once it has claimed one.
     claimed: Option<ClaimedMigration>,
+    /// Whether this connection has already asked the client to stop drawing its own damage
+    /// number. **Once per session**, because `0x00EA` echoes the command into the chat window.
+    asked_to_hide_hit_damage: bool,
     /// The NPC conversation in progress, if any.
     conversation: Option<Conversation>,
     /// Where each NPC on the current field is in its idle chatter.
@@ -361,6 +364,7 @@ impl Session {
             store,
             config,
             claimed: None,
+            asked_to_hide_hit_damage: false,
             conversation: None,
             chatter: Vec::new(),
             rng: Xorshift(seed),
