@@ -120,7 +120,7 @@ offset in the source object, which is what pins the field boundaries.
 | 6 | 12 | u32 | `+0x18` | 0 | |
 | 7 | 16 | u8 | bool | **1** | `setne dl` |
 | 8 | 17 | u32 | `+0x20` | **5** | |
-| 9 | 21 | u32 | `+0x24` | `0x0834ae9f` | ~~serial / nonce~~ **a CONSTANT.** Byte-identical in all three captures - a melee swing 2026-08-19, a Three Snails 2026-08-22, a Magic Claw 2026-08-28, three sessions and three characters apart. The `[I]` is refuted; what it *is* remains open |
+| 9 | 21 | u32 | `+0x24` | `0x0834ae9f` | ~~serial / nonce~~ **near-invariant**: `0x0834ae9f` in **433 of 434** bodies over 25 distinct captures and nine days. One outlier, `world-20260819-222734.log` 02:25:52.054 = `0xdd01c6a9`, with fields 8 and 34 moving alongside. A nonce does not repeat 433 times, so the `[I]` is refuted - but *a constant* was also too strong and is corrected here. What it **is** remains open |
 | 10 | 25 | u8 | `+0x28` | **1** | |
 | 11 | 26 | u32 | `+0x2c` | **4** | |
 | 12 | 30 | u32 | `+0x30` | `0x06eeac37` | **the tick** - see 1.5 |
@@ -179,7 +179,28 @@ offset in the source object, which is what pins the field boundaries.
 140f31fb4  call 140f31bb0             ; one target
 ```
 
-then `FUN_14083b270(packet, 0)` writes a final `u32` + `u8`. [L]
+then `FUN_14083b270(packet, 0)` writes the trailer. **[L]**
+
+> **CORRECTED 2026-08-28: the trailer is not always five bytes, and this sentence used to say
+> it was.** `FUN_14083b270` is **2612 bytes over five merged `.pdata` entries**; the `u32` +
+> `u8` above is its first two writes and then the description stopped. The `u8` is a
+> **NULL flag**, and when it is set the function goes on to write a node list terminated by
+> `0xFFFFFFFF`:
+>
+> ```text
+> 14083b288  w_u32   FUN_1402b29a0()          always
+> 14083b296  w_u8    (obj != NULL)            always
+> 14083b29e  je 0x14083bbf4                   NULL -> return
+> 14083b2b0  w_u32   [obj+0x1c]
+> 14083b2f8  w_u32   [node+0x1c]  + 42-way switch on tag-1   (per node)
+> 14083bbe2  w_u32   0xFFFFFFFF               the terminator
+> ```
+>
+> **7 of the 434 archived bodies set it** - every Magic Claw - each carrying 8 further bytes
+> (`00000000 FFFFFFFF`, an empty node list plus its terminator). A parser built on the old
+> five-byte reading stops early on all seven, which is exactly what `net::attack`'s length
+> check catches. The 42 node types are undecoded and carried raw; being end-of-body, they
+> cannot desynchronise a reader.
 
 `110 + 12 + 5 = 127`, which is **exactly** the captured length with `targetCount == 0`.
 Every one of the 127 bytes is accounted for. [D]

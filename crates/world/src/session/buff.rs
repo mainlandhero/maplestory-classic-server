@@ -59,10 +59,11 @@ impl Session {
         // Snails is an attack and Recovery's CTS bit is not identified, so neither has a
         // packet to send - and "nothing happened" with no explanation is the symptom the owner
         // reported twice for Nimble Feet. Saying so costs one chat line on a rare cast.
-        let Some(level) = net::buff::buff_level(skill_id, asked) else {
+        let Some(level) = self.buff_level_for(skill_id, asked, &chr) else {
             return self.notice(format!(
                 "This server does not grant skill {skill_id}'s effect yet. Three Snails is an \
-                 attack, and Recovery's stat bit has never been identified."
+                 attack, Recovery's stat bit has never been identified, and Disorder is a \
+                 debuff on the MOB rather than a stat on you."
             ));
         };
 
@@ -121,6 +122,57 @@ impl Session {
         }];
         out.extend(self.grant_buff(skill_id, level, now));
         out
+    }
+
+    /// **Every buff this server can grant, from either table.**
+    ///
+    /// `net::buff` holds the three that were decoded first - Nimble Feet, Magic Guard, Magic
+    /// Armor. `net::jobbuffs` holds the other three first-job buffs, whose CTS bits were found
+    /// on 2026-08-28 by **re-deriving the index-to-name table**: the earlier pass produced 323
+    /// names, this one produces 408, and the 85 it had been missing include every bit needed
+    /// here - 86 `PDD`, 88 `ACC`, 89 `EVA`, 99 `DarkSight`. `CLAUDE.md`'s oldest rule, again:
+    /// the old absence was a property of the search, not of the client.
+    ///
+    /// **Order matters only in that the two tables must not overlap**, and they do not: the
+    /// skill ids are disjoint and `jobbuffs::buff_level` returns `None` for everything outside
+    /// its four.
+    ///
+    /// Disorder returns `None` from both, on purpose. It is a debuff on the **mob**, and this
+    /// server has no packet for that - `research/first-job-buffs.md` §5. A `0x013C` for it is
+    /// still answered, with the chat line above; the alternative is the frozen UI.
+    fn buff_level_for(
+        &self,
+        skill_id: u32,
+        level: u32,
+        chr: &net::opcode::Character,
+    ) -> Option<net::buff::BuffLevel> {
+        net::buff::buff_level(skill_id, level)
+            .or_else(|| net::jobbuffs::buff_level(skill_id, level, self.weapon_defence(chr)))
+    }
+
+    /// The character's Weapon Defence, which **Iron Body alone** reads.
+    ///
+    /// Its `indiePddR` is a **percent** while CTS bit 86 is a flat add, so the server has to
+    /// resolve the one into the other - `research/first-job-buffs.md` §3.2. The resolution is
+    /// **[I]** and one launch decides it: a W.Def that rises by 25% of its base means this is
+    /// right, and a rise of exactly 25 regardless of the base means the raw percent reached
+    /// the wire.
+    ///
+    /// **`0` is a safe answer, not a failure.** `jobbuffs` yields a working cast that adds
+    /// nothing rather than a refusal, which is the right way round for a debug server.
+    ///
+    /// # This is not the same sum `incoming_damage_for` uses, and that is deliberate
+    ///
+    /// That function sums equipment `inc_pdd` and **omits the `floor(STR/4)` seed**. The stat
+    /// window shows both, and Iron Body's percentage applies to what the window shows, so this
+    /// adds the seed. The two are now knowingly different rather than accidentally different;
+    /// whether `incoming_damage_for` should also include the seed is a behaviour change on
+    /// working combat code and is left alone until someone measures it.
+    fn weapon_defence(&self, chr: &net::opcode::Character) -> i16 {
+        let equipment: u32 =
+            self.dressed(chr).iter().map(|(_, _, s)| u32::from(s.stats.inc_pdd)).sum();
+        let total = crate::damage::wdef_from_strength(u32::from(chr.strength)) + equipment;
+        i16::try_from(total).unwrap_or(i16::MAX)
     }
 
     /// Put the stat on, replacing whatever held that bit before.
@@ -260,8 +312,30 @@ impl Session {
         };
         // Only bits we believe are held. Answering for a bit we never granted would tell the
         // client to clear something it may hold from elsewhere.
-        let held: Vec<u32> =
-            req.bits.iter().copied().filter(|b| self.buffs.iter().any(|h| h.bit == *b)).collect();
+        //
+        // **But cancel the whole SKILL, not just the bit that was named.** A buff is a skill's
+        // set of stats: Dark Sight grants invisibility (99) *and* a Speed penalty (92), and
+        // Focus grants Accuracy (88) *and* Avoidability (89). If a right-click names one bit
+        // and this cleared only that one, the player keeps the other half forever - and for
+        // Dark Sight the half left behind is the **drawback**, so on screen it is a cancelled
+        // buff and a character who is permanently slow for no visible reason. Nobody reports
+        // that as a buff bug.
+        //
+        // `research/first-job-buffs.md` §7 item 3 names this hazard; it is the same shape as
+        // `grant_buff_with_tail`'s `all_granted_by` note, which is about the other direction
+        // of the identical mistake.
+        let skills: Vec<u32> = self
+            .buffs
+            .iter()
+            .filter(|h| req.bits.contains(&h.bit))
+            .map(|h| h.skill_id)
+            .collect();
+        let held: Vec<u32> = self
+            .buffs
+            .iter()
+            .filter(|h| req.bits.contains(&h.bit) || skills.contains(&h.skill_id))
+            .map(|h| h.bit)
+            .collect();
         if held.is_empty() {
             // **Still worth a line, because this is the retry case.** Fourteen unanswered
             // requests is what the run before this looked like, and silence here would be

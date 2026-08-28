@@ -92,6 +92,33 @@ data this project produces. Never trade it for disk space, and **never state a c
 drawn from two different sessions as though one capture showed both halves** - that is exactly
 how the mob-targeting answer went right, then wrong, then right again.
 
+### The corollary: `research/fixtures/` is COPIES, so counting across both double-counts
+
+`fixtures/` holds copies of `previous-runs/` files under names that say what they prove. That
+is the right design and it has one consequence nobody wrote down: **a glob over both
+directories counts a capture once per name it has.** 155 world logs on disk are **119 distinct
+files**, and `world-20260822-213856.log` exists under three names.
+
+On 2026-08-28 this produced the wrong numbers *in the write-up of an instrument lesson*. The
+skill-id enumeration was reported as 689 swings, 2 Three Snails and 14 Magic Claws. The real
+counts are **426, 1 and 7**; two of the three were exactly doubled by fixture copies, and the
+control that reads as "two independent observations" is **one packet**. An agent caught it by
+hashing first.
+
+Two habits:
+
+* **Deduplicate by content hash before counting anything across those two directories.**
+  `tools/extract_attack_bodies.py` does it and exits non-zero on an empty result.
+* **A fixture's name says what its author was looking at, not everything the file contains.**
+  Both captures that settled the skill id had been sitting in `fixtures/` for days, under
+  `magic-claw-1-damage-and-heapfix-armed-` and `cash-shop-click-sent-nothing-`. Grep the
+  contents; do not scan the names.
+
+And the reason this is worth a section rather than a footnote: **the finding was right and the
+count was wrong, which is the more dangerous combination.** A wrong count does not fail loudly
+the way a wrong conclusion does - it just quietly makes a one-observation control look like
+corroboration.
+
 ## Built is not wired
 
 Several subsystems have been fully decoded, implemented, tested - and never connected, so on

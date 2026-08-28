@@ -66,10 +66,26 @@ Magic Claw, `world.log` 04:01:06.251, first 34 bytes of the body:
 
 ## 3. A second correction that falls out for free
 
-Field 9, `+0x24`, is `9fae3408` = `0x0834ae9f` in **all three** captures - a melee swing on
-2026-08-19, a Three Snails on 2026-08-22 and a Magic Claw on 2026-08-28, three sessions and
-three characters apart. `mob-combat.md` section 1.3 calls it *"looks like a per-attack serial /
-nonce **[I]**"*. It is a **constant**. The `[I]` is refuted; what the constant is remains open.
+Field 9, `+0x24`, is `0x0834ae9f` in **433 of the 434 bodies**, across 25 distinct captures and
+nine days. `mob-combat.md` section 1.3 calls it *"looks like a per-attack serial / nonce
+**[I]**"*. A nonce that repeats 433 times is not a nonce, so the `[I]` is refuted.
+
+**But "it is a constant" was too strong, and that sentence is corrected here too.** There is
+exactly one outlier - `previous-runs/world-20260819-222734.log` at 02:25:52.054, `0xdd01c6a9` -
+and fields 8 and 34 move with it. Near-invariant and not per-attack is all that is measured.
+What it *is* remains open.
+
+```python
+# counting over previous-runs/ AND research/fixtures/ without counting a capture twice
+import glob, hashlib
+seen, files = set(), []
+for f in sorted(set(glob.glob('previous-runs/world*.log') + ['world.log']
+                    + glob.glob('research/fixtures/*world*.log'))):
+    h = hashlib.md5(open(f, 'rb').read()).hexdigest()
+    if h not in seen:
+        seen.add(h)
+        files.append(f)
+```
 
 ## 4. What this unblocks
 
@@ -85,6 +101,18 @@ damage; a server that disagrees has found a bug in its own model far more often 
 
 ## 5. The fixture
 
-`research/fixtures/attack-packet-carries-skill-id-world.log` - the 2026-08-28 run, 14 Magic
-Claw casts at level 7. The Three Snails control is in
-`previous-runs/world-20260822-213856.log` and should be copied out before that buffer rolls.
+**Already archived, under names given for other questions.** Two fresh copies made while
+writing this file were deleted again, because a third copy of a capture is precisely what
+produced the wrong counts in section 1:
+
+| capture | fixture |
+|---|---|
+| 2026-08-28, the 7 Magic Claws at level 7 | `research/fixtures/magic-claw-1-damage-and-heapfix-armed-world.log` |
+| 2026-08-22, the one Three Snails | `research/fixtures/cash-shop-click-sent-nothing-world.log` |
+
+Neither name mentions the attack packet, and that is the point: **a fixture name says what its
+author was looking at, not everything the file contains.** Both of these were sitting in
+`research/fixtures/` with the skill id in them the whole time.
+
+`tools/extract_attack_bodies.py` deduplicates by content hash and exits non-zero on an empty
+result, so a silent zero is not one of the answers it can give.

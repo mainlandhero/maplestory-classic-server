@@ -20,6 +20,7 @@
 //! assert_eq!(r.str().unwrap(), "Scania");
 //! ```
 
+pub mod attack;
 pub mod bag;
 pub mod buff;
 pub mod cashshop;
@@ -31,6 +32,7 @@ pub mod drops;
 pub mod error;
 pub mod handshake;
 pub mod inventory;
+pub mod jobbuffs;
 pub mod message;
 pub mod mob;
 pub mod mobmove;

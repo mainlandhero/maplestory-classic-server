@@ -5441,6 +5441,265 @@ fn resetap_gives_back_exactly_what_was_spent() {
     assert_eq!(s.claimed_character().unwrap().ap, ap_now, "a second reset is a no-op");
 }
 
+/// A `0x013C`: `u32 skillId, u32 level`.
+fn cast(skill_id: u32, level: u32) -> Vec<u8> {
+    let mut b = net::buff::CLIENT_SKILL_USE.to_le_bytes().to_vec();
+    b.extend_from_slice(&skill_id.to_le_bytes());
+    b.extend_from_slice(&level.to_le_bytes());
+    b
+}
+
+/// A `0x013F` naming exactly one CTS bit - the inverse of `net::buff::bits_in_mask`.
+fn cancel(skill_id: u32, bit: u32) -> Vec<u8> {
+    let mut b = net::buff::CLIENT_SKILL_CANCEL.to_le_bytes().to_vec();
+    b.extend_from_slice(&skill_id.to_le_bytes());
+    b.extend_from_slice(&[0u8; net::buff::CANCEL_MASK_OFFSET - 4]);
+    let mut mask = [0u8; net::buff::MASK_LEN];
+    let word = (bit / 32) as usize;
+    let within = bit % 32;
+    let value: u32 = 1 << (31 - within);
+    mask[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    // The helper has to agree with the parser, or this test proves nothing about the wire.
+    assert_eq!(net::buff::bits_in_mask(&mask), vec![bit]);
+    b.extend_from_slice(&mask);
+    b
+}
+
+/// A job-`job` character holding `skill_id` at `level`, claimed and on a field.
+fn buffed_session(job: u16, skill_id: u32, level: u32) -> (Session, Arc<Store>, u32) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Caster".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = job;
+    made.mp = 200;
+    made.max_mp = 200;
+    store.save_character_progress(&made).unwrap();
+    store.set_skill_level(made.id, skill_id, level).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config { set_field_probe: true, ..Config::default() };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+    (s, store, made.id)
+}
+
+/// **`!kit` hands over a whole branch's gear, and every id it names is real.**
+///
+/// The test plan tells the owner to type `!kit` for three of its six steps. `give_item` refuses any
+/// id that is not in this client's `Item.wz`, so a loadout naming an id that does not exist
+/// would produce a run where three branches silently have no weapon - and each of those reads
+/// on screen as the skill being broken, which is the exact failure this whole session started
+/// from.
+///
+/// So this asserts against **the real `gm-handbook/items.txt`**, not a fixture: the ids have to
+/// survive the same lookup `!item` does.
+#[test]
+fn kit_gives_every_branch_gear_that_actually_exists() {
+    let names = crate::config::Config::load_id_names(std::path::Path::new(
+        "../../gm-handbook/items.txt",
+    ));
+    if names.is_empty() {
+        return; // generated, gitignored - python tools/dump_names.py
+    }
+    // The instrument first: a known-good id must be findable, or an empty result below would
+    // be a property of the loader rather than of the loadout.
+    assert!(names.contains_key(&1_302_000), "the loader cannot even see the Sword");
+
+    for job in [100u16, 200, 300, 400] {
+        let kit = crate::loadout::loadout_for(job).expect("all four first jobs have a loadout");
+        for piece in kit.pieces.iter().chain(kit.alternative.iter()) {
+            assert!(
+                names.contains_key(&piece.item_id),
+                "job {job}: {} ({}) is not in this client's Item.wz, so !item would refuse it",
+                piece.name,
+                piece.item_id
+            );
+        }
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Kitted".to_string(), ..Default::default() };
+        let mut made = store.create_character(account_id, 0, &chr).unwrap();
+        made.job = job;
+        made.level = 10;
+        store.save_character_progress(&made).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        let config = Config {
+            set_field_probe: true,
+            item_names: names.clone(),
+            ..Config::default()
+        };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(made.id);
+
+        let out = s.handle(&gm_chat("!kit"));
+        let said = notice_text(&out[0]);
+        if kit.needs_nothing() {
+            // The Magician's empty kit is a MEASUREMENT - no Magician skill carries a weapon
+            // column - so it has to say so rather than look like a table nobody filled in.
+            assert!(said.contains("NOTHING"), "job {job}: {said}");
+            let any = [store::InventoryType::Equip, store::InventoryType::Use]
+                .iter()
+                .any(|t| !store.bag_items(made.id, *t).unwrap_or_default().is_empty());
+            assert!(!any, "job {job} needs nothing, so nothing may be handed over");
+            continue;
+        }
+        // Every piece reached the database. A count is the check here: a loop that gives up
+        // after the first failure looks identical to one that worked.
+        let mut held = Vec::new();
+        for tab in [store::InventoryType::Equip, store::InventoryType::Use] {
+            held.extend(store.bag_items(made.id, tab).unwrap_or_default());
+        }
+        for piece in kit.pieces {
+            assert!(
+                held.iter().any(|i| i.item.item_id == piece.item_id),
+                "job {job}: {} never reached the inventory. Said: {said}",
+                piece.name
+            );
+        }
+        assert!(
+            !said.contains("REFUSED"),
+            "job {job} kit was refused: {said}"
+        );
+    }
+}
+
+/// **`!kit` warns when the character cannot equip what it just handed over.**
+///
+/// There is no free bow, crossbow or claw in this client - all 230 weapon images were read to
+/// establish that. `jobs::advancement_for` would have refused a character who could not meet
+/// those requirements, but **`!job` bypasses it**, and `!job` is how these branches get
+/// reached. A bow in the bag that cannot go in the hand looks exactly like a broken skill.
+#[test]
+fn kit_warns_when_the_weapon_cannot_be_equipped() {
+    let names = crate::config::Config::load_id_names(std::path::Path::new(
+        "../../gm-handbook/items.txt",
+    ));
+    if names.is_empty() {
+        return;
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Weakling".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 300; // a Bowman by fiat, with a fresh character's DEX
+    made.level = 1;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config =
+        Config { set_field_probe: true, item_names: names, ..Config::default() };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    let out = s.handle(&gm_chat("!kit"));
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE
+            && notice_text(r).contains("WARNING")),
+        "a level-1 Bowman must be told the bow will not go in their hand"
+    );
+    // The items are still handed over. A refusal would be wrong: the stat can be raised
+    // afterwards, and !resetap is right there.
+    assert!(
+        !store.bag_items(made.id, store::InventoryType::Equip).unwrap_or_default().is_empty(),
+        "the kit is still given - the warning is advice, not a refusal"
+    );
+}
+
+/// **The three first-job buffs of the other branches now cast at all.**
+///
+/// Before this, `on_skill_use` looked in `net::buff` alone - three skills - and answered every
+/// other cast with "this server does not grant that yet". Iron Body, Focus and Dark Sight are
+/// half of what a Warrior, a Bowman and a Thief have to show for a first job.
+///
+/// Their CTS bits came from **re-deriving** the index-to-name table on 2026-08-28: the earlier
+/// pass produced 323 names, this one 408, and the 85 it had been missing include every bit
+/// needed here. The old absence was a property of the search.
+#[test]
+fn iron_body_focus_and_dark_sight_all_cast() {
+    for (job, skill, level, bits) in [
+        (100u16, net::jobbuffs::IRON_BODY, 20u32, 1usize),
+        (300, net::jobbuffs::FOCUS, 20, 2),
+        (400, net::jobbuffs::DARK_SIGHT, 1, 2),
+    ] {
+        let (mut s, _store, _id) = buffed_session(job, skill, level);
+        let out = s.handle(&cast(skill, level));
+        let granted = out
+            .iter()
+            .find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET)
+            .unwrap_or_else(|| panic!("skill {skill} must grant a temporary stat"));
+        assert!(!granted.body.is_empty());
+        // The MP is spent in the same exchange - every effect hangs off the one transition.
+        assert!(
+            out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+            "skill {skill} must also spend MP"
+        );
+        // How many stats it grants is the thing a single-stat call site would get wrong.
+        let level_row = net::jobbuffs::buff_level(skill, level, 100).expect("in the table");
+        assert_eq!(
+            level_row.all_granted_by(skill).len(),
+            bits,
+            "skill {skill} grants {bits} stat(s)"
+        );
+    }
+}
+
+/// **Cancelling Dark Sight clears the Speed penalty too, not just the invisibility.**
+///
+/// `research/first-job-buffs.md` §7 item 3: the right-click names the bit the player clicked.
+/// If the server cleared only that bit, the half left behind for Dark Sight is the
+/// **drawback**: a cancelled buff and a character permanently slow for no visible reason,
+/// which nobody reports as a buff bug. Focus has the same shape with Accuracy and
+/// Avoidability.
+///
+/// This is the mirror of `grant_buff_with_tail`'s `all_granted_by` note: the same mistake, in
+/// the other direction, on the other path.
+#[test]
+fn cancelling_a_two_stat_buff_clears_both_of_its_bits() {
+    let (mut s, _store, _id) = buffed_session(400, net::jobbuffs::DARK_SIGHT, 1);
+    s.handle(&cast(net::jobbuffs::DARK_SIGHT, 1));
+
+    // The client right-clicks the icon, which names ONE bit: invisibility.
+    let out = s.handle(&cancel(net::jobbuffs::DARK_SIGHT, net::jobbuffs::CTS_DARK_SIGHT));
+    let reset = out
+        .iter()
+        .find(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET)
+        .expect("the cancel must be answered");
+    let cleared = net::buff::bits_in_mask(&reset.body[3..3 + net::buff::MASK_LEN]);
+    assert!(
+        cleared.contains(&net::jobbuffs::CTS_DARK_SIGHT),
+        "the bit that was clicked: {cleared:?}"
+    );
+    assert!(
+        cleared.contains(&net::buff::CTS_SPEED),
+        "and the Speed penalty it came with, or the player stays slow forever: {cleared:?}"
+    );
+
+    // Nothing is left held, so a second right-click has nothing to do.
+    let out = s.handle(&cancel(net::jobbuffs::DARK_SIGHT, net::jobbuffs::CTS_DARK_SIGHT));
+    assert!(
+        !out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET),
+        "both bits were already released"
+    );
+}
+
+/// **Disorder is answered and grants nothing**, because it is a debuff on the mob.
+///
+/// `jobbuffs::buff_level` returns `None` for it deliberately, and this asserts the refusal is
+/// a *chat line* rather than silence. An unanswered request is the frozen-UI failure this
+/// project has paid for repeatedly - and `0x013C` is the one request that does not latch, so
+/// the honest answer here is words on screen.
+#[test]
+fn disorder_is_answered_even_though_it_grants_no_stat() {
+    let (mut s, _store, _id) = buffed_session(400, net::jobbuffs::DISORDER, 20);
+    let out = s.handle(&cast(net::jobbuffs::DISORDER, 20));
+    assert!(!out.is_empty(), "an unanswered 0x013C is how a UI freezes");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET),
+        "Disorder sets no stat on the player"
+    );
+    assert!(notice_text(&out[0]).contains("Disorder"), "{}", notice_text(&out[0]));
+}
+
 /// **The Cash Shop silences idle chatter, and only the chatter.**
 ///
 /// The owner, 2026-08-26: *"we should fix NPC idle chatter when player is in cash shop."* About
@@ -5511,7 +5770,7 @@ fn the_cash_shop_silences_idle_chatter_and_the_field_gets_it_back() {
     assert_eq!(balloons(&mut s, 60_000), 0, "no balloons while the field is not being drawn");
 
     // 3. Exit - `0x00D1` with an EMPTY body is the button, not a portal - and Robin is back.
-    let out = s.handle(&super::CLIENT_TRANSFER_FIELD.to_le_bytes().to_vec());
+    let out = s.handle(&super::CLIENT_TRANSFER_FIELD.to_le_bytes());
     assert!(
         !out.is_empty(),
         "the Exit button must be answered; an unanswered one freezes the whole UI"

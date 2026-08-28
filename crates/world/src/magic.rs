@@ -12,10 +12,11 @@
 //!
 //! **It is the `u32` at body offset 2, and its level is the `u8` at offset 6.**
 //! `research/attack-skill-id.md` has the enumeration: every archived `0x00DF`/`0x00E1` body,
-//! grouped by that field. 689 melee swings carry `0`; two Three Snails carry `1000` at level
-//! **3**, and Three Snails' `maxLevel` is exactly 3; fourteen Magic Claws carry `2001003` at
-//! level **7**, and the owner had put exactly 7 points in. Two skills, two levels each known from
-//! an unrelated source.
+//! grouped by that field. **426** melee swings carry `0`; **one** Three Snails carries `1000`
+//! at level **3**, and Three Snails' `maxLevel` is exactly 3; **seven** Magic Claws carry
+//! `2001003` at level **7**, and the owner had put exactly 7 points in. Two skills, two levels each
+//! known from an unrelated source - and that, not the count, is the corroboration. The Three
+//! Snails control is **one packet**; anything leaning on it should say so.
 //!
 //! **The evidence for the old claim was an absence in captures that could not have contained
 //! the thing.** Every body this module was written against was an ordinary swing, where the

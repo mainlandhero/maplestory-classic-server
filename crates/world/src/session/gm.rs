@@ -83,6 +83,7 @@ impl Session {
             "resetap" => self.gm_reset_ap(),
             "resetsp" => self.gm_reset_sp(),
             "learn" => self.gm_learn(arg),
+            "kit" => self.gm_kit(arg),
             "buy" => self.gm_buy(arg),
             "locker" => self.gm_locker(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
@@ -1106,6 +1107,101 @@ impl Session {
         out
     }
 
+    /// `!kit` - hand over everything this job needs to cast its own skills.
+    ///
+    /// # Why a command and not a note in the test plan
+    ///
+    /// Five of the 24 first-job skills carry a **weapon gate** in this client's `Skill.wz`,
+    /// measured over all four `weapon` columns: Arrow Blow, Double Shot and Power Knockback
+    /// want 45 or 46 (bow or crossbow), Double Stab wants 33 (dagger), Lucky Seven wants 47
+    /// (claw). Without the right item in hand the client refuses the cast itself, and on
+    /// screen that is indistinguishable from a server that never implemented the skill.
+    ///
+    /// A run that discovers this costs the owner a manual launch. Typing four `!item` lines off a
+    /// plan costs a transcription error.
+    ///
+    /// # It warns about what cannot be equipped, which is the half that matters
+    ///
+    /// **There is no zero-requirement bow, crossbow or claw in this client, and no free
+    /// throwing star** - `crate::loadout` read all 230 weapon images from the WZ to establish
+    /// that, because `gm-handbook/equips.txt` is missing the requirement columns entirely.
+    /// Anything advanced through `jobs::advancement_for` clears its own kit, since
+    /// `LEVEL_MINIMUM` is 10 and `STAT_MINIMUM` is 35 against the bow's 25.
+    ///
+    /// **`!job` bypasses that check**, and `!job` is how these branches will be reached. So a
+    /// character can end up holding a bow it cannot equip, which reads on screen as the skill
+    /// being broken. `Loadout::unequippable` names the failing clause instead.
+    pub(super) fn gm_kit(&mut self, _arg: &str) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self
+                .gm_ack("!kit REFUSED: no character is claimed on this connection.".to_string());
+        };
+        let Some(kit) = crate::loadout::loadout_for(chr.job) else {
+            return self.gm_ack(format!(
+                "!kit: job {} has no loadout. The four first jobs are 100 (Warrior), 200 \
+                 (Magician), 300 (Bowman) and 400 (Thief) - try !job 300 first.",
+                chr.job
+            ));
+        };
+        // **An empty kit is a measurement, not a failure.** No Magician skill carries a
+        // `weapon` column at all - confirmed over all four columns on all six skills - so the
+        // honest answer is "nothing", said out loud.
+        if kit.needs_nothing() {
+            return self.gm_ack(format!(
+                "!kit: {} needs NOTHING. None of its six skills carries a weapon column in \
+                 this client's Skill.wz, so every one of them casts bare-handed. That is \
+                 measured, not an empty table.",
+                kit.job_name
+            ));
+        }
+
+        let mut out = Vec::new();
+        let mut lines = Vec::new();
+        for piece in kit.pieces {
+            match self.give_item(piece.item_id, piece.quantity, "GM !kit") {
+                Ok((line, replies)) => {
+                    lines.push(format!("{line} - {}", piece.why));
+                    out.extend(replies);
+                }
+                // Reported, never swallowed. A half-delivered kit that says nothing is how a
+                // missing arrow becomes "Double Shot is broken".
+                Err(why) => lines.push(format!("{} ({}) {why}", piece.name, piece.item_id)),
+            }
+        }
+
+        // The equip check runs on the character as it is now, after the grants.
+        let now = self.claimed_character().unwrap_or(chr);
+        let blocked = kit.unequippable(&now);
+        let warning = if blocked.is_empty() {
+            String::new()
+        } else {
+            let each: Vec<String> = blocked
+                .iter()
+                .map(|(p, unmet)| format!("{} needs {}", p.name, unmet.join(" and ")))
+                .collect();
+            format!(
+                " *** WARNING: you cannot EQUIP {}. !job does not move ability points, so the \
+                 skills these gate will refuse to cast and it will look like the server. Use \
+                 !resetap and raise the stat. ***",
+                each.join("; ")
+            )
+        };
+
+        let mut replies = self.gm_ack(format!(
+            "!kit for {} (job {}): {}.{}{}",
+            kit.job_name,
+            kit.job,
+            lines.join(" | "),
+            kit.caveat.map(|c| format!(" NOTE: {c}")).unwrap_or_default(),
+            warning
+        ));
+        replies.extend(out);
+        if !warning.is_empty() {
+            replies.extend(self.notice(warning.trim().trim_matches('*').trim().to_string()));
+        }
+        replies
+    }
+
     /// A skill's name, for a line a person reads. The id alone if the table is not loaded.
     pub(super) fn skill_name(&self, skill_id: u32) -> String {
         self.config
@@ -1338,26 +1434,54 @@ impl Session {
             return self.gm_ack(format!("!item: {arg:?} is not an item id. Try !item 1302000."));
         };
         let count: u16 = parts.next().and_then(|c| c.parse().ok()).unwrap_or(1).max(1);
+        match self.give_item(item_id, count, "GM !item") {
+            Ok((line, replies)) => {
+                let mut out = self.gm_ack(line);
+                out.extend(replies);
+                out
+            }
+            Err(why) => self.gm_ack(why),
+        }
+    }
 
+    /// **Hand one item over: every refusal, the row, and the packets.** Shared by `!item` and
+    /// `!kit`.
+    ///
+    /// `session/inventory.rs` records that this path *already existed twice and drifted*.
+    /// A third copy is how one of them ends up missing the pet guard - the guard that exists
+    /// because sending a pet as a bundle throws `0xE06D7363` and kills the client. So `!kit`
+    /// adds no new wire path at all; it calls this in a loop.
+    ///
+    /// `Ok` carries the line to print and the packets to send. `Err` carries the refusal,
+    /// already worded for a person.
+    fn give_item(
+        &mut self,
+        item_id: u32,
+        count: u16,
+        why: &str,
+    ) -> Result<(String, Vec<Reply>), String> {
+        let count = count.max(1);
         if net::inventory::is_pet(item_id) {
-            return self.gm_ack(format!(
-                "!item REFUSED: {item_id} is a PET. This server cannot build a pet item body                  yet, and sending one as a bundle kills the client - measured 2026-08-26,                  net::inventory::is_pet has the mechanism."
+            return Err(format!(
+                "REFUSED: {item_id} is a PET. This server cannot build a pet item body yet, \
+                 and sending one as a bundle kills the client - measured 2026-08-26, \
+                 net::inventory::is_pet has the mechanism."
             ));
         }
         let Some(inv) = store::InventoryType::for_item(item_id) else {
-            return self.gm_ack(format!(
-                "!item REFUSED: {item_id} is not in any inventory tab - ids start 1..5."
+            return Err(format!(
+                "REFUSED: {item_id} is not in any inventory tab - ids start 1..5."
             ));
         };
         if !self.config.item_names.contains_key(&item_id)
             && !self.config.shops.item_data.contains_key(&item_id)
         {
-            return self.gm_ack(format!(
-                "!item REFUSED: {item_id} is not in this client's Item.wz, so it has nothing to draw."
+            return Err(format!(
+                "REFUSED: {item_id} is not in this client's Item.wz, so it has nothing to draw."
             ));
         }
         let Some(chr) = self.claimed_character() else {
-            return self.gm_ack("!item REFUSED: no character is claimed on this connection.".to_string());
+            return Err("REFUSED: no character is claimed on this connection.".to_string());
         };
 
         let is_equip = inv == store::InventoryType::Equip;
@@ -1370,17 +1494,17 @@ impl Session {
 
         let placed = match self.store.add_item(chr.id, inv, &item, max_stack) {
             Ok(rows) => rows,
-            Err(e) => return self.gm_ack(format!("!item REFUSED: {e}")),
+            Err(e) => return Err(format!("REFUSED: {e}")),
         };
 
         let name = self.item_name(item_id);
-        let mut out = self.gm_ack(format!(
+        let line = format!(
             "Giving {} {count}x {name} ({item_id}) -> {inv:?} tab, slot {}",
             chr.name,
             placed.iter().map(|r| r.slot.to_string()).collect::<Vec<_>>().join(", ")
-        ));
-        out.extend(self.inventory_added_replies(inv, &placed, "GM !item"));
-        out
+        );
+        let replies = self.inventory_added_replies(inv, &placed, why);
+        Ok((line, replies))
     }
 
 

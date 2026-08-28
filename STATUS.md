@@ -56,8 +56,12 @@ unwired because of it. It is the **`u32` at body offset 2**, with the **level as
 offset 6** — `research/attack-skill-id.md`. The evidence for the old claim was an absence in
 captures that could not have contained the thing: every archived body was an ordinary swing,
 where the field is legitimately `0`, and a zero field explains nothing about itself. One grep
-over `previous-runs/` settled it, with 689 swings at `0`, two Three Snails at `1000` level **3**
-(its maxLevel is 3) and fourteen Magic Claws at `2001003` level **7** (the owner had put in 7).
+over `previous-runs/` settled it: **426** swings at `0`, **one** Three Snails at `1000` level
+**3** (its maxLevel is 3) and **seven** Magic Claws at `2001003` level **7** (the owner had put in 7).
+*(Those counts are the corrected ones — the first pass said 689/2/14, because a glob over
+`previous-runs/` **and** `research/fixtures/` counts a capture once per name it has: 155 world
+logs on disk are 119 distinct files. Deduplicate by content hash before counting anything in
+those two directories.)*
 Same shape as the cash-shop opcode that sat in the log for three sessions while being reported
 absent: **nobody asked the specific question.**
 
