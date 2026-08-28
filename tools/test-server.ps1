@@ -88,53 +88,38 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
 
     THE STEPS, 1-7 plus 5b. Each is a claim that can come back false; report them
     separately.
-    ORDER: 1 first - the one the owner pushed twice on, and one hit settles it. Then 2 and the
-    branches. 7 last.
+    ORDER: 8 FIRST - it only means anything in a young session. Then 2 with 3 inside it,
+    then 4, 5, 5b, 7. Step 1 is a READ, not a test.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
 
-     1. THE CLIENT COMPUTES ITS OWN MOB DAMAGE AND SENDS IT. One number, both sides agree.
+     1. NOTHING TO TEST HERE - the 1 is settled, and not in my favour. Read once, skip.
 
-        The owner: *"try harder to see how the client can compute its own mob damage and then
-        sending that to the server instead. This is one of the ways that both the server and
-        client can agree."* They were right, and the previous patch - which merely HID the
-        client's number - was the wrong fix, made before the contact path had been read. It
-        left the client still SENDING 1, so the two sides still disagreed, just off screen.
+        I told the owner the client computes contact damage and merely discards it, and that
+        clearing one byte would let it keep the answer. The patch armed, verified its own
+        write, logged the new bytes - and the claim was still 1.
 
-        THE CLIENT ALREADY COMPUTES IT. FUN_14288ac30's no-attack-record branch:
-            14288b2dc  cmp  dword [rdi+0xe8], 0     ; the mob's attack power
-            14288b2e3  jle  0x14288ca17             ; zero -> bail out entirely
-            14288b312  movd xmm1, dword [rdi+0xe8]
-            14288b326  mulsd xmm0, xmm1
-            14288b32a  divsd xmm0, [0x143277e78]    ; = 100.0, read off .rdata
-            14288b337  cvttsd2si r12d, xmm0         ; a REAL damage
-        and r12d survives untouched to the gate at 14288b3f0, where a block conditioned on
-        user+0x544a REPLACES it. That is why 198 of 198 captures said 1: the number was
-        computed and then discarded.
+        The path is real but it is a FIXED-DAMAGE OVERRIDE:
+            14288b2dc  cmp dword [rdi+0xe8], 0
+            14288b2e3  jle 0x14288ca17          ; `xor dil,dil` into the EPILOGUE
+        rdi is the mob's TEMPLATE record (FUN_141c54dd0, named in user-hit.md 3.5), and
+        template+0xe8 is written by the template loader FUN_14047d990 at 0x140481995 from the
+        WZ property `fixedBodyAttackDamage` (string at 0x14328afb8).
 
-        ONE BYTE. The client sets the flag on itself with an immediate:
-            142883687  48 c7 86 48 54 00 00  01 00 01 00
-                       mov qword ptr [rsi+0x5448], 0x00010001
-        and 0x00010001 -> 0x00000001 clears +0x544a while leaving +0x5448 (never read
-        anywhere) as it was. The byte is compared in EIGHT functions, the 0x00E5 builder and
-        the drawer among them, so they all move together - computed, sent and drawn become
-        one number.
+        ZERO of this client's 193 mob images carry fixedBodyAttackDamage. All 193 carry
+        PADamage. So every contact hit bails into the epilogue and the gate is never reached,
+        which is exactly what the run showed. The patch is INERT for contact damage; it is off
+        by default now and -ClientHitNumberPatch re-arms it, kept only in case a mob
+        ATTACK-SKILL hit reaches the gate - and no such hit exists in 198 captures.
 
-        AND THE SERVER DEFERS TO IT. `on_user_hit` now applies a claim above 1 as-is; our own
-        incoming_damage still runs and still prints, as a check rather than an authority. A
-        claim of exactly 1 is the floor the discarded path produces, so it falls back to the
-        server's model - which keeps an unpatched client behaving as it always has.
+        THE ERROR WAS MINE AND IT IS THIS FILE'S OLDEST RULE: I found a real calculation and
+        did not check its precondition. One wz-dump over 193 images - the same instrument used
+        three times already in that write-up - would have said so before a launch was spent.
 
-          Fight anything and get hit.
-            ONE number matching the HP drop -> done, and the two sides agree by construction
-            still TWO                       -> our own 0x02D1 is still drawing; one line
-            ONE number, still 1             -> the client bailed at 14288b2e3, so mob+0xe8 is
-                                               zero and THAT is the next thing to chase. A
-                                               real result, not a failure
-            NO number                       -> say so
-          grep HITNUMBER in client-patched\maplecw-hook.log for whether it armed.
-          -KeepClientHitNumber restores the old behaviour.
-          research/damage-number-two-numbers.md.
+        So: the client has no ordinary contact-damage calculation in this build. Contact damage
+        is the SERVER's to supply, and which packet carries it to the client is still not
+        found. Two numbers stay for now, and ours is the correct one.
+        research/damage-number-two-numbers.md.
 
      2. WARRIOR - FIRST OF THE FOUR BRANCHES, after step 7. Do step 3 in the MIDDLE of it.
         It is the only branch whose weapon is FREE (Sword 1302000: reqLevel 0, no stat, no
@@ -244,6 +229,27 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
                           0x055D alone will NOT recover it, because of the modal guard
           c) do the prices match data/shops.txt?
 
+     8. THE !learn CRASH - one observation, and it needs the young-session discriminator.
+
+        `!learn 1000001 15` (Max HP Increase) killed the client, but the fault was at
+        18:28:59.889 and the packet went out at 18:28:56.211 - **3.7 seconds earlier**, with
+        a `0x0226` reply and dozens of mob moves in between. Not on the packet.
+
+        The packet is byte-correct: header `01 01 00 | 01 00`, entry `41420f00` = 1000001,
+        `0f000000` = 15, masterLevel 0, then `00 80 05 bb 46 e6 17 02` = the never-expires
+        constant, then the trailing `00`. 26 bytes = 5 + 20 + 1, which is the builder's own
+        arithmetic. `needs_master_level` correctly excludes this skill.
+
+        Fault `0x1415f0db0` appears in NONE of the other archived hook logs.
+
+        So it is the pair this file keeps meeting: the command is fatal, or the session had
+        been running long enough for something else to fire. Opposite work, identical on
+        screen. **Do it at ~40 s of client life, before anything else.**
+          dies again, early -> the command is fatal, and repeatable
+          does not die      -> the session was long and the command is innocent
+        Say WHEN either way. That discriminator cleared GoodTest in one login on 2026-08-22
+        and has convicted nothing since, so neither answer is the safe default.
+
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
     MP cost and damage validation on ATTACK skills. The skill id is readable now so both are
@@ -338,15 +344,19 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
       mode=2            leave the client's mode-5 auto-login so the button gets a turn.
       create=on         set the protected flag that gates "Create a character", re-armed on
                         every login result because the handshake zeroes it.
-      hitnumber=off     ON BY DEFAULT. Five nops over 0x1428aca14, the only renderer call in
-                        FUN_1428aa0a0, so the client stops drawing its own hit number. It
-                        computes 1 for ALL contact damage - 198 captures across 160 logs, every
-                        one attack index -1, every one claiming 1 - because a contact hit has no
-                        attack record for it to read the damage from. No packet can turn the
-                        draw off: option 0xAE is read at 11 sites and written at none, and the
-                        console command that clears the other half is refused. OURS is untouched,
-                        so one number should remain and it should be the right one.
-                        -KeepClientHitNumber to see both again.
+      hitnumber=off     OFF by default, with -ClientHitNumberPatch, and MEASURED INERT for
+                        contact damage on 2026-08-28. It clears user+0x544a, which gates a
+                        block that REPLACES the computed damage. But the only path that
+                        computes one is entered from
+                          14288b2dc  cmp dword [rdi+0xe8], 0
+                          14288b2e3  jle <epilogue>
+                        and template+0xe8 is the WZ node `fixedBodyAttackDamage`, which
+                        ZERO of this client's 193 mobs carry - all 193 carry PADamage
+                        instead. So a contact hit bails before the gate is reached, and
+                        clearing the flag changes nothing. Confirmed on a client: the patch
+                        armed, verified its own write, and the claim was still 1.
+                        Kept because it may matter for a mob ATTACK-SKILL hit, which has
+                        never been observed in 198 captures.
                         research/damage-number-two-numbers.md.
       heapfix=on        ONLY with -HeapFix, off by default, and TRIED AND FOUND USELESS on
                         2026-08-28. The three bytes at 14019b504 still do exactly what they
@@ -478,10 +488,10 @@ param(
     # 0xC0000374 with this on, research/heap-wild-write.md is wrong somewhere - which is
     # exactly what makes it worth running.
     [switch]$HeapFix,
-    # Stop the CLIENT drawing its own hit number. On by default: for contact damage the
-    # client always computes 1 - 198 captures across 160 logs, no exceptions - and no packet
-    # can turn that draw off. -KeepClientHitNumber leaves it alone.
-    [switch]$KeepClientHitNumber,
+    # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
+    # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
+    # Kept because it may matter for a mob ATTACK-SKILL hit, which has never been observed.
+    [switch]$ClientHitNumberPatch,
     # Monsters are ON by default since 2026-08-19. -NoMobs turns them off.
     #
     # -Mobs used to be the opt-in, and it cost a launch: the owner stood on map 40, which has
@@ -977,7 +987,7 @@ New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.dumpdir') -Value $dumpDir -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Encoding ascii
 if ($HeapFix) { $Session = "$Session,heapfix=on" }
-if (-not $KeepClientHitNumber) { $Session = "$Session,hitnumber=off" }
+if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
@@ -1059,16 +1069,15 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 1-7, plus 5b.' -ForegroundColor Yellow
-    Write-Host '  ORDER: 1 first - it is the one you pushed twice on, and one hit' -ForegroundColor Yellow
-    Write-Host '  settles it. Then 2 and the branches. 7 last.' -ForegroundColor Yellow
+    Write-Host '  STEPS 2-8, plus 5b. 1 is a read.' -ForegroundColor Yellow
+    Write-Host '  ORDER: 8 FIRST (it only means anything in a young session),' -ForegroundColor Yellow
+    Write-Host '  then 2 with 3 inside it, then 4, 5, 5b, 7. Step 1 is a READ.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
     Write-Host '  SELLING WORKS and the counter DRAWS - 0x055D, Lucy, 12 rows,'
     Write-Host '  1905 bytes = 21 + 12x157 exactly.'
-    Write-Host '  There is NO Buy Back tab and there never will be - this client'
-    Write-Host '  ships no repurchaseInfo node and exactly two tabs. Not a bug.'
+    Write-Host '  No Buy Back tab in this client. Closed, not coming back.'
     Write-Host '  WARRIOR WORKS. Skills cast, and the client refuses at 0 MP.'
     Write-Host '  AND THE RED POTION NEVER RESTORED MP. Its spec is hp 100, mp 0'
     Write-Host '  and the log says "+0 mp". The CLIENT had been spending MP locally'
@@ -1093,34 +1102,22 @@ if ($SetFieldProbe) {
     Write-Host '     !kit          the weapon and ammunition that job needs, and it'
     Write-Host '                   WARNS if you cannot equip what it just gave you.'
     Write-Host ''
-    Write-Host '  1. THE CLIENT NOW COMPUTES ITS OWN MOB DAMAGE AND SENDS IT.' -ForegroundColor White
-    Write-Host '     You asked me to try harder to find how the client can compute'
-    Write-Host '     this itself and send it, so both sides agree. It CAN, and it'
-    Write-Host '     already does - it just threw the answer away.'
-    Write-Host '     The contact path computes mobAttack * x / 100 and lands a real'
-    Write-Host '     number in a register. Four instructions later a block gated on'
-    Write-Host '     ONE BYTE overwrites it with the floor. That is why every one of'
-    Write-Host '     198 captured hits across 160 logs reported 1 - not because the'
-    Write-Host '     client cannot work it out, but because it discards it.'
-    Write-Host '     The client sets that byte on itself with a constant, so it is a'
-    Write-Host '     ONE-BYTE patch: the immediate 0x00010001 becomes 0x00000001.'
-    Write-Host '     Every one of the eight sites that reads the byte moves together,'
-    Write-Host '     so the number COMPUTED, the number SENT and the number DRAWN'
-    Write-Host '     become the same number.'
-    Write-Host '     THE SERVER NOW DEFERS TO IT. A claim above 1 is applied as-is;'
-    Write-Host '     our own model still runs and still prints, as a check. So the'
-    Write-Host '     HP bar and the floating number agree BY CONSTRUCTION.'
-    Write-Host '     Just fight anything and get hit.'
-    Write-Host '       ONE number, matching the HP drop -> done, and both sides agree'
-    Write-Host '       still TWO numbers   -> our 0x02D1 is still drawing. One line to'
-    Write-Host '                     remove; say so'
-    Write-Host '       ONE number, still 1 -> the client bailed before computing,'
-    Write-Host '                     because the mob attack power at mob+0xe8 is zero.'
-    Write-Host '                     That is the next thing to chase and it is a REAL'
-    Write-Host '                     result. world.log says "the server overrode it"'
-    Write-Host '       NO number at all    -> say so'
-    Write-Host '     grep HITNUMBER in client-patched\maplecw-hook.log to see whether'
-    Write-Host '     the patch armed. -KeepClientHitNumber restores the old behaviour.'
+    Write-Host '  1. NOTHING TO TEST. The 1 is settled and it is not fixable' -ForegroundColor White
+    Write-Host '     from the server. Read this once, then skip to 2.'
+    Write-Host '     I told you the client computes contact damage and throws it'
+    Write-Host '     away. WRONG - the patch armed, verified its own write, and the'
+    Write-Host '     claim was still 1. The path I found is a FIXED-DAMAGE OVERRIDE:'
+    Write-Host '       14288b2dc  cmp dword [rdi+0xe8], 0'
+    Write-Host '       14288b2e3  jle <epilogue>'
+    Write-Host '     and template+0xe8 is the WZ node fixedBodyAttackDamage, which'
+    Write-Host '     ZERO of this client 193 mobs carry - all 193 carry PADamage.'
+    Write-Host '     So every contact hit bails before the gate is even reached.'
+    Write-Host '     I found a real calculation and did not check its precondition.'
+    Write-Host '     One wz-dump would have said so before costing you a launch.'
+    Write-Host '     The client has no contact-damage calculation in this build, so'
+    Write-Host '     it is the SERVER that must supply the number - and which packet'
+    Write-Host '     carries it is not found. Two numbers stay for now; ours is right.'
+    Write-Host '     The patch is off by default now. -ClientHitNumberPatch re-arms it.'
     Write-Host ''
     Write-Host '  2. WARRIOR - THE WHOLE BRANCH, AND THE CHEAPEST ONE.' -ForegroundColor White
     Write-Host '     FIRST OF THE FOUR BRANCHES (step 7 comes before all of them).'
@@ -1140,13 +1137,22 @@ if ($SetFieldProbe) {
     Write-Host '       a) do Power Strike and Slash Blast do REAL damage, well above 1?'
     Write-Host '       b) does Slash Blast hit up to FOUR mobs at once? That is its'
     Write-Host '          mobCount and it is the one thing that tells it from Power Strike'
-    Write-Host '       c) IRON BODY: does W. Def in the stat window go UP, and by how'
+    Write-Host '       c) IRON BODY - NEWLY FIXED, and this is the one measurement I'
+    Write-Host '          need. It never reduced damage because our own model summed'
+    Write-Host '          equipment defence and NOTHING ELSE - the buff set the bit,'
+    Write-Host '          drew the icon, cost MP, and the arithmetic never saw it.'
+    Write-Host '          Third time a buff has done that here. Now it feeds in.'
+    Write-Host '          Its WZ value at level 20 is 25, and whether that means +25%'
+    Write-Host '          or +25 FLAT is inferred, not read. Those are hard to tell'
+    Write-Host '          apart on a low-defence character - which is why I need the'
+    Write-Host '          NUMBER: does W. Def in the stat window go UP, and by how'
     Write-Host '          much? SAY THE NUMBER BEFORE AND AFTER. This is a measurement,'
     Write-Host '          not a yes/no:'
-    Write-Host '            it rises by about a QUARTER of what it was -> our percent-to-'
-    Write-Host '                     flat conversion is right. That was the [I] in this run'
-    Write-Host '            it rises by exactly 25, whatever it started at -> the raw'
-    Write-Host '                     percent is reaching the wire unresolved. One-line fix'
+    Write-Host '            it rises by about a QUARTER of what it was -> percent, and'
+    Write-Host '                     our conversion is right'
+    Write-Host '            it rises by exactly 25 whatever it started at -> the value is'
+    Write-Host '                     FLAT and we are dividing when we should not. One line'
+    Write-Host '            SAY BOTH NUMBERS either way - that is what settles it'
     Write-Host '            it does not move at all -> CTS bit 86 is wrong, and Magic'
     Write-Host '                     Armor rests on the same bit'
     Write-Host '       d) MP should drop on every cast. Does it?'
@@ -1253,6 +1259,21 @@ if ($SetFieldProbe) {
     Write-Host '                          went out and the window is latched. Close and'
     Write-Host '                          re-click the NPC; a fresh 0x055D will NOT fix it'
     Write-Host '       c) do the prices match data/shops.txt?'
+    Write-Host ''
+    Write-Host '  8. THE !learn CRASH - ONE OBSERVATION, DO IT AT ~40 SECONDS.' -ForegroundColor White
+    Write-Host '     !learn 1000001 15 died last run, but 3.7 SECONDS after the'
+    Write-Host '     packet went out - not on it. The packet itself is byte-correct:'
+    Write-Host '     skillId 1000001, level 15, masterLevel 0, and the never-expires'
+    Write-Host '     constant exactly right. Fault 0x1415f0db0 appears in none of the'
+    Write-Host '     other archived hook logs.'
+    Write-Host '     So it is the usual pair: the COMMAND is fatal, or the session had'
+    Write-Host '     been running long enough for something else to fire. Those need'
+    Write-Host '     opposite work and look identical on screen.'
+    Write-Host '     Log in and type it IMMEDIATELY, before anything else.'
+    Write-Host '       it dies again, early -> the command is fatal. Repeatable'
+    Write-Host '       it does NOT die      -> the session was long; it is innocent'
+    Write-Host '     Say WHEN either way. This same discriminator cleared GoodTest in'
+    Write-Host '     one login and convicted nothing since, so neither is the default.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
     Write-Host '     Damage VALIDATION on attack skills. MP cost is wired now; the'

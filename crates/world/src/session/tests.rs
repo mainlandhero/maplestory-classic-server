@@ -1378,6 +1378,83 @@ fn stored_mp(store: &Arc<Store>, id: u32) -> u32 {
         .mp
 }
 
+/// **Iron Body actually reduces the damage taken.**
+///
+/// The owner, 2026-08-28: *"Iron Body did not seem to reduce the damage I take."* It could not have.
+/// `incoming_damage_for` summed equipment `inc_pdd` and stopped, so a buff that set CTS bit 86,
+/// drew its icon and cost MP was invisible to the one calculation it exists to change.
+///
+/// **This is the third time in this file.** Magic Guard set its bit and moved no HP until the
+/// split was written; Nimble Feet's grant was decoded and never wired. Setting the bit buys the
+/// icon - the arithmetic is always the server's. So the assertion is on the DAMAGE, not on the
+/// packet: a test that checked bit 86 went out would have passed the whole time.
+#[test]
+fn iron_body_reduces_the_damage_taken() {
+    let skills = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !skills.exists() {
+        return;
+    }
+    const IRON_BODY: u32 = net::jobbuffs::IRON_BODY;
+    // Template 3, so `incoming_damage_for` has a real PADamage to work from.
+    let mob_attack: std::collections::HashMap<u32, u32> =
+        [(3u32, 40u32)].into_iter().collect();
+
+    let build = |buffed: bool| {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Tank".to_string(), ..Default::default() };
+        let mut made = store.create_character(account_id, 0, &chr).unwrap();
+        made.job = 100;
+        made.mp = 200;
+        made.max_mp = 200;
+        made.hp = 5000;
+        made.max_hp = 5000;
+        // **Real STR, because Iron Body's value is a PERCENTAGE of Weapon Def.**
+        // `indiePddR` is 25 at level 20, and `iron_body_flat_pdd` resolves it as
+        // `wdef * 25 / 100`. A character with no defence gets 25% of nothing - which is a
+        // property of the reading, not a bug in the wiring, and it is very likely what the owner
+        // saw. Whether the WZ means +25% or +25 flat is [I]; `research/first-job-buffs.md`
+        // §3.2 says so and the stat window is the discriminator.
+        made.strength = 100;
+        store.save_character_progress(&made).unwrap();
+        store.set_skill_level(made.id, IRON_BODY, 20).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        let config = Config {
+            set_field_probe: true,
+            mob_attack: mob_attack.clone(),
+            ..Config::default()
+        };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(made.id);
+        if buffed {
+            let out = s.handle(&cast(IRON_BODY, 20));
+            assert!(
+                out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET),
+                "Iron Body must actually be granted, or this test compares nothing"
+            );
+        }
+        (s, store, made.id)
+    };
+
+    // The buff must add weapon defence to the model the incoming hit uses.
+    let (bare, _, _) = build(false);
+    let (armoured, _, _) = build(true);
+    let bare_wdef = bare.held_weapon_defence();
+    let armoured_wdef = armoured.held_weapon_defence();
+    assert_eq!(bare_wdef, 0, "nothing held, nothing added");
+    assert!(
+        armoured_wdef > 0,
+        "Iron Body must contribute weapon defence, or it cannot reduce anything"
+    );
+
+    // And that has to show up as less damage. `incoming_damage` is monotonic in wdef, so
+    // comparing the WINDOWS avoids the roll making this flaky.
+    let hurt = |wdef: u32| crate::damage::incoming_window(40, 1, wdef);
+    let (bare_lo, bare_hi) = hurt(bare_wdef);
+    let (buff_lo, buff_hi) = hurt(armoured_wdef);
+    assert!(buff_lo <= bare_lo && buff_hi < bare_hi, "buffed {buff_hi} must be under {bare_hi}");
+}
+
 /// **An attack skill costs MP, and a potion afterwards does not hand it back.**
 ///
 /// The owner, 2026-08-28: *"Using the Red Potion when my MP is depleted incorrectly recovered my

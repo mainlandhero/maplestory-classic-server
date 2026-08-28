@@ -823,11 +823,19 @@ impl Session {
         if pa_damage == 0 {
             return None;
         }
-        let wdef: u32 = self
-            .dressed(chr)
-            .iter()
-            .map(|(_, _, stats)| u32::from(stats.stats.inc_pdd))
-            .sum();
+        // **Equipment, the STR seed, and any held defence buff.**
+        //
+        // The owner, 2026-08-28: *"Iron Body did not seem to reduce the damage I take."* It could
+        // not have: this summed equipment `inc_pdd` and stopped there, so a buff that set CTS
+        // bit 86, drew an icon and cost MP was invisible to the one calculation it exists to
+        // change. Same shape as the Magic Guard bug - the bit buys the icon, the arithmetic
+        // is the server's.
+        //
+        // The `floor(STR/4)` seed goes in for the same reason: `Session::weapon_defence`
+        // already documents that the stat window shows both, and a Warrior's STR is not a
+        // rounding error.
+        let wdef = u32::try_from(self.weapon_defence(chr)).unwrap_or(0)
+            + self.held_weapon_defence();
         // A roll in [1.1, 1.5), the half-open span `damage::incoming_window` pins both ends
         // of. Taken from the session rng so a run is varied and a test can seed it.
         let span = crate::damage::INCOMING_ROLL_SPAN;

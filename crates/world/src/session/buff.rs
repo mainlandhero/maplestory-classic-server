@@ -168,7 +168,7 @@ impl Session {
     /// adds the seed. The two are now knowingly different rather than accidentally different;
     /// whether `incoming_damage_for` should also include the seed is a behaviour change on
     /// working combat code and is left alone until someone measures it.
-    fn weapon_defence(&self, chr: &net::opcode::Character) -> i16 {
+    pub(super) fn weapon_defence(&self, chr: &net::opcode::Character) -> i16 {
         let equipment: u32 =
             self.dressed(chr).iter().map(|(_, _, s)| u32::from(s.stats.inc_pdd)).sum();
         let total = crate::damage::wdef_from_strength(u32::from(chr.strength)) + equipment;
@@ -209,6 +209,36 @@ impl Session {
             })
             .map(|l| u32::try_from(l.value).unwrap_or(0))
             .unwrap_or(0)
+    }
+
+    /// **The weapon defence a held buff is adding right now**, or `0`.
+    ///
+    /// The owner, 2026-08-28: *"Iron Body did not seem to reduce the damage I take."* It could not
+    /// have. `incoming_damage_for` summed equipment `inc_pdd` and nothing else, so the buff
+    /// set CTS bit 86 on the client, drew its icon, cost MP - and the server's own damage
+    /// model never heard about it.
+    ///
+    /// That is the same shape as the Magic Guard bug this file already documents: setting the
+    /// bit buys an icon, and the arithmetic that makes the buff *mean* something is the
+    /// server's. `magic_guard_percent` is the sibling.
+    ///
+    /// Read from the buff table rather than the skill table, because the level the player
+    /// actually cast is what matters, and that is what `buffs` records.
+    pub(super) fn held_weapon_defence(&self) -> u32 {
+        let Some(chr) = self.claimed_character() else { return 0 };
+        self.buffs
+            .iter()
+            .filter(|b| b.bit == net::buff::CTS_WEAPON_DEFENCE)
+            .filter_map(|b| {
+                let level = self.store.skill_level(chr.id, b.skill_id).ok()?;
+                // The same third argument the grant used, so the resolved flat value matches
+                // what the client was told rather than being recomputed from a stale base.
+                let base = self.weapon_defence(&chr);
+                net::buff::buff_level(b.skill_id, level)
+                    .or_else(|| net::jobbuffs::buff_level(b.skill_id, level, base))
+            })
+            .map(|l| u32::try_from(l.value).unwrap_or(0))
+            .sum()
     }
 
     pub(super) fn grant_buff_with_tail(

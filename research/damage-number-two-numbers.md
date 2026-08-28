@@ -144,59 +144,46 @@ the damage from an attack record that a contact hit does not have. Whether an at
 would produce a real number is still **unobserved**, and now looks hard to observe: no mob has
 ever used one against us, which is its own open question.
 
-## 4. RESULT, after the owner pushed a second time: the client CAN compute it
+## 4. RETRACTED THE SAME DAY: the client does NOT compute ordinary contact damage
 
-The owner: *"try harder to see how the client can compute its own mob damage and then sending that
-to the server instead. This is one of the ways that both the server and client can agree."*
+Section 4 said *"it already computes it"* and that clearing one byte would let it keep the
+answer. **The patch armed - it verified its own write and logged the new bytes - and the
+client still claimed `1`.** So the claim was wrong, and here is why.
 
-**It already computes it.** Section 2 said the contact path had no damage to work with; that
-was wrong, and reading `FUN_14288ac30`'s no-attack-record branch shows why: **[L]**
-
-```text
-14288b2dc  cmp  dword [rdi+0xe8], 0     ; the mob's attack power
-14288b2e3  jle  0x14288ca17             ; zero -> bail out entirely
-14288b312  movd xmm1, dword [rdi+0xe8]
-14288b326  mulsd xmm0, xmm1
-14288b32a  divsd xmm0, [0x143277e78]    ; = 100.0, read off .rdata
-14288b337  cvttsd2si r12d, xmm0         ; a REAL damage, in r12d
-```
-
-`r12d` then survives untouched to the gate at `0x14288b3f0`, and the gated block **replaces
-it**. So the `1` was never the client failing to compute - it was the client computing and
-then discarding.
-
-**The gate's reachable half is a constant the client writes on itself:**
+The path I read is real, but it is a **fixed-damage override**, not the ordinary calculation:
 
 ```text
-142883687  48 c7 86 48 54 00 00  01 00 01 00
-           mov qword ptr [rsi+0x5448], 0x00010001
+14288b2dc  cmp  dword [rdi+0xe8], 0
+14288b2e3  jle  0x14288ca17        ; and 0x14288ca17 is `xor dil,dil` into the EPILOGUE
 ```
 
-`0x00010001` -> `0x00000001` clears `+0x544a` and leaves `+0x5448`, which
-`damage-number-suppress.md` §8 records as written once and never read. **One byte.**
+`rdi` is the mob's **template record** (`FUN_141c54dd0`, named in `research/user-hit.md` §3.5),
+and `template+0xe8` is written by the template loader `FUN_14047d990` at `0x140481995` from the
+WZ property **`fixedBodyAttackDamage`** - the string at `0x14328afb8`.
 
-The byte is compared in **eight** functions - the `0x00E5` builder and the drawer among them -
-so they move together: the number **computed**, the number **sent** and the number **drawn**
-become one number. `crates/grap-stub/src/hitnumber.rs`, on by default, `-KeepClientHitNumber`
-to disable.
+**Zero of this client's 193 mob images carry `fixedBodyAttackDamage`. All 193 carry
+`PADamage`.** [L]
 
-And `world::session::combat::on_user_hit` now **defers to the client** when it claims more than
-`1`; our own `incoming_damage` still runs and still prints, as a check rather than an authority.
-A claim of exactly `1` is the floor the discarded path produces, so it falls back to the
-server's model and an unpatched client behaves as it always has.
+So for every mob in the game the compare fails, the function bails into its epilogue, and the
+gate I patched is **never reached**. That is exactly what the run showed, and the patch is
+therefore **inert for contact damage**. It is now off by default (`-ClientHitNumberPatch`),
+kept only because a mob *attack-skill* hit might reach the gate - and no such hit has ever been
+observed in 198 captures.
 
-### What this replaced, and why it was wrong
+### What this means, and it is where §1-§3 already pointed
 
-The first attempt nopped the renderer at `0x1428aca14` - it **hid** the wrong number. Written
-before the contact path had been read, it left the client still *sending* `1`, so the two sides
-still disagreed and the disagreement was merely off screen. The owner's instinct that this was the
-wrong shape of fix was right both times.
+The client has no ordinary contact-damage calculation in this build. The owner's instinct that the
+client should compute and send it is right about how the two sides *should* agree, and this
+client simply does not offer that path. **Contact damage is the server's to supply**, and which
+packet carries it to the client is still not found.
 
-### Still open
+### The honest shape of my error
 
-**Whether `mob+0xe8` is non-zero for our mobs.** If it is zero the client bails at
-`0x14288b2e3` and this changes nothing - a real possible outcome, and the test plan says so
-rather than assuming success.
+I found a real calculation and did not check its precondition. `[rdi+0xe8]` was read as "the
+mob's attack power" because that is what it looked like in context; one `wz-dump` over 193
+images - the same instrument used three times already in this file - would have said otherwise
+before a client run was spent. That is this project's oldest rule, and I broke it while writing
+a file about breaking it.
 
 ## 5. The superseded experiment, kept for the method
 
