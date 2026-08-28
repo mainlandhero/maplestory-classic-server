@@ -150,9 +150,11 @@ mod tests {
 ///   `Etc/GlobalMarketData.img` for `0x01A2`. **The instrument discriminates** rather than
 ///   matching everything, which is what makes the positive worth anything.
 ///
-/// **The opcode NUMBER is `[D]`, not `[L]`.** No `SetCashShop` has ever been on this wire.
-/// `0x01A0` is the only member of the block with a live confirmation, and if this draws
-/// nothing the number is the first thing to doubt.
+/// **CONFIRMED ON A CLIENT, 2026-08-25.** This block used to end *"the opcode NUMBER is [D],
+/// not [L] - no SetCashShop has ever been on this wire"*. It has been now: the hook logged one
+/// entry to `0x14209AD60` dispatching this exact opcode, the window drew, and the stage's own
+/// `OnPacket` then accepted two wallets. The number is **read**, and the three discriminators
+/// above are corroboration rather than the whole case.
 pub const SET_CASH_SHOP: u16 = 0x01A3;
 
 /// Bytes after the character record, before the margin: `u8 u8 u8`, `u16`, `u16`, `u32`.
@@ -522,7 +524,14 @@ pub fn action_family(sub_op: u8) -> ActionFamily {
     }
 }
 
-/// **`0x05AE` sub-op `0x19` - the purchase succeeded. The only silent arm that hands an item over.**
+/// **`0x05AE` sub-op `0x19` - an item arrives in the BAG. This is the MOVE reply, not the buy.**
+///
+/// # It was used for a purchase once and that was wrong
+///
+/// The owner, 2026-08-27: *"it automatically goes into the 'Item Inventory', when it should go into
+/// the 'Cash Inventory'."* This is the reply to `0x03E1` sub-op `0x0A`, *move a locker item
+/// into inventory slot N*, and it did exactly that. The purchase reply is
+/// [`RESULT_ITEM_TO_LOCKER`]. Kept here because the locker-to-bag move still needs it.
 ///
 /// # This contradicts what this file said a day ago, and the correction matters
 ///

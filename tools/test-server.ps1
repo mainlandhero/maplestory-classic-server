@@ -113,9 +113,11 @@
           THE BALANCE KEEPS DROPPING, or you get several coupons from one click
                                    -> the re-entry is SENDING rather than completing. CLOSE
                                       THE CLIENT and say so; it is one line to disarm
-          the client dies          -> say so at once, and buy nothing else. The record has
-                                      eleven fields with no known reader and this is the first
-                                      time one has been on a wire
+          the client dies          -> say so at once, and buy nothing else. ELEVEN of the
+                                      record's fifteen fields have NO READER anywhere in the
+                                      cash shop, so a wrong value in one fails silently rather
+                                      than complaining - and this is the first time any of
+                                      them has been on a wire
 
      1b. THEN BUY IT TWICE MORE. Three coupons, 300 LP gone, three success messages.
         Try to drag one from the Cash Inventory into the Item Inventory - it will NOT work
@@ -140,20 +142,44 @@
                        come back - alive, in the map you died in, behind a dead prompt
           HP climbs off zero     -> the gate is not holding
 
-     4. JOB ADVANCEMENT AND SKILL POINTS - NEW, and never on a wire.
+     4. JOB ADVANCEMENT, SKILL POINTS, AND THE MAGICIAN BOOK - NEW, and never on a wire.
         At level 10 or above, type  !job 200 . Then open the skill window.
           a) does the JobChanged effect play, with its sound?
           b) does the skill window show SKILL POINTS - 1 at level 10, 4 at level 11, and
              3 more for every level above that?
           c) is the + button LIVE rather than greyed?
+          d) DO THE SIX MAGICIAN SKILLS APPEAR AT ALL? This build ships exactly six, from
+             "Introduction to Magic", and they are the whole of the first job:
+               2000000 Improved MP Recovery   max 15   passive
+               2000001 Max MP Increase        max 15   passive
+               2001000 Magic Guard            max 15   TOGGLE - it has NO duration
+               2001001 Magic Armor            max 20   timed buff
+               2001002 Energy Bolt            max 20   attack
+               2001003 Magic Claw             max 20   attack, TWO hits per cast
+          e) PUT A POINT IN MAGIC CLAW. Until today the server refused every skill outside the
+             three beginner ones and clamped everything to level 3; both are fixed, so this is
+             the first time a job skill can be raised at all.
         Outcomes:
           points show and + is live -> the whole SP chain works, first time
           points show, + is greyed  -> the pool arrived but something else gates the button
           NO points, + greyed       -> the pool key is wrong. It is a TIER (1 for first job),
                        not a job id; a job id reads an empty pool and looks exactly like this
+          the skills are not listed  -> the client draws the book from its own data, so this
+                       would mean the job change did not reach the character record
+          Magic Claw stops below 20  -> the per-skill ceiling is not being read
           the client dies           -> the extended SP table is the wrong shape. Say when
         SPENDING IS NOT PERSISTED YET. If you click + the point is spent on screen but the
         server does not know, so it will come back. That is known, not a new bug.
+
+     4b. THEN CAST WHAT YOU BOUGHT. Put a point in ENERGY BOLT or MAGIC CLAW and attack
+        something with it.
+          it fires and the mob takes damage -> the attack path works. Whether the NUMBER is
+                       right is a separate question and this server cannot answer it: outgoing
+                       damage is entirely the client's, and the MAGIC formula has never been
+                       decoded. Do not read a plausible number as a correct one
+          it fires and nothing takes damage -> say so; that is ours
+          MAGIC GUARD or MAGIC ARMOR does nothing -> EXPECTED. Neither has a stat bit yet, so
+                       the server refuses them with a chat line. Say what the line said
 
      5. ORGANIZE ITEM, still never seen working. Put three or four things in storage, take one
         from the middle to leave a hole, hit Organize THREE times. Clicks two and three must
@@ -345,7 +371,8 @@ param(
     # returns it to the right free list - the correct outcome, not a suppression.
     #
     # Six damaged slots across three dumps, all the identical value, all in the 0x20 class,
-    # accumulating at about one per 250 s. research/heap-third-dump.md.
+    # accumulating with session AGE - the old 'one per 250 s' is falsified, 1046 s gave 2
+    # rather than 4. research/heap-corruption-2026-08-27.md.
     #
     # Nothing in client-patched\ changes on disk. The patch verifies the three bytes before
     # writing, reads them back after, and logs both. If the client still dies with
@@ -928,8 +955,8 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  Five things this run, each a separate answer. Step 1 is the one' -ForegroundColor Yellow
-    Write-Host '  that closes the cash shop; step 4 has never been on a wire.' -ForegroundColor Yellow
+    Write-Host '  Six things this run, each a separate answer. Step 1 closes the' -ForegroundColor Yellow
+    Write-Host '  cash shop; step 4 is the Magician book, never on a wire.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  CONFIRMED, DO NOT RE-TEST.' -ForegroundColor Green
@@ -1019,17 +1046,38 @@ if ($SetFieldProbe) {
     Write-Host '                           before, and the dialog would never return'
     Write-Host '       HP climbs        -> the gate is not holding'
     Write-Host ''
-    Write-Host '  4. JOB ADVANCEMENT AND SKILL POINTS - NEW, never on a wire.' -ForegroundColor Cyan
-    Write-Host '     At level 10+, type  !job 200 , then open the skill window.'
+    Write-Host '  4. JOB ADVANCEMENT, SKILL POINTS, AND THE MAGICIAN BOOK.' -ForegroundColor Cyan
+    Write-Host '     NEW, and never on a wire. At level 10+, type  !job 200 , then'
+    Write-Host '     open the skill window.'
     Write-Host '       a) does JobChanged play, with sound?'
-    Write-Host '       b) does it show SKILL POINTS? 1 at level 10, 4 at level 11,'
-    Write-Host '          3 more per level after'
+    Write-Host '       b) SKILL POINTS? 1 at level 10, 4 at 11, 3 more per level'
     Write-Host '       c) is the + button LIVE, not greyed?'
-    Write-Host '     points and a live +  -> the whole SP chain works, first time'
-    Write-Host '     points, + greyed     -> pool arrived, something else gates it'
-    Write-Host '     NO points, + greyed  -> the pool key is wrong. It is a TIER (1),'
-    Write-Host '                             not a job id - which looks exactly like this'
+    Write-Host '       d) do the SIX Magician skills appear? This build ships exactly'
+    Write-Host '          six and they are the whole first job:'
+    Write-Host '            2000000 Improved MP Recovery  15  passive'
+    Write-Host '            2000001 Max MP Increase       15  passive'
+    Write-Host '            2001000 Magic Guard           15  TOGGLE, no duration'
+    Write-Host '            2001001 Magic Armor           20  timed buff'
+    Write-Host '            2001002 Energy Bolt           20  attack'
+    Write-Host '            2001003 Magic Claw            20  attack, TWO hits'
+    Write-Host '       e) PUT A POINT IN MAGIC CLAW. Until today the server refused'
+    Write-Host '          every non-beginner skill and clamped everything to 3.'
+    Write-Host '     points and a live +   -> the whole SP chain works, first time'
+    Write-Host '     points, + greyed      -> pool arrived, something else gates it'
+    Write-Host '     NO points, + greyed   -> the pool key is wrong. It is a TIER (1),'
+    Write-Host '                              not a job id - looks exactly like this'
+    Write-Host '     skills not listed     -> the job change did not reach the record'
+    Write-Host '     Magic Claw stops < 20 -> the per-skill ceiling is not being read'
     Write-Host '     SPENDING IS NOT PERSISTED. A spent point comes back. Known.'
+    Write-Host ''
+    Write-Host '  4b. THEN CAST IT. Attack something with Energy Bolt or Magic Claw.' -ForegroundColor Cyan
+    Write-Host '     it fires and the mob takes damage -> the attack path works. The'
+    Write-Host '       NUMBER is a separate question this server CANNOT answer:'
+    Write-Host '       the CLIENT computes outgoing damage, not us, and the MAGIC'
+    Write-Host '       formula has never been decoded. Plausible is not correct.'
+    Write-Host '     nothing takes damage -> say so, that one is ours'
+    Write-Host '     MAGIC GUARD / MAGIC ARMOR do nothing -> EXPECTED. No stat bit yet;'
+    Write-Host '       the server refuses them. Say what the chat line said.'
     Write-Host ''
     Write-Host '  5. ORGANIZE ITEM, still never seen working. THREE times; clicks 2' -ForegroundColor Cyan
     Write-Host '     and 3 must change nothing. Items VANISH -> stop and say so.'
@@ -1054,7 +1102,7 @@ if ($SetFieldProbe) {
     Write-Host '  slots in 962112, all the identical value, all one size class.'
     Write-Host '     Three bytes at 14019b504 in memory only; nothing on disk changes.'
     Write-Host '     A damaged pool header goes back to the free list instead of to'
-    Write-Host '     HeapFree. SEVEN damaged slots over four dumps, ~1 per 250s.'
+    Write-Host '     HeapFree. NINE damaged slots over six dumps, all the same value.'
     Write-Host '       stops dying with 0xC0000374 -> the chain is confirmed'
     Write-Host '       dies anyway                 -> the chain is wrong somewhere,'
     Write-Host '                                      which is worth more'

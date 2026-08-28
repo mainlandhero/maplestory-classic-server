@@ -15,6 +15,8 @@
 //! ```text
 //! <- 0x00D5  the button            ->  0x01A3 SetCashShop  +  0x05AD wallet
 //! <- 0x03E0  "what is my balance"  ->  0x05AD wallet
+//! <- 0x03E1  a click in the shop   ->  see `on_cash_shop_action` - a buy is 0x05AE 0x0C
+//!                                      then 0x05AD, IN THAT ORDER
 //! <- 0x00D1  Exit, EMPTY body      ->  0x01A0 SetField, characterData = 1
 //! ```
 //!
@@ -24,11 +26,20 @@
 //! split backwards would make every portal in the game try to leave a cash shop, so the
 //! dispatcher checks the length and this module owns only the empty case.
 //!
-//! # None of this has ever been on a wire
+//! # What has been on a wire, and what has not
 //!
-//! `0x01A0` is the only member of the stage block with a live confirmation. The `0x01A3`
-//! number is **[D]** from three independent discriminators, not **[L]**, and if the shop draws
-//! nothing that number is the first thing to doubt. Said here rather than discovered later.
+//! This block used to say *"none of this has ever been on a wire"*. Most of it now has been.
+//!
+//! **Confirmed on a client, 2026-08-25 and 2026-08-26:** the window draws; `0x01A3` reached
+//! its handler (one hook line, dispatching that exact opcode), so it is **read** rather than
+//! the `[D]` it was; the stage's own `OnPacket` accepted both wallets; both balance fields
+//! read back in the right order; the `0x03E0` poll fired twice in 103 s, so `0x05AD` clears
+//! its own latch; an empty `0x00D1` brought the field back with its NPCs; and three buy
+//! clicks produced three refusals with no ejection.
+//!
+//! **Not yet on a wire:** the purchase reply `0x05AE 0x0C`, the cash-item record it carries -
+//! eleven of whose fifteen fields have **no reader anywhere in the cash shop**, so a wrong
+//! value there fails silently - and the two locker moves, which are refused.
 
 use super::*;
 
@@ -69,8 +80,8 @@ impl Session {
             what: format!(
                 "SetCashShop: {seen}. 0x01A3 on THIS socket - there is no migrate; 0x01A0..0x01A3 \
                  are four arms of one stage forwarder and CField::OnPacket chains into it. The \
-                 opcode NUMBER is [D] from three discriminators, not [L] - nothing in this block \
-                 but 0x01A0 has ever been confirmed on a wire. It also clears ctx+0x2330 itself, \
+                 opcode number was [D] and is now READ: the hook logged an entry to \
+                 0x14209ad60 dispatching it, and the window drew. It also clears ctx+0x2330 itself, \
                  which is why no 0x0070 goes with it"
             ),
         }];
@@ -139,7 +150,7 @@ impl Session {
     /// # What each family gets
     ///
     /// ```text
-    /// 0x02 / 0x1F  buy      -> 0x05AE 0x19 + 0x05AD, in that order   (or 0x1A + u8 reason)
+    /// 0x02 / 0x1F  buy      -> 0x05AE 0x0C + 0x05AD, in that order   (or 0x1A + u8 reason)
     /// 0x0A/0x0B/0x1C queue  -> 0x05AE 0x3D + u16 reason  - 0x1A would EMPTY the queue
     /// 0x03 gift, unknown    -> 0x05AE 0x1A + u8 reason
     /// 0x2B                  -> nothing. It is the one builder that does not latch
@@ -276,14 +287,20 @@ impl Session {
     /// # The pair, and why the order is the whole safety argument
     ///
     /// ```text
-    /// 0x05AE 0x19   the item, and the release of BOTH latches
-    /// 0x05AD        the debited balance - INERT only because 0x19 went first
+    /// 0x05AE 0x0C   the item, into the CASH INVENTORY
+    /// 0x05AD        the debited balance - and the three other things it does
     /// ```
     ///
-    /// While `[stage+0x120]` is still `1` the wallet arm calls the buy builder back, so a
-    /// wallet sent first would make the client buy again, and again. `0x19` zeroes it. See
-    /// [`net::cashshop::RESULT_ITEM_GRANTED`], where both branches are read out of the
-    /// listing rather than taken on report.
+    /// **This pair used to be `0x19` then `0x05AD`, and that was wrong twice over.** `0x19` is
+    /// the reply to a locker-to-bag *move*, so the coupon arrived in the Item Inventory; and
+    /// because `0x19` cleared `[stage+0x120]` itself, the wallet never re-entered the buy
+    /// builder and the client's own success message never ran. One packet, two symptoms.
+    ///
+    /// The wallet is what does the work here. It writes `[stage+0x74] = 0` unconditionally,
+    /// then reads `[stage+0x120]`, sees the buy's `1`, zeroes it, and re-enters the buy builder
+    /// on its **completion** path - which fetches string 590, *"You have successfully made the
+    /// purchase."* So `0x0C` deliberately clears **neither** latch and the order is what makes
+    /// the sequence work. [`net::cashshop::RESULT_ITEM_TO_LOCKER`] has the addresses.
     ///
     /// # Two stores, so a compensating transaction rather than one
     ///

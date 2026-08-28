@@ -115,6 +115,23 @@ further up.
 
 **What changed most recently, newest first:**
 
+* **A Magician can now put a point in Magic Claw.** The blocker was never damage - it was that
+  `session/skills.rs` refused every id outside the three beginner skills and clamped everything
+  to level **3**. Its own comment said why: *"a refusal to invent a rule, since what a job may
+  learn is `Skill.wz` data nobody has read."* `tools/dump_skills.py` reads it now - 176 skills,
+  4 164 skill-levels - and `world::skilltable` gates on the **book** and on each skill's **own**
+  ceiling. An empty table degrades to the old behaviour, deliberately.
+* **The Magician first job is six skills**, from `200.img`, and not the list from another
+  version: Improved MP Recovery and Max MP Increase (passive, 15), **Magic Guard (15, a TOGGLE
+  with no duration at any level)**, Magic Armor (20, timed, seconds not ms), Energy Bolt (20),
+  and **Magic Claw (20, `attackCount` 2 - its damage number is PER HIT)**. `mastery` in this
+  build is a **level 1..10**, not the percentage it is elsewhere.
+* **There are no skill damage formulas on this server, correct or otherwise.** `on_attack`
+  applies `target.total_damage()` - the client's own number - so every skill "works" and none
+  is checked. `damage.rs` has `check_hit` and `max_plausible_hit` and **neither has a caller**;
+  and the whole file is physical, with `research/damage-formula.md` recording at line 231 that
+  *"magic damage is a different path entirely and is not in this function."*
+
 * **`-HeapFix` would have prevented the 2026-08-27 death, and both crashed runs were
   UNPATCHED.** `0x14019b58e` - the fault address the hook recorded - is the **return address**
   of `call rbx` = `HeapFree(heap, 0, ptr-8)` at `+0xac` of the same 288-byte function the patch
@@ -199,7 +216,7 @@ further up.
 * **Buffs are closed both ways**, storage is closed including Organize, and the pick-up latch
   bug is fixed and confirmed.
 * **Two crash families are open**, and they are not the same bug: a heap one with four dumps
-  and a rate of about one damaged pool slot per 250 s, and a **null dereference during a map
+  and a rate **since falsified** - see the 2026-08-27 entry - and a **null dereference during a map
   load** that has been seen once.
 
 **The next-steps table is further down**, under "What to do next, in order". It is rewritten
@@ -442,8 +459,14 @@ invent a serial: it can only return one that is really in `Commodity.img`.
   and the number is **1 both times** - as it was on all 25 hits of the previous run. A
   computed value cannot be constant across a 10x change in the input. The client does not
   compute mob damage, and `user-hit.md` §4.4 establishes the number is drawn at *send* time by
-  `FUN_142771360`, so **no server change can reach it**. The HP bar is right and the number
-  beside it will read 1 forever unless a redraw packet is found.
+  `FUN_142771360`.
+  **CORRECTED 2026-08-27: the redraw packet was found.** *"unless a redraw packet is found"*
+  was the right hedge and it has been answered. `FUN_142771360` forks at `0x142771395` on the
+  **sign** of its `i32`: positive picks the blue recovery digits, negative picks the damage
+  ones - so the blue number the owner has already seen and the damage number are the same call with
+  the sign flipped, and the server now sends `0x02D1` effect `0x41` with a negative amount.
+  What is still true is that **the client's own `1` cannot be suppressed**, so the screen shows
+  two numbers. `research/damage-number-draw.md`.
 * **The NPC "fade" is not a fade, and `0x0452` is not the cause.** The owner: *"I turned npcfx off,
   but npcecho copy of Heena that newly showed up still faded in. Once it fades in, it is no
   see through, it's just absent-then-present, it's a very fast fade in effect but
@@ -1013,6 +1036,11 @@ yields 1 for a snail against this character, or **the field is a stub and the cl
 computes mob damage at all** - in which case the floating number will read 1 for every mob
 forever and no server change can move it, because `user-hit.md` §4.4 establishes it is drawn
 at *send* time by `FUN_142771360`.
+
+> **Read on: the second half of that sentence was wrong.** The field IS a stub - the Drake run
+> of 2026-08-27 settled that, 224 captured hits across mobs rated 3 to 287 all reporting 1 -
+> but "no server change can move it" did not follow. A *different* number can be drawn beside
+> it. See the entry above.
 
 **One hit from a much stronger mob discriminates.** If the number moves off 1, the client
 computes and our formula is the thing that disagrees. If it stays 1, it is a stub.
@@ -1656,7 +1684,7 @@ implementation can be diffed against rather than re-derived. One is **in progres
 | 1 | **The Cash Shop** | **BUILT, ENTIRELY UNCONFIRMED.** Entry is `0x01A3` on the same channel socket - four arms of one stage forwarder, **no migrate and no second server** - plus `0x05AD` for the balance, an empty `0x00D1` to leave, and a non-ejecting `0x05AE` refusal for every in-shop click. `crates/store/src/cash.rs` holds a per-account NX wallet and a locker; `world::commodity` prices 159 sale rows by SN; `!nx`, `!buy` and `!locker` drive the whole transaction from the field. **`0x01A3` is derived, not read** - `0x01A0` is the only stage packet ever confirmed on a wire. Next: does the window draw, and what does a real `0x03E1` look like. `research/cash-shop-stage.md`, and `research/cash-shop.md` parts one to seven |
 | 2 | **The Henesys Park null dereference** | **A different family from the heap crash.** `0xC0000005` reading `[0 + 0x3530]`, 328 ms into the `0x01A0` handler, no dispatch line - and the damaged pool slot in that dump was a **bystander**. Whether map `10001050` is fatal or the 389-second session was is **still not established**, and one GM command settles it. `tools/check_map_resources.py` has already ruled out a missing tile, object, background or map mark, with a positive control. `research/henesys-park-null-deref.md` §3 |
 | 3 | **The classic shop counter** | **Decoded, not built**, and the price is settled: **`row+0x38`, a u64**, from three independent sites. The row is **42 reads**, not thirteen fields. Request opcode is **`0x00F5`**, not `0x0104`. **Three traps**: `row+0xa4` is a FILETIME with no sentinel and `0` hides every row; `row+0x10c = 0` fails purchases silently; a dropped row desynchronises the byte stream. `research/classic-shop-rows.md` |
-| 4 | **The heap wild write** | **Four dumps**, three of that family. The value is `1` **seven for seven**, the class is `0x20` seven for seven (7 of 309 152 there, **0 of 472 760** elsewhere), and the count tracks session length at about **one damaged slot per 250 s**. The **writer is still not found**, and `heap-wild-write.md` §8 names the blind spot that makes a static sweep for it impossible. The 3-byte patch is **built and off**: `-HeapFix`, `crates/grap-stub/src/heapfix.rs`, nothing on disk in `client-patched/` changes |
+| 4 | **The heap wild write** | **Six dumps** of that family now. The value is the identical `0x0000000100000020` **nine for nine**, the class is `0x20` nine for nine (**0 of 579 008** elsewhere, out of 962 112 enumerated). **The one-per-250-s rate is FALSIFIED**: 1 046 s produced 2, not 4, and damage tracks session *age* (rank corr 0.80) rather than map loads (0.05). A damaged slot was found **on the free list**, which kills "the object underruns its own buffer" and leaves overrun-from-predecessor and stale-pointer. The **writer is still not found**. `-HeapFix` **would have prevented the 2026-08-27 fault** - `0x14019b58e` is the return address of the `HeapFree` call at `+0xac` of the function it patches at `+0x24` - and **has never been switched on in a crashed run**. `research/heap-corruption-2026-08-27.md` |
 | 5 | **The pick-up after a Cash Shop click** | Ten seconds, no setup. `[ctx+0x2330]` gates the pick-up sweep as well, so before the fix one click killed every later pick-up in the session. That implication is **reasoned, not seen** - the 29-second run had no drops in it |
 | 6 | **The two `0x00DF` header fields** | The damage formula is decoded and cannot be *used* without the **action** and the **skill id**, neither parsed out of the attack header. `research/damage-formula.md` |
 | 7 | **The grey item line** | The packet goes out - `0x02D1` effect 8, category 6 - on every successful pick-up, and nobody has reported what it looks like. One glance, no setup |

@@ -8,17 +8,23 @@
 //! advance late. If they job advance at level 11, they should receive 4 skill points
 //! retroactively once they become that 1st job."*
 //!
-//! # NOTHING HERE IS WIRED. There is no packet yet.
+//! # WIRED as of 2026-08-27, and never yet on a wire
 //!
-//! `crates/net/src/opcode.rs` records why, on `Character::exp`: the stat block **forks on the
-//! job**, and job `0` - every character this server has - takes the *extended* branch, where
-//! SP is a count followed by per-pool entries rather than a `u16`. That encoding has not been
-//! read, so a skill point computed here cannot yet be put on screen.
+//! This block used to say there was no packet. There is one now. The extended-SP encoding was
+//! decoded (`research/skill-points.md`): `u8 count`, then `count` x (`u8 tier`, `u32 amount`),
+//! and **the pool key is a job TIER 0..=10, not a job id** - `FUN_1402CB030` returns 0 for any
+//! key above 10, so a job id would read an empty pool for every job in the game. `gm_job` now
+//! sends the job change and the table in **one** `0x007C`.
 //!
-//! This module is therefore the **rules only**, and it is deliberately a pure function of the
-//! character's level so that it can be finished and tested without a client run. `STATUS.md`
-//! marks it as unwired; say so when reporting progress rather than letting "implemented" be
-//! heard as "working".
+//! **No client has seen it.** Wired is not confirmed, and this is the module where that
+//! distinction has already cost a day.
+//!
+//! # What is still missing: SPENDING
+//!
+//! The amount is computed from the **level** alone. That is what makes [`top_up`] idempotent
+//! and the retroactive rule free - but nothing records what has been **spent**, so a point the
+//! player spends comes back on the next advancement. Say that when reporting, because a player
+//! who spends and sees it return will otherwise file it as a bug.
 //!
 //! # Why entitlement, and not "add 3 on level-up"
 //!
