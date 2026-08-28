@@ -778,28 +778,39 @@ fn shop_session() -> (Session, Arc<Store>, u32) {
     let mut npcs = std::collections::HashMap::new();
     npcs.insert(
         net::opcode::START_MAP_ID,
-        vec![net::opcode::FieldNpc {
-            object_id: 1000,
-            template_id: 21,
-            x: 0,
-            cy: 0,
-            fh: 1,
-            rx0: 0,
-            rx1: 0,
-            f: 0,
-        }],
+        vec![
+            net::opcode::FieldNpc {
+                object_id: 1000,
+                template_id: 21,
+                x: 0,
+                cy: 0,
+                fh: 1,
+                rx0: 0,
+                rx1: 0,
+                f: 0,
+            },
+            // A second NPC on the same map that keeps NO shop, so the fall-through to
+            // dialogue can be tested without turning a flag off.
+            net::opcode::FieldNpc {
+                object_id: 1001,
+                template_id: 22,
+                x: 0,
+                cy: 0,
+                fh: 1,
+                rx0: 0,
+                rx1: 0,
+                f: 0,
+            },
+        ],
     );
     let mut shop_by_template = std::collections::HashMap::new();
     shop_by_template.insert(21u32, 0usize);
 
     let config = Config {
         set_field_probe: true,
-        // The shop is OFF in `Config::default()` because `0x0560` kills the real client -
-        // its window needs a WZ image this client does not ship. These tests are about the
-        // packet's contents and the transaction rules, which stay correct and stay worth
-        // pinning; they turn it on explicitly so the default cannot silently gut them into
-        // passing against a server that sends nothing.
-        send_shop: true,
+        // `send_shop` is gone: it existed because `0x0560` killed the client, and the real
+        // cause was that this client has TWO shop windows and that was the one whose art it
+        // does not ship. The classic `0x055D` counter goes out by default now.
         shops: table,
         shop_by_template,
         npcs,
@@ -808,6 +819,26 @@ fn shop_session() -> (Session, Arc<Store>, u32) {
     let mut s = Session::new(store.clone(), Arc::new(config));
     assert!(s.claim_for_character(id).contains("claimed the migration"));
     (s, store, id)
+}
+
+/// A classic-shop BUY, `0x00F5`: u8 0, u16 rowIndex, u32 itemId, u16 quantity.
+fn classic_buy(row_index: u16, item_id: u32, quantity: u16) -> Vec<u8> {
+    let mut b = net::classicshop::CLIENT_CLASSIC_SHOP_REQUEST.to_le_bytes().to_vec();
+    b.push(0);
+    b.extend_from_slice(&row_index.to_le_bytes());
+    b.extend_from_slice(&item_id.to_le_bytes());
+    b.extend_from_slice(&quantity.to_le_bytes());
+    b
+}
+
+/// A classic-shop SELL, `0x00F5`: u8 1, u16 slot, u32 itemId, u16 quantity.
+fn classic_sell(slot: u16, item_id: u32, quantity: u16) -> Vec<u8> {
+    let mut b = net::classicshop::CLIENT_CLASSIC_SHOP_REQUEST.to_le_bytes().to_vec();
+    b.push(1);
+    b.extend_from_slice(&slot.to_le_bytes());
+    b.extend_from_slice(&item_id.to_le_bytes());
+    b.extend_from_slice(&quantity.to_le_bytes());
+    b
 }
 
 /// The `0x00F2` body: u32 npcObjectId, i16 x, i16 y, u32 tail.
@@ -831,7 +862,12 @@ fn clicking_a_shopkeeper_opens_the_shop() {
     let out = s.handle(&npc_click(1000));
 
     assert_eq!(out.len(), 1, "one packet: the shop");
-    assert_eq!(out[0].opcode, net::shop::OPEN_SHOP);
+    // **The CLASSIC counter, 0x055D.** This asserted 0x0560 until 2026-08-28, and that
+    // packet's art is not in this client's WZ - it killed the client twice, before a single
+    // row byte was read. The test passed the whole time, because a builder can be perfectly
+    // correct about a window that does not exist.
+    assert_eq!(out[0].opcode, net::classicshop::CLASSIC_OPEN_SHOP);
+    assert_ne!(out[0].opcode, net::shop::OPEN_SHOP, "0x0560 must never go out again");
     assert_eq!(
         u32::from_le_bytes(out[0].body[0..4].try_into().unwrap()),
         21,
@@ -839,10 +875,11 @@ fn clicking_a_shopkeeper_opens_the_shop() {
     );
     // Two buy rows - a quest item is perfectly buyable - and one sell row, because the
     // quest item gets none. The owner's rule is about SELLING, not stocking.
-    assert_eq!(u16::from_le_bytes([out[0].body[4], out[0].body[5]]), 3, "rowCount is a u16");
+    let rows = u16::from_le_bytes([out[0].body[19], out[0].body[20]]);
+    assert_eq!(rows, 3, "rowCount is a u16, at the end of the 21-byte head");
     assert_eq!(
         out[0].body.len(),
-        net::shop::OPEN_SHOP_FIXED_LEN + 3 * net::shop::SHOP_ROW_LEN
+        net::classicshop::CLASSIC_HEAD_LEN + 3 * net::classicshop::CLASSIC_ROW_LEN
     );
     assert!(out[0].what.contains("2 buy, 1 sell"), "{}", out[0].what);
 }
@@ -1169,15 +1206,23 @@ fn a_kill_with_no_table_drops_nothing_quietly() {
 /// says a line is worth more than one who ends the session, and this pins that the fallback
 /// is a real reply rather than silence - an unanswered click freezes the whole UI.
 #[test]
-fn with_the_shop_off_a_shopkeeper_falls_through_to_dialogue() {
+fn an_npc_with_no_shop_falls_through_to_dialogue() {
+    // **The `send_shop` gate is gone**, and this test used to turn it off. It existed because
+    // the shop packet killed the client, and the fix was to not send it. The real cause was
+    // that we were sending the wrong one of this client's two shop windows; the classic one
+    // has its art and goes out by default now.
+    //
+    // What is still worth pinning is the fall-through itself: an NPC this server has no shop
+    // for must SAY something. An unanswered click is not the hazard here - the 2026-08-19
+    // capture shows the UI stays live with `0x00F2` unanswered - but a shopkeeper who does
+    // nothing visible is indistinguishable from a click that never arrived.
     let (mut s, _, _) = shop_session();
-    s.config = Arc::new(Config { send_shop: false, ..(*s.config).clone() });
 
-    let out = s.handle(&npc_click(1000));
-    assert!(!out.is_empty(), "a click must always be answered");
+    // Object 1001 is on the same map and its template keeps no shop.
+    let out = s.handle(&npc_click(1001));
     assert!(
-        out.iter().all(|r| r.opcode != net::shop::OPEN_SHOP),
-        "the packet that kills the client must not go out"
+        out.iter().all(|r| r.opcode != net::classicshop::CLASSIC_OPEN_SHOP),
+        "no shop for this NPC"
     );
     assert!(
         out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
@@ -1200,8 +1245,8 @@ fn the_shop_row_cap_keeps_one_buy_row() {
 
     let out = s.handle(&npc_click(1000));
     let body = &out[0].body;
-    assert_eq!(u16::from_le_bytes([body[4], body[5]]), 1, "one row");
-    assert_eq!(body.len(), net::shop::OPEN_SHOP_FIXED_LEN + net::shop::SHOP_ROW_LEN);
+    assert_eq!(u16::from_le_bytes([body[19], body[20]]), 1, "one row");
+    assert_eq!(body.len(), net::classicshop::CLASSIC_HEAD_LEN + net::classicshop::CLASSIC_ROW_LEN);
     // The surviving row must be the BUY one. The sell direction has never been on a wire in
     // either direction, so capping to the untested half would waste the launch.
     assert!(out[0].what.contains("1 buy, 0 sell"), "{}", out[0].what);
@@ -1219,7 +1264,7 @@ fn the_shop_row_cap_cannot_empty_the_counter() {
     s.config = Arc::new(Config { shop_rows: Some(0), ..(*s.config).clone() });
 
     let out = s.handle(&npc_click(1000));
-    assert_eq!(u16::from_le_bytes([out[0].body[4], out[0].body[5]]), 1, "clamped up to one");
+    assert_eq!(u16::from_le_bytes([out[0].body[19], out[0].body[20]]), 1, "clamped up to one");
 }
 
 /// **A quest item gets no sell row, so the player is never offered the option.**
@@ -1235,15 +1280,19 @@ fn the_shop_row_cap_cannot_empty_the_counter() {
 fn a_quest_item_is_never_given_a_sell_row() {
     let (mut s, _, _) = shop_session();
     let out = s.handle(&npc_click(1000));
-    let rows = &out[0].body[net::shop::OPEN_SHOP_FIXED_LEN - 1..];
+    let rows = &out[0].body[net::classicshop::CLASSIC_HEAD_LEN..];
 
+    // **The tab is a FLAG on the classic row, not the price's sign.** Shop2 filed a row by
+    // `cmp dword [rbx+0x58],0 / jg`; the classic window carries an explicit sell byte as the
+    // second-to-last of the row's 157. Same rule, different encoding - and reading it the old
+    // way here would have put every row in the Buy tab and passed.
     let mut sell_rows = Vec::new();
     let mut buy_rows = Vec::new();
     for i in 0..3usize {
-        let at = i * net::shop::SHOP_ROW_LEN;
-        let item_id = u32::from_le_bytes(rows[at + 4..at + 8].try_into().unwrap());
-        let price = i32::from_le_bytes(rows[at + 8..at + 12].try_into().unwrap());
-        if price > 0 { buy_rows.push(item_id) } else { sell_rows.push(item_id) }
+        let at = i * net::classicshop::CLASSIC_ROW_LEN;
+        let item_id = u32::from_le_bytes(rows[at + 8..at + 12].try_into().unwrap());
+        let sell = rows[at + net::classicshop::CLASSIC_ROW_LEN - 2];
+        if sell == 0 { buy_rows.push(item_id) } else { sell_rows.push(item_id) }
     }
     assert_eq!(buy_rows, vec![2000000, 4031507], "both are stocked");
     assert_eq!(sell_rows, vec![2000000], "the quest item is not buyable back");
@@ -1256,16 +1305,12 @@ fn buying_charges_mesos_and_delivers_the_item() {
     store.set_mesos(id, 1000).unwrap();
     s.handle(&npc_click(1000));
 
-    // sub-op 1: u32 rowKey, u16 quantity, u16 slot. Row 0 is the potion's buy row.
-    let mut body = net::shop::CLIENT_SHOP_REQUEST.to_le_bytes().to_vec();
-    body.push(net::shop::SHOP_REQ_TRANSACTION);
-    body.extend_from_slice(&0u32.to_le_bytes());
-    body.extend_from_slice(&3u16.to_le_bytes());
-    body.extend_from_slice(&0u16.to_le_bytes());
-    let out = s.handle(&body);
+    // The CLASSIC request, 0x00F5: u8 0, u16 rowIndex, u32 itemId, u16 quantity.
+    // Row 0 is the potion's buy row.
+    let out = s.handle(&classic_buy(0, 2000000, 3));
 
-    assert_eq!(out[0].opcode, net::shop::SHOP_TRANSACTION_RESULT);
-    assert_eq!(out[0].body[1], net::shop::ShopResult::Success.code());
+    assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT);
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS);
     assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the bag");
     assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the meso count");
 
@@ -1286,35 +1331,208 @@ fn a_purchase_beyond_the_purse_is_refused_by_code() {
     store.set_mesos(id, 10).unwrap();
     s.handle(&npc_click(1000));
 
-    let mut body = net::shop::CLIENT_SHOP_REQUEST.to_le_bytes().to_vec();
-    body.push(net::shop::SHOP_REQ_TRANSACTION);
-    body.extend_from_slice(&0u32.to_le_bytes());
-    body.extend_from_slice(&1u16.to_le_bytes());
-    body.extend_from_slice(&0u16.to_le_bytes());
-    let out = s.handle(&body);
+    let out = s.handle(&classic_buy(0, 2000000, 1));
 
-    assert_eq!(out[0].body[1], net::shop::ShopResult::NotEnoughMesos.code());
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_NOT_ENOUGH_MESOS);
+    assert_eq!(out.len(), 1, "a refusal moves nothing and owes no list");
     assert_eq!(store.mesos(id).unwrap(), 10, "nothing was charged");
     assert!(store.bag(id).unwrap().is_empty(), "and nothing was delivered");
 }
 
-/// A row key we never sent is refused **and** the list is re-sent, because that result
-/// code makes the client re-request it.
+/// A row index we never sent is refused - **and it is still answered**, because the window
+/// latches on send and only a result clears it.
 #[test]
-fn an_unknown_row_key_is_refused_and_the_list_is_re_sent() {
+fn an_unknown_row_index_is_refused_and_still_answered() {
     let (mut s, _, _) = shop_session();
     s.handle(&npc_click(1000));
 
-    let mut body = net::shop::CLIENT_SHOP_REQUEST.to_le_bytes().to_vec();
-    body.push(net::shop::SHOP_REQ_TRANSACTION);
-    body.extend_from_slice(&99u32.to_le_bytes());
-    body.extend_from_slice(&1u16.to_le_bytes());
-    body.extend_from_slice(&0u16.to_le_bytes());
-    let out = s.handle(&body);
+    let out = s.handle(&classic_buy(99, 2000000, 1));
+    assert_eq!(out.len(), 1, "one result, and it must exist");
+    assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT);
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_NOT_ENOUGH_MESOS);
+    assert!(out[0].what.contains("not among the 3 rows"), "{}", out[0].what);
+}
 
-    assert_eq!(out[0].body[1], net::shop::ShopResult::UnknownItem.code());
-    assert!(net::shop::ShopResult::UnknownItem.rerequests());
-    assert_eq!(out[1].opcode, net::shop::OPEN_SHOP, "a re-requesting code owes a fresh list");
+/// **The item id in the request is checked against the row.** A client whose list has
+/// drifted from ours would otherwise buy whatever our row 0 happens to be.
+#[test]
+fn a_row_index_naming_the_wrong_item_is_refused() {
+    let (mut s, store, id) = shop_session();
+    s.handle(&npc_click(1000));
+
+    let before = store.mesos(id).unwrap();
+    let out = s.handle(&classic_buy(0, 4031507, 1));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_NOT_ENOUGH_MESOS);
+    assert!(out[0].what.contains("the client asked for"), "{}", out[0].what);
+    assert_eq!(store.mesos(id).unwrap(), before, "nothing was charged");
+}
+
+/// **Selling puts the item in the Buy Back tab, and buying it back takes it out again.**
+///
+/// Four effects, all asserted, because `CLAUDE.md`'s Heena rule says a test of one gives false
+/// confidence about the rest: the result, the meso change, the ring, and the **type-10 list
+/// refresh** - the tab only ever changes when the whole list is re-sent, so without that last
+/// one the sale works and the tab stays empty.
+#[test]
+fn selling_fills_the_buy_back_tab_and_buying_back_empties_it() {
+    let (mut s, store, id) = shop_session();
+    store.set_mesos(id, 1000).unwrap();
+    s.handle(&npc_click(1000));
+    // Buy three potions so there is something to sell back.
+    s.handle(&classic_buy(0, 2000000, 3));
+
+    let slot = store
+        .bag(id)
+        .unwrap()
+        .items_in(store::InventoryType::Use)
+        .next()
+        .expect("three potions are in the Use tab")
+        .slot;
+
+    let out = s.handle(&classic_sell(slot, 2000000, 3));
+    assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT);
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "the sale succeeded");
+    assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "the meso count moved");
+
+    // The refresh, and the row that must be in it.
+    let refresh = out
+        .iter()
+        .rfind(|r| r.opcode == net::classicshop::CLASSIC_SHOP_RESULT)
+        .expect("a list refresh");
+    assert_eq!(
+        refresh.body[0],
+        net::classicshop::RESULT_REFRESH_LIST,
+        "the Buy Back tab only changes when the list is re-sent"
+    );
+    assert!(refresh.what.contains("1 buy-back"), "{}", refresh.what);
+
+    // Buy it back. Row 3 is the buy-back row: three shop rows then the ring.
+    let before = store.mesos(id).unwrap();
+    let out = s.handle(&classic_buy(3, 2000000, 3));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    assert!(out[0].what.contains("bought BACK"), "{}", out[0].what);
+    assert!(store.mesos(id).unwrap() < before, "buying back costs mesos");
+
+    // And it leaves the tab, which again only happens via a refresh.
+    let refresh = out
+        .iter()
+        .rfind(|r| r.opcode == net::classicshop::CLASSIC_SHOP_RESULT)
+        .expect("a second list refresh");
+    assert_eq!(refresh.body[0], net::classicshop::RESULT_REFRESH_LIST);
+    assert!(refresh.what.contains("0 buy-back"), "{}", refresh.what);
+}
+
+/// **Every `0x00F5` arm is answered except Close, which latches nothing.**
+///
+/// `shopUI+0x4b0` latches when the window sends a request and only a result clears it. An
+/// unanswered buy leaves the counter alive but every further click a silent no-op - the shop
+/// reads as half-working, and another `0x055D` will not fix it because of the modal guard.
+#[test]
+fn every_classic_shop_request_is_answered_except_close() {
+    let (mut s, _, _) = shop_session();
+    s.handle(&npc_click(1000));
+
+    // A body with no sub-op byte at all, a nonsense sub-op, and a recharge nothing can reach.
+    for body in [
+        vec![],
+        vec![0xEE],
+        vec![2, 0, 0],
+        vec![0], // a buy with no fields
+    ] {
+        let mut packet = net::classicshop::CLIENT_CLASSIC_SHOP_REQUEST.to_le_bytes().to_vec();
+        packet.extend_from_slice(&body);
+        let out = s.handle(&packet);
+        assert!(
+            out.iter().any(|r| r.opcode == net::classicshop::CLASSIC_SHOP_RESULT),
+            "body {body:02x?} must still clear the latch"
+        );
+    }
+
+    // Close is the exception: nothing is latched, and the state goes.
+    let mut packet = net::classicshop::CLIENT_CLASSIC_SHOP_REQUEST.to_le_bytes().to_vec();
+    packet.push(3);
+    let out = s.handle(&packet);
+    assert!(out.is_empty(), "close owes nothing: {out:?}");
+
+    // With the counter closed, a buy is refused rather than acted on.
+    let out = s.handle(&classic_buy(0, 2000000, 1));
+    assert!(out[0].what.contains("no shop is open"), "{}", out[0].what);
+}
+
+/// **Every one of the 39 authored shops builds a packet whose length is exactly accounted
+/// for**, against the real `data/shops.txt`.
+///
+/// This is the check that a client run cannot cheaply give. The classic counter parses rows in
+/// a loop, so a row one byte wide in either direction desynchronises everything after it -
+/// `research/classic-shop-rows.md` §4 calls that the one failure here that crashes rather than
+/// disappoints. Deriving the expected length from the row *contents* rather than from the
+/// writer's cursor is what makes this a check and not a restatement.
+///
+/// Flora the Fairy is asserted by name: they are the NPC the owner clicked on 2026-08-28, and the
+/// reason they got a dialogue box was that shops were off, not that their join was missing.
+#[test]
+fn every_authored_shop_builds_a_length_correct_packet() {
+    let shops = std::path::Path::new("../../data/shops.txt");
+    let items = std::path::Path::new("../../gm-handbook/items.txt");
+    let strings = std::path::Path::new("../../gm-handbook/npcstrings.txt");
+    let itemdata = std::path::Path::new("../../gm-handbook/itemdata.txt");
+    if !shops.exists() || !items.exists() || !strings.exists() {
+        return; // two of the three are generated and gitignored
+    }
+    let table = crate::shops::ShopTable::load(shops, items, itemdata);
+    let npc_strings = crate::config::load_npc_strings(strings);
+    let (by_template, _) = crate::shops::resolve_npc_templates(&table, &npc_strings);
+    assert!(by_template.len() >= 39, "only {} shops resolved", by_template.len());
+
+    let mut flora = false;
+    for (&template, &index) in &by_template {
+        let shop = &table.shops[index];
+        let rows: Vec<net::classicshop::ClassicShopRow> = shop
+            .items
+            .iter()
+            .filter(|i| i.buy_price > 0)
+            .map(|i| {
+                net::classicshop::ClassicShopRow::buy(
+                    i.item_id,
+                    u64::from(i.buy_price),
+                    i16::try_from(table.max_per_purchase(i.item_id)).unwrap_or(100),
+                )
+            })
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let body = net::classicshop::classic_open_shop(template, &rows);
+        let want: usize =
+            net::classicshop::CLASSIC_HEAD_LEN + rows.iter().map(|r| r.wire_len()).sum::<usize>();
+        assert_eq!(body.len(), want, "{} ({}) row width", shop.npc, shop.role);
+        assert_eq!(
+            u16::from_le_bytes([body[19], body[20]]) as usize,
+            rows.len(),
+            "{}: rowCount must match what was written",
+            shop.npc
+        );
+        // Every row's price must have survived as a non-zero u64, and every cap must be
+        // non-zero - the two silent killers.
+        for (i, row) in rows.iter().enumerate() {
+            let at = net::classicshop::CLASSIC_HEAD_LEN + i * net::classicshop::CLASSIC_ROW_LEN;
+            let price = u64::from_le_bytes(body[at + 36..at + 44].try_into().unwrap());
+            assert_eq!(price, row.price, "{}: row {i} price", shop.npc);
+            assert_ne!(price, 0, "{}: row {i} is free, which files it in the Sell tab", shop.npc);
+            let cap = i16::from_le_bytes(
+                body[at + net::classicshop::CLASSIC_ROW_LEN - 4
+                    ..at + net::classicshop::CLASSIC_ROW_LEN - 2]
+                    .try_into()
+                    .unwrap(),
+            );
+            assert!(cap > 0, "{}: row {i} cap is 0 - every purchase would fail silently", shop.npc);
+        }
+        if shop.npc.contains("Flora") {
+            flora = true;
+            assert!(!rows.is_empty(), "Flora the Fairy must actually stock something");
+        }
+    }
+    assert!(flora, "Flora the Fairy is the NPC that started this; they must be in the join");
 }
 
 /// **The join, against the real data.** All 39 authored shops must resolve to a template,

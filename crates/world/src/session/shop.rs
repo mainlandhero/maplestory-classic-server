@@ -6,6 +6,9 @@
 
 use super::*;
 
+/// How many sold items the Buy Back tab remembers. **Fifteen**, the client's own list length.
+const BUY_BACK_DEPTH: usize = 15;
+
 impl Session {
 
     /// Build and send this NPC's shop, or `None` if it has no shop.
@@ -30,26 +33,30 @@ impl Session {
     /// **An empty row list is not an empty shop.** `140d22656` takes a different arm
     /// entirely for `rowCount == 0` - a dialog box, and a `0x0104` back - so a shop that
     /// resolves to nothing falls through to the dialogue path instead.
+    /// Open the classic counter for a shopkeeper, or `None` if this NPC does not keep one.
+    ///
+    /// # This used to be off by default, and the reason it was is now fixed
+    ///
+    /// It sent `0x0560`, the **Shop2** window. That window's art -
+    /// `UI/UIWindow2.img/Shop2/backgrnd` - **is not in this client's WZ**: the ResMan COM call
+    /// fails, `_com_issue_errorex` throws and the unwinder faults, *before a single row byte
+    /// is read*. Two manual launches died on it, twelve rows and one correctly-formed row
+    /// alike, which is why `--shop-rows 1` changed nothing. So the packet was disabled and a
+    /// shopkeeper fell through to ordinary dialogue.
+    ///
+    /// **This client has two shop windows.** The classic one, `UI/UIShop.img/Shop`, is present
+    /// in `UI_000.wz`, and it opens on `0x055D`. `research/classic-shop-opcode.md` found that
+    /// and `research/classic-shop-rows.md` decoded the body down to the price, the gates and
+    /// the result table. `net::classicshop` builds it against that file's own golden vector.
+    ///
+    /// So the gate is gone: shops are on. What killed the client was never our bytes.
+    ///
+    /// # The dialogue must be REPLACED, not followed
+    ///
+    /// `0x055D`'s handler has a modal guard - if the shop singleton is non-null the packet is
+    /// **discarded silently**. A `0x055B` script box already on screen is exactly that case,
+    /// which is why `on_npc_click` tries this branch *before* it builds a conversation.
     pub(super) fn open_shop_for(&mut self, template: u32, character_id: u32) -> Option<Vec<Reply>> {
-        // **`0x0560` kills this client, and the reason is its own data, not our bytes.**
-        //
-        // Two manual launches died on it - twelve rows and one correctly-formed row alike -
-        // and the client never returns from the handler: neither run has a numbered dispatch
-        // line for `0x0560`, and both counters run without gaps, so the absence is real. The
-        // shop UI's constructor loads `UI/UIWindow2.img/Shop2/backgrnd`, that image is
-        // **not in this client's WZ**, the ResMan COM call fails, `_com_issue_errorex`
-        // throws, and the unwinder faults. The crash happens *before* a single row byte is
-        // read, which is why `--shop-rows 1` changed nothing.
-        //
-        // So this is off by default until the **classic** counter is found - the WZ ships
-        // `UIShop.img/Shop` instead, and which opcode drives it is not yet established.
-        // Returning `None` falls through to the NPC's ordinary dialogue, which works; a
-        // shopkeeper who talks is worth more than one who ends the session.
-        //
-        // `--shop` turns it back on for a deliberate test. `research/npc-shop-crash2.md`.
-        if !self.config.send_shop {
-            return None;
-        }
         let index = *self.config.shop_by_template.get(&template)?;
         let shop = self.config.shops.shops.get(index)?;
 
@@ -57,20 +64,21 @@ impl Session {
         let mut skipped_free = 0usize;
         for item in &shop.items {
             // **A zero buy price is not a free item, it is a SELL row.** The client files a
-            // row by the sign of its price, and `> 0` is the buy test - so a 0 here would
-            // silently appear in the Sell tab offering to buy something the player has, at
-            // nothing. `data/shops.txt` currently has no such row; this is here so that a
-            // future transcription typo shows up as a missing line rather than as junk in
-            // the wrong tab.
+            // row by the sign of its price, so a 0 here would silently appear in the Sell tab
+            // offering to buy something at nothing. `data/shops.txt` has no such row today;
+            // this makes a future transcription typo show up as a missing line rather than as
+            // junk in the wrong tab.
             if item.buy_price == 0 {
                 skipped_free += 1;
                 continue;
             }
-            rows.push(net::shop::ShopRow::buy(
-                rows.len() as u32,
+            rows.push(net::classicshop::ClassicShopRow::buy(
                 item.item_id,
-                item.buy_price,
-                self.config.shops.max_per_purchase(item.item_id),
+                u64::from(item.buy_price),
+                // **Never zero.** `ItemData::slot_max` is zero for 2495 of the 2785 rows in
+                // `gm-handbook/itemdata.txt`, and a zero cap makes every purchase of that row
+                // fail with no message at all - to the player or to us.
+                i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
             ));
         }
         for item in &shop.items {
@@ -78,24 +86,24 @@ impl Session {
             if !data.may_be_sold() {
                 continue; // the owner: "Please do not allow quest items to be sold."
             }
-            rows.push(net::shop::ShopRow::sell(rows.len() as u32, item.item_id, data.price));
+            rows.push(net::classicshop::ClassicShopRow::sell(
+                item.item_id,
+                u64::from(data.price),
+                i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
+            ));
         }
+        // The Buy Back tab, newest first - what this player has sold at any counter this
+        // session. Appended last so a buy-back row can never shift the index of a buy row.
+        rows.extend(self.buy_back.iter().copied());
+
         if rows.is_empty() {
             return None; // a zero-row shop is a different client arm, not an empty counter
         }
 
-        // **A blast-radius control, exactly like `--mob-limit`.** On 2026-08-20 Lucy's
-        // counter went out with twelve rows and the client threw a C++ exception ten
-        // milliseconds later, then faulted. A fault can come from a row being wrong or from
-        // twelve rows at once, and those look identical on screen. `--shop-rows 1` makes
-        // them distinguishable in one launch, which is the scarcest thing on this project.
-        //
-        // Applied AFTER both loops rather than inside them, so `--shop-rows 1` leaves one
-        // *buy* row - the buy direction is the one with a straight-line trace behind it,
-        // and the sell direction has never been on a wire in either direction.
-        //
-        // A zero-row shop is a different client arm entirely (`140d22656 test edi,edi`), so
-        // the cap can never take the list below one.
+        // **The blast-radius control survives the opcode change**, and is worth more here than
+        // it was: `--shop-rows 1` tells a bad row apart from too many rows in one launch,
+        // which is the scarcest thing on this project. A zero-row shop is a different client
+        // arm entirely, so the cap can never take the list below one.
         let capped = match self.config.shop_rows {
             Some(n) if n < rows.len() => n.max(1),
             _ => rows.len(),
@@ -103,14 +111,16 @@ impl Session {
         let dropped_by_cap = rows.len() - capped;
         rows.truncate(capped);
 
-        let body = net::shop::open_shop(template, &rows);
+        let body = net::classicshop::classic_open_shop(template, &rows);
         let what = format!(
-            "OpenShop: {} ({}) for character {character_id} - {} rows ({} buy, {} sell), {} bytes{}{}",
+            "ClassicOpenShop 0x055D: {} ({}) for character {character_id} - {} rows ({} buy, \
+             {} sell, {} buy-back), {} bytes{}{}",
             shop.npc,
             shop.role,
             rows.len(),
-            rows.iter().filter(|r| r.is_buy_row()).count(),
-            rows.iter().filter(|r| !r.is_buy_row()).count(),
+            rows.iter().filter(|r| !r.sell && !r.buy_back).count(),
+            rows.iter().filter(|r| r.sell).count(),
+            rows.iter().filter(|r| r.buy_back).count(),
             body.len(),
             if skipped_free > 0 {
                 format!(" - {skipped_free} row(s) DROPPED for a zero buy price")
@@ -124,154 +134,237 @@ impl Session {
             }
         );
         self.open_shop = Some((template, rows));
-        Some(vec![Reply { opcode: net::shop::OPEN_SHOP, body, what }])
+        Some(vec![Reply { opcode: net::classicshop::CLASSIC_OPEN_SHOP, body, what }])
     }
 
-
-    /// The client's shop request, `0x0104`.
+    /// `0x00F5` - everything the classic counter sends.
     ///
-    /// **A transaction must be answered.** `FUN_140d2c060` sets `shopUI+0x14d8 = 1` after
-    /// sending sub-op 1 and returns immediately at `140d2c0a6` while it is set, so every
-    /// further Buy or Sell click is a silent no-op until it clears. It is **not** the
-    /// session-long latch `0x0107` has: `tools/fieldrefs.py 0x14d8` enumerates four writers,
-    /// and a fresh `OPEN_SHOP` clears it too. Dead until the next result or list, not
-    /// forever - a real difference, and worth not overstating.
-    pub(super) fn on_shop_request(&mut self, body: &[u8]) -> Vec<Reply> {
-        let Some(request) = net::shop::parse_shop_request(body) else {
-            // No sub-op byte at all. Nothing was latched by a body this short.
-            return Vec::new();
+    /// **Every arm but Close is answered with a `0x055E`.** `shopUI+0x4b0` latches when the
+    /// window sends one of these and only a result clears it: an unanswered buy leaves the
+    /// window alive but every further click a silent no-op, which reads on screen as the shop
+    /// half-working. Closing and re-clicking the NPC recovers it - a fresh `0x055D` alone does
+    /// not, because of the modal guard.
+    pub(super) fn on_classic_shop_request(&mut self, body: &[u8]) -> Vec<Reply> {
+        let Some(request) = net::classicshop::parse_classic_shop_request(body) else {
+            // A body we cannot read is our problem, not a reason to wedge the counter.
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                &format!("unreadable 0x00F5 body {body:02x?} - clearing the latch anyway"),
+            );
         };
         match request {
-            net::shop::ShopRequest::Reopen { npc_template_id } => {
-                // Re-send the SAME rows, so the row keys the client still holds stay valid.
-                let Some((template, rows)) = self.open_shop.clone() else { return Vec::new() };
-                if template != npc_template_id {
-                    return Vec::new();
-                }
-                vec![Reply {
-                    opcode: net::shop::OPEN_SHOP,
-                    body: net::shop::open_shop(template, &rows),
-                    what: format!("OpenShop: re-sent for {template}, same {} rows", rows.len()),
-                }]
-            }
-            net::shop::ShopRequest::Close => {
+            net::classicshop::ClassicShopRequest::Close => {
                 self.open_shop = None;
-                Vec::new() // nothing is owed; the client closed its own UI
+                Vec::new() // nothing is latched on close
             }
-            net::shop::ShopRequest::Other { .. } => Vec::new(),
-            net::shop::ShopRequest::Transaction(t) => self.on_shop_transaction(t),
+            net::classicshop::ClassicShopRequest::Recharge { inventory_slot } => self
+                .classic_refused(
+                    net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                    &format!(
+                        "recharge of slot {inventory_slot} - no row this server sends is \
+                         rechargeable, so this should be unreachable"
+                    ),
+                ),
+            net::classicshop::ClassicShopRequest::Buy { row_index, item_id, quantity } => {
+                self.classic_buy(row_index, item_id, quantity)
+            }
+            net::classicshop::ClassicShopRequest::Sell { inventory_slot, item_id, quantity } => {
+                self.classic_sell(inventory_slot, item_id, quantity)
+            }
         }
     }
 
-
-    /// Buy or sell one row. **Every path here ends in a `0x055F`.**
+    /// Buy, or buy back when the row index names a flagged row.
     ///
-    /// Three rules this encodes, all of them easy to lose:
-    ///
-    /// 1. **The client's numbers are claims.** It computed `|price| * quantity` against its
-    ///    own meso count before sending, but that is its arithmetic and its balance. The
-    ///    quantity is clamped to the row's own maximum and the price is the server's.
-    /// 2. **A result that re-requests owes a fresh list.** `ShopResult::rerequests` is the
-    ///    client's own tail test at `140d22f51`; five of the fourteen codes set it.
-    /// 3. **Success still owes the bag.** The client does not move an item on a bare
-    ///    success - the `0x0070` does that, and the meso count needs `0x007C`.
-    pub(super) fn on_shop_transaction(&mut self, t: net::shop::ShopTransaction) -> Vec<Reply> {
+    /// **The client's numbers are claims.** It checked `price * quantity` against its own meso
+    /// count before sending, but that is its arithmetic on its balance, and nothing on this
+    /// socket authenticates anybody. The quantity is clamped to the row's own cap and the
+    /// price is the server's.
+    fn classic_buy(&mut self, row_index: u16, item_id: u32, quantity: u16) -> Vec<Reply> {
         let Some(chr) = self.claimed_character() else {
-            return self.shop_answer(net::shop::ShopResult::Busy, "no character is claimed");
-        };
-        let Some((template, rows)) = self.open_shop.clone() else {
-            return self.shop_answer(net::shop::ShopResult::Busy, "no shop is open");
-        };
-        let Some(row) = rows.iter().find(|r| r.row_key == t.row_key).copied() else {
-            return self.shop_answer(
-                net::shop::ShopResult::UnknownItem,
-                &format!("row key {} is not in the {} rows we sent", t.row_key, rows.len()),
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                "no character is claimed",
             );
         };
+        let Some((_, rows)) = self.open_shop.clone() else {
+            return self
+                .classic_refused(net::classicshop::RESULT_NOT_ENOUGH_MESOS, "no shop is open");
+        };
+        // **The index is into the list we sent**, which is the only defensible reading of it.
+        let Some(row) = rows.get(usize::from(row_index)).copied() else {
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                &format!("row {row_index} is not among the {} rows we sent", rows.len()),
+            );
+        };
+        // The client also names the item. Disagreement means our list and its list have
+        // drifted, and buying the wrong thing is worse than refusing.
+        if row.item_id != item_id {
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                &format!("row {row_index} is item {} and the client asked for {item_id}", row.item_id),
+            );
+        }
         let Some(inv) = store::InventoryType::for_item(row.item_id) else {
-            return self.shop_answer(
-                net::shop::ShopResult::UnknownItem,
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
                 &format!("item {} belongs to no inventory tab", row.item_id),
             );
         };
-        let _ = template;
 
-        if row.is_buy_row() {
-            let qty = t.quantity.clamp(1, row.max_per_purchase.max(1));
-            let unit = row.price.max(0) as u32;
-            let cost = u32::from(qty).saturating_mul(unit);
-            let max_stack = self.config.shops.max_per_purchase(row.item_id);
-            let item = if inv == store::InventoryType::Equip {
-                store::Item::equip(row.item_id)
-            } else {
-                store::Item::bundle(row.item_id, qty)
-            };
-            match self.store.buy_item(chr.id, inv, &item, max_stack, cost) {
-                Ok(changed) => {
-                    let mut out = self.shop_answer(
-                        net::shop::ShopResult::Success,
-                        &format!("bought {qty}x {} for {cost} mesos", row.item_id),
-                    );
-                    out.extend(self.inventory_added_replies(inv, &changed, "bought"));
-                    out.extend(self.meso_reply(chr.id));
-                    out
-                }
-                Err(store::StoreError::BagFull { .. }) => {
-                    self.shop_answer(net::shop::ShopResult::InventoryFull, "the bag is full")
-                }
-                Err(store::StoreError::NotEnoughMesos { .. }) => self
-                    .shop_answer(net::shop::ShopResult::NotEnoughMesos, "not enough mesos"),
-                Err(e) => self.shop_answer(net::shop::ShopResult::Busy, &format!("buy failed: {e}")),
-            }
+        let cap = u16::try_from(row.max_per_purchase.max(1)).unwrap_or(1);
+        let qty = quantity.clamp(1, cap);
+        let cost = u64::from(qty).saturating_mul(row.price);
+        let cost = u32::try_from(cost).unwrap_or(u32::MAX);
+        let max_stack = self.config.shops.max_per_purchase(row.item_id);
+        let item = if inv == store::InventoryType::Equip {
+            store::Item::equip(row.item_id)
         } else {
-            let unit = row.price.unsigned_abs();
-            match self.store.sell_item(chr.id, inv, t.slot, Some(t.quantity), unit) {
-                Ok(_) => {
-                    let mut out = self.shop_answer(
-                        net::shop::ShopResult::Success,
-                        &format!("sold {}x {} from slot {}", t.quantity, row.item_id, t.slot),
-                    );
-                    out.push(Reply {
-                        opcode: net::inventory::INVENTORY_OPERATION,
-                        body: net::inventory::inventory_removed(inv.as_u8() as i8, t.slot as i16),
-                        what: format!("InventoryOperation REMOVE: {inv:?} slot {}", t.slot),
-                    });
-                    out.extend(self.meso_reply(chr.id));
-                    out
+            store::Item::bundle(row.item_id, qty)
+        };
+        match self.store.buy_item(chr.id, inv, &item, max_stack, cost) {
+            Ok(changed) => {
+                let what = if row.buy_back {
+                    format!("bought BACK {qty}x {} for {cost} mesos", row.item_id)
+                } else {
+                    format!("bought {qty}x {} for {cost} mesos", row.item_id)
+                };
+                let mut out = vec![Reply {
+                    opcode: net::classicshop::CLASSIC_SHOP_RESULT,
+                    body: net::classicshop::classic_shop_success(row.item_id, 0),
+                    what: format!("ClassicShopResult success: {what}"),
+                }];
+                // **The result moves nothing by itself.** Without these two the window says
+                // the purchase worked while the item and the mesos stay where they were.
+                out.extend(self.inventory_added_replies(inv, &changed, "bought"));
+                out.extend(self.meso_reply(chr.id));
+                // A bought-back row leaves the Buy Back tab, and the tab only changes when the
+                // whole list is re-sent.
+                if row.buy_back {
+                    self.buy_back.retain(|b| b.item_id != row.item_id);
+                    out.extend(self.classic_refresh("a buy-back row was bought"));
                 }
-                Err(store::StoreError::ItemMayNotBeSold { .. }) => self.shop_answer(
-                    net::shop::ShopResult::UnknownItem,
-                    "that is a quest item and may not be sold - the owner's rule, enforced in the store",
-                ),
-                Err(e) => {
-                    self.shop_answer(net::shop::ShopResult::UnknownItem, &format!("sell failed: {e}"))
-                }
+                out
             }
+            Err(store::StoreError::BagFull { .. }) => {
+                self.classic_refused(net::classicshop::RESULT_INVENTORY_FULL, "the bag is full")
+            }
+            Err(store::StoreError::NotEnoughMesos { .. }) => self
+                .classic_refused(net::classicshop::RESULT_NOT_ENOUGH_MESOS, "not enough mesos"),
+            Err(e) => self
+                .classic_refused(net::classicshop::RESULT_NOT_ENOUGH_MESOS, &format!("buy failed: {e}")),
         }
     }
 
-
-    /// A `0x055F`, plus the fresh list the result may owe.
-    pub(super) fn shop_answer(&self, result: net::shop::ShopResult, why: &str) -> Vec<Reply> {
-        let mut out = vec![Reply {
-            opcode: net::shop::SHOP_TRANSACTION_RESULT,
-            body: net::shop::shop_result(result),
-            what: format!("ShopResult {result:?} (code {}): {why}", result.code()),
-        }];
-        if result.rerequests() {
-            if let Some((template, rows)) = self.open_shop.as_ref() {
+    /// Sell one inventory slot, and push what was sold onto the Buy Back ring.
+    fn classic_sell(&mut self, slot: u16, item_id: u32, quantity: u16) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                "no character is claimed",
+            );
+        };
+        let Some(inv) = store::InventoryType::for_item(item_id) else {
+            return self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                &format!("item {item_id} belongs to no inventory tab"),
+            );
+        };
+        // The sell price is the client's own `Item.wz` price - the owner, 2026-08-19: *"The prices
+        // client side most likely represents sell prices."* `data/shops.txt` holds only what
+        // the NPC charges.
+        let unit = self.config.shops.item_data.get(&item_id).map(|d| d.price).unwrap_or(0);
+        match self.store.sell_item(chr.id, inv, slot, Some(quantity), unit) {
+            Ok(_) => {
+                let mut out = vec![Reply {
+                    opcode: net::classicshop::CLASSIC_SHOP_RESULT,
+                    body: net::classicshop::classic_shop_success(item_id, 0),
+                    what: format!("ClassicShopResult success: sold {quantity}x {item_id} from slot {slot}"),
+                }];
                 out.push(Reply {
-                    opcode: net::shop::OPEN_SHOP,
-                    body: net::shop::open_shop(*template, rows),
-                    what: format!(
-                        "OpenShop: re-sent because ShopResult {result:?} makes the client re-request"
-                    ),
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_removed(inv.as_u8() as i8, slot as i16),
+                    what: format!("InventoryOperation REMOVE: {inv:?} slot {slot}"),
                 });
+                out.extend(self.meso_reply(chr.id));
+                // **Onto the Buy Back ring, newest first, fifteen deep** - the client's own
+                // list length. Session-scoped: a buy-back list that survived a relog would
+                // offer items out of a counter the player has not opened.
+                self.buy_back.retain(|b| b.item_id != item_id);
+                self.buy_back.insert(
+                    0,
+                    net::classicshop::ClassicShopRow::buy_back(
+                        item_id,
+                        u64::from(unit),
+                        i16::try_from(quantity).unwrap_or(1),
+                    ),
+                );
+                self.buy_back.truncate(BUY_BACK_DEPTH);
+                out.extend(self.classic_refresh("an item was sold"));
+                out
             }
+            Err(store::StoreError::ItemMayNotBeSold { .. }) => self.classic_refused(
+                net::classicshop::RESULT_NOT_ENOUGH_MESOS,
+                "that is a quest item and may not be sold - the owner's rule, enforced in the store",
+            ),
+            Err(e) => self
+                .classic_refused(net::classicshop::RESULT_NOT_ENOUGH_MESOS, &format!("sell failed: {e}")),
         }
-        out
     }
 
+    /// `0x055E` type 10 - re-send the list without reopening the window.
+    ///
+    /// The rows held in `open_shop` are rebuilt so the Buy Back tab reflects the ring, and the
+    /// stored list is updated with them: a later request names an index into **this** list.
+    fn classic_refresh(&mut self, why: &str) -> Vec<Reply> {
+        let Some((template, rows)) = self.open_shop.clone() else { return Vec::new() };
+        let mut fresh: Vec<net::classicshop::ClassicShopRow> =
+            rows.into_iter().filter(|r| !r.buy_back).collect();
+        fresh.extend(self.buy_back.iter().copied());
+        let body = net::classicshop::classic_shop_refresh(&fresh);
+        let what = format!(
+            "ClassicShopResult type 10: list re-sent, {} rows ({} buy-back) - {why}",
+            fresh.len(),
+            fresh.iter().filter(|r| r.buy_back).count()
+        );
+        self.open_shop = Some((template, fresh));
+        vec![Reply { opcode: net::classicshop::CLASSIC_SHOP_RESULT, body, what }]
+    }
+
+    /// A `0x055E` refusal. **Never skip one**: the window latches on send.
+    fn classic_refused(&self, result_type: u8, why: &str) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::classicshop::CLASSIC_SHOP_RESULT,
+            body: net::classicshop::classic_shop_refused(result_type),
+            what: format!("ClassicShopResult refusal (type {result_type}): {why}"),
+        }]
+    }
+
+    /// `0x0104` - the **Shop2** window's request opcode.
+    ///
+    /// Nothing can open that window any more: its art is missing from this client, and
+    /// [`Session::open_shop_for`] sends `0x055D` instead. This arm exists so that if the
+    /// assumption is ever wrong the request is still answered rather than left hanging, which
+    /// is the failure mode this project has paid for most often.
+    pub(super) fn on_shop_request(&mut self, body: &[u8]) -> Vec<Reply> {
+        if net::shop::parse_shop_request(body).is_none() {
+            return Vec::new(); // no sub-op byte; nothing was latched by a body this short
+        }
+        vec![Reply {
+            opcode: net::shop::SHOP_TRANSACTION_RESULT,
+            body: net::shop::shop_result(net::shop::ShopResult::Busy),
+            what: "ShopResult Busy: a 0x0104 arrived, but this server opens the CLASSIC \
+                   counter (0x055D) and nothing should be able to open Shop2. Answered so the \
+                   window is not left latched"
+                .to_string(),
+        }]
+    }
+
+    // **`shop_answer` was deleted with the Shop2 transaction path.** It built a `0x055F`
+    // and, on a re-requesting result, a fresh `0x0560` - the packet whose art this client does
+    // not have. Its replacement is `Session::classic_refused` plus `Session::classic_refresh`,
+    // which are driven by what actually changed rather than by the result code.
 
     /// Tell the client its new meso count.
     ///

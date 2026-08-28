@@ -184,7 +184,21 @@ pub struct Session {
     /// into an item and a price. Keeping the sent copy rather than re-deriving it is the
     /// point: a re-derivation that disagreed by one row would charge the wrong price for the
     /// right-looking click, and nothing on either side would notice.
-    open_shop: Option<(u32, Vec<net::shop::ShopRow>)>,
+    /// The counter the player has open, and **the rows exactly as they went on the wire**.
+    ///
+    /// `net::classicshop`, not `net::shop`: this client has two shop windows and the art for
+    /// the `0x0560` one is **not in its WZ**, so that packet killed the client twice before a
+    /// single row byte was read. The classic `0x055D` window is the one that exists.
+    ///
+    /// The rows are kept verbatim because a request names a **row index**, and the only
+    /// defensible reading of that index is the list we actually sent.
+    open_shop: Option<(u32, Vec<net::classicshop::ClassicShopRow>)>,
+    /// What the player has sold at this counter, newest first - the Buy Back tab.
+    ///
+    /// **Fifteen entries**, the client's own list length. Session-scoped and deliberately not
+    /// persisted: a buy-back list that survived a relog would be offering items out of a
+    /// counter the player has not opened.
+    buy_back: Vec<net::classicshop::ClassicShopRow>,
 
     /// The storage keeper whose window is open, by **template** id.
     ///
@@ -389,6 +403,7 @@ impl Session {
             clock_ms: 0,
             fields,
             open_shop: None,
+            buy_back: Vec::new(),
             open_storage: None,
             buffs: Vec::new(),
             skill_ready_ms: std::collections::HashMap::new(),
@@ -649,6 +664,15 @@ impl Session {
             net::channel::CLIENT_CHANGE_CHANNEL => {
                 return self.on_change_channel(body.get(2..).unwrap_or(&[]))
             }
+            // **`0x00F5` is the CLASSIC counter's request opcode**, and it is the one this
+            // server will actually receive: the Shop2 window whose `0x0104` the arm below
+            // answers is never opened, because its art does not exist in this client.
+            net::classicshop::CLIENT_CLASSIC_SHOP_REQUEST => {
+                return self.on_classic_shop_request(body.get(2..).unwrap_or(&[]))
+            }
+            // Kept answering although nothing can now open the window that sends it. It costs
+            // one arm, and the alternative is an unanswered request if that assumption is ever
+            // wrong - which is the failure this project has paid for most often.
             net::shop::CLIENT_SHOP_REQUEST => {
                 return self.on_shop_request(body.get(2..).unwrap_or(&[]))
             }

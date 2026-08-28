@@ -71,7 +71,8 @@
                   screen is indistinguishable from a broken skill.
 
     THE SEVEN STEPS. Each is a claim that can come back false; report them separately.
-    DO STEP 7 FIRST: it is a discriminator that only works in a young session.
+    DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
+    likely to end the session, and everything after it is cheaper to redo than to lose.
 
      0. TOP UP. !lp with no argument. Only if under 1000, !lp 99000. Step 6 needs it.
 
@@ -164,26 +165,65 @@
           balance keeps dropping, or several coupons from one click -> the re-entry is
                      SENDING rather than completing. CLOSE THE CLIENT and say so
 
-     7. FLORA THE FAIRY - ONE OBSERVATION, AND THE FIRST THING TO DO IS TELL IT APART
-        FROM THE SESSION. 2026-08-28: clicking the Ellinia weapon-store NPC (template 310,
-        Flora the Fairy) ended the client with an ACCESS VIOLATION, 0xC0000005, at
-        0x1426e4be9 - a fault address that appears nowhere else in 68 archived hook logs.
-        The fault is in the same MILLISECOND as the inbound 0x00F3 script reply.
+     7. NPC SHOPS ARE ON - AND THIS IS THE ONE THAT WAS NEVER ON A WIRE. DO IT FIRST.
+        Clicking a shopkeeper now opens a counter instead of saying a line. Nothing about
+        this has ever been sent to a client, so it is the highest-risk step in the file.
 
-        THE UNANSWERED 0x00F3 IS NOT THE CAUSE, and that is measured rather than argued:
-        it appears 168 times across 23 archived runs, unanswered every time, with no death.
-        Their shop is not wired either, so what they give is our placeholder Say box.
+        WHY IT WAS OFF: we were sending 0x0560, the Shop2 window, and this client does not
+        ship its art (UI/UIWindow2.img/Shop2/backgrnd). The constructor's resource call
+        fails, a C++ exception is thrown and the unwinder faults - BEFORE a single row byte
+        is read, which is why one correctly-formed row killed it exactly as twelve did.
+        It was never our bytes.
 
-        DO THIS AT ABOUT 40 SECONDS OF CLIENT LIFE, BEFORE ANYTHING ELSE. The client had
-        been up 229 s when it died, and the two readings need opposite work:
-          it dies again, early -> Flora, or the script-reply path, really is fatal. That is
-                     a repeatable bug with a 1.3 GB dump already on disk next to it
-          it does NOT die      -> the session had been running long enough for something
-                     else to fire, and Flora is innocent. This is the same discriminator
-                     that cleared character GoodTest in one login on 2026-08-22, and it
-                     went the OTHER way that time, so neither answer is the safe default
-        Either way, say WHEN it happened. Do not click them a second time in a long session
-        and report that as a repeat.
+        THIS CLIENT HAS TWO SHOP WINDOWS. The classic one, UI/UIShop.img/Shop, IS in the WZ
+        and opens on 0x055D. That was found on 2026-08-20, its body was decoded on
+        2026-08-22 down to the price and the five gates that can silently drop a row, and
+        both sat unimplemented until today. crates/net/src/classicshop.rs builds it and its
+        test diffs the bytes against the research file's own golden vector - 336 bytes,
+        matched first try. All 39 authored shops build length-correct packets.
+
+        AND THE FLORA CRASH FROM LAST RUN IS NO LONGER REPRODUCIBLE BY THIS ROUTE. Clicking
+        their took the DIALOGUE path, because shops were off; they now take the shop path
+        instead. So a click that does not crash proves nothing about that access violation -
+        it is a different code path. Do not read it as fixed. The 1.3 GB dump is still on
+        disk and the fault address 0x1426e4be9 is still in none of the 68 archived hook logs.
+
+        Lucy is template 21 on map 1013: !map 1010, then the in02 portal into Amherst
+        Department Store. Flora is the Ellinia weapon seller. Either will do.
+          a) does a shop window appear, with the classic art?
+               a window            -> 0x055D, the head and the 157-byte row are all right
+               the old dialogue box -> no packet went out; the NPC-to-shop join is missing
+               nothing at all, and the hook log shows 0x055D dispatched and returning
+                                   -> the modal guard fired; a dialog was already on screen
+               a freeze or a fault  -> the row width is wrong. world.log's last outbound
+                                       length should be 21 + 157n. SAY THE LENGTH
+          b) are all the NPC's items there, at data/shops.txt prices?
+               right count          -> the price at row+0x38 and the row width are right
+               ZERO rows            -> a gate dropped every row. First suspect is row+0xa4,
+                                       the sale end: it is compared to the wall clock with
+                                       no sentinel, so a wrong value empties the shop and
+                                       says nothing anywhere
+               fewer than sent      -> count them; that names which row first tripped a gate
+          c) buy one item. Does the item arrive AND the meso count drop? Then click Buy
+             again.
+               both move            -> the whole loop works
+               nothing visible, but the second click still opens the quantity box
+                                   -> the 0x055E went out and the inventory/meso packets
+                                       did not
+               the second click does NOTHING, silently
+                                   -> the 0x055E never went out and shopUI+0x4b0 is latched.
+                                       Close the shop and re-click the NPC to recover; a
+                                       fresh 0x055D alone will NOT, because of the modal
+                                       guard
+          d) sell something back. Does a BUY BACK tab appear with it in?
+               yes                  -> the sell flag, the ring and the type-10 refresh work
+               it sells but no tab  -> the refresh did not go out, or the tab byte is wrong
+          e) buy it back off that tab. Does it leave the tab?
+
+        IF THE CLIENT DIES ANYWHERE IN 7, STOP AND SAY WHICH STEP. Then relaunch with
+        -ShopRows 1 if that switch is wired, or say so and I will send one row: a bad row
+        and too many rows look identical on screen and that flag tells them apart in one
+        launch.
 
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
@@ -207,14 +247,14 @@
 
     STILL OPEN - do not spend the run confirming these are broken
     ------------------------------------------------------------
+      - NPC SHOPS: BUILT this session and awaiting step 7. Never on a wire.
       - BUYING FROM THE CASH SHOP WINDOW is BUILT and awaiting step 6. The old note here
         said no packet could report a purchase without a message; that was a known-list
         search over the six INLINE arms and it missed the two that delegate. 0x05AE sub-op
         0x0C is the one. !buy from the field still works as the control.
-      - The classic shop counter, which is a DIFFERENT window from the cash shop. DECODED
-        including the price (row+0x38), and deliberately not built - three of its fields fail
-        silently or desynchronise the stream if they are wrong, and it has killed the client
-        twice.
+      - The Shop2 window (0x0560) can no longer be sent at all: its art is not in this
+        client, which is what killed the client twice. `--shop` is a no-op that says so.
+        The CLASSIC counter (0x055D) replaced it and is step 7.
       - Outgoing damage validation. HALF-UNBLOCKED 2026-08-28: the 0x00DF header DOES carry
         the skill id (u32 at body offset 2) and its level, so a per-skill ceiling is now
         computable. The ACTION field is still unfound, and nothing is wired - attack skills
@@ -986,7 +1026,7 @@ Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
     Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. Seven steps.' -ForegroundColor Yellow
-    Write-Host '  DO STEP 7 FIRST - it only means anything in a young session.' -ForegroundColor Yellow
+    Write-Host '  DO STEP 7 FIRST - NPC SHOPS, never once on a wire.' -ForegroundColor Yellow
     Write-Host '  Then step 2, which is the cheapest and isolates the most.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
@@ -1133,27 +1173,44 @@ if ($SetFieldProbe) {
     Write-Host '       BALANCE KEEPS DROPPING, or several coupons from one click ->'
     Write-Host '                   CLOSE THE CLIENT and say so. One line to disarm'
     Write-Host ''
-    Write-Host '  7. FLORA THE FAIRY - DO THIS AT ~40 SECONDS, BEFORE ANYTHING ELSE.' -ForegroundColor White
-    Write-Host '     Clicking the Ellinia weapon-store NPC killed the client last run:'
-    Write-Host '     an ACCESS VIOLATION at 0x1426e4be9, an address that appears nowhere'
-    Write-Host '     else in 68 archived hook logs. There is a 1.3 GB dump of it on disk.'
-    Write-Host '     THE UNANSWERED SCRIPT REPLY IS NOT THE CAUSE - that packet appears'
-    Write-Host '     168 times across 23 archived runs with no death. Their shop is not'
-    Write-Host '     wired either, so you get our placeholder text box, not a shop.'
-    Write-Host '     THE POINT IS TO SEPARATE THE NPC FROM THE SESSION. The client had'
-    Write-Host '     been up 229 s when it died. So click their EARLY:'
-    Write-Host '       it dies again, early -> Flora really is fatal. Repeatable bug'
-    Write-Host '       it does NOT die      -> the session was long, and they are innocent'
-    Write-Host '     Say WHEN it happened either way. Clicking them once in a long session'
-    Write-Host '     and calling it a repeat proves nothing.'
+    Write-Host '  7. NPC SHOPS ARE ON. NEVER BEEN ON A WIRE. DO THIS FIRST.' -ForegroundColor White
+    Write-Host '     Clicking a shopkeeper now opens a counter instead of saying a line.'
+    Write-Host '     WHY IT WAS OFF: we sent 0x0560, the Shop2 window, and this client does'
+    Write-Host '     not ship its art. The constructor faults BEFORE reading a single row'
+    Write-Host '     byte - which is why one row killed it exactly as twelve did. It was'
+    Write-Host '     never our bytes. This client has TWO shop windows; the classic one IS'
+    Write-Host '     in the WZ and opens on 0x055D. Decoded 6 days ago, unimplemented until'
+    Write-Host '     today. The builder matches the research golden vector byte for byte.'
+    Write-Host '     THE FLORA CRASH IS NOT REPRODUCIBLE THIS WAY ANY MORE. They took the'
+    Write-Host '     DIALOGUE path last run because shops were off; they take the SHOP path'
+    Write-Host '     now. A click that does not crash proves NOTHING about that access'
+    Write-Host '     violation - different code path. Do not read it as fixed.'
+    Write-Host '     Lucy is template 21: !map 1010, in02 portal. Or Flora in Ellinia.'
+    Write-Host '       a) does a shop window appear, with the classic art?'
+    Write-Host '            a window      -> 0x055D and the 157-byte row are right'
+    Write-Host '            old dialogue  -> no packet went out; the join is missing'
+    Write-Host '            freeze/fault  -> the row width is wrong. SAY THE LAST OUTBOUND'
+    Write-Host '                             LENGTH from world.log; it should be 21 + 157n'
+    Write-Host '       b) are all the items there at the data/shops.txt prices?'
+    Write-Host '            ZERO rows     -> a gate dropped every row. First suspect is the'
+    Write-Host '                             sale end: no sentinel, so a wrong value empties'
+    Write-Host '                             the shop and says nothing anywhere'
+    Write-Host '            fewer         -> count them; that names which row tripped first'
+    Write-Host '       c) buy one. Item AND mesos both move? Then click Buy AGAIN:'
+    Write-Host '            second click does nothing, silently -> the result never went out'
+    Write-Host '                             and the window is latched. Close and re-click'
+    Write-Host '                             the NPC; a fresh 0x055D alone will NOT recover it'
+    Write-Host '       d) sell something. Does a BUY BACK tab appear with it in?'
+    Write-Host '       e) buy it back off that tab. Does it leave?'
+    Write-Host '     IF THE CLIENT DIES, STOP AND SAY WHICH STEP.'
     Write-Host ''
     Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
     Write-Host '     MP cost and damage validation on ATTACK skills. The skill id is'
     Write-Host '     now readable so both are finally possible, but neither is'
     Write-Host '     connected - attacks still cost no MP. Only BUFF casts spend it.'
     Write-Host '     Spent skill points still come back; !learn grants directly.'
-    Write-Host '     Mina classic shop counter. Three fields fail silently or'
-    Write-Host '     desynchronise the byte stream; it has killed the client twice.'
+    Write-Host '     The Shop2 window (0x0560). Its art is not in this client and it'
+    Write-Host '     can no longer be sent at all. --shop is now a no-op that says so.'
     Write-Host ''
     Write-Host '  GLANCES: drops arc from the corpse and are walkable-over; kill-EXP'
     Write-Host '  line is WHITE; mobs on map 40 already standing; pick-ups stay OUT of'

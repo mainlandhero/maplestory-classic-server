@@ -7,8 +7,14 @@ plus the request opcode that file never found.
 Markers: **[L]** read off this client's listing or capture, **[D]** derived from two or more [L]
 facts, **[I]** inferred.
 
-**Nothing was implemented.** No `crates/` file was touched. §9 is a byte-for-byte recipe, not a
-patch.
+**IMPLEMENTED 2026-08-28.** `crates/net/src/classicshop.rs` builds §9.1 and its test diffs the
+output against **this file's own golden vector, byte for byte** - it matched on the first run.
+`crates/world/src/session/shop.rs` sends it, answers `0x00F5` and keeps the Buy Back ring.
+Shops are on by default; the `send_shop` flag and `--shop` are gone.
+
+**Still true: nothing here has been on a wire.** Every claim below is static, and the golden
+vector proves only that the builder agrees with the decode - not that the decode is right. §9.4
+is the run that tests that, and it is step 7 of the launcher's plan.
 
 ---
 

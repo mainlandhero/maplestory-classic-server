@@ -137,22 +137,23 @@ pub struct Config {
     /// half. It can never take the list to zero: a zero-row shop is a different client arm
     /// that builds a dialog box instead of a counter.
     pub shop_rows: Option<usize>,
-    /// Send `0x0560` OpenShop at all. **Off by default, because it kills this client.**
-    ///
-    /// Not a protocol bug and not fixable from the server: the shop UI's constructor loads
-    /// `UI/UIWindow2.img/Shop2/backgrnd`, and that image is **not in this client's WZ**. The
-    /// resource call fails, `_com_issue_errorex` throws, and the unwinder faults. The client
-    /// never returns from the handler - neither crashing run has a numbered dispatch line
-    /// for `0x0560`, and both counters run without gaps, so the absence is measured rather
-    /// than assumed. It dies *before* reading a single row byte, which is why one row killed
-    /// it exactly as twelve did.
-    ///
-    /// With this off, a shopkeeper falls through to ordinary dialogue, which works. That is
-    /// a worse shop and a much better client. `--shop` re-enables it for a deliberate test.
-    ///
-    /// **Not abandoned.** The WZ ships `UIShop.img/Shop`, the classic-layout counter; which
-    /// opcode builds *that* is the open question. `research/npc-shop-crash2.md`.
-    pub send_shop: bool,
+    // **`send_shop` was removed on 2026-08-28, and the field it gated is worth remembering.**
+    //
+    // It existed to keep `0x0560` OpenShop OFF, because that packet killed this client twice.
+    // Not a protocol bug and never fixable from the server: the Shop2 UI's constructor loads
+    // `UI/UIWindow2.img/Shop2/backgrnd`, that image is **not in this client's WZ**, the
+    // resource call fails, `_com_issue_errorex` throws and the unwinder faults - *before* a
+    // single row byte is read, which is why one correctly-formed row killed it exactly as
+    // twelve did.
+    //
+    // The flag's own doc ended with the answer: *"the WZ ships `UIShop.img/Shop`, the
+    // classic-layout counter; which opcode builds that is the open question."* It is
+    // **`0x055D`** (`research/classic-shop-opcode.md`), its body is decoded
+    // (`research/classic-shop-rows.md`) and `net::classicshop` builds it against that file's
+    // own golden vector. So shops are on, unconditionally, and there is nothing left to gate.
+    //
+    // `--shop` is now a no-op that says so rather than an error, because it is in the owner's
+    // shell history.
     /// What each mob drops when it dies, plus the global event table. `data/drops.txt`.
     ///
     /// Empty is legal and means mobs drop nothing - see `crate::droptables::DropTables::load`
@@ -1326,7 +1327,6 @@ impl Default for Config {
             mob_respawn_s: HashMap::new(),
             mob_limit: None,
             shop_rows: None,
-            send_shop: false,
             drops: crate::droptables::DropTables::default(),
             exp_curve: crate::expcurve::ExpCurve::default(),
             mob_exp: HashMap::new(),

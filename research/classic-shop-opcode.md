@@ -174,7 +174,12 @@ The next step is `FUN_141fa2670` (the layout) and `FUN_141f9f5e0`'s row loop rea
 enough to name the fields, exactly the way `research/npc-shop.md` did it for Shop2. That file
 is the template for this work and most of its method transfers.
 
-Until then `crates/net/src/shop.rs` still builds `0x0560` and NPC shops stay off by default.
-**Changing the opcode without decoding the body would send a `0x0560`-shaped body to a
-handler that reads a different and longer one**, which is the same class of mistake as the
-truncated chat packet, with the same consequence.
+**SUPERSEDED 2026-08-28.** Everything this section lists as undone was done by
+`research/classic-shop-rows.md` on 2026-08-22 - the price (`row+0x38`), the conditional tail,
+the head fields, the `0x055E` table - and the request opcode that section never found is
+`0x00F5`. `crates/net/src/classicshop.rs` now builds `0x055D` against that file's golden
+vector, and `crates/world/src/session/shop.rs` sends it. Shops are on by default.
+
+The warning below was right and was heeded: the body **was** decoded before the opcode was
+changed. `crates/net/src/shop.rs` still builds `0x0560` and nothing calls it - it is kept for
+its result table and because the two-window fact is worth being able to point at.

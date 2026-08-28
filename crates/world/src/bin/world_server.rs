@@ -151,17 +151,21 @@ fn main() -> ExitCode {
                     .map(|n: usize| config.mob_limit = Some(n))
                     .map_err(|e| format!("--mob-limit {v}: {e}"))
             }),
-            // Re-enable OpenShop. OFF by default: it kills this client, because the window
-            // it builds needs a WZ image this client does not ship. See Config::send_shop
-            // and research/npc-shop-crash2.md.
+            // **A no-op since 2026-08-28, and kept for the reason `--session-tokens` is.**
+            // Shops are ON by default now. The flag existed because `0x0560` killed the
+            // client; the cause was that this client has two shop windows and that was the
+            // one whose art it does not ship. `net::classicshop` sends `0x055D` instead.
+            // An argument that used to mean something and now errors is a failed launch for
+            // a reason nobody would guess, so this accepts and says so.
             "--shop" => {
-                config.send_shop = true;
+                println!("--shop: no longer needed - NPC shops are on by default. The old                           0x0560 window is gone; this client's counter is the classic 0x055D.");
                 Ok(())
             }
-            // The shop counter's blast-radius control, and it is now known NOT to be the
-            // variable: one correctly-formed row killed the client exactly as twelve did,
-            // because the client dies before reading any row byte. Kept for the next time
-            // rows are a suspect.
+            // The shop counter's blast-radius control. It was known NOT to be the variable
+            // for Shop2 - one correctly-formed row killed the client exactly as twelve did,
+            // because it died before reading any row byte - but for the CLASSIC counter it is
+            // a live instrument again: that window really does parse rows, and
+            // `research/classic-shop-rows.md` names five separate gates that can drop one.
             "--shop-rows" => value().and_then(|v| {
                 v.parse()
                     .map(|n: usize| config.shop_rows = Some(n))

@@ -21,6 +21,7 @@
 //! ```
 
 pub mod attack;
+pub mod classicshop;
 pub mod bag;
 pub mod buff;
 pub mod cashshop;
