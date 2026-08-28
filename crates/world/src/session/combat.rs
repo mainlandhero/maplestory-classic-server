@@ -536,21 +536,58 @@ impl Session {
         let computed = self.incoming_damage_for(hit.mob_template_id, &chr);
         let applied = computed.unwrap_or(claimed);
 
+        // **Magic Guard sends part of the damage to MP, and that split is the SERVER's job.**
+        //
+        // `research/magic-damage.md`: the client computes `mpLoss = guard% * damage / 100`
+        // clamped to current MP - the hit handler reads `secStat+0x614`, multiplies, divides
+        // by 100 and clamps - but it **never writes HP**. `user-hit.md` enumerated every write
+        // to the HP field, closed the `lea`-handoff blind spot, and walked the hit path to
+        // depth 8 without finding one. Only `0x007C` moves either bar.
+        //
+        // So setting CTS bit 97 buys an icon and nothing else. Without this block the buff
+        // would look active, cost MP to cast, and change nothing about how much a hit hurt -
+        // which is the shape of bug that gets reported as "the skill does nothing".
+        //
+        // **Clamped to current MP**, like the client's own arithmetic: what MP cannot absorb
+        // still comes off HP. A player at 0 MP with Magic Guard up takes the full hit, which
+        // is the behaviour the clamp in the client produces too.
+        let guard_percent = self.magic_guard_percent();
+        let to_mp = if guard_percent > 0 {
+            (u64::from(applied) * u64::from(guard_percent) / 100).min(u64::from(chr.mp)) as u32
+        } else {
+            0
+        };
+        let to_hp = applied - to_mp;
+
         let before = chr.hp;
-        chr.hp = chr.hp.saturating_sub(applied);
+        chr.mp = chr.mp.saturating_sub(to_mp);
+        chr.hp = chr.hp.saturating_sub(to_hp);
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.notice(format!("Could not save your health: {e}"));
         }
 
+        // **HP and MP in ONE packet.** `hp_only` was right until Magic Guard existed; sending
+        // two packets would let the client draw the HP bar against a stale MP value, and the
+        // revive dialog below gates on the HP this packet sets.
         let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,
-            body: net::stats::StatChange::hp_only(chr.hp).build(),
+            body: net::stats::StatChange {
+                hp: Some(chr.hp),
+                mp: (to_mp > 0).then_some(chr.mp),
+                ..Default::default()
+            }
+            .build(),
             what: format!(
-                "StatChanged: hit by mob {} (template {}, attack index {}) for {applied} - hp {before} -> {}. The CLIENT claimed {claimed}{}. Bit 10 carries the NEW HP, not a delta.",
+                "StatChanged: hit by mob {} (template {}, attack index {}) for {applied} - hp {before} -> {}{}. The CLIENT claimed {claimed}{}. Bit 10 carries the NEW HP, not a delta.",
                 hit.mob_object_id,
                 hit.mob_template_id,
                 hit.attack_index,
                 chr.hp,
+                if to_mp > 0 {
+                    format!(", and MAGIC GUARD sent {to_mp} of it to MP ({guard_percent}%) -> {} mp", chr.mp)
+                } else {
+                    String::new()
+                },
                 match computed {
                     Some(_) if claimed != applied => " and the server overrode it",
                     Some(_) => " and the server agreed",

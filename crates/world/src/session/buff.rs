@@ -138,6 +138,27 @@ impl Session {
 
     /// [`Self::grant_buff`] with the tail length chosen by the caller - `!buff`'s third
     /// argument. See `net::buff::TAIL_LEN` for why that number is slack and not a length.
+    /// **How much of an incoming hit Magic Guard sends to MP**, as a percent, or `0`.
+    ///
+    /// Read from the buff this session is holding rather than from the skill table, because
+    /// the level the player actually cast is what matters and that is what `buffs` records.
+    ///
+    /// The value is the WZ's `x` - 30 at level 1 rising to 80 - and it is a **percent**, which
+    /// was measured together with the bit: the client's hit handler multiplies by the damage
+    /// and divides by 100. Same measurement, so the unit cannot be wrong independently of the
+    /// bit being wrong.
+    pub(super) fn magic_guard_percent(&self) -> u32 {
+        self.buffs
+            .iter()
+            .find(|b| b.skill_id == net::buff::MAGIC_GUARD)
+            .and_then(|b| {
+                let level = self.store.skill_level(self.claimed_character()?.id, b.skill_id).ok()?;
+                net::buff::buff_level(net::buff::MAGIC_GUARD, level)
+            })
+            .map(|l| u32::try_from(l.value).unwrap_or(0))
+            .unwrap_or(0)
+    }
+
     pub(super) fn grant_buff_with_tail(
         &mut self,
         skill_id: u32,
@@ -145,17 +166,28 @@ impl Session {
         now_ms: u64,
         tail: usize,
     ) -> Vec<Reply> {
-        let stat = level.granted_by(skill_id);
+        // **`all_granted_by`, not `granted_by` - a skill may grant more than one stat.**
+        //
+        // Magic Armor sets weapon defence AND magic defence. `granted_by` returns only the
+        // first, so this call site would have set one and silently dropped the other - and
+        // `research/magic-damage.md` says exactly what that would have cost: on screen it
+        // reads as "only W. Def moved", which is the signature of *the bit pair being off by
+        // one*. It would have produced a confident wrong retraction from a real observation,
+        // on the very run meant to promote those two bits from [D] to [L].
+        let stats = level.all_granted_by(skill_id);
         // One holder per bit. Two entries for the same stat would leave the second expiry
         // clearing a buff the first had already replaced - and the client tracks one value
         // per bit, so our table has to as well.
-        self.buffs.retain(|b| b.bit != stat.bit);
-        self.buffs.push(ActiveBuff {
-            bit: stat.bit,
-            skill_id,
-            expires_ms: now_ms.saturating_add(u64::from(stat.duration_ms)),
-        });
-        let body = net::buff::temporary_stat_set_with_tail(&[stat], tail);
+        for stat in &stats {
+            self.buffs.retain(|b| b.bit != stat.bit);
+            self.buffs.push(ActiveBuff {
+                bit: stat.bit,
+                skill_id,
+                expires_ms: now_ms.saturating_add(u64::from(stat.duration_ms)),
+            });
+        }
+        let stat = stats[0];
+        let body = net::buff::temporary_stat_set_with_tail(&stats, tail);
         vec![Reply {
             opcode: net::buff::TEMPORARY_STAT_SET,
             body,

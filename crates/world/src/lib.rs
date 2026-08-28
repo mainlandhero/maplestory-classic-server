@@ -37,6 +37,7 @@ pub mod consumables;
 pub mod damage;
 pub mod footholds;
 pub mod jobs;
+pub mod magic;
 pub mod server;
 pub mod session;
 pub mod skillpoints;

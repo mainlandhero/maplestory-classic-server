@@ -5340,6 +5340,82 @@ fn a_job_advancement_carries_its_skill_points() {
     let _ = id;
 }
 
+/// **Magic Guard sends part of a hit to MP, and that is the server's arithmetic.**
+///
+/// The client computes the split and then **never writes HP** - only `0x007C` moves either
+/// bar - so setting CTS bit 97 alone would buy an icon and change nothing about how much a hit
+/// hurt. Four things are asserted, because a test of one would pass while the others were
+/// wrong: the total taken, the MP share, the HP share, and that **both travel in one packet**.
+#[test]
+fn magic_guard_splits_incoming_damage_between_hp_and_mp() {
+    // Template 45 is the Drake, PADamage 287 - a hit big enough that a percentage of it is
+    // not lost to integer division, which a snail's 3 would be.
+    let hit_body = || {
+        hex("00000000ffffffff0100000002002100431e140f0000000000000000000001000000010000000100000001000000d3070000d307000001000000000000000000000000000000000000de0100008b010000000000000000000000000000ffffffff00000000ffffffff000000000000000002000000000000000000000000000000000000000100000000000000000000000000")
+    };
+    let build = || {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
+        let mut made = store.create_character(account_id, 0, &chr).unwrap();
+        made.level = 7;
+        made.job = 200;
+        made.max_hp = 5000;
+        made.hp = 5000;
+        made.max_mp = 5000;
+        made.mp = 5000;
+        store.save_character_progress(&made).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        // A big attack column so the server's own number is large enough that a percentage of
+        // it survives integer division.
+        let config =
+            Config { mob_attack: [(2u32, 300u32)].into_iter().collect(), ..Config::default() };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(made.id);
+        (s, store, made.id)
+    };
+
+    // **The control first.** Without the buff the whole hit lands on HP, so a pass below
+    // cannot come from the split quietly doing nothing.
+    let (mut s, _store, _id) = build();
+    s.on_user_hit(&hit_body());
+    let plain = s.claimed_character().unwrap();
+    let plain_loss = 5000 - plain.hp;
+    assert!(plain_loss > 10, "the control has to actually hurt: took {plain_loss}");
+    assert_eq!(plain.mp, 5000, "and MP must not move without Magic Guard");
+
+    // Now with it up, taking the same hit from the same state.
+    let (mut s, store, id) = build();
+    store.set_skill_level(id, net::buff::MAGIC_GUARD, 1).unwrap();
+    let level = net::buff::buff_level(net::buff::MAGIC_GUARD, 1).expect("Magic Guard level 1");
+    s.grant_buff_with_tail(net::buff::MAGIC_GUARD, level, 0, net::buff::TAIL_LEN);
+    let mut chr = s.claimed_character().unwrap();
+    chr.hp = 5000;
+    chr.mp = 5000;
+    store.save_character_progress(&chr).unwrap();
+
+    let out = s.on_user_hit(&hit_body());
+    let after = s.claimed_character().unwrap();
+    let to_mp = 5000 - after.mp;
+    let to_hp = 5000 - after.hp;
+    let percent = u32::try_from(level.value).unwrap();
+    let total = to_hp + to_mp;
+    assert!(to_mp > 0, "Magic Guard must send SOME of it to MP - level 1 is {percent}%");
+    // **The invariant is checked WITHIN one hit, not across two.** `incoming_damage` rolls a
+    // window, so two hits legitimately differ - the first version of this test compared the
+    // totals of two separate hits and failed on 429 vs 389, which is the damage model working
+    // rather than the split being wrong.
+    assert_eq!(to_mp, total * percent / 100, "the same arithmetic the client does");
+    assert!(to_hp > 0, "and the rest still lands on HP at {percent}%");
+    assert!(total > 10, "the hit has to be big enough to divide: took {total}");
+
+    // **One packet.** Two would let the client draw the HP bar against a stale MP value, and
+    // the revive dialog gates on the HP this very packet sets.
+    let stats: Vec<_> = out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED).collect();
+    assert_eq!(stats.len(), 1, "HP and MP travel together");
+    assert!(stats[0].what.contains("MAGIC GUARD"), "and the log says so: {}", stats[0].what);
+}
+
 /// **A pet is refused rather than handed over, and it goes back in the locker.**
 ///
 /// The owner's `!locker 1` moved a Brown Puppy (`5000001`) into the Cash tab on 2026-08-26 and the

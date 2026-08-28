@@ -6,6 +6,25 @@
 //! `world.log` of the 12:59 run logs one `0x013C`, 51 bytes, `skillId 1002 level 3` - and
 //! nothing answered it. `research/buffs.md` has the working; this is the wire.
 //!
+//! # Three skills are modelled, and one of them is NOT fully wired
+//!
+//! [`buff_level`] answers for [`NIMBLE_FEET`], [`MAGIC_GUARD`] and [`MAGIC_ARMOR`]. Only
+//! Nimble Feet's rows are confirmed on a client; the other two are read off the WZ and their
+//! bits carry different confidences, recorded on [`CTS_MAGIC_GUARD`] (**[L]**) and
+//! [`CTS_WEAPON_DEFENCE`] (**[D]**, with a named blind spot).
+//!
+//! **Magic Armor grants two stats and [`BuffLevel::granted_by`] returns one.** The session
+//! calls `granted_by`, so until that one call site becomes [`BuffLevel::all_granted_by`],
+//! Magic Armor sets weapon defence and **silently drops magic defence**. That is not a
+//! cosmetic gap: on screen it is a cast where only W. Def moves, which
+//! `research/magic-damage.md` §9.3 lists as meaning *"the pair is off by one"* - a wrong
+//! conclusion drawn from a real observation, and the run that was supposed to promote
+//! [`CTS_WEAPON_DEFENCE`] from [D] to [L] would instead be spent chasing it.
+//!
+//! Magic Guard needs a second thing this file cannot supply: its damage split is **server
+//! work**. `research/magic-damage.md` §8 established the client computes the MP redirection
+//! and never writes HP, so setting bit 97 alone buys an icon and nothing else.
+//!
 //! # `0x007D` outbound is NOT `0x007D` inbound, and the names here say so
 //!
 //! `crate::opcode::CLIENT_MIGRATION_HELLO` is `0x007D` **from** the client. This module's
@@ -379,21 +398,187 @@ pub fn parse_skill_use(body: &[u8]) -> Option<SkillUse> {
     })
 }
 
-/// One level of a skill that grants a temporary stat.
+/// The character-temporary-stat bit for Magic Guard's damage-redirection percentage.
+///
+/// **[L]**, and it does not rest on the `.rdata` name table that also says `97 = MagicGuard`.
+/// `research/magic-damage.md` §7.3: the client's own hit handler `FUN_1428aa0a0` reads bit
+/// 97's value slot at `secStat+0x614`, multiplies it by the incoming damage, applies the
+/// signed `/100` idiom and clamps the result to a second field:
+///
+/// ```asm
+/// 1428ac93f  lea  rcx, [r13 + 0x614]   ; bit 97's value
+/// 1428ac99a  imul ecx, esi             ; value * damage
+/// 1428ac99d  mov  eax, 0x51eb851f / imul / sar edx,5   ; the signed "/ 100"
+/// 1428ac9c0  cmp  eax, ebx / cmovl ebx, eax            ; clamp
+/// ```
+///
+/// Two halves found by different routes meet on one offset, so the bit **and** its unit are
+/// measured together: the value is a **percent**, `Skill.wz` `2001000/level/<lv>/x`.
+///
+/// **Bit 97 carries no per-stat extras** - its census row is a standard `u32,u16,u32,u32`
+/// block and 97 is not among the 67 conditional-extras bits - so a Magic Guard `0x007D` has
+/// exactly the shape of the Nimble Feet one.
+pub const CTS_MAGIC_GUARD: u32 = 97;
+
+/// The character-temporary-stat bit Magic Armor's `indiePdd` is sent as: **Weapon Defence**.
+///
+/// # This is **[D]**, it is weaker than [`CTS_MAGIC_GUARD`], and the doubt is real
+///
+/// What is **[L]** (`research/magic-damage.md` §7.4): `FUN_14087c130`, the attacker-totals
+/// builder, reads nine consecutive CTS values 83..91 in index order and adds them to the
+/// totals in order. Bit **86** lands on `totals+0x0c`, the field seeded with `floor(STR/4)` -
+/// the guide's WDEF - and bit **87** on `totals+0x14`, seeded with `floor(INT/4)`, MDEF. So
+/// 86 and 87 *are* what this client adds to its own Weapon Def. and Magic Def.
+///
+/// **What is not established is that the server is supposed to reach them this way.** Magic
+/// Armor's WZ keys are `indiePdd`/`indieMdd`, and "Indie" is a **separate index space**:
+/// `.rdata 0x14327ce58..` holds a second name run giving `IndiePDD = 2`, `IndieMDD = 3` over
+/// 57 names indexed 0..55. None of those names appears in the CTS table, and the `0x007D`
+/// decoder `FUN_140a165f0` shows no sign of carrying them - its 474 blocks are 407 standard
+/// stats plus 67 conditional extras, all enumerated by read shape rather than filtered, and
+/// **no bit below 83 decodes at all**.
+///
+/// The quoted blind spot, so it can be acted on rather than buried: *"Nothing I found says
+/// the server is supposed to grant Magic Armor as CTS 86/87 rather than as Indie 2/3 through
+/// some mechanism I have not located."* Choosing 86/87 **because** the Indie space appears
+/// not to ride in `0x007D` is an inference from an absence, and this file's own rules say a
+/// silent negative is usually a property of the search.
+///
+/// **One run settles it**, and the outcomes point different ways -
+/// `research/magic-damage.md` §9.3 has the table. Cast Magic Armor and read the stat window:
+/// both W. Def and M. Def rise by the level's value (86/87 are right, promote to [L]);
+/// neither moves (wrong bits, or the window shows only equipment - sweep 83..91 one bit per
+/// cast, and 83 should move Attack as a free positive control); exactly one moves (the pair
+/// is off by one, and the run names which).
+pub const CTS_WEAPON_DEFENCE: u32 = 86;
+
+/// The bit Magic Armor's `indieMdd` is sent as: **Magic Defence**. **[D]**, same chain and
+/// same doubt as [`CTS_WEAPON_DEFENCE`] - read that one.
+pub const CTS_MAGIC_DEFENCE: u32 = 87;
+
+/// How long a granted stat lasts - or that `Skill.wz` says nothing at all.
+///
+/// # `0` and "absent" are different things, and this project has already paid for merging them
+///
+/// `CLAUDE.md`: *"A mob's size was sent as `0` meaning 'unset'; `0` means **zero percent**,
+/// and it collapsed every mob's hit box onto its own centre."* Magic Guard genuinely has no
+/// `time` node, so "0 seconds" would be a claim this data does not make.
+///
+/// [`BuffLevel::seconds`] cannot become an `Option` - callers outside this crate already read
+/// it as a `u32`. So the distinction lives here, and `seconds` is **derived** from this enum
+/// in the one constructor rather than written beside it, which is why the two cannot drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BuffLevel {
-    pub mp_cost: u16,
-    /// `Skill.wz`'s `time`, in **seconds**. [`TemporaryStat::duration_ms`] wants it x1000.
-    pub seconds: u32,
-    /// `Skill.wz`'s `cooltime`, in **seconds**.
-    pub cooldown_seconds: u32,
-    /// The stat this level grants, and by how much.
+pub enum BuffDuration {
+    /// `Skill.wz`'s `time`, in **seconds**.
+    Seconds(u32),
+    /// The skill has **no `time` node at any of its levels**; it is switched off by casting
+    /// it again.
+    ///
+    /// **[L]** for the absence: `gm-handbook/skills.txt` has an empty `time` cell on all 15
+    /// Magic Guard levels, and the client's own tooltip says *"activated when used and
+    /// deactivated when used again."*
+    ///
+    /// **[D]** for "`processtype 113` means toggle": all 16 skills in the archive with that
+    /// processtype lack `time` at every level and every one of their descriptions says the
+    /// same thing in words. 16 cases with no counterexample is a correlation, not a decoded
+    /// field. `research/magician-first-job.md` §4.
+    Toggle,
+}
+
+impl BuffDuration {
+    /// Seconds, or **`0` for a [`BuffDuration::Toggle`]** - see [`BuffLevel::granted_by`] for
+    /// what that zero means on the wire and how one launch tells the two readings apart.
+    pub const fn seconds(self) -> u32 {
+        match self {
+            BuffDuration::Seconds(s) => s,
+            BuffDuration::Toggle => 0,
+        }
+    }
+
+    /// Whether `Skill.wz` states a duration for this level at all.
+    pub const fn is_toggle(self) -> bool {
+        matches!(self, BuffDuration::Toggle)
+    }
+}
+
+/// A **second** stat granted by the same cast. See [`BuffLevel::second`].
+///
+/// The asymmetry with [`BuffLevel`]'s own `bit`/`value` pair is not a style choice: those two
+/// fields are read by name outside this crate, so the first stat cannot be moved in here
+/// without breaking a file this crate does not own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatGrant {
     pub bit: u32,
     pub value: i16,
 }
 
+/// One level of a skill that grants one or more temporary stats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuffLevel {
+    pub mp_cost: u16,
+    /// `Skill.wz`'s `time`, in **seconds**. [`TemporaryStat::duration_ms`] wants it x1000.
+    ///
+    /// **`0` here means "no `time` node", not "zero seconds"** - [`BuffLevel::duration`] is
+    /// the field that says which, and this one is derived from it.
+    pub seconds: u32,
+    /// `Skill.wz`'s `cooltime`, in **seconds**. `0` where the skill has none, which is both
+    /// Magician buffs.
+    pub cooldown_seconds: u32,
+    /// The first stat this level grants, and by how much.
+    pub bit: u32,
+    pub value: i16,
+    /// A second stat granted by the **same cast**, or `None`.
+    ///
+    /// Magic Armor is the only skill modelled here that grants two - `indiePdd` on
+    /// [`CTS_WEAPON_DEFENCE`] and `indieMdd` on [`CTS_MAGIC_DEFENCE`]. **A caller that reads
+    /// `bit`/`value` and ignores this field silently grants half the buff**, which on screen
+    /// is indistinguishable from the bit pair being off by one - the exact wrong reading
+    /// `research/magic-damage.md` §9.3's run is there to make. Use [`BuffLevel::all_granted_by`].
+    pub second: Option<StatGrant>,
+    /// Whether [`BuffLevel::seconds`] is a duration at all.
+    pub duration: BuffDuration,
+}
+
 impl BuffLevel {
-    /// The `0x007D` entry for this level, granted by `skill_id`.
+    /// The `0x007D` entry for this level's **first** stat, granted by `skill_id`.
+    ///
+    /// # This returns one stat, and one skill here grants two
+    ///
+    /// Magic Armor's `indieMdd` is in [`BuffLevel::second`] and **is not in this return
+    /// value**. The signature is fixed by callers outside this crate, so the hazard cannot be
+    /// removed by types; [`BuffLevel::all_granted_by`] is the call that cannot drop it, and
+    /// there is a test that pins exactly what this one loses.
+    ///
+    /// # What a [`BuffDuration::Toggle`] sends, and why it is `0`
+    ///
+    /// Magic Guard has no `time` node, so there is no number to convert and `seconds` is `0`,
+    /// which falls out of the multiplication below as `duration_ms = 0`. **This is a decision,
+    /// not a lookup**, and here is the whole of it.
+    ///
+    /// Three things are measured (`research/buffs-underflow.md`, and the owner on 2026-08-22):
+    /// the client's `tExpire` drives **only the icon animation**; at a natural expiry the
+    /// client sends **nothing** and merely flashes the icon; and **the stat itself survives
+    /// that expiry** - *"It just kept flashing, but the temporary stats were still there."*
+    /// Removal happens only when the server sends `0x007E`.
+    ///
+    /// So the number cannot cost the buff its effect. Whatever `duration_ms` says, bit 97
+    /// stays set until this server clears it, and the damage split `on_user_hit` performs
+    /// hangs off the **server's** record of "Magic Guard is on", not the client's clock. The
+    /// choice is therefore cosmetic, and `0` is the honest encoding of an absent node: a large
+    /// fake duration would put a silly countdown on the icon and would be indistinguishable,
+    /// in `world.log` a week later, from a genuinely timed buff.
+    ///
+    /// **Whether this client reads `0` as "forever" or as "already expired" is NOT
+    /// established.** One launch separates them, and they look nothing alike:
+    ///
+    /// | on screen after the cast | reading | what to do |
+    /// |---|---|---|
+    /// | icon appears and **sits still**, no countdown, no flashing | `0` is "no expiry" | nothing; leave it |
+    /// | icon appears and **starts flashing within about a second** - the expiry animation `research/buffs-underflow.md` recorded, arriving immediately | `0` is "already expired" | send a large duration instead and keep the off-switch on `0x013F`; the stat is still set either way |
+    ///
+    /// The second outcome is the same signature as the seconds-sent-as-milliseconds bug this
+    /// module already documents, so a run that sees flashing must also check that the timed
+    /// skills are unaffected before blaming the zero.
     pub fn granted_by(&self, skill_id: u32) -> TemporaryStat {
         TemporaryStat {
             bit: self.bit,
@@ -403,6 +588,39 @@ impl BuffLevel {
             // the third unit bug this project would have shipped; the field name carries the
             // unit and this is the only multiplication.
             duration_ms: self.seconds.saturating_mul(1000),
+        }
+    }
+
+    /// **Every** `0x007D` entry this level grants - one stat, or two for Magic Armor.
+    ///
+    /// Pass the whole slice to [`temporary_stat_set`], which sorts into the mask walk order;
+    /// do not sort here and do not rely on the caller's order.
+    ///
+    /// The second entry **copies** the first's `duration_ms` rather than re-deriving it from
+    /// `seconds`. That is deliberate: it keeps [`BuffLevel::granted_by`]'s multiplication the
+    /// only `* 1000` in this crate, so a second stat cannot be converted twice, converted
+    /// zero times, or converted differently from its partner.
+    pub fn all_granted_by(&self, skill_id: u32) -> Vec<TemporaryStat> {
+        let first = self.granted_by(skill_id);
+        let mut out = vec![first];
+        if let Some(s) = self.second {
+            out.push(TemporaryStat {
+                bit: s.bit,
+                value: s.value,
+                reason: skill_id,
+                duration_ms: first.duration_ms,
+            });
+        }
+        out
+    }
+
+    /// How many stats a cast of this level sets - the length [`BuffLevel::all_granted_by`]
+    /// returns, and the `n` in [`temporary_stat_set_len`].
+    pub const fn stat_count(&self) -> usize {
+        if self.second.is_some() {
+            2
+        } else {
+            1
         }
     }
 }
@@ -426,19 +644,136 @@ impl BuffLevel {
 /// The value is a **bonus, not an absolute**: the client's string table has `Speed: +%d`
 /// (id 906). **[D]**
 ///
-/// # Why this is a literal table and not a WZ read
-///
-/// It is three rows for the one beginner skill that grants a stat. Its two siblings do not:
-/// `1000` Three Snails is an attack, and `1001` Recovery is a heal-over-time whose CTS bit
-/// nobody has identified. A loader for a table of three known rows would be more code and one
-/// more thing that can silently return nothing.
+/// Its two beginner siblings grant no stat: `1000` Three Snails is an attack, and `1001`
+/// Recovery is a heal-over-time whose CTS bit nobody has identified.
 pub const NIMBLE_FEET: u32 = 1002;
 
-/// The levels of [`NIMBLE_FEET`], indexed from 1.
+/// Magic Guard, skill **2001000**, max level 15. A **toggle**: see [`BuffDuration::Toggle`].
+///
+/// # The classic skill ids are not this build's ids
+///
+/// **[L]**, `String.wz/Skill.img` via `research/magic-damage.md` §7.1: this build's job-200
+/// book holds `2001000` Magic Guard, `2001001` Magic Armor, `2001002` Energy Bolt and
+/// `2001003` Magic Claw. The classic tree puts Magic Guard at `2001002` and Magic Armor at
+/// `2001003`, and **`2001004`/`2001005` do not exist here at all**.
+///
+/// That is worth spelling out because the failure is silent: in this build both classic ids
+/// name **attacks**, so a table written from the classic numbering buffs a skill that grants
+/// no stat, and nothing whatever happens on screen.
+pub const MAGIC_GUARD: u32 = 2_001_000;
+
+/// Magic Armor, skill **2001001**, max level 20. An ordinary timed buff granting **two**
+/// stats - see [`BuffLevel::second`] and the doubt recorded on [`CTS_WEAPON_DEFENCE`].
+pub const MAGIC_ARMOR: u32 = 2_001_001;
+
+/// `mpCon` for [`MAGIC_GUARD`] levels 1..=15.
+const MAGIC_GUARD_MP: [u16; 15] = [8, 8, 8, 8, 8, 10, 10, 10, 10, 10, 12, 12, 12, 12, 12];
+
+/// `x` for [`MAGIC_GUARD`] levels 1..=15: the **percent of incoming damage** redirected to MP.
+///
+/// **[L]** twice over, and the two agree: `gm-handbook/skills.txt` reads
+/// `2001000/level/<lv>/x`, and the client's own tooltip for each level says *"Replace 30% of
+/// HP damage with MP while active"* with the same number in it.
+const MAGIC_GUARD_PERCENT: [i16; 15] =
+    [30, 33, 36, 39, 42, 49, 52, 55, 58, 61, 68, 71, 74, 77, 80];
+
+/// `mpCon` for [`MAGIC_ARMOR`] levels 1..=20.
+const MAGIC_ARMOR_MP: [u16; 20] =
+    [8, 8, 8, 8, 8, 10, 10, 10, 10, 10, 13, 13, 13, 13, 13, 16, 16, 16, 16, 16];
+
+/// `time` for [`MAGIC_ARMOR`] levels 1..=20, in **SECONDS**. The wire wants milliseconds and
+/// [`BuffLevel::granted_by`] is the one place that multiplies.
+///
+/// **Level 20 is 600, not 585.** Levels 1..=19 rise by exactly 15 a level; the last row
+/// breaks the run by 30. See [`MAGIC_ARMOR_PDD`] for why that matters.
+const MAGIC_ARMOR_SECONDS: [u32; 20] = [
+    300, 315, 330, 345, 360, 375, 390, 405, 420, 435, 450, 465, 480, 495, 510, 525, 540, 555,
+    570, 600,
+];
+
+/// `indiePdd` for [`MAGIC_ARMOR`] levels 1..=20: **flat Weapon Defence points**, not a percent.
+///
+/// The tooltip writes *"Weapon Def. +40"*, and the ratio forms (`indiePddR`, `indieMhpR`)
+/// exist elsewhere in this same archive as **separate properties**, so the flat-vs-ratio
+/// distinction is the data's own rather than a reading of it. **[L]**
+///
+/// # These are literal rows, and they duplicate data the WZ already carries
+///
+/// `gm-handbook/skills.txt` is the source these were read from and remains the authority; it
+/// is generated by `tools/dump_skills.py` and **gitignored**, which is why `net` - a wire
+/// crate with no WZ access and no business acquiring one - cannot load it at run time. The
+/// duplication is deliberate and it is a liability: a re-dump that changes a number will not
+/// change these arrays, and only a person re-reading `skills.txt` will notice.
+///
+/// **A formula would be worse, and the data says so.** Levels 1..=19 are exactly
+/// `40 + 4 * (lv - 1)`, which predicts **116** at level 20. The WZ says **120**. Level 20's
+/// `time` breaks its own run the same way (585 predicted, 600 measured). Two independent
+/// discontinuities in the last row of one skill is precisely the shape a fitted curve hides:
+/// it would be right for 19 rows, wrong for the one a maxed skill actually uses, and there
+/// would be nothing on screen to say so.
+const MAGIC_ARMOR_PDD: [i16; 20] = [
+    40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 112, 120,
+];
+
+/// `indieMdd` for [`MAGIC_ARMOR`] levels 1..=20: **flat Magic Defence points**.
+///
+/// Identical to [`MAGIC_ARMOR_PDD`] at every level today, and kept as a **second array
+/// anyway**. `research/magician-first-job.md` §4 names the reason: they are two WZ properties,
+/// and a skill that separated them would otherwise silently inherit the wrong one. A test
+/// asserts they still agree, so a re-dump that separates them is loud instead of invisible.
+const MAGIC_ARMOR_MDD: [i16; 20] = [
+    40, 44, 48, 52, 56, 60, 64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108, 112, 120,
+];
+
+// The tables are indexed together, so a length mismatch would read a stale neighbour rather
+// than fail. These refuse to compile instead.
+const _: () = assert!(MAGIC_GUARD_MP.len() == MAGIC_GUARD_PERCENT.len());
+const _: () = assert!(MAGIC_ARMOR_MP.len() == MAGIC_ARMOR_SECONDS.len());
+const _: () = assert!(MAGIC_ARMOR_MP.len() == MAGIC_ARMOR_PDD.len());
+const _: () = assert!(MAGIC_ARMOR_MP.len() == MAGIC_ARMOR_MDD.len());
+
+/// Master level of [`MAGIC_GUARD`], from the table's own length rather than a second literal.
+pub const MAGIC_GUARD_MAX_LEVEL: u32 = MAGIC_GUARD_PERCENT.len() as u32;
+
+/// Master level of [`MAGIC_ARMOR`], from the table's own length.
+pub const MAGIC_ARMOR_MAX_LEVEL: u32 = MAGIC_ARMOR_PDD.len() as u32;
+
+/// Master level of [`NIMBLE_FEET`]. **Confirmed on a client**, unlike the two above.
+pub const NIMBLE_FEET_MAX_LEVEL: u32 = 3;
+
+/// The stat-granting levels of the three skills this server models, indexed from 1.
+///
+/// # Three skills, one per branch, and an unknown skill must not disturb the others
+///
+/// Every id gets its own table function and an unmodelled one returns `None` from the `_`
+/// arm, so adding or breaking a branch cannot reach the others. `1001` Recovery still returns
+/// `None` here - its CTS bit has never been identified - and that is a modelled absence, not
+/// an oversight.
+///
+/// # Where the numbers come from, and which of them are measured
+///
+/// [`NIMBLE_FEET`]'s three rows are **confirmed on a client**: the owner watched the level-3 buff
+/// run for the 30 seconds the tooltip promises. They are the only rows here with that status,
+/// and `tools/dump_skills.py` reproduces all three exactly from the WZ - which is what makes
+/// `gm-handbook/skills.txt` a checked instrument for the 35 Magician rows rather than an
+/// unverified one.
+///
+/// The Magician rows are **[L] from `gm-handbook/skills.txt`** and cross-checked against the
+/// client's own per-level tooltip text, which states the same numbers in words. What is
+/// *not* settled for them is where they land: [`CTS_MAGIC_GUARD`] is [L], the Magic Armor
+/// pair is **[D]** with a named blind spot, and the toggle's `duration_ms` is a decision -
+/// all three are written up where they are used.
 pub fn buff_level(skill_id: u32, level: u32) -> Option<BuffLevel> {
-    if skill_id != NIMBLE_FEET {
-        return None;
+    match skill_id {
+        NIMBLE_FEET => nimble_feet_level(level),
+        MAGIC_GUARD => magic_guard_level(level),
+        MAGIC_ARMOR => magic_armor_level(level),
+        _ => None,
     }
+}
+
+/// Levels 1..=3 of [`NIMBLE_FEET`] - the rows confirmed on a client. Unchanged.
+fn nimble_feet_level(level: u32) -> Option<BuffLevel> {
     let seconds = match level {
         1 => 10,
         2 => 20,
@@ -450,12 +785,51 @@ pub fn buff_level(skill_id: u32, level: u32) -> Option<BuffLevel> {
         2 => 7,
         _ => 10,
     };
+    let duration = BuffDuration::Seconds(seconds);
     Some(BuffLevel {
         mp_cost,
-        seconds,
+        seconds: duration.seconds(),
         cooldown_seconds: 180,
         bit: CTS_SPEED,
         value: 10,
+        second: None,
+        duration,
+    })
+}
+
+/// Levels 1..=15 of [`MAGIC_GUARD`]. One stat, a percent, and **no duration**.
+fn magic_guard_level(level: u32) -> Option<BuffLevel> {
+    let i = usize::try_from(level.checked_sub(1)?).ok()?;
+    let value = *MAGIC_GUARD_PERCENT.get(i)?;
+    // The const assertions above make this index safe for any `i` the line before accepted.
+    let mp_cost = MAGIC_GUARD_MP[i];
+    let duration = BuffDuration::Toggle;
+    Some(BuffLevel {
+        mp_cost,
+        seconds: duration.seconds(),
+        // No `cooltime` node at any level, so nothing to convert. Not a placeholder.
+        cooldown_seconds: 0,
+        bit: CTS_MAGIC_GUARD,
+        value,
+        second: None,
+        duration,
+    })
+}
+
+/// Levels 1..=20 of [`MAGIC_ARMOR`]. **Two** stats, flat defence points, `time` in seconds.
+fn magic_armor_level(level: u32) -> Option<BuffLevel> {
+    let i = usize::try_from(level.checked_sub(1)?).ok()?;
+    let seconds = *MAGIC_ARMOR_SECONDS.get(i)?;
+    let duration = BuffDuration::Seconds(seconds);
+    Some(BuffLevel {
+        mp_cost: MAGIC_ARMOR_MP[i],
+        seconds: duration.seconds(),
+        // No `cooltime` node at any level.
+        cooldown_seconds: 0,
+        bit: CTS_WEAPON_DEFENCE,
+        value: MAGIC_ARMOR_PDD[i],
+        second: Some(StatGrant { bit: CTS_MAGIC_DEFENCE, value: MAGIC_ARMOR_MDD[i] }),
+        duration,
     })
 }
 
@@ -660,5 +1034,370 @@ mod tests {
         assert!(parse_skill_use(&body[..7]).is_none());
         assert!(parse_skill_use(&[]).is_none());
         assert_eq!(parse_skill_use(&body[..8]), Some(SkillUse { skill_id: 1002, level: 3 }));
+    }
+
+    /// **Every level of Magic Guard, against `gm-handbook/skills.txt`.**
+    ///
+    /// The expected rows below are transcribed from that file, **not** read back out of
+    /// [`MAGIC_GUARD_PERCENT`]. A test that loops over the constant it is checking agrees
+    /// with the code by construction and can never disagree with the WZ - which is the shape
+    /// `CLAUDE.md` records as passing while the exception-info struct was the wrong size.
+    #[test]
+    fn magic_guard_matches_the_wz_at_every_one_of_its_fifteen_levels() {
+        // level, mpCon, x   -- Skill_000.wz 200.img/skill/2001000/level/<n>
+        let wz: [(u32, u16, i16); 15] = [
+            (1, 8, 30),
+            (2, 8, 33),
+            (3, 8, 36),
+            (4, 8, 39),
+            (5, 8, 42),
+            (6, 10, 49),
+            (7, 10, 52),
+            (8, 10, 55),
+            (9, 10, 58),
+            (10, 10, 61),
+            (11, 12, 68),
+            (12, 12, 71),
+            (13, 12, 74),
+            (14, 12, 77),
+            (15, 12, 80),
+        ];
+        assert_eq!(wz.len() as u32, MAGIC_GUARD_MAX_LEVEL, "master level is 15");
+
+        for (level, mp_cost, percent) in wz {
+            let l = buff_level(MAGIC_GUARD, level).unwrap_or_else(|| panic!("level {level}"));
+            assert_eq!(l.mp_cost, mp_cost, "level {level} mpCon");
+            assert_eq!(l.value, percent, "level {level} x, a PERCENT of incoming damage");
+            assert_eq!(l.bit, CTS_MAGIC_GUARD, "level {level} bit");
+            assert_eq!(l.second, None, "Magic Guard grants exactly one stat");
+            assert_eq!(l.stat_count(), 1);
+
+            // The toggle, stated twice: the enum says so and `seconds` is derived from it.
+            assert_eq!(l.duration, BuffDuration::Toggle, "level {level} has no `time` node");
+            assert!(l.duration.is_toggle());
+            assert_eq!(l.seconds, 0, "0 here means ABSENT, not zero seconds");
+            assert_eq!(l.cooldown_seconds, 0, "no `cooltime` node either");
+        }
+
+        assert!(buff_level(MAGIC_GUARD, 0).is_none(), "levels are 1-based");
+        assert!(buff_level(MAGIC_GUARD, 16).is_none(), "master level is 15");
+        assert!(buff_level(MAGIC_GUARD, u32::MAX).is_none());
+    }
+
+    /// **Every level of Magic Armor, against `gm-handbook/skills.txt`**, all four columns.
+    ///
+    /// Transcribed from the generated table for the same reason as the Magic Guard test.
+    /// `time` is asserted in **seconds** here; the millisecond conversion has its own test.
+    #[test]
+    fn magic_armor_matches_the_wz_at_every_one_of_its_twenty_levels() {
+        // level, mpCon, time (SECONDS), indiePdd, indieMdd
+        let wz: [(u32, u16, u32, i16, i16); 20] = [
+            (1, 8, 300, 40, 40),
+            (2, 8, 315, 44, 44),
+            (3, 8, 330, 48, 48),
+            (4, 8, 345, 52, 52),
+            (5, 8, 360, 56, 56),
+            (6, 10, 375, 60, 60),
+            (7, 10, 390, 64, 64),
+            (8, 10, 405, 68, 68),
+            (9, 10, 420, 72, 72),
+            (10, 10, 435, 76, 76),
+            (11, 13, 450, 80, 80),
+            (12, 13, 465, 84, 84),
+            (13, 13, 480, 88, 88),
+            (14, 13, 495, 92, 92),
+            (15, 13, 510, 96, 96),
+            (16, 16, 525, 100, 100),
+            (17, 16, 540, 104, 104),
+            (18, 16, 555, 108, 108),
+            (19, 16, 570, 112, 112),
+            (20, 16, 600, 120, 120),
+        ];
+        assert_eq!(wz.len() as u32, MAGIC_ARMOR_MAX_LEVEL, "master level is 20");
+
+        for (level, mp_cost, seconds, pdd, mdd) in wz {
+            let l = buff_level(MAGIC_ARMOR, level).unwrap_or_else(|| panic!("level {level}"));
+            assert_eq!(l.mp_cost, mp_cost, "level {level} mpCon");
+            assert_eq!(l.seconds, seconds, "level {level} time, in SECONDS");
+            assert_eq!(l.duration, BuffDuration::Seconds(seconds));
+            assert!(!l.duration.is_toggle(), "Magic Armor is timed, not a toggle");
+            assert_eq!(l.cooldown_seconds, 0, "no `cooltime` node at any level");
+
+            // Two stats, and the flat defence points are NOT percentages.
+            assert_eq!(l.bit, CTS_WEAPON_DEFENCE, "level {level} indiePdd bit");
+            assert_eq!(l.value, pdd, "level {level} indiePdd, FLAT defence points");
+            assert_eq!(
+                l.second,
+                Some(StatGrant { bit: CTS_MAGIC_DEFENCE, value: mdd }),
+                "level {level} indieMdd"
+            );
+            assert_eq!(l.stat_count(), 2);
+        }
+
+        assert!(buff_level(MAGIC_ARMOR, 0).is_none(), "levels are 1-based");
+        assert!(buff_level(MAGIC_ARMOR, 21).is_none(), "master level is 20");
+        assert!(buff_level(MAGIC_ARMOR, u32::MAX).is_none());
+    }
+
+    /// **The last row breaks both of its own runs, and a fitted formula would miss it.**
+    ///
+    /// Levels 1..=19 are `40 + 4*(lv-1)` and `300 + 15*(lv-1)` exactly. Level 20 is neither.
+    /// This is the test that would fail if anyone "simplified" the tables into arithmetic, and
+    /// it fails on the one level a maxed skill actually uses.
+    #[test]
+    fn magic_armors_twentieth_level_is_not_on_the_line_the_other_nineteen_sit_on() {
+        for level in 1..=19u32 {
+            let l = buff_level(MAGIC_ARMOR, level).unwrap();
+            assert_eq!(l.value, 40 + 4 * (level as i16 - 1), "level {level} is on the line");
+            assert_eq!(l.seconds, 300 + 15 * (level - 1), "level {level} is on the line");
+        }
+        let twenty = buff_level(MAGIC_ARMOR, 20).unwrap();
+        assert_eq!(twenty.value, 120, "the line predicts 116; the WZ says 120");
+        assert_ne!(twenty.value, 40 + 4 * 19);
+        assert_eq!(twenty.seconds, 600, "the line predicts 585; the WZ says 600");
+        assert_ne!(twenty.seconds, 300 + 15 * 19);
+
+        // Magic Guard's run breaks every five levels rather than once, for the same reason.
+        assert_eq!(buff_level(MAGIC_GUARD, 5).unwrap().value, 42);
+        assert_eq!(buff_level(MAGIC_GUARD, 6).unwrap().value, 49, "+7, not +3");
+    }
+
+    /// `indiePdd` and `indieMdd` are equal at every level **today**, and they are two
+    /// properties. This makes a future divergence loud instead of silently inheriting one.
+    #[test]
+    fn the_two_magic_armor_defence_columns_still_agree_level_for_level() {
+        for level in 1..=MAGIC_ARMOR_MAX_LEVEL {
+            let l = buff_level(MAGIC_ARMOR, level).unwrap();
+            let second = l.second.expect("Magic Armor always grants two");
+            assert_eq!(
+                l.value, second.value,
+                "level {level}: indiePdd and indieMdd are equal in this archive - if a \
+                 re-dump separates them, carry both rather than deleting this test"
+            );
+        }
+    }
+
+    /// **The bit numbers, with their confidence, and where each lands in the 124-byte mask.**
+    ///
+    /// Asserted as numbers *and* as mask bytes because the two can disagree: the arithmetic
+    /// is big-endian inside a little-endian word, and the "obvious" `1 << (i & 31)` sets a
+    /// different stat that the client would grant without complaint.
+    #[test]
+    fn the_magician_bits_land_where_the_client_reads_them() {
+        assert_eq!(CTS_MAGIC_GUARD, 97, "[L] - the hit handler reads secStat+0x614");
+        assert_eq!(CTS_WEAPON_DEFENCE, 86, "[D] - totals+0x0c, seeded floor(STR/4)");
+        assert_eq!(CTS_MAGIC_DEFENCE, 87, "[D] - totals+0x14, seeded floor(INT/4)");
+        assert_eq!(CTS_SPEED, 92, "the measured control, unchanged");
+
+        // Bit 97: word 97>>5 = 3 is bytes 12..15, and 1 << (31 - (97 & 31)) = 1 << 30.
+        let guard = stat_mask(&[CTS_MAGIC_GUARD]);
+        assert_eq!(&guard[12..16], &[0x00, 0x00, 0x00, 0x40], "bytes 12..15 read 00 00 00 40");
+        assert_eq!(guard.iter().filter(|b| **b != 0).count(), 1, "exactly one byte is set");
+        assert_ne!(
+            (1u32 << (CTS_MAGIC_GUARD & 31)).to_le_bytes(),
+            [0x00, 0x00, 0x00, 0x40],
+            "1 << (i & 31) is a DIFFERENT stat"
+        );
+
+        // Bits 86 and 87 share word 2, bytes 8..11: 1 << 9 | 1 << 8 = 0x300.
+        let armor = stat_mask(&[CTS_WEAPON_DEFENCE, CTS_MAGIC_DEFENCE]);
+        assert_eq!(&armor[8..12], &[0x00, 0x03, 0x00, 0x00], "bytes 8..11 read 00 03 00 00");
+        assert_eq!(armor.iter().filter(|b| **b != 0).count(), 1, "both bits, one byte");
+
+        // The three stats this server can set are three distinct bits, and none is Speed.
+        assert_eq!(bits_in_mask(&guard), vec![CTS_MAGIC_GUARD]);
+        assert_eq!(bits_in_mask(&armor), vec![CTS_WEAPON_DEFENCE, CTS_MAGIC_DEFENCE]);
+        for bit in [CTS_MAGIC_GUARD, CTS_WEAPON_DEFENCE, CTS_MAGIC_DEFENCE] {
+            assert_ne!(bit, CTS_SPEED);
+            assert!(bit < MAX_CTS_BIT);
+        }
+    }
+
+    /// **Seconds reach the wire as milliseconds exactly once - not zero times, not twice.**
+    ///
+    /// `CLAUDE.md` records three bugs this month that were a correct number in the wrong unit.
+    /// Both wrong answers are asserted against by name, because "x1000 happened" and "x1000
+    /// happened once" are different claims and only a test that can fail both ways makes the
+    /// second one.
+    #[test]
+    fn the_seconds_to_milliseconds_conversion_happens_exactly_once() {
+        for (skill, max) in [(NIMBLE_FEET, NIMBLE_FEET_MAX_LEVEL), (MAGIC_ARMOR, MAGIC_ARMOR_MAX_LEVEL)] {
+            for level in 1..=max {
+                let l = buff_level(skill, level).unwrap();
+                let stats = l.all_granted_by(skill);
+                assert!(l.seconds > 0, "{skill} level {level} is a timed buff");
+
+                for s in &stats {
+                    assert_eq!(s.duration_ms, l.seconds * 1000, "{skill} level {level}");
+                    assert_ne!(s.duration_ms, l.seconds, "not converted at all");
+                    assert_ne!(s.duration_ms, l.seconds * 1_000_000, "converted twice");
+                    assert_eq!(s.duration_ms % 1000, 0, "a whole number of seconds");
+                    assert_eq!(s.reason, skill);
+                }
+
+                // Both of Magic Armor's stats carry the SAME converted number. The second
+                // copies the first rather than re-deriving it, so they cannot drift.
+                assert!(stats.iter().all(|s| s.duration_ms == stats[0].duration_ms));
+                assert_eq!(stats.len(), l.stat_count());
+            }
+        }
+
+        // The toggle converts nothing, because there is nothing to convert.
+        for level in 1..=MAGIC_GUARD_MAX_LEVEL {
+            let l = buff_level(MAGIC_GUARD, level).unwrap();
+            assert_eq!(l.granted_by(MAGIC_GUARD).duration_ms, 0, "no `time` node");
+            assert_eq!(BuffDuration::Toggle.seconds(), 0);
+        }
+
+        // And the value is never touched by the conversion - it is a percent or a flat
+        // defence point, in neither case a time.
+        assert_eq!(buff_level(MAGIC_ARMOR, 1).unwrap().value, 40, "not 40000");
+        assert_eq!(buff_level(MAGIC_GUARD, 1).unwrap().value, 30, "not 30000");
+    }
+
+    /// **Magic Guard level 1 on the wire, byte for byte.** One stat, and the duration is zero.
+    ///
+    /// The zero is the decision documented on [`BuffLevel::granted_by`]. If a run shows the
+    /// icon flashing immediately, that is the "already expired" reading and the number
+    /// changes - this test is what will then need updating, deliberately and in one place.
+    #[test]
+    fn magic_guard_at_level_one_is_the_documented_body() {
+        let level = buff_level(MAGIC_GUARD, 1).unwrap();
+        let body = temporary_stat_set(&level.all_granted_by(MAGIC_GUARD));
+
+        assert_eq!(body.len(), 198, "124 mask + 10 stat + 64 tail");
+        assert_eq!(body.len(), temporary_stat_set_len(level.stat_count()));
+        assert_eq!(&body[0..12], &[0u8; 12], "the mask is zero before bit 97's word");
+        assert_eq!(&body[12..16], &[0x00, 0x00, 0x00, 0x40], "bit 97");
+        assert_eq!(&body[16..124], &[0u8; 108], "and zero after it");
+        assert_eq!(
+            &body[124..134],
+            &[0x1e, 0x00, 0x68, 0x88, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x00],
+            "30 percent, reason 2001000, duration 0 - a toggle has no time node"
+        );
+        assert_eq!(&body[134..], &[0u8; TAIL_LEN], "the tail is all zero");
+    }
+
+    /// **Magic Armor level 1 on the wire, byte for byte.** Two stats, ascending, 300 000 ms.
+    #[test]
+    fn magic_armor_at_level_one_is_the_documented_body() {
+        let level = buff_level(MAGIC_ARMOR, 1).unwrap();
+        let body = temporary_stat_set(&level.all_granted_by(MAGIC_ARMOR));
+
+        assert_eq!(body.len(), 208, "124 mask + 2 x 10 stat + 64 tail");
+        assert_eq!(body.len(), temporary_stat_set_len(level.stat_count()));
+        assert_eq!(&body[0..8], &[0u8; 8], "the mask is zero before the defence word");
+        assert_eq!(&body[8..12], &[0x00, 0x03, 0x00, 0x00], "bits 86 and 87");
+        assert_eq!(&body[12..124], &[0u8; 112], "and zero after it");
+
+        // Bit 86 first, then 87 - the order the client walks the mask in, not the caller's.
+        assert_eq!(
+            &body[124..134],
+            &[0x28, 0x00, 0x69, 0x88, 0x1e, 0x00, 0xe0, 0x93, 0x04, 0x00],
+            "weapon def 40, reason 2001001, duration 300000 MILLISECONDS"
+        );
+        assert_eq!(
+            &body[134..144],
+            &[0x28, 0x00, 0x69, 0x88, 0x1e, 0x00, 0xe0, 0x93, 0x04, 0x00],
+            "magic def 40, same reason, same duration"
+        );
+        assert_eq!(&body[144..], &[0u8; TAIL_LEN], "the tail is all zero");
+
+        // 300 seconds, not 300 milliseconds. The failure this catches shows on screen as an
+        // icon that flashes and vanishes.
+        assert_eq!(u32::from_le_bytes([body[130], body[131], body[132], body[133]]), 300_000);
+        assert_eq!(u32::from_le_bytes([body[140], body[141], body[142], body[143]]), 300_000);
+    }
+
+    /// **What `granted_by` loses, pinned so it cannot be a surprise.**
+    ///
+    /// The signature is fixed by callers this crate does not own, so a caller can still take
+    /// the one-stat path for a two-stat skill. On screen that is a Magic Armor cast where
+    /// only W. Def moves - which `research/magic-damage.md` §9.3 lists as meaning *"the pair
+    /// is off by one"*. It would be the wrong conclusion, drawn from a real observation, and
+    /// this test is the note that says so.
+    #[test]
+    fn granted_by_alone_drops_magic_armors_second_stat_and_the_shape_says_so() {
+        let level = buff_level(MAGIC_ARMOR, 1).unwrap();
+
+        let truncated = temporary_stat_set(&[level.granted_by(MAGIC_ARMOR)]);
+        let whole = temporary_stat_set(&level.all_granted_by(MAGIC_ARMOR));
+
+        assert_eq!(truncated.len(), 198, "one stat");
+        assert_eq!(whole.len(), 208, "two - and the length is the tell");
+        assert_eq!(bits_in_mask(&truncated[..MASK_LEN]), vec![CTS_WEAPON_DEFENCE]);
+        assert_eq!(
+            bits_in_mask(&whole[..MASK_LEN]),
+            vec![CTS_WEAPON_DEFENCE, CTS_MAGIC_DEFENCE],
+            "both bits, ascending"
+        );
+
+        // For the one-stat skills the two calls are identical, so a caller that uses
+        // `all_granted_by` everywhere is never wrong.
+        for (skill, level) in [(NIMBLE_FEET, 3u32), (MAGIC_GUARD, 15)] {
+            let l = buff_level(skill, level).unwrap();
+            assert_eq!(l.all_granted_by(skill), vec![l.granted_by(skill)], "{skill}");
+        }
+    }
+
+    /// **An unmodelled skill returns `None` without disturbing the three that are modelled.**
+    ///
+    /// Including the trap that would be silent: in this build `2001002` and `2001003` are
+    /// **Energy Bolt and Magic Claw**, not Magic Guard and Magic Armor. A table written from
+    /// the classic ids would buff two attacks, which grant no stat, and nothing would happen
+    /// on screen to say so.
+    #[test]
+    fn one_skill_returning_none_does_not_stop_the_others() {
+        for (id, why) in [
+            (1000u32, "Three Snails is an attack"),
+            (1001, "Recovery's CTS bit is not identified"),
+            (2000000, "Improved MP Recovery is a passive with no stat bit"),
+            (2000001, "Max MP Increase is a passive; mmpR is a PERCENT of max MP"),
+            (2001002, "Energy Bolt - an ATTACK in this build, not Magic Guard"),
+            (2001003, "Magic Claw - an ATTACK in this build, not Magic Armor"),
+            (2001004, "does not exist in this build"),
+            (2001005, "does not exist in this build"),
+            (0, "not a skill"),
+            (u32::MAX, "not a skill"),
+        ] {
+            for level in [0u32, 1, 3, 20] {
+                assert!(buff_level(id, level).is_none(), "skill {id}: {why}");
+            }
+        }
+
+        // ...and all three modelled skills still answer, at their first and last levels.
+        for (id, max) in [
+            (NIMBLE_FEET, NIMBLE_FEET_MAX_LEVEL),
+            (MAGIC_GUARD, MAGIC_GUARD_MAX_LEVEL),
+            (MAGIC_ARMOR, MAGIC_ARMOR_MAX_LEVEL),
+        ] {
+            assert!(buff_level(id, 1).is_some(), "skill {id} level 1");
+            assert!(buff_level(id, max).is_some(), "skill {id} level {max}");
+            assert!(buff_level(id, max + 1).is_none(), "skill {id} past its master level");
+        }
+
+        // The ids are this build's, read off String.wz - not the classic tree's.
+        assert_eq!(MAGIC_GUARD, 2_001_000);
+        assert_eq!(MAGIC_ARMOR, 2_001_001);
+    }
+
+    /// Nimble Feet's three rows are untouched by the two skills added beside them.
+    ///
+    /// They are the only rows here **confirmed on a client**, so they are the one thing in
+    /// this file that a refactor is not allowed to move. The byte-level bodies have their own
+    /// tests; this asserts the table and the new fields' defaults.
+    #[test]
+    fn nimble_feet_is_exactly_what_it_was() {
+        for (level, mp_cost, seconds) in [(1u32, 4u16, 10u32), (2, 7, 20), (3, 10, 30)] {
+            let l = buff_level(NIMBLE_FEET, level).unwrap();
+            assert_eq!(l.mp_cost, mp_cost);
+            assert_eq!(l.seconds, seconds);
+            assert_eq!(l.duration, BuffDuration::Seconds(seconds));
+            assert_eq!(l.cooldown_seconds, 180, "confirmed on a client: 3 min");
+            assert_eq!(l.bit, CTS_SPEED);
+            assert_eq!(l.value, 10, "speed is +10 at EVERY level; only the duration scales");
+            assert_eq!(l.second, None, "Nimble Feet grants one stat");
+            assert_eq!(l.stat_count(), 1);
+        }
     }
 }
