@@ -156,6 +156,9 @@
                2001001 Magic Armor            max 20   timed buff
                2001002 Energy Bolt            max 20   attack
                2001003 Magic Claw             max 20   attack, TWO hits per cast
+             THE IDS ARE NOT THE CLASSIC TREE. 2001004 and 2001005 DO NOT EXIST here, and
+             2001002/2001003 - the classic ids for the two BUFFS - are the two ATTACKS in this
+             build. Two agents reached that independently, from the WZ and from the code.
           e) PUT A POINT IN MAGIC CLAW. Until today the server refused every skill outside the
              three beginner ones and clamped everything to level 3; both are fixed, so this is
              the first time a job skill can be raised at all.
@@ -178,8 +181,12 @@
                        damage is entirely the client's, and the MAGIC formula has never been
                        decoded. Do not read a plausible number as a correct one
           it fires and nothing takes damage -> say so; that is ours
-          MAGIC GUARD or MAGIC ARMOR does nothing -> EXPECTED. Neither has a stat bit yet, so
-                       the server refuses them with a chat line. Say what the line said
+          MAGIC GUARD or MAGIC ARMOR does nothing -> EXPECTED, and Magic Guard needs more
+                       than a stat bit. Its bit IS known now - CTS 97, [L], found by reading
+                       the client's own hit handler rather than a name table - but the client
+                       computes the HP-to-MP split and then NEVER WRITES HP: only 0x007C moves
+                       either bar. So the SERVER has to do the split and send HP and MP
+                       together, and it sends HP alone today. Say what the refusal line said
 
      5. ORGANIZE ITEM, still never seen working. Put three or four things in storage, take one
         from the middle to leave a hole, hit Organize THREE times. Clicks two and three must
@@ -1060,6 +1067,8 @@ if ($SetFieldProbe) {
     Write-Host '            2001001 Magic Armor           20  timed buff'
     Write-Host '            2001002 Energy Bolt           20  attack'
     Write-Host '            2001003 Magic Claw            20  attack, TWO hits'
+    Write-Host '          NOT the classic ids: 2001004/2001005 do not exist here,'
+    Write-Host '          and the classic BUFF ids are the two ATTACKS in this build.'
     Write-Host '       e) PUT A POINT IN MAGIC CLAW. Until today the server refused'
     Write-Host '          every non-beginner skill and clamped everything to 3.'
     Write-Host '     points and a live +   -> the whole SP chain works, first time'
@@ -1076,8 +1085,11 @@ if ($SetFieldProbe) {
     Write-Host '       the CLIENT computes outgoing damage, not us, and the MAGIC'
     Write-Host '       formula has never been decoded. Plausible is not correct.'
     Write-Host '     nothing takes damage -> say so, that one is ours'
-    Write-Host '     MAGIC GUARD / MAGIC ARMOR do nothing -> EXPECTED. No stat bit yet;'
-    Write-Host '       the server refuses them. Say what the chat line said.'
+    Write-Host '     MAGIC GUARD / MAGIC ARMOR do nothing -> EXPECTED, and Magic'
+    Write-Host '       Guard needs MORE than a stat bit. The client computes the'
+    Write-Host '       HP-to-MP split and then NEVER writes HP - only 0x007C moves'
+    Write-Host '       either bar - so the SERVER must split it and send HP and MP'
+    Write-Host '       together. It sends HP alone today. Say what the line said.'
     Write-Host ''
     Write-Host '  5. ORGANIZE ITEM, still never seen working. THREE times; clicks 2' -ForegroundColor Cyan
     Write-Host '     and 3 must change nothing. Items VANISH -> stop and say so.'

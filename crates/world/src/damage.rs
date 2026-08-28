@@ -586,6 +586,13 @@ pub fn level_gap_scale(player_level: u32, mob_level: u32) -> f64 {
 }
 
 /// The base critical rate, as a **fraction**. **[D]**, measured - see [`CRIT_MULTIPLIER`].
+///
+/// # LIMITATION, found 2026-08-27: the client does not use a global here
+///
+/// `research/magic-damage.md` read the critical stage of both damage paths and the rate and
+/// the multiplier are **per-character percent fields**, not constants. This value is whatever
+/// a default character happens to have, so a window computed from it is right only for one.
+/// Nothing reads those fields yet; when something does, this constant is what it replaces.
 pub const CRIT_RATE: f64 = 0.05;
 
 /// What a critical hit multiplies by. **[D]**, and the measurement is worth stating.
@@ -703,12 +710,17 @@ pub fn check_hit(
 // Mob -> player. The server IS the authority here.
 // ---------------------------------------------------------------------------------------
 
-/// Physical defence derived from STR. **[I]**, `floor(STR / 4)`.
+/// Weapon defence derived from STR. **[L] as of 2026-08-27**, `floor(STR / 4)`.
+///
+/// It was `[I]`. `research/magic-damage.md` found it as a **literal seed in the totals
+/// builder** - the same function that seeds `MagicTotal` with `floor(INT/2)` - so it is read
+/// rather than guessed, and the sibling below with it.
 pub fn wdef_from_strength(strength: u32) -> u32 {
     strength / 4
 }
 
-/// Magic defence derived from INT. **[I]**, `floor(INT / 4)`.
+/// Magic defence derived from INT. **[L] as of 2026-08-27**, `floor(INT / 4)` - a literal
+/// seed in the same totals builder. `research/magic-damage.md`.
 pub fn mdef_from_intelligence(intelligence: u32) -> u32 {
     intelligence / 4
 }

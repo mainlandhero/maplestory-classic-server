@@ -115,6 +115,25 @@ further up.
 
 **What changed most recently, newest first:**
 
+* **The magic damage formula is decoded**, `FUN_14025FFD0` - the sibling of the physical one,
+  found because the two are called from the same four sites with byte-identical setup on the
+  two arms of one `if`, and because it reads the one stat slot the physical builder ignores.
+  All **[L]**. Two things worth knowing: **magic has ONE uniform roll where physical has two**,
+  and `MagicTotal` is seeded with `floor(INT/2)`.
+* **Magic Guard is CTS bit 97 [L], and it is the SERVER's job, not a stat bit.** The bit was
+  found by reading the client's own hit handler - it multiplies `secStat+0x614` by the damage,
+  divides by 100 and clamps to MP - rather than from a name table. But the client **never
+  writes HP**: only `0x007C` moves either bar. So setting the bit buys an icon and nothing
+  else; `Session::on_user_hit` has to do the split and send HP **and** MP together, where it
+  sends `hp_only` today.
+* **`wdef_from_strength` and `mdef_from_intelligence` are [L] now**, not `[I]` - both are
+  literal seeds in the same totals builder. And a **limitation found in our own code**: the
+  critical rate and multiplier are **per-character percent fields** in this client, not the
+  globals `damage.rs` assumes, so its window is right for one character only.
+* **The Magician ids are not the classic tree**, confirmed independently by two agents: the
+  classic buff ids `2001002`/`2001003` are the two **attacks** here, and `2001004`/`2001005`
+  do not exist at all. Anything hard-coding the familiar numbers would buff two attack skills.
+
 * **A Magician can now put a point in Magic Claw.** The blocker was never damage - it was that
   `session/skills.rs` refused every id outside the three beginner skills and clamped everything
   to level **3**. Its own comment said why: *"a refusal to invent a rule, since what a job may
