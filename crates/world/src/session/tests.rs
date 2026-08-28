@@ -2260,6 +2260,31 @@ fn a_mob_with_an_attack_column_overrides_the_damage_the_client_claimed() {
     );
     assert!(lost > 1, "and above all, more than 1");
 
+    // **And the number over the player's head carries what was actually taken, negated.**
+    //
+    // The owner, 2026-08-27: *"When I died to the Drakes, I still visually took 1 damage, but it
+    // wiped out my whole HP bar."* The client's own number is a stub - 224 captured hits
+    // across mob templates whose PADamage runs 3 to 287 all report 1, because there is a
+    // `max(damage, 1)` floor and every mob call site hands it 0. So the server draws its own.
+    //
+    // The SIGN is the whole packet: `FUN_142771360` forks on it, positive picking the blue
+    // recovery digits and negative the damage ones. A positive value here would put a healing
+    // number over the head of someone who was just hit.
+    let number = replies
+        .iter()
+        .find(|r| r.opcode == net::stats::USER_EFFECT_LOCAL)
+        .expect("a damage number goes out");
+    assert_eq!(
+        number.body,
+        net::revive::recovery_number(-(lost as i32), 0),
+        "the amount must be the damage APPLIED, negated - not the client's stub 1"
+    );
+    assert_ne!(
+        number.body,
+        net::revive::recovery_number(lost as i32, 0),
+        "a positive amount would draw it in the blue RECOVERY colour"
+    );
+
     // The log line carries BOTH numbers, because the disagreement is the measurement.
     let what = &replies[0].what;
     assert!(what.contains("CLIENT claimed 1"), "{what}");

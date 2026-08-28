@@ -587,6 +587,56 @@ impl Session {
                 ),
             });
         }
+
+        // **The damage number the player actually took.**
+        //
+        // The owner, 2026-08-27: *"When I died to the Drakes, I still visually took 1 damage, but
+        // it wiped out my whole HP bar."* They are right, and this is the packet the comment
+        // above asked for when it said the disagreement "is the measurement the next run is
+        // for".
+        //
+        // # The client's own number is a stub, and that is now measured rather than suspected
+        //
+        // 224 `0x00E5` bodies across 22 capture files, decoded with a passing control: mob
+        // templates whose `PADamage` runs from **3 to 287** - a 96x spread - every one of them
+        // reporting **damage = 1**. There is an explicit `max(damage, 1)` floor at
+        // `0x1428AB959` and all sixteen mob-family call sites hand it `nDamage = 0`. The
+        // client is not computing a number we could correct; it never had one.
+        //
+        // # The colour is the SIGN, and `recovery_number` already carries it
+        //
+        // `FUN_142771360` forks at `0x142771395`: a positive amount picks digit set 2
+        // (`NoBlue`), a negative one picks set 3 (`NoViolet`) - and set 3 is what the client's
+        // own hit builder reaches with a non-positive argument at `0x1428ACA14`. So the blue
+        // recovery number and the damage number are not merely the same renderer by analogy;
+        // they are the same call with the sign flipped. `net::revive::recovery_number` already
+        // preserves the sign, and its own test says why.
+        //
+        // Everything upstream of the fork is proven by the owner seeing the blue `+10`.
+        //
+        // # THIS DOES NOT DELETE THE CLIENT'S `1`, AND THAT IS THE COST
+        //
+        // The stub number is drawn at *send* time, before this packet exists, so the screen
+        // will show **both**. The flag that suppresses it, `user+0x544a`, has exactly one
+        // writer and it is in a function with no packet reads - no server route was found,
+        // and the search that failed named its own blind spots.
+        //
+        // Two numbers is worse than one *correct* number and better than one *wrong* one, so
+        // it goes in and the run says whether it reads acceptably. It is one push to remove.
+        // The only route to a single correct number is `forcedStatPresent` at offset 10 of the
+        // spawn body - sent as `0` today, never tried, and its parser reads twelve `u32` stat
+        // overrides of which none is yet known to be attack power.
+        out.push(Reply {
+            opcode: net::stats::USER_EFFECT_LOCAL,
+            body: net::revive::recovery_number(-(applied as i32), 0),
+            what: format!(
+                "UserEffectLocal effect 0x41 with a NEGATIVE amount: -{applied} over the \
+                 player's head, in the damage colour. The sign is what selects it - positive \
+                 is the blue recovery number the owner has already seen. The client ALSO draws its \
+                 own stub 1, at send time, and nothing here can suppress it, so expect two \
+                 numbers"
+            ),
+        });
         out
     }
 

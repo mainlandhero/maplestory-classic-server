@@ -121,6 +121,21 @@
 
         e) CLICK EXIT, THEN CLICK CASH SHOP AGAIN. Re-entry, which has never been tested.
 
+     1.5 THE DAMAGE NUMBER - GO AND GET HIT BY SOMETHING THAT HURTS.
+        A Drake will do. You should now see the REAL damage over your head, in the damage
+        colour, because the server draws it: the same renderer as the blue recovery number,
+        with the sign flipped. Positive is blue and healing, negative is damage; that fork is
+        one instruction and it is why this works at all.
+        **EXPECT TWO NUMBERS.** The client's own `1` is drawn at SEND time, before our packet
+        exists, and nothing found reaches the flag that would suppress it. It is a stub: 224
+        captured hits, across mobs whose attack ratings run from 3 to 287, ALL report 1.
+          two numbers, one of them right -> as designed. YOU decide whether that reads well
+                       enough to keep; it is one line to remove
+          only the stub 1                -> our packet is not drawing. Say whether the blue
+                       recovery number still works, because they share a renderer
+          the right number, in BLUE      -> the sign was lost somewhere
+          only our number                -> better than expected; say so
+
      2. HENESYS PARK IS CLOSED - DO NOT TEST IT AGAIN. Map 10001050 is NOT fatal, and the
         proof was sitting in previous-runs/ unread the whole time. On 2026-08-22 a portal walk
         put a character there 52 seconds into the connection; the client sent 0x00DC back,
@@ -996,6 +1011,19 @@ if ($SetFieldProbe) {
     Write-Host '     c) BUY IT TWICE MORE. 100 lower each time, three coupons.'
     Write-Host '     d) BUY WATER OF LIFE, SN 160300001. A different id, same path.'
     Write-Host '     e) CLICK EXIT, THEN CASH SHOP AGAIN. Re-entry, never tested.'
+    Write-Host ''
+    Write-Host '  1.5 THE DAMAGE NUMBER - GO AND GET HIT BY SOMETHING THAT HURTS.' -ForegroundColor Cyan
+    Write-Host '     You should now see the REAL damage over your head, in the damage'
+    Write-Host '     colour. Same renderer as the blue recovery number, sign flipped.'
+    Write-Host '     EXPECT TWO NUMBERS: the client draws its own 1 at SEND time and'
+    Write-Host '     nothing we found can suppress it. That 1 is a stub - 224 captured'
+    Write-Host '     hits, mobs rated 3 to 287, all reporting 1.'
+    Write-Host '       two numbers, one right -> as designed. YOU decide if that reads'
+    Write-Host '                     well enough to keep; one line to remove'
+    Write-Host '       only the stub 1        -> ours is not drawing. Does the blue'
+    Write-Host '                     recovery number still work? They share a renderer'
+    Write-Host '       right number in BLUE   -> the sign was lost'
+    Write-Host '       only our number        -> better than expected; say so'
     Write-Host ''
     Write-Host '  2. HENESYS PARK IS CLOSED. Do NOT test map 10001050 again.' -ForegroundColor Green
     Write-Host '     It is NOT fatal, and the proof sat unread in previous-runs/:'
