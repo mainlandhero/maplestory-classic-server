@@ -174,19 +174,45 @@
         SPENDING IS NOT PERSISTED YET. If you click + the point is spent on screen but the
         server does not know, so it will come back. That is known, not a new bug.
 
-     4b. THEN CAST WHAT YOU BOUGHT. Put a point in ENERGY BOLT or MAGIC CLAW and attack
-        something with it.
-          it fires and the mob takes damage -> the attack path works. Whether the NUMBER is
-                       right is a separate question and this server cannot answer it: outgoing
-                       damage is entirely the client's, and the MAGIC formula has never been
-                       decoded. Do not read a plausible number as a correct one
-          it fires and nothing takes damage -> say so; that is ours
-          MAGIC GUARD or MAGIC ARMOR does nothing -> EXPECTED, and Magic Guard needs more
-                       than a stat bit. Its bit IS known now - CTS 97, [L], found by reading
-                       the client's own hit handler rather than a name table - but the client
-                       computes the HP-to-MP split and then NEVER WRITES HP: only 0x007C moves
-                       either bar. So the SERVER has to do the split and send HP and MP
-                       together, and it sends HP alone today. Say what the refusal line said
+     4b. THEN CAST THEM. All four castable Magician skills are now built, and every one of
+        them is on a wire for the first time.
+
+        CAST MAGIC GUARD (2001000), THEN GO AND GET HIT.
+          This is the one with real server arithmetic behind it. The client works out the
+          HP-to-MP split and then NEVER writes HP - only 0x007C moves either bar - so the
+          server does the split and sends HP and MP together. Level 1 sends 30% to MP.
+            HP drops LESS than usual and MP drops too  -> it works, end to end
+            HP drops normally and MP does not move     -> the buff is not registering. Say
+                         whether the icon appeared at all
+            MP drops and HP does not                   -> the split is inverted
+            you die at full MP                         -> the clamp is wrong
+          AND WATCH THE ICON, because one thing nobody has measured rides on it. Magic Guard
+          has NO duration in the client's own data, so we send 0 ms:
+            the icon appears and SITS STILL          -> 0 means "no expiry". Leave it
+            the icon appears and starts FLASHING within a second or so
+                                                     -> 0 means "already expired". It needs a
+                         large duration instead, with the off-switch staying on the right-click
+          Either way the STAT is set - expiry only drives the animation - so the split above
+          should work whichever the icon does.
+
+        CAST MAGIC ARMOR (2001001). It grants TWO stats, weapon defence and magic defence.
+            BOTH numbers move in the stat window -> the pair is right. This is what promotes
+                         bits 86 and 87 from [D] to measured
+            only WEAPON defence moves            -> say so, but do NOT read it as "the pair is
+                         off by one" - that was a real trap and the code that caused it is
+                         fixed. If it happens now it is the bits, not the plumbing
+            neither moves                        -> the Indie doubt in the research file is
+                         right and these are not CTS bits at all
+
+        CAST ENERGY BOLT (2001002) or MAGIC CLAW (2001003) at something.
+            the mob takes damage -> the attack PATH works. The NUMBER is a separate question
+                         this server cannot answer: the client computes outgoing damage and
+                         nothing validates it. Plausible is not correct
+            YOUR MP DOES NOT DROP -> EXPECTED, and it is blocked rather than missed. The attack
+                         packet carries NO SKILL ID, so the server cannot tell Energy Bolt from
+                         Magic Claw from a plain swing, and therefore cannot charge for it.
+                         Finding that field is the next piece of work
+            nothing takes damage -> that one IS ours. Say so
 
      5. ORGANIZE ITEM, still never seen working. Put three or four things in storage, take one
         from the middle to leave a hole, hit Organize THREE times. Clicks two and three must
@@ -1079,17 +1105,36 @@ if ($SetFieldProbe) {
     Write-Host '     Magic Claw stops < 20 -> the per-skill ceiling is not being read'
     Write-Host '     SPENDING IS NOT PERSISTED. A spent point comes back. Known.'
     Write-Host ''
-    Write-Host '  4b. THEN CAST IT. Attack something with Energy Bolt or Magic Claw.' -ForegroundColor Cyan
-    Write-Host '     it fires and the mob takes damage -> the attack path works. The'
-    Write-Host '       NUMBER is a separate question this server CANNOT answer:'
-    Write-Host '       the CLIENT computes outgoing damage, not us, and the MAGIC'
-    Write-Host '       formula has never been decoded. Plausible is not correct.'
-    Write-Host '     nothing takes damage -> say so, that one is ours'
-    Write-Host '     MAGIC GUARD / MAGIC ARMOR do nothing -> EXPECTED, and Magic'
-    Write-Host '       Guard needs MORE than a stat bit. The client computes the'
-    Write-Host '       HP-to-MP split and then NEVER writes HP - only 0x007C moves'
-    Write-Host '       either bar - so the SERVER must split it and send HP and MP'
-    Write-Host '       together. It sends HP alone today. Say what the line said.'
+    Write-Host '  4b. THEN CAST THEM. All four castable Magician skills are now' -ForegroundColor Cyan
+    Write-Host '     built, and every one is on a wire for the first time.'
+    Write-Host ''
+    Write-Host '     MAGIC GUARD (2001000), then GO AND GET HIT. Level 1 sends 30%'
+    Write-Host '     of the damage to MP. The client never writes HP, so the SERVER'
+    Write-Host '     does the split and sends HP and MP together.'
+    Write-Host '       HP drops LESS and MP drops too -> works, end to end'
+    Write-Host '       HP normal, MP still            -> buff not registering. Did the'
+    Write-Host '                                         icon appear at all?'
+    Write-Host '       MP drops, HP does not          -> the split is inverted'
+    Write-Host '       you die at full MP             -> the clamp is wrong'
+    Write-Host '     AND WATCH THE ICON. The client ships NO duration for Magic Guard,'
+    Write-Host '     so we send 0 ms - and nobody has measured what 0 means here:'
+    Write-Host '       icon SITS STILL      -> 0 means no expiry. Leave it'
+    Write-Host '       icon starts FLASHING -> 0 means already expired; needs a large'
+    Write-Host '                               duration instead. The stat is set either'
+    Write-Host '                               way, so the split should still work'
+    Write-Host ''
+    Write-Host '     MAGIC ARMOR (2001001) grants TWO stats, W.Def and M.Def.'
+    Write-Host '       BOTH move   -> promotes bits 86/87 from derived to measured'
+    Write-Host '       only W.Def  -> say so, but do NOT read it as the pair being off'
+    Write-Host '                      by one; the code that caused that is fixed'
+    Write-Host '       neither     -> they are not CTS bits at all'
+    Write-Host ''
+    Write-Host '     ENERGY BOLT (2001002) or MAGIC CLAW (2001003) at something.'
+    Write-Host '       the mob takes damage -> the PATH works. The NUMBER is a separate'
+    Write-Host '                      question we cannot answer. Plausible is not correct'
+    Write-Host '       YOUR MP DOES NOT DROP -> EXPECTED and BLOCKED: the attack packet'
+    Write-Host '                      carries NO SKILL ID, so we cannot charge for it'
+    Write-Host '       nothing takes damage  -> that one IS ours. Say so'
     Write-Host ''
     Write-Host '  5. ORGANIZE ITEM, still never seen working. THREE times; clicks 2' -ForegroundColor Cyan
     Write-Host '     and 3 must change nothing. Items VANISH -> stop and say so.'
