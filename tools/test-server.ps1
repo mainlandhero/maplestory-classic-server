@@ -30,16 +30,10 @@
     WHAT THE LAST RUN CLOSED - none of this needs testing again
     ----------------------------------------------------------
     THE CLASSIC SHOP WINDOW DRAWS. See step 7.
-    AND THE STUB 1 CANNOT BE TURNED OFF BY ANY PACKET. The owner: "The 1 damage from mobs still
-    show up, I do see /hitdamagetest 0 echoed in chat." Both halves together are the answer,
-    and the plan had already written it down: the echo happens BEFORE the dispatch, so it
-    proves only that the string arrived. The proof that the command RAN is an inbound 0x0189,
-    and world.log has none - the two "0189" matches in it are our own log line and a
-    coincidence inside a move packet's hex. The permission gate refused, which was the [D] in
-    that chain all along. The server no longer sends 0x00EA: a line in the chat window every
-    session that changes nothing is worse than no attempt, because the next person to see the
-    echo will conclude it worked. The remaining route is the five-byte hook patch at
-    0x1428aca14 - a client patch, not a packet. research/damage-number-suppress.md.
+THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
+    No 0x0189 came back, so the permission gate refused it; the echo happens BEFORE the
+    dispatch, so seeing it in chat meant nothing. 0x00EA is no longer sent. The owner pushed back
+    on the conclusion I drew from that and they were right - see step 1.
     YOU STAY DEAD. You could previously regenerate out of death, and because the revive
     dialog fires on the TRANSITION it would never have come back.
     THE CASH SHOP OPENS and the wallet reads both fields. Exit works. !lp works.
@@ -81,11 +75,55 @@
                   so a !job character can end up holding something it cannot wear, which on
                   screen is indistinguishable from a broken skill.
 
-    THE STEPS, 2-7 plus 5b. Each is a claim that can come back false; report them
+    THE STEPS, 1-7 plus 5b. Each is a claim that can come back false; report them
     separately.
     DO STEP 7 FIRST: selling killed the client last run.
     DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
     likely to end the session, and everything after it is cheaper to redo than to lose.
+
+     1. THE 1: FIGHT A MOB WITH AN ATTACK NODE. One hit settles it, and it needs no code.
+
+        The owner, 2026-08-28: *"this is the official client and this behavior does not exist ...
+        something is wrong with our implementation."* Right on both counts, and it retracts
+        two things I said.
+
+        "The 1 cannot be turned off by packet" was too strong: what is measured is that ONE
+        lever failed, not that no cause exists.
+
+        "The client draws its own STUB" is worse, and it was inherited rather than checked.
+        Both halves of the gate on that draw are CONSTANTS. Option 0xAE is read at ELEVEN
+        sites in .text and written at NONE - byte-scanned, with the two already-known sites
+        as the positive control - so GetOption(0xAE,0) is 0 for the life of the process and
+        no packet can change it. The other half is a hardcoded 1 from
+        `mov qword [rsi+0x5448], 0x10001`. So that block is not a debug mode we switched on.
+        It is the only path this client has, and /hitdamagetest 0 would merely have sent the
+        code down the OTHER branch - which might be better, and which nobody established.
+
+        WHY IT SAYS 1. Four instructions before the gate:
+            14288b405  mov edi, [r13 + 0x50]   ; from the attack record
+            14288b40b  mov edi, r14d           ; ...or ZERO, when there is none
+        and `edi` goes into the struct the damage function receives. touch-damage.md 3
+        already had it: a body/touch attack has no attack node. Enumerated over all 193 mob
+        images in this client's Mob_000.wz: 65 HAVE an attack node, 128 do NOT - and every
+        mob the owner has fought is in the 128. So the 224 captures behind "mobs rated 3 to 287,
+        all 1" are 224 observations of ONE case; the ratings vary, the code path does not.
+
+          !map 1014   Snail Field of Flowers, template 41, level 46, PADamage 243.
+          Let it hit you ONCE, then !heal. Alternatives: map 41 (template 53, pad 410) or
+          map 10001012 (template 50, pad 306).
+
+            a real number near 243 -> the missing attack record is the cause. Body-attack
+                       damage is what the server owes the client and we can act on it
+            still 1                -> the attack record is not the variable and my reading is
+                       wrong. That is a real result, not a failed test
+            no number from us      -> say so; ours is a separate packet
+
+        AND THE SECOND NUMBER IS OURS. On a real server there is one number because the
+        server does not draw one. Ours is the CORRECT one - it runs the real formula over the
+        mob's PADamage and the player's defence. Removing it is one line and would leave
+        exactly the official behaviour, but not before this test: deleting the right number to
+        match a wrong one is the wrong order to do it in.
+        research/damage-number-two-numbers.md.
 
      2. WARRIOR - FIRST OF THE FOUR BRANCHES, after step 7. Do step 3 in the MIDDLE of it.
         It is the only branch whose weapon is FREE (Sword 1302000: reqLevel 0, no stat, no
@@ -1025,7 +1063,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 2-7, plus 5b.' -ForegroundColor Yellow
+    Write-Host '  ALL FOUR FIRST JOBS ARE TESTABLE THIS RUN. 1-7, plus 5b.' -ForegroundColor Yellow
     Write-Host '  DO STEP 7 FIRST - selling, which killed the client last run.' -ForegroundColor Yellow
     Write-Host '  Then step 2, which is the cheapest and isolates the most.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
@@ -1033,11 +1071,9 @@ if ($SetFieldProbe) {
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
     Write-Host '  THE SHOP WINDOW DRAWS. 0x055D, Lucy, 12 rows, 1905 bytes = 21 +'
     Write-Host '  12x157 exactly. Six days of decode, right first time on the wire.'
-    Write-Host '  AND THE 1 CANNOT BE TURNED OFF BY PACKET. /hitdamagetest was echoed'
-    Write-Host '  into your chat and NO 0x0189 came back, which is the only proof it'
-    Write-Host '  ran - so the permission gate refused it. The echo happens BEFORE the'
-    Write-Host '  dispatch, so seeing it meant nothing. The server no longer sends it;'
-    Write-Host '  the remaining route is a five-byte hook patch, not a packet.'
+    Write-Host '  (The /hitdamagetest route is dead: no 0x0189 came back, so the'
+    Write-Host '  permission gate refused it. But that was one lever failing, not the'
+    Write-Host '  answer - see step 1, which you were right to push back on.)'
     Write-Host '  YOU STAY DEAD - no more regenerating out of death. The wallet, the'
     Write-Host '  cash shop window, Exit, and the leaf-point balance. !lp. THE JOB'
     Write-Host '  CHANGE, THE SKILL POINTS AND THE MAGICIAN BOOK - !job 200 gave the'
@@ -1060,6 +1096,28 @@ if ($SetFieldProbe) {
     Write-Host '                   No skill points needed. !learn 5 caps them at 5.'
     Write-Host '     !kit          the weapon and ammunition that job needs, and it'
     Write-Host '                   WARNS if you cannot equip what it just gave you.'
+    Write-Host ''
+    Write-Host '  1. THE 1: FIGHT A MOB THAT HAS AN ATTACK NODE. ONE HIT SETTLES IT.' -ForegroundColor White
+    Write-Host '     You were right and I was wrong. Two numbers on the official client'
+    Write-Host '     means WE are adding one, and the "stub" story was wrong too:'
+    Write-Host '     BOTH halves of the gate on that draw are CONSTANTS. Option 0xAE is'
+    Write-Host '     read at 11 sites and WRITTEN AT NONE - no packet can set it - and'
+    Write-Host '     the other half is a hardcoded 1. So that block is not a debug mode'
+    Write-Host '     we switched on; it is the only path this client has.'
+    Write-Host '     WHY IT SAYS 1: four instructions earlier the client reads a field'
+    Write-Host '     from the mob ATTACK RECORD, or ZERO if there is no attack record.'
+    Write-Host '     128 of this client 193 mobs have no attack node - INCLUDING EVERY'
+    Write-Host '     MOB YOU HAVE EVER FOUGHT. Snails have none. So the 224 captures of'
+    Write-Host '     "always 1" are 224 observations of the same case, not a range.'
+    Write-Host '       !map 1014      Snail Field of Flowers - template 41, PADamage 243'
+    Write-Host '     Let it hit you ONCE. It hits hard; !heal after.'
+    Write-Host '       a real number near 243 -> that is the cause. Body-attack damage'
+    Write-Host '                     is what the server owes the client, and we can fix it'
+    Write-Host '       still 1               -> the attack record is not the variable and'
+    Write-Host '                     my section 2 is wrong. Say so; it is a real result'
+    Write-Host '     Ours is still the second number, and ours is the CORRECT one. It is'
+    Write-Host '     one line to remove, but not before this test - deleting the right'
+    Write-Host '     number to match a wrong one is the wrong order.'
     Write-Host ''
     Write-Host '  2. WARRIOR - THE WHOLE BRANCH, AND THE CHEAPEST ONE.' -ForegroundColor White
     Write-Host '     FIRST OF THE FOUR BRANCHES (step 7 comes before all of them).'
