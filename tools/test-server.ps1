@@ -565,10 +565,18 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         # cost nothing to read and pair directly with world.log - CLAUDE.md, "count the same
         # event in two logs".
         #
-        # 14209ad60:hits=10 - the 0x01A3 ARM ITSELF, not the forwarder (!map's 0x01A0 enters
-        #   the forwarder too, so a hit there would prove nothing). It fired exactly once
-        #   last run and the window drew, which is what promoted 0x01A3 from [D] to read.
-        #   It is kept for the RE-ENTRY step: a second entry must produce a SECOND line.
+        # 140d78070:peek=0x74:hits=20 - THE INSTRUMENT FOR THIS RUN. It is the buy entry
+        #   point, and its FIRST real instruction is `cmp byte [rcx+0x74], 0` at 140d78096,
+        #   with rcx the real `this` - so the peek reads the shop's in-flight latch AT THE
+        #   MOMENT THE PLAYER CLICKS BUY. Verified by disassembling it, not assumed.
+        #     click 1 reads 0                 -> the shop was free, as expected
+        #     click 2 and 3 also read 0       -> our 0x19 released it. The purchase is closed
+        #     click 2 reads 1                 -> 0x19 did NOT clear it. That is exactly the
+        #                                        failure bRelease exists to prevent, and it
+        #                                        localises to one byte
+        #   It replaced 14209ad60, whose question (does 0x01A3 reach its handler) is now
+        #   answered twice over, and whose remaining use - re-entry - is visible on screen
+        #   and in world.log without spending a slot.
         # 140d734e0:hits=40 - the cash shop stage's OWN OnPacket. A line means a stage object
         #   exists and is receiving, and rdx names which of 0x5AD/0x5AE/0x5B9/0x5BA arrived.
         #     rdx=0x5ad -> the wallet was accepted. Read the balance off the screen
@@ -589,13 +597,13 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
         #   and 14209ad60 answers the re-entry step better than a peek would.
         # 140304100:hits=200:dump=143AC2400/968 - the equip decode at world entry. POSITIVE
         #   CONTROL: no lines at all means the hook never armed and the log proves nothing.
-        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,14209ad60:hits=10,140d734e0:hits=60,140d785f0:hits=20,140304100:hits=200:dump=143AC2400/968'
+        $Probe = 'watch@1415db360:ret,141b2a280:rdx=0,140d78070:peek=0x74:hits=20,140d734e0:hits=60,140d785f0:hits=20,140304100:hits=200:dump=143AC2400/968'
     }
     # Announce which pair actually got armed. The old line said "mobs" for 141c532ab, which
     # is the mob SPAWN decoder - now that -MobTargets arms a mob TARGETING watch, one word
     # would have covered two different runs. Same precedence as the if/elseif above, and
     # written as three statements because 5.1 has no ternary.
-    $pair = "THE PURCHASE (140d785f0 = the buy builder, 140d734e0 = the stage OnPacket, 14209ad60 = the 0x01A3 arm)"
+    $pair = "THE PURCHASE (140d78070 peeking the in-flight latch AT THE CLICK, 140d785f0 = the buy builder, 140d734e0 = the stage OnPacket)"
     if ($InventorySlots -gt 0) { $pair = "THE BAG (140305e48)" }
     if ($MobTargets) { $pair = "MOB TARGETING (mob+0xa88 and mob+0x42c in the collector loop)" }
     if ($UserState) { $pair = "THE USER STATE FIELD (140f810e0, rdx is the value)" }
