@@ -1155,7 +1155,94 @@ mod tests {
         };
         s.set_password("player_one", "a-brand-new-password").unwrap();
         assert!(s.validate_session(&token).unwrap().is_none());
-        assert!(s.authenticate("player_one", "a-brand-new-password").is_ok());
+
+        // `.is_ok()` was the assertion here, and it checked almost nothing: `authenticate`
+        // returns `Ok(AuthOutcome::InvalidCredentials)` for a REFUSED login, so the old line
+        // passed whether or not the new password worked - it would have stayed green if
+        // `set_password` had written a hash nothing could verify. Match the outcome.
+        assert!(
+            matches!(
+                s.authenticate("player_one", "a-brand-new-password").unwrap(),
+                AuthOutcome::Ok { .. }
+            ),
+            "the new password must actually sign in"
+        );
+        assert_eq!(
+            s.authenticate("player_one", "hunter2hunter2").unwrap(),
+            AuthOutcome::InvalidCredentials,
+            "and the old one must not"
+        );
+    }
+
+    #[test]
+    fn a_password_can_be_reset_by_email_without_knowing_the_old_one() {
+        // What `maplecw-useradd --passwd <email>` does. Nothing anywhere in the reset path
+        // takes the previous password: it is an administrative reset against a database the
+        // caller already holds, not a change-my-password flow.
+        let s = store();
+        s.create_account("maplecw", "the-forgotten-one").unwrap();
+        s.set_email("maplecw", Some("wispplayer@example.com")).unwrap();
+
+        s.set_password_by_identity("wispplayer@example.com", "a-brand-new-password")
+            .unwrap();
+
+        assert!(matches!(
+            s.authenticate_identity("wispplayer@example.com", "a-brand-new-password").unwrap(),
+            AuthOutcome::Ok { .. }
+        ));
+        // And by name, because they are two identities for one row.
+        assert!(matches!(
+            s.authenticate("maplecw", "a-brand-new-password").unwrap(),
+            AuthOutcome::Ok { .. }
+        ));
+        assert_eq!(
+            s.authenticate("maplecw", "the-forgotten-one").unwrap(),
+            AuthOutcome::InvalidCredentials
+        );
+    }
+
+    #[test]
+    fn resetting_by_an_unknown_identity_says_so() {
+        // Unlike authentication, this may distinguish: it is run by someone holding the
+        // database, and "no such account" is the useful answer rather than a leak.
+        let s = store();
+        s.create_account("maplecw", "hunter2hunter2").unwrap();
+        assert!(matches!(
+            s.set_password_by_identity("nobody@example.test", "whatever-else"),
+            Err(StoreError::NoSuchAccount { .. })
+        ));
+    }
+
+    #[test]
+    fn changing_a_password_also_clears_that_accounts_login_claim() {
+        // The claim is a standing instruction to serve the next game connection as this
+        // account, and it outlives a session by hours. A password is changed when someone
+        // has lost control of it, so letting the claim survive would let the old password's
+        // last act outlive the password.
+        let s = store();
+        let id = s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.stake_login_claim(id, "a-token", crate::LOGIN_CLAIM_TTL_SECS).unwrap();
+        assert!(s.current_login_claim().unwrap().is_some());
+
+        s.set_password("player_one", "a-brand-new-password").unwrap();
+        assert!(s.current_login_claim().unwrap().is_none());
+    }
+
+    #[test]
+    fn changing_one_password_does_not_evict_a_different_account() {
+        // Scoped, not `clear_login_claims()`. One person resetting a password must not drop
+        // somebody else out of the game.
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        let two = s.create_account("player_two", "hunter2hunter2").unwrap();
+        s.stake_login_claim(two, "a-token", crate::LOGIN_CLAIM_TTL_SECS).unwrap();
+
+        s.set_password("player_one", "a-brand-new-password").unwrap();
+        assert_eq!(
+            s.current_login_claim().unwrap().map(|c| c.account_name),
+            Some("player_two".to_string()),
+            "player_two was playing and had nothing to do with it"
+        );
     }
 
     #[test]

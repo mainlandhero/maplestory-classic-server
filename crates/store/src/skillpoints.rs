@@ -1098,17 +1098,29 @@ mod tests {
         for account in store.list_accounts().unwrap() {
             for chr in store.characters_for(account.id, 0).unwrap() {
                 characters += 1;
-                // The ledger starts empty for everyone, which is the amnesty.
-                assert!(
-                    store.skill_point_ledger(chr.id).unwrap().is_empty(),
-                    "{} has ledger rows in a database that has never had the table",
-                    chr.name
-                );
+                // **What this used to assert, and why it had to change.**
+                //
+                // It was `skill_point_ledger(chr.id).is_empty()` and a flat `== 61` on every
+                // pool - "the ledger starts empty for everyone, which is the amnesty". That
+                // was true of a database written by a build with no ledger table, which is
+                // what this test was built to open. It stopped being true the day the feature
+                // shipped and the owner played: their live file now carries a real spend, so the
+                // test began failing on 2026-08-29 for a reason that has nothing to do with
+                // the migration it exists to check.
+                //
+                // A test pinned to live, mutating state expires. The durable guarantee is not
+                // "the ledger is empty" - it is **nobody is stranded**: whatever has been
+                // spent, the pool reads exactly `entitlement - spent` and never less, and no
+                // skill level is lost. So compute the expectation from the ledger instead of
+                // assuming what the ledger says.
+                let ledger = store.skill_point_ledger(chr.id).unwrap();
                 for tier in 0..=MAX_POOL_TIER {
+                    let spent: u32 =
+                        ledger.iter().filter(|r| r.tier == tier).map(|r| r.points).sum();
                     assert_eq!(
                         store.skill_points_available(chr.id, tier, 61).unwrap(),
-                        61,
-                        "{} reads a short pool at tier {tier}",
+                        balance(61, spent),
+                        "{} reads a pool at tier {tier} that does not match its {spent} spent",
                         chr.name
                     );
                 }

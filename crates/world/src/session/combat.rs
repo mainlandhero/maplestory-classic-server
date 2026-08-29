@@ -829,22 +829,27 @@ impl Session {
         // writer and it is in a function with no packet reads - no server route was found,
         // and the search that failed named its own blind spots.
         //
-        // Two numbers is worse than one *correct* number and better than one *wrong* one, so
-        // it goes in and the run says whether it reads acceptably. It is one push to remove.
-        // The only route to a single correct number is `forcedStatPresent` at offset 10 of the
-        // spawn body - sent as `0` today, never tried, and its parser reads twelve `u32` stat
-        // overrides of which none is yet known to be attack power.
-        out.push(Reply {
-            opcode: net::stats::USER_EFFECT_LOCAL,
-            body: net::revive::recovery_number(-(applied as i32), 0),
-            what: format!(
-                "UserEffectLocal effect 0x41 with a NEGATIVE amount: -{applied} over the \
-                 player's head, in the damage colour. The sign is what selects it - positive \
-                 is the blue recovery number the owner has already seen. The client ALSO draws its \
-                 own stub 1, at send time, and nothing here can suppress it, so expect two \
-                 numbers"
-            ),
-        });
+        // # AND IT IS GONE, 2026-08-29 - the prediction above came true
+        //
+        // That paragraph used to end: *"Two numbers is worse than one correct number and
+        // better than one wrong one, so it goes in and the run says whether it reads
+        // acceptably. It is one push to remove. The only route to a single correct number is
+        // `forcedStatPresent` at offset 10 of the spawn body - sent as 0 today, never tried."*
+        //
+        // It was tried. `MobForcedStat` now rides every spawn, so the client is told the
+        // mob's attack power and computes a real number instead of the `max(damage, 1)` stub.
+        // The owner, 2026-08-29: *"Latest client run was able to confirm that the mob damage
+        // numbers are now agreeing with each other. No need to show the number twice."*
+        //
+        // So the client's number is correct on its own and this packet is the redundant one.
+        // Removing OURS rather than the client's is the only choice available - the flag that
+        // suppresses the client's, `user+0x544a`, has exactly one writer and it is in a
+        // function with no packet reads, so no server route to it was ever found.
+        //
+        // **The server still computes and applies the damage**; `applied` above is what the HP
+        // bar moves by, and the log line still carries both numbers. What is gone is only the
+        // second thing drawn on screen. If the two ever disagree again, the log says so
+        // without a packet, and this is four lines to put back.
         out
     }
 

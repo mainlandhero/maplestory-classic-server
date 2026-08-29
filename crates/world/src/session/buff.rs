@@ -56,15 +56,44 @@ impl Session {
         let (skill_id, asked) = (req.skill_id, req.level);
 
         // **A skill this server grants nothing for still gets an answer on screen.** Three
-        // Snails is an attack and Recovery's CTS bit is not identified, so neither has a
-        // packet to send - and "nothing happened" with no explanation is the symptom the owner
-        // reported twice for Nimble Feet. Saying so costs one chat line on a rare cast.
-        let Some(level) = self.buff_level_for(skill_id, asked, &chr) else {
-            return self.notice(format!(
-                "This server does not grant skill {skill_id}'s effect yet. Three Snails is an \
-                 attack, Recovery's stat bit has never been identified, and Disorder is a \
-                 debuff on the MOB rather than a stat on you."
-            ));
+        // Snails is an attack and Disorder is a debuff on the mob, so neither has a packet to
+        // send - and "nothing happened" with no explanation is the symptom the owner reported twice
+        // for Nimble Feet. Saying so costs one chat line on a rare cast. Recovery used to be
+        // on that list and is not any more; see below.
+        //
+        // **Recovery is not a stat buff, so it does not come from the buff tables.** It has no
+        // CTS bit anybody has identified - which is why it used to fall into the notice below
+        // - but it does not need one: it is HP over time, and HP is the server's to give. The
+        // level row comes from the generated skill table instead, and everything after this
+        // (has-the-skill, cooldown, MP, spend) is shared with every other skill so the two
+        // cannot drift. `crate::session::recovery`.
+        let recovery_row = (skill_id == recovery::RECOVERY_SKILL_ID)
+            .then(|| self.recovery_level(asked).cloned())
+            .flatten();
+
+        let level = match (self.buff_level_for(skill_id, asked, &chr), &recovery_row) {
+            (Some(level), _) => level,
+            // Recovery: borrow the shared checks by presenting its costs in the same shape.
+            // `bit` and `value` are never read on this path - `start_recovery` is what runs -
+            // and `seconds` is the heal duration rather than a stat duration.
+            (None, Some(row)) => net::buff::BuffLevel {
+                mp_cost: u16::try_from(row.mp_con.unwrap_or(0)).unwrap_or(u16::MAX),
+                seconds: row.time_seconds.unwrap_or(0),
+                cooldown_seconds: row.cooltime_seconds.unwrap_or(0),
+                bit: 0,
+                value: 0,
+                second: None,
+                // Recovery HAS a `time` - 30 seconds - and it is the heal's duration rather
+                // than a stat's. Carrying it as `Seconds` keeps this row honest for the
+                // cooldown and MP checks above; nothing on this path builds a `0x007D`.
+                duration: net::buff::BuffDuration::Seconds(row.time_seconds.unwrap_or(0)),
+            },
+            (None, None) => {
+                return self.notice(format!(
+                    "This server does not grant skill {skill_id}'s effect yet. Three Snails is \
+                     an attack, and Disorder is a debuff on the MOB rather than a stat on you."
+                ))
+            }
         };
 
         // **The client's claim about its own level is checked, not trusted.** It sends the
@@ -120,7 +149,13 @@ impl Session {
                 level.mp_cost, chr.mp, chr.max_mp
             ),
         }];
-        out.extend(self.grant_buff(skill_id, level, now));
+        // Recovery's effect is a heal-over-time, not a stat. Everything above - the level
+        // check, the cooldown, the MP spend, the `0x007C` that shows it - was shared; only
+        // this last step differs.
+        match &recovery_row {
+            Some(row) => out.extend(self.start_recovery(row, asked)),
+            None => out.extend(self.grant_buff(skill_id, level, now)),
+        }
         out
     }
 

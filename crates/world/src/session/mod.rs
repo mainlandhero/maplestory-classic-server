@@ -265,6 +265,12 @@ pub struct Session {
     ///
     /// `None` is both "they are busy" and "they are already full", and neither needs a timer.
     next_regen_ms: Option<u64>,
+    /// Recovery (skill 1001) in progress, if any.
+    ///
+    /// Not in `buffs` with the stat buffs: Recovery has no CTS bit, so there is nothing to
+    /// put there. It is HP arriving over time, which the server owns outright.
+    /// `crate::session::recovery`.
+    recovering: Option<recovery::Recovering>,
 
     /// What this connection last put in the client's scrolling banner, `None` for "nothing".
     ///
@@ -370,6 +376,7 @@ mod ground;
 mod inventory;
 mod npc;
 mod rates;
+mod recovery;
 mod regen;
 mod shop;
 mod storage;
@@ -411,6 +418,7 @@ impl Session {
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,
+            recovering: None,
         }
     }
 
@@ -462,6 +470,10 @@ impl Session {
         // Idle regeneration, which uses `now_ms` rather than the wall clock - it is a
         // property of one player rather than of the server. `crate::session::regen`.
         out.extend(self.regen_tick(now_ms));
+        // Recovery's heal-over-time. Beside idle regen because it is the same shape - a
+        // `0x007C` and a blue number - and after it so that a tick carrying both puts the two
+        // stat changes in a stable order.
+        out.extend(self.recovery_tick(now_ms));
         // Buffs whose time is up. After regen so a `0x007C` and a `0x007E` in the same
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));
