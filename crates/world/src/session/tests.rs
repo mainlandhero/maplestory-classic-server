@@ -6270,6 +6270,85 @@ fn even_help_and_rates_are_gated() {
     }
 }
 
+/// Put one equip in the bag and hand back the slot it landed in.
+fn bag_an_equip(store: &Store, id: u32, item_id: u32) -> i16 {
+    let placed = store
+        .add_item(id, store::InventoryType::Equip, &store::Item::equip(item_id), 1)
+        .expect("the equip goes in the bag");
+    placed.first().expect("a slot").slot as i16
+}
+
+/// **An overall takes the bottom off.** The owner, 2026-08-29: *"when I wore an overall item, the
+/// server did not take off the bottoms that I was wearing."*
+///
+/// `dressed_session` starts wearing a top in slot 5 and a bottom in slot 6. Slot 5's ordinary
+/// swap already removed the top, because a top and an overall share that slot - the bottom
+/// was the half nothing displaced, and it is what the owner saw.
+#[test]
+fn equipping_an_overall_takes_off_the_bottom() {
+    let (mut s, store, id) = dressed_session();
+    let robe = bag_an_equip(&store, id, 1_050_000);
+
+    let out = s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, robe, -5, -1));
+    assert_eq!(out[0].body[0], 1, "still answered - a silent refusal locks the UI");
+
+    let worn = store.equipped_items(id).unwrap();
+    assert!(
+        worn.iter().any(|e| e.slot == 5 && e.item_id == 1_050_000),
+        "the robe should be on: {worn:?}"
+    );
+    assert!(
+        !worn.iter().any(|e| e.slot == 6),
+        "the bottom must have come off: {worn:?}"
+    );
+    // Into the bag, not destroyed.
+    assert!(
+        store.bag(id).unwrap().items.iter().any(|i| i.item.item_id == 1_060_002),
+        "the bottom must be back in the bag"
+    );
+    assert!(out[0].what.contains("overall and a bottom cannot be worn together"), "{}", out[0].what);
+}
+
+/// **The control, and it is the important half.** A plain top and a bottom are worn together
+/// by every character in the game; taking the trousers off to put a shirt on would be a much
+/// worse bug than the one being fixed.
+#[test]
+fn equipping_a_plain_top_leaves_the_bottom_alone() {
+    let (mut s, store, id) = dressed_session();
+    let shirt = bag_an_equip(&store, id, 1_040_000);
+
+    s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, shirt, -5, -1));
+
+    let worn = store.equipped_items(id).unwrap();
+    assert!(
+        worn.iter().any(|e| e.slot == 6 && e.item_id == 1_060_002),
+        "a shirt does not take your trousers off: {worn:?}"
+    );
+}
+
+/// The other direction. Enforcing only the first leaves the identical picture on screen from
+/// the other order - robe on, then trousers over it.
+#[test]
+fn equipping_a_bottom_takes_off_a_worn_overall() {
+    let (mut s, store, id) = dressed_session();
+    let robe = bag_an_equip(&store, id, 1_050_000);
+    s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, robe, -5, -1));
+    assert!(store.equipped_items(id).unwrap().iter().any(|e| e.slot == 5 && e.item_id == 1_050_000));
+
+    let trousers = bag_an_equip(&store, id, 1_060_000);
+    s.on_inventory_move(&inventory_move(net::inventory::INV_EQUIP, trousers, -6, -1));
+
+    let worn = store.equipped_items(id).unwrap();
+    assert!(
+        worn.iter().any(|e| e.slot == 6 && e.item_id == 1_060_000),
+        "the trousers should be on: {worn:?}"
+    );
+    assert!(
+        !worn.iter().any(|e| e.slot == 5 && e.item_id == 1_050_000),
+        "and the robe must have come off: {worn:?}"
+    );
+}
+
 /// A `0x013C`: `u32 skillId, u32 level`.
 fn cast(skill_id: u32, level: u32) -> Vec<u8> {
     let mut b = net::buff::CLIENT_SKILL_USE.to_le_bytes().to_vec();

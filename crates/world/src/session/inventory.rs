@@ -165,19 +165,88 @@ impl Session {
             // would be wrong rather than merely redundant - it would move the item that had
             // just arrived. `research/equip-crash.md`. The store mirrors `142d52c13` exactly:
             // the displaced item goes into `src`, in the same transaction.
+            // **An overall and a bottom cannot be worn together.** The owner, 2026-08-29: *"when I
+            // wore an overall item, the server did not take off the bottoms that I was
+            // wearing... unless the player does not have sufficient inventory space."*
+            //
+            // Slot 5's ordinary swap already removes a worn TOP, because a top and an overall
+            // share that slot. The bottom is slot 6 and nothing displaces it, which is what
+            // The owner saw. `net::overall` holds the rule and the item-id ranges it reads.
+            //
+            // **Done BEFORE the equip, and a failure aborts the whole thing.** The alternative
+            // - equip first, then try to free the other slot - can leave the character wearing
+            // an illegal pair when the bag is full, and a half-applied equip is exactly the
+            // state `CLAUDE.md` records as the most expensive kind of bug here.
+            let mut freed: Option<String> = None;
+            // The id comes out of the BAG ROW the server owns, never from the slot the client
+            // asked for: trusting that would be trusting the client to say what it is wearing,
+            // and nothing on this socket is authenticated.
+            let incoming = self
+                .store
+                .bag(chr.id)
+                .ok()
+                .and_then(|b| {
+                    b.items
+                        .iter()
+                        .find(|i| i.inv_type == store::InventoryType::Equip && i.slot == src)
+                        .map(|i| i.item.item_id)
+                })
+                .unwrap_or(0);
+            if let Some(other) = net::overall::conflicting_slot(incoming) {
+                if let Some(worn_there) = self
+                    .store
+                    .equipped_items(chr.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|e| e.slot == other)
+                {
+                    if net::overall::conflicts_with(incoming, worn_there.item_id, other) {
+                        // `None` picks the lowest free bag slot, and returns
+                        // `StoreError::BagFull` when there is not one - which is exactly the
+                        // "unless the player does not have sufficient inventory space" case.
+                        match self.store.unequip_to_bag(chr.id, other, None) {
+                            Ok(moved) => {
+                                freed = Some(format!(
+                                    "took off item {} from slot {other} into bag slot {} first \
+                                     - an overall and a bottom cannot be worn together",
+                                    moved.item.item_id, moved.slot
+                                ));
+                            }
+                            Err(e) => {
+                                return self.inventory_refused(
+                                    &m,
+                                    &format!(
+                                        "an overall cannot be worn over a bottom, and the bottom \
+                                         could not be taken off: {e}. Free an Equip slot first - \
+                                         nothing was changed."
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             return match self.store.equip_from_bag(chr.id, src, worn) {
                 Ok(done) => self.inventory_moved(
                     &m,
-                    match done.displaced {
-                        Some(off) => format!(
-                            "equipped item {} from Equip bag slot {src} into slot {worn}, SWAPPING item {off} back into bag slot {src}",
-                            done.equipped
-                        ),
-                        None => format!(
-                            "equipped item {} from Equip bag slot {src} into slot {worn}",
-                            done.equipped
-                        ),
-                    },
+                    format!(
+                        "{}{}",
+                        match done.displaced {
+                            Some(off) => format!(
+                                "equipped item {} from Equip bag slot {src} into slot {worn}, SWAPPING item {off} back into bag slot {src}",
+                                done.equipped
+                            ),
+                            None => format!(
+                                "equipped item {} from Equip bag slot {src} into slot {worn}",
+                                done.equipped
+                            ),
+                        },
+                        match &freed {
+                            Some(note) => format!(" ({note})"),
+                            None => String::new(),
+                        }
+                    ),
                 ),
                 Err(e) => self.inventory_refused(&m, &format!("equip refused: {e}")),
             };
