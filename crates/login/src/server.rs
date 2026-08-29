@@ -156,6 +156,20 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     log("  connects is served as whichever account the claim or the fallback names.");
     log("  The launcher checks a password before staking a claim; this socket does not.");
     log("  See docs/launcher.md.");
+    if config.bind_migrations {
+        log("MIGRATION BINDING IS ON. Every migration is bound to the live login claim's");
+        log("  session token and CANNOT be claimed by a connection that presents none.");
+        log("  The stock channel server presents none, so unless the hook has been taught");
+        log("  to send the token, every character select will be refused and nobody will");
+        log("  enter the world. If that is what you are seeing, this flag is why.");
+    } else {
+        log("MIGRATION BINDING IS OFF (--bind-migrations). A migration is claimed by the");
+        log("  character id the connecting client ASSERTS, and nothing checks that the");
+        log("  connection has any right to it - so any connection to a channel port can");
+        log("  claim any character's pending migration by naming it. No race is needed.");
+        log("  The mechanism to close this is built and tested; it needs the hook to send");
+        log("  the session token on the channel socket before it can be switched on.");
+    }
 
     // The migration makes the client come back on a second connection, so the log has to
     // say which one a line belongs to - the peer address alone differs only in an ephemeral
@@ -279,7 +293,12 @@ fn connection(
     let mut rx = Framer::new(MapleCipher::new(CLIENT_TX_IV.to_le_bytes(), Direction::ClientToServer));
     let mut tx = Framer::new(MapleCipher::new(CLIENT_RX_IV.to_le_bytes(), Direction::ServerToClient));
 
-    let mut session = Session::new(store, config, account);
+    // The address is recorded on any migration this connection mints. Defence in depth and
+    // an audit trail - **not** a discriminator: two clients on one machine share an address.
+    let mut session = match stream.peer_addr() {
+        Ok(addr) => Session::new(store, config, account).with_peer(addr.ip().to_string()),
+        Err(_) => Session::new(store, config, account),
+    };
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
     }

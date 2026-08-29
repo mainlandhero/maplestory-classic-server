@@ -143,6 +143,11 @@ pub struct Session {
     config: Arc<Config>,
     /// The migration this connection claimed, once it has claimed one.
     claimed: Option<ClaimedMigration>,
+    /// The source address this connection arrived from, if the socket reported one.
+    ///
+    /// **Recorded and reported, never decisive.** Two clients on one machine share it, so
+    /// it cannot separate them - which is exactly the case the owner asked about.
+    peer: Option<String>,
     // `asked_to_hide_hit_damage` was removed 2026-08-28 with the packet it gated. `0x00EA`
     // carrying "/hitdamagetest 0" reached the client and was ECHOED into chat, and no
     // `0x0189` ever came back - so the command's permission gate refused it and the stub
@@ -435,6 +440,7 @@ impl Session {
             config,
             subscriber,
             claimed: None,
+            peer: None,
             conversation: None,
             in_cash_shop: false,
             chatter: Vec::new(),
@@ -451,6 +457,15 @@ impl Session {
             next_regen_ms: None,
             recovering: None,
         }
+    }
+
+    /// Record the address this connection came from.
+    ///
+    /// A builder rather than a parameter so `joining`'s signature and its many test callers
+    /// are unchanged. See the `peer` field: this is evidence for a log line, not a guard.
+    pub fn with_peer(mut self, peer: impl Into<String>) -> Self {
+        self.peer = Some(peer.into());
+        self
     }
 
 
@@ -898,55 +913,76 @@ impl Session {
     /// actually lived: a `u32` on the wire was never a secret, and this only removes the
     /// pretence that it was. Nothing here authenticates anybody.
     pub fn claim_for_character(&mut self, character_id: u32) -> String {
-        match self.store.claim_migration_for_character(character_id) {
-            Ok(Some(claimed)) => {
-                let wrong_channel = claimed.world_id != self.config.world_id
-                    || claimed.channel_id != self.config.channel_id;
-                let note = format!(
-                    "claimed the migration for character {} of account {} \
-                     (world {} channel {})",
-                    claimed.character_id, claimed.account_id, claimed.world_id, claimed.channel_id
+        use store::migration::{ClaimOutcome, MigrationEvidence, PeerPolicy};
+
+        // What this connection can prove. **TODAY THAT IS NOTHING**, and that is the whole
+        // state of this feature. The client does not carry the seed back - measured
+        // 2026-08-29: 115 distinct hello bodies against all 74 seeds ever minted, plain and
+        // both endiannesses and the XOR form the decompiler predicts, 8510 trials, zero
+        // hits, with the character id at offset 8 passing as a positive control on all 115.
+        // No token reaches us until the hook sends one. The address is recorded, never
+        // decisive: two clients on one machine share it.
+        //
+        // TODO(hook): when grap-stub presents the launcher's session token on this socket,
+        // build `MigrationEvidence::with_token(tok)` here. That is the whole of what makes
+        // `--bind-migrations` safe to switch on.
+        let evidence = match self.peer.as_deref() {
+            Some(p) => MigrationEvidence::none().from_peer(p),
+            None => MigrationEvidence::none(),
+        };
+
+        let mut accept = |claimed: store::ClaimedMigration, how: &str, mismatch: bool| {
+            let wrong_channel = claimed.world_id != self.config.world_id
+                || claimed.channel_id != self.config.channel_id;
+            let mut note = format!(
+                "claimed the migration for character {} of account {} {how} (world {} channel {})",
+                claimed.character_id, claimed.account_id, claimed.world_id, claimed.channel_id
+            );
+            if mismatch {
+                note.push_str(
+                    " - PEER MISMATCH: this connection's address differs from the one the                      migration was minted for. Not refused (two clients on one machine share                      an address, and a dual-stack client changes it legitimately), but worth                      reading if impersonation is suspected"
                 );
-                self.claimed = Some(claimed);
-                if wrong_channel {
-                    format!(
-                        "{note} - WRONG CHANNEL: this is world {} channel {}",
-                        self.config.world_id, self.config.channel_id
-                    )
-                } else {
-                    note
-                }
             }
-            // **A channel migration cannot be claimed by character id**, so falling through
-            // here is the ordinary case for a channel change rather than an error.
-            //
-            // Measured 2026-08-21: the channel-migrate reply is `0x001A` and its body is
-            // `u8 ok, u32 ip, u16 port` - seven bytes, no character id. The client's `0x007D`
-            // on the new channel then reported id **32513**, which is `01 7f 00 00` read back
-            // out of our own body. Channel 1 refused it, answered with the MINIMAL SetField,
-            // and the client faulted three seconds later.
-            //
-            // So: if this world and channel has exactly one migration pending, it is this
-            // connection's. Ambiguity returns `None` and we fall through to the old message.
-            Ok(None) => match self
-                .store
-                .claim_sole_migration_for_channel(self.config.world_id, self.config.channel_id)
-            {
-                Ok(Some(claimed)) => {
-                    let note = format!(
-                        "claimed the migration for character {} of account {} by CHANNEL, not by \
-                         character id - the hello said {character_id}, which a channel migrate \
-                         cannot carry (world {} channel {})",
-                        claimed.character_id, claimed.account_id, claimed.world_id,
-                        claimed.channel_id
-                    );
-                    self.claimed = Some(claimed);
-                    note
-                }
-                Ok(None) => format!(
-                    "character {character_id} has no unconsumed migration, and this world and \
-                     channel has no single pending one to fall back on - it was never minted, \
-                     or already claimed, or it expired"
+            if wrong_channel {
+                note.push_str(&format!(
+                    " - WRONG CHANNEL: this is world {} channel {}",
+                    self.config.world_id, self.config.channel_id
+                ));
+            }
+            self.claimed = Some(claimed);
+            note
+        };
+
+        match self.store.claim_migration_for_character_with(character_id, &evidence, PeerPolicy::Record) {
+            Ok(ClaimOutcome::Claimed { migration, peer_mismatch }) => {
+                accept(migration, "by character id", peer_mismatch)
+            }
+
+            // **A refusal is never retried as a weaker claim.** Falling through to the
+            // channel route here would be exactly the downgrade the binding exists to
+            // prevent: the row demanded a credential and this connection did not have it.
+            Ok(ClaimOutcome::Refused(why)) => format!(
+                "REFUSED the migration for character {character_id}: {why}. The client is                  still answered - it gets the minimal SetField - because an unanswered packet                  freezes its entire UI. It will NOT enter the world."
+            ),
+
+            // A channel migration cannot be claimed by character id - `0x001A` is
+            // `u8 ok, u32 ip, u16 port` and carries no character - so this is the ordinary
+            // channel-change case, not an error.
+            Ok(ClaimOutcome::NoMigration) => match self.store.claim_sole_migration_for_channel_with(
+                self.config.world_id, self.config.channel_id, &evidence, PeerPolicy::Record,
+            ) {
+                Ok(ClaimOutcome::Claimed { migration, peer_mismatch }) => accept(
+                    migration,
+                    &format!(
+                        "by CHANNEL, not by character id - the hello said {character_id}, which                          a channel migrate cannot carry"
+                    ),
+                    peer_mismatch,
+                ),
+                Ok(ClaimOutcome::Refused(why)) => format!(
+                    "REFUSED the sole pending migration on this channel: {why}. Answered with                      the minimal SetField; the character does not enter the world."
+                ),
+                Ok(ClaimOutcome::NoMigration) => format!(
+                    "character {character_id} has no unconsumed migration, and this world and                      channel has no single pending one to fall back on - it was never minted,                      or already claimed, or it expired, or there is more than one and                      ambiguity is refused rather than guessed"
                 ),
                 Err(e) => format!("character {character_id} could not be checked: {e}"),
             },

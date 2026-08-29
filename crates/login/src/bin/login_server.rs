@@ -30,6 +30,12 @@ maplecw-login - the MapleCW login server
   --channel N           which channel a player entering the world is sent to (default 0)
   --list                print the stored characters and exit, without listening
   --delete NAME         delete one character on --account, then exit
+  --bind-migrations     bind each migration to the launcher sign-in that authorised it.
+                        DO NOT PASS THIS YET. A bound migration can only be claimed by a
+                        connection presenting a matching session token, and the channel
+                        server presents nothing - so with this on, every migration is
+                        refused and no character can enter the world. It needs the hook to
+                        send the token on the channel socket first.
   -h, --help            this
 
 The game socket carries no credentials, so --account is not a login: it decides whose
@@ -54,6 +60,10 @@ fn main() -> ExitCode {
             }),
             "--list" => {
                 list_only = true;
+                Ok(())
+            }
+            "--bind-migrations" => {
+                config.bind_migrations = true;
                 Ok(())
             }
             "--delete" => value().map(|v| delete_name = Some(v)),

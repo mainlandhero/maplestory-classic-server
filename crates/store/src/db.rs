@@ -300,6 +300,11 @@ impl Store {
         // module WIRED rather than merely working, and its absence is exactly the state
         // CLAUDE.md calls "built is not wired".
         crate::codes::create_tables(&conn)?;
+        // The migration credential columns. These are ALTERed onto `migrations`, which is
+        // NOT a new table, so the call carries its own PRAGMA guard - see that module.
+        // Every claim entry point already calls this; doing it here too makes the module
+        // wired rather than merely working.
+        crate::migration::ensure_columns(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 

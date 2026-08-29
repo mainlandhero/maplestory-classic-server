@@ -89,6 +89,27 @@ pub struct Config {
     /// where a person expects to see themselves, not because a constant is ever right.
     pub display_name: String,
 
+    /// **Bind each minted migration to the launcher sign-in that authorised it.**
+    ///
+    /// Off, and it must stay off until the channel server can present a token.
+    ///
+    /// # Why an off switch rather than simply doing the right thing
+    ///
+    /// A bound migration can only be claimed by a connection presenting a matching session
+    /// token - that is the invariant in `store::migration`, and it is what closes the
+    /// impersonation hole. **The channel server presents nothing today.** The client does not
+    /// carry the credential back: measured 2026-08-29 across 115 `0x007D` hello bodies
+    /// against all 74 seeds ever minted, 8510 trials and zero hits, with a passing positive
+    /// control. So with this on and nothing else changed, **every migration is refused and
+    /// no character can enter the world** - the fix would read on screen as a total outage.
+    ///
+    /// Turning it on requires the hook to send the token on the channel connection. Until
+    /// then this is deliberately, visibly unwired rather than quietly half-applied, and the
+    /// startup banner says which state the server is in.
+    ///
+    /// The mechanism underneath is complete and tested either way; only the switch is off.
+    pub bind_migrations: bool,
+
     pub world: World,
 }
 
@@ -99,6 +120,9 @@ impl Default for Config {
             db_path: PathBuf::from("maplecw.db"),
             account: "maplecw".to_string(),
             display_name: "maplecw".to_string(),
+            // OFF. See the field's doc block: on, with today's channel server, every
+            // migration is refused and nobody can enter the world.
+            bind_migrations: false,
             world: World::default(),
         }
     }

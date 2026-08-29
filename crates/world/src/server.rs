@@ -105,7 +105,16 @@ fn connection(
         Shift::Add,
     ));
 
-    let mut session = Session::joining(store, config.clone(), fields);
+    // The address this connection came from. **Recorded, never decisive** - two clients on
+    // one machine share it, and a dual-stack client legitimately arrives as ::1 on one
+    // socket and 127.0.0.1 on the other. Refusing on it would lock the owner out of their own
+    // server; it is here so a suspected impersonation has something to read.
+    let mut session = match stream.peer_addr() {
+        Ok(addr) => {
+            Session::joining(store, config.clone(), fields).with_peer(addr.ip().to_string())
+        }
+        Err(_) => Session::joining(store, config.clone(), fields),
+    };
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
     }

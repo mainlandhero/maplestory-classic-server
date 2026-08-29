@@ -113,11 +113,29 @@ pub struct Session {
     /// Has the client asked to log in yet? Only used to decide whether the startup gate
     /// needs repeating - see [`Session::on_quiet`].
     seen_login_request: bool,
+    /// The source address this connection arrived from, if the socket could report one.
+    ///
+    /// Recorded on the migration for the audit trail and for `store::PeerPolicy::Require`.
+    /// **It is not a discriminator and must not be described as one** - the owner, 2026-08-29:
+    /// *"the launcher needs to be able to potentially handle multiple connections from the
+    /// same IP as well, IP cannot be the sole discriminator."* Two clients on one machine
+    /// both present `127.0.0.1`.
+    peer: Option<String>,
 }
 
 impl Session {
     pub fn new(store: Arc<Store>, config: Arc<Config>, account: Account) -> Self {
-        Session { store, config, account, seen_login_request: false }
+        Session { store, config, account, seen_login_request: false, peer: None }
+    }
+
+    /// Record the address this connection came from.
+    ///
+    /// A builder rather than a fourth parameter to [`Session::new`], so the thirteen tests
+    /// below that do not care about addressing keep compiling. A session with no peer mints
+    /// a migration with no address recorded, which is exactly what an in-process test is.
+    pub fn with_peer(mut self, peer: impl Into<String>) -> Self {
+        self.peer = Some(peer.into());
+        self
     }
 
     pub fn account_name(&self) -> &str {
@@ -488,7 +506,64 @@ impl Session {
         // The seed is minted here and claimed by the channel server out of the same
         // database. It is a u32 - all the packet has room for - so it identifies a pending
         // migration rather than proving anything. What it does buy is single use.
-        let seed = match self.store.create_migration(self.account.id, id, world.id, channel) {
+        //
+        // **The row is bound to the sign-in that staked the live login claim.** Only the
+        // claim's SHA-256 is read and re-stored; the plain token is not in this process. A
+        // bound row can never be claimed by a connection that presents nothing - see the
+        // invariant in `store::migration`. That is what stops a channel connection from
+        // getting this character by merely asserting its id.
+        //
+        // `None` here means nobody has used the launcher, so there is no credential to bind
+        // and the row is minted unbound - the old behaviour, hole included. It is logged as
+        // such rather than silently accepted, because an unbound migration is exactly the
+        // thing that is still impersonatable and the log is where that has to be visible.
+        // **Off by default, and that is the honest state rather than an oversight.** A bound
+        // row can only be claimed by a connection presenting a matching token, and the
+        // channel server presents nothing today - so binding unconditionally would refuse
+        // every migration and lock the player out of the world entirely. See
+        // `Config::bind_migrations` for the measurement behind that.
+        let (token_hash, binding) = if !self.config.bind_migrations {
+            (
+                None,
+                "UNBOUND - migration binding is off (--bind-migrations). Any channel \
+                 connection that names this character id can claim it. Binding needs the \
+                 hook to present the session token on the channel socket; without that, \
+                 turning it on refuses every migration"
+                    .to_string(),
+            )
+        } else {
+            match self.store.live_claim_token_hash() {
+                Ok(Some(hash)) => (Some(hash), "BOUND to the live login claim".to_string()),
+                Ok(None) => (
+                    None,
+                    "UNBOUND - no live login claim, so there was nothing to bind to. Any \
+                     channel connection that names this character id can claim it. Sign in \
+                     through maplecw-launcher first"
+                        .to_string(),
+                ),
+                // Never fatal: an unanswered select-character freezes the client's whole UI.
+                // Degrade to unbound and say so loudly.
+                Err(e) => (
+                    None,
+                    format!(
+                        "UNBOUND - the login claim could not be read ({e}), so nothing was bound"
+                    ),
+                ),
+            }
+        };
+
+        // The hash goes in with the INSERT. This server never holds the plain token - the
+        // launcher was handed that at sign-in - so `create_migration_bound_hash` is the right
+        // entry point, and binding in the INSERT means the row is never briefly visible in an
+        // unbound state.
+        let seed = match self.store.create_migration_bound_hash(
+            self.account.id,
+            id,
+            world.id,
+            channel,
+            token_hash.as_deref(),
+            self.peer.as_deref(),
+        ) {
             Ok(seed) => seed,
             Err(e) => return refuse(format!("REFUSED - could not mint a migration: {e}")),
         };
@@ -497,7 +572,7 @@ impl Session {
             MIGRATE_COMMAND,
             migrate(addr, id, seed),
             format!(
-                "migrate {:?} (id {id}) to world {} channel {channel} at {addr}, seed {seed:#010x} - single use, NOT authentication",
+                "migrate {:?} (id {id}) to world {} channel {channel} at {addr}, seed {seed:#010x} - single use, NOT authentication. Migration {binding}",
                 chosen.name, world.id
             ),
         )]
@@ -549,7 +624,7 @@ const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 pub fn describe(opcode: u16, payload: &[u8]) -> Option<String> {
     if opcode == CLIENT_MIGRATION_HELLO {
         return Some(format!(
-            "MIGRATION HELLO: the client reconnected after 0x0011 and sent {} bytes. The migration seed is in here, obfuscated with the u32 before its length -              layout not yet decoded, read the body hex. See docs/opcodes.md.",
+            "MIGRATION HELLO: the client reconnected after 0x0011 and sent {} bytes. The seed is NOT in here - measured 2026-08-29 across 115 distinct hello bodies against all 74 seeds this server has minted, plain and under the XOR-with-a-replicated-byte form, 8510 trials and zero hits, with the character id at offset 8 as a passing positive control. What IS in here is the character id, and it is asserted rather than proved. See docs/opcodes.md.",
             payload.len()
         ));
     }
@@ -1185,6 +1260,139 @@ mod tests {
         assert_eq!(*body, migrate(s.config.world.channel_address(0).unwrap(), id, seed));
         let claimed = s.store.claim_migration(seed).unwrap().expect("the seed was minted");
         assert_eq!(claimed.character_id, id);
+    }
+
+    /// The seed the client was handed, dug back out of a `MIGRATE_COMMAND` body.
+    fn seed_from(body: &[u8]) -> u32 {
+        let key = u32::from_le_bytes(body[47..51].try_into().unwrap());
+        let raw = u32::from_le_bytes(body[55..59].try_into().unwrap());
+        let t = (key ^ raw).wrapping_add(0x369F_144D).wrapping_add(key >> 7);
+        t ^ 0xAAAA_BBBBu32
+    }
+
+    /// Select a character and return the seed the client was told to migrate with.
+    fn migrate_and_get_seed(s: &mut Session, id: u32) -> u32 {
+        let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        assert_eq!(replies[0].opcode, MIGRATE_COMMAND);
+        seed_from(&replies[0].body)
+    }
+
+    /// **The fix, end to end on the login side.** With a launcher sign-in staked, the
+    /// migration is bound to that sign-in's token, and a channel connection presenting
+    /// nothing cannot claim it - which is what the world server does today.
+    /// A session with migration binding switched on.
+    fn binding_session() -> Session {
+        let base = session();
+        let config = Config { bind_migrations: true, ..(*base.config).clone() };
+        Session::new(base.store.clone(), Arc::new(config), base.account.clone())
+    }
+
+    #[test]
+    fn a_migration_minted_under_a_live_claim_is_bound_to_it() {
+        let mut s = binding_session();
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let token = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        s.store.stake_login_claim(s.account.id, token, store::LOGIN_CLAIM_TTL_SECS).unwrap();
+
+        let seed = migrate_and_get_seed(&mut s, id);
+
+        // Presenting nothing is refused, not served.
+        assert_eq!(
+            s.store
+                .claim_migration_with(
+                    seed,
+                    &store::migration::MigrationEvidence::none(),
+                    store::migration::PeerPolicy::Record,
+                )
+                .unwrap(),
+            store::migration::ClaimOutcome::Refused(store::migration::Refusal::TokenMissing),
+            "a bound migration must not be claimable by a connection that proves nothing"
+        );
+        // And the real launcher token still gets the character in.
+        assert!(s
+            .store
+            .claim_migration_with(
+                seed,
+                &store::migration::MigrationEvidence::with_token(token),
+                store::migration::PeerPolicy::Record,
+            )
+            .unwrap()
+            .migration()
+            .is_some());
+    }
+
+    /// **The default is the old behaviour, unchanged.** A live claim with the switch off
+    /// still mints an unbound migration - because a bound one would be refused by today's
+    /// channel server and the player would simply never enter the world.
+    #[test]
+    fn binding_is_off_by_default_even_with_a_live_claim() {
+        let mut s = session();
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        s.store.stake_login_claim(s.account.id, "abc", 3600).unwrap();
+
+        let seed = migrate_and_get_seed(&mut s, id);
+        assert!(
+            !s.store.migration_binding(seed).unwrap().unwrap().token_bound,
+            "binding on by default would refuse every migration on today's channel server"
+        );
+        assert!(
+            s.store.claim_migration(seed).unwrap().is_some(),
+            "the credential-less channel server must still be able to claim it"
+        );
+    }
+
+    /// With no launcher sign-in there is nothing to bind to. The migration is minted
+    /// **unbound** and behaves exactly as it always did - the honest degradation, and the
+    /// reason the reply's log line says which of the two happened.
+    #[test]
+    fn a_migration_minted_with_no_claim_is_unbound_and_says_so() {
+        let mut s = binding_session();
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        assert!(
+            replies[0].what.contains("UNBOUND"),
+            "an unbound migration is the impersonatable case and the log must name it: {}",
+            replies[0].what
+        );
+        assert!(s.store.claim_migration(seed_from(&replies[0].body)).unwrap().is_some());
+    }
+
+    /// The reply must still be a `MIGRATE_COMMAND` in every branch. An unanswered
+    /// select-character freezes the client's entire UI, including the quit prompt, so no
+    /// binding failure may turn into silence.
+    #[test]
+    fn every_binding_outcome_still_answers_the_client() {
+        for stake in [false, true] {
+            let mut s = session();
+            s.handle(&create_request("Wanderer", 30030, &STYLE));
+            let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+            if stake {
+                s.store.stake_login_claim(s.account.id, "abc", 3600).unwrap();
+            }
+            let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+            assert_eq!(replies.len(), 1, "stake={stake}");
+            assert_eq!(replies[0].opcode, MIGRATE_COMMAND, "stake={stake}");
+        }
+    }
+
+    /// The address is recorded when the socket had one, and its absence is not an error.
+    #[test]
+    fn the_peer_address_is_recorded_on_the_migration_when_there_is_one() {
+        let base = session();
+        let mut s = Session::new(base.store.clone(), base.config.clone(), base.account.clone())
+            .with_peer("203.0.113.7");
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let seed = migrate_and_get_seed(&mut s, id);
+
+        let binding = s.store.migration_binding(seed).unwrap().expect("the row was minted");
+        assert_eq!(binding.peer.as_deref(), Some("203.0.113.7"));
+        assert!(!binding.token_bound, "no claim was staked, so nothing to bind to");
     }
 
     /// A world that advertises a channel it has no address for would send the client
