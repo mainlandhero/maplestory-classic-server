@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Install MapleCW on a machine that has nothing on it.
 
@@ -121,10 +121,10 @@ if (-not $NoAccount) {
     }
     Write-Host ''
     Write-Host 'More accounts at any time:' -ForegroundColor Cyan
-    Write-Host "  `"$useradd`" --db `"$db`" <name> --email <address>"
+    Write-Host "  & `"$useradd`" --db `"$db`" <name> --email <address>"
 } else {
     Write-Host 'skipping account creation (-NoAccount)' -ForegroundColor Yellow
-    Write-Host "create one before launching:  `"$useradd`" --db `"$db`" <name>"
+    Write-Host "create one before launching:  & `"$useradd`" --db `"$db`" <name>"
 }
 
 # ---------------------------------------------------------------- launcher config

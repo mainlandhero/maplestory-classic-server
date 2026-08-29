@@ -46,7 +46,7 @@ if ($Stop) {
 if (-not (Test-Path $db)) {
     throw @"
 no database at $db - create an account first:
-  "$bin\maplecw-useradd.exe" --db "$db" <name>
+  & "$bin\maplecw-useradd.exe" --db "$db" <name>
 "@
 }
 

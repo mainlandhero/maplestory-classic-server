@@ -36,7 +36,10 @@ RUN
 
 2. Run the launcher - there is a desktop shortcut, or:
 
-       "C:\MapleCW\maplecw-launcher.exe"
+       & "C:\MapleCW\maplecw-launcher.exe"
+
+   The leading & is required. PowerShell reads a line starting with a quoted string as
+   a string, not a command, so without it you get "Unexpected token".
 
 3. Type the account name (or its email) and the password, check the server IP, and press
    Login. When it succeeds, Start Game becomes available. Start Game installs the GameGuard
@@ -49,8 +52,8 @@ manifest, not something this launcher asks for.
 MORE ACCOUNTS
 -------------
 
-    "C:\MapleCW\bin\maplecw-useradd.exe" --db "C:\MapleCW\maplecw.db" <name> --email <addr>
-    "C:\MapleCW\bin\maplecw-useradd.exe" --db "C:\MapleCW\maplecw.db" --list
+    & "C:\MapleCW\bin\maplecw-useradd.exe" --db "C:\MapleCW\maplecw.db" <name> --email <addr>
+    & "C:\MapleCW\bin\maplecw-useradd.exe" --db "C:\MapleCW\maplecw.db" --list
 
 Each account has its own characters. The launcher decides which one is playing; sign in
 again as someone else and press Start Game to swap. You do not need to restart the servers.

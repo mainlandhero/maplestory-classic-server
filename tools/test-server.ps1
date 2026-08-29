@@ -1074,8 +1074,12 @@ if ($Launcher) {
     Write-Host '  Login, then Start Game. The login server picks up whoever you signed in'
     Write-Host '  as - it is resolved per connection now, so no restart is needed to swap.'
     Write-Host ''
-    Write-Host ("  accounts:  `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" --list" -f $root, $Database)
-    Write-Host ("  add one:   `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" <name> --email <addr>" -f $root, $Database)
+    # The leading `&` is REQUIRED and is not decoration. PowerShell parses a line that starts
+    # with a quoted string as a string expression, not as a command, so pasting one of these
+    # without it fails with "Unexpected token 'db'" and "The '--' operator works only on
+    # variables". Every pasteable line in this repo that starts with a quoted path needs it.
+    Write-Host ("  accounts:  & `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" --list" -f $root, $Database)
+    Write-Host ("  add one:   & `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" <name> --email <addr>" -f $root, $Database)
     Write-Host ''
     Start-Process -FilePath $launcherExe -WorkingDirectory $root | Out-Null
     Write-Host 'launcher started. Stop the servers when done:' -ForegroundColor Green
