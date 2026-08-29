@@ -44,7 +44,7 @@ $bin  = Join-Path $root 'bin'
 $db   = Join-Path $root 'maplecw.db'
 
 function Stop-All {
-    foreach ($n in @('maplecw-login', 'maplecw-world')) {
+    foreach ($n in @('maplecw-login', 'maplecw-world', 'maplecw-auth')) {
         Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force
     }
 }
@@ -104,6 +104,23 @@ $login = Start-Process -FilePath (Join-Path $bin 'maplecw-login.exe') -WorkingDi
     -RedirectStandardError  (Join-Path $root 'login.log.err')
 Write-Host "login server  pid $($login.Id)  $($Bind):$Port  fallback account '$Account'"
 $watched += $login
+
+# THE SIGN-IN SERVICE, and on an installed box it must be REACHABLE.
+#
+# The launcher on a client machine has no database to read, so it signs in over HTTP to this
+# service. Bound to $Bind - which defaults to 0.0.0.0 here, unlike the dev script - because a
+# loopback bind would mean only this machine could ever log in.
+#
+# THE PASSWORD CROSSES THE WIRE IN PLAIN TEXT. That is stated in crates/launcher/src/http.rs
+# and in docs/deployment.md, and it is the price of being installable at all. This is a test
+# server on a network you control; do not put it on the internet.
+$authArgs = @('--db', "$db", '--bind', "$Bind", '--port', '8080')
+$auth = Start-Process -FilePath (Join-Path $bin 'maplecw-auth.exe') -WorkingDirectory $root `
+    -ArgumentList $authArgs -PassThru -NoNewWindow `
+    -RedirectStandardOutput (Join-Path $root 'auth.log') `
+    -RedirectStandardError  (Join-Path $root 'auth.log.err')
+Write-Host "sign-in       pid $($auth.Id)  $($Bind):8080  <- the launcher signs in here"
+$watched += $auth
 
 for ($ch = 0; $ch -lt $Channels; $ch++) {
     $chLog = if ($ch -eq 0) { 'world.log' } else { "world-ch$ch.log" }

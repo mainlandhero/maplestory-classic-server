@@ -165,7 +165,8 @@ $binaries = @(
     @{ From = 'grap64.dll';           To = '.';    Why = 'the GameGuard stub the launcher installs' },
     @{ From = 'maplecw-login.exe';    To = 'bin';  Why = 'the login / character-select server' },
     @{ From = 'maplecw-world.exe';    To = 'bin';  Why = 'a channel server' },
-    @{ From = 'maplecw-useradd.exe';  To = 'bin';  Why = 'creates the first account' }
+    @{ From = 'maplecw-useradd.exe';  To = 'bin';  Why = 'creates the first account' },
+    @{ From = 'maplecw-auth.exe';     To = 'bin';  Why = 'the sign-in service the launcher posts to' }
 )
 foreach ($b in $binaries) {
     if (-not (Test-Path (Join-Path $rel $b.From))) {

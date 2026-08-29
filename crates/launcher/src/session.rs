@@ -16,15 +16,13 @@
 //! byte-identical to a run without them. Passing them also broke the run with a "trouble
 //! connecting" dialog, which is why [`crate::app`] passes exactly three arguments.
 
-use std::path::{Path, PathBuf};
-
-use store::{AuthOutcome, Store, LOGIN_CLAIM_TTL_SECS};
+use crate::http::{self, AuthReply};
 
 /// The result of a sign-in attempt, in the shape the UI needs.
 ///
-/// The session token is deliberately **not** carried out of this module. It is a secret, it
-/// has already been staked into the claim the login server reads, and the UI has no use for
-/// it - so it is dropped where it is created rather than trusted to every later line of code.
+/// The session token is deliberately **not** carried out of this module - in fact it never
+/// reaches this machine at all now. The auth service stakes the login claim itself, because
+/// the launcher on a client machine cannot: there is no database there to write to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignIn {
     Ok {
@@ -35,11 +33,9 @@ pub enum SignIn {
     /// Wrong password, or no such account. **One outcome, on purpose.**
     BadCredentials,
     Disabled,
-    /// The database file is not there. Distinct from every other failure because it is the
-    /// one with a fix the user can carry out.
-    NoDatabase(PathBuf),
-    /// Anything else: the store said so.
-    Failed(String),
+    /// The sign-in service could not be reached, or did not answer usefully. Distinct from a
+    /// refusal because it is the one with a fix the person can carry out.
+    Unreachable(String),
 }
 
 impl SignIn {
@@ -56,252 +52,126 @@ impl SignIn {
                 human_duration(*ttl_secs)
             ),
             // `store::AuthOutcome::InvalidCredentials` does not distinguish a bad name from a
-            // bad password - telling them apart lets an attacker enumerate account names -
-            // so this must not invent a distinction the store refuses to make.
+            // bad password - telling them apart lets an attacker enumerate account names - so
+            // this must not invent a distinction the service refuses to make.
             SignIn::BadCredentials => {
-                "that email/account name and password do not match an account".into()
+                "that email or account name and password do not match. (The server will not \
+                 say which of the two was wrong.)"
+                    .to_string()
             }
-            SignIn::Disabled => "that account is disabled".into(),
-            SignIn::NoDatabase(p) => format!(
-                "no database at {} - create an account first with maplecw-useradd",
-                p.display()
-            ),
-            SignIn::Failed(e) => format!("sign-in failed: {e}"),
+            SignIn::Disabled => "that account is disabled.".to_string(),
+            SignIn::Unreachable(why) => why.clone(),
         }
     }
 }
 
-/// `43200` is a true answer to "how long does the claim last" and a useless one on screen.
-fn human_duration(secs: i64) -> String {
-    match secs {
-        s if s <= 0 => "no time at all".to_string(),
-        s if s % 3600 == 0 && s >= 3600 => {
-            let h = s / 3600;
-            format!("{h} hour{}", if h == 1 { "" } else { "s" })
-        }
-        s if s % 60 == 0 && s >= 60 => {
-            let m = s / 60;
-            format!("{m} minute{}", if m == 1 { "" } else { "s" })
-        }
-        s => format!("{s} seconds"),
-    }
-}
-
-/// Verify a password and stake the login claim.
+/// Sign in against the server's auth service.
 ///
-/// Slow on purpose: argon2id is the point. Call it off the UI thread.
-pub fn sign_in(db_path: &Path, identity: &str, password: &str) -> SignIn {
-    // **Check the file before opening it.** `Store::open` creates a database that is not
-    // there, so without this a mistyped path would produce an empty database and every
-    // sign-in would come back "wrong password" - which is exactly the failure this project
-    // keeps writing down: a clean, confident answer from an instrument pointed at nothing.
-    if !db_path.is_file() {
-        return SignIn::NoDatabase(db_path.to_path_buf());
+/// **Over the network, always - there is no local-database shortcut.** The owner, 2026-08-29:
+/// *"everyone installs this differently, on a client machine you won't have access to the
+/// project or the database."* Two auth paths would mean the dev box exercised the file and
+/// every other machine the socket, and the socket would be the one nobody tried.
+///
+/// `crate::http` carries the warning that matters: the password crosses the wire in plain
+/// text, which is acceptable for a test server on a network you control and nothing else.
+pub fn sign_in(host: &str, auth_port: u16, identity: &str, password: &str) -> SignIn {
+    if identity.trim().is_empty() {
+        return SignIn::BadCredentials;
     }
+    match http::login(host, auth_port, identity, password) {
+        AuthReply::Ok { account_id, .. } => SignIn::Ok {
+            account_id,
+            identity: identity.to_string(),
+            ttl_secs: LOGIN_CLAIM_TTL_SECS,
+        },
+        AuthReply::InvalidCredentials => SignIn::BadCredentials,
+        AuthReply::Disabled => SignIn::Disabled,
+        AuthReply::Failed(why) => SignIn::Unreachable(why),
+    }
+}
 
-    let store = match Store::open(db_path) {
-        Ok(s) => s,
-        Err(e) => return SignIn::Failed(format!("could not open {}: {e}", db_path.display())),
+/// The claim lifetime, for the message only.
+///
+/// Duplicated from `store` rather than depended on: the launcher no longer needs the store at
+/// all, and keeping a database crate in a client-machine binary to read one integer would be
+/// carrying rusqlite onto machines that have no database. If it ever drifts the message is
+/// slightly wrong, which is the cheapest possible failure here.
+const LOGIN_CLAIM_TTL_SECS: i64 = 12 * 3600;
+
+/// `43200` reads badly on screen. This says "12 hours".
+///
+/// Whole units only where they divide exactly, so "90 seconds" stays 90 seconds rather than
+/// becoming "1 minute" and quietly losing half of itself.
+fn human_duration(secs: i64) -> String {
+    if secs <= 0 {
+        return "no time at all".to_string();
+    }
+    let plural = |n: i64, unit: &str| {
+        if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") }
     };
-
-    let outcome = match store.authenticate_identity(identity, password) {
-        Ok(o) => o,
-        Err(e) => return SignIn::Failed(e.to_string()),
-    };
-
-    match outcome {
-        AuthOutcome::InvalidCredentials => SignIn::BadCredentials,
-        AuthOutcome::Disabled => SignIn::Disabled,
-        AuthOutcome::Ok { account_id, token } => {
-            match store.stake_login_claim(account_id, &token, LOGIN_CLAIM_TTL_SECS) {
-                // The claim itself is not carried out of here: nothing in the UI needs it,
-                // and it is derived from the token.
-                Ok(_claim) => SignIn::Ok {
-                    account_id,
-                    identity: identity.to_string(),
-                    ttl_secs: LOGIN_CLAIM_TTL_SECS,
-                },
-                Err(e) => SignIn::Failed(format!("could not stake the login claim: {e}")),
-            }
-        }
+    if secs % 3600 == 0 {
+        plural(secs / 3600, "hour")
+    } else if secs % 60 == 0 {
+        plural(secs / 60, "minute")
+    } else {
+        plural(secs, "second")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::TempDir;
 
     #[test]
-    fn a_missing_database_is_reported_as_such_and_never_created() {
-        // `Store::open` would happily create one, and then every password would be wrong for
-        // a reason nobody could see.
-        let t = TempDir::new("nodb");
-        let db = t.path().join("maplecw.db");
-        let outcome = sign_in(&db, "wisp", "hunter2");
-        assert_eq!(outcome, SignIn::NoDatabase(db.clone()));
-        assert!(!db.exists(), "sign_in created a database that was not there");
+    fn an_empty_identity_is_refused_without_touching_the_network() {
+        // Not a round trip: an empty box is a mistake, and making the server say so would
+        // cost an argon2id verify and a message that reads as if the server were at fault.
+        assert_eq!(sign_in("127.0.0.1", 1, "   ", "whatever"), SignIn::BadCredentials);
     }
 
     #[test]
-    fn the_four_failures_do_not_read_alike() {
-        let messages = [
-            SignIn::BadCredentials.message(),
-            SignIn::Disabled.message(),
-            SignIn::NoDatabase(PathBuf::from(r"C:\x\maplecw.db")).message(),
-            SignIn::Failed("disk is on fire".into()).message(),
-        ];
-        let unique: std::collections::HashSet<_> = messages.iter().collect();
-        assert_eq!(unique.len(), 4, "{messages:?}");
-        assert!(messages[2].contains(r"C:\x\maplecw.db"), "{}", messages[2]);
-        assert!(messages[3].contains("disk is on fire"), "{}", messages[3]);
-    }
-
-    #[test]
-    fn bad_credentials_does_not_claim_to_know_which_half_was_wrong() {
-        let msg = SignIn::BadCredentials.message();
-        let lower = msg.to_ascii_lowercase();
-        assert!(
-            !lower.contains("no such account") && !lower.contains("wrong password"),
-            "the store refuses to distinguish these; the UI must not invent it: {msg}"
-        );
-    }
-
-    #[test]
-    fn the_success_line_names_the_account_and_says_what_the_claim_does() {
+    fn a_success_names_the_account_and_the_claim_lifetime() {
         let msg = SignIn::Ok {
-            account_id: 7,
-            identity: "wisp@example.com".into(),
-            ttl_secs: 120,
-        }
-        .message();
-        assert!(msg.contains("wisp@example.com"), "{msg}");
-        assert!(msg.contains('7'), "{msg}");
-        assert!(msg.contains("2 minutes"), "{msg}");
-        // It has to say what the claim actually does, or "signed in" reads as "authenticated".
-        assert!(msg.contains("served as this account"), "{msg}");
-    }
-
-    #[test]
-    fn the_success_line_does_not_carry_a_token() {
-        // The token is a secret and this type deliberately has nowhere to put one.
-        let msg = SignIn::Ok {
-            account_id: 1,
-            identity: "wisp".into(),
+            account_id: 2,
+            identity: "tester@example.test".into(),
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
         }
         .message();
-        assert!(!msg.to_ascii_lowercase().contains("token"), "{msg}");
+        assert!(msg.contains("tester@example.test"), "{msg}");
+        assert!(msg.contains("account 2"), "{msg}");
+        assert!(msg.contains("12 hours"), "43200 reads badly on screen: {msg}");
     }
 
-    // ---- against a real database ----
-    //
-    // Everything above this line is about shapes and wording. These drive the actual store:
-    // argon2id, the claim row, and the account the login server would then resolve. Without
-    // them the whole sign-in path is untested end to end, which is the first thing anyone
-    // touches and the last thing that gets covered.
-
-    fn db_with_two_accounts(dir: &Path) -> PathBuf {
-        let path = dir.join("maplecw.db");
-        let store = Store::open(&path).expect("open a fresh database");
-        store.create_account("player_one", "correct horse battery").unwrap();
-        store.create_account("player_two", "correct horse battery").unwrap();
-        store.set_email("player_one", Some("wisp@example.test")).unwrap();
-        path
+    /// The refusal must not invent a distinction the server refuses to make. Telling a bad
+    /// name from a bad password is an account-enumeration oracle, which is why
+    /// `AuthOutcome::InvalidCredentials` is one variant on the server side too.
+    #[test]
+    fn a_refusal_does_not_say_which_half_was_wrong() {
+        let msg = SignIn::BadCredentials.message();
+        let lower = msg.to_ascii_lowercase();
+        assert!(lower.contains("do not match"), "{msg}");
+        assert!(!lower.contains("no such account"), "{msg}");
+        assert!(!lower.contains("wrong password"), "{msg}");
     }
 
     #[test]
-    fn signing_in_stakes_a_claim_the_login_server_would_resolve() {
-        let t = TempDir::new("signin-ok");
-        let db = db_with_two_accounts(t.path());
-
-        let out = sign_in(&db, "player_two", "correct horse battery");
-        let SignIn::Ok { account_id, .. } = out else {
-            panic!("expected a successful sign-in, got {out:?}");
-        };
-
-        // The claim is the whole point: it is what `login::server::resolve_account` reads.
-        let store = Store::open(&db).unwrap();
-        let claim = store.current_login_claim().unwrap().expect("a claim was staked");
-        assert_eq!(claim.account_id, account_id);
-        assert_eq!(claim.account_name, "player_two");
+    fn an_unreachable_server_shows_the_reason_it_was_given() {
+        let msg = SignIn::Unreachable("could not reach the sign-in service".into()).message();
+        assert!(msg.contains("could not reach"), "{msg}");
     }
 
     #[test]
-    fn signing_in_by_email_works_and_names_the_account_that_owns_it() {
-        let t = TempDir::new("signin-email");
-        let db = db_with_two_accounts(t.path());
-
-        let out = sign_in(&db, "wisp@example.test", "correct horse battery");
-        assert!(out.is_ok(), "{out:?}");
-
-        let store = Store::open(&db).unwrap();
-        let claim = store.current_login_claim().unwrap().unwrap();
-        assert_eq!(claim.account_name, "player_one");
-    }
-
-    #[test]
-    fn signing_in_again_as_someone_else_moves_the_claim() {
-        // This is the feature the owner asked for, in one test: more than one account on one
-        // machine, swapped without restarting anything.
-        let t = TempDir::new("signin-swap");
-        let db = db_with_two_accounts(t.path());
-
-        assert!(sign_in(&db, "player_one", "correct horse battery").is_ok());
-        assert!(sign_in(&db, "player_two", "correct horse battery").is_ok());
-
-        let store = Store::open(&db).unwrap();
-        assert_eq!(
-            store.current_login_claim().unwrap().unwrap().account_name,
-            "player_two"
-        );
-    }
-
-    #[test]
-    fn a_wrong_password_stakes_nothing() {
-        let t = TempDir::new("signin-bad");
-        let db = db_with_two_accounts(t.path());
-
-        assert_eq!(sign_in(&db, "player_one", "not-the-password"), SignIn::BadCredentials);
-
-        let store = Store::open(&db).unwrap();
-        assert!(
-            store.current_login_claim().unwrap().is_none(),
-            "a refused sign-in must not decide who plays"
-        );
-    }
-
-    #[test]
-    fn an_unknown_identity_is_refused_without_saying_it_is_unknown() {
-        let t = TempDir::new("signin-unknown");
-        let db = db_with_two_accounts(t.path());
-        // Same variant as a wrong password, so the UI cannot leak which accounts exist.
-        assert_eq!(sign_in(&db, "nobody@example.test", "whatever"), SignIn::BadCredentials);
-    }
-
-    #[test]
-    fn a_disabled_account_is_refused_and_says_so() {
-        let t = TempDir::new("signin-disabled");
-        let db = db_with_two_accounts(t.path());
-        Store::open(&db).unwrap().set_enabled("player_one", false).unwrap();
-
-        assert_eq!(sign_in(&db, "player_one", "correct horse battery"), SignIn::Disabled);
-        assert!(Store::open(&db).unwrap().current_login_claim().unwrap().is_none());
-    }
-
-    #[test]
-    fn the_claim_survives_being_read_twice() {
-        // The log-out reconnect, from the launcher's side. `CLAUDE.md` records two 0x0010s
-        // in one launch; if reading consumed the claim the second connection would land on
-        // a different account and it would read as characters going missing.
-        let t = TempDir::new("signin-twice");
-        let db = db_with_two_accounts(t.path());
-        assert!(sign_in(&db, "player_one", "correct horse battery").is_ok());
-
-        let store = Store::open(&db).unwrap();
-        let first = store.current_login_claim().unwrap().unwrap();
-        let second = store.current_login_claim().unwrap().unwrap();
-        assert_eq!(first.account_name, second.account_name);
+    fn no_message_ever_mentions_a_token() {
+        // The token never reaches this machine now - the service stakes the claim itself -
+        // but the assertion stays, because a secret that cannot be printed is worth pinning.
+        for s in [
+            SignIn::Ok { account_id: 1, identity: "wisp".into(), ttl_secs: 3600 },
+            SignIn::BadCredentials,
+            SignIn::Disabled,
+            SignIn::Unreachable("nope".into()),
+        ] {
+            assert!(!s.message().to_ascii_lowercase().contains("token"), "{:?}", s);
+        }
     }
 
     #[test]

@@ -10,11 +10,13 @@
 //!
 //! 1. **`maplecw-launcher.toml` beside the executable.** Applied per key, so a config that
 //!    only sets `server_ip` still gets its paths from 2 or 3.
-//! 2. **The installed layout** - `client\`, `maplecw.db` and `grap64.dll` beside the exe.
+//! 2. **The installed layout** - `client\` beside the exe. That is the whole test: the
+//!    launcher carries its own GameGuard stub and signs in over the network, so neither a
+//!    `grap64.dll` nor a database has to be there.
 //!    This is what the installer lays down.
 //! 3. **The dev layout** - walk up from the exe (which lives in `target\debug\` or
 //!    `target\release\`) until a directory containing `client-patched\MapleStory.exe` turns
-//!    up. That directory is the repo root; the database is `maplecw.db` in it and the stub is
+//!    up. That directory is the repo root, and the stub is
 //!    `target\<profile>\grap64.dll`, which is where `cargo build -p grap-stub` puts it.
 //!
 //! If none of them matches, the layout is still *filled in* with the installed shape and
@@ -32,7 +34,6 @@ pub const INSTALLED_CLIENT_DIR: &str = "client";
 /// The directory name a repo checkout uses. `client-patched\` exists so the original client
 /// is never touched - a standing constraint, see `CLAUDE.md`.
 pub const DEV_CLIENT_DIR: &str = "client-patched";
-pub const DB_FILE_NAME: &str = "maplecw.db";
 pub const STUB_FILE_NAME: &str = "grap64.dll";
 
 /// **The dev-layout stub is always the `release` one, whatever profile the launcher itself
@@ -55,8 +56,15 @@ pub const STUB_FILE_NAME: &str = "grap64.dll";
 pub const STUB_PROFILE: &str = "release";
 
 pub const DEFAULT_SERVER_IP: &str = "127.0.0.1";
-/// `tools/test-server.ps1`'s `-Port` default.
+/// `tools/test-server.ps1`'s `-Port` default. The GAME port, handed to the client.
 pub const DEFAULT_PORT: u16 = 8484;
+
+/// Where `crates/auth` listens. `auth::DEFAULT_PORT`.
+///
+/// A second number rather than a derived one, because the two services are separate
+/// processes: a machine can reach the game port and not the sign-in port, or the reverse, and
+/// folding them together would make "wrong port" and "server down" the same report.
+pub const DEFAULT_AUTH_PORT: u16 = 8080;
 
 /// How far up from the executable the dev-layout walk goes. `target\debug\` is two, and a
 /// few more cover `target\<triple>\debug\` and an examples subdirectory.
@@ -96,7 +104,8 @@ pub struct Layout {
     pub config_problems: Vec<String>,
 
     pub client_dir: PathBuf,
-    pub db_path: PathBuf,
+    /// The GameGuard stub to install, when one is on disk. A launcher that carries its own
+    /// (the normal case) never reads it - see `crate::stub`.
     pub stub_path: PathBuf,
     /// Where run output goes: `previous-runs\` and `dumps\` are created under this. The repo
     /// root in a dev layout, so archived hook logs land beside the archived `world.log`s
@@ -105,6 +114,12 @@ pub struct Layout {
 
     pub server_ip: String,
     pub port: u16,
+    /// Where the sign-in service listens - `crates/auth`, default 8080.
+    ///
+    /// Separate from `port`, which is the GAME port the client is handed. They are two
+    /// different services and a machine can legitimately reach one and not the other; folding
+    /// them into one number would make "wrong port" and "server down" the same report.
+    pub auth_port: u16,
 }
 
 impl Layout {
@@ -164,12 +179,12 @@ impl Layout {
         }
         out.push_str(&format!("client    {}\n", self.client_dir.display()));
         out.push_str(&format!("exe       {}\n", self.client_exe().display()));
-        out.push_str(&format!("database  {}\n", self.db_path.display()));
         out.push_str(&format!("stub      {}\n", self.stub_path.display()));
         out.push_str(&format!("output    {}\n", self.data_root.display()));
         out.push_str(&format!("archives  {}\n", self.previous_runs_dir().display()));
         out.push_str(&format!("dumps     {}\n", self.dumps_dir().display()));
-        out.push_str(&format!("server    {}:{}\n", self.server_ip, self.port));
+        out.push_str(&format!("game      {}:{}\n", self.server_ip, self.port));
+        out.push_str(&format!("sign-in   {}:{}\n", self.server_ip, self.auth_port));
         for problem in &self.config_problems {
             out.push_str(&format!("CONFIG    {problem}\n"));
         }
@@ -195,15 +210,22 @@ impl Layout {
         if !self.client_exe().is_file() {
             out.push(format!("no {} at {}", CLIENT_EXE_NAME, self.client_exe().display()));
         }
-        if !self.db_path.is_file() {
+        // **A MISSING DATABASE IS NOT A PROBLEM.** The owner, 2026-08-29: *"everyone installs this
+        // differently, on a client machine you won't have access to the project or the
+        // database."* Sign-in goes to the server's auth service over the network now, so a
+        // client machine legitimately has no `maplecw.db` at all - and reporting one as a
+        // fault would send somebody hunting for a file that is not meant to be there.
+        //
+        // The path is still resolved and still shown, because a machine that DOES have one
+        // (the dev box) benefits from seeing which, and because `--print-paths` is the only
+        // way to check resolution without a window.
+        if !self.stub_path.is_file() && crate::stub::EMBEDDED.is_none() {
+            // Only when there is no built-in copy either. A launcher that carries its own
+            // stub does not need one on disk, which is the whole point of embedding it - and
+            // complaining about a file it will never read would be a false alarm.
             out.push(format!(
-                "no database at {} - create an account first with maplecw-useradd",
-                self.db_path.display()
-            ));
-        }
-        if !self.stub_path.is_file() {
-            out.push(format!(
-                "no GameGuard stub at {} - build it with `cargo build --release -p grap-stub`",
+                "no GameGuard stub at {} and none compiled in - build it with `cargo build \
+                 --release -p grap-stub`",
                 self.stub_path.display()
             ));
         }
@@ -227,7 +249,7 @@ pub fn resolve() -> Layout {
 /// The whole of the resolution, driven by a directory rather than by the process, so the
 /// precedence order is testable with temp dirs.
 pub fn resolve_from(exe_dir: &Path) -> Layout {
-    let (base_source, client_dir, db_path, stub_path, data_root) = base_layout(exe_dir);
+    let (base_source, client_dir, stub_path, data_root) = base_layout(exe_dir);
 
     let mut layout = Layout {
         exe_dir: exe_dir.to_path_buf(),
@@ -236,11 +258,11 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
         config_applied: Vec::new(),
         config_problems: Vec::new(),
         client_dir,
-        db_path,
         stub_path,
         data_root,
         server_ip: DEFAULT_SERVER_IP.to_string(),
         port: DEFAULT_PORT,
+        auth_port: DEFAULT_AUTH_PORT,
     };
 
     if let Some((path, cfg)) = config::load(exe_dir) {
@@ -268,10 +290,6 @@ fn apply_config(layout: &mut Layout, cfg: &LauncherConfig, exe_dir: &Path) {
         layout.client_dir = absolutise(exe_dir, v);
         layout.config_applied.push("client_dir".into());
     }
-    if let Some(v) = &cfg.db_path {
-        layout.db_path = absolutise(exe_dir, v);
-        layout.config_applied.push("db_path".into());
-    }
     if let Some(v) = &cfg.stub_path {
         layout.stub_path = absolutise(exe_dir, v);
         layout.config_applied.push("stub_path".into());
@@ -280,18 +298,21 @@ fn apply_config(layout: &mut Layout, cfg: &LauncherConfig, exe_dir: &Path) {
         layout.server_ip = v.clone();
         layout.config_applied.push("server_ip".into());
     }
+    if let Some(v) = cfg.auth_port {
+        layout.auth_port = v;
+        layout.config_applied.push("auth_port".into());
+    }
     if let Some(v) = cfg.port {
         layout.port = v;
         layout.config_applied.push("port".into());
     }
 }
 
-fn base_layout(exe_dir: &Path) -> (Source, PathBuf, PathBuf, PathBuf, PathBuf) {
+fn base_layout(exe_dir: &Path) -> (Source, PathBuf, PathBuf, PathBuf) {
     if let Some(client_dir) = installed_client_dir(exe_dir) {
         return (
             Source::Installed,
             client_dir,
-            exe_dir.join(DB_FILE_NAME),
             exe_dir.join(STUB_FILE_NAME),
             exe_dir.to_path_buf(),
         );
@@ -300,7 +321,6 @@ fn base_layout(exe_dir: &Path) -> (Source, PathBuf, PathBuf, PathBuf, PathBuf) {
         return (
             Source::Dev,
             root.join(DEV_CLIENT_DIR),
-            root.join(DB_FILE_NAME),
             root.join("target").join(STUB_PROFILE).join(STUB_FILE_NAME),
             root,
         );
@@ -308,7 +328,6 @@ fn base_layout(exe_dir: &Path) -> (Source, PathBuf, PathBuf, PathBuf, PathBuf) {
     (
         Source::Fallback,
         exe_dir.join(INSTALLED_CLIENT_DIR),
-        exe_dir.join(DB_FILE_NAME),
         exe_dir.join(STUB_FILE_NAME),
         exe_dir.to_path_buf(),
     )
@@ -316,10 +335,10 @@ fn base_layout(exe_dir: &Path) -> (Source, PathBuf, PathBuf, PathBuf, PathBuf) {
 
 /// The installed layout is recognised by `client\` beside the executable.
 ///
-/// Not by all three of `client\`, `maplecw.db` and `grap64.dll` being present: the database
-/// does not exist until an account is created, so requiring it would demote a real install to
-/// [`Source::Fallback`] and hide the reason. [`Layout::problems`] reports the missing pieces
-/// instead, which is the same information without the wrong verdict attached.
+/// Not by `client\` AND `grap64.dll` both being present: the launcher carries its own stub,
+/// so requiring one on disk would demote a real install to [`Source::Fallback`] and hide the
+/// reason. [`Layout::problems`] reports a genuinely missing piece instead, which is the same
+/// information without the wrong verdict attached.
 fn installed_client_dir(exe_dir: &Path) -> Option<PathBuf> {
     let dir = exe_dir.join(INSTALLED_CLIENT_DIR);
     if dir.is_dir() {
@@ -421,7 +440,6 @@ mod tests {
         let l = resolve_from(&exe_dir);
         assert_eq!(l.source, Source::Installed);
         assert_eq!(l.client_dir, exe_dir.join("client"));
-        assert_eq!(l.db_path, exe_dir.join("maplecw.db"));
         assert_eq!(l.stub_path, exe_dir.join("grap64.dll"));
         assert_eq!(l.data_root, exe_dir);
         assert!(l.problems().is_empty(), "{:?}", l.problems());
@@ -434,7 +452,6 @@ mod tests {
         let l = resolve_from(&exe_dir);
         assert_eq!(l.source, Source::Dev);
         assert_eq!(l.client_dir, root.join("client-patched"));
-        assert_eq!(l.db_path, root.join("maplecw.db"));
         assert_eq!(l.data_root, root);
         assert!(l.problems().is_empty(), "{:?}", l.problems());
     }
@@ -461,6 +478,13 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&l.stub_path).unwrap(), "the current stub");
     }
 
+    /// The stale-debug-stub trap, still. `STUB_PROFILE` is release unconditionally, so a
+    /// current `target\debug\grap64.dll` must NOT be picked up in a dev layout.
+    ///
+    /// **What changed on 2026-08-29:** a missing release stub is only a *problem* when this
+    /// launcher has none compiled in either. A build that carries its own does not need a
+    /// file it will never read, and complaining about one would be a false alarm - see
+    /// `crate::stub`. The path it resolves is unchanged and is still asserted.
     #[test]
     fn a_missing_release_stub_is_reported_and_not_replaced_by_the_debug_one() {
         let t = TempDir::new("devnorelease");
@@ -470,9 +494,22 @@ mod tests {
         let exe_dir = t.dir("repo/target/debug");
 
         let l = resolve_from(&exe_dir);
+        assert!(
+            l.stub_path.ends_with("release/grap64.dll")
+                || l.stub_path.ends_with("release\\grap64.dll"),
+            "the debug stub must never be chosen: {}",
+            l.stub_path.display()
+        );
+
         let problems = l.problems();
-        assert_eq!(problems.len(), 1, "{problems:?}");
-        assert!(problems[0].contains("cargo build --release -p grap-stub"), "{problems:?}");
+        match crate::stub::EMBEDDED {
+            // Nothing to complain about: the launcher carries its own.
+            Some(_) => assert!(problems.is_empty(), "{problems:?}"),
+            None => {
+                assert_eq!(problems.len(), 1, "{problems:?}");
+                assert!(problems[0].contains("cargo build"), "{problems:?}");
+            }
+        }
     }
 
     #[test]
@@ -511,7 +548,6 @@ mod tests {
         assert_eq!(l.server_ip, "192.168.1.20");
         assert_eq!(l.port, 9999);
         // ...and everything it did not name fell through to the installed layout.
-        assert_eq!(l.db_path, exe_dir.join("maplecw.db"));
         assert_eq!(l.stub_path, exe_dir.join("grap64.dll"));
         assert_eq!(
             l.config_applied,
@@ -532,7 +568,6 @@ mod tests {
         .unwrap();
         let l = resolve_from(&exe_dir);
         assert_eq!(l.client_dir, exe_dir.join("other"));
-        assert_eq!(l.db_path, exe_dir.join("data").join("live.db"));
     }
 
     #[test]
@@ -613,8 +648,14 @@ mod tests {
         let l = resolve_from(&exe_dir);
         assert_eq!(l.source, Source::Fallback);
         assert_eq!(l.client_dir, exe_dir.join("client"));
-        // Three problems: no client exe, no database, no stub. All named, none fatal.
-        assert_eq!(l.problems().len(), 3, "{:?}", l.problems());
+
+        // The client executable is the one thing that is ALWAYS a problem when missing:
+        // nothing can be launched without it. The database is not (sign-in is over the
+        // network) and the stub is not when one is compiled in.
+        let problems = l.problems();
+        assert!(problems.iter().any(|p| p.contains("MapleStory.exe")), "{problems:?}");
+        let expected = 1 + usize::from(crate::stub::EMBEDDED.is_none());
+        assert_eq!(problems.len(), expected, "{problems:?}");
     }
 
     #[test]
@@ -629,15 +670,27 @@ mod tests {
     }
 
     #[test]
+    /// **A missing database is NOT a problem any more**, and that is the whole point of the
+    /// 2026-08-29 change. The owner: *"on a client machine you won't have access to the project or
+    /// the database."* Sign-in goes to the server over HTTP, so an installed client
+    /// legitimately has no `maplecw.db` - and reporting one would send somebody hunting for a
+    /// file that is not meant to exist.
     fn missing_pieces_are_named_individually() {
         let t = TempDir::new("partial");
         t.file("app/client/MapleStory.exe", "client");
         let exe_dir = t.path().join("app");
         let l = resolve_from(&exe_dir);
         assert_eq!(l.source, Source::Installed);
+
         let problems = l.problems();
-        assert_eq!(problems.len(), 2, "{problems:?}");
-        assert!(problems.iter().any(|p| p.contains("database")), "{problems:?}");
-        assert!(problems.iter().any(|p| p.contains("stub")), "{problems:?}");
+        assert!(
+            !problems.iter().any(|p| p.contains("database")),
+            "a client machine has no database and that is correct: {problems:?}"
+        );
+        // The stub is still named, but only when there is no built-in copy to fall back on.
+        match crate::stub::EMBEDDED {
+            Some(_) => assert!(problems.is_empty(), "{problems:?}"),
+            None => assert!(problems.iter().any(|p| p.contains("stub")), "{problems:?}"),
+        }
     }
 }

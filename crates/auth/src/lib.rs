@@ -55,14 +55,44 @@ impl AuthService {
         Self { store }
     }
 
+    /// Authenticate, issue a token, and **stake the login claim**.
+    ///
+    /// The owner, 2026-08-29: *"everyone installs this differently, on a client machine you won't
+    /// have access to the project or the database."*
+    ///
+    /// That is why the claim is staked HERE rather than in the launcher. The launcher used to
+    /// open `maplecw.db` directly, which works on the one machine that has it and cannot work
+    /// anywhere else - a client machine has no repo, no database and no server binaries. The
+    /// only thing it can reach is this service, so this service has to do both halves: check
+    /// the password, and record who is playing.
+    ///
+    /// **The identity may be an account name or an email.** `authenticate_identity` resolves
+    /// either, and routes an unresolvable one through the same dummy argon2id verify so a bad
+    /// address does not answer faster than a bad password.
+    ///
+    /// A failed claim does **not** fail the login. The password really was right, and telling
+    /// someone their credentials are wrong because a table would not write is a lie about the
+    /// thing they can act on. It is logged and the token is still issued.
     pub fn login(&self, req: &LoginRequest) -> LoginResponse {
-        match self.store.authenticate(&req.username, &req.password) {
-            Ok(AuthOutcome::Ok { account_id, token }) => LoginResponse::Ok {
-                account_id,
-                username: req.username.clone(),
-                token,
-                expires_in: store::SESSION_TTL_SECS,
-            },
+        match self.store.authenticate_identity(&req.username, &req.password) {
+            Ok(AuthOutcome::Ok { account_id, token }) => {
+                if let Err(e) = self.store.stake_login_claim(
+                    account_id,
+                    &token,
+                    store::LOGIN_CLAIM_TTL_SECS,
+                ) {
+                    eprintln!(
+                        "auth: signed in account {account_id} but could NOT stake the login \
+                         claim: {e} - the game will be served as the fallback --account"
+                    );
+                }
+                LoginResponse::Ok {
+                    account_id,
+                    username: req.username.clone(),
+                    token,
+                    expires_in: store::SESSION_TTL_SECS,
+                }
+            }
             Ok(AuthOutcome::Disabled) => LoginResponse::Disabled,
             Ok(AuthOutcome::InvalidCredentials) => LoginResponse::InvalidCredentials,
             Err(e) => {

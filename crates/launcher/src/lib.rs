@@ -26,11 +26,13 @@
 mod app;
 mod client;
 mod config;
+mod http;
 mod launch;
 mod paths;
 mod prepare;
 mod servers;
 mod session;
+mod stub;
 
 #[cfg(test)]
 mod testutil;
@@ -43,8 +45,8 @@ maplecw-launcher [--print-paths]
   --help          this
 
 The launcher takes no server address on the command line: the window has fields for it, and
-a maplecw-launcher.toml beside the executable can set defaults (client_dir, db_path,
-stub_path, server_ip, port).";
+a maplecw-launcher.toml beside the executable can set defaults (client_dir, stub_path,
+server_ip, port, auth_port).";
 
 /// Print, or put it in a window when there is nothing to print to.
 ///

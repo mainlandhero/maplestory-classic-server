@@ -10,7 +10,8 @@
 //! this costs no dependency.
 
 use std::ffi::c_void;
-use std::path::Path;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::path::{Path, PathBuf};
 
 /// `ShellExecuteW` returns an `HINSTANCE` for historical reasons. Anything **greater than
 /// 32** means it started something; 32 and below is an error code.
@@ -178,6 +179,110 @@ fn show_box(caption: &str, text: &str, kind: u32) {
     }
 }
 
+// ---------------------------------------------------------------- the file picker
+
+#[link(name = "comdlg32")]
+extern "system" {
+    fn GetOpenFileNameW(lpofn: *mut OpenFileNameW) -> i32;
+}
+
+/// `OPENFILENAMEW`. Laid out by hand for the same reason every other Win32 struct here is:
+/// this workspace declares its FFI rather than taking a dependency for it.
+///
+/// **The size field is load-bearing and is `size_of` rather than a literal.** Windows
+/// switches struct version on it, and a wrong value is `CDERR_STRUCTSIZE` - which
+/// `GetOpenFileNameW` reports by returning 0, exactly as a user pressing Cancel does. A
+/// hard-coded number here would make "the dialog is broken" and "you cancelled" the same
+/// answer, which is the class of mistake `CLAUDE.md` is full of.
+#[repr(C)]
+struct OpenFileNameW {
+    l_struct_size: u32,
+    hwnd_owner: *mut c_void,
+    h_instance: *mut c_void,
+    lpstr_filter: *const u16,
+    lpstr_custom_filter: *mut u16,
+    n_max_cust_filter: u32,
+    n_filter_index: u32,
+    lpstr_file: *mut u16,
+    n_max_file: u32,
+    lpstr_file_title: *mut u16,
+    n_max_file_title: u32,
+    lpstr_initial_dir: *const u16,
+    lpstr_title: *const u16,
+    flags: u32,
+    n_file_offset: u16,
+    n_file_extension: u16,
+    lpstr_def_ext: *const u16,
+    l_cust_data: isize,
+    lpfn_hook: *mut c_void,
+    lp_template_name: *const u16,
+    pv_reserved: *mut c_void,
+    dw_reserved: u32,
+    flags_ex: u32,
+}
+
+const OFN_FILEMUSTEXIST: u32 = 0x0000_1000;
+const OFN_PATHMUSTEXIST: u32 = 0x0000_0800;
+const OFN_NOCHANGEDIR: u32 = 0x0000_0008;
+
+/// Ask the player to point at `MapleStory.exe`.
+///
+/// `None` means they cancelled **or** the dialog failed - the two are genuinely
+/// indistinguishable through this API without `CommDlgExtendedError`, and neither is worth
+/// interrupting anybody over: the field stays as it was and they can type a path instead.
+///
+/// `OFN_NOCHANGEDIR` matters more than it looks. Without it the common dialog changes the
+/// **process** working directory, and this process later launches the client with a working
+/// directory of its own - a stale cwd is the kind of thing that produces a failure three
+/// steps from its cause.
+pub fn pick_client_exe(start_in: Option<&Path>) -> Option<PathBuf> {
+    // "Label\0pattern\0...\0\0" - a double NUL ends the list.
+    let filter: Vec<u16> = "MapleStory.exe\0MapleStory.exe\0Executables\0*.exe\0All files\0*.*\0\0"
+        .encode_utf16()
+        .collect();
+    let title: Vec<u16> = "Where is MapleStory.exe?\0".encode_utf16().collect();
+    let initial: Option<Vec<u16>> = start_in.map(|p| {
+        let mut v: Vec<u16> = p.as_os_str().encode_wide().collect();
+        v.push(0);
+        v
+    });
+
+    let mut buf = vec![0u16; 1024];
+    let mut ofn = OpenFileNameW {
+        l_struct_size: std::mem::size_of::<OpenFileNameW>() as u32,
+        hwnd_owner: std::ptr::null_mut(),
+        h_instance: std::ptr::null_mut(),
+        lpstr_filter: filter.as_ptr(),
+        lpstr_custom_filter: std::ptr::null_mut(),
+        n_max_cust_filter: 0,
+        n_filter_index: 1,
+        lpstr_file: buf.as_mut_ptr(),
+        n_max_file: buf.len() as u32,
+        lpstr_file_title: std::ptr::null_mut(),
+        n_max_file_title: 0,
+        lpstr_initial_dir: initial.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+        lpstr_title: title.as_ptr(),
+        flags: OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR,
+        n_file_offset: 0,
+        n_file_extension: 0,
+        lpstr_def_ext: std::ptr::null(),
+        l_cust_data: 0,
+        lpfn_hook: std::ptr::null_mut(),
+        lp_template_name: std::ptr::null(),
+        pv_reserved: std::ptr::null_mut(),
+        dw_reserved: 0,
+        flags_ex: 0,
+    };
+
+    // SAFETY: every pointer above outlives the call, and `buf` is the documented size.
+    let ok = unsafe { GetOpenFileNameW(&mut ofn) };
+    if ok == 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&buf[..end])))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,3 +357,4 @@ mod tests {
         assert!(err.contains("no client executable"), "{err}");
     }
 }
+

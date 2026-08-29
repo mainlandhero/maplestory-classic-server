@@ -52,7 +52,7 @@ Write-Host ''
 # ---------------------------------------------------------------- preflight
 foreach ($needed in @('maplecw-launcher.exe', 'grap64.dll',
                       'bin\maplecw-login.exe', 'bin\maplecw-world.exe',
-                      'bin\maplecw-useradd.exe', 'gm-handbook', 'data')) {
+                      'bin\maplecw-useradd.exe', 'bin\maplecw-auth.exe', 'gm-handbook', 'data')) {
     if (-not (Test-Path (Join-Path $payload $needed))) {
         throw "the payload is incomplete - $needed is missing. Re-run tools\make-installer.ps1."
     }
@@ -150,6 +150,7 @@ db_path    = "$db"
 stub_path  = "$(Join-Path $InstallDir 'grap64.dll')"
 server_ip  = "$ServerIp"
 port       = "$Port"
+auth_port  = "8080"
 "@
 Set-Content -Path (Join-Path $InstallDir 'maplecw-launcher.toml') -Value $toml -Encoding ascii
 Write-Host ''

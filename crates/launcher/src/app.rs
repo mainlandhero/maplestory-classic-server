@@ -44,6 +44,10 @@ pub struct LauncherApp {
     password: String,
     server_ip: String,
     port_text: String,
+    /// The client directory, editable. The owner, 2026-08-29: *"We should probably let the player
+    /// choose where the MapleStory.exe is."* Held as text rather than a `PathBuf` so a
+    /// half-typed path is a half-typed path and not a resolution failure on every keystroke.
+    client_dir_text: String,
 
     signing_in: bool,
     launching: bool,
@@ -62,6 +66,7 @@ impl LauncherApp {
         let mut app = LauncherApp {
             server_ip: layout.server_ip.clone(),
             port_text: layout.port.to_string(),
+            client_dir_text: layout.client_dir.display().to_string(),
             layout,
             identity: String::new(),
             password: String::new(),
@@ -125,7 +130,11 @@ impl LauncherApp {
         // A copy goes to the worker and is dropped there. The field itself is wiped on
         // SUCCESS, not here: a failed sign-in that also silently emptied the box would have
         // The owner retyping a password to find out they had typed it right the first time.
-        let db = self.layout.db_path.clone();
+        // The SERVER checks the password, not this machine. A client machine has no
+        // database to read - `crate::http` has the whole reasoning, including the fact that
+        // the password crosses the wire in plain text.
+        let host = self.server_ip.trim().to_string();
+        let auth_port = self.layout.auth_port;
         let identity = self.identity.trim().to_string();
         let password = self.password.clone();
         let tx = self.tx.clone();
@@ -134,14 +143,49 @@ impl LauncherApp {
         self.signing_in = true;
         self.signed_in = None;
         self.status = Some((Level::Info, "checking the password (argon2id is slow on purpose)…".into()));
-        self.push(Level::Info, format!("signing in against {}", db.display()));
+        self.push(Level::Info, format!("signing in against {host}:{auth_port}"));
 
         thread::spawn(move || {
-            let outcome = session::sign_in(&db, &identity, &password);
+            let outcome = session::sign_in(&host, auth_port, &identity, &password);
             drop(password);
             let _ = tx.send(Msg::SignedIn(outcome));
             ctx.request_repaint();
         });
+    }
+
+    /// Ask for `MapleStory.exe` and keep the directory it is in.
+    ///
+    /// The dialog picks the **executable** rather than a folder, because "where is
+    /// MapleStory.exe" is the question a person can answer - a folder picker asks them to
+    /// know which of several folders is the right one.
+    fn browse_for_client(&mut self) {
+        let start = std::path::PathBuf::from(self.client_dir_text.trim());
+        let start = start.is_dir().then_some(start);
+        let Some(exe) = crate::launch::pick_client_exe(start.as_deref()) else {
+            // Cancelled, or the dialog failed. Indistinguishable through this API and not
+            // worth interrupting anybody over - the field is untouched either way.
+            return;
+        };
+        match exe.parent() {
+            Some(dir) => {
+                self.client_dir_text = dir.display().to_string();
+                self.push(Level::Good, format!("game folder set to {}", dir.display()));
+                self.commit_client_dir();
+            }
+            None => self.push(Level::Warn, format!("{} has no parent folder", exe.display())),
+        }
+    }
+
+    /// Take whatever is in the box and make it the layout's client directory.
+    ///
+    /// Called before a launch as well as after Browse, so a **typed** path counts - somebody
+    /// pasting a path and pressing Start Game should not silently launch the old one.
+    fn commit_client_dir(&mut self) {
+        let typed = self.client_dir_text.trim();
+        if typed.is_empty() || self.layout.client_dir == std::path::Path::new(typed) {
+            return;
+        }
+        self.layout.client_dir = std::path::PathBuf::from(typed);
     }
 
     fn start_launch(&mut self, ctx: &egui::Context, plan: Plan) {
@@ -273,6 +317,21 @@ impl eframe::App for LauncherApp {
                         egui::TextEdit::singleline(&mut self.port_text).desired_width(90.0),
                     );
                     ui.end_row();
+
+                    // **Where MapleStory.exe is.** Editable and browsable, because every
+                    // install is somewhere different and the resolver can only guess.
+                    ui.label("Game folder");
+                    ui.horizontal(|ui| {
+                        ui.add_enabled(
+                            !busy,
+                            egui::TextEdit::singleline(&mut self.client_dir_text)
+                                .desired_width(224.0),
+                        );
+                        if ui.add_enabled(!busy, egui::Button::new("Browse…")).clicked() {
+                            self.browse_for_client();
+                        }
+                    });
+                    ui.end_row();
                 });
 
             ui.add_space(4.0);
@@ -290,6 +349,8 @@ impl eframe::App for LauncherApp {
                 let ready = self.signed_in.is_some() && !busy;
                 let start = ui.add_enabled(ready, egui::Button::new("Start Game"));
                 if start.clicked() {
+                    // A typed path counts, not only a browsed one.
+                    self.commit_client_dir();
                     match self.port() {
                         Ok(port) => {
                             let plan = Plan {
@@ -330,7 +391,6 @@ impl eframe::App for LauncherApp {
                                 ("source", self.layout.source.label().to_string()),
                                 ("launcher", self.layout.exe_dir.display().to_string()),
                                 ("client", self.layout.client_dir.display().to_string()),
-                                ("database", self.layout.db_path.display().to_string()),
                                 ("stub", self.layout.stub_path.display().to_string()),
                                 ("output", self.layout.data_root.display().to_string()),
                                 (

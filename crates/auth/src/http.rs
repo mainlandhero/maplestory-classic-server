@@ -45,7 +45,13 @@ fn read_body(req: &mut Request) -> Result<String, String> {
 
 /// Serve until the process is stopped. Binds to loopback only.
 pub fn serve(service: Arc<AuthService>, port: u16) -> std::io::Result<()> {
-    let addr = format!("127.0.0.1:{port}");
+    serve_on(service, "127.0.0.1", port)
+}
+
+/// Serve on a chosen interface. `0.0.0.0` is what an installed server box needs, because the
+/// launcher on a client machine has no other way to reach anything.
+pub fn serve_on(service: Arc<AuthService>, bind: &str, port: u16) -> std::io::Result<()> {
+    let addr = format!("{bind}:{port}");
     let server = Server::http(&addr).map_err(|e| {
         std::io::Error::other(format!("could not bind {addr}: {e}"))
     })?;

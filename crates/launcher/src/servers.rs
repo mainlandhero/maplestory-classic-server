@@ -96,6 +96,29 @@ mod tests {
     use std::net::TcpListener;
     use std::path::Path;
 
+    /// A TCP port that is **verified closed**, not merely one that was closed a moment ago.
+    ///
+    /// The obvious version - bind an ephemeral port, drop the listener, use the number - is
+    /// flaky, and it flaked: `a_dead_local_port_names_the_command_that_fixes_it` passed alone
+    /// and failed in the full run on 2026-08-29. Tests run in parallel, and the OS is free to
+    /// hand a just-released ephemeral port straight to another test's listener - so the
+    /// "closed" port had something on it by the time the assertion looked.
+    ///
+    /// This re-checks after releasing, and retries. A test that is right most of the time is
+    /// worse than no test: it trains everyone to re-run until it goes green.
+    fn a_closed_port() -> u16 {
+        for _ in 0..50 {
+            let Ok(listener) = TcpListener::bind("127.0.0.1:0") else { continue };
+            let Ok(addr) = listener.local_addr() else { continue };
+            let port = addr.port();
+            drop(listener);
+            if !is_listening("127.0.0.1", port) {
+                return port;
+            }
+        }
+        panic!("could not find a closed port in 50 attempts");
+    }
+
     #[test]
     fn loopback_is_this_machine_and_a_lan_address_is_not() {
         assert!(is_local("127.0.0.1"));
@@ -115,9 +138,11 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
         let port = listener.local_addr().unwrap().port();
         assert!(is_listening("127.0.0.1", port), "a bound port must be seen");
-
         drop(listener);
-        assert!(!is_listening("127.0.0.1", port), "a closed port must not be seen");
+
+        // The negative half uses a re-checked port rather than this one: another test can
+        // take a just-released ephemeral port before the assertion looks at it.
+        assert!(!is_listening("127.0.0.1", a_closed_port()), "a closed port must not be seen");
     }
 
     #[test]
@@ -129,10 +154,7 @@ mod tests {
 
     #[test]
     fn a_dead_local_port_names_the_command_that_fixes_it() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
+        let port = a_closed_port();
         let err = check("127.0.0.1", port, Some(Path::new("C:\\repo"))).unwrap_err();
         assert!(err.contains("Connecting..."), "{err}");
         assert!(err.contains("test-server.ps1"), "{err}");
@@ -141,10 +163,7 @@ mod tests {
 
     #[test]
     fn without_a_repo_it_points_at_the_double_click_script() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
+        let port = a_closed_port();
         let err = check("127.0.0.1", port, None).unwrap_err();
         assert!(err.contains("start-servers.cmd"), "{err}");
         assert!(!err.contains("test-server.ps1"), "an installed machine has no tools\\: {err}");

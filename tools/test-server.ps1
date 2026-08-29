@@ -730,6 +730,12 @@ function Stop-All {
         if (Get-Process maplecw-world -ErrorAction SilentlyContinue) {
             taskkill /F /IM maplecw-world.exe | Out-Null
         }
+        # The sign-in service, added 2026-08-29. Without this it survives -Stop and holds
+        # targetelease\maplecw-auth.exe open, so the NEXT build fails with "Access is
+        # denied" against a path that says nothing about servers.
+        if (Get-Process maplecw-auth -ErrorAction SilentlyContinue) {
+            taskkill /F /IM maplecw-auth.exe | Out-Null
+        }
     } finally {
         $ErrorActionPreference = $prev
     }
@@ -892,6 +898,28 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru @s
         '--account', $Account, '--display-name', "`"$DisplayName`"", '--world', $World
     ) `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
+
+# THE SIGN-IN SERVICE. Started with the other two, and that is not optional any more.
+#
+# The launcher no longer opens maplecw.db - the owner, 2026-08-29: "on a client machine you won't
+# have access to the project or the database." Sign-in is an HTTP POST to this service, so a
+# dev run without it cannot log in either. Starting it here means the dev box exercises
+# exactly the path an installed machine does, rather than testing one and shipping the other.
+#
+# Bound to loopback here. An installed server box passes --bind 0.0.0.0; see start-server.ps1.
+$authLog = Join-Path $root 'auth.log'
+Save-PreviousLog $authLog
+Remove-Item $authLog -Force -ErrorAction SilentlyContinue
+$authExe = Join-Path $root 'target\release\maplecw-auth.exe'
+if (Test-Path $authExe) {
+    $authSrv = Start-Process -FilePath $authExe -WorkingDirectory $root -PassThru @spawn `
+        -ArgumentList @('--db', "`"$Database`"", '--bind', '127.0.0.1', '--port', '8080') `
+        -RedirectStandardOutput $authLog -RedirectStandardError "$authLog.err"
+    Write-Host "sign-in service on 127.0.0.1:8080 (pid $($authSrv.Id)), log $authLog"
+} else {
+    Write-Host "NO SIGN-IN SERVICE at $authExe - the launcher cannot log in." -ForegroundColor Red
+    Write-Host "  cargo build --release -p auth" -ForegroundColor Red
+}
 
 $worldSrv = $null
 # Every channel, not just channel 0. -ServersOnly watches all of them: a channel that dies

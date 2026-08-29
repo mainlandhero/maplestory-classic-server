@@ -70,8 +70,12 @@ pub fn prepare(layout: &Layout, log: &mut dyn FnMut(Level, String)) -> Result<()
         return Err(format!("no {} at {}", crate::paths::CLIENT_EXE_NAME, exe.display()));
     }
 
-    // 3. GameGuard.
-    for step in client::stub_gameguard(client_dir, &layout.stub_path)? {
+    // 3. GameGuard. The stub is a file on disk when there is one, and otherwise the copy
+    //    compiled into this executable - which is what lets a single .exe patch a stock
+    //    client on a machine that has nothing else on it. `crate::stub`.
+    let stub = crate::stub::resolve(&layout.stub_path, client_dir)?;
+    log(Level::Info, stub.describe());
+    for step in client::stub_gameguard(client_dir, stub.path())? {
         log(Level::Good, step);
     }
 

@@ -1,6 +1,10 @@
 //! The local authentication server.
 //!
-//!   maplecw-auth [--db <path>] [--port <port>]
+//!   maplecw-auth [--db <path>] [--bind <addr>] [--port <port>]
+//!
+//! `--bind 0.0.0.0` is what an installed server box needs: the launcher on a client machine
+//! has no repo, no database and no server binaries, so this service is the only thing it can
+//! reach. The default stays loopback - going wider is a decision somebody makes.
 
 use std::sync::Arc;
 
@@ -10,6 +14,7 @@ use store::Store;
 fn main() -> std::process::ExitCode {
     let mut db_path = String::from("maplecw.db");
     let mut port = DEFAULT_PORT;
+    let mut bind = String::from("127.0.0.1");
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -17,6 +22,10 @@ fn main() -> std::process::ExitCode {
         match args[i].as_str() {
             "--db" if i + 1 < args.len() => {
                 db_path = args[i + 1].clone();
+                i += 2;
+            }
+            "--bind" if i + 1 < args.len() => {
+                bind = args[i + 1].clone();
                 i += 2;
             }
             "--port" if i + 1 < args.len() => {
@@ -30,7 +39,7 @@ fn main() -> std::process::ExitCode {
                 i += 2;
             }
             "-h" | "--help" => {
-                println!("usage: maplecw-auth [--db <path>] [--port <port>]");
+                println!("usage: maplecw-auth [--db <path>] [--bind <addr>] [--port <port>]");
                 return std::process::ExitCode::SUCCESS;
             }
             other => {
@@ -63,7 +72,7 @@ fn main() -> std::process::ExitCode {
     }
 
     let service = Arc::new(AuthService::new(Arc::new(store)));
-    if let Err(e) = http::serve(service, port) {
+    if let Err(e) = http::serve_on(service, &bind, port) {
         eprintln!("server error: {e}");
         return std::process::ExitCode::FAILURE;
     }

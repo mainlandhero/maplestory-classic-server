@@ -12,7 +12,7 @@
 //! ```text
 //! # a comment
 //! client_dir = "C:\MapleCW\client"     ; also a comment
-//! db_path    = maplecw.db              # unquoted values work, and are trimmed
+//! stub_path  = grap64.dll              # unquoted values work, and are trimmed
 //! stub_path  = grap64.dll
 //! server_ip  = 192.168.1.20
 //! port       = 8484
@@ -29,15 +29,16 @@ pub const CONFIG_FILE_NAME: &str = "maplecw-launcher.toml";
 
 /// Every key this reader understands. Anything else is reported rather than ignored, because
 /// a typo'd key that silently does nothing is the same failure mode as a stale instrument.
-pub const KNOWN_KEYS: &[&str] = &["client_dir", "db_path", "stub_path", "server_ip", "port"];
+pub const KNOWN_KEYS: &[&str] =
+    &["client_dir", "stub_path", "server_ip", "port", "auth_port"];
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LauncherConfig {
     pub client_dir: Option<String>,
-    pub db_path: Option<String>,
     pub stub_path: Option<String>,
     pub server_ip: Option<String>,
     pub port: Option<u16>,
+    pub auth_port: Option<u16>,
     /// Lines that could not be used, with a reason. Surfaced in the UI; never fatal.
     pub problems: Vec<String>,
 }
@@ -46,7 +47,6 @@ impl LauncherConfig {
     /// Did the file actually set anything?
     pub fn is_empty(&self) -> bool {
         self.client_dir.is_none()
-            && self.db_path.is_none()
             && self.stub_path.is_none()
             && self.server_ip.is_none()
             && self.port.is_none()
@@ -93,9 +93,24 @@ pub fn parse(text: &str) -> LauncherConfig {
         }
         match key.as_str() {
             "client_dir" => cfg.client_dir = Some(value),
-            "db_path" => cfg.db_path = Some(value),
+            // Accepted and IGNORED rather than rejected. Every installer written before
+            // 2026-08-29 writes this key, and answering an old config file with "unknown
+            // key" would read as the file being wrong when it is merely out of date.
+            "db_path" => cfg.problems.push(format!(
+                "line {line_no}: db_path is obsolete and was ignored - sign-in goes to the \
+                 server over the network now, so this machine needs no database"
+            )),
             "stub_path" => cfg.stub_path = Some(value),
             "server_ip" => cfg.server_ip = Some(value),
+            "auth_port" => match value.parse::<u16>() {
+                Ok(0) => cfg
+                    .problems
+                    .push(format!("line {line_no}: auth_port 0 is not a port, ignored")),
+                Ok(v) => cfg.auth_port = Some(v),
+                Err(_) => cfg.problems.push(format!(
+                    "line {line_no}: auth_port {value:?} is not a number 1..=65535, ignored"
+                )),
+            },
             "port" => match value.parse::<u16>() {
                 Ok(0) => cfg
                     .problems
@@ -157,8 +172,8 @@ mod tests {
 
     #[test]
     fn unquoted_values_are_trimmed_and_lose_trailing_comments() {
-        let cfg = parse("db_path =   maplecw.db   # the database\nserver_ip = 10.0.0.5");
-        assert_eq!(cfg.db_path.as_deref(), Some("maplecw.db"));
+        let cfg = parse("stub_path =   grap64.dll   # the stub\nserver_ip = 10.0.0.5");
+        assert_eq!(cfg.stub_path.as_deref(), Some("grap64.dll"));
         assert_eq!(cfg.server_ip.as_deref(), Some("10.0.0.5"));
         assert!(cfg.problems.is_empty(), "{:?}", cfg.problems);
     }
