@@ -44,14 +44,90 @@ use std::time::Duration;
 /// unreachable. It is also why the sign-in runs off the UI thread.
 const TIMEOUT: Duration = Duration::from_secs(20);
 
+/// **A one-purpose handle, kept out of `Debug`.**
+///
+/// The service hands this back at sign-in so the launcher can say "the client I just started
+/// is process N, and it belongs to my claim". It is not the session token and cannot stand in
+/// for one - `store::StakedClaim` has the whole reasoning - but it is still a random secret,
+/// and `{:?}` on a struct is how a secret reaches a log without anybody deciding to put it
+/// there. So `Debug` redacts and [`LaunchId::as_str`] is the only way out.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LaunchId(String);
+
+impl LaunchId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    /// True when the service could not stake a claim and sent an empty handle. The launcher
+    /// must say so rather than posting it and reading the refusal back.
+    pub fn is_empty(&self) -> bool {
+        self.0.trim().is_empty()
+    }
+}
+
+impl std::fmt::Debug for LaunchId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.is_empty() { "LaunchId(<none>)" } else { "LaunchId(<redacted>)" })
+    }
+}
+
 /// What the auth service said.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthReply {
-    Ok { account_id: i64, username: String },
+    Ok {
+        account_id: i64,
+        username: String,
+        /// The handle for [`bind_launch`]. Empty when the service signed the person in but
+        /// could not stake a claim - which it reports rather than failing the login, because
+        /// the password really was right.
+        launch_id: LaunchId,
+    },
     InvalidCredentials,
     Disabled,
     /// Anything else: unreachable, a non-200, a body that did not parse.
     Failed(String),
+}
+
+/// What `POST /launch` said.
+///
+/// **None of these is fatal**, and that is the point of having three of them. The client can be
+/// started either way; what changes is whether the login server can tell this launch from
+/// somebody else's on the same machine. The launcher prints the sentence and carries on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchReply {
+    /// The process is bound to this launch's claim.
+    Bound { pid: u32 },
+    /// The handle named no live claim - stale, expired, or Login was pressed again.
+    UnknownLaunch,
+    /// Unreachable, a non-200, or a body that did not parse.
+    Failed(String),
+}
+
+impl LaunchReply {
+    /// The line the log pane shows. The two unhappy ones have to say what they cost, because
+    /// on a single-player machine nothing goes wrong and the failure only appears months later
+    /// when somebody else signs in.
+    pub fn message(&self) -> String {
+        match self {
+            LaunchReply::Bound { pid } => format!(
+                "this launch is registered as process {pid} - the server will serve it as your \
+                 account even if somebody else is signed in on this machine"
+            ),
+            LaunchReply::UnknownLaunch => "the server did not recognise this launch (the \
+                 sign-in may have expired, or Login was pressed again). The client still \
+                 starts; if somebody else is signed in on this machine the game will be \
+                 served as the server's fallback account rather than yours - sign in again"
+                .to_string(),
+            LaunchReply::Failed(why) => format!(
+                "this launch could not be registered: {why}. The client still starts; if \
+                 somebody else is signed in on this machine the game will be served as the \
+                 server's fallback account rather than yours"
+            ),
+        }
+    }
 }
 
 /// `POST /login` with an identity and a password.
@@ -59,6 +135,10 @@ pub enum AuthReply {
 /// The **token is deliberately not returned.** The service stakes the login claim itself, so
 /// nothing on this side needs it, and a secret that is never carried cannot be logged by
 /// accident. `crates/auth`'s own `login` is where the claim is written.
+///
+/// The **launch handle is** returned, and it is a different thing: it is what lets this
+/// machine say which client process belongs to this sign-in. Without it two launchers on one
+/// box are indistinguishable to the server and both fall back.
 pub fn login(host: &str, port: u16, identity: &str, password: &str) -> AuthReply {
     let body = format!(
         "{{\"username\":{},\"password\":{}}}",
@@ -79,6 +159,59 @@ pub fn login(host: &str, port: u16, identity: &str, password: &str) -> AuthReply
         Err(e) => return AuthReply::Failed(e),
     };
     parse(&response)
+}
+
+/// `POST /launch`: tell the server which process this launch started.
+///
+/// Called immediately after the client is started, with the pid `launch::launch_for_pid`
+/// reported. The server matches it against the process the operating system says owns the
+/// game connection, which is the only per-launch fact either end can observe - the client
+/// sends nothing that varies between launches, and the address is shared by every client on
+/// the machine.
+pub fn bind_launch(host: &str, port: u16, launch_id: &LaunchId, pid: u32) -> LaunchReply {
+    if launch_id.is_empty() {
+        return LaunchReply::Failed(
+            "the sign-in did not hand back a launch handle, so the server has no claim to \
+             attach this process to"
+                .into(),
+        );
+    }
+    let body = format!("{{\"launch_id\":{},\"pid\":{pid}}}", json_string(launch_id.as_str()));
+    let request = format!(
+        "POST /launch HTTP/1.1\r\n\
+         Host: {host}:{port}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    );
+    match send(host, port, request.as_bytes()) {
+        Ok(r) => parse_launch(&r),
+        Err(e) => LaunchReply::Failed(e),
+    }
+}
+
+/// Turn a raw HTTP response into a [`LaunchReply`]. Status line first, for the same reason
+/// [`parse`] checks it first.
+pub fn parse_launch(response: &str) -> LaunchReply {
+    let Some((head, body)) = response.split_once("\r\n\r\n") else {
+        return LaunchReply::Failed(format!("no HTTP body in the answer: {}", trim(response)));
+    };
+    let status = head.lines().next().unwrap_or("");
+    if status.split_whitespace().nth(1).unwrap_or("") != "200" {
+        return LaunchReply::Failed(format!("the server answered {status:?}"));
+    }
+    match field(body, "status").as_deref() {
+        Some("bound") => match number(body, "pid") {
+            Some(pid) if pid > 0 => LaunchReply::Bound { pid: pid as u32 },
+            _ => LaunchReply::Failed(format!("no process id in the answer: {}", trim(body))),
+        },
+        Some("unknown_launch") => LaunchReply::UnknownLaunch,
+        Some("failed") => LaunchReply::Failed(
+            field(body, "message").unwrap_or_else(|| "the server refused".into()),
+        ),
+        _ => LaunchReply::Failed(format!("could not read the answer: {}", trim(body))),
+    }
 }
 
 /// Connect, write, read to EOF.
@@ -132,6 +265,10 @@ pub fn parse(response: &str) -> AuthReply {
                 Some(account_id) => AuthReply::Ok {
                     account_id,
                     username: field(body, "username").unwrap_or_default(),
+                    // Absent on an older server, or empty when the claim could not be staked.
+                    // Both come out as an empty handle, which `bind_launch` refuses with a
+                    // sentence rather than posting and reading the refusal back.
+                    launch_id: LaunchId::new(field(body, "launch_id").unwrap_or_default()),
                 },
                 None => AuthReply::Failed(format!("no account id in the answer: {}", trim(body))),
             }
@@ -201,9 +338,16 @@ mod tests {
     fn a_successful_login_is_read() {
         let r = parse(&http(
             "200 OK",
-            r#"{"status":"ok","account_id":2,"username":"tester","token":"abc","expires_in":900}"#,
+            r#"{"status":"ok","account_id":2,"username":"tester","token":"abc","expires_in":900,"launch_id":"L1"}"#,
         ));
-        assert_eq!(r, AuthReply::Ok { account_id: 2, username: "tester".into() });
+        assert_eq!(
+            r,
+            AuthReply::Ok {
+                account_id: 2,
+                username: "tester".into(),
+                launch_id: LaunchId::new("L1"),
+            }
+        );
     }
 
     #[test]
@@ -236,9 +380,83 @@ mod tests {
         // that is never carried cannot be logged by accident.
         let r = parse(&http(
             "200 OK",
-            r#"{"status":"ok","account_id":2,"username":"t","token":"SECRET","expires_in":900}"#,
+            r#"{"status":"ok","account_id":2,"username":"t","token":"SECRET","expires_in":900,"launch_id":"HANDLE"}"#,
         ));
         assert!(!format!("{r:?}").contains("SECRET"), "{r:?}");
+        // The launch handle DOES leave this module - the launcher needs it - but it must not
+        // ride out inside a `{:?}`, which is how a secret reaches a log without anybody
+        // deciding to put it there.
+        assert!(!format!("{r:?}").contains("HANDLE"), "the launch handle leaked into Debug: {r:?}");
+        let AuthReply::Ok { launch_id, .. } = &r else { panic!("{r:?}") };
+        assert_eq!(launch_id.as_str(), "HANDLE", "and it is still readable on purpose");
+    }
+
+    /// A server that predates `/launch` sends no `launch_id`. The login still succeeds - the
+    /// password was right - and the handle is empty, which `bind_launch` refuses with a
+    /// sentence rather than a round trip.
+    #[test]
+    fn an_older_server_with_no_launch_id_still_signs_in() {
+        let r = parse(&http(
+            "200 OK",
+            r#"{"status":"ok","account_id":2,"username":"t","token":"abc","expires_in":900}"#,
+        ));
+        let AuthReply::Ok { launch_id, .. } = &r else { panic!("{r:?}") };
+        assert!(launch_id.is_empty());
+        assert_eq!(format!("{launch_id:?}"), "LaunchId(<none>)");
+    }
+
+    #[test]
+    fn a_bound_launch_is_read() {
+        assert_eq!(
+            parse_launch(&http("200 OK", r#"{"status":"bound","pid":4242}"#)),
+            LaunchReply::Bound { pid: 4242 }
+        );
+    }
+
+    /// The three unhappy answers are told apart, because they need different sentences and
+    /// only one of them has a fix the person can carry out.
+    #[test]
+    fn the_launch_refusals_are_told_apart() {
+        assert_eq!(
+            parse_launch(&http("200 OK", r#"{"status":"unknown_launch"}"#)),
+            LaunchReply::UnknownLaunch
+        );
+        assert_eq!(
+            parse_launch(&http("200 OK", r#"{"status":"failed","message":"the store said no"}"#)),
+            LaunchReply::Failed("the store said no".into())
+        );
+        assert!(matches!(parse_launch(&http("500 Oops", "")), LaunchReply::Failed(_)));
+        assert!(matches!(parse_launch("not http at all"), LaunchReply::Failed(_)));
+        // A `bound` with no pid is a malformed answer, not a success with pid 0 - 0 is the
+        // System Idle Process and can never own a socket.
+        assert!(matches!(
+            parse_launch(&http("200 OK", r#"{"status":"bound","pid":0}"#)),
+            LaunchReply::Failed(_)
+        ));
+    }
+
+    /// **Every launch outcome says what it costs.** A registration that quietly failed is
+    /// invisible on a single-player machine and only bites when somebody else signs in.
+    #[test]
+    fn every_launch_outcome_says_what_it_costs() {
+        for reply in [
+            LaunchReply::UnknownLaunch,
+            LaunchReply::Failed("nope".into()),
+        ] {
+            let msg = reply.message();
+            assert!(msg.contains("fallback"), "{reply:?}: {msg}");
+            assert!(msg.contains("still starts"), "{reply:?}: {msg}");
+        }
+        assert!(LaunchReply::Bound { pid: 7 }.message().contains('7'));
+    }
+
+    /// An empty handle is refused without a round trip, and the message says why rather than
+    /// reporting whatever the server would have said about a blank id.
+    #[test]
+    fn an_empty_launch_handle_is_refused_before_the_network() {
+        let r = bind_launch("127.0.0.1", 1, &LaunchId::new(""), 42);
+        let LaunchReply::Failed(why) = r else { panic!("expected a refusal") };
+        assert!(why.contains("launch handle"), "{why}");
     }
 
     #[test]

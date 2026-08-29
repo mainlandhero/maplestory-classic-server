@@ -16,7 +16,7 @@
 //! byte-identical to a run without them. Passing them also broke the run with a "trouble
 //! connecting" dialog, which is why [`crate::app`] passes exactly three arguments.
 
-use crate::http::{self, AuthReply};
+use crate::http::{self, AuthReply, LaunchId};
 
 /// The result of a sign-in attempt, in the shape the UI needs.
 ///
@@ -29,6 +29,13 @@ pub enum SignIn {
         account_id: i64,
         identity: String,
         ttl_secs: i64,
+        /// The handle for registering the client process this sign-in is about to start.
+        ///
+        /// **Not the session token**, which still never reaches this machine. See
+        /// `crate::http::LaunchId` and `store::StakedClaim`. It is carried out of this module
+        /// only because `crate::prepare` needs it the instant the client starts, and it is
+        /// redacted in `Debug` so it cannot reach the log pane by accident.
+        launch_id: LaunchId,
     },
     /// Wrong password, or no such account. **One outcome, on purpose.**
     BadCredentials,
@@ -46,10 +53,20 @@ impl SignIn {
     /// The line shown under the buttons.
     pub fn message(&self) -> String {
         match self {
-            SignIn::Ok { account_id, identity, ttl_secs } => format!(
-                "signed in as {identity} (account {account_id}). The next game connection will \
-                 be served as this account; the claim lasts {}.",
-                human_duration(*ttl_secs)
+            SignIn::Ok { account_id, identity, ttl_secs, launch_id } => format!(
+                "signed in as {identity} (account {account_id}). This launch will be served as \
+                 this account; the claim lasts {}.{}",
+                human_duration(*ttl_secs),
+                // Said here rather than only at the launch step, because it is the earliest
+                // point at which it is known and it changes what a second sign-in on this
+                // machine will do.
+                if launch_id.is_empty() {
+                    " The server did not hand back a launch handle, so this launch cannot be \
+                     registered - with somebody else signed in on this machine the game will \
+                     fall back to the server's default account."
+                } else {
+                    ""
+                }
             ),
             // `store::AuthOutcome::InvalidCredentials` does not distinguish a bad name from a
             // bad password - telling them apart lets an attacker enumerate account names - so
@@ -61,6 +78,15 @@ impl SignIn {
             }
             SignIn::Disabled => "that account is disabled.".to_string(),
             SignIn::Unreachable(why) => why.clone(),
+        }
+    }
+
+    /// The handle this sign-in produced, for registering the client process it is about to
+    /// start. `None` for every refusal, because there is no claim to attach anything to.
+    pub fn launch_id(&self) -> Option<&LaunchId> {
+        match self {
+            SignIn::Ok { launch_id, .. } => Some(launch_id),
+            _ => None,
         }
     }
 }
@@ -79,10 +105,11 @@ pub fn sign_in(host: &str, auth_port: u16, identity: &str, password: &str) -> Si
         return SignIn::BadCredentials;
     }
     match http::login(host, auth_port, identity, password) {
-        AuthReply::Ok { account_id, .. } => SignIn::Ok {
+        AuthReply::Ok { account_id, launch_id, .. } => SignIn::Ok {
             account_id,
             identity: identity.to_string(),
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
+            launch_id,
         },
         AuthReply::InvalidCredentials => SignIn::BadCredentials,
         AuthReply::Disabled => SignIn::Disabled,
@@ -129,17 +156,51 @@ mod tests {
         assert_eq!(sign_in("127.0.0.1", 1, "   ", "whatever"), SignIn::BadCredentials);
     }
 
+    /// A signed-in outcome with a working launch handle, which is the ordinary case.
+    fn signed_in(identity: &str) -> SignIn {
+        SignIn::Ok {
+            account_id: 2,
+            identity: identity.into(),
+            ttl_secs: LOGIN_CLAIM_TTL_SECS,
+            launch_id: LaunchId::new("a-launch-handle"),
+        }
+    }
+
     #[test]
     fn a_success_names_the_account_and_the_claim_lifetime() {
-        let msg = SignIn::Ok {
-            account_id: 2,
-            identity: "tester@example.test".into(),
-            ttl_secs: LOGIN_CLAIM_TTL_SECS,
-        }
-        .message();
+        let msg = signed_in("tester@example.test").message();
         assert!(msg.contains("tester@example.test"), "{msg}");
         assert!(msg.contains("account 2"), "{msg}");
         assert!(msg.contains("12 hours"), "43200 reads badly on screen: {msg}");
+        // A working handle must not push a warning about falling back onto the screen.
+        assert!(!msg.contains("fall back"), "{msg}");
+    }
+
+    /// **A sign-in with no launch handle says so at sign-in time**, not later. It is the
+    /// earliest point at which it is known, and it changes what a second sign-in on this
+    /// machine will do - which is invisible on a machine where nobody else ever signs in.
+    #[test]
+    fn a_sign_in_with_no_launch_handle_says_what_that_costs() {
+        let msg = SignIn::Ok {
+            account_id: 2,
+            identity: "tester".into(),
+            ttl_secs: LOGIN_CLAIM_TTL_SECS,
+            launch_id: LaunchId::new(""),
+        }
+        .message();
+        assert!(msg.contains("cannot be registered"), "{msg}");
+        assert!(msg.contains("fall back"), "{msg}");
+    }
+
+    /// The handle has to be reachable, or `prepare` cannot register the launch and the whole
+    /// per-launch claim is built and unwired - `CLAUDE.md`'s "built is not wired".
+    #[test]
+    fn the_launch_handle_is_carried_out_of_a_successful_sign_in() {
+        assert_eq!(signed_in("t").launch_id().map(|l| l.as_str().to_string()),
+                   Some("a-launch-handle".to_string()));
+        assert!(SignIn::BadCredentials.launch_id().is_none());
+        assert!(SignIn::Disabled.launch_id().is_none());
+        assert!(SignIn::Unreachable("nope".into()).launch_id().is_none());
     }
 
     /// The refusal must not invent a distinction the server refuses to make. Telling a bad
@@ -165,12 +226,22 @@ mod tests {
         // The token never reaches this machine now - the service stakes the claim itself -
         // but the assertion stays, because a secret that cannot be printed is worth pinning.
         for s in [
-            SignIn::Ok { account_id: 1, identity: "wisp".into(), ttl_secs: 3600 },
+            SignIn::Ok {
+                account_id: 1,
+                identity: "wisp".into(),
+                ttl_secs: 3600,
+                launch_id: LaunchId::new("SECRET-HANDLE"),
+            },
             SignIn::BadCredentials,
             SignIn::Disabled,
             SignIn::Unreachable("nope".into()),
         ] {
             assert!(!s.message().to_ascii_lowercase().contains("token"), "{:?}", s);
+            // The launch handle is the new secret on this side and must not reach the log
+            // pane either - not through the message, and not through the `{:?}` that a
+            // panic message like this one would print.
+            assert!(!s.message().contains("SECRET-HANDLE"), "{:?}", s);
+            assert!(!format!("{s:?}").contains("SECRET-HANDLE"), "{s:?}");
         }
     }
 

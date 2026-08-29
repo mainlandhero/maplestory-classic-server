@@ -32,6 +32,10 @@ pub mod inventory;
 pub mod migration;
 pub mod error;
 pub mod password;
+/// Which process owns the far end of a local TCP connection - the per-launch discriminator
+/// `claims` resolves by. A socket concern in a database crate, deliberately: `crates/login`
+/// and `crates/world` both need it and both already depend on this one. See its module docs.
+pub mod peerowner;
 pub mod quest;
 pub mod rates;
 pub mod session;
@@ -41,7 +45,10 @@ pub mod storage;
 
 pub use abilityspend::ApSpend;
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
-pub use claims::{LoginClaim, LOGIN_CLAIM_TTL_SECS};
+pub use claims::{
+    ClaimEvidence, ClaimResolution, LoginClaim, ResolvedBy, ResolvedClaim, StakedClaim,
+    LOGIN_CLAIM_TTL_SECS,
+};
 pub use codes::{NewCode, CODE_ALPHABET, CODE_CHARS, INVITE_TTL_SECS, RECOVERY_TTL_SECS};
 pub use inventory::{
     Bag, Equipped, EquippedItem, InvItem, InventoryType, Item, ItemKind, ItemRules, MoveOutcome,

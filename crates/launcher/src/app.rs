@@ -192,6 +192,10 @@ impl LauncherApp {
         let layout = self.layout.clone();
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        // Carried into the worker so the launch can be registered the instant the client
+        // starts. `Start Game` is gated on a successful sign-in, so this is `Some` in every
+        // path a person can reach - and `prepare` says so out loud if it ever is not.
+        let launch_id = self.signed_in.as_ref().and_then(|s| s.launch_id()).cloned();
 
         self.launching = true;
         self.status = Some((Level::Info, "preparing the client…".into()));
@@ -202,7 +206,8 @@ impl LauncherApp {
                 let _ = tx.send(Msg::Log(level, text));
                 ctx.request_repaint();
             };
-            let result = prepare::prepare_and_launch(&layout, &plan, &mut emit);
+            let result =
+                prepare::prepare_and_launch(&layout, &plan, launch_id.as_ref(), &mut emit);
             let _ = tx.send(Msg::LaunchFinished(result));
             ctx.request_repaint();
         });

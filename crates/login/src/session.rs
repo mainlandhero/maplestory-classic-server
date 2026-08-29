@@ -121,11 +121,32 @@ pub struct Session {
     /// same IP as well, IP cannot be the sole discriminator."* Two clients on one machine
     /// both present `127.0.0.1`.
     peer: Option<String>,
+    /// The SHA-256 of the session token behind **the login claim this connection resolved
+    /// to**, if it resolved to one.
+    ///
+    /// This replaces a call to `Store::live_claim_token_hash`, and the replacement is the
+    /// point. That reader takes the *newest* live claim: with two people signed in it binds
+    /// one player's migration to the other player's token, so with `--bind-migrations` on the
+    /// rightful player's channel connection is refused (`TokenMismatch`) and the other
+    /// player's is not. That is the same singleton mistake `store::claims` was rewritten to
+    /// remove, one layer down.
+    ///
+    /// `None` means this connection did not resolve to a claim - nobody signed in, or two
+    /// people did and it could not be told apart - and the migration is minted **unbound**,
+    /// which is the pre-existing behaviour and is logged as such.
+    claim_token_hash: Option<String>,
 }
 
 impl Session {
     pub fn new(store: Arc<Store>, config: Arc<Config>, account: Account) -> Self {
-        Session { store, config, account, seen_login_request: false, peer: None }
+        Session {
+            store,
+            config,
+            account,
+            seen_login_request: false,
+            peer: None,
+            claim_token_hash: None,
+        }
     }
 
     /// Record the address this connection came from.
@@ -135,6 +156,16 @@ impl Session {
     /// a migration with no address recorded, which is exactly what an in-process test is.
     pub fn with_peer(mut self, peer: impl Into<String>) -> Self {
         self.peer = Some(peer.into());
+        self
+    }
+
+    /// Record which login claim this connection was resolved to, by its token's SHA-256.
+    ///
+    /// A builder for the same reason `with_peer` is: the tests below that do not care about
+    /// binding keep compiling, and a session that was never told is one that mints unbound
+    /// migrations - the old behaviour, stated rather than defaulted into.
+    pub fn with_claim_token_hash(mut self, hash: Option<String>) -> Self {
+        self.claim_token_hash = hash;
         self
     }
 
@@ -532,22 +563,27 @@ impl Session {
                     .to_string(),
             )
         } else {
-            match self.store.live_claim_token_hash() {
-                Ok(Some(hash)) => (Some(hash), "BOUND to the live login claim".to_string()),
-                Ok(None) => (
-                    None,
-                    "UNBOUND - no live login claim, so there was nothing to bind to. Any \
-                     channel connection that names this character id can claim it. Sign in \
-                     through maplecw-launcher first"
-                        .to_string(),
+            // **This connection's claim, not the newest one.** `Store::live_claim_token_hash`
+            // reads whichever claim is newest, which with two people signed in binds one
+            // player's migration to the other's token - and then refuses the rightful
+            // player's channel connection while accepting the other's. The hash is carried in
+            // from `resolve_account`, which already decided which launch this is.
+            //
+            // There is no `Err` arm any more because there is no read here to fail: the
+            // decision was made once, at accept time, where a failure could still be logged
+            // against a connection rather than against a character select.
+            match self.claim_token_hash.clone() {
+                Some(hash) => (
+                    Some(hash),
+                    "BOUND to the login claim THIS CONNECTION resolved to".to_string(),
                 ),
-                // Never fatal: an unanswered select-character freezes the client's whole UI.
-                // Degrade to unbound and say so loudly.
-                Err(e) => (
+                None => (
                     None,
-                    format!(
-                        "UNBOUND - the login claim could not be read ({e}), so nothing was bound"
-                    ),
+                    "UNBOUND - this connection did not resolve to a login claim (nobody is \
+                     signed in, or more than one launch is and this connection could not be \
+                     attributed to one). Any channel connection that names this character id \
+                     can claim it. Sign in through maplecw-launcher first"
+                        .to_string(),
                 ),
             }
         };
@@ -1295,6 +1331,9 @@ mod tests {
 
         let token = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         s.store.stake_login_claim(s.account.id, token, store::LOGIN_CLAIM_TTL_SECS).unwrap();
+        // What `server::resolve_account` does once per connection: decide which claim this
+        // connection is, and hand the session that claim's token hash.
+        s = s.with_claim_token_hash(Some(store::hash_token(token)));
 
         let seed = migrate_and_get_seed(&mut s, id);
 

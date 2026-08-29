@@ -2,12 +2,21 @@
 //!
 //! Endpoints:
 //!
-//! | Method | Path      | Body                            | Purpose |
-//! |--------|-----------|---------------------------------|---------|
-//! | POST   | `/login`  | `{"username":..,"password":..}` | authenticate, issue a token |
-//! | POST   | `/verify` | `{"token":..}`                  | check a token, leaves it valid |
-//! | POST   | `/consume`| `{"token":..}`                  | check and spend a token |
-//! | GET    | `/health` | —                               | liveness |
+//! | Method | Path      | Body                                | Purpose |
+//! |--------|-----------|-------------------------------------|---------|
+//! | POST   | `/login`  | `{"username":..,"password":..}`     | authenticate, issue a token, stake a per-launch claim |
+//! | POST   | `/launch` | `{"launch_id":..,"pid":..}`         | bind the client process to that claim |
+//! | POST   | `/verify` | `{"token":..}`                      | check a token, leaves it valid |
+//! | POST   | `/consume`| `{"token":..}`                      | check and spend a token |
+//! | GET    | `/health` | —                                   | liveness |
+//!
+//! # `/launch` is what makes two clients on one machine work
+//!
+//! `/login` used to be the whole story, and it was enough only because the claim table held
+//! one global row - which is exactly the bug: a second sign-in evicted the first and both
+//! login connections were served as the second account. The claim is now per launch, and the
+//! launcher registers the process id of the client it started so the login server can tell one
+//! launch from another. See `store::claims` and `store::peerowner`.
 
 use std::sync::Arc;
 
@@ -22,6 +31,13 @@ const MAX_BODY: usize = 8 * 1024;
 #[derive(Debug, Deserialize)]
 struct TokenRequest {
     token: String,
+}
+
+/// `POST /launch`. The handle from `/login`, and the process the launcher just started.
+#[derive(Debug, Deserialize)]
+struct LaunchRequest {
+    launch_id: String,
+    pid: u32,
 }
 
 fn json_response(status: u16, body: String) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -65,18 +81,42 @@ pub fn serve_on(service: Arc<AuthService>, bind: &str, port: u16) -> std::io::Re
         let response = match (&method, path.as_str()) {
             (Method::Get, "/health") => json_response(200, r#"{"status":"ok"}"#.into()),
 
-            (Method::Post, "/login") => match read_body(&mut req) {
+            (Method::Post, "/login") => {
+                // The address the sign-in came from, recorded on the claim. It separates two
+                // MACHINES and is explicitly not the discriminator - two clients on one box
+                // share it, which is the owner's constraint verbatim. `store::claims` rule 3.
+                let peer = req.remote_addr().map(|a| a.ip().to_string());
+                match read_body(&mut req) {
+                    Err(e) => json_response(400, error_json(&e)),
+                    Ok(body) => match serde_json::from_str::<LoginRequest>(&body) {
+                        // Never echo the body back: it contains the password.
+                        Err(_) => json_response(400, error_json("invalid JSON")),
+                        Ok(login) => {
+                            let resp = service.login(&login, peer.as_deref());
+                            let code = match resp {
+                                crate::LoginResponse::Ok { .. } => 200,
+                                _ => 401,
+                            };
+                            json_response(code, serde_json::to_string(&resp).unwrap_or_default())
+                        }
+                    },
+                }
+            }
+
+            // Bind the client process the launcher started to the claim it signed in with.
+            //
+            // **Never a 5xx or a hang on a refusal.** A launcher that cannot register its
+            // launch still starts the client - the claim is simply resolved by address, or by
+            // being the only one - so the answer has to be a value it can print rather than a
+            // failure it has to interpret. 200 with a `status` the caller reads, the same
+            // shape `/login` uses for a wrong password.
+            (Method::Post, "/launch") => match read_body(&mut req) {
                 Err(e) => json_response(400, error_json(&e)),
-                Ok(body) => match serde_json::from_str::<LoginRequest>(&body) {
-                    // Never echo the body back: it contains the password.
+                Ok(body) => match serde_json::from_str::<LaunchRequest>(&body) {
                     Err(_) => json_response(400, error_json("invalid JSON")),
-                    Ok(login) => {
-                        let resp = service.login(&login);
-                        let code = match resp {
-                            crate::LoginResponse::Ok { .. } => 200,
-                            _ => 401,
-                        };
-                        json_response(code, serde_json::to_string(&resp).unwrap_or_default())
+                    Ok(l) => {
+                        let resp = service.bind_launch(&l.launch_id, l.pid);
+                        json_response(200, serde_json::to_string(&resp).unwrap_or_default())
                     }
                 },
             },

@@ -8,7 +8,8 @@
 //!   maplecw-useradd --enable  <name>
 //!   maplecw-useradd --gm <name>             allow the ! GM commands
 //!   maplecw-useradd --no-gm <name>          take that away
-//!   maplecw-useradd --clear-claims          forget which account is "playing"
+//!   maplecw-useradd --claims                who is signed in, one row per launch
+//!   maplecw-useradd --clear-claims          forget which accounts are "playing"
 //!
 //! GM status is authorisation, **not authentication**. The game socket carries no
 //! credentials, so it says which *account* may use `!item`; which account a connection is
@@ -98,6 +99,7 @@ fn main() -> std::process::ExitCode {
             Some(name) => set_gm(&store, name, false),
             None => Err("--no-gm needs an account name".into()),
         },
+        Some("--claims") => list_claims(&store),
         Some("--clear-claims") => clear_claims(&store),
         Some("--email") => match (rest.get(1), rest.get(2)) {
             (Some(name), Some(addr)) => set_email(&store, name, addr),
@@ -131,7 +133,8 @@ fn usage() {
          maplecw-useradd --no-gm <name>          take that away\n  \
          maplecw-useradd --disable <name>\n  \
          maplecw-useradd --enable  <name>\n  \
-         maplecw-useradd --clear-claims          forget which account is playing\n\n\
+         maplecw-useradd --claims                who is signed in, one row per launch\n  \
+         maplecw-useradd --clear-claims          forget which accounts are playing\n\n\
          options:\n  \
          --db <path>                             database file (default {DEFAULT_DB})\n\n\
          Passwords are read from a prompt or stdin, never from an argument.\n  \
@@ -212,13 +215,58 @@ fn set_gm(store: &Store, name: &str, is_gm: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// **Who is signed in, one row per launch.**
+///
+/// Worth its own command for the same reason `--list` is: it answers a question that
+/// otherwise costs one of the owner's manual client launches. A claim used to be one global row,
+/// so "which account is playing" had exactly one answer and the login server's startup banner
+/// was enough. It is now one row per launch, and the interesting states - two people signed
+/// in, or one person signed in twice - are invisible anywhere else.
+///
+/// The **count** is the number that matters. With more than one live claim, a connection the
+/// server cannot attribute to a launch is served as the fallback `--account` rather than
+/// guessed at, so "2 live claims" plus "the wrong characters on screen" is a complete
+/// diagnosis rather than the start of an investigation.
+fn list_claims(store: &Store) -> Result<(), String> {
+    let claims = store
+        .live_login_claims()
+        .map_err(|e| format!("could not read login claims: {e}"))?;
+    if claims.is_empty() {
+        println!("no live login claim - every connection is served as the login server's --account");
+        return Ok(());
+    }
+    println!("{:<24} {:<12} {}", "account", "staked", "expires");
+    for c in &claims {
+        println!("{:<24} {:<12} {}", c.account_name, c.created_at, c.expires_at);
+    }
+    println!();
+    match claims.len() {
+        1 => println!(
+            "1 live claim. Any connection is served as it, including one the server cannot \
+             attribute to a launch."
+        ),
+        n => println!(
+            "{n} live claims. A connection the server CAN attribute to a launch - same machine, \
+             registered by the launcher - is served as that launch's account. One it cannot is \
+             served as the --account fallback, deliberately: serving the newest is how one \
+             player gets served as another."
+        ),
+    }
+    Ok(())
+}
+
 fn clear_claims(store: &Store) -> Result<(), String> {
     let n = store
         .clear_login_claims()
         .map_err(|e| format!("could not clear login claims: {e}"))?;
     match n {
         0 => println!("no login claim was live; the login server was already using --account"),
-        _ => println!("cleared {n} login claim(s); the login server now uses its --account"),
+        // The plural is load-bearing now: this takes EVERY launch, including other people's.
+        // `Store::clear_login_claims_for` is the scoped one.
+        _ => println!(
+            "cleared {n} login claim(s) - every launch, not just one. The login server now uses \
+             its --account until somebody signs in again."
+        ),
     }
     Ok(())
 }

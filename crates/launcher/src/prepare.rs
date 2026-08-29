@@ -111,10 +111,28 @@ pub fn prepare(layout: &Layout, log: &mut dyn FnMut(Level, String)) -> Result<()
     Ok(())
 }
 
-/// Prepare, then start the client.
+/// Prepare, then start the client, then **register the launch**.
+///
+/// `launch_id` is the handle the sign-in produced. Registering the client's process id is what
+/// makes two launchers on one machine two distinguishable claims: the client sends nothing
+/// per-launch (measured - see `store::peerowner`'s module docs) and the address is shared, so
+/// the owning process is the only thing left.
+///
+/// # Registration never fails the launch
+///
+/// It happens **after** the client is started, and every outcome is a log line rather than an
+/// `Err`. The client is already on screen by then, so returning an error would say "the launch
+/// failed" about something that plainly did not - and the cost of an unregistered launch is
+/// real but narrow: on a machine where nobody else is signed in it changes nothing at all,
+/// because the server's sole-claim rule still finds the right account.
+///
+/// What it must not do is be silent. `crate::http::LaunchReply::message` spells out the cost
+/// for each outcome, and `CLAUDE.md`'s standing complaint is exactly about refusals that get
+/// captured into a log string and then ignored - so the unhappy ones are logged at `Warn`.
 pub fn prepare_and_launch(
     layout: &Layout,
     plan: &Plan,
+    launch_id: Option<&crate::http::LaunchId>,
     log: &mut dyn FnMut(Level, String),
 ) -> Result<(), String> {
     prepare(layout, log)?;
@@ -146,8 +164,15 @@ pub fn prepare_and_launch(
             launch::quote_args(&args)
         ),
     );
-    launch::launch(&layout.client_exe(), &args, &layout.client_dir)?;
+    let launched = launch::launch_for_pid(&layout.client_exe(), &args, &layout.client_dir)?;
     log(Level::Good, "client started (Windows will ask for elevation)".into());
+    log(
+        if launched.pid.is_some() { Level::Info } else { Level::Warn },
+        launched.describe(),
+    );
+
+    register_launch(layout, plan, launch_id, launched.pid, log);
+
     log(
         Level::Info,
         format!(
@@ -157,6 +182,43 @@ pub fn prepare_and_launch(
         ),
     );
     Ok(())
+}
+
+/// Tell the server which process this launch started, and say what happened either way.
+///
+/// Split out so the three "could not register" paths are one place rather than three, and so
+/// each of them is a sentence that names the consequence instead of a shrug. Returns nothing:
+/// there is no outcome here that should stop a client which is already running.
+fn register_launch(
+    layout: &Layout,
+    plan: &Plan,
+    launch_id: Option<&crate::http::LaunchId>,
+    pid: Option<u32>,
+    log: &mut dyn FnMut(Level, String),
+) {
+    let Some(launch_id) = launch_id else {
+        // No sign-in handle at all. Start Game is gated on a successful sign-in, so this is
+        // reachable only from a caller that did not pass one - a programming error, not a
+        // user one, and it says so rather than looking like a server problem.
+        log(
+            Level::Warn,
+            "no launch handle was carried from the sign-in, so this launch cannot be \
+             registered. The client still starts and will be served correctly unless somebody \
+             else is signed in on this machine."
+                .into(),
+        );
+        return;
+    };
+    let Some(pid) = pid else {
+        // Already reported by `Launched::describe`, which says what it costs. Not repeated.
+        return;
+    };
+    let reply = crate::http::bind_launch(&plan.ip, layout.auth_port, launch_id, pid);
+    let level = match reply {
+        crate::http::LaunchReply::Bound { .. } => Level::Good,
+        _ => Level::Warn,
+    };
+    log(level, reply.message());
 }
 
 #[cfg(test)]

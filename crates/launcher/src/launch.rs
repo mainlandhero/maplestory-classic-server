@@ -1,10 +1,16 @@
 //! Starting `MapleStory.exe`, and saying something useful when that fails.
 //!
-//! **`ShellExecuteW`, not `std::process::Command`.** The client carries an elevation
+//! **`ShellExecuteExW`, not `std::process::Command`.** The client carries an elevation
 //! manifest, so `CreateProcess` - which is what `Command` uses - fails outright with
 //! `ERROR_ELEVATION_REQUIRED` (740). `tools/test-server.ps1` uses `Start-Process` for the
 //! same reason and says so in a comment above the call. ShellExecute is the API that consults
 //! the manifest and raises the UAC prompt.
+//!
+//! The `Ex` form rather than plain `ShellExecuteW` for exactly one reason: `SEE_MASK_NOCLOSEPROCESS`
+//! hands back the client's process handle, and the pid is the only thing that tells two
+//! clients on one machine apart - see [`launch_for_pid`]. There is deliberately **one** launch
+//! path, not two: a second one would be the way the client is started on the machine nobody
+//! tests, which is the same trade `crate::http` refuses for sign-in.
 //!
 //! Declared with a raw `extern "system"` block the way `crates/grap-stub` does its FFI, so
 //! this costs no dependency.
@@ -13,23 +19,7 @@ use std::ffi::c_void;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
-/// `ShellExecuteW` returns an `HINSTANCE` for historical reasons. Anything **greater than
-/// 32** means it started something; 32 and below is an error code.
-pub const SHELL_EXECUTE_SUCCESS_THRESHOLD: isize = 32;
-
 const SW_SHOWNORMAL: i32 = 1;
-
-#[link(name = "shell32")]
-extern "system" {
-    fn ShellExecuteW(
-        hwnd: *mut c_void,
-        op: *const u16,
-        file: *const u16,
-        params: *const u16,
-        dir: *const u16,
-        show: i32,
-    ) -> isize;
-}
 
 #[link(name = "user32")]
 extern "system" {
@@ -60,7 +50,11 @@ pub fn quote_args(args: &[String]) -> String {
         .join(" ")
 }
 
-/// Map a `ShellExecuteW` return value to something a person can act on.
+/// Map a `ShellExecuteEx` error code to something a person can act on.
+///
+/// On failure `ShellExecuteExW` leaves the same `HINSTANCE`-shaped code in `hInstApp` that
+/// plain `ShellExecuteW` would have returned, so this table is unchanged by the move to the
+/// `Ex` form.
 ///
 /// The one that matters most in practice is **5**: that is what comes back when the UAC
 /// prompt is dismissed, and "access denied" on its own sends people looking at file
@@ -83,17 +77,99 @@ pub fn describe_shell_error(code: isize) -> String {
         30 => "the DDE transaction could not be completed, DDE was busy (SE_ERR_DDEBUSY)",
         31 => "no application is associated with this file (SE_ERR_NOASSOC)",
         32 => "a required DLL was not found (SE_ERR_DLLNOTFOUND)",
-        _ => return format!("ShellExecuteW failed with code {code}"),
+        _ => return format!("ShellExecuteEx failed with code {code}"),
     };
-    format!("ShellExecuteW failed with code {code}: {detail}")
+    format!("ShellExecuteEx failed with code {code}: {detail}")
 }
 
-/// Start the client.
+// ------------------------------------------------------- starting the client, with its pid
+
+/// `SHELLEXECUTEINFOW`. Laid out by hand, like `OpenFileNameW` below and for the same reason.
 ///
-/// `working_dir` matters as much as the executable: `crates/grap-stub` reads every one of its
-/// marker files by **relative** name, so the hook only arms when the client's working
-/// directory is the client directory.
-pub fn launch(exe: &Path, args: &[String], working_dir: &Path) -> Result<(), String> {
+/// **`cbSize` is `size_of` rather than a literal**, exactly as the file picker's is: Windows
+/// switches struct version on it and a wrong value is a failure that looks like a user
+/// cancelling. The union at the end is `hIcon`/`hMonitor`, both handles, so one pointer-sized
+/// field covers it.
+#[repr(C)]
+struct ShellExecuteInfoW {
+    cb_size: u32,
+    mask: u32,
+    hwnd: *mut c_void,
+    verb: *const u16,
+    file: *const u16,
+    parameters: *const u16,
+    directory: *const u16,
+    show: i32,
+    inst_app: *mut c_void,
+    id_list: *mut c_void,
+    class: *const u16,
+    hkey_class: *mut c_void,
+    hot_key: u32,
+    icon_or_monitor: *mut c_void,
+    process: *mut c_void,
+}
+
+/// Return the process handle instead of closing it. Without this `hProcess` is always null and
+/// there is no pid to register.
+const SEE_MASK_NOCLOSEPROCESS: u32 = 0x0000_0040;
+/// Wait for the shell operation to finish rather than returning while it is still starting.
+/// This runs on a worker thread with no message pump, which is the case the flag documents.
+const SEE_MASK_NOASYNC: u32 = 0x0000_0100;
+
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteExW(info: *mut ShellExecuteInfoW) -> i32;
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetProcessId(process: *mut c_void) -> u32;
+    fn CloseHandle(handle: *mut c_void) -> i32;
+}
+
+/// What a launch produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launched {
+    /// The client's process id, if Windows handed one back.
+    ///
+    /// **`None` is a real possibility and is not an error.** `ShellExecuteEx` documents
+    /// `hProcess` as being set only when the operation actually started a process, and the
+    /// client carries an elevation manifest, so the launch goes through the consent UI. That
+    /// path has **not** been measured here - measuring it costs one of the owner's manual client
+    /// launches, which `CLAUDE.md` says to spend only when nothing cheaper answers the
+    /// question - so the code treats a null handle as ordinary and the launcher says out loud
+    /// that the launch could not be registered. See [`Launched::describe`].
+    pub pid: Option<u32>,
+}
+
+impl Launched {
+    /// The line to print. **The `None` case says what it costs**, because "no pid" is silent
+    /// on screen and only bites when a second person is signed in.
+    pub fn describe(&self) -> String {
+        match self.pid {
+            Some(pid) => format!("client started as process {pid}"),
+            None => "client started, but Windows did not report its process id - most likely \
+                     the elevation prompt started it out of process. This launch cannot be \
+                     registered, so if somebody else is signed in on this machine the game \
+                     will be served as the server's fallback account rather than yours"
+                .to_string(),
+        }
+    }
+}
+
+/// Start the client and report the process id, so the launch can be registered with the
+/// server.
+///
+/// The pid is the only thing that tells two clients on one machine apart: the client sends
+/// nothing per-launch (measured), and the address is shared. `store::peerowner` recovers the
+/// same number on the server side from the accepted socket, so the two ends meet without the
+/// client having to carry anything.
+///
+/// `ShellExecuteExW` rather than `ShellExecuteW` purely for `hProcess`. Everything else - the
+/// elevation manifest, the working directory, the arguments - is identical, which is
+/// deliberate: this is not a second way of launching the client, it is the same one with the
+/// handle kept.
+pub fn launch_for_pid(exe: &Path, args: &[String], working_dir: &Path) -> Result<Launched, String> {
     if !exe.is_file() {
         return Err(format!("no client executable at {}", exe.display()));
     }
@@ -102,24 +178,46 @@ pub fn launch(exe: &Path, args: &[String], working_dir: &Path) -> Result<(), Str
     let params = to_wide(&quote_args(args));
     let dir = to_wide(&working_dir.to_string_lossy());
 
-    // SAFETY: four NUL-terminated UTF-16 buffers that outlive the call, and a null HWND,
-    // which ShellExecuteW documents as "no owner window".
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            op.as_ptr(),
-            file.as_ptr(),
-            params.as_ptr(),
-            dir.as_ptr(),
-            SW_SHOWNORMAL,
-        )
+    let mut info = ShellExecuteInfoW {
+        cb_size: std::mem::size_of::<ShellExecuteInfoW>() as u32,
+        mask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,
+        hwnd: std::ptr::null_mut(),
+        verb: op.as_ptr(),
+        file: file.as_ptr(),
+        parameters: params.as_ptr(),
+        directory: dir.as_ptr(),
+        show: SW_SHOWNORMAL,
+        inst_app: std::ptr::null_mut(),
+        id_list: std::ptr::null_mut(),
+        class: std::ptr::null(),
+        hkey_class: std::ptr::null_mut(),
+        hot_key: 0,
+        icon_or_monitor: std::ptr::null_mut(),
+        process: std::ptr::null_mut(),
     };
 
-    if result > SHELL_EXECUTE_SUCCESS_THRESHOLD {
-        Ok(())
-    } else {
-        Err(describe_shell_error(result))
+    // SAFETY: every string buffer above is NUL-terminated and outlives the call, and `info`
+    // is a live exclusive borrow for its duration.
+    let ok = unsafe { ShellExecuteExW(&mut info) };
+    if ok == 0 {
+        // On failure `hInstApp` carries the same code `ShellExecuteW` would have returned, so
+        // the error messages stay identical between the two paths.
+        return Err(describe_shell_error(info.inst_app as isize));
     }
+
+    if info.process.is_null() {
+        return Ok(Launched { pid: None });
+    }
+    // SAFETY: a non-null process handle we own because of SEE_MASK_NOCLOSEPROCESS.
+    let pid = unsafe { GetProcessId(info.process) };
+    // The handle is ours to close and we do not wait on the client - the launcher's job ends
+    // here, and leaking a handle per launch would keep a zombie entry alive for the life of
+    // the launcher window.
+    unsafe { CloseHandle(info.process) };
+    // GetProcessId returns 0 on failure, and 0 is the System Idle Process, so it can never be
+    // a real client. Report it as "no pid" rather than registering a number that means
+    // "unset" - the same reasoning `store::migration::random_seed` uses for never minting 0.
+    Ok(Launched { pid: (pid != 0).then_some(pid) })
 }
 
 const MB_ICONERROR: u32 = 0x10;
@@ -317,13 +415,6 @@ mod tests {
     }
 
     #[test]
-    fn the_success_threshold_is_the_documented_one() {
-        // ShellExecute returns an HINSTANCE; > 32 is success, <= 32 is an error code. Off by
-        // one here turns "no application associated" (31) into a successful launch.
-        assert_eq!(SHELL_EXECUTE_SUCCESS_THRESHOLD, 32);
-    }
-
-    #[test]
     fn the_uac_case_says_uac() {
         let msg = describe_shell_error(5);
         assert!(msg.contains("UAC"), "{msg}");
@@ -348,13 +439,57 @@ mod tests {
 
     #[test]
     fn launching_something_that_is_not_there_fails_before_any_ffi() {
-        let err = launch(
+        let err = launch_for_pid(
             Path::new("Z:\\definitely\\not\\here\\MapleStory.exe"),
             &[],
             Path::new("Z:\\definitely\\not\\here"),
         )
         .unwrap_err();
         assert!(err.contains("no client executable"), "{err}");
+    }
+
+    /// **The positive control for the `SHELLEXECUTEINFOW` layout.**
+    ///
+    /// `CLAUDE.md`: *"A constant that came from reading a header is a claim, not a fact"*, and
+    /// every offset in that struct came from a header. A wrong `cbSize` or a misplaced field
+    /// does not raise - `ShellExecuteExW` either fails in a way that looks like a cancelled
+    /// prompt, or succeeds and writes `hProcess` somewhere else, and the pid comes back as
+    /// garbage or zero. So this starts a real, harmless process and checks the number.
+    ///
+    /// **What it does NOT cover, stated rather than implied:** the client carries an elevation
+    /// manifest and goes through the consent UI, and `cmd.exe` does not. Whether `hProcess`
+    /// comes back for an elevated launch is unmeasured here - measuring it costs one of the owner's
+    /// manual client launches. `launch_for_pid` treats a null handle as ordinary and
+    /// `Launched::describe` says what that costs, which is the honest shape for an untested
+    /// branch.
+    #[test]
+    fn shell_execute_ex_reports_the_pid_of_a_process_it_started() {
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        let cmd = PathBuf::from(&system_root).join("System32").join("cmd.exe");
+        if !cmd.is_file() {
+            // Not a silent skip: if this ever fires the control is not running and the layout
+            // is unverified, which is the state this test exists to prevent.
+            panic!("no {} to launch - the layout check cannot run", cmd.display());
+        }
+        let launched = launch_for_pid(
+            &cmd,
+            &["/c".to_string(), "exit".into()],
+            Path::new(&system_root),
+        )
+        .expect("cmd.exe /c exit must start");
+        let pid = launched.pid.expect("hProcess must come back with SEE_MASK_NOCLOSEPROCESS");
+        assert_ne!(pid, 0, "0 is the System Idle Process, never a started one");
+        assert_ne!(pid, std::process::id(), "that is this process, not the one just started");
+    }
+
+    /// The no-pid case has to say what it costs. It is silent on screen otherwise, and only
+    /// bites when a second person is signed in on the same machine.
+    #[test]
+    fn a_launch_with_no_pid_says_what_that_costs() {
+        let msg = Launched { pid: None }.describe();
+        assert!(msg.contains("fallback"), "{msg}");
+        assert!(msg.to_lowercase().contains("cannot be registered"), "{msg}");
+        assert!(Launched { pid: Some(42) }.describe().contains("42"));
     }
 }
 
