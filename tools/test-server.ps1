@@ -13,7 +13,7 @@
     wrong, the server is the only thing that changed.
 
 .NOTES
-    ====== THE TEST PLAN, 2026-08-29: TWO CLIENTS, AND WHETHER THEY SEE EACH OTHER ======
+    ====== THE TEST PLAN, 2026-08-29b: DOES THE MENU BOX DRAW? ======
 
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
@@ -22,74 +22,85 @@
     packet and the client sits on "Connecting...". Run -Stop before relaunching.
 
     DO NOT PASS -HeapFix. It armed, it held, and it was irrelevant - 10 deaths of that
-    family across the archive, 8 at 0x14019b58e and 2 at 0x14019bbf3, and FIFTY-SIX sites
-    carry the same ladder. It also costs a measurement every run: the one constraint anyone
-    has on when the stray 1 is written comes from finding a damaged slot on the free list,
-    which is only an argument while the free is unpatched.
+    family across the archive and FIFTY-SIX sites carry the same ladder.
 
-    WHAT THE LAST RUN CLOSED - none of this needs testing again
-    ----------------------------------------------------------
-    THE LAUNCHER WORKS, and the whole flow with it. The owner, 2026-08-29: "UAC prompt is
-    present. Wrong password is refused. Client does start with no second UAC prompt." So
-    the manifest is embedded, the elevation is inherited by the client, and the Login gate
-    holds. The paths resolved too, or the client could not have started.
-    A SECOND ACCOUNT WORKS, and it signs in BY EMAIL - tester@example.test.
-    THE MASKED EMAIL FOLLOWS THE ACCOUNT. It showed the tester address, not the
-    -DisplayName constant, which is the whole point of deriving it.
-    ONE DAMAGE NUMBER. "I only see 1 number now." The forced-stat block made the client
-    compute the real number and ours was removed; both halves are now confirmed on screen.
-    MP COST ON SKILLS IS ACCURATE. Selling works and there is no Buy Back tab in this
-    client. Warrior skills cast. The classic shop window draws.
+    WHAT PREVIOUS RUNS CLOSED - none of this needs testing again
+    -----------------------------------------------------------
+    THE LAUNCHER WORKS: UAC prompt present, wrong password refused, client starts with no
+    second prompt. A SECOND ACCOUNT WORKS and signs in BY EMAIL. THE MASKED EMAIL FOLLOWS
+    THE ACCOUNT. ONE DAMAGE NUMBER. MP COST ACCURATE, selling works, no Buy Back tab,
+    warrior skills cast, the classic shop draws.
 
-    HOW A RUN STARTS NOW
-    --------------------
-    This window is the SERVER. Close it to stop; there is no stop script any more. The
-    CLIENT comes from maplecw-launcher.exe, which asks for administrator - say yes, and the
-    client does not ask again.
+    WHAT CHANGED IN THE SERVER SINCE THE LAST RUN
+    ---------------------------------------------
+    TWO PLAYERS CAN NOW SIGN IN IN ANY ORDER. The old instruction here said to wait until
+    the first client reached the world, because the login server served whichever account
+    claimed LAST. That was a real bug - one player was served the other's character list -
+    and it is fixed: one claim per launch, and the server matches a connection to its
+    launch by asking the OS which process owns the socket. Proved over real sockets by
+    tools/claims_smoke.py, two accounts on 127.0.0.1, each served its own characters.
+    SO: SIGN IN IN WHATEVER ORDER YOU LIKE. If both clients still show the same account,
+    that is a NEW finding and worth saying.
 
-    Accounts: `maplecw` (GM) and `tester` / tester@example.test (NOT a GM, no characters).
-    A forgotten password is a reset, and it never asks for the old one:
-      & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw
-
-    ============ NEW, AND THE REASON FOR THIS RUN ============
-
-    NOTHING IN THIS HAS EVER BEEN ON A SCREEN. Every byte of the three new packets was
-    read out of the client statically - research/user-enter-field.md decoded all 65
-    fields of 0x0224 - and NO packet in 0x224..0x39F has been observed doing anything in
-    any archived run. So the first question is not "is the position right", it is
-    "does the client accept this packet at all". Do M1 before anything else.
-
-    YOU NEED TWO CLIENTS, AND THE ORDER MATTERS. The game socket carries no credentials
-    and the login server serves whichever account claimed LAST, so:
-      1. launcher -> sign in as maplecw -> Start Game -> WAIT until you are in the world
-      2. launcher again -> sign in as tester -> Start Game
-    Signing in as tester before the first client reaches the world gives both clients the
-    same account. tester has no characters, so make one.
-    UNKNOWN: whether this client will run twice on one machine at all. If the second
+    STILL UNKNOWN: whether this client will run twice on one machine at all. If the second
     instance refuses to start, SAY SO - that is a finding, not a failed test, and the
     answer is two machines.
 
-     M1. Get both characters onto the SAME MAP.
-          a) does the other character appear? -> the whole feature works
-          b) a client dies or closes when the second player arrives -> the 0x0224 body is
-             wrong somewhere. Say WHICH client died - the one arriving or the one already
-             there - because that names the direction the bad packet went
-          c) nothing appears and nothing dies -> the packet was dropped in silence. Six
-             gates in user-enter-field.md can do that, and the next run answers it with a
-             watch on 0x1429ba60b rather than more body work
-     M2. If they can see each other, WALK ONE AROUND.
-          a) does the other client see it move, and smoothly?
-          b) stutter, teleport, or lag - say roughly how far behind
-     M3. A JUST-ARRIVED character may appear AT THE MAP ORIGIN until it moves. Expected,
-        and it should snap to the right place on the first step: the server's only source
-        of position is the client's own movement reports, and portals.txt has no
-        coordinates in it.
-          it never snaps -> the move broadcast is not arriving, which contradicts M2
-     M4. LEAVING. Walk one character through a portal, then log the other out.
-          a) does each disappear from the other screen?
-          b) then kill a client from Task Manager. It must ALSO disappear - that is the
-             path with no log-out packet at all, and it is the one bug that cannot be
-             cleaned up from the client side
+    ============ WHAT THIS RUN IS FOR ============
+
+    T3 IS THE MEASUREMENT. Everything else is either a gate for it or a control beside it.
+
+    The client has a list box - message type 6 - that draws clickable lines from ONE string
+    carrying #L<n># markup. The client uses it for its own NPC menus. Whether it draws when
+    the SERVER sends it has never been observed. Two agents disagreed about whether it even
+    existed; the enumeration that said no was searching for the wrong shape.
+
+    So the taxis send type 6 and Phil sends a chain of yes/no boxes, which IS proven on
+    screen. That is deliberate: T4 is the control for T3. If Phil works and Lyn does not,
+    the fault is type 6 and nothing else.
+
+     T1. TWO CLIENTS, SAME MAP. Do this first; T2 waits on it.
+          a) the other character appears -> the whole thing works
+          b) a client dies when the second arrives -> the 0x0224 body is wrong. Say WHICH
+             client died, the one arriving or the one already there, because that names
+             the direction the bad packet went
+          c) nothing appears and nothing dies -> dropped in silence, and the next run
+             carries a watch on 0x1429ba60b rather than more body work
+     T2. KILL ONE MOB TOGETHER, both of you hitting it.
+          The one who dealt most damage should see a WHITE exp line; the other a YELLOW
+          one with a smaller number.
+            only the killer is paid -> the fact never crossed the bus
+            both lines white -> the majority flag is wrong
+            the helper is paid the FULL amount -> the split is not being applied
+     T3. CLICK LYN, the tour guide on the Lith Harbor dock. THE MEASUREMENT.
+          They should show ONE box listing five towns, each a clickable line.
+            five clickable lines -> type 6 renders from the server. Say so loudly; it
+                       means Phil collapses from four boxes to one, and every future menu
+                       is one packet instead of a chain
+            a box with text but nothing clickable -> the markup is wrong and ONLY the
+                       markup. Fallback is written down in taxi.rs
+            no box at all -> the packet or the message type is wrong
+          If the screen is ambiguous, world.log settles it with no description needed:
+          a 10-byte 0x00F3 ending 06 01 and a u32 = it worked; 6 bytes ending 06 00 = the
+          box drew but nothing was clickable; no 0x00F3 = it never came up.
+          Picking a town costs 500 mesos and warps you.
+     T4. CLICK PHIL in Lith Harbor, as a Beginner at LEVEL 10. THE CONTROL FOR T3.
+          Four yes/no boxes, one per job path; Yes warps you to that instructor.
+            T4 works and T3 does not -> type 6 is the problem, and only type 6
+            NEITHER works -> something common to both, which is the script packet itself
+          Then talk to the instructor you land on. advance_job_for has NEVER been observed
+          to run - zero occurrences in 675 014 archived events - so this is its first test.
+     T5. RETURN SCROLLS. !item 2030000 3, then !item 2030009 1. Use each from the bag.
+          Nearest Town should warp you to the map's own return town and take ONE scroll.
+          The El Nath scroll must REFUSE with a chat notice and LEAVE THE SCROLL IN THE BAG.
+            the scroll vanishes on the refusal -> the transition guard is broken
+            nothing happens at all on either -> the client never sent 0x010E for a 0203
+                       item, and the whole path is dead code. Grep world.log for 0x010E
+     T6. !npcreload. Add a line to data/npc-dialogue.txt while the server is RUNNING, then
+         run the command and click that NPC.
+          a) does it say the new line without a restart?
+          b) the reply names counts - "N replaced, N added". A reload that read nothing
+             must say zero, not "ok"
 
     ============ CARRIED OVER - none of this has changed ============
 
@@ -1212,67 +1223,71 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  M1-M4 FIRST (two clients), then steps 1-7.' -ForegroundColor Yellow
+    Write-Host '  T1-T6 FIRST, then the carried-over steps 1-7.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
     Write-Host '  The CLIENT comes from maplecw-launcher.exe (asks for administrator).'
-    Write-Host '  ACCOUNTS: maplecw (GM), tester / tester@example.test (NOT a GM,'
-    Write-Host '  no characters). A forgotten password is a reset, and it never asks'
-    Write-Host '  for the old one:'
+    Write-Host '  ACCOUNTS: maplecw (GM), tester / tester@example.test (NOT a GM).'
+    Write-Host '  A forgotten password is a reset and never asks for the old one:'
     Write-Host '    & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw'
     Write-Host ''
-    Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
-    Write-Host '  THE LAUNCHER WORKS - UAC prompt present, wrong password refused,'
-    Write-Host '  and the client starts with NO second prompt. So the manifest is'
-    Write-Host '  embedded and the client inherits the elevation.'
-    Write-Host '  A SECOND ACCOUNT WORKS and signs in BY EMAIL.'
-    Write-Host '  THE MASKED EMAIL FOLLOWS THE ACCOUNT - it showed the tester address,'
-    Write-Host '  not the -DisplayName constant, which is the point of deriving it.'
-    Write-Host '  ONE DAMAGE NUMBER. Both halves confirmed on screen.'
-    Write-Host '  MP COST ACCURATE. Selling works, no Buy Back tab. Warrior casts.'
+    Write-Host '  CONFIRMED ALREADY, DO NOT RE-TEST.' -ForegroundColor Green
+    Write-Host '  Launcher, UAC, wrong-password refusal, second account by email,'
+    Write-Host '  masked email, one damage number, MP costs, selling, warrior casts.'
     Write-Host ''
-    Write-Host '  NEW - AND NONE OF IT HAS EVER BEEN ON A SCREEN.' -ForegroundColor Magenta
-    Write-Host '  Three new packets, every byte read out of the client statically.'
-    Write-Host '  NO packet in 0x224..0x39F has been seen doing anything in any run.'
-    Write-Host '  So M1 is not "is the position right", it is "does the client'
-    Write-Host '  accept this packet at all". Do it first.'
-    Write-Host ''
-    Write-Host '  TWO CLIENTS, AND THE ORDER MATTERS:' -ForegroundColor Yellow
-    Write-Host '    1. launcher -> maplecw -> Start Game -> WAIT until you are'
-    Write-Host '       in the world'
-    Write-Host '    2. launcher again -> tester -> Start Game'
-    Write-Host '  The game socket carries no credentials and the login server'
-    Write-Host '  serves whichever account claimed LAST, so signing in as tester'
-    Write-Host '  too early gives BOTH clients the same account. tester has no'
-    Write-Host '  characters - make one.'
-    Write-Host '  UNKNOWN: whether this client runs twice on one machine. If the'
-    Write-Host '  second refuses to start, SAY SO - that is a finding, and the'
+    Write-Host '  SIGN IN IN ANY ORDER NOW - this changed.' -ForegroundColor Cyan
+    Write-Host '  The login server used to serve whichever account claimed LAST, so'
+    Write-Host '  one player got the other characters. That was real and it is fixed:'
+    Write-Host '  one claim per launch, matched by asking the OS which process owns'
+    Write-Host '  the socket. Two accounts on 127.0.0.1 now each get their own.'
+    Write-Host '  If both clients STILL show the same account, that is a new finding.'
+    Write-Host '  UNKNOWN: whether this client runs twice on one machine at all. If'
+    Write-Host '  the second refuses to start, SAY SO - that is a finding, and the'
     Write-Host '  answer is two machines.'
     Write-Host ''
-    Write-Host '  M1. Get both characters onto the SAME MAP.' -ForegroundColor White
-    Write-Host '        a) does the other character appear? -> it all works'
-    Write-Host '        b) a client dies when the second player arrives -> the'
-    Write-Host '           0x0224 body is wrong. Say WHICH client died, the one'
-    Write-Host '           arriving or the one already there - that names the'
-    Write-Host '           direction the bad packet went'
-    Write-Host '        c) nothing appears and nothing dies -> dropped in silence.'
-    Write-Host '           Next run carries a watch on 0x1429ba60b instead of'
-    Write-Host '           more body work'
-    Write-Host '  M2. If they see each other, WALK ONE AROUND.' -ForegroundColor White
-    Write-Host '        a) does the other client see it move, and smoothly?'
-    Write-Host '        b) stutter / teleport / lag - say roughly how far behind'
-    Write-Host '  M3. A JUST-ARRIVED character may sit AT THE MAP ORIGIN until it' -ForegroundColor White
-    Write-Host '      moves. Expected - the only source of position is the'
-    Write-Host '      movement reports the client sends, and portals.txt has no'
-    Write-Host '      coordinates in it.'
-    Write-Host '      It should snap on the first step.'
-    Write-Host '        never snaps -> the move broadcast is not arriving, which'
-    Write-Host '                   contradicts M2'
-    Write-Host '  M4. LEAVING. A portal, then a log out.' -ForegroundColor White
-    Write-Host '        a) does each disappear from the other screen?'
-    Write-Host '        b) then KILL a client from Task Manager. It must also'
-    Write-Host '           disappear - that path has no log-out packet at all'
+    Write-Host '  T3 IS WHAT THIS RUN IS FOR. The rest gates it or controls it.' -ForegroundColor Magenta
+    Write-Host '  The client has a list box - message type 6 - that draws clickable'
+    Write-Host '  lines from ONE string. The client uses it for its own menus. Whether'
+    Write-Host '  it draws when the SERVER sends one has never been observed. So the'
+    Write-Host '  taxis send type 6 and Phil sends yes/no boxes, which ARE proven.'
+    Write-Host '  T4 is the control for T3.'
+    Write-Host ''
+    Write-Host '  T1. TWO CLIENTS, SAME MAP. First, and T2 waits on it.' -ForegroundColor White
+    Write-Host '        a) the other character appears -> it all works'
+    Write-Host '        b) a client dies when the second arrives -> the 0x0224 body'
+    Write-Host '           is wrong. Say WHICH died, arriving or already there -'
+    Write-Host '           that names the direction the bad packet went'
+    Write-Host '        c) nothing appears and nothing dies -> dropped in silence'
+    Write-Host '  T2. KILL ONE MOB TOGETHER, both hitting it.' -ForegroundColor White
+    Write-Host '        Most damage sees a WHITE exp line, the other YELLOW and less.'
+    Write-Host '          only the killer paid -> the fact never crossed the bus'
+    Write-Host '          both white -> the majority flag is wrong'
+    Write-Host '          helper paid in FULL -> the split is not applied'
+    Write-Host '  T3. CLICK LYN, tour guide on the Lith Harbor dock. THE ONE.' -ForegroundColor Yellow
+    Write-Host '        ONE box, five towns, each a clickable line.'
+    Write-Host '          five clickable lines -> type 6 renders. Say so loudly'
+    Write-Host '          text but nothing clickable -> the markup, and only that'
+    Write-Host '          no box at all -> the packet or the message type'
+    Write-Host '        world.log settles it if the screen is unclear: a 10-byte'
+    Write-Host '        0x00F3 ending 06 01 = worked; 6 bytes 06 00 = drew but dead;'
+    Write-Host '        no 0x00F3 = never came up. A town costs 500 mesos and warps.'
+    Write-Host '  T4. CLICK PHIL in Lith Harbor, Beginner at LEVEL 10. CONTROL.' -ForegroundColor White
+    Write-Host '        Four yes/no boxes, one per job path. Yes warps you.'
+    Write-Host '          T4 works, T3 does not -> type 6 is the problem, only it'
+    Write-Host '          NEITHER works -> something common to both'
+    Write-Host '        Then talk to the instructor you land on. Job advancement has'
+    Write-Host '        NEVER been observed to run - this is its first test.'
+    Write-Host '  T5. RETURN SCROLLS. !item 2030000 3 then !item 2030009 1.' -ForegroundColor White
+    Write-Host '        Nearest Town warps to the map return town, taking ONE.'
+    Write-Host '        El Nath must REFUSE and LEAVE THE SCROLL IN THE BAG.'
+    Write-Host '          scroll vanishes on a refusal -> the guard is broken'
+    Write-Host '          nothing at all -> the client never sent 0x010E. Grep it'
+    Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
+    Write-Host '      server RUNNING, run the command, click that NPC.'
+    Write-Host '        a) new line with no restart?'
+    Write-Host '        b) the reply names counts. A reload that read nothing must'
+    Write-Host '           say zero, not ok'
     Write-Host ''
     Write-Host '  ---- carried over, unchanged ----' -ForegroundColor DarkGray
     Write-Host '  1. RECOVERY (1001). !learn 1001 3, then cast it.' -ForegroundColor White

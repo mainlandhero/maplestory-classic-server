@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-29: **a second player can be seen, and never has been**
+# Where things stand — 2026-08-29b: **three ways to travel, and a menu box nobody has watched draw**
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -24,6 +24,69 @@ the stored characters and launches nothing.
 answers at all". Without it `Session::handle` returns nothing for *every* packet, the
 migration hello goes unanswered, and the client sits on "Connecting..." looking exactly
 like a server that is not running. It cost one of the owner's manual launches on 2026-08-20.
+
+### LANDED 2026-08-29b — what is wired, what is OFF, what is unobserved
+
+**The one measurement the next run is for:** does a **server-sent message type 6** draw its
+`#L<n>#` lines? The client uses that box for its own NPC menus (`research/npc-click.md:196`,
+`FUN_142a61900(ui, 6, ...)`, **[L]**), and the client's own WZ carries 33 such menus — but no
+server has ever sent one. So **the taxis send type 6 and Phil sends a chain of yes/no boxes,
+which is proven on screen.** That is deliberate: Phil is the control beside the experiment.
+If Phil works and Lyn does not, the fault is type 6 and nothing else.
+
+That design exists because of an instrument failure worth remembering. An enumeration of all
+71 entries of the `0x055B` jump table concluded **no select-one-of-N box exists**. It was wrong
+twice: it searched for a *count-then-N-strings* body (type 6 reads **one** string with markup),
+and its write-extractor **walked each function linearly and stopped at the first `send`** —
+type 6's *cancel* path is laid out before its selection path, so the tool reported the six-byte
+cancel and concluded there was no index. **A linear write-scan reports whichever branch the
+compiler emitted first and says nothing about the rest.** The answer had been sitting in
+`research/npc-click.md` the whole time; neither pass grepped it. The coordinator then relayed
+that negative to another agent as settled, which caused a **correct** type-6 implementation to
+be withdrawn. Do not propagate a negative you have not checked.
+
+| what | state |
+|---|---|
+| EXP shares reach other players | wired, **never on a screen** |
+| Taxi rides, 8 NPCs, 500 mesos, Lyn as tour guide | wired, **never on a screen**, sends type 6 |
+| Phil routes Beginners to their instructor | wired, **never on a screen**, sends yes/no |
+| Return scrolls, 10 of them, same-continent rule | wired, **never on a screen** |
+| `!npcreload` — NPC dialogue swaps under a live connection | wired, smoke-tested, **never on a screen** |
+| Per-launch login claims | **fixed and proved over real sockets** |
+| Migration credential binding | **BUILT AND OFF.** See below |
+| NPC and mob names in the dumps | done |
+
+**`--bind-migrations` is OFF by default and until it is on, the migration hole is not fixed.**
+A bound migration is refused by a channel server presenting nothing, which is today's channel
+server, so switching it on unconditionally would refuse **every** character select and read as
+a total outage. This is the "Built is not wired" category and it is named here rather than
+listed as done. The seed cannot be the credential: measured 2026-08-29, 115 distinct `0x007D`
+hello bodies against all 74 seeds ever minted, plain, both endiannesses, and the XOR form the
+decompiler predicts — **8510 trials, zero hits**, character id at offset 8 passing as a
+positive control on all 115.
+
+**What IS fixed, and it was the worse bug:** `stake_login_claim` used to `DELETE FROM
+login_claims` and insert one global row, so the second person to sign in **evicted** the first
+and *both* connections were served as the second account. Reproduced live over sockets
+(`otter saw ['OwlTwo']; owl saw ['OwlTwo']`), then closed: one claim per launch, and a
+connection is matched to its launch by asking the OS which process owns the socket
+(`store::peerowner`, `GetExtendedTcpTable`). The owner's constraint — *"IP cannot be the sole
+discriminator"* — is satisfied by construction, and `tools/claims_smoke.py` is the acceptance
+test: two accounts on `127.0.0.1`, each served its own characters, and an unattributable
+connection **refused rather than guessed**.
+
+**Still true, and said out loud as always: nothing authenticates the game socket.** The
+per-launch claim decides which account a credential-less connection is served as, using a fact
+the OS supplies rather than one the client asserts. That is strictly better and it is not
+authentication. Known residue: an elevated launch may not return `hProcess` through the UAC
+consent UI (unmeasured, costs one launch); a recycled pid inside a 12-hour claim is unguarded;
+two *remote* clients behind one address are `Ambiguous` — neither impersonated, neither able to
+play.
+
+**The next cheap step on that:** `MigrationEvidence::with_token_hash(hash)` would let the world
+server resolve pid → claim → `token_hash` and satisfy a bound migration **without the hook**,
+for same-machine clients. Assessed, not built. It must never be constructible from anything a
+connection sends.
 
 **MULTIPLAYER IS WIRED AND HAS NEVER BEEN ON A SCREEN — 2026-08-29.** The owner:
 *"the client's own movement is completely disregarded ... their movements and their
