@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-20: **a character plays, and keeps what it takes off**
+# Where things stand — 2026-08-29: **a second player can be seen, and never has been**
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -24,6 +24,56 @@ the stored characters and launches nothing.
 answers at all". Without it `Session::handle` returns nothing for *every* packet, the
 migration hello goes unanswered, and the client sits on "Connecting..." looking exactly
 like a server that is not running. It cost one of the owner's manual launches on 2026-08-20.
+
+**MULTIPLAYER IS WIRED AND HAS NEVER BEEN ON A SCREEN — 2026-08-29.** The owner:
+*"the client's own movement is completely disregarded ... their movements and their
+attacks need to be broadcasted and shown on all clients."* The first half of that was
+literally true and worse than it sounded: **no session could say anything to another
+session at all.** A channel is a process, each connection is a thread with its own
+socket, and `Session` is a pure state machine, so `session/combat.rs` had been computing
+a second contributor's EXP share and dropping it for nine days. `research/exp-sharing.md`
+said so out loud: *"only the delivery is missing"*.
+
+`crates/world/src/broadcast.rs` is the delivery — a mailbox per connection, hung off
+`Fields` so it reaches every session through an `Arc` that was already threaded there.
+A publisher never touches another socket (the send cipher is a *stream* cipher, so two
+threads framing onto one socket would corrupt everything after the collision,
+intermittently); it appends, and the owning thread drains in `Session::handle` **and**
+`Session::tick`. Both, because a player standing still sends no packets and `tick` is
+the only thing waking that connection. `TICK_MS` 500 → 100 for the same reason.
+
+Three packets go out, all decoded **statically** this session:
+
+| packet | body | where |
+|---|---|---|
+| `0x0224` UserEnterField | 65 fields, **508 bytes** + name + 5·equips | `research/user-enter-field.md` |
+| `0x0225` UserLeaveField | one `u32` | same, §1 |
+| `0x0293` UserMoveRemote | `u32 charId` + the path **verbatim** | `research/user-pool-tables.md` |
+
+Three things are worth not relearning:
+
+* **`avatar_look()` is reused unchanged, at body offset 187.** `1429ce6a9 call
+  0x1402ee8d0` is the same compact-look reader the character-select screen already
+  accepts these exact bytes through.
+* **`0x0293` must NOT carry the key-state trailer.** `1429d2eb5 XOR R8D,R8D`, exactly
+  like outbound `MOB_MOVE` against `0x02FF`. Checking the *encoder's* call sites gives
+  the wrong answer — `0x00D9`'s builder also passes zero, and 1082 measured bodies
+  carry the trailer anyway. The encoder writes it unconditionally; only the decoder
+  chooses to read it. `net::usermove::UserMove::path` is the right span,
+  `path_with_key_states` is not.
+* **The enter/leave assignment is [L] now**, from the bodies — `0x0224` allocates a
+  `0x4438`-byte `CUser` and inserts it, `0x0225` unlinks and destroys — not [D] from
+  enum order, which is all there was before.
+
+**Known wrong, and it self-heals: a just-arrived character is announced at the map
+origin.** The server's only source of position is the client's own `0x00D9` reports, and
+`gm-handbook/portals.txt` carries no coordinates. It snaps on that player's first step.
+The real fix is teaching `tools/dump_portals.py` to emit portal x/y.
+
+**Nothing in `0x224..0x39F` has ever been observed doing anything in any archived run**,
+so the first question on the next launch is not whether the position is right — it is
+whether the client accepts `0x0224` at all. If it is dropped in silence, the answer is a
+watch on `0x1429ba60b`, not more body work. Test plan steps M1–M4.
 
 **The character-select screen is finished and server-driven**, all confirmed on screen:
 the list, create, a truthful name check, the three-slot limit, **delete**, and persistence

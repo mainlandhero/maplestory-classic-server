@@ -1,0 +1,430 @@
+
+==============================================================================
+A  FUN_1429bafb0  table=0x1429bb5d0  entries=81  opcodes 0x0226..0x0276
+==============================================================================
+  op 0x0226  idx 0x00  stub 0x1429bb124  -> 0x1427847a0                                     jmp 0x1429bb59f
+  op 0x0227  idx 0x01  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0228  idx 0x02  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0229  idx 0x03  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x022a  idx 0x04  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x022b  idx 0x05  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x022c  idx 0x06  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x022d  idx 0x07  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x022e  idx 0x08  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x022f  idx 0x09  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0230  idx 0x0a  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0231  idx 0x0b  stub 0x1429bb134  -> 0x142784970                                     jmp 0x1429bb59f
+  op 0x0232  idx 0x0c  stub 0x1429bb144  -> 0x142785e20                                     jmp 0x1429bb59f
+  op 0x0233  idx 0x0d  stub 0x1429bb154  -> 0x1427956b0                                     jmp 0x1429bb59f
+  op 0x0234  idx 0x0e  stub 0x1429bb164  -> 0x142795a70                                     jmp 0x1429bb59f
+  op 0x0235  idx 0x0f  stub 0x1429bb174  -> 0x14277b0e0                                     jmp 0x1429bb59f
+  op 0x0236  idx 0x10  stub 0x1429bb184  -> 0x142792340                                     jmp 0x1429bb59f
+  op 0x0237  idx 0x11  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0238  idx 0x12  stub 0x1429bb1f4  -> 0x1427934e0                                     jmp 0x1429bb59f
+  op 0x0239  idx 0x13  stub 0x1429bb204  -> 0x1427938c0                                     jmp 0x1429bb59f
+  op 0x023a  idx 0x14  stub 0x1429bb194  -> 0x142793aa0                                     jmp 0x1429bb59f
+  op 0x023b  idx 0x15  stub 0x1429bb1a4  -> 0x142793c10                                     jmp 0x1429bb59f
+  op 0x023c  idx 0x16  stub 0x1429bb1b4  -> 0x1427948d0                                     jmp 0x1429bb59f
+  op 0x023d  idx 0x17  stub 0x1429bb1c4  -> 0x142794130                                     jmp 0x1429bb59f
+  op 0x023e  idx 0x18  stub 0x1429bb1d4  -> 0x142794540                                     jmp 0x1429bb59f
+  op 0x023f  idx 0x19  stub 0x1429bb1e4  -> 0x1427946b0                                     jmp 0x1429bb59f
+  op 0x0240  idx 0x1a  stub 0x1429bb214  -> 0x142794ec0                                     jmp 0x1429bb59f
+  op 0x0241  idx 0x1b  stub 0x1429bb244  -> 0x142795330                                     jmp 0x1429bb59f
+  op 0x0242  idx 0x1c  stub 0x1429bb254  -> 0x1427954e0                                     jmp 0x1429bb59f
+  op 0x0243  idx 0x1d  stub 0x1429bb264  -> 0x142798c20                                     jmp 0x1429bb59f
+  op 0x0244  idx 0x1e  stub 0x1429bb274  -> 0x142798c30                                     jmp 0x1429bb59f
+  op 0x0245  idx 0x1f  stub 0x1429bb284  -> 0x142798c40                                     jmp 0x1429bb59f
+  op 0x0246  idx 0x20  stub 0x1429bb294  -> 0x142798c70                                     jmp 0x1429bb59f
+  op 0x0247  idx 0x21  stub 0x1429bb2a4  -> 0x14279bc20                                     jmp 0x1429bb59f
+  op 0x0248  idx 0x22  stub 0x1429bb2b4  -> 0x1427922b0                                     jmp 0x1429bb59f
+  op 0x0249  idx 0x23  stub 0x1429bb2c4  -> 0x142798cf0                                     jmp 0x1429bb59f
+  op 0x024a  idx 0x24  stub 0x1429bb2d4  -> 0x1427eeb40                                     jmp 0x1429bb59f
+  op 0x024b  idx 0x25  stub 0x1429bb2e4  -> 0x1427991b0                                     jmp 0x1429bb59f
+  op 0x024c  idx 0x26  stub 0x1429bb2f4  -> 0x142799290                                     jmp 0x1429bb59f
+  op 0x024d  idx 0x27  stub 0x1429bb304  -> 0x1427995c0                                     jmp 0x1429bb59f
+  op 0x024e  idx 0x28  stub 0x1429bb314  -> 0x14279a6e0                                     jmp 0x1429bb59f
+  op 0x024f  idx 0x29  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0250  idx 0x2a  stub 0x1429bb324  -> 0x142826ab0                                     jmp 0x1429bb59f
+  op 0x0251  idx 0x2b  stub 0x1429bb334  -> 0x1427bdd40                                     jmp 0x1429bb59f
+  op 0x0252  idx 0x2c  stub 0x1429bb344  -> 0x1428341c0                                     jmp 0x1429bb59f
+  op 0x0253  idx 0x2d  stub 0x1429bb354  -> 0x142834230                                     jmp 0x1429bb59f
+  op 0x0254  idx 0x2e  stub 0x1429bb364  -> 0x1428350a0                                     jmp 0x1429bb59f
+  op 0x0255  idx 0x2f  stub 0x1429bb374  -> 0x142835870                                     jmp 0x1429bb59f
+  op 0x0256  idx 0x30  stub 0x1429bb384  -> 0x1428358e0                                     jmp 0x1429bb59f
+  op 0x0257  idx 0x31  stub 0x1429bb394  -> 0x142835930                                     jmp 0x1429bb59f
+  op 0x0258  idx 0x32  stub 0x1429bb3a4  -> 0x142835a80                                     jmp 0x1429bb59f
+  op 0x0259  idx 0x33  stub 0x1429bb224  -> 0x142795050                                     jmp 0x1429bb59f
+  op 0x025a  idx 0x34  stub 0x1429bb234  -> 0x1427951c0                                     jmp 0x1429bb59f
+  op 0x025b  idx 0x35  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x025c  idx 0x36  stub 0x1429bb3b4  -> 0x1428482a0                                     jmp 0x1429bb59f
+  op 0x025d  idx 0x37  stub 0x1429bb3c4  -> 0x142834060                                     jmp 0x1429bb59f
+  op 0x025e  idx 0x38  stub 0x1429bb424  -> 0x142833e80                                     jmp 0x1429bb59f
+  op 0x025f  idx 0x39  stub 0x1429bb3d4  -> 0x142836380                                     jmp 0x1429bb59f
+  op 0x0260  idx 0x3a  stub 0x1429bb3e4  -> 0x1428363b0                                     jmp 0x1429bb59f
+  op 0x0261  idx 0x3b  stub 0x1429bb3f4  -> 0x142836660                                     jmp 0x1429bb59f
+  op 0x0262  idx 0x3c  stub 0x1429bb404  -> 0x1428377f0                                     jmp 0x1429bb59f
+  op 0x0263  idx 0x3d  stub 0x1429bb414  -> 0x142837540                                     jmp 0x1429bb59f
+  op 0x0264  idx 0x3e  stub 0x1429bb434  -> 0x142833ff0                                     jmp 0x1429bb59f
+  op 0x0265  idx 0x3f  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0266  idx 0x40  stub 0x1429bb444  -> 0x142853840                                     jmp 0x1429bb59f
+  op 0x0267  idx 0x41  stub 0x1429bb454  -> 0x142853ae0                                     jmp 0x1429bb59f
+  op 0x0268  idx 0x42  stub 0x1429bb464  -> 0x1428542a0                                     jmp 0x1429bb59f
+  op 0x0269  idx 0x43  stub 0x1429bb474  -> 0x142854520                                     jmp 0x1429bb59f
+  op 0x026a  idx 0x44  stub 0x1429bb484  -> 0x142854710                                     jmp 0x1429bb59f
+  op 0x026b  idx 0x45  stub 0x1429bb494  -> qword ptr [rax + 0x90]                          jmp 0x1429bb59f
+  op 0x026c  idx 0x46  stub 0x1429bb4a8  -> 0x1427fb990                                     jmp 0x1429bb59f
+  op 0x026d  idx 0x47  stub 0x1429bb4b8  -> 0x1427fba10                                     jmp 0x1429bb59f
+  op 0x026e  idx 0x48  stub 0x1429bb4d8  -> 0x1427fba70                                     jmp 0x1429bb59f
+  op 0x026f  idx 0x49  stub 0x1429bb4e8  -> 0x1427fbaa0                                     jmp 0x1429bb59f
+  op 0x0270  idx 0x4a  stub 0x1429bb4c8  -> 0x142859c60                                     jmp 0x1429bb59f
+  op 0x0271  idx 0x4b  stub 0x1429bb4f8  -> 0x142859f00                                     jmp 0x1429bb59f
+  op 0x0272  idx 0x4c  stub 0x1429bb508  -> 0x142859f70                                     jmp 0x1429bb59f
+  op 0x0273  idx 0x4d  stub 0x1429bb518  -> 0x14285b4f0                                     jmp 0x1429bb59f
+  op 0x0274  idx 0x4e  stub 0x1429bb525  -> 0x14285f040                                     jmp 0x1429bb59f
+  op 0x0275  idx 0x4f  stub 0x1429bb53f  -> 0x142795b20, 0x142798a40, 0x142846520, 0x1428340e0, 0x1415f0d70  ret  <-- DEFAULT
+  op 0x0276  idx 0x50  stub 0x1429bb532  -> 0x14285f8e0                                     jmp 0x1429bb59f
+  -- 81 entries, 67 distinct stubs
+  -- default arm 0x1429bb53f occupies 15 slots
+
+==============================================================================
+B  FUN_1429bb720 primary  table=0x1429bbc34  entries=39  opcodes 0x029e..0x02c4
+==============================================================================
+  op 0x029e  idx 0x00  stub 0x1429bb95e  -> 0x1429d2ee0                                     jmp 0x1429bbb10
+  op 0x029f  idx 0x01  stub 0x1429bb95e  -> 0x1429d2ee0                                     jmp 0x1429bbb10
+  op 0x02a0  idx 0x02  stub 0x1429bb95e  -> 0x1429d2ee0                                     jmp 0x1429bbb10
+  op 0x02a1  idx 0x03  stub 0x1429bb95e  -> 0x1429d2ee0                                     jmp 0x1429bbb10
+  op 0x02a2  idx 0x04  stub 0x1429bb970  -> 0x1429d4100                                     jmp 0x1429bbb1f
+  op 0x02a3  idx 0x05  stub 0x1429bb986  -> 0x1429d4390                                     jmp 0x1429bbb1f
+  op 0x02a4  idx 0x06  stub 0x1429bb99c  -> 0x1429d4680                                     jmp 0x1429bbb1f
+  op 0x02a5  idx 0x07  stub 0x1429bb9b2  -> 0x1429d48c0                                     jmp 0x1429bbb1f
+  op 0x02a6  idx 0x08  stub 0x1429bb9c8  -> 0x1427862e0                                     jmp 0x1429bbb1f
+  op 0x02a7  idx 0x09  stub 0x1429bb9de  -> 0x142786350                                     jmp 0x1429bbb1f
+  op 0x02a8  idx 0x0a  stub 0x1429bb9f4  -> 0x1429d4f20                                     jmp 0x1429bbb1f
+  op 0x02a9  idx 0x0b  stub 0x1429bba0a  -> 0x1429d4f50                                     jmp 0x1429bbb1f
+  op 0x02aa  idx 0x0c  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02ab  idx 0x0d  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02ac  idx 0x0e  stub 0x1429bba20  -> 0x1429d4f60                                     jmp 0x1429bbb1f
+  op 0x02ad  idx 0x0f  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02ae  idx 0x10  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02af  idx 0x11  stub 0x1429bba36  -> 0x1427863f0                                     jmp 0x1429bbb1f
+  op 0x02b0  idx 0x12  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b1  idx 0x13  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b2  idx 0x14  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b3  idx 0x15  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b4  idx 0x16  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b5  idx 0x17  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b6  idx 0x18  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b7  idx 0x19  stub 0x1429bba5c  -> 0x1429d5f70                                     jmp 0x1429bbb1f
+  op 0x02b8  idx 0x1a  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02b9  idx 0x1b  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02ba  idx 0x1c  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02bb  idx 0x1d  stub 0x1429bba72  -> 0x1429d6010                                     jmp 0x1429bbb1f
+  op 0x02bc  idx 0x1e  stub 0x1429bba88  -> 0x1429d6100                                     jmp 0x1429bbb1f
+  op 0x02bd  idx 0x1f  stub 0x1429bba9e  -> 0x1429d7130                                     jmp 0x1429bbb1f
+  op 0x02be  idx 0x20  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02bf  idx 0x21  stub 0x1429bbab1  -> 0x1429de1b0                                     jmp 0x1429bbb1f
+  op 0x02c0  idx 0x22  stub 0x1429bbac4  -> 0x1429deb60                                     jmp 0x1429bbb1f
+  op 0x02c1  idx 0x23  stub 0x1429bbad7  -> 0x1429deae0                                     jmp 0x1429bbb1f
+  op 0x02c2  idx 0x24  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02c3  idx 0x25  stub 0x1429bbb10  -> (none)                                          jmp rcx  <-- DEFAULT
+  op 0x02c4  idx 0x26  stub 0x1429bba4c  -> 0x1429d5d90                                     jmp 0x1429bbc08
+  -- 39 entries, 20 distinct stubs
+  -- default arm 0x1429bbb10 occupies 17 slots
+
+==============================================================================
+C  FUN_1429bb720 secondary  byteidx=0x1429bbd10 (49) dwords=0x1429bbcd0  opcodes 0x0293..0x02c3
+==============================================================================
+  byte index values: 00 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 0f 01 0f 0f 02 03 0f 04 05 06 07 08 09 0a 0f 0f 0b 0f 0f 0f 0f 0c 0f 0f 0f 0d 0e
+  -> 16 dword slots
+  case 0x00  stub 0x1429bbb38 -> 0x1429d2e70                                    jmp 0x1429bbc08
+  case 0x01  stub 0x1429bbb78 -> 0x1429d6f50                                    jmp 0x1429bbc08
+  case 0x02  stub 0x1429bbb48 -> 0x1429d4fd0                                    jmp 0x1429bbc08
+  case 0x03  stub 0x1429bbb58 -> 0x1429d5290                                    jmp 0x1429bbc08
+  case 0x04  stub 0x1429bbb68 -> 0x1429d62f0                                    jmp 0x1429bbc08
+  case 0x05  stub 0x1429bbb88 -> 0x1429d6500                                    jmp 0x1429bbc08
+  case 0x06  stub 0x1429bbbbc -> 0x1429d5610                                    jmp 0x1429bbc08
+  case 0x07  stub 0x1429bbb95 -> 0x1429d5710                                    jmp 0x1429bbc08
+  case 0x08  stub 0x1429bbba2 -> 0x1429d5a40                                    jmp 0x1429bbc08
+  case 0x09  stub 0x1429bbbaf -> 0x1429d5ac0                                    jmp 0x1429bbc08
+  case 0x0a  stub 0x1429bbbc9 -> 0x1429d7020                                    jmp 0x1429bbc08
+  case 0x0b  stub 0x1429bbbd6 -> 0x1429d70f0                                    jmp 0x1429bbc08
+  case 0x0c  stub 0x1429bbbe3 -> 0x1429ddb20                                    jmp 0x1429bbc08
+  case 0x0d  stub 0x1429bbbf0 -> 0x1429d7170                                    jmp 0x1429bbc08
+  case 0x0e  stub 0x1429bbbfd -> 0x1429d7220, 0x1415f0d70                       ret
+  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                                    ret
+  ---- per opcode ----
+  op 0x0293  idx 0x00  case 0x00  stub 0x1429bbb38 -> 0x1429d2e70                              jmp 0x1429bbc08
+  op 0x0294  idx 0x01  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x0295  idx 0x02  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x0296  idx 0x03  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x0297  idx 0x04  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x0298  idx 0x05  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x0299  idx 0x06  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x029a  idx 0x07  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x029b  idx 0x08  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x029c  idx 0x09  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x029d  idx 0x0a  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x029e  idx 0x0b  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x029f  idx 0x0c  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a0  idx 0x0d  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a1  idx 0x0e  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a2  idx 0x0f  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a3  idx 0x10  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a4  idx 0x11  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a5  idx 0x12  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a6  idx 0x13  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a7  idx 0x14  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a8  idx 0x15  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02a9  idx 0x16  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02aa  idx 0x17  case 0x01  stub 0x1429bbb78 -> 0x1429d6f50                              jmp 0x1429bbc08
+  op 0x02ab  idx 0x18  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02ac  idx 0x19  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02ad  idx 0x1a  case 0x02  stub 0x1429bbb48 -> 0x1429d4fd0                              jmp 0x1429bbc08
+  op 0x02ae  idx 0x1b  case 0x03  stub 0x1429bbb58 -> 0x1429d5290                              jmp 0x1429bbc08
+  op 0x02af  idx 0x1c  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02b0  idx 0x1d  case 0x04  stub 0x1429bbb68 -> 0x1429d62f0                              jmp 0x1429bbc08
+  op 0x02b1  idx 0x1e  case 0x05  stub 0x1429bbb88 -> 0x1429d6500                              jmp 0x1429bbc08
+  op 0x02b2  idx 0x1f  case 0x06  stub 0x1429bbbbc -> 0x1429d5610                              jmp 0x1429bbc08
+  op 0x02b3  idx 0x20  case 0x07  stub 0x1429bbb95 -> 0x1429d5710                              jmp 0x1429bbc08
+  op 0x02b4  idx 0x21  case 0x08  stub 0x1429bbba2 -> 0x1429d5a40                              jmp 0x1429bbc08
+  op 0x02b5  idx 0x22  case 0x09  stub 0x1429bbbaf -> 0x1429d5ac0                              jmp 0x1429bbc08
+  op 0x02b6  idx 0x23  case 0x0a  stub 0x1429bbbc9 -> 0x1429d7020                              jmp 0x1429bbc08
+  op 0x02b7  idx 0x24  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02b8  idx 0x25  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02b9  idx 0x26  case 0x0b  stub 0x1429bbbd6 -> 0x1429d70f0                              jmp 0x1429bbc08
+  op 0x02ba  idx 0x27  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02bb  idx 0x28  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02bc  idx 0x29  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02bd  idx 0x2a  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02be  idx 0x2b  case 0x0c  stub 0x1429bbbe3 -> 0x1429ddb20                              jmp 0x1429bbc08
+  op 0x02bf  idx 0x2c  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02c0  idx 0x2d  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02c1  idx 0x2e  case 0x0f  stub 0x1429bbc08 -> 0x1415f0d70                              ret  <-- DEFAULT
+  op 0x02c2  idx 0x2f  case 0x0d  stub 0x1429bbbf0 -> 0x1429d7170                              jmp 0x1429bbc08
+  op 0x02c3  idx 0x30  case 0x0e  stub 0x1429bbbfd -> 0x1429d7220, 0x1415f0d70                 ret
+  -- 49 opcodes, 16 distinct stubs
+  -- default arm 0x1429bbc08 occupies 34 slots
+
+==============================================================================
+D  FUN_14289a3a0  table=0x14289d660  entries=218  opcodes 0x02c5..0x039e
+==============================================================================
+  op 0x02c5  idx 0x00  stub 0x14289a419  -> 0x1427862e0                                     jmp 0x14289d615
+  op 0x02c6  idx 0x01  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02c7  idx 0x02  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02c8  idx 0x03  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02c9  idx 0x04  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02ca  idx 0x05  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02cb  idx 0x06  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02cc  idx 0x07  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02cd  idx 0x08  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02ce  idx 0x09  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02cf  idx 0x0a  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02d0  idx 0x0b  stub 0x14289a429  -> 0x142786350                                     jmp 0x14289d615
+  op 0x02d1  idx 0x0c  stub 0x14289a439  -> 0x1427863f0                                     jmp 0x14289d615
+  op 0x02d2  idx 0x0d  stub 0x14289a449  -> 0x1406e8ae0, 0x142cc4430, 0x1406e8ae0, 0x1406e8c20, 0x1406e8b80, 0x1406e8b80, 0x1428d6710  jmp 0x14289d615
+  op 0x02d3  idx 0x0e  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02d4  idx 0x0f  stub 0x14289a53b  -> 0x14289db10                                     jmp 0x14289d615
+  op 0x02d5  idx 0x10  stub 0x14289a54b  -> 0x1408a9e40, 0x142a26280                        jmp 0x14289d615
+  op 0x02d6  idx 0x11  stub 0x14289a591  -> 0x14289dd90                                     jmp 0x14289d615
+  op 0x02d7  idx 0x12  stub 0x14289a5a1  -> 0x1406e8c20, 0x1428d93b0                        jmp 0x14289d615
+  op 0x02d8  idx 0x13  stub 0x14289a5be  -> 0x1428a1460                                     jmp 0x14289d615
+  op 0x02d9  idx 0x14  stub 0x14289a5ce  -> 0x1406e9170, 0x1406e8ae0, 0x1406e8c20           jmp 0x14289a62b
+  op 0x02da  idx 0x15  stub 0x14289a7b6  -> 0x1428a1a70                                     jmp 0x14289d615
+  op 0x02db  idx 0x16  stub 0x14289a7c6  -> 0x1406e9050, 0x1403ede40, 0x14019f2c0, 0x1429f5560  jmp 0x14289a867
+  op 0x02dc  idx 0x17  stub 0x14289a81c  -> 0x1406e9050, 0x1403ede40, 0x14019f2c0, 0x1429f1f50, 0x1401bebb0  jmp 0x14289c26b
+  op 0x02dd  idx 0x18  stub 0x14289a87e  -> 0x1428a1d20                                     jmp 0x14289d615
+  op 0x02de  idx 0x19  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x02df  idx 0x1a  stub 0x14289a88e  -> 0x1406e8c20, 0x142cb1020                        jmp 0x14289d615
+  op 0x02e0  idx 0x1b  stub 0x14289a8cd  -> 0x1406e8c20, 0x142cb4530                        jmp 0x14289d615
+  op 0x02e1  idx 0x1c  stub 0x14289a8f4  -> 0x1428a2480                                     jmp 0x14289d615
+  op 0x02e2  idx 0x1d  stub 0x14289a914  -> 0x1406e8ae0, 0x142cc1c30, 0x141892840, 0x141b829c0  jmp 0x14289d615
+  op 0x02e3  idx 0x1e  stub 0x14289a950  -> 0x1428a2ad0                                     jmp 0x14289d615
+  op 0x02e4  idx 0x1f  stub 0x14289a960  -> 0x1406e8ae0, 0x142cc3d60, 0x142cb9290, 0x1427bacc0  jmp 0x14289d615
+  op 0x02e5  idx 0x20  stub 0x14289a9d1  -> 0x1406e8ae0, 0x1428eb430                        jmp 0x14289d615
+  op 0x02e6  idx 0x21  stub 0x14289aa14  -> 0x1406e8ae0, 0x1406e8c20, 0x1406e8c20, 0x142e52ed0, 0x1420e6c90  jmp 0x14289d615
+  op 0x02e7  idx 0x22  stub 0x14289a99a  -> 0x1406e8ae0, 0x1406e8c20, 0x1406e8c20, 0x1428a2f80  jmp 0x14289d615
+  op 0x02e8  idx 0x23  stub 0x14289aad5  -> 0x1428a3200                                     jmp 0x14289d615
+  op 0x02e9  idx 0x24  stub 0x14289aae5  -> 0x1428a3600                                     jmp 0x14289d615
+  op 0x02ea  idx 0x25  stub 0x14289aaf5  -> 0x1428a37e0                                     jmp 0x14289d615
+  op 0x02eb  idx 0x26  stub 0x14289ab05  -> 0x1428a3a10                                     jmp 0x14289d615
+  op 0x02ec  idx 0x27  stub 0x14289ab15  -> 0x142cb1020                                     jmp 0x14289d615
+  op 0x02ed  idx 0x28  stub 0x14289ab3b  -> 0x1406e9050, 0x1406e8ae0, 0x14019a260, 0x142a26280  jmp 0x14289c25c
+  op 0x02ee  idx 0x29  stub 0x14289aba0  -> 0x1406e8b80, 0x1406e9050, 0x1415eca30           jmp 0x14289c258
+  op 0x02ef  idx 0x2a  stub 0x14289abca  -> 0x1406e8b80, 0x1406e8c20, 0x1406e8c20, 0x1415ecd00  jmp 0x14289d615
+  op 0x02f0  idx 0x2b  stub 0x14289abf9  -> 0x1406e8b80, 0x1406e9050, 0x142ef6a98, 0x14019ce60, 0x1415eca30, 0x14019ce60, 0x14019f2c0, 0x14019f2c0, 0x14019f2c0  jmp 0x14289ac20
+  op 0x02f1  idx 0x2c  stub 0x14289acfa  -> 0x1428ee5d0                                     jmp 0x14289d615
+  op 0x02f2  idx 0x2d  stub 0x14289ad0a  -> 0x1428ee7d0                                     jmp 0x14289d615
+  op 0x02f3  idx 0x2e  stub 0x14289ad1a  -> 0x1428a3bf0                                     jmp 0x14289d615
+  op 0x02f4  idx 0x2f  stub 0x14289ad2a  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x14295e330, 0x14019b780, 0x1429e3ef0  jmp 0x14289d615
+  op 0x02f5  idx 0x30  stub 0x14289ae0b  -> 0x14279c140                                     jmp 0x14289d615
+  op 0x02f6  idx 0x31  stub 0x14289ae1b  -> 0x1406e8c20, 0x1406e8c20, 0x142cd87b0           jmp 0x14289d615
+  op 0x02f7  idx 0x32  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02f8  idx 0x33  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x02f9  idx 0x34  stub 0x14289caf4  -> 0x1406e8ae0, 0x1428fad20, 0x142ceefb0           jmp 0x14289d615
+  op 0x02fa  idx 0x35  stub 0x14289a904  -> 0x1428a2830                                     jmp 0x14289d615
+  op 0x02fb  idx 0x36  stub 0x14289ae5f  -> 0x1406e8ae0                                     jmp 0x14289d615
+  op 0x02fc  idx 0x37  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x02fd  idx 0x38  stub 0x14289ae73  -> 0x142954270, 0x141a2d830                        jmp 0x14289d615
+  op 0x02fe  idx 0x39  stub 0x14289ae8f  -> 0x1428fb0f0                                     jmp 0x14289d615
+  op 0x02ff  idx 0x3a  stub 0x14289ae9f  -> 0x14298fa30                                     jmp 0x14289d615
+  op 0x0300  idx 0x3b  stub 0x14289aeaf  -> 0x14298fb70                                     jmp 0x14289d615
+  op 0x0301  idx 0x3c  stub 0x14289aebf  -> 0x1406e9050, 0x1406e8ae0, 0x14019a260, 0x142df3430  jmp 0x14289af26
+  op 0x0302  idx 0x3d  stub 0x14289af3e  -> 0x1406e9050, 0x14019a260, 0x142df3570           jmp 0x14289c25c
+  op 0x0303  idx 0x3e  stub 0x14289af84  -> 0x1428fae50                                     jmp 0x14289d615
+  op 0x0304  idx 0x3f  stub 0x14289af94  -> 0x1406e8c20, 0x142cdec50                        jmp 0x14289d615
+  op 0x0305  idx 0x40  stub 0x14289afaf  -> 0x1428a6720                                     jmp 0x14289d615
+  op 0x0306  idx 0x41  stub 0x14289b014  -> 0x1406e8c20, 0x142e52ed0, 0x141a141a0, 0x142e52ed0, 0x141a14bc0  jmp 0x14289d615
+  op 0x0307  idx 0x42  stub 0x14289b0a3  -> 0x1406e8c20, 0x1401c00e0, 0x1406e9050, 0x14019a260  jmp 0x14289b100
+  op 0x0308  idx 0x43  stub 0x14289b168  -> 0x1406e8c20, 0x141892a90, 0x142bf3f70           jmp 0x14289c71c
+  op 0x0309  idx 0x44  stub 0x14289b1fa  -> 0x1406e8c20, 0x1406e8c20, 0x142cb9550, 0x141892a90, 0x142bf3f70, qword ptr [rax]  jmp 0x14289b2bc
+  op 0x030a  idx 0x45  stub 0x14289b2f8  -> 0x1406e8b80, 0x142bf3f70, qword ptr [rax], 0x1413b8e00, 0x142f21e80, 0x14019b780, 0x14118ace0, 0x1413b9ab0, 0x1406e8b80, 0x1406e8c20, 0x1406e8c20, 0x1413b9950  jmp 0x14289b2d8
+  op 0x030b  idx 0x46  stub 0x14289b421  -> 0x1406e8c20, 0x1406e8c20, 0x1413b8e00           jmp 0x14289b2ce
+  op 0x030c  idx 0x47  stub 0x14289b452  -> 0x1406e8c20, 0x142cb1020, 0x141350610, qword ptr [rax + 0x90]  jmp 0x14289d615
+  op 0x030d  idx 0x48  stub 0x14289b153  -> 0x1406e8ae0                                     jmp 0x14289d615
+  op 0x030e  idx 0x49  stub 0x14289b4b9  -> 0x1406e8c20                                     jmp 0x14289d615
+  op 0x030f  idx 0x4a  stub 0x14289b4c6  -> 0x1406e8ae0, 0x142a33fd0, 0x142cc4430           jmp 0x14289d615
+  op 0x0310  idx 0x4b  stub 0x14289b4f7  -> 0x1406e8c20, 0x1406e8c20, 0x1427703d0, 0x141ebd9d0  jmp 0x14289d615
+  op 0x0311  idx 0x4c  stub 0x14289afbf  -> 0x1428e1fa0                                     jmp 0x14289d615
+  op 0x0312  idx 0x4d  stub 0x14289afcf  -> 0x1406e8c20, 0x1406e8c20, 0x141001fc0           jmp 0x14289d615
+  op 0x0313  idx 0x4e  stub 0x14289b543  -> 0x142903600                                     jmp 0x14289d615
+  op 0x0314  idx 0x4f  stub 0x14289b553  -> 0x140f810b0, 0x142cbe730, 0x142cbec90, 0x1401ba9d0, 0x142cbef90, 0x140268a60, 0x14025d6a0, 0x1429e3ef0, 0x1406ed520, 0x14025d810, 0x1415d01c0, 0x142771360, 0x1406ed610  jmp 0x14289d615
+  op 0x0315  idx 0x50  stub 0x14289b656  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8ae0, 0x1406e8c20, 0x1406e8c20, 0x1406e8ae0, 0x1406e8ae0, 0x142cbecc0, 0x142122480, 0x142cbe730, 0x1401ba9d0, 0x142cb5cb0, 0x142903e90  jmp 0x14289d615
+  op 0x0316  idx 0x51  stub 0x14289b7c7  -> 0x1429040b0                                     jmp 0x14289d615
+  op 0x0317  idx 0x52  stub 0x14289b7d7  -> 0x1406e8b80, 0x1406e8c20, 0x1406e8ae0, 0x1406e8c20, 0x14019b780, 0x1425af3c0, qword ptr [rax + 0xd0], 0x1425b1e70, 0x1425ac9f0, 0x1406e8c20, 0x1425aca00  jmp 0x14289d615
+  op 0x0318  idx 0x53  stub 0x14289b8be  -> 0x1406e8c20, 0x1406e8c20, 0x1429e3ef0, qword ptr [rax + 0xb8]  jmp 0x14289d615
+  op 0x0319  idx 0x54  stub 0x14289b9ea  -> 0x1406e8ae0, 0x1406e8ae0, 0x1406e9050, qword ptr [rax + 0x100], 0x142ef3ad0, 0x1415f4320, 0x1415ffe70, 0x1429e4fa0, 0x14019f2c0  jmp 0x14289d615
+  op 0x031a  idx 0x55  stub 0x14289a7a6  -> 0x1428e3ba0                                     jmp 0x14289d615
+  op 0x031b  idx 0x56  stub 0x14289bab0  -> 0x1406e8c20, 0x142797050, 0x1420f6460, 0x142e52ed0, 0x1420fb540  jmp 0x14289bb67
+  op 0x031c  idx 0x57  stub 0x14289bb92  -> 0x1406e8c20, 0x1406e8c20, 0x14276df20, qword ptr [rdx + 0xb0], 0x1427bbae0, 0x141892840, qword ptr [r9 + 0xf8]  jmp 0x14289d615
+  op 0x031d  idx 0x58  stub 0x14289bbef  -> 0x1406e8ae0, 0x142cf6a50, 0x142cf6a60, 0x142cf6a50, 0x142cbe730  jmp 0x14289bcac
+  op 0x031e  idx 0x59  stub 0x14289bce6  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x141ef2180, 0x141eeb820, 0x141e6e080  jmp 0x14289d615
+  op 0x031f  idx 0x5a  stub 0x14289bd43  -> 0x1406e8c20                                     jmp 0x14289d615
+  op 0x0320  idx 0x5b  stub 0x14289bd57  -> 0x1406e8ae0, 0x1406e8c20, qword ptr [r10 + 0x70]  jmp 0x14289d615
+  op 0x0321  idx 0x5c  stub 0x14289bd94  -> 0x142906da0                                     jmp 0x14289d615
+  op 0x0322  idx 0x5d  stub 0x14289bda4  -> 0x1406e8f00, qword ptr [rax + 0x118]            jmp 0x14289d615
+  op 0x0323  idx 0x5e  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0324  idx 0x5f  stub 0x14289be90  -> 0x142908730                                     jmp 0x14289d615
+  op 0x0325  idx 0x60  stub 0x14289bea0  -> 0x1406e9050, 0x1406e8c20, 0x1406e8c20, 0x14019a260, 0x142908be0  jmp 0x14289c25c
+  op 0x0326  idx 0x61  stub 0x14289bef1  -> 0x1406e9050, 0x14019a260, 0x142908e80           jmp 0x14289c25c
+  op 0x0327  idx 0x62  stub 0x14289bf28  -> 0x1406e8ae0, 0x142961650, 0x14019b780, 0x1402be980  jmp 0x14289bf82
+  op 0x0328  idx 0x63  stub 0x14289c00e  -> 0x1406e8c20, 0x141e768f0, qword ptr [r8 + 0x30], qword ptr [rax + 0x30]  jmp 0x14289c065
+  op 0x0329  idx 0x64  stub 0x14289c07a  -> 0x1406ed520, 0x1415d01c0, 0x1406ed610           jmp 0x14289d615
+  op 0x032a  idx 0x65  stub 0x14289c113  -> 0x14019f2c0, 0x1406e9050, 0x1406e8c20, 0x1429e3ef0  jmp 0x14289c177
+  op 0x032b  idx 0x66  stub 0x14289c18f  -> 0x1406e8ae0, 0x1428fb960                        jmp 0x14289d615
+  op 0x032c  idx 0x67  stub 0x14289c1ca  -> 0x14290cd80                                     jmp 0x14289d615
+  op 0x032d  idx 0x68  stub 0x14289c1da  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e9050, 0x142e52ed0, 0x14101d380, 0x14019f2c0  jmp 0x14289d615
+  op 0x032e  idx 0x69  stub 0x14289c270  -> 0x14290a1a0                                     jmp 0x14289d615
+  op 0x032f  idx 0x6a  stub 0x14289c778  -> 0x141025a00                                     jmp 0x14289d615
+  op 0x0330  idx 0x6b  stub 0x14289c280  -> 0x141892840, 0x142e541f0                        jmp 0x14289c2c4
+  op 0x0331  idx 0x6c  stub 0x14289c37c  -> 0x14290d4e0                                     jmp 0x14289d615
+  op 0x0332  idx 0x6d  stub 0x14289c38c  -> 0x141edf840                                     jmp 0x14289d615
+  op 0x0333  idx 0x6e  stub 0x14289c3a6  -> 0x1406e8c20, 0x1406e8ae0, 0x1407e7d10, qword ptr [rax + 0xe0]  jmp 0x14289d615
+  op 0x0334  idx 0x6f  stub 0x14289c3ee  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x141e768f0, 0x141e454d0, 0x141e456a0  jmp 0x14289d615
+  op 0x0335  idx 0x70  stub 0x14289c44e  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x141e768f0, 0x141e646c0  jmp 0x14289d615
+  op 0x0336  idx 0x71  stub 0x14289c4a8  -> 0x14290dd60                                     jmp 0x14289d615
+  op 0x0337  idx 0x72  stub 0x14289c4b5  -> 0x142992960                                     jmp 0x14289d615
+  op 0x0338  idx 0x73  stub 0x14289c4c5  -> 0x1429934a0                                     jmp 0x14289d615
+  op 0x0339  idx 0x74  stub 0x14289c4d5  -> 0x142993780                                     jmp 0x14289d615
+  op 0x033a  idx 0x75  stub 0x14289a6c1  -> 0x1406e8f00, 0x1406e8f00, 0x1423d58b0           jmp 0x14289d615
+  op 0x033b  idx 0x76  stub 0x14289a759  -> 0x1428e3ad0                                     jmp 0x14289d615
+  op 0x033c  idx 0x77  stub 0x14289a769  -> 0x1406e8c20, 0x140fcec30                        jmp 0x14289d615
+  op 0x033d  idx 0x78  stub 0x14289c4e5  -> 0x1429e3ef0, 0x1406e8c20, 0x1406e8c20           jmp 0x14289d615
+  op 0x033e  idx 0x79  stub 0x14289c514  -> 0x1406e8c20, 0x1407f7900, 0x140909d80, 0x140909d50, 0x1428c1fa0  jmp 0x14289d615
+  op 0x033f  idx 0x7a  stub 0x14289c6b8  -> 0x1428437d0                                     jmp 0x14289d615
+  op 0x0340  idx 0x7b  stub 0x14289c6c8  -> 0x1406e88d0, 0x142994aa0                        jmp 0x14289d615
+  op 0x0341  idx 0x7c  stub 0x14289c6e7  -> 0x1406e8ae0                                     jmp 0x14289d615
+  op 0x0342  idx 0x7d  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0343  idx 0x7e  stub 0x14289c700  -> 0x142bf3f70, qword ptr [rax]                    jmp 0x14289d615
+  op 0x0344  idx 0x7f  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0345  idx 0x80  stub 0x14289b4b9  -> 0x1406e8c20                                     jmp 0x14289d615
+  op 0x0346  idx 0x81  stub 0x14289c738  -> 0x142919080                                     jmp 0x14289d615
+  op 0x0347  idx 0x82  stub 0x14289c758  -> 0x14291a2c0                                     jmp 0x14289d615
+  op 0x0348  idx 0x83  stub 0x14289c768  -> 0x14291a4e0                                     jmp 0x14289d615
+  op 0x0349  idx 0x84  stub 0x14289c748  -> 0x142919510                                     jmp 0x14289d615
+  op 0x034a  idx 0x85  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x034b  idx 0x86  stub 0x14289c785  -> 0x14291b050                                     jmp 0x14289d615
+  op 0x034c  idx 0x87  stub 0x14289c795  -> 0x14291bef0                                     jmp 0x14289d615
+  op 0x034d  idx 0x88  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x034e  idx 0x89  stub 0x14289c7a5  -> 0x1406e8c20                                     jmp 0x14289d615
+  op 0x034f  idx 0x8a  stub 0x14289c7b9  -> 0x14291f2f0                                     jmp 0x14289d615
+  op 0x0350  idx 0x8b  stub 0x14289c7c9  -> 0x142d0b290, 0x142d0b330                        jmp 0x14289d615
+  op 0x0351  idx 0x8c  stub 0x14289c7fb  -> 0x1406e8ae0, 0x142d9cd90                        jmp 0x14289d615
+  op 0x0352  idx 0x8d  stub 0x14289c82b  -> 0x14291f740                                     jmp 0x14289d615
+  op 0x0353  idx 0x8e  stub 0x14289cc34  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x142cbe730, 0x1407b3df0, 0x1407e8340, 0x1428c1fa0  jmp 0x14289d615
+  op 0x0354  idx 0x8f  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0355  idx 0x90  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x0356  idx 0x91  stub 0x14289c8ff  -> 0x142907cd0                                     jmp 0x14289d615
+  op 0x0357  idx 0x92  stub 0x14289c90f  -> 0x1406e8c20, 0x142d09590                        jmp 0x14289d615
+  op 0x0358  idx 0x93  stub 0x14289c83b  -> 0x1428b3da0                                     jmp 0x14289d615
+  op 0x0359  idx 0x94  stub 0x14289c84b  -> 0x1428349f0                                     jmp 0x14289d615
+  op 0x035a  idx 0x95  stub 0x14289c94c  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x140fb7330, 0x140fb7170  jmp 0x14289d615
+  op 0x035b  idx 0x96  stub 0x14289c992  -> 0x1428485b0                                     jmp 0x14289d615
+  op 0x035c  idx 0x97  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x035d  idx 0x98  stub 0x14289c85b  -> 0x1428b3f50                                     jmp 0x14289d615
+  op 0x035e  idx 0x99  stub 0x14289c87b  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8f10, 0x1428b4b40  jmp 0x14289d615
+  op 0x035f  idx 0x9a  stub 0x14289c86b  -> 0x1428b4280                                     jmp 0x14289d615
+  op 0x0360  idx 0x9b  stub 0x14289c8bb  -> 0x1406e8c20, 0x1406e8c20, 0x141d2efc0           jmp 0x14289d615
+  op 0x0361  idx 0x9c  stub 0x14289c99f  -> 0x1406e9170, 0x1406e8c20, 0x1408f6690, 0x142d9f570, 0x1406e8c20  jmp 0x14289cacf
+  op 0x0362  idx 0x9d  stub 0x14289cb2b  -> 0x1406e8c20, 0x1407e8ca0, 0x1428da150           jmp 0x14289d615
+  op 0x0363  idx 0x9e  stub 0x14289cb9b  -> 0x1429237b0                                     jmp 0x14289d615
+  op 0x0364  idx 0x9f  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0365  idx 0xa0  stub 0x14289cbab  -> 0x1429274f0                                     jmp 0x14289d615
+  op 0x0366  idx 0xa1  stub 0x14289cbbb  -> 0x1406e8c20                                     jmp 0x14289d615
+  op 0x0367  idx 0xa2  stub 0x14289cbcf  -> 0x1406e8c20, 0x1428da150                        jmp 0x14289d615
+  op 0x0368  idx 0xa3  stub 0x14289cbf6  -> 0x142927830                                     jmp 0x14289d615
+  op 0x0369  idx 0xa4  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x036a  idx 0xa5  stub 0x14289cc06  -> (none)                                          jmp 0x14289d615
+  op 0x036b  idx 0xa6  stub 0x14289cc13  -> 0x1429e3ef0                                     jmp 0x14289d615
+  op 0x036c  idx 0xa7  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x036d  idx 0xa8  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x036e  idx 0xa9  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x036f  idx 0xaa  stub 0x14289cd5d  -> 0x1406e8c20, 0x1406e8c20, 0x140495990, 0x1429e3ef0  jmp 0x14289cdb2
+  op 0x0370  idx 0xab  stub 0x14289ce61  -> 0x1406e8ae0, 0x142961870, 0x14019b780, 0x142ef8250, 0x1429444e0  jmp 0x14289ceca
+  op 0x0371  idx 0xac  stub 0x14289cf5e  -> qword ptr [rip + 0x9c5e2e], 0x1406e8c20, 0x142e52ed0, 0x140292fe0  jmp 0x14289d615
+  op 0x0372  idx 0xad  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0373  idx 0xae  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0374  idx 0xaf  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0375  idx 0xb0  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0376  idx 0xb1  stub 0x14289cfc0  -> 0x1429e3ef0                                     jmp 0x14289d615
+  op 0x0377  idx 0xb2  stub 0x14289cfd1  -> 0x14292eaa0                                     jmp 0x14289d615
+  op 0x0378  idx 0xb3  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0379  idx 0xb4  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x037a  idx 0xb5  stub 0x14289cfe1  -> 0x14292c720                                     jmp 0x14289d615
+  op 0x037b  idx 0xb6  stub 0x14289cff1  -> 0x14292cd90                                     jmp 0x14289d615
+  op 0x037c  idx 0xb7  stub 0x14289d001  -> 0x14292cf90                                     jmp 0x14289d615
+  op 0x037d  idx 0xb8  stub 0x14289d011  -> 0x14292d8d0                                     jmp 0x14289d615
+  op 0x037e  idx 0xb9  stub 0x14289d021  -> 0x14292e500                                     jmp 0x14289d615
+  op 0x037f  idx 0xba  stub 0x14289cc24  -> 0x142921a20                                     jmp 0x14289d615
+  op 0x0380  idx 0xbb  stub 0x14289d031  -> 0x14292eb10                                     jmp 0x14289d615
+  op 0x0381  idx 0xbc  stub 0x14289d041  -> 0x14292ede0                                     jmp 0x14289d615
+  op 0x0382  idx 0xbd  stub 0x14289d051  -> 0x14292f600                                     jmp 0x14289d615
+  op 0x0383  idx 0xbe  stub 0x14289d061  -> 0x14292fd50                                     jmp 0x14289d615
+  op 0x0384  idx 0xbf  stub 0x14289d071  -> 0x142930180                                     jmp 0x14289d615
+  op 0x0385  idx 0xc0  stub 0x14289d081  -> 0x142e52ed0, 0x14019bd40, 0x142e52dd0, 0x142e54290, 0x142e54290, 0x142861290  jmp 0x14289d615
+  op 0x0386  idx 0xc1  stub 0x14289d140  -> 0x142930680                                     jmp 0x14289d615
+  op 0x0387  idx 0xc2  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0388  idx 0xc3  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0389  idx 0xc4  stub 0x14289d150  -> 0x142931990                                     jmp 0x14289d615
+  op 0x038a  idx 0xc5  stub 0x14289d160  -> 0x1406e8c20, 0x142cbecc0, 0x142120830           jmp 0x14289d615
+  op 0x038b  idx 0xc6  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x038c  idx 0xc7  stub 0x14289d194  -> 0x1406e8c20, 0x1406e8c20, 0x1406e9170, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8ae0, 0x142578d90  jmp 0x14289d615
+  op 0x038d  idx 0xc8  stub 0x14289d217  -> 0x1406e8c20, 0x1406e8c20, 0x1406e9170, 0x1406e8c20, 0x1406e8c20, 0x142cf6960, 0x142578b90  jmp 0x14289d615
+  op 0x038e  idx 0xc9  stub 0x14289d294  -> 0x142934dc0                                     jmp 0x14289d615
+  op 0x038f  idx 0xca  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0390  idx 0xcb  stub 0x14289d2a4  -> 0x142cc4430, 0x142cc44b0                        jmp 0x14289d615
+  op 0x0391  idx 0xcc  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0392  idx 0xcd  stub 0x14289d2ce  -> 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1406e8c20, 0x1407b3a90, 0x14019ba10, 0x1415eca30, 0x14019f2c0, 0x14019f2c0  jmp 0x14289d615
+  op 0x0393  idx 0xce  stub 0x14289d3b0  -> 0x1406e8c20, 0x1406e8c20, 0x1408dc810, 0x14257b500, 0x142ef3bb8  jmp 0x14289d615
+  op 0x0394  idx 0xcf  stub 0x14289d46e  -> 0x140e6c990                                     jmp 0x14289d615
+  op 0x0395  idx 0xd0  stub 0x14289d615  -> 0x142ef44b0                                     ret
+  op 0x0396  idx 0xd1  stub 0x14289d48a  -> 0x1406e8fb0, 0x1406e8f10, 0x1406e8f10, 0x1408a9e40, 0x14019ba10, 0x14019a260, 0x14019f2c0, 0x14019f2c0, 0x1415eca30, 0x1408a9e40, 0x1415eca30, 0x14019f2c0, 0x14019f2c0  jmp 0x14289d615
+  op 0x0397  idx 0xd2  stub 0x14289d563  -> 0x1406e8c20, 0x1429e3ef0, 0x142937eb0           jmp 0x14289d615
+  op 0x0398  idx 0xd3  stub 0x14289d58b  -> 0x1410e7970                                     jmp 0x14289d615
+  op 0x0399  idx 0xd4  stub 0x14289b4e4  -> 0x142cc4430                                     jmp 0x14289d615
+  op 0x039a  idx 0xd5  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x039b  idx 0xd6  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x039c  idx 0xd7  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x039d  idx 0xd8  stub 0x14289d5f5  -> 0x14200d0e0, 0x142ef44b0                        ret  <-- DEFAULT
+  op 0x039e  idx 0xd9  stub 0x14289a6f2  -> 0x1406e8c20, 0x142cbe730, 0x1406e8c20, 0x1406e8c20, 0x142ce4870  jmp 0x14289a74e
+  -- 218 entries, 175 distinct stubs
+  -- default arm 0x14289d5f5 occupies 19 slots

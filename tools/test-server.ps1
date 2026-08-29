@@ -13,7 +13,7 @@
     wrong, the server is the only thing that changed.
 
 .NOTES
-    ============ THE TEST PLAN, as of 2026-08-28: ALL FOUR FIRST JOBS ============
+    ====== THE TEST PLAN, 2026-08-29: TWO CLIENTS, AND WHETHER THEY SEE EACH OTHER ======
 
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
@@ -50,6 +50,48 @@
     Accounts: `maplecw` (GM) and `tester` / tester@example.test (NOT a GM, no characters).
     A forgotten password is a reset, and it never asks for the old one:
       & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw
+
+    ============ NEW, AND THE REASON FOR THIS RUN ============
+
+    NOTHING IN THIS HAS EVER BEEN ON A SCREEN. Every byte of the three new packets was
+    read out of the client statically - research/user-enter-field.md decoded all 65
+    fields of 0x0224 - and NO packet in 0x224..0x39F has been observed doing anything in
+    any archived run. So the first question is not "is the position right", it is
+    "does the client accept this packet at all". Do M1 before anything else.
+
+    YOU NEED TWO CLIENTS, AND THE ORDER MATTERS. The game socket carries no credentials
+    and the login server serves whichever account claimed LAST, so:
+      1. launcher -> sign in as maplecw -> Start Game -> WAIT until you are in the world
+      2. launcher again -> sign in as tester -> Start Game
+    Signing in as tester before the first client reaches the world gives both clients the
+    same account. tester has no characters, so make one.
+    UNKNOWN: whether this client will run twice on one machine at all. If the second
+    instance refuses to start, SAY SO - that is a finding, not a failed test, and the
+    answer is two machines.
+
+     M1. Get both characters onto the SAME MAP.
+          a) does the other character appear? -> the whole feature works
+          b) a client dies or closes when the second player arrives -> the 0x0224 body is
+             wrong somewhere. Say WHICH client died - the one arriving or the one already
+             there - because that names the direction the bad packet went
+          c) nothing appears and nothing dies -> the packet was dropped in silence. Six
+             gates in user-enter-field.md can do that, and the next run answers it with a
+             watch on 0x1429ba60b rather than more body work
+     M2. If they can see each other, WALK ONE AROUND.
+          a) does the other client see it move, and smoothly?
+          b) stutter, teleport, or lag - say roughly how far behind
+     M3. A JUST-ARRIVED character may appear AT THE MAP ORIGIN until it moves. Expected,
+        and it should snap to the right place on the first step: the server's only source
+        of position is the client's own movement reports, and portals.txt has no
+        coordinates in it.
+          it never snaps -> the move broadcast is not arriving, which contradicts M2
+     M4. LEAVING. Walk one character through a portal, then log the other out.
+          a) does each disappear from the other screen?
+          b) then kill a client from Task Manager. It must ALSO disappear - that is the
+             path with no log-out packet at all, and it is the one bug that cannot be
+             cleaned up from the client side
+
+    ============ CARRIED OVER - none of this has changed ============
 
     THE STEPS. Each is a claim that can come back false; report them separately.
     ORDER: whatever suits. 6 costs no launch of its own and 7 is a question, not a test.
@@ -1170,7 +1212,7 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  STEPS 1-7. 6 costs no launch of its own; 7 is a question.' -ForegroundColor Yellow
+    Write-Host '  M1-M4 FIRST (two clients), then steps 1-7.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
@@ -1190,6 +1232,49 @@ if ($SetFieldProbe) {
     Write-Host '  ONE DAMAGE NUMBER. Both halves confirmed on screen.'
     Write-Host '  MP COST ACCURATE. Selling works, no Buy Back tab. Warrior casts.'
     Write-Host ''
+    Write-Host '  NEW - AND NONE OF IT HAS EVER BEEN ON A SCREEN.' -ForegroundColor Magenta
+    Write-Host '  Three new packets, every byte read out of the client statically.'
+    Write-Host '  NO packet in 0x224..0x39F has been seen doing anything in any run.'
+    Write-Host '  So M1 is not "is the position right", it is "does the client'
+    Write-Host '  accept this packet at all". Do it first.'
+    Write-Host ''
+    Write-Host '  TWO CLIENTS, AND THE ORDER MATTERS:' -ForegroundColor Yellow
+    Write-Host '    1. launcher -> maplecw -> Start Game -> WAIT until you are'
+    Write-Host '       in the world'
+    Write-Host '    2. launcher again -> tester -> Start Game'
+    Write-Host '  The game socket carries no credentials and the login server'
+    Write-Host '  serves whichever account claimed LAST, so signing in as tester'
+    Write-Host '  too early gives BOTH clients the same account. tester has no'
+    Write-Host '  characters - make one.'
+    Write-Host '  UNKNOWN: whether this client runs twice on one machine. If the'
+    Write-Host '  second refuses to start, SAY SO - that is a finding, and the'
+    Write-Host '  answer is two machines.'
+    Write-Host ''
+    Write-Host '  M1. Get both characters onto the SAME MAP.' -ForegroundColor White
+    Write-Host '        a) does the other character appear? -> it all works'
+    Write-Host '        b) a client dies when the second player arrives -> the'
+    Write-Host '           0x0224 body is wrong. Say WHICH client died, the one'
+    Write-Host '           arriving or the one already there - that names the'
+    Write-Host '           direction the bad packet went'
+    Write-Host '        c) nothing appears and nothing dies -> dropped in silence.'
+    Write-Host '           Next run carries a watch on 0x1429ba60b instead of'
+    Write-Host '           more body work'
+    Write-Host '  M2. If they see each other, WALK ONE AROUND.' -ForegroundColor White
+    Write-Host '        a) does the other client see it move, and smoothly?'
+    Write-Host '        b) stutter / teleport / lag - say roughly how far behind'
+    Write-Host '  M3. A JUST-ARRIVED character may sit AT THE MAP ORIGIN until it' -ForegroundColor White
+    Write-Host '      moves. Expected - the only source of position is the'
+    Write-Host '      movement reports the client sends, and portals.txt has no'
+    Write-Host '      coordinates in it.'
+    Write-Host '      It should snap on the first step.'
+    Write-Host '        never snaps -> the move broadcast is not arriving, which'
+    Write-Host '                   contradicts M2'
+    Write-Host '  M4. LEAVING. A portal, then a log out.' -ForegroundColor White
+    Write-Host '        a) does each disappear from the other screen?'
+    Write-Host '        b) then KILL a client from Task Manager. It must also'
+    Write-Host '           disappear - that path has no log-out packet at all'
+    Write-Host ''
+    Write-Host '  ---- carried over, unchanged ----' -ForegroundColor DarkGray
     Write-Host '  1. RECOVERY (1001). !learn 1001 3, then cast it.' -ForegroundColor White
     Write-Host '     NO BUFF ICON WILL APPEAR and that is expected - Recovery has no'
     Write-Host '     stat bit anybody has identified. The heal is real, the tray is'

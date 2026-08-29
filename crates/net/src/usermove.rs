@@ -333,13 +333,24 @@ impl UserMove {
     /// is what makes it checkable: `span.len() + USER_MOVE_HEAD_LEN == body.len()` for every
     /// captured body, and the sweep asserts exactly that.
     ///
-    /// # Which of the two spans an outbound packet wants is NOT established
+    /// # SETTLED 2026-08-29: a rebroadcast wants [`UserMove::path_span`], not this one
     ///
     /// `FUN_141d598b0` reads the trailer's count byte at `0x141d5991f` only when its third
     /// argument is non-zero, and the two known call sites disagree (`141cb8346 MOV R8D,R13D`
-    /// for `0x02FF`, `141c82000 XOR R8D,R8D` for `0x03D9`). **[L]** Nobody has read the
-    /// corresponding call site for a remote *user* movement packet, so which span to copy is
-    /// open - see `crate::userpool`, where that opcode is a documented gap.
+    /// for `0x02FF`, `141c82000 XOR R8D,R8D` for `0x03D9`). **[L]** The remote user move is
+    /// now identified - `0x0293`, `FUN_1429d2e70` - and it passes **zero**:
+    /// `1429d2eb5 XOR R8D,R8D` before the call at `1429d2ec6`. **[L]** So
+    /// `crate::userpool::user_move_remote` copies this packet's `path_span` and stops.
+    ///
+    /// This span is still the one that describes an **inbound** `0x00D9` completely, which
+    /// is what the archive sweep checks, so it stays.
+    ///
+    /// *One correction that belongs next to the answer, because checking the call sites
+    /// alone gives the wrong one:* `0x00D9`'s own builder **also** passes zero
+    /// (`1409f96c7 XOR R8D,R8D`), which would say the client sends no key states - and 1082
+    /// measured bodies say it does. The encoder writes the trailer unconditionally once the
+    /// path is out (`141d580e5`; both branches converge at `141d580df`). Only the **decoder**
+    /// consults that argument.
     ///
     /// **`None` unless [`UserMove::walk_closed`]**, for the reason [`UserMove::path`] gives.
     pub fn path_with_key_states_span(&self) -> Option<std::ops::Range<usize>> {

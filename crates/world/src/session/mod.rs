@@ -709,9 +709,20 @@ impl Session {
                 return self.on_user_hit(body.get(2..).unwrap_or(&[]))
             }
             net::usermove::CLIENT_USER_MOVE => {
-                if let Some(m) = net::usermove::parse_user_move(body.get(2..).unwrap_or(&[])) {
+                let payload = body.get(2..).unwrap_or(&[]);
+                if let Some(m) = net::usermove::parse_user_move(payload) {
                     self.last_position = Some((m.x, m.y));
                     self.note_activity();
+                    // **The packet the whole bus exists for.** The owner, 2026-08-29:
+                    // *"the client's own movement is completely disregarded ...
+                    // their movements and their attacks need to be broadcasted
+                    // and shown on all clients."* This is the movement half.
+                    //
+                    // Still no reply to the mover: 1082 captured `0x00D9`s went
+                    // unanswered with the client playing on for minutes
+                    // afterwards, so it does not latch the way `0x0107` does.
+                    // The broadcast goes to everyone *else*.
+                    self.publish_user_move(&m, payload);
                 }
                 return Vec::new();
             }

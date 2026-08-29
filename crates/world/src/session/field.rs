@@ -46,6 +46,15 @@ impl Session {
         // `research/damage-number-suppress.md`. That is a client patch rather than a packet,
         // so it belongs to the hook and the launcher, not here.
         let mut out = Vec::new();
+        // **Other players, before the NPCs and mobs.** `0x00DC` arrives once per
+        // field entry, every time, and the client destroys and rebuilds its pools
+        // on every `SetField` - so the user pool has to be refilled after each one
+        // for exactly the reason the NPC re-send below does.
+        //
+        // This both announces us to everyone here and returns everyone here to us,
+        // in one call, because half of a mutual sighting is invisible on one
+        // screen. `crate::session::multiplayer`.
+        out.extend(self.announce_field_entry());
         let empty: Vec<net::opcode::FieldNpc> = Vec::new();
         out.extend(self.config.npcs.get(&chr.map_id).unwrap_or(&empty)
             .iter()

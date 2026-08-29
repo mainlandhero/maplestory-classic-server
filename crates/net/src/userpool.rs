@@ -220,10 +220,18 @@ pub fn user_effect_remote(char_id: u32, effect: u8) -> Vec<u8> {
 
 /// Build a [`USER_LEAVE_FIELD`] body: **one `u32` character id, and that is the whole claim.**
 ///
-/// # Read this before sending it
+/// # This was [I] until 2026-08-29 and is now [L]
 ///
-/// **The body is [I], and the opcode's meaning is [D].** Nobody has counted the reads in
-/// `FUN_1429b9300`'s inline `0x0225` arm. What supports it:
+/// **`FUN_1429ba980` reads exactly one `u32`, at `0x1429ba9a2`, and nothing else** -
+/// counted at depth 4, `research/user-enter-field.md` §1. It then hashes that id, unlinks
+/// the node from `pool+0xf8` and calls its deleting destructor, which is also what settles
+/// enter-versus-leave from the *bodies* rather than from enum order: `0x0224` allocates a
+/// `0x4438`-byte `CUser` and inserts it.
+///
+/// The superseded argument is kept below, because it was the reasoning that made this
+/// safe to write before anyone had read the function, and it names its own weak point.
+///
+/// # The old [I] argument What supports it:
 ///
 /// * the enum ordering `0x224` enter / `0x225` leave / `0x226` chat, which
 ///   `research/talking-back.md` §1.3 calls a match for the classic `CUserPool` exactly, and
@@ -248,9 +256,438 @@ pub fn user_leave_field(char_id: u32) -> Vec<u8> {
     w.into_vec()
 }
 
+/// Where one character is standing, which the character record does not carry.
+///
+/// `Character` describes who someone is; this is where they are right now, and it comes
+/// from a different place entirely - the client's own `0x00D9` movement reports
+/// (`crate::usermove`), held per session. Kept separate so a caller cannot forget it: a
+/// remote player built from the database alone would appear at whatever position the
+/// struct defaulted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RemoteAt {
+    /// Body offset 426. **[D]** - `r8d` of the `vtable[0x118]` call at `1429ce852`.
+    pub x: i16,
+    /// Body offset 428. **[D]** - `r9d` of the same call, read at `1429ce85f`.
+    pub y: i16,
+    /// Body offset 430, `+0x6e4`. Stance and facing. **[D]**
+    pub move_action: u8,
+    /// Body offset 431, through `FUN_142df6c50([0x143AC18D8], v)`. **[D]**
+    ///
+    /// `0` is legal and means "not standing on a foothold" - the client resolves it
+    /// itself. Sending a foothold id from a *different* map is not legal and is the
+    /// mistake to watch for when this is wired to a stale position.
+    pub foothold: i16,
+}
+
+/// The remote temporary-stat mask: **124 bytes**, all clear meaning "no buffs".
+///
+/// Read as one raw block at `1429ce4e4` and handed to `FUN_140a46e50` -
+/// `research/buffs.md` documents the same decoder. **[L]** for the length.
+///
+/// **124, not 132.** The v214 reference's equivalent is 132, and that difference is the
+/// single clearest evidence that the reference is a different version rather than a
+/// superset - `CLAUDE.md` scores it 1 of 8. Taking the reference's number here would put
+/// every byte after offset 179 eight places out, with no length prefix anywhere in the
+/// body to resynchronise on.
+pub const REMOTE_STAT_MASK_LEN: usize = 124;
+
+/// Length of a [`USER_ENTER_FIELD`] body with an **empty** name and **no** equipped
+/// items. See [`user_enter_field_len`] for the real one.
+///
+/// The last field is the `u32` count at offset 504, so the body ends at 508. Every one
+/// of the 60-odd offsets between 0 and 504 chains exactly, which is the check that this
+/// number is a total rather than a guess.
+pub const USER_ENTER_FIELD_MIN_LEN: usize = 508;
+
+/// Byte offset of the avatar look inside a [`USER_ENTER_FIELD`] body, for an empty name.
+///
+/// `1429ce6a9  call 0x1402ee8d0` - the same compact-look reader `0x0107`, `0x0114` and
+/// `0x0138` use, called with the same `(&look, pkt, &str, 0)` shape. **[L]**
+pub const USER_ENTER_FIELD_LOOK_AT: usize = 187;
+
+/// Byte offset of `x` inside a [`USER_ENTER_FIELD`] body, for an empty name and no equips.
+pub const USER_ENTER_FIELD_POS_AT: usize = 426;
+
+/// Exactly how long [`user_enter_field`] will be for this character.
+///
+/// Two things move: the name (a `u16`-prefixed string, so its bytes are added on top of
+/// the 2-byte empty form) and the equipped list inside the avatar look (5 bytes each).
+pub fn user_enter_field_len(chr: &crate::opcode::Character) -> usize {
+    USER_ENTER_FIELD_MIN_LEN + chr.name.len() + 5 * chr.equips.len()
+}
+
+/// Build a [`USER_ENTER_FIELD`] body: **put this character on someone else's screen.**
+///
+/// Full field table with the read address for every one of the 65 fields:
+/// `research/user-enter-field.md` §2. The shape, in three parts:
+///
+/// ```text
+///   0  u32  userId          any nonzero value
+///   4  u32  charId          NONZERO - see below
+///   8  u32  fieldCheck
+///  12  ...  CUser::Init, 62 fields, decoded by FUN_1429ce270
+/// 187  ...  avatar_look(), unchanged
+/// ```
+///
+/// # The character id must not be zero, and that is a real branch
+///
+/// `1429ba43b` reads the `u32` at +4; if it is **zero** the client reads a *fourth*
+/// `u32` at `1429ba44d` and uses that as the id instead. **[L]** Both encodings decode -
+/// the v214 reference writes `id, 0, id`, which is exactly what the long arm consumes -
+/// but this builder writes the short one, so a zero id here would silently eat the four
+/// bytes of `level` and shift the whole body. Ids start at 200
+/// (`store::FIRST_CHARACTER_ID`), so this is a guard rather than a live hazard.
+///
+/// # What this deliberately does not carry
+///
+/// Guild block, fame, pets, familiars, mounts, rings, miniroom, damage skin and the
+/// chair are all sent as their absent form. Two are load-bearing rather than merely
+/// empty:
+///
+/// * **the miniroom dword at 451 is four zero bytes**, and a nonzero value there opens a
+///   further nine-field block ending in a chat post (§2.3);
+/// * **no mount or vehicle equip**, because `1429cfc0a` reads an extra `u32` gated on
+///   the *client's own* equipped item ids rather than on anything in this packet (§3).
+///   That read is invisible to a length check here and would desync the tail.
+///
+/// # Do not send this twice for the same character
+///
+/// A `0x0224` naming an id already in the pool **returns in silence without reading the
+/// body** (`1429ba556`), so it cannot be used to update anyone - and one naming *our
+/// own* id clears a dword and returns. **[L]** for both. To move a remote player, use
+/// the remote family at `0x293..0x2C4`; to redress one, leave then enter.
+pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8> {
+    debug_assert_ne!(chr.id, 0, "a zero character id takes the four-u32 header branch");
+    // Everything after the name shifts by its bytes; everything after the look shifts by
+    // its equips. Both are folded into the offset assertions below.
+    let shift = chr.name.len();
+    let equips = 5 * chr.equips.len();
+
+    let mut w = crate::PacketWriter::new();
+    w.u32(chr.id); //  0  userId - the same id; nothing reads it apart from CUser::CUser
+    w.u32(chr.id); //  4  charId, and it is the hash key
+    w.u32(0); //       8  fieldCheck
+
+    w.u32(chr.level); //          12
+    w.str(&chr.name); //          16  user+0x10d8, the name the chat line prints
+    w.str(""); //                 18  parent name, deprecated
+    w.u32(0); //                  20  guild id
+    w.str(""); //                 24  guild name
+    w.u16(0); //                  26  guild logo background
+    w.u8(0); //                   28  ...its colour
+    w.u16(0); //                  29  guild logo
+    w.u8(0); //                   31  ...its colour
+    w.u32(0); //                  32
+    w.u32(0); //                  36
+    w.u8(chr.gender); //          40
+    w.u32(0); //                  41  fame
+    w.u32(0); //                  45  name-tag mark
+    w.u8(0); //                   49
+    w.u32(0); //                  50
+    w.u8(0); //                   54  stored as (v == 1)
+    debug_assert_eq!(w.len(), 55 + shift, "the stat mask moved");
+    w.zeros(REMOTE_STAT_MASK_LEN); // 55  no buffs
+    w.u16(chr.job); //            179
+    w.u16(0); //                  181  sub-job
+    w.u32(0); //                  183
+
+    debug_assert_eq!(w.len(), USER_ENTER_FIELD_LOOK_AT + shift, "the avatar look moved");
+    w.bytes(&crate::opcode::avatar_look(chr)); // 187
+
+    w.u32(0); //                  382  driver id
+    w.u32(0); //                  386  passenger id
+    w.u8(0); //                   390
+    w.u32(0); //                  391
+    w.u32(0); //                  395
+    w.u32(0); //                  399
+    w.u8(0); //                   403  no trailing string
+    w.u32(0); //                  404  damage skin
+    w.str(""); //                 408
+    w.str(""); //                 410
+    w.u32(0); //                  412
+    w.i16(0); //                  416  field seat
+    w.u32(0); //                  418  chair item id
+    w.u32(0); //                  422
+
+    debug_assert_eq!(
+        w.len(),
+        USER_ENTER_FIELD_POS_AT + shift + equips,
+        "the position moved - x and y are what put the character somewhere real"
+    );
+    w.i16(at.x); //               426
+    w.i16(at.y); //               428
+    w.u8(at.move_action); //      430
+    w.i16(at.foothold); //        431
+
+    w.u8(0); //                   433
+    w.u8(0); //                   434
+    w.u8(0); //                   435  no chair to decode
+    w.u8(0); //                   436  no pets
+    w.u8(0); //                   437  no familiars
+    w.u32(0); //                  438  taming-mob level
+    w.u32(0); //                  442  taming-mob exp
+    w.u32(0); //                  446  taming-mob fatigue
+    w.u8(0); //                   450
+    w.zeros(4); //                451  NO MINIROOM - see the doc block
+    // 455, FUN_14073a7b0, unconditional: raw4, u32, raw4, str, u32 = 18 bytes.
+    w.zeros(4);
+    w.u32(0);
+    w.zeros(4);
+    w.str("");
+    w.u32(0);
+    w.u8(0); //                   473
+    w.u8(0); //                   474  couple ring
+    w.u8(0); //                   475  friendship ring
+    w.u8(0); //                   476  marriage ring
+    w.u8(0); //                   477
+    w.u8(0); //                   478  the bitmask; bit 0x20 would add a u32
+    w.u32(0); //                  479
+    w.u32(0); //                  483
+    w.u32(0); //                  487  FUN_142834df0 count
+    w.u8(0); //                   491  FUN_142835840, both unconditional
+    w.u32(0); //                  492
+    w.u32(0); //                  496  FUN_1428358a0
+    w.u32(0); //                  500  count
+    w.u32(0); //                  504  count
+
+    debug_assert_eq!(w.len(), user_enter_field_len(chr), "the body length is wrong");
+    w.into_vec()
+}
+
+/// **`0x0293`** - a remote player walked. Server to client.
+///
+/// ## How this was found, because no name in any table was involved
+///
+/// By reachability. `research/user-pool-tables.md` enumerated all **315** distinct handler
+/// functions across the pool's four dispatch tables and walked the call graph to depth 6:
+/// **exactly two** reach `FUN_1404b2630`, the client's 79-command movement-path decoder.
+/// One is `0x02F5` in the *local* table; the other is this. `FUN_1429d2e70` is 102 bytes
+/// and has one read site - the call into `FUN_141d598b0`. **[L]**
+///
+/// It sits in a **second** jump table on `FUN_1429bb720` (`0x1429bbcd0`/`0x1429bbd10`,
+/// byte-indexed) that the first enumeration did not know about. The two tables are exactly
+/// complementary - 22 opcodes in one, 15 in the other, none in both - so walking only the
+/// dense table at `0x1429bbc34` would have missed the move entirely.
+pub const USER_MOVE_REMOTE: u16 = 0x0293;
+
+/// **`0x029E..=0x02A1`** - a remote player attacked. Four opcodes, **one** handler
+/// (`FUN_1429d2ee0`), corroborated by the throttle at `0x1429bbaea` special-casing the same
+/// four. **[L]** for the set.
+///
+/// Which is melee, which is shoot, which is magic and which is body is **[I]** - and it
+/// costs nothing if it is wrong, because the handler stores the opcode and never reads it
+/// back. `research/user-pool-tables.md`.
+pub const USER_ATTACK_REMOTE_FIRST: u16 = 0x029E;
+/// See [`USER_ATTACK_REMOTE_FIRST`].
+pub const USER_ATTACK_REMOTE_LAST: u16 = 0x02A1;
+
+/// Build a [`USER_MOVE_REMOTE`] body: `u32 charId` then the movement path **verbatim**.
+///
+/// ```text
+///   0  u32  charId          read by FUN_1429bb720 at 1429bb745, before the dispatch
+///   4  ...  the path block, copied byte for byte out of the client's own 0x00D9
+///           END - nothing follows it
+/// ```
+///
+/// # Pass [`crate::usermove::UserMove::path`], never `path_with_key_states`
+///
+/// This is the one detail that would have cost a client launch. The client's own `0x00D9`
+/// **carries** a key-state trailer - a count byte then two 4-bit entries per byte - and
+/// `0x0293` **does not read it**: `1429d2eb5 XOR R8D,R8D` before the call at `1429d2ec6`,
+/// byte-identical to the `141c82000` that makes outbound `MOB_MOVE` drop `0x02FF`'s
+/// trailing count. **[L]** Appending those bytes leaves them in the framer's buffer for
+/// whatever the client decodes next.
+///
+/// `UserMove::path` returns `None` unless the element walk closed, and that `None` **must
+/// be treated as a refusal to rebroadcast**, not as an empty path.
+///
+/// *A correction worth keeping, because the obvious check gives the wrong answer:* the
+/// **encoder** always writes the trailer - `141d580e5` is unconditional once the path is
+/// written, both branches converging at `141d580df` - so comparing call sites alone says
+/// the client sends no key states, which 1082 measured bodies disprove. Only the decoder
+/// chooses whether to read it.
+pub fn user_move_remote(char_id: u32, path: &[u8]) -> Vec<u8> {
+    let mut w = crate::PacketWriter::new();
+    w.u32(char_id);
+    w.bytes(path);
+    w.into_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn someone(name: &str, equips: &[(u8, u32)]) -> crate::opcode::Character {
+        crate::opcode::Character {
+            id: 200,
+            name: name.to_string(),
+            level: 8,
+            job: 100,
+            gender: 0,
+            equips: equips.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    /// **The number this whole builder rests on.** `research/user-enter-field.md` §2
+    /// walks 60-odd fields from offset 0 to the `u32` count at 504; if any one of them
+    /// is the wrong width the total is not 508, and the client has no length prefix
+    /// anywhere in this body to resynchronise on.
+    #[test]
+    fn an_empty_name_and_no_equips_is_the_508_byte_minimum() {
+        let body = user_enter_field(&someone("", &[]), RemoteAt::default());
+        assert_eq!(body.len(), USER_ENTER_FIELD_MIN_LEN);
+        assert_eq!(body.len(), 508);
+    }
+
+    /// Only two things move, and both move by a known amount. This is what makes a
+    /// length regression a failing test rather than a client that closes itself.
+    #[test]
+    fn only_the_name_and_the_equips_change_the_length() {
+        let equips = [(5u8, 1_040_002u32), (6, 1_060_002), (7, 1_072_001)];
+
+        assert_eq!(
+            user_enter_field(&someone("Wanderer", &[]), RemoteAt::default()).len(),
+            508 + 8,
+            "an 8-character name adds exactly its bytes"
+        );
+        assert_eq!(
+            user_enter_field(&someone("", &equips), RemoteAt::default()).len(),
+            508 + 15,
+            "three equips add five bytes each"
+        );
+
+        let chr = someone("Wanderer", &equips);
+        let body = user_enter_field(&chr, RemoteAt::default());
+        assert_eq!(body.len(), 508 + 8 + 15);
+        assert_eq!(body.len(), user_enter_field_len(&chr), "the predictor agrees");
+    }
+
+    /// `1429ce6a9 call 0x1402ee8d0` - the same reader the character-select screen has
+    /// already accepted these exact bytes through. If this ever stops being a verbatim
+    /// copy, the character is dressed from a different encoder than the one that works.
+    #[test]
+    fn the_avatar_look_is_the_same_bytes_at_the_offset_the_client_reads() {
+        let chr = someone("", &[(5, 1_040_002)]);
+        let body = user_enter_field(&chr, RemoteAt::default());
+        let look = crate::opcode::avatar_look(&chr);
+
+        assert_eq!(look.len(), 195 + 5, "195 + 5 per equip");
+        assert_eq!(
+            &body[USER_ENTER_FIELD_LOOK_AT..USER_ENTER_FIELD_LOOK_AT + look.len()],
+            &look[..],
+            "the look must be byte-identical and start at 187"
+        );
+    }
+
+    /// The four fields that decide where the character is drawn. A body whose length is
+    /// right and whose position is in the wrong place puts someone at the map origin,
+    /// which reads on screen as "the broadcast does not work".
+    #[test]
+    fn the_position_lands_where_the_client_reads_it() {
+        let at = RemoteAt { x: -1234, y: 567, move_action: 4, foothold: 89 };
+        let body = user_enter_field(&someone("", &[]), at);
+        let p = USER_ENTER_FIELD_POS_AT;
+
+        assert_eq!(i16::from_le_bytes([body[p], body[p + 1]]), -1234, "x at 426");
+        assert_eq!(i16::from_le_bytes([body[p + 2], body[p + 3]]), 567, "y at 428");
+        assert_eq!(body[p + 4], 4, "moveAction at 430");
+        assert_eq!(i16::from_le_bytes([body[p + 5], body[p + 6]]), 89, "foothold at 431");
+    }
+
+    /// The header is three `u32`s **only** because the id is nonzero. A zero at +4 makes
+    /// the client read a fourth one (`1429ba44d`) and everything after it shifts.
+    #[test]
+    fn the_header_is_three_u32s_and_the_id_is_not_zero() {
+        let chr = someone("", &[]);
+        let body = user_enter_field(&chr, RemoteAt::default());
+
+        assert_eq!(u32::from_le_bytes(body[4..8].try_into().unwrap()), chr.id);
+        assert_ne!(
+            u32::from_le_bytes(body[4..8].try_into().unwrap()),
+            0,
+            "a zero here takes the four-u32 branch and eats the level field"
+        );
+        // The field right after the header is the level, which is only true while the
+        // header is three words long.
+        assert_eq!(u32::from_le_bytes(body[12..16].try_into().unwrap()), 8);
+    }
+
+    /// The miniroom dword at 451 opens a nine-field block ending in a chat post if it is
+    /// anything but zero. Four zero bytes is not decoration.
+    #[test]
+    fn there_is_no_miniroom_and_no_chair() {
+        let body = user_enter_field(&someone("", &[]), RemoteAt::default());
+        assert_eq!(&body[451..455], &[0, 0, 0, 0], "miniroom absent");
+        assert_eq!(
+            u32::from_le_bytes(body[418..422].try_into().unwrap()),
+            0,
+            "chair item id"
+        );
+        assert_eq!(body[435], 0, "no chair object to decode");
+        assert_eq!(body[436], 0, "no pets");
+        assert_eq!(body[437], 0, "no familiars");
+    }
+
+    /// The 124-byte stat mask, and the number that is easy to take from the wrong place.
+    #[test]
+
+    fn the_remote_stat_mask_is_124_bytes_of_zero() {
+        assert_eq!(REMOTE_STAT_MASK_LEN, 124, "124 here; the v214 reference has 132");
+        let body = user_enter_field(&someone("", &[]), RemoteAt::default());
+        assert!(body[55..179].iter().all(|&b| b == 0), "all clear means no buffs");
+        assert_eq!(u16::from_le_bytes([body[179], body[180]]), 100, "job right after");
+    }
+
+    /// One `u32` and nothing else - `FUN_1429ba980` reads exactly one, at `1429ba9a2`.
+    #[test]
+    fn a_leave_is_four_bytes() {
+        assert_eq!(user_leave_field(207), 207u32.to_le_bytes().to_vec());
+        assert_eq!(user_leave_field(207).len(), 4);
+    }
+
+    /// `0x0293` sits in the remote range, and the four attack opcodes sit above it in the
+    /// same range. A number outside it would be dispatched somewhere else entirely.
+    #[test]
+    fn the_move_and_attack_opcodes_are_inside_the_remote_range() {
+        assert_eq!(USER_MOVE_REMOTE, 0x0293);
+        assert_eq!(USER_MOVE_REMOTE, USER_POOL_REMOTE_FIRST, "it is the first one");
+        assert_eq!(USER_ATTACK_REMOTE_FIRST, 0x029E);
+        assert_eq!(USER_ATTACK_REMOTE_LAST, 0x02A1);
+        assert_eq!(USER_ATTACK_REMOTE_LAST - USER_ATTACK_REMOTE_FIRST, 3, "four of them");
+        for op in [USER_MOVE_REMOTE, USER_ATTACK_REMOTE_FIRST, USER_ATTACK_REMOTE_LAST] {
+            let remote = USER_POOL_REMOTE_FIRST..=USER_POOL_REMOTE_LAST;
+            assert!(remote.contains(&op), "{op:#06x}");
+            assert!(is_user_pool(op), "{op:#06x}");
+        }
+    }
+
+    /// The move body is the id and then the path, with **nothing** in between and nothing
+    /// after. Four bytes of head is the whole difference from the client's own ten.
+    #[test]
+    fn a_remote_move_is_an_id_then_the_path_verbatim() {
+        let path = [0x11u8, 0x22, 0x33, 0x44, 0x55];
+        let body = user_move_remote(201, &path);
+
+        assert_eq!(u32::from_le_bytes(body[0..4].try_into().unwrap()), 201);
+        assert_eq!(&body[4..], &path, "copied byte for byte");
+        assert_eq!(body.len(), 4 + path.len(), "no trailer, no padding");
+    }
+
+    /// The rule that makes a rebroadcast safe: a path we could not walk is a path we must
+    /// not re-emit, and `UserMove::path` refuses rather than returning a short slice.
+    #[test]
+    fn a_path_that_did_not_walk_closed_cannot_be_rebroadcast() {
+        // Ten-byte head, a path head claiming one element, and a truncated element.
+        let mut body = vec![0u8; crate::usermove::USER_MOVE_HEAD_LEN];
+        body.extend_from_slice(&[0u8; 12]);
+        body.extend_from_slice(&1i16.to_le_bytes()); // element_count = 1
+        body.push(0x00); // a 17-byte element, and the body ends here
+
+        let m = crate::usermove::parse_user_move(&body).expect("long enough to parse");
+        assert!(!m.walk_closed, "the walk must not close on a truncated element");
+        assert!(m.path(&body).is_none(), "and the span must refuse");
+    }
 
     /// The opcodes, so a typo fails here rather than on the wire.
     #[test]
@@ -340,28 +777,21 @@ mod tests {
         );
     }
 
-    /// **The gap, asserted rather than only described.** There is no `user_enter_field`
-    /// builder, and this test is what fails if someone adds one without the research file
-    /// that would justify it.
+    /// The gap this module opened on 2026-08-29 is closed, and this is the tripwire that
+    /// says so. `research/user-enter-field.md` decoded all 65 fields; if the file goes
+    /// away, the builder above is resting on nothing anyone can check.
     #[test]
-    fn user_enter_field_is_a_documented_gap() {
-        // The opcode is known...
-        assert_eq!(USER_ENTER_FIELD, USER_POOL_FIRST);
-        // ...and the body is not. `research/user-enter-field.md` is where the answer lands.
-        // If that file exists and a builder still does not, this module is out of date.
+    fn the_enter_field_decode_is_still_on_disk() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .nth(2)
             .expect("crates/net sits two levels under the repo root")
             .to_path_buf();
         let answer = root.join("research").join("user-enter-field.md");
-        if answer.is_file() {
-            eprintln!(
-                "NOTE {} now exists. crates/net/src/userpool.rs still has no user_enter_field \
-                 builder - decide whether to write one from it, and replace the gap in \
-                 USER_ENTER_FIELD's doc block rather than adding to it.",
-                answer.display()
-            );
-        }
+        assert!(
+            answer.is_file(),
+            "{} is where every offset in user_enter_field came from",
+            answer.display()
+        );
     }
 }
