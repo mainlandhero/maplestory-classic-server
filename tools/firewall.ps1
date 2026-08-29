@@ -26,7 +26,23 @@ param(
     [string]$ClientExe,
     [switch]$Add,
     [switch]$Remove,
-    [switch]$Status
+    [switch]$Status,
+    # Let the client reach PRIVATE addresses, and keep blocking the public internet.
+    #
+    # Needed the moment the server stops being on this machine. The ordinary rule blocks
+    # outbound to RemoteIP=Any, and Windows Firewall does not filter loopback - which is why
+    # 127.0.0.1 has always worked and why a LAN server will silently not. The client sits on
+    # "Connecting..." and nothing anywhere says the firewall did it.
+    #
+    # An `action=allow` rule alongside would NOT fix it: Windows evaluates block before
+    # allow, so the block still wins. The only way is to narrow what the block covers, which
+    # is what this does - four ranges that together are "everything except 10/8, 172.16/12,
+    # 192.168/16 and loopback".
+    #
+    # It is a real widening and it is not the default. The client can now reach any private
+    # address, which on a home network is a handful of machines you own. Nexon is on the
+    # public internet and stays blocked, which is the property that matters.
+    [switch]$AllowLan
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,17 +107,45 @@ if (Test-RuleExists) {
     netsh advfirewall firewall delete rule name="$RuleName" | Out-Null
 }
 
-$desc = 'Local RE/testing: prevents the patched MapleStory client from contacting ' +
-        'Nexon. Loopback is unaffected. Safe to delete.'
-netsh advfirewall firewall add rule `
-    name="$RuleName" `
-    dir=out `
-    program="$ClientExe" `
-    action=block `
-    enable=yes `
-    profile=any `
-    description="$desc" | Out-Null
+# Everything EXCEPT 10/8, 172.16/12, 192.168/16 and 127/8. Written as the four gaps between
+# them, because netsh has no negation.
+$PublicOnly = '1.0.0.0-9.255.255.255,11.0.0.0-126.255.255.255,128.0.0.0-172.15.255.255,' +
+              '172.32.0.0-192.167.255.255,192.169.0.0-223.255.255.255'
+
+if ($AllowLan) {
+    $desc = 'Local RE/testing: blocks the patched MapleStory client from the public ' +
+            'internet, but permits private addresses so it can reach a LAN server. ' +
+            'Safe to delete.'
+    netsh advfirewall firewall add rule `
+        name="$RuleName" `
+        dir=out `
+        program="$ClientExe" `
+        action=block `
+        enable=yes `
+        profile=any `
+        remoteip="$PublicOnly" `
+        description="$desc" | Out-Null
+} else {
+    $desc = 'Local RE/testing: prevents the patched MapleStory client from contacting ' +
+            'Nexon. Loopback is unaffected. Safe to delete.'
+    netsh advfirewall firewall add rule `
+        name="$RuleName" `
+        dir=out `
+        program="$ClientExe" `
+        action=block `
+        enable=yes `
+        profile=any `
+        description="$desc" | Out-Null
+}
 if ($LASTEXITCODE -ne 0) { throw 'netsh failed to add the rule' }
 
-Write-Host "added outbound block for:`n  $ClientExe"
+if ($AllowLan) {
+    Write-Host "added outbound block (PUBLIC INTERNET ONLY) for:`n  $ClientExe"
+    Write-Host '  private addresses are permitted, so a LAN server is reachable.'
+    Write-Host '  Nexon is on the public internet and stays blocked.'
+} else {
+    Write-Host "added outbound block (ALL remote addresses) for:`n  $ClientExe"
+    Write-Host '  loopback is not filtered by Windows Firewall, so a LOCAL server works.'
+    Write-Host '  A LAN server will NOT until this is re-added with -AllowLan.'
+}
 Show-Status

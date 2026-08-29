@@ -379,45 +379,18 @@ impl eframe::App for LauncherApp {
                 ui.label(RichText::new(text).color(colour(*level)));
             }
 
-            ui.add_space(4.0);
-            egui::CollapsingHeader::new("Where the launcher is looking")
-                .default_open(false)
-                .show(ui, |ui| {
-                    egui::Grid::new("paths")
-                        .num_columns(2)
-                        .spacing([10.0, 4.0])
-                        .show(ui, |ui| {
-                            let rows = [
-                                ("source", self.layout.source.label().to_string()),
-                                ("launcher", self.layout.exe_dir.display().to_string()),
-                                ("client", self.layout.client_dir.display().to_string()),
-                                ("stub", self.layout.stub_path.display().to_string()),
-                                ("output", self.layout.data_root.display().to_string()),
-                                (
-                                    "archives",
-                                    self.layout.previous_runs_dir().display().to_string(),
-                                ),
-                                (
-                                    "config",
-                                    match &self.layout.config_file {
-                                        Some(p) => p.display().to_string(),
-                                        None => format!(
-                                            "none ({} beside the launcher would be read)",
-                                            crate::config::CONFIG_FILE_NAME
-                                        ),
-                                    },
-                                ),
-                            ];
-                            for (label, value) in rows {
-                                ui.label(label);
-                                ui.label(RichText::new(value).monospace().small());
-                                ui.end_row();
-                            }
-                        });
-                    for problem in self.layout.problems() {
-                        ui.label(RichText::new(format!("• {problem}")).color(colour(Level::Warn)));
-                    }
-                });
+            // The "Where the launcher is looking" panel was here and is GONE. The owner,
+            // 2026-08-29: *"just remove the entire section."*
+            //
+            // It listed source, launcher, client, stub, output, archives and config - and
+            // most of those are not things a player has any use for. The three that matter
+            // are the fields above: where MapleStory.exe is, which server, which ports.
+            //
+            // **Nothing was hidden by removing it.** The panel also rendered
+            // `Layout::problems()`, and `announce_layout` already pushes exactly those into
+            // the Log pane at startup - so a missing MapleStory.exe still says so, in the
+            // place the rest of the run is reported. `--print-paths` still prints everything
+            // for a machine where a window cannot be scripted into answering.
 
             ui.separator();
             ui.label(RichText::new("Log").strong());
