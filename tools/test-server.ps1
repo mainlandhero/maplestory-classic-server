@@ -773,7 +773,7 @@ function Stop-All {
             taskkill /F /IM maplecw-world.exe | Out-Null
         }
         # The sign-in service, added 2026-08-29. Without this it survives -Stop and holds
-        # targetelease\maplecw-auth.exe open, so the NEXT build fails with "Access is
+        # target\release\maplecw-auth.exe open, so the NEXT build fails with "Access is
         # denied" against a path that says nothing about servers.
         if (Get-Process maplecw-auth -ErrorAction SilentlyContinue) {
             taskkill /F /IM maplecw-auth.exe | Out-Null
