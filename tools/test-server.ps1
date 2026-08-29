@@ -29,257 +29,115 @@
 
     WHAT THE LAST RUN CLOSED - none of this needs testing again
     ----------------------------------------------------------
-    SELLING WORKS, and the Buy Back tab is not coming. Removing the type-10 refresh fixed
-    the crash. This client's UIShop.img/Shop has no repurchaseInfo node and exactly TabBuy
-    and TabSell, so there is no third tab to draw. Not a bug and not a gap.
-    WARRIOR WORKS - skills cast, and the client refuses at 0 MP.
-    THE RED POTION NEVER RESTORED MP. The owner: *"Using the Red Potion when my MP is depleted
-    incorrectly recovered my MP?"* It did not. Its spec is hp 100, mp 0, and the log line
-    reads "+0 mp (now 181/181)". The CLIENT had been spending MP locally on every swing
-    while the SERVER never did, so our stale 181/181 rode along on the potion's 0x007C and
-    the client believed it. Any 0x007C would have done it - idle regen a few seconds later
-    would have. FIXED: attack skills now cost MP server-side, keyed by (skill id, level),
-    which is the first thing research/attack-skill-id.md actually bought.
-    THE CLASSIC SHOP WINDOW DRAWS. See step 7.
-THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
-    No 0x0189 came back, so the permission gate refused it; the echo happens BEFORE the
-    dispatch, so seeing it in chat meant nothing. 0x00EA is no longer sent. The owner pushed back
-    on the conclusion I drew from that and they were right - see step 1.
-    YOU STAY DEAD. You could previously regenerate out of death, and because the revive
-    dialog fires on the TRANSITION it would never have come back.
-    THE CASH SHOP OPENS and the wallet reads both fields. Exit works. !lp works.
-    THE JOB CHANGE, THE SKILL POINTS AND THE MAGICIAN BOOK all worked first time: !job 200
-    played the effect, the points showed, the + button was live, all six Magician skills
-    listed, and Magic Claw accepted seven points.
-    MAGIC CLAW DEALING 1 WAS NOT A BUG. The owner was a Rogue - LUK 36, DEX 24, INT 6 - wearing
-    a Magician job id. MagicTotal seeds from floor(INT/2), so the whole damage window sat
-    between 1 and 2 before the mob magic defence was even applied. The formula predicts
-    exactly the 1 they saw. Every branch step below therefore begins with !resetap.
+    THE TWO DAMAGE NUMBERS AGREE, and the duplicate has been REMOVED since. The owner,
+    2026-08-29: "the mob damage numbers are now agreeing with each other. No need to show
+    the number twice." MobForcedStat told the client the mob's attack power, so it stopped
+    drawing its max(damage,1) stub and computed the real number - and ours became the
+    redundant one. Step 3 is the one-glance confirmation that only one is left.
+    MP COST ON SKILLS IS ACCURATE. Same run.
+    SELLING WORKS and there is no Buy Back tab in this client. Closed.
+    WARRIOR SKILLS CAST and the client refuses at 0 MP.
+    THE CLASSIC SHOP WINDOW DRAWS - 1905 bytes = 21 + 12x157.
 
-    THE FINDING THIS RUN RESTS ON - THE ATTACK PACKET CARRIES THE SKILL ID
-    ---------------------------------------------------------------------
-    For nine days world::magic, damage-formula.md 9.1 and mob-combat.md 7 all said the
-    server cannot tell which skill was cast, and every damage validator was left unwired
-    because of it. It is the u32 at body offset 2, with the level as the u8 at offset 6.
+    THE RUN NOW STARTS DIFFERENTLY - THE LAUNCHER
+    ---------------------------------------------
+    This window is the SERVER. Close it to stop; there is no stop script any more. The
+    CLIENT is started from maplecw-launcher.exe, which asks for administrator - say yes,
+    and the client then does not ask a second time.
 
-    The evidence for the old claim was an ABSENCE IN CAPTURES THAT COULD NOT HAVE CONTAINED
-    THE THING: every archived body was an ordinary swing, where the field is legitimately 0,
-    and a zero field explains nothing about itself. 426 swings at 0, one Three Snails at
-    1000 level 3 (its maxLevel is 3), seven Magic Claws at 2001003 level 7 (the owner had put in
-    7). Two skills, two levels each known from an unrelated source - and THAT is the
-    corroboration, not the count. The first pass reported 689/2/14 because a glob over
-    previous-runs/ AND research/fixtures/ counts a capture once per name it has: 155
-    world logs on disk are 119 distinct files. Hash before counting.
+    Sign in with `maplecw` or `wispplayer@example.com`. If the password is not known:
+      & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw
+    It asks for a NEW password twice and never asks for the old one.
 
-    Nothing in this run tests that directly. It is why the rest of the plan is possible.
-    research/attack-skill-id.md.
+    THE STEPS. Each is a claim that can come back false; report them separately.
+    ORDER: 1 first - nothing else can run until the launcher works. Then 2, then whatever
+    order suits. 9 costs no launch of its own and 10 is a question, not a test.
 
-    TWO NEW COMMANDS DO THE SETUP
-    -----------------------------
-    !learn        every skill of your current job at its own max level, no skill points
-                  needed. !learn 5 caps at 5. !learn 2001003 7 does one skill. Each skill
-                  is clamped to ITS OWN ceiling - the Magician book runs to 15 AND 20, so
-                  any single constant is wrong for half of it.
-    !kit          the weapon and ammunition that job needs, and it WARNS if the character
-                  cannot equip what it just handed over. There is no free bow, crossbow or
-                  claw in this client - all 230 weapon images were read to establish that -
-                  so a !job character can end up holding something it cannot wear, which on
-                  screen is indistinguishable from a broken skill.
+     1. THE LAUNCHER - blocking, and it has never been rendered.
+        I have never seen this window. Layout, spacing, whether the log pane scrolls - all
+        unknown. If it looks wrong, that is expected feedback rather than a surprise.
+          a) double-click target\release\maplecw-launcher.exe. UAC prompt?
+          b) do the paths it prints look right, and does it say MISSING anything?
+             MISSING anything -> the resolution logic guessed wrong. Say which line;
+                        this is the same code a test machine depends on
+          c) Login with the WRONG password. It must refuse and leave Start Game disabled
+             Start Game becomes available anyway -> the gate is broken, do not press it
+          d) Login properly, then Start Game. Client starts with no SECOND UAC prompt?
+             a second prompt -> the launcher is not running elevated after all
+             nothing at all -> ShellExecuteW failed; the log pane says why
 
-    THE STEPS, 1-9 plus 5b. Each is a claim that can come back false; report them
-    separately.
-    ORDER: 8 FIRST - it only means anything in a young session. Then 2 with 3 inside it,
-    then 4, 5, 5b, 7, and 9 whenever it suits - it rides along and costs no run of its own.
-    Step 1 is a READ, not a test.
-    DO STEP 7 FIRST: NPC shops have never been sent to a client, so it is the step most
-    likely to end the session, and everything after it is cheaper to redo than to lose.
+     2. THE MASKED EMAIL, on the login screen. It should read wisp****@example.com, and it is
+        now derived from the ACCOUNT rather than from a -DisplayName constant.
+          the right masked address -> the account drives the screen
+          blank -> the account has no email and the fallback did not fire either
+          the old constant when signed in as somebody else -> it is still hard-coded
 
-     1. NOTHING TO TEST HERE - the 1 is settled, and not in my favour. Read once, skip.
+     3. ONE DAMAGE NUMBER. Get hit by a mob.
+          exactly one number, and the HP bar agrees with it -> closed for good
+          two numbers again -> ours came back; four lines in combat.rs
 
-        I told the owner the client computes contact damage and merely discards it, and that
-        clearing one byte would let it keep the answer. The patch armed, verified its own
-        write, logged the new bytes - and the claim was still 1.
+     4. RECOVERY (skill 1001). !learn 1001 3, then cast it.
+        NO BUFF ICON WILL APPEAR and that is expected - Recovery has no stat bit anybody
+        has identified. The heal is real, the tray is empty, and the cast says so in chat.
+          a) six blue +12 numbers, one every five seconds, over thirty seconds?
+             the numbers but wrong spacing -> the 5s interval is derived from the tooltip
+                        arithmetic, not read from a column. Say the spacing you saw
+             one number then nothing -> the tick is not being driven
+          b) does it stop on its own after six, or keep going?
 
-        The path is real but it is a FIXED-DAMAGE OVERRIDE:
-            14288b2dc  cmp dword [rdi+0xe8], 0
-            14288b2e3  jle 0x14288ca17          ; `xor dil,dil` into the EPILOGUE
-        rdi is the mob's TEMPLATE record (FUN_141c54dd0, named in user-hit.md 3.5), and
-        template+0xe8 is written by the template loader FUN_14047d990 at 0x140481995 from the
-        WZ property `fixedBodyAttackDamage` (string at 0x14328afb8).
+     5. !resetap. Put points into STR, HP and MP first, then run it.
+          a) STR/DEX/INT/LUK all read 4?
+          b) did max HP and max MP come back DOWN, and the points return to the pool?
+             the four stats reset but max HP did not -> the HP ledger is not recording
+          c) run it a second time. It must refund NOTHING.
+             more points the second time -> the counters are not being cleared, which is
+                        free stats out of a command whose job is to be safe to repeat
 
-        ZERO of this client's 193 mob images carry fixedBodyAttackDamage. All 193 carry
-        PADamage. So every contact hit bails into the epilogue and the gate is never reached,
-        which is exactly what the run showed. The patch is INERT for contact damage; it is off
-        by default now and -ClientHitNumberPatch re-arms it, kept only in case a mob
-        ATTACK-SKILL hit reaches the gate - and no such hit exists in 198 captures.
+     6. OVERALLS. Wear trousers, then equip a robe (1050000 is a Beige Plain Robe).
+          a) do the trousers come off into the bag?
+          b) now put the trousers back on. The robe should come off - it is symmetric
+          c) the control: equip a plain TOP (1040000) over trousers. The trousers must
+             STAY ON. A shirt taking your trousers off is a worse bug than the one fixed
 
-        THE ERROR WAS MINE AND IT IS THIS FILE'S OLDEST RULE: I found a real calculation and
-        did not check its precondition. One wz-dump over 193 images - the same instrument used
-        three times already in that write-up - would have said so before a launch was spent.
+     7. THE GM GATE. Everything with a ! is now gated on the account.
+          a) !heal as maplecw - works?
+          b) make a second account, sign in as it, and try !heal. It must refuse with a
+             line naming --gm. Anything happening -> the gate is not reached
 
-        So: the client has no ordinary contact-damage calculation in this build. Contact damage
-        is the SERVER's to supply, and which packet carries it to the client is still not
-        found. Two numbers stay for now, and ours is the correct one.
-        research/damage-number-two-numbers.md.
+     8. A SECOND ACCOUNT SEES ITS OWN CHARACTERS. Same second account as 7.
+          empty character list -> the login claim is being read
+          Cobalt is there -> the claim is not, and you are still maplecw. login.log names
+                     the account on every connection; that line says which
 
-     2. WARRIOR - FIRST OF THE FOUR BRANCHES, after step 7. Do step 3 in the MIDDLE of it.
-        It is the only branch whose weapon is FREE (Sword 1302000: reqLevel 0, no stat, no
-        job bit) and none of its skills carries a weapon column. So it separates "does a
-        skill attack work at all" from "am I holding the right thing", which 4 and 5 cannot.
-          !resetap, put points into STR to 35+, !job 100, !kit.
-          *** STOP. DO STEP 3 NOW, BEFORE !learn. *** Then !learn, EQUIP THE SWORD.
-        The six: Improved HP Recovery, Max HP Increase, Precise Strikes (passive), Iron Body
-        (buff), Power Strike, Slash Blast (attacks).
-          a) do Power Strike and Slash Blast do real damage, well above 1?
-          b) does Slash Blast hit up to FOUR mobs? mobCount 4 is what tells it from Power
-             Strike, whose mobCount is 1
-          c) IRON BODY - SAY THE W. DEF NUMBER BEFORE AND AFTER. This is a measurement:
-               rises by about a QUARTER of its base -> the percent-to-flat resolution is
-                          right. That is the [I] this run promotes
-               rises by exactly 25 whatever the base -> the raw percent reached the wire
-               does not move -> CTS bit 86 is wrong, and Magic Armor rests on the same bit
-             indiePddR is a PERCENT and bit 86 is a FLAT add, so the server has to resolve
-             one into the other. Passing 0 yields a working cast that adds nothing.
-          d) does MP drop on every cast?
+     9. THE KEYBOARD LAYOUT - free, rides along, do it whenever.
+        Open keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close the window. Say
+        roughly when. 162 archived captures contain no keymap packet, but nobody has ever
+        changed a key DURING one, so that is "never captured" and not "never sent".
+          a new opcode near that moment -> the client reports changes and both halves
+                     become measured
+          nothing new -> the client never volunteers it, and the only route left is the
+                     hook reading the client's own memory
 
-     3. THE PASSIVE QUESTION - one command, and it decides a design.
-        Nine of the 24 are passive. The client's own lookup chain reads them from its
-        Skill.wz off the level in 0x0081 - FUN_1407b3df0 -> FUN_14079fe90 -> FUN_1401ba9d0 -
-        so seven of the nine change nothing this server owns and cannot be tested. TWO can.
-        DO IT INSIDE STEP 2, after !kit and BEFORE !learn: !learn hands out Max HP
-        Increase at level 15 with everything else, and once it is learned the
-        before-number is gone. If !learn has already run, !resetsp forgets the book.
-        WRITE DOWN MAX HP. Then !learn 1000001 15 (Max HP Increase, tooltip +25%).
-        Look again.
-          UP by about a quarter -> the client applies passives itself. The server must NOT
-                     also apply them or every one of them doubles
-          unchanged -> the client does nothing with them and the server owes nine skills
-                     their effect
-        Both answers are actionable and they point opposite ways, which is why this is worth
-        a step of its own rather than a glance.
+    10. THE CRASH - a question, not a test.
+        A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
+        appears NOWHERE else in the archive. It is an std::map node walk hitting a bad
+        pointer, with 38 C++ throws before it. You said you were "just in the map with
+        monsters, not doing anything particular" - so there is no action to blame, and what
+        is left is something that accumulates while a session runs.
+        WHAT WOULD HELP: roughly how long had the client been up? A duration turns an
+        unreproducible crash into a number that can be compared between runs.
 
-     4. BOWMAN - and this one has a stat gate that can stop the run.
-          !resetap, points into DEX to 35+, !job 300, !kit, !learn, EQUIP THE BOW.
-        War Bow 1452000 needs level 10 and DEX 25; arrows 2060000 are free and go to the USE
-        tab, where the client picks them up itself. That tab is [L] now, not [I]: the
-        client's GetInventoryType returns itemId/1000000 for everything outside the equip
-        family, and !item routes on the identical quotient.
-          a) does Arrow Blow fire, and does the arrow count drop by 1?
-          b) does Double Shot fire, and drop it by 2?
-          c) FOCUS - do ACCURACY and AVOIDABILITY both rise? Say both:
-               both -> bits 88 and 89 correct
-               only accuracy -> 89 is not Avoidability; sweep 89..91
-               neither -> the window may show equipment only; Magic Armor is the control
-          d) UNEQUIP THE BOW and try Arrow Blow. It should refuse - the CLIENT enforces the
-             weapon column. If it fires anyway, say so; that changes who owns the gate
-
-     5. THIEF - two weapons, and a swap between them. THIS IS THE ONE THAT LOOKS BROKEN
-        IF THE SWAP IS FORGOTTEN. Double Stab wants weapon 33 (dagger), Lucky Seven wants 47
-        (claw), and no item in this client is both.
-          !resetap, points into LUK to 35+, !job 400, !kit, !learn.
-          a) EQUIP THE RAZOR 1332000 (dagger). Double Stab - two hits per cast
-          b) SWAP TO THE GARNIER 1472000 (claw). Lucky Seven
-          c) DARK SIGHT - translucent, and slower?
-               translucent AND slower -> bit 99 and the speed penalty both right
-               translucent, same speed -> the penalty was dropped
-               slower, not translucent -> a flag of 1 is not enough on bit 99
-             THEN RIGHT-CLICK THE ICON. Back to normal speed AND visible? Staying slow means
-             the off-path cleared one bit of the two, which is a fixed hazard being checked
-          d) Disorder will say it grants nothing. Correct and deliberate: it is a debuff on
-             the MOB and this server has no packet for that. Check it freezes nothing
-
-     5b. MAGICIAN - the wand, which is the bug the owner hit on 2026-08-28.
-        !kit said "the Magician needs nothing". That was my error and it is the same one I
-        made about the Warrior an hour earlier, in the other direction: no Magician skill is
-        GATED on a weapon, and I read that as no weapon NEEDED. MagicTotal is floor(INT/2)
-        plus equipment incMAD, the Wooden Wand's incMAD is 27, and the row had read its
-        incWAT of 18 and concluded weapons do not matter on the magic path.
-          !resetap, points into INT to 35+, !job 200, !kit, !learn, EQUIP THE WAND.
-        Wooden Wand 1372000 needs level 10 and INT 20; there is no free wand or staff, and
-        the staff is strictly worse for magic (incMAD 24) and adds a reqJob bit.
-          a) does Magic Claw do real damage now? Roughly what number?
-          b) Magic Claw is attackCount 2 - two numbers per cast?
-          c) Magic Guard: cast, then get hit. Does the damage come off MP instead of HP?
-             That split is the SERVER's arithmetic, not the client's - the client never
-             writes HP, so this is the one buff whose effect we compute
-          d) does the wand go in the hand, or does !kit warn that it cannot?
-
-     6. THE PURCHASE - carried over, still unconfirmed.
-        (If leaf points are under 1000, !lp 99000 first. A PREREQUISITE, not a test: !lp has
-        been confirmed on several runs and was struck from this plan on 2026-08-28 when the owner
-        said "we tested 0 quite a few times".)
-        Last run the coupon bought fine and
-        landed in the ITEM inventory: 0x19 is the reply to "move a locker item into a bag",
-        so it did what it says. The purchase reply is 0x05AE sub-op 0x0C.
-        Buy the MYSTERY HAIR COUPON - Main tab, 100 LP, SN 150000000. NOT Brown Puppy (a
-        pet, refused) and NOT Red Hat (1802002 is pet EQUIPMENT).
-          a) CASH INVENTORY, upper left panel?   b) success message and sound?
-          c) leaf points drop by exactly 100?
-          all three -> the cash shop is CLOSED as a feature
-          balance keeps dropping, or several coupons from one click -> the re-entry is
-                     SENDING rather than completing. CLOSE THE CLIENT and say so
-
-     7. BUYING FROM AN NPC SHOP - the only half of the counter never tested.
-
-        Selling is done and the window draws. Buying has never been on a wire.
-          a) buy something from Lucy. Do the ITEM and the MESOS both move?
-          b) click Buy AGAIN.
-               works twice -> buying is done
-               the second click does nothing, silently -> the 0x055E never went out and
-                          shopUI+0x4b0 is latched. Close and re-click the NPC; a fresh
-                          0x055D alone will NOT recover it, because of the modal guard
-          c) do the prices match data/shops.txt?
-
-     8. THE !learn CRASH - one observation, and it needs the young-session discriminator.
-
-        `!learn 1000001 15` (Max HP Increase) killed the client, but the fault was at
-        18:28:59.889 and the packet went out at 18:28:56.211 - **3.7 seconds earlier**, with
-        a `0x0226` reply and dozens of mob moves in between. Not on the packet.
-
-        The packet is byte-correct: header `01 01 00 | 01 00`, entry `41420f00` = 1000001,
-        `0f000000` = 15, masterLevel 0, then `00 80 05 bb 46 e6 17 02` = the never-expires
-        constant, then the trailing `00`. 26 bytes = 5 + 20 + 1, which is the builder's own
-        arithmetic. `needs_master_level` correctly excludes this skill.
-
-        Fault `0x1415f0db0` appears in NONE of the other archived hook logs.
-
-        So it is the pair this file keeps meeting: the command is fatal, or the session had
-        been running long enough for something else to fire. Opposite work, identical on
-        screen. **Do it at ~40 s of client life, before anything else.**
-          dies again, early -> the command is fatal, and repeatable
-          does not die      -> the session was long and the command is innocent
-        Say WHEN either way. That discriminator cleared GoodTest in one login on 2026-08-22
-        and has convicted nothing since, so neither answer is the safe default.
-
-     9. THE KEYBOARD LAYOUT - 20 seconds, and it decides which of two implementations.
-
-        The owner: "Upon logout then subsequent login, this customization is completely gone."
-        Correct, and it is not a broken feature: NOTHING in the seven crates has ever
-        touched a key mapping, and the client has nowhere local to keep one - its settings
-        block is sound, graphics and chat options, no key mapping in it. So it can only come
-        from us, and we have never sent it.
-
-        WHAT IS NOT KNOWN is whether the client even TELLS us when a key changes. 162
-        distinct archived captures contain no keymap-shaped packet - but nobody has ever
-        changed a key DURING a capture, so that is "never captured", not "never sent". This
-        step is the whole difference and it costs nothing.
-
-          Open the keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close the window.
-          Do it at a moment you can name, and say roughly when.
-
-        Then the answer is in world.log without another launch:
-          a NEW opcode near that moment -> the client reports changes. Its body IS the
-                     layout, and the same layout inverted is the restore packet. Both halves
-                     become measured. This is the server-side implementation and it is the
-                     right one
-          nothing new -> the client never volunteers it. The mapping can then only be
-                     recovered from the client's own memory by the hook, which is a
-                     different design and a worse one
-
-        The client does NOT freeze when a key is changed - the owner has done it several times
-        across sessions - so whatever it sends needs no reply, and our current silence is
-        already safe. That is one thing this step does not have to establish.
-        research/keymap-not-saved.md.
+    CARRIED OVER, STILL UNCONFIRMED - lower value than the above
+    ------------------------------------------------------------
+    IRON BODY reducing damage. It never did, because our model summed equipment defence and
+    nothing else; that is fixed and unretested. SAY THE W.DEF NUMBER BEFORE AND AFTER:
+    a rise of about a quarter means the percent-to-flat conversion is right, a rise of
+    exactly 25 whatever the base means the raw percent reached the wire.
+    !learn 1000001 15 killed the client once, 3.7 s after a byte-correct packet. Do it at
+    ~40 s of client life: dies again early -> the command is fatal; does not -> the session
+    was long and the command is innocent.
+    BOWMAN, THIEF and MAGICIAN branches - none tested since the weapons were sorted out.
+    BUYING from an NPC shop, and the cash-shop purchase.
 
     MORE THAN ONE ACCOUNT - new 2026-08-28, and not a step in this plan
     -------------------------------------------------------------------
@@ -486,7 +344,7 @@ param(
     # (`Account::masked_email`), so it follows the launcher's claim instead of being fixed at
     # startup. This value is what an account created before the email column existed gets,
     # because an empty field draws as a blank line where a person expects to see themselves.
-    #   .	argetelease\maplecw-useradd.exe --email <name> <address>
+    #   maplecw-useradd.exe --email <name> <address>   (in target/release)
     [string]$DisplayName = 'wisp****@example.com',
     [string]$Database,
     [string]$World = 'Scania',
@@ -1295,259 +1153,106 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  STEPS 2-9, plus 5b. 1 is a read.' -ForegroundColor Yellow
-    Write-Host '  ORDER: 8 FIRST (it only means anything in a young session),' -ForegroundColor Yellow
-    Write-Host '  then 2 with 3 inside it, then 4, 5, 5b, 7, 9. Step 1 is a READ.' -ForegroundColor Yellow
+    Write-Host '  STEPS 1-10. Do 1 first - nothing else runs until it works.' -ForegroundColor Yellow
+    Write-Host '  9 costs no launch of its own. 10 is a question, not a test.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
+    Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
+    Write-Host '  The CLIENT comes from maplecw-launcher.exe, which asks for'
+    Write-Host '  administrator. Say yes - the client then does not ask again.'
+    Write-Host '  Sign in as maplecw or wispplayer@example.com. Forgotten password:'
+    Write-Host '    & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw'
+    Write-Host '    It asks for a NEW one twice and never asks for the old one.'
+    Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
-    Write-Host '  SELLING WORKS and the counter DRAWS - 0x055D, Lucy, 12 rows,'
-    Write-Host '  1905 bytes = 21 + 12x157 exactly.'
-    Write-Host '  No Buy Back tab in this client. Closed, not coming back.'
-    Write-Host '  WARRIOR WORKS. Skills cast, and the client refuses at 0 MP.'
-    Write-Host '  AND THE RED POTION NEVER RESTORED MP. Its spec is hp 100, mp 0'
-    Write-Host '  and the log says "+0 mp". The CLIENT had been spending MP locally'
-    Write-Host '  while the SERVER never did, so our stale 181/181 rode along on the'
-    Write-Host '  potion stat change and the client believed it. FIXED: attack skills'
-    Write-Host '  now cost MP server-side - the first thing the skill id bought.'
-    Write-Host '  (The /hitdamagetest route is dead: no 0x0189 came back, so the'
-    Write-Host '  permission gate refused it. But that was one lever failing, not the'
-    Write-Host '  answer - see step 1, which you were right to push back on.)'
-    Write-Host '  YOU STAY DEAD - no more regenerating out of death. The wallet, the'
-    Write-Host '  cash shop window, Exit, and the leaf-point balance. !lp. THE JOB'
-    Write-Host '  CHANGE, THE SKILL POINTS AND THE MAGICIAN BOOK - !job 200 gave the'
-    Write-Host '  effect, the points showed, the + button was live, all six skills'
-    Write-Host '  listed, and Magic Claw took seven points.'
-    Write-Host '  AND MAGIC CLAW DEALING 1 WAS NOT A BUG. You were a Rogue with 6'
-    Write-Host '  INT wearing a Magician job id. The formula predicts exactly 1.'
-    Write-Host '  That is why steps 2, 4 and 5 all start by fixing the stat.'
+    Write-Host '  THE DAMAGE NUMBERS AGREE - the forced-stat block worked, so the'
+    Write-Host '  client computes the real number instead of its max(damage,1) stub.'
+    Write-Host '  Ours is REMOVED since; step 3 checks only one is left.'
+    Write-Host '  MP COST ON SKILLS IS ACCURATE. Selling works and there is no Buy'
+    Write-Host '  Back tab in this client. Warrior skills cast. The shop window draws.'
     Write-Host ''
-    Write-Host '  TWO NEW COMMANDS DO THE SETUP FOR YOU:' -ForegroundColor Cyan
-    Write-Host '     !learn        every skill of your job at its own max level.'
-    Write-Host '                   No skill points needed. !learn 5 caps them at 5.'
-    Write-Host '     !kit          the weapon and ammunition that job needs, and it'
-    Write-Host '                   WARNS if you cannot equip what it just gave you.'
+    Write-Host '  1. THE LAUNCHER - blocking, and I have NEVER seen this window.' -ForegroundColor White
+    Write-Host '     Layout, spacing, whether the log pane scrolls - all unknown.'
+    Write-Host '     If it looks wrong that is expected feedback, not a surprise.'
+    Write-Host '       a) double-click target\release\maplecw-launcher.exe. UAC prompt?'
+    Write-Host '       b) do the paths look right? Does it say MISSING anything?'
+    Write-Host '            MISSING -> resolution guessed wrong. Say WHICH line; a test'
+    Write-Host '                       machine depends on the same code'
+    Write-Host '       c) Login with the WRONG password. It must refuse and leave'
+    Write-Host '          Start Game disabled.'
+    Write-Host '            enabled anyway -> the gate is broken, do not press it'
+    Write-Host '       d) Login properly, then Start Game. Client starts with NO second'
+    Write-Host '          UAC prompt?'
+    Write-Host '            a second prompt -> the launcher is not elevated after all'
+    Write-Host '            nothing at all  -> ShellExecuteW failed; the log pane says why'
     Write-Host ''
-    Write-Host '  1. NOTHING TO TEST. The 1 is settled and it is not fixable' -ForegroundColor White
-    Write-Host '     from the server. Read this once, then skip to 2.'
-    Write-Host '     I told you the client computes contact damage and throws it'
-    Write-Host '     away. WRONG - the patch armed, verified its own write, and the'
-    Write-Host '     claim was still 1. The path I found is a FIXED-DAMAGE OVERRIDE:'
-    Write-Host '       14288b2dc  cmp dword [rdi+0xe8], 0'
-    Write-Host '       14288b2e3  jle <epilogue>'
-    Write-Host '     and template+0xe8 is the WZ node fixedBodyAttackDamage, which'
-    Write-Host '     ZERO of this client 193 mobs carry - all 193 carry PADamage.'
-    Write-Host '     So every contact hit bails before the gate is even reached.'
-    Write-Host '     I found a real calculation and did not check its precondition.'
-    Write-Host '     One wz-dump would have said so before costing you a launch.'
-    Write-Host '     The client has no contact-damage calculation in this build, so'
-    Write-Host '     it is the SERVER that must supply the number - and which packet'
-    Write-Host '     carries it is not found. Two numbers stay for now; ours is right.'
-    Write-Host '     The patch is off by default now. -ClientHitNumberPatch re-arms it.'
+    Write-Host '  2. THE MASKED EMAIL on the login screen.' -ForegroundColor White
+    Write-Host '     It should read wisp****@example.com, and it now comes from the'
+    Write-Host '     ACCOUNT rather than a -DisplayName constant.'
+    Write-Host '       blank -> the account has no email and the fallback did not fire'
     Write-Host ''
-    Write-Host '  2. WARRIOR - THE WHOLE BRANCH, AND THE CHEAPEST ONE.' -ForegroundColor White
-    Write-Host '     FIRST OF THE FOUR BRANCHES (step 7 comes before all of them).'
-    Write-Host '     It is the only branch whose weapon has NO'
-    Write-Host '     requirement at all, and none of its skills is gated on a weapon,'
-    Write-Host '     so it separates "does a skill attack work" from "am I holding'
-    Write-Host '     the right thing" - which is exactly what steps 4 and 5 cannot.'
-    Write-Host '       !resetap        then put points into STR until it reads 35+'
-    Write-Host '       !job 100'
-    Write-Host '       !kit            gives a Sword, 1302000, free to anyone'
-    Write-Host '       --- STOP HERE AND DO STEP 3 NOW, BEFORE !learn ---' -ForegroundColor Magenta
-    Write-Host '       !learn          all six Warrior skills at max'
-    Write-Host '     EQUIP THE SWORD. Then cast Power Strike and Slash Blast.'
-    Write-Host '     The six are: Improved HP Recovery, Max HP Increase, Precise'
-    Write-Host '     Strikes (all passive), Iron Body (buff), Power Strike and'
-    Write-Host '     Slash Blast (attacks).'
-    Write-Host '       a) do Power Strike and Slash Blast do REAL damage, well above 1?'
-    Write-Host '       b) does Slash Blast hit up to FOUR mobs at once? That is its'
-    Write-Host '          mobCount and it is the one thing that tells it from Power Strike'
-    Write-Host '       c) IRON BODY - NEWLY FIXED, and this is the one measurement I'
-    Write-Host '          need. It never reduced damage because our own model summed'
-    Write-Host '          equipment defence and NOTHING ELSE - the buff set the bit,'
-    Write-Host '          drew the icon, cost MP, and the arithmetic never saw it.'
-    Write-Host '          Third time a buff has done that here. Now it feeds in.'
-    Write-Host '          Its WZ value at level 20 is 25, and whether that means +25%'
-    Write-Host '          or +25 FLAT is inferred, not read. Those are hard to tell'
-    Write-Host '          apart on a low-defence character - which is why I need the'
-    Write-Host '          NUMBER: does W. Def in the stat window go UP, and by how'
-    Write-Host '          much? SAY THE NUMBER BEFORE AND AFTER. This is a measurement,'
-    Write-Host '          not a yes/no:'
-    Write-Host '            it rises by about a QUARTER of what it was -> percent, and'
-    Write-Host '                     our conversion is right'
-    Write-Host '            it rises by exactly 25 whatever it started at -> the value is'
-    Write-Host '                     FLAT and we are dividing when we should not. One line'
-    Write-Host '            SAY BOTH NUMBERS either way - that is what settles it'
-    Write-Host '            it does not move at all -> CTS bit 86 is wrong, and Magic'
-    Write-Host '                     Armor rests on the same bit'
-    Write-Host '       d) MP should drop on every cast. Does it?'
+    Write-Host '  3. ONE DAMAGE NUMBER. Get hit by a mob.' -ForegroundColor White
+    Write-Host '       one number, and the HP bar agrees -> closed for good'
+    Write-Host '       two again -> ours came back; four lines in combat.rs'
     Write-Host ''
-    Write-Host '  3. THE PASSIVE QUESTION - ONE COMMAND, AND IT DECIDES A DESIGN.' -ForegroundColor White
-    Write-Host '     Nine of the 24 first-job skills are passive. The client appears'
-    Write-Host '     to apply them itself; if it does not, the server has to fold'
-    Write-Host '     every one of them in by hand. Seven of the nine change nothing'
-    Write-Host '     this server owns, so they cannot be tested. TWO can.'
-    Write-Host '     DO THIS IN THE MIDDLE OF STEP 2 - after !kit, BEFORE !learn.'
-    Write-Host '     !learn hands out Max HP Increase at level 15 along with everything'
-    Write-Host '     else, and once it is learned the before-number is gone. If you'
-    Write-Host '     have already run !learn, use !resetsp to forget the book first.'
-    Write-Host '     WRITE DOWN YOUR MAX HP. Then:'
-    Write-Host '       !learn 1000001 15      Max HP Increase, tooltip says +25%'
-    Write-Host '     Look at Max HP again.'
-    Write-Host '       it went UP by about a quarter -> the client applies passives'
-    Write-Host '                     itself. The server must NOT also apply them or'
-    Write-Host '                     everything doubles'
-    Write-Host '       it did not move          -> the client does nothing with them and'
-    Write-Host '                     the server owes nine skills their effect'
-    Write-Host '     Either answer is worth the run. They point opposite ways.'
+    Write-Host '  4. RECOVERY (1001). !learn 1001 3, then cast it.' -ForegroundColor White
+    Write-Host '     NO BUFF ICON WILL APPEAR and that is expected - Recovery has no'
+    Write-Host '     stat bit anybody has identified. The heal is real, the tray is'
+    Write-Host '     empty, and the cast says so in chat.'
+    Write-Host '       a) six blue +12 numbers, one every 5s, over 30s?'
+    Write-Host '            numbers but wrong spacing -> the 5s interval is DERIVED from'
+    Write-Host '                       the tooltip arithmetic, not read from a column.'
+    Write-Host '                       Say the spacing you saw'
+    Write-Host '            one then nothing -> the tick is not being driven'
+    Write-Host '       b) does it stop on its own after six?'
     Write-Host ''
-    Write-Host '  4. BOWMAN - AND THIS ONE HAS A STAT GATE THAT CAN STOP YOU.' -ForegroundColor White
-    Write-Host '       !resetap        then put points into DEX until it reads 35+'
-    Write-Host '       !job 300'
-    Write-Host '       !kit            War Bow 1452000, and 1000 Arrows 2060000'
-    Write-Host '       !learn'
-    Write-Host '     THE BOW NEEDS LEVEL 10 AND DEX 25. There is no free bow in this'
-    Write-Host '     client - all 230 weapons were read to check. If !kit prints a'
-    Write-Host '     WARNING, you cannot equip it yet; fix the stat first.'
-    Write-Host '     EQUIP THE BOW. The arrows go in the USE tab and the client picks'
-    Write-Host '     them up itself.'
-    Write-Host '       a) does Arrow Blow fire, and does the arrow count drop by 1?'
-    Write-Host '       b) does Double Shot fire, and does it drop by 2?'
-    Write-Host '       c) FOCUS: do ACCURACY and AVOIDABILITY both rise? Say both.'
-    Write-Host '            both rise      -> bits 88 and 89 are right'
-    Write-Host '            only accuracy  -> 89 is not Avoidability. We sweep 89..91'
-    Write-Host '            neither        -> the window may be showing equipment only'
-    Write-Host '       d) UNEQUIP THE BOW and try Arrow Blow. It SHOULD refuse - the'
-    Write-Host '          client enforces that itself. If it fires anyway, say so'
+    Write-Host '  5. !resetap. Put points into STR, HP and MP first.' -ForegroundColor White
+    Write-Host '       a) STR/DEX/INT/LUK all read 4?'
+    Write-Host '       b) did max HP and max MP come DOWN, and the points come back?'
+    Write-Host '            stats reset but max HP did not -> the ledger is not recording'
+    Write-Host '       c) run it AGAIN. It must refund NOTHING.'
+    Write-Host '            more points -> the counters are not cleared, which is free'
+    Write-Host '                       stats out of a command meant to be safe to repeat'
     Write-Host ''
-    Write-Host '  5. THIEF - TWO WEAPONS, AND YOU MUST SWAP BETWEEN THEM.' -ForegroundColor White
-    Write-Host '     THIS IS THE ONE THAT WILL LOOK BROKEN IF YOU FORGET.'
-    Write-Host '     Double Stab needs a DAGGER. Lucky Seven needs a CLAW. No item'
-    Write-Host '     in this client is both, so one of them always refuses.'
-    Write-Host '       !resetap        then put points into LUK until it reads 35+'
-    Write-Host '       !job 400'
-    Write-Host '       !kit            Razor 1332000, Garnier 1472000, 500 stars 2070000'
-    Write-Host '       !learn'
-    Write-Host '       a) EQUIP THE RAZOR (dagger). Cast Double Stab. Two hits per cast'
-    Write-Host '       b) SWAP TO THE GARNIER (claw). Cast Lucky Seven'
-    Write-Host '       c) DARK SIGHT: do you go TRANSLUCENT, and are you SLOWER?'
-    Write-Host '            translucent AND slower -> bit 99 and the speed penalty'
-    Write-Host '            translucent, same speed -> the penalty was dropped'
-    Write-Host '            slower, not translucent -> a flag of 1 is not enough'
-    Write-Host '          THEN RIGHT-CLICK THE ICON to cancel it. Are you back to'
-    Write-Host '          normal speed AND visible? If you stay slow, the off-path is'
-    Write-Host '          clearing one bit of two'
-    Write-Host '       d) Disorder will say it grants nothing. That is correct and'
-    Write-Host '          deliberate - it is a debuff on the MOB and we have no packet'
-    Write-Host '          for that. Just check it does not freeze anything'
+    Write-Host '  6. OVERALLS. Wear trousers, then equip a robe (1050000).' -ForegroundColor White
+    Write-Host '       a) do the trousers come off into the bag?'
+    Write-Host '       b) put them back on - the robe should come off. It is symmetric'
+    Write-Host '       c) THE CONTROL: equip a plain TOP (1040000) over trousers. They'
+    Write-Host '          must STAY ON. A shirt removing trousers is a worse bug than'
+    Write-Host '          the one being fixed'
     Write-Host ''
-    Write-Host '  5b. MAGICIAN - THE WAND, WHICH IS THE BUG YOU HIT.' -ForegroundColor White
-    Write-Host '     !kit told you the Magician needs nothing. Wrong, and it was my'
-    Write-Host '     error: no Magician skill is GATED on a weapon, and I read that as'
-    Write-Host '     no weapon needed. MagicTotal is floor(INT/2) + equipment incMAD,'
-    Write-Host '     and the Wooden Wand incMAD is 27. Without it the whole formula'
-    Write-Host '     runs on floor(INT/2) alone - which is how Magic Claw drew a 1.'
-    Write-Host '       !resetap        then put points into INT until it reads 35+'
-    Write-Host '       !job 200'
-    Write-Host '       !kit            Wooden Wand 1372000. Needs level 10 and INT 20'
-    Write-Host '       !learn'
-    Write-Host '     EQUIP THE WAND.'
-    Write-Host '       a) does Magic Claw now do REAL damage? Say roughly what.'
-    Write-Host '          It should be far above the 1 you saw'
-    Write-Host '       b) Magic Claw is TWO hits per cast. Do you see two numbers'
-    Write-Host '          per swing?'
-    Write-Host '       c) MAGIC GUARD: cast it, then get hit. Does the damage come'
-    Write-Host '          off MP instead of HP? That split is the SERVER arithmetic'
-    Write-Host '       d) does the wand actually go in the hand, or does !kit warn?'
+    Write-Host '  7. THE GM GATE. Every ! command is gated on the account now.' -ForegroundColor White
+    Write-Host '       a) !heal as maplecw - works?'
+    Write-Host '       b) make a second account, sign in as it, try !heal. It must'
+    Write-Host '          refuse with a line naming --gm'
     Write-Host ''
-    Write-Host '  6. THE PURCHASE - CARRIED OVER, STILL UNCONFIRMED.' -ForegroundColor White
-    Write-Host '     (If leaf points are under 1000, !lp 99000 first. That is a'
-    Write-Host '     prerequisite, not a test - it has been confirmed several times.)'
-    Write-Host '     Last run the coupon bought fine and landed in the ITEM inventory.'
-    Write-Host '     0x19 is the reply to "move a locker item into a bag", so it did'
-    Write-Host '     what it says. The purchase reply is 0x05AE sub-op 0x0C.'
-    Write-Host '     Buy the MYSTERY HAIR COUPON - Main tab, 100 LP, SN 150000000.'
-    Write-Host '     NOT Brown Puppy (a pet, refused) and NOT Red Hat (pet EQUIPMENT).'
-    Write-Host '       a) does it appear in the CASH INVENTORY - upper left panel?'
-    Write-Host '       b) success message and sound?'
-    Write-Host '       c) do the Leaf Points drop by exactly 100?'
-    Write-Host '       all three -> the cash shop is CLOSED as a feature'
-    Write-Host '       BALANCE KEEPS DROPPING, or several coupons from one click ->'
-    Write-Host '                   CLOSE THE CLIENT and say so. One line to disarm'
+    Write-Host '  8. THAT SECOND ACCOUNT SEES ITS OWN CHARACTERS.' -ForegroundColor White
+    Write-Host '       empty list -> the login claim is being read'
+    Write-Host '       Cobalt -> it is not, and you are still maplecw. login.log names'
+    Write-Host '                 the account on every connection'
     Write-Host ''
-    Write-Host '  7. BUYING FROM AN NPC SHOP. The only half never tested.' -ForegroundColor White
-    Write-Host '     Selling is done and the counter draws. Buying never has been.'
-    Write-Host '       a) buy something from Lucy. Do the ITEM and the MESOS both move?'
-    Write-Host '       b) then click Buy AGAIN.'
-    Write-Host '            it works twice     -> buying is done'
-    Write-Host '            the second click does nothing, silently -> the result never'
-    Write-Host '                          went out and the window is latched. Close and'
-    Write-Host '                          re-click the NPC; a fresh 0x055D will NOT fix it'
-    Write-Host '       c) do the prices match data/shops.txt?'
+    Write-Host '  9. THE KEYBOARD LAYOUT - free, rides along, do it whenever.' -ForegroundColor White
+    Write-Host '     Open keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close'
+    Write-Host '     the window. Say roughly when. 162 archived captures have no keymap'
+    Write-Host '     packet - but nobody has ever changed a key DURING one, so that is'
+    Write-Host '     "never captured", not "never sent".'
     Write-Host ''
-    Write-Host '  8. THE !learn CRASH - ONE OBSERVATION, DO IT AT ~40 SECONDS.' -ForegroundColor White
-    Write-Host '     !learn 1000001 15 died last run, but 3.7 SECONDS after the'
-    Write-Host '     packet went out - not on it. The packet itself is byte-correct:'
-    Write-Host '     skillId 1000001, level 15, masterLevel 0, and the never-expires'
-    Write-Host '     constant exactly right. Fault 0x1415f0db0 appears in none of the'
-    Write-Host '     other archived hook logs.'
-    Write-Host '     So it is the usual pair: the COMMAND is fatal, or the session had'
-    Write-Host '     been running long enough for something else to fire. Those need'
-    Write-Host '     opposite work and look identical on screen.'
-    Write-Host '     Log in and type it IMMEDIATELY, before anything else.'
-    Write-Host '       it dies again, early -> the command is fatal. Repeatable'
-    Write-Host '       it does NOT die      -> the session was long; it is innocent'
-    Write-Host '     Say WHEN either way. This same discriminator cleared GoodTest in'
-    Write-Host '     one login and convicted nothing since, so neither is the default.'
+    Write-Host ' 10. THE CRASH - a question, not a test.' -ForegroundColor White
+    Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
+    Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
+    Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'
+    Write-Host '     the map with monsters", so there is no action to blame and what is'
+    Write-Host '     left is something that accumulates.'
+    Write-Host '     WHAT WOULD HELP: roughly how long had the client been up?'
     Write-Host ''
-    Write-Host '  9. THE KEYBOARD LAYOUT - 20 SECONDS, AND IT PICKS AN ARCHITECTURE.' -ForegroundColor White
-    Write-Host '     You are right that it is not saved. It is not a broken feature:'
-    Write-Host '     nothing in the seven crates has EVER touched a key mapping, and'
-    Write-Host '     the client has nowhere local to keep one - I read its settings'
-    Write-Host '     block out of the exe and it is sound, graphics and chat options'
-    Write-Host '     with no key mapping in it. So it can only come from us.'
-    Write-Host '     What is NOT known is whether the client TELLS us when a key'
-    Write-Host '     changes. 162 archived captures have no keymap-shaped packet - but'
-    Write-Host '     nobody has ever changed a key DURING a capture, so that is'
-    Write-Host '     "never captured", not "never sent". This step is the difference.'
-    Write-Host '       OPEN KEYBOARD SETTINGS, DRAG ONE SKILL ONTO AN EMPTY KEY,' -ForegroundColor Magenta
-    Write-Host '       CLOSE THE WINDOW. Say roughly when you did it.' -ForegroundColor Magenta
-    Write-Host '     I read the answer out of world.log - no second launch:'
-    Write-Host '       a NEW opcode near that moment -> the client reports changes, its'
-    Write-Host '                body IS the layout, and both halves become measured.'
-    Write-Host '                That is the server-side implementation and the right one'
-    Write-Host '       nothing new -> the client never volunteers it, and the only way'
-    Write-Host '                left is the hook reading the client''s own memory'
-    Write-Host '     The client does NOT freeze when you change a key - you have done'
-    Write-Host '     it several times - so whatever it sends needs no reply and our'
-    Write-Host '     silence today is already safe. One less thing to establish.'
-    Write-Host ''
-    Write-Host '  NOT THIS RUN - built but deliberately not wired:' -ForegroundColor DarkGray
-    Write-Host '     Damage VALIDATION on attack skills. MP cost is wired now; the'
-    Write-Host '     hit check is still not - the client authors the number and we'
-    Write-Host '     do not argue with it.'
-    Write-Host '     Spent skill points still come back; !learn grants directly.'
-    Write-Host '     The Shop2 window (0x0560). Its art is not in this client and it'
-    Write-Host '     can no longer be sent at all. --shop is now a no-op that says so.'
-    Write-Host ''
-    Write-Host '  GLANCES: drops arc from the corpse and are walkable-over; kill-EXP'
-    Write-Host '  line is WHITE; mobs on map 40 already standing; pick-ups stay OUT of'
-    Write-Host '  the chat log; level-up +16 HP / +12 MP; relog keeps Etc and mesos;'
-    Write-Host '  ores stack; !setrates 2 3 5 -> one banner. NPC chatter no longer'
-    Write-Host '  follows you into the cash shop.'
-    Write-Host ''
-    Write-Host '  MORE THAN ONE ACCOUNT WORKS NOW - relaunch with -Launcher.' -ForegroundColor Cyan
-    Write-Host '  The login server used to resolve --account ONCE at startup, so one'
-    Write-Host '  process could only ever be one player. It resolves per CONNECTION now:'
-    Write-Host '  maplecw-launcher checks a password, marks who is playing, and you can'
-    Write-Host '  swap accounts without restarting anything. Sign in with the account'
-    Write-Host '  name OR its email.'
-    Write-Host '    add one:  .\target\release\maplecw-useradd.exe <name> --email <addr>'
-    Write-Host '    list:     .\target\release\maplecw-useradd.exe --list'
-    Write-Host '  THIS run cleared any leftover claim, so it is served as --account.'
-    Write-Host '  Still not authentication: the game socket carries no credentials, so'
-    Write-Host '  this picks an account, it does not verify the client.'
+    Write-Host '  CARRIED OVER, lower value than the above:' -ForegroundColor DarkGray
+    Write-Host '     IRON BODY reducing damage - fixed and unretested. SAY THE W.DEF'
+    Write-Host '     NUMBER BEFORE AND AFTER: about a quarter means the percent-to-flat'
+    Write-Host '     conversion is right; exactly 25 means the raw percent reached the wire.'
+    Write-Host '     !learn 1000001 15 killed the client once, 3.7s after a byte-correct'
+    Write-Host '     packet. At ~40s of life: dies early -> fatal; does not -> the'
+    Write-Host '     session was long and the command is innocent.'
+    Write-Host '     Bowman, Thief and Magician branches. Shop buying. The cash purchase.'
     Write-Host ''
     Write-Host '  COMMANDS: !map !item !exp !heal !job !learn !kit !buff !unbuff'
     Write-Host '  !npcecho !npcfx !migsweep !exprate !mesorate !droprate !setrates'
