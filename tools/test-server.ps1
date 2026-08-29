@@ -1050,6 +1050,39 @@ if ($server.HasExited) {
 Write-Host "login server pid $($server.Id) -> $serverLog"
 Get-Content $serverLog -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
 
+if ($Launcher) {
+    # Hand over to maplecw-launcher and stop here, BEFORE the marker block below.
+    #
+    # The launcher writes the same four hook markers and launches the client itself. Placed
+    # after that block - where this used to sit - both would write them and the launcher
+    # would silently win, so a custom -Probe would be replaced by the launcher's built-in
+    # default and the run would come back missing the watches it was launched for. That is
+    # the "a stale instrument answers" failure this repo keeps paying for, so there is one
+    # writer and it is whichever of the two is driving.
+    #
+    # The cost, stated rather than hidden: on this path -Probe, -Session, -HeapFix and
+    # -ClientHitNumberPatch DO NOTHING. The launcher's defaults are byte-identical to this
+    # script's defaults today (client::DEFAULT_PROBE / DEFAULT_SESSION), so an ordinary run
+    # is unaffected - but if you are here to arm a watch, use the ordinary path.
+    $launcherExe = Join-Path $root 'target\release\maplecw-launcher.exe'
+    if (-not (Test-Path $launcherExe)) {
+        throw "no launcher at $launcherExe - build it with: cargo build --release -p launcher"
+    }
+    Write-Host ''
+    Write-Host 'THE LAUNCHER IS DRIVING THIS RUN.' -ForegroundColor Cyan
+    Write-Host '  Sign in with an account name OR its email, check the server IP, press'
+    Write-Host '  Login, then Start Game. The login server picks up whoever you signed in'
+    Write-Host '  as - it is resolved per connection now, so no restart is needed to swap.'
+    Write-Host ''
+    Write-Host ("  accounts:  `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" --list" -f $root, $Database)
+    Write-Host ("  add one:   `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" <name> --email <addr>" -f $root, $Database)
+    Write-Host ''
+    Start-Process -FilePath $launcherExe -WorkingDirectory $root | Out-Null
+    Write-Host 'launcher started. Stop the servers when done:' -ForegroundColor Green
+    Write-Host ("  powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -Stop" -f $root)
+    return
+}
+
 # The hook is switched on by marker files, because ShellExecute does not carry $env: into
 # the child - a launcher will replace all of this with one config file (docs/launcher.md).
 $hookLog = Join-Path $ClientDir 'maplecw-hook.log'
@@ -1119,29 +1152,6 @@ if ($SetFieldProbe) {
     Write-Host "              at all means the hook never armed and the log proves nothing."
     Write-Host "              It arms ~4.5s after connect."
 }
-if ($Launcher) {
-    # Hand over to maplecw-launcher and stop here. It writes the same marker files this
-    # script does and launches the client itself, so doing both would mean two writers for
-    # one set of files - and the second one to run would silently win.
-    $launcherExe = Join-Path $root 'target\release\maplecw-launcher.exe'
-    if (-not (Test-Path $launcherExe)) {
-        throw "no launcher at $launcherExe - build it with: cargo build --release -p launcher"
-    }
-    Write-Host ''
-    Write-Host 'THE LAUNCHER IS DRIVING THIS RUN.' -ForegroundColor Cyan
-    Write-Host '  Sign in with an account name OR its email, check the server IP, press'
-    Write-Host '  Login, then Start Game. The login server picks up whoever you signed in'
-    Write-Host '  as - it is resolved per connection now, so no restart is needed to swap.'
-    Write-Host ''
-    Write-Host ("  accounts:  `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" --list" -f $root, $Database)
-    Write-Host ("  add one:   `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" <name> --email <addr>" -f $root, $Database)
-    Write-Host ''
-    Start-Process -FilePath $launcherExe -WorkingDirectory $root | Out-Null
-    Write-Host 'launcher started. Stop the servers when done:' -ForegroundColor Green
-    Write-Host ("  powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -Stop" -f $root)
-    return
-}
-
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
 # with "requires elevation".
 $launchArgs = @('-NXLDEBUG', '127.0.0.1', "$Port")
