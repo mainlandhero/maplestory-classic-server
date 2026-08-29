@@ -33,13 +33,16 @@ RUN
 Two double-clicks. No typing.
 
 1. Double-click  C:\MapleCW\start-servers.cmd
-   Leave the window it opens alone - closing it stops the servers.
+   THAT WINDOW IS THE SERVER. Leave it open while you play; close it when you
+   are done and the server stops with it. There is no stop script to forget.
 
 2. Double-click  C:\MapleCW\maplecw-launcher.exe   (or the desktop shortcut)
    Windows asks for administrator. Say yes: the game client requires it, and
    accepting here means the client does not ask a second time.
 
-To stop everything afterwards, double-click  C:\MapleCW\stop-servers.cmd
+Closing the server window terminates the servers rather than asking them to
+finish, and nothing is lost by that: every log line is flushed as it is written,
+and the database is in WAL mode, which is crash-safe by design.
 
 If you would rather use a PowerShell window, the same two steps are:
 

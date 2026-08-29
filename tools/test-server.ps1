@@ -1005,8 +1005,28 @@ if (-not $Launcher -and -not $ServersOnly) {
     }
 }
 
-$server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
-    -WindowStyle Hidden `
+# HOW THE SERVERS ARE ATTACHED, and it decides whether closing this window stops them.
+#
+# `-WindowStyle Hidden` gives each child its OWN hidden console. That is right for a run this
+# script drives to completion - the client is the thing on screen - but it also means the
+# children are attached to no console anybody can close, which is exactly why `-Stop` had to
+# exist as a separate step.
+#
+# `-NoNewWindow` shares THIS console. Closing the window then sends CTRL_CLOSE_EVENT to every
+# process attached to it, children included, and Windows gives them five seconds to go. That
+# is what makes "one shell, close it to stop the server" work, so -ServersOnly uses it.
+#
+# MEASURED 2026-08-28, both ways, because the whole feature rests on it. A harness spawned a
+# long-lived child and its console window was closed with a real WM_CLOSE:
+#
+#   -NoNewWindow        child gone after the close        <- what -ServersOnly does
+#   -WindowStyle Hidden child STILL RUNNING after it      <- the control, and the old behaviour
+#
+# The control is the half that matters: it is why a separate stop script had to exist, and it
+# shows the difference is this switch rather than something incidental about the close.
+$spawn = if ($ServersOnly) { @{ NoNewWindow = $true } } else { @{ WindowStyle = 'Hidden' } }
+
+$server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru @spawn `
     -ArgumentList @(
         '--db', "`"$Database`"", '--bind', "127.0.0.1:$Port",
         # One address per channel. The client connects to this when it enters the world,
@@ -1022,6 +1042,9 @@ $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
 
 $worldSrv = $null
+# Every channel, not just channel 0. -ServersOnly watches all of them: a channel that dies
+# leaves the login screen working and the world unreachable, which is the confusing half.
+$worldAll = @()
 foreach ($ch in 0..($Channels - 1)) {
     $chPort = $ChannelPort + $ch
     $chLog = if ($ch -eq 0) { $worldLog } else { Join-Path $root "world-ch$ch.log" }
@@ -1038,11 +1061,11 @@ foreach ($ch in 0..($Channels - 1)) {
     if ($MobLimit -gt 0) { $chArgs += @('--mob-limit', "$MobLimit") }
     if ($ShopRows -gt 0) { $chArgs += @('--shop-rows', "$ShopRows") }
     if ($InventorySlots -gt 0) { $chArgs += @('--inventory-slots', "$InventorySlots") }
-    $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru `
-        -WindowStyle Hidden `
+    $p = Start-Process -FilePath $worldExe -WorkingDirectory $root -PassThru @spawn `
         -ArgumentList $chArgs `
         -RedirectStandardOutput $chLog -RedirectStandardError "$chLog.err"
     if ($ch -eq 0) { $worldSrv = $p }
+    $worldAll += $p
     Write-Host "channel $ch on 127.0.0.1:$chPort (pid $($p.Id)), log $chLog"
 }
 
@@ -1075,8 +1098,52 @@ if ($ServersOnly) {
     Write-Host ("  accounts:  & `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" --list" -f $root, $Database)
     Write-Host ("  add one:   & `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" <name> --email <addr>" -f $root, $Database)
     Write-Host ''
-    Write-Host 'Stop the servers when done:' -ForegroundColor Green
-    Write-Host ("  powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -Stop" -f $root)
+    Write-Host 'THIS WINDOW IS THE SERVER. Close it, or press Ctrl+C, to stop.' -ForegroundColor Green
+    Write-Host '  There is no separate stop script on this path and that is the point:' -ForegroundColor Green
+    Write-Host '  the servers share this console, so closing it takes them with it.' -ForegroundColor Green
+    Write-Host ''
+
+    # THE WAIT. Two things stop it, and they arrive by different routes:
+    #
+    #   Ctrl+C          PowerShell raises a terminating error out of Start-Sleep, so the
+    #                   `finally` below runs and stops whatever is left.
+    #   closing the X   every process attached to this console gets CTRL_CLOSE_EVENT,
+    #                   children included. They exit on their own; the `finally` may not get
+    #                   to run at all, and does not need to.
+    #
+    # "Gracefully" is worth being precise about, because nothing here runs a shutdown routine.
+    # It means nothing is lost: `login::server::log` flushes stdout on EVERY line, so the logs
+    # are complete to the last thing that happened, and SQLite is in WAL mode, which is
+    # crash-safe by construction. A terminated server loses no state and no evidence.
+    #
+    # The gap, stated rather than hidden: killing THIS process from Task Manager sends no
+    # console event and runs no `finally`, so the children survive it. That is the one case
+    # `-Stop` is still for.
+    $watched = @($server)
+    foreach ($w in $worldAll) { $watched += $w }
+    try {
+        while ($true) {
+            Start-Sleep -Seconds 1
+            $dead = @($watched | Where-Object { $_.HasExited })
+            if ($dead.Count -gt 0) {
+                Write-Host ''
+                Write-Host 'A SERVER EXITED ON ITS OWN - that is not you closing the window.' -ForegroundColor Red
+                foreach ($d in $dead) {
+                    Write-Host ("  {0} (pid {1}) exit code {2}" -f $d.ProcessName, $d.Id, $d.ExitCode) -ForegroundColor Red
+                }
+                Write-Host '  The usual cause is an account that does not exist. Read:' -ForegroundColor Red
+                Write-Host ("    {0}" -f $serverLog) -ForegroundColor Red
+                Write-Host ("    {0}.err" -f $serverLog) -ForegroundColor Red
+                break
+            }
+        }
+    }
+    finally {
+        Write-Host ''
+        Write-Host 'stopping the servers...' -ForegroundColor Cyan
+        Stop-All
+        Write-Host 'stopped.' -ForegroundColor Green
+    }
     return
 }
 
