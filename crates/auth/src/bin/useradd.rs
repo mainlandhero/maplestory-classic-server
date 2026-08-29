@@ -6,7 +6,14 @@
 //!   maplecw-useradd --email <name> <addr>   set or clear an email ("" clears)
 //!   maplecw-useradd --disable <name>
 //!   maplecw-useradd --enable  <name>
+//!   maplecw-useradd --gm <name>             allow the ! GM commands
+//!   maplecw-useradd --no-gm <name>          take that away
 //!   maplecw-useradd --clear-claims          forget which account is "playing"
+//!
+//! GM status is authorisation, **not authentication**. The game socket carries no
+//! credentials, so it says which *account* may use `!item`; which account a connection is
+//! served as comes from a launcher claim. It keeps a second account on the machine out of the
+//! commands. It keeps nothing out of the port.
 //!
 //! The email is a second **identity**, not a second credential: `maplecw-launcher`'s
 //! sign-in field accepts either it or the account name, and `Store::validate_name` allows
@@ -83,6 +90,14 @@ fn main() -> std::process::ExitCode {
             Some(name) => toggle(&store, name, true),
             None => Err("--enable needs an account name".into()),
         },
+        Some("--gm") => match rest.get(1) {
+            Some(name) => set_gm(&store, name, true),
+            None => Err("--gm needs an account name".into()),
+        },
+        Some("--no-gm") => match rest.get(1) {
+            Some(name) => set_gm(&store, name, false),
+            None => Err("--no-gm needs an account name".into()),
+        },
         Some("--clear-claims") => clear_claims(&store),
         Some("--email") => match (rest.get(1), rest.get(2)) {
             (Some(name), Some(addr)) => set_email(&store, name, addr),
@@ -108,14 +123,22 @@ fn main() -> std::process::ExitCode {
 fn usage() {
     println!(
         "usage:\n  \
-         maplecw-useradd <name>            create an account\n  \
-         maplecw-useradd --list            list accounts\n  \
-         maplecw-useradd --passwd <name>   change a password\n  \
+         maplecw-useradd <name> [--email ADDR]   create an account\n  \
+         maplecw-useradd --list                  list accounts\n  \
+         maplecw-useradd --passwd <name|email>   set a NEW password (the old one is not asked for)\n  \
+         maplecw-useradd --email <name> <addr>   set an email (\"\" clears it)\n  \
+         maplecw-useradd --gm <name>             allow the ! GM commands\n  \
+         maplecw-useradd --no-gm <name>          take that away\n  \
          maplecw-useradd --disable <name>\n  \
-         maplecw-useradd --enable  <name>\n\n\
+         maplecw-useradd --enable  <name>\n  \
+         maplecw-useradd --clear-claims          forget which account is playing\n\n\
          options:\n  \
-         --db <path>                       database file (default {DEFAULT_DB})\n\n\
-         Passwords are read from a prompt or stdin, never from an argument."
+         --db <path>                             database file (default {DEFAULT_DB})\n\n\
+         Passwords are read from a prompt or stdin, never from an argument.\n  \
+         The email is a second identity for the launcher's sign-in field, not a second\n  \
+         credential; an account without one signs in by name.\n  \
+         GM status is authorisation, not authentication: the game socket carries no\n  \
+         credentials, so it gates the ACCOUNT rather than whoever is connected."
     );
 }
 
@@ -170,6 +193,25 @@ fn create(store: &Store, name: &str, email: Option<&str>) -> Result<(), String> 
 /// explicit `--account` would quietly serve yesterday's launcher account instead, and on
 /// screen that is someone else's characters with no explanation. `tools/test-server.ps1`
 /// calls this on the path that does not use the launcher, so explicit configuration wins.
+/// Grant or revoke GM status.
+///
+/// Separate from account creation on purpose: granting is a decision, and a decision belongs
+/// in one obvious place rather than falling out of a default. A fresh account has no GM
+/// status, which is the safe direction.
+fn set_gm(store: &Store, name: &str, is_gm: bool) -> Result<(), String> {
+    store
+        .set_gm(name, is_gm)
+        .map_err(|e| format!("could not change GM status: {e}"))?;
+    if is_gm {
+        println!("account {name:?} may now use the ! GM commands");
+        println!("  this is authorisation, not authentication: the game socket carries no");
+        println!("  credentials, so it gates the ACCOUNT, not whoever is connected");
+    } else {
+        println!("account {name:?} may no longer use the ! GM commands");
+    }
+    Ok(())
+}
+
 fn clear_claims(store: &Store) -> Result<(), String> {
     let n = store
         .clear_login_claims()
@@ -238,18 +280,19 @@ fn list(store: &Store) -> Result<(), String> {
         println!("no accounts yet");
         return Ok(());
     }
-    println!("{:<5} {:<24} {:<28} {:<9} last login", "id", "name", "email", "state");
+    println!("{:<5} {:<24} {:<28} {:<9} {:<4} last login", "id", "name", "email", "state", "gm");
     for a in accounts {
         let last = a
             .last_login
             .map(|t| format!("{t}"))
             .unwrap_or_else(|| "never".into());
         println!(
-            "{:<5} {:<24} {:<28} {:<9} {}",
+            "{:<5} {:<24} {:<28} {:<9} {:<4} {}",
             a.id,
             a.name,
             a.email.as_deref().unwrap_or("-"),
             if a.enabled { "enabled" } else { "disabled" },
+            if a.is_gm { "GM" } else { "-" },
             last
         );
     }

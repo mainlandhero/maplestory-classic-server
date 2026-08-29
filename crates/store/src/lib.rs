@@ -22,6 +22,7 @@
 //! * **A meso balance cannot go negative**, and every read-modify-write of one is a single
 //!   transaction, so two concurrent spends cannot both see the same balance.
 
+pub mod abilityspend;
 pub mod cash;
 pub mod character;
 pub mod claims;
@@ -37,6 +38,7 @@ pub mod skills;
 pub mod skillpoints;
 pub mod storage;
 
+pub use abilityspend::ApSpend;
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
 pub use claims::{LoginClaim, LOGIN_CLAIM_TTL_SECS};
 pub use inventory::{

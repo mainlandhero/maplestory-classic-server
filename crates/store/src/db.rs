@@ -55,6 +55,13 @@ pub struct Account {
     /// two are alternative identities for the same row, never a second credential.
     pub email: Option<String>,
     pub enabled: bool,
+    /// May this account use the `!` GM commands?
+    ///
+    /// **Not a security boundary.** The game socket carries no credentials, so this says which
+    /// *account* is allowed, not which *person* is connected - and which account a connection
+    /// is served as comes from a launcher claim. It keeps a second account on the machine out
+    /// of `!item`; it keeps nothing out of the port.
+    pub is_gm: bool,
     pub created_at: i64,
     pub last_login: Option<i64>,
 }
@@ -261,6 +268,7 @@ impl Store {
         Self::add_meso_column(&conn)?;
         Self::add_experience_column(&conn)?;
         Self::add_account_email_column(&conn)?;
+        Self::add_account_gm_column(&conn)?;
         // Whole new tables, so a plain `CREATE TABLE IF NOT EXISTS` is enough - unlike the
         // slot columns above, which had to be ALTERed onto a table that already existed.
         crate::quest::create_tables(&conn)?;
@@ -283,6 +291,9 @@ impl Store {
         // either a wrong account or no reply at all, and an unanswered packet freezes the
         // client's whole UI.
         crate::claims::create_tables(&conn)?;
+        // The two AP-spend counters. ALTERed onto `characters`, which is NOT a new table, so
+        // this carries its own PRAGMA guard - see the note in that module.
+        crate::abilityspend::create_tables(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -361,6 +372,42 @@ impl Store {
                  ON accounts(email) WHERE email IS NOT NULL",
             [],
         )?;
+        Ok(())
+    }
+
+    /// `accounts.is_gm`, added to `accounts` after the fact.
+    ///
+    /// The owner, 2026-08-29: *"can you please make GM commands only available to accounts with GM
+    /// status? All commands should have this gate for now until otherwise specified."*
+    ///
+    /// Same `PRAGMA table_info` guard and the same reason as [`Self::add_meso_column`]:
+    /// `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, and `ALTER
+    /// TABLE ADD COLUMN` raises "duplicate column name" on the second open.
+    ///
+    /// **Every existing account gets `0`, including the one the owner plays.** That is the safe
+    /// direction and it is deliberate: a migration that guessed which account should be a GM
+    /// would be inventing an authorisation decision. `maplecw-useradd --gm <name>` grants it,
+    /// and that is a person choosing rather than a schema assuming.
+    ///
+    /// **This is not a security boundary and must not be described as one.** The game socket
+    /// carries no credentials; the flag says which *account* may use GM commands, and which
+    /// account a connection is served as is decided by a launcher claim, not by anything the
+    /// client proves. It stops a second account on this machine from using `!item`; it stops
+    /// nothing that can reach the port.
+    fn add_account_gm_column(conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(accounts)")?;
+        let exists = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "is_gm");
+        drop(stmt);
+        if !exists {
+            conn.execute(
+                "ALTER TABLE accounts ADD COLUMN is_gm INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -527,7 +574,7 @@ impl Store {
     pub fn get_account(&self, name: &str) -> Result<Option<Account>> {
         let acc = self.conn()
             .query_row(
-                "SELECT id, name, email, enabled, created_at, last_login
+                "SELECT id, name, email, enabled, is_gm, created_at, last_login
                  FROM accounts WHERE name = ?1",
                 params![name],
                 |r| {
@@ -536,8 +583,9 @@ impl Store {
                         name: r.get(1)?,
                         email: r.get(2)?,
                         enabled: r.get::<_, i64>(3)? != 0,
-                        created_at: r.get(4)?,
-                        last_login: r.get(5)?,
+                        is_gm: r.get::<_, i64>(4)? != 0,
+                        created_at: r.get(5)?,
+                        last_login: r.get(6)?,
                     })
                 },
             )
@@ -560,7 +608,7 @@ impl Store {
         let acc = self
             .conn()
             .query_row(
-                "SELECT id, name, email, enabled, created_at, last_login
+                "SELECT id, name, email, enabled, is_gm, created_at, last_login
                    FROM accounts
                   WHERE name = ?1 OR email = ?1",
                 params![identity],
@@ -570,8 +618,9 @@ impl Store {
                         name: r.get(1)?,
                         email: r.get(2)?,
                         enabled: r.get::<_, i64>(3)? != 0,
-                        created_at: r.get(4)?,
-                        last_login: r.get(5)?,
+                        is_gm: r.get::<_, i64>(4)? != 0,
+                        created_at: r.get(5)?,
+                        last_login: r.get(6)?,
                     })
                 },
             )
@@ -624,7 +673,7 @@ impl Store {
         // to outlive it.
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, email, enabled, created_at, last_login FROM accounts ORDER BY id",
+            "SELECT id, name, email, enabled, is_gm, created_at, last_login FROM accounts ORDER BY id",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -633,12 +682,44 @@ impl Store {
                     name: r.get(1)?,
                     email: r.get(2)?,
                     enabled: r.get::<_, i64>(3)? != 0,
-                    created_at: r.get(4)?,
-                    last_login: r.get(5)?,
+                    is_gm: r.get::<_, i64>(4)? != 0,
+                    created_at: r.get(5)?,
+                    last_login: r.get(6)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Grant or revoke GM status.
+    ///
+    /// Deliberately a separate call from anything that creates an account: granting is a
+    /// decision, and a decision should be made in one obvious place rather than fall out of a
+    /// default. `maplecw-useradd --gm <name>`.
+    pub fn set_gm(&self, name: &str, is_gm: bool) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE accounts SET is_gm = ?2 WHERE name = ?1",
+            params![name, i64::from(is_gm)],
+        )?;
+        if n == 0 {
+            return Err(StoreError::NoSuchAccount { name: name.to_string() });
+        }
+        Ok(())
+    }
+
+    /// Is this account allowed to use GM commands? `false` for an account that is not there,
+    /// which is the answer that refuses rather than the one that panics.
+    pub fn is_gm(&self, account_id: i64) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT is_gm FROM accounts WHERE id = ?1",
+                params![account_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(|v| v != 0)
+            .unwrap_or(false))
     }
 
     pub fn set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
@@ -758,7 +839,7 @@ impl Store {
         };
         let acc = self.conn()
             .query_row(
-                "SELECT id, name, email, enabled, created_at, last_login
+                "SELECT id, name, email, enabled, is_gm, created_at, last_login
                  FROM accounts WHERE id = ?1 AND enabled = 1",
                 params![id],
                 |r| {
@@ -767,8 +848,9 @@ impl Store {
                         name: r.get(1)?,
                         email: r.get(2)?,
                         enabled: r.get::<_, i64>(3)? != 0,
-                        created_at: r.get(4)?,
-                        last_login: r.get(5)?,
+                        is_gm: r.get::<_, i64>(4)? != 0,
+                        created_at: r.get(5)?,
+                        last_login: r.get(6)?,
                     })
                 },
             )

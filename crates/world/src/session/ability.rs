@@ -110,6 +110,13 @@ impl Session {
 
         let mut change = net::stats::StatChange::default();
         let mut spent: Vec<String> = Vec::new();
+        // Points going into max HP / max MP, counted so `!resetap` can give them back.
+        //
+        // **This is the only moment the two are separable.** `max_hp` also grows on level-up,
+        // and the stored total says nothing about which part came from which - so dividing
+        // `max_hp` by MAX_HP_PER_AP at reset time would refund the character's whole level
+        // history as ability points. `store::abilityspend` has the full reasoning.
+        let (mut into_hp, mut into_mp) = (0u32, 0u32);
         for entry in &req.entries {
             let Some(stat) = entry.stat() else { continue };
             let n = entry.amount;
@@ -137,12 +144,14 @@ impl Session {
                 // hp/mp are deliberately left alone - raising them is a policy decision the
                 // request does not ask for.
                 net::abilityup::ApStat::MaxHp => {
+                    into_hp = into_hp.saturating_add(n);
                     chr.max_hp = chr
                         .max_hp
                         .saturating_add(n * net::abilityup::policy::MAX_HP_PER_AP);
                     chr.max_hp
                 }
                 net::abilityup::ApStat::MaxMp => {
+                    into_mp = into_mp.saturating_add(n);
                     chr.max_mp = chr
                         .max_mp
                         .saturating_add(n * net::abilityup::policy::MAX_MP_PER_AP);
@@ -160,6 +169,17 @@ impl Session {
             // Still a 0x007C: refusing to answer because the database failed would turn a
             // lost point into a dead stat window.
             return vec![self.ability_refused(chr.ap, which, &format!("could not save: {e}"))];
+        }
+        // AFTER the character saved, and only then. A counter incremented for a spend that
+        // did not persist would refund points the player never got - the same "every effect
+        // hangs off the transition" rule the quest turn-in was corrected for.
+        if let Err(e) = self.store.record_ap_spend(chr.id, into_hp, into_mp) {
+            // Not fatal and not silent: the points ARE spent, the stat window is about to
+            // show it, and the only loss is that `!resetap` cannot give these back.
+            crate::server::log(&format!(
+                "ability: could not record {into_hp} hp / {into_mp} mp ability spend for                  character {}: {e} - !resetap will not refund them",
+                chr.id
+            ));
         }
         // No local copy to update: `claimed_character` reads the store on every call, so
         // the write above IS the update.

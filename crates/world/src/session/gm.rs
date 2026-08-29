@@ -6,6 +6,22 @@
 
 use super::*;
 
+/// What `!resetap` puts STR, DEX, INT and LUK back to.
+///
+/// The owner, 2026-08-29: *"When !resetap runs, the character should only have 4, 4, 4, 4 in STR,
+/// DEX, INT and LUK, that represents the lowest amount of AP available for characters to
+/// increase from."*
+///
+/// **Not `net::opcode::Character::default()`, which is 12/5/4/4.** Those are the stats a
+/// character is *created* with, and they are the right answer for creation - but a reset that
+/// stops at 12 STR leaves eight points stranded in a stat the player may not want, which is
+/// exactly the situation `!resetap` exists to get out of. The floor is the lowest value the
+/// game lets a stat reach, so every point above it is refundable by definition.
+///
+/// The two numbers are deliberately separate: changing creation stats and changing the reset
+/// floor are different decisions, and sharing a constant would couple them.
+pub(super) const AP_RESET_FLOOR: u16 = 4;
+
 impl Session {
 
     /// GM commands typed into the chat box.
@@ -26,6 +42,26 @@ impl Session {
     /// and an unknown one is swallowed before it reaches the wire.
     ///
     /// So a server-side command has to look like ordinary chat. `!` is ordinary chat.
+    /// Does the account this connection is served as hold GM status?
+    ///
+    /// **`false` is the answer to every uncertainty** - no claimed migration, a database that
+    /// will not answer, an account that has been deleted. A permission check that fails open
+    /// is not a permission check, and the cost of failing closed here is one chat line telling
+    /// a real GM to run `--gm`.
+    pub(super) fn account_is_gm(&self) -> bool {
+        let Some(claimed) = self.claimed() else { return false };
+        match self.store.is_gm(claimed.account_id) {
+            Ok(yes) => yes,
+            Err(e) => {
+                crate::server::log(&format!(
+                    "gm: could not read GM status for account {}: {e} - refusing the command",
+                    claimed.account_id
+                ));
+                false
+            }
+        }
+    }
+
     pub(super) fn on_chat(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(text) = net::opcode::parse_chat(payload) else { return Vec::new() };
         let text = text.trim();
@@ -57,6 +93,28 @@ impl Session {
             }
             _ => (name, arg),
         };
+        // **Every command is gated on the account's GM flag.** The owner, 2026-08-29: *"can you
+        // please make GM commands only available to accounts with GM status? All commands
+        // should have this gate for now until otherwise specified."* All of them, including
+        // `!help` and the read-only `!rates` - "until otherwise specified" is the instruction,
+        // and a gate with quiet exceptions is the shape that gets found by accident later.
+        //
+        // **This is authorisation, not authentication, and the difference is the whole
+        // caveat.** The game socket carries no credentials: which account this connection is
+        // served as comes from a launcher claim, not from anything the client proved. So this
+        // stops a *second account on this machine* from using `!item`; it stops nothing that
+        // can reach the port. Say so when reporting it.
+        //
+        // The refusal is a chat line rather than silence, for the reason every refusal here
+        // is: "nothing happened" with no explanation is indistinguishable from a broken
+        // command, and that has cost this project two rounds of investigation already.
+        if !self.account_is_gm() {
+            return self.gm_ack(format!(
+                "!{name} is a GM command and this account does not have GM status. Grant it \
+                 with: maplecw-useradd --gm <account>"
+            ));
+        }
+
         match name {
             "map" => self.gm_map(arg),
             "item" => self.gm_item(arg),
@@ -754,49 +812,94 @@ impl Session {
     /// in a command whose whole job is to be safe to run.
     ///
     /// So this does arithmetic that cannot be wrong in either direction. Every stat goes back
-    /// to the value a **fresh character** has, and the difference lands in the pool:
+    /// to [`AP_RESET_FLOOR`] and the difference lands in the pool:
     ///
     /// ```text
-    /// refund = (str + dex + int + luk) - (12 + 5 + 4 + 4)
+    /// refund = (str + dex + int + luk) - (4 + 4 + 4 + 4)
+    ///        + ap_spent_hp + ap_spent_mp
     /// ap     = ap + refund
     /// ```
     ///
     /// Total points in and total points out are equal by construction. Run it twice and the
-    /// second run refunds zero, because the stats are already at the floor.
+    /// second run refunds zero: the stats are already at the floor and the HP/MP counters were
+    /// cleared by the first.
     ///
     /// **A stat below the floor is left alone rather than "corrected" upward.** That would be
     /// creating points out of a character this server had already got wrong, and a reset that
     /// can hand out free stats is worse than one that occasionally refunds nothing.
+    ///
+    /// # HP and MP need a ledger; the four stats do not
+    ///
+    /// A stat's value *is* the record of what was spent on it. `max_hp` is not: it also grows
+    /// on level-up, and the stored number does not say which part came from where, so
+    /// `max_hp / MAX_HP_PER_AP` would refund the character's entire level history as ability
+    /// points. The points are counted when they are spent instead - `store::abilityspend`,
+    /// incremented by `session::ability`.
+    ///
+    /// **Points spent on HP before that column existed are not refundable.** They really are
+    /// indistinguishable from level-up HP, which is the whole reason the column had to exist.
     pub(super) fn gm_reset_ap(&mut self) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else {
             return self
                 .gm_ack("!resetap REFUSED: no character is claimed on this connection.".to_string());
         };
-        let base = net::opcode::Character::default();
+        let floor = AP_RESET_FLOOR;
         let (was_str, was_dex, was_int, was_luk) =
             (chr.strength, chr.dexterity, chr.intelligence, chr.luck);
+        let (was_max_hp, was_max_mp) = (chr.max_hp, chr.max_mp);
 
         // `saturating_sub` on each stat separately, so one stat already under the floor
         // cannot eat another stat's refund.
-        let refund = was_str.saturating_sub(base.strength)
-            + was_dex.saturating_sub(base.dexterity)
-            + was_int.saturating_sub(base.intelligence)
-            + was_luk.saturating_sub(base.luck);
+        let stat_refund = was_str.saturating_sub(floor)
+            + was_dex.saturating_sub(floor)
+            + was_int.saturating_sub(floor)
+            + was_luk.saturating_sub(floor);
 
-        chr.strength = if was_str > base.strength { base.strength } else { was_str };
-        chr.dexterity = if was_dex > base.dexterity { base.dexterity } else { was_dex };
-        chr.intelligence = if was_int > base.intelligence { base.intelligence } else { was_int };
-        chr.luck = if was_luk > base.luck { base.luck } else { was_luk };
+        // **Read and cleared in one transaction**, so a reset cannot count the points, fail to
+        // clear them, and hand the same ones out again on the next run.
+        let hpmp = match self.store.take_ap_spend(chr.id) {
+            Ok(spend) => spend,
+            Err(e) => return self.gm_ack(format!("!resetap FAILED and nothing changed: {e}")),
+        };
+        let refund = stat_refund.saturating_add(u16::try_from(hpmp.total()).unwrap_or(u16::MAX));
+
+        chr.strength = if was_str > floor { floor } else { was_str };
+        chr.dexterity = if was_dex > floor { floor } else { was_dex };
+        chr.intelligence = if was_int > floor { floor } else { was_int };
+        chr.luck = if was_luk > floor { floor } else { was_luk };
+
+        // The HP and MP those points bought, removed with the SAME constant that granted it,
+        // so the two cannot drift. Never below 1 max HP: a character with a zero-length HP bar
+        // is dead in a way nothing here knows how to undo.
+        chr.max_hp = chr
+            .max_hp
+            .saturating_sub(hpmp.hp.saturating_mul(net::abilityup::policy::MAX_HP_PER_AP))
+            .max(1);
+        chr.max_mp = chr
+            .max_mp
+            .saturating_sub(hpmp.mp.saturating_mul(net::abilityup::policy::MAX_MP_PER_AP));
+        // Current cannot exceed maximum, or the bar draws past its own end.
+        chr.hp = chr.hp.min(chr.max_hp);
+        chr.mp = chr.mp.min(chr.max_mp);
         chr.ap = chr.ap.saturating_add(refund);
 
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.gm_ack(format!("!resetap FAILED and nothing changed: {e}"));
         }
 
+        let hpmp_note = if hpmp.total() > 0 {
+            format!(
+                ", plus {} point(s) out of max HP ({was_max_hp}->{}) and {} out of max MP \
+                 ({was_max_mp}->{})",
+                hpmp.hp, chr.max_hp, hpmp.mp, chr.max_mp
+            )
+        } else {
+            String::new()
+        };
         let mut out = self.gm_ack(format!(
             "Ability points reset. STR {was_str}->{}, DEX {was_dex}->{}, INT {was_int}->{}, \
-             LUK {was_luk}->{} - {refund} points back, {} to spend. The totals match by \
-             construction: nothing was created or destroyed.",
+             LUK {was_luk}->{}{hpmp_note} - {refund} points back, {} to spend. The totals \
+             match by construction: nothing was created or destroyed.",
             chr.strength, chr.dexterity, chr.intelligence, chr.luck, chr.ap
         ));
         // **One packet with all five fields.** The stat window reads them together, and five
@@ -809,13 +912,20 @@ impl Session {
                 intelligence: Some(chr.intelligence),
                 luck: Some(chr.luck),
                 ap: Some(chr.ap),
+                // Only when they moved. Restating an unchanged max HP is what `regen_tick`
+                // was corrected for, and it costs a redraw for nothing.
+                max_hp: (chr.max_hp != was_max_hp).then_some(chr.max_hp),
+                max_mp: (chr.max_mp != was_max_mp).then_some(chr.max_mp),
+                hp: (chr.max_hp != was_max_hp).then_some(chr.hp),
+                mp: (chr.max_mp != was_max_mp).then_some(chr.mp),
                 ..Default::default()
             }
             .build(),
             what: format!(
-                "StatChanged: ability reset - STR/DEX/INT/LUK back to a fresh character's \
-                 {}/{}/{}/{} and {refund} points refunded into AP, now {}",
-                base.strength, base.dexterity, base.intelligence, base.luck, chr.ap
+                "StatChanged: ability reset - STR/DEX/INT/LUK back to the floor of \
+                 {floor}/{floor}/{floor}/{floor}, {} point(s) out of max HP and {} out of max \
+                 MP, {refund} refunded into AP, now {}",
+                hpmp.hp, hpmp.mp, chr.ap
             ),
         });
         out

@@ -9,6 +9,9 @@ use super::*;
 fn session() -> (Session, Arc<Store>, i64, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Wanderer".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     let s = Session::new(store.clone(), Arc::new(Config::default()));
@@ -148,6 +151,9 @@ fn an_empty_journal_still_costs_two_blocks() {
 fn dressed_session() -> (Session, Arc<Store>, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character {
         name: "Wanderer".to_string(),
         equips: vec![(5, 1040002), (6, 1060002), (7, 1072001), (11, 1302000)],
@@ -286,6 +292,9 @@ fn an_unclaimed_connection_is_refused_rather_than_ignored() {
 fn gm_session() -> (Session, Arc<Store>, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -625,6 +634,9 @@ fn change_channel(target: u8) -> Vec<u8> {
 fn two_channel_session() -> (Session, Arc<Store>, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -745,6 +757,9 @@ fn changing_to_the_current_channel_is_refused_and_still_answered() {
 fn shop_session() -> (Session, Arc<Store>, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -1396,6 +1411,9 @@ fn a_skill_point_is_charged_and_only_a_forget_gives_it_back() {
     const MAGIC_CLAW: u32 = 2001003;
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 200;
@@ -1457,6 +1475,9 @@ fn learn_grants_levels_without_charging_the_pool() {
     }
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 200;
@@ -1501,6 +1522,9 @@ fn clicking_an_instructor_advances_the_job() {
         );
         let store = Arc::new(Store::open_in_memory().unwrap());
         let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
         let chr = net::opcode::Character { name: "Rookie".to_string(), ..Default::default() };
         let mut made = store.create_character(account_id, 0, &chr).unwrap();
         made.level = level;
@@ -1587,6 +1611,9 @@ fn iron_body_reduces_the_damage_taken() {
     let build = |buffed: bool| {
         let store = Arc::new(Store::open_in_memory().unwrap());
         let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
         let chr = net::opcode::Character { name: "Tank".to_string(), ..Default::default() };
         let mut made = store.create_character(account_id, 0, &chr).unwrap();
         made.job = 100;
@@ -1662,6 +1689,9 @@ fn an_attack_skill_costs_mp_and_a_potion_does_not_undo_it() {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Fighter".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 100;
@@ -2075,6 +2105,9 @@ fn clicking_a_questless_npc_is_answered_as_its_template_not_its_object_id() {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character {
         name: "TestCharD".to_string(), map_id: 40, ..Default::default()
     };
@@ -2126,6 +2159,9 @@ fn accepting_a_quest_answers_with_the_yes_branch() {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -2198,6 +2234,9 @@ fn rogers_script_quest_opens_from_the_authored_overlay() {
     let config = Config { quests, ..Config::default() };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Roger".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -2246,6 +2285,9 @@ fn a_multi_line_path_still_pages_in_order() {
     let config = Config { quests, ..Config::default() };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -2278,6 +2320,9 @@ fn closing_a_box_ends_the_conversation_silently() {
     let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -2312,6 +2357,9 @@ fn completing_a_quest_plays_the_clear_fanfare_and_a_non_completion_does_not() {
     let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -2370,6 +2418,9 @@ fn completing_a_quest_plays_the_clear_fanfare_and_a_non_completion_does_not() {
 fn equipping_over_a_worn_item_swaps_and_still_sends_one_entry() {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character {
         name: "Swapper".to_string(),
         equips: vec![(5, 1040002)],
@@ -2418,6 +2469,9 @@ fn equipping_over_a_worn_item_swaps_and_still_sends_one_entry() {
 fn session_with_ap(ap: u16) -> (Session, i64, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Spender".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.ap = ap;
@@ -2561,6 +2615,9 @@ fn giving_up_a_quest_forgets_the_row_and_still_answers() {
     let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Quitter".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -2599,6 +2656,9 @@ fn only_a_five_byte_action_three_is_read_as_a_forfeit() {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Shorty".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -2613,6 +2673,9 @@ fn only_a_five_byte_action_three_is_read_as_a_forfeit() {
 fn session_with_potions(count: u16, hp: u32) -> (Session, i64, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Drinker".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     // **A fresh character has 50 max HP**, so a 100-point potion would always cap and the
@@ -2830,6 +2893,9 @@ fn an_item_that_restores_nothing_is_not_consumed() {
 fn a_mob_with_an_attack_column_overrides_the_damage_the_client_claimed() {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Bitten".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.level = 7;
@@ -2891,6 +2957,9 @@ fn a_mob_with_an_attack_column_overrides_the_damage_the_client_claimed() {
 fn a_mob_we_have_no_attack_data_for_keeps_the_clients_number() {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Bitten2".to_string(), ..Default::default() };
     let made = store.create_character(account_id, 0, &chr).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
@@ -2935,6 +3004,9 @@ fn rogers_apple_drops_your_health_on_accept_and_completes_when_you_eat_it() {
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Apple".to_string(), ..Default::default() };
     let made = store.create_character(account_id, 0, &chr).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
@@ -2989,6 +3061,9 @@ fn eating_an_apple_you_were_never_asked_for_completes_no_quest() {
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Greedy".to_string(), ..Default::default() };
     let made = store.create_character(account_id, 0, &chr).unwrap();
     store.create_migration(account_id, made.id, 0, 0).unwrap();
@@ -3062,6 +3137,9 @@ fn a_bad_map_says_why_and_log_out_is_answered() {
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -3174,6 +3252,9 @@ fn npcs_chatter_in_order_on_the_clients_own_cadence() {
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character {
         name: "TestCharD".to_string(), map_id: 40, ..Default::default()
     };
@@ -3254,6 +3335,9 @@ fn entering_a_field_late_does_not_make_everyone_speak_at_once() {
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character {
         name: "TestCharD".to_string(), map_id: 40, ..Default::default()
     };
@@ -3380,6 +3464,9 @@ fn a_late_tick_does_not_burst() {
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character {
         name: "TestCharD".to_string(), map_id: 40, ..Default::default()
     };
@@ -4347,6 +4434,9 @@ fn turning_a_quest_in_twice_pays_out_only_once() {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TwiceOver".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -4413,6 +4503,9 @@ fn accepting_a_quest_twice_grants_its_items_only_once() {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TwoMirrors".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -4460,6 +4553,9 @@ fn a_finished_quest_cannot_be_farmed_by_giving_it_up_and_taking_it_again() {
     let config = Config { quests: crate::config::load_quests(path), ..Config::default() };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "NoFarming".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -5555,6 +5651,9 @@ fn cash_shop_session() -> (Session, Arc<Store>, u32) {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -5842,6 +5941,9 @@ fn a_magician_may_raise_magic_claw_and_a_beginner_may_not() {
 
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
     let id = store.create_character(account_id, 0, &chr).unwrap().id;
     store.create_migration(account_id, id, 0, 0).unwrap();
@@ -5963,6 +6065,9 @@ fn spending_a_point_on_an_attack_skill_warns_when_the_stat_is_missing() {
     let build = |int: u16| {
         let store = Arc::new(Store::open_in_memory().unwrap());
         let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
         let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
         let mut made = store.create_character(account_id, 0, &chr).unwrap();
         made.job = 200;
@@ -6006,26 +6111,30 @@ fn spending_a_point_on_an_attack_skill_warns_when_the_stat_is_missing() {
 #[test]
 fn resetap_gives_back_exactly_what_was_spent() {
     let (mut s, store, _id) = gm_session();
-    let base = net::opcode::Character::default();
+    let floor = 4u16; // crate::session::gm::AP_RESET_FLOOR
     let mut chr = s.claimed_character().unwrap();
-    // Cobalt's real spread, from the 2026-08-28 run.
-    chr.strength = 4;
+    // Cobalt's real spread from the 2026-08-28 run, with STR taken one BELOW the floor so the
+    // "not corrected upward" rule still has a case. At the old floor of 12/5/4/4 a STR of 4
+    // was under it; at 4/4/4/4 it is exactly on it, and the test would have stopped checking
+    // the thing it was written for without failing.
+    chr.strength = 3;
     chr.dexterity = 24;
     chr.intelligence = 6;
     chr.luck = 36;
     chr.ap = 10;
     store.save_character_progress(&chr).unwrap();
-    let before_total = 4 + 24 + 6 + 36 + 10;
+    let before_total = 3 + 24 + 6 + 36 + 10;
 
     let out = s.handle(&gm_chat("!resetap"));
     let after = s.claimed_character().unwrap();
     let after_total = after.strength + after.dexterity + after.intelligence + after.luck + after.ap;
     assert_eq!(after_total, before_total, "not one point created or destroyed");
-    assert_eq!(after.dexterity, base.dexterity, "DEX back to the floor");
-    assert_eq!(after.luck, base.luck, "LUK back to the floor");
+    assert_eq!(after.dexterity, floor, "DEX back to the floor");
+    assert_eq!(after.luck, floor, "LUK back to the floor");
+    assert_eq!(after.intelligence, floor, "INT back to the floor");
     // **STR was BELOW the floor and must be left alone**, not topped up - a reset that hands
     // out free stats is worse than one that occasionally refunds nothing.
-    assert_eq!(after.strength, 4, "a stat under the floor is not corrected upward");
+    assert_eq!(after.strength, 3, "a stat under the floor is not corrected upward");
     assert!(after.ap > 10, "and the difference is in the pool: {}", after.ap);
 
     // One packet, carrying all five fields - the stat window reads them together.
@@ -6037,6 +6146,128 @@ fn resetap_gives_back_exactly_what_was_spent() {
     let ap_now = after.ap;
     s.handle(&gm_chat("!resetap"));
     assert_eq!(s.claimed_character().unwrap().ap, ap_now, "a second reset is a no-op");
+}
+
+/// The floor is **4/4/4/4**, not the 12/5/4/4 a character is created with.
+///
+/// The owner, 2026-08-29: *"the character should only have 4, 4, 4, 4 in STR, DEX, INT and LUK,
+/// that represents the lowest amount of AP available for characters to increase from."* A
+/// reset that stopped at 12 STR would strand eight points in a stat the player may not want,
+/// which is the situation the command exists to get out of.
+#[test]
+fn resetap_floors_every_stat_at_four_not_at_the_creation_spread() {
+    let (mut s, store, _id) = gm_session();
+    let mut chr = s.claimed_character().unwrap();
+    chr.strength = 30;
+    chr.dexterity = 30;
+    chr.intelligence = 30;
+    chr.luck = 30;
+    chr.ap = 0;
+    store.save_character_progress(&chr).unwrap();
+
+    s.handle(&gm_chat("!resetap"));
+    let after = s.claimed_character().unwrap();
+    assert_eq!(
+        (after.strength, after.dexterity, after.intelligence, after.luck),
+        (4, 4, 4, 4),
+        "the creation spread 12/5/4/4 would leave 8 STR and 1 DEX stranded"
+    );
+    assert_eq!(after.ap, (30 - 4) * 4, "and every point above the floor is in the pool");
+}
+
+/// Points spent on HP and MP come back too, and the max values come down with them.
+#[test]
+fn resetap_refunds_ability_points_spent_on_hp_and_mp() {
+    let (mut s, store, _id) = gm_session();
+    let chr = s.claimed_character().unwrap();
+    let (base_hp, base_mp, base_ap) = (chr.max_hp, chr.max_mp, chr.ap);
+
+    // Spend as the ability-up handler would: raise the maxima AND record the points.
+    //
+    // The four stats are put ON the floor first, so this test measures the HP/MP refund alone.
+    // Left at the creation spread of 12/5/4/4 they contribute nine points of their own, and
+    // the assertion below would be checking two things at once while naming one.
+    let mut spent = chr.clone();
+    spent.strength = 4;
+    spent.dexterity = 4;
+    spent.intelligence = 4;
+    spent.luck = 4;
+    spent.max_hp += 3 * net::abilityup::policy::MAX_HP_PER_AP;
+    spent.max_mp += 2 * net::abilityup::policy::MAX_MP_PER_AP;
+    store.save_character_progress(&spent).unwrap();
+    store.record_ap_spend(spent.id, 3, 2).unwrap();
+
+    s.handle(&gm_chat("!resetap"));
+    let after = s.claimed_character().unwrap();
+    assert_eq!(after.max_hp, base_hp, "the HP those points bought is gone");
+    assert_eq!(after.max_mp, base_mp, "and the MP");
+    assert_eq!(after.ap, base_ap + 5, "all five points are back in the pool");
+    // And the counters were cleared, so a second run cannot hand them out again.
+    assert_eq!(store.ap_spend(after.id).unwrap().total(), 0);
+    s.handle(&gm_chat("!resetap"));
+    assert_eq!(s.claimed_character().unwrap().ap, base_ap + 5, "a second reset refunds nothing");
+}
+
+/// Current HP is never left above maximum by the refund - the bar would draw past its end.
+#[test]
+fn resetap_pulls_current_hp_down_with_the_maximum() {
+    let (mut s, store, _id) = gm_session();
+    let mut chr = s.claimed_character().unwrap();
+    chr.max_hp += 5 * net::abilityup::policy::MAX_HP_PER_AP;
+    chr.hp = chr.max_hp; // full, on the inflated bar
+    store.save_character_progress(&chr).unwrap();
+    store.record_ap_spend(chr.id, 5, 0).unwrap();
+
+    s.handle(&gm_chat("!resetap"));
+    let after = s.claimed_character().unwrap();
+    assert!(after.hp <= after.max_hp, "{} hp on a {} bar", after.hp, after.max_hp);
+}
+
+/// **The gate, and the control for it.** The owner, 2026-08-29: *"make GM commands only available
+/// to accounts with GM status."*
+///
+/// Both halves matter. Without the second, a gate that refused everything would pass.
+#[test]
+fn gm_commands_are_refused_without_gm_status_and_allowed_with_it() {
+    let (mut s, store, _id) = gm_session();
+
+    // The helper grants it, so take it away and watch the same command stop working.
+    store.set_gm("maplecw", false).unwrap();
+    let refused = s.handle(&gm_chat("!heal"));
+    let said = refused
+        .iter()
+        .find(|r| r.opcode == net::notice::CHAT_NOTICE || r.opcode == net::userchat::USER_CHAT)
+        .map(|r| r.what.clone())
+        .unwrap_or_default();
+    assert!(
+        refused.iter().all(|r| r.opcode != net::stats::STAT_CHANGED),
+        "!heal must not heal without GM status"
+    );
+
+    // The positive control: the identical command, with the flag back on.
+    store.set_gm("maplecw", true).unwrap();
+    let allowed = s.handle(&gm_chat("!heal"));
+    assert!(
+        allowed.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "with GM status !heal must work - otherwise the refusal above proves nothing. \
+         Refusal said: {said}"
+    );
+}
+
+/// Every command, not a list of the dangerous ones. "All commands should have this gate for
+/// now until otherwise specified" - including `!help` and the read-only `!rates`.
+#[test]
+fn even_help_and_rates_are_gated() {
+    let (mut s, store, _id) = gm_session();
+    store.set_gm("maplecw", false).unwrap();
+    for command in ["!help", "!rates", "!item 1302000", "!map 1"] {
+        let out = s.handle(&gm_chat(command));
+        assert!(
+            out.iter().any(|r| r.what.contains("does not have GM status")),
+            "{command} was not gated: {:?}",
+            out.iter().map(|r| &r.what).collect::<Vec<_>>()
+        );
+    }
 }
 
 /// A `0x013C`: `u32 skillId, u32 level`.
@@ -6067,6 +6298,9 @@ fn cancel(skill_id: u32, bit: u32) -> Vec<u8> {
 fn buffed_session(job: u16, skill_id: u32, level: u32) -> (Session, Arc<Store>, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Caster".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = job;
@@ -6116,6 +6350,9 @@ fn kit_gives_every_branch_gear_that_actually_exists() {
 
         let store = Arc::new(Store::open_in_memory().unwrap());
         let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
         let chr = net::opcode::Character { name: "Kitted".to_string(), ..Default::default() };
         let mut made = store.create_character(account_id, 0, &chr).unwrap();
         made.job = job;
@@ -6178,6 +6415,9 @@ fn kit_warns_when_the_weapon_cannot_be_equipped() {
     }
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Weakling".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 300; // a Bowman by fiat, with a fresh character's DEX
@@ -6336,6 +6576,9 @@ fn the_cash_shop_silences_idle_chatter_and_the_field_gets_it_back() {
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character {
         name: "Shopper".to_string(), map_id: 40, ..Default::default()
     };
@@ -6412,6 +6655,9 @@ fn learn_grants_a_whole_job_book_at_once() {
     }
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Ranger".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 300;
@@ -6476,6 +6722,9 @@ fn learn_clamps_each_skill_to_its_own_maximum() {
     }
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Cobalt".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 200;
@@ -6521,6 +6770,9 @@ fn learn_refuses_a_skill_from_another_branch() {
     }
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
     let chr = net::opcode::Character { name: "Ranger".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
     made.job = 300;
@@ -6593,6 +6845,9 @@ fn magic_guard_splits_incoming_damage_between_hp_and_mp() {
     let build = || {
         let store = Arc::new(Store::open_in_memory().unwrap());
         let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    // Every `!` command is gated on the account's GM flag, and these helpers exist to
+    // drive them. `maplecw` is the GM account on the owner's machine too.
+    store.set_gm("maplecw", true).unwrap();
         let chr = net::opcode::Character { name: "Mage".to_string(), ..Default::default() };
         let mut made = store.create_character(account_id, 0, &chr).unwrap();
         made.level = 7;
