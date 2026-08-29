@@ -48,6 +48,11 @@ maplecw-world - one channel of the MapleCW game world
                    refused as sold out - the client draws its catalogue from
                    its own copy either way, so the shop still looks stocked
   --shops PATH     the authored NPC shop file      (default data/shops.txt)
+  --npc-dialogue PATH  authored NPC dialogue laid over the generated npcstrings
+                   (default data/npc-dialogue.txt). Rows are
+                   `templateId TAB d<n> TAB text` and they REPLACE the client's
+                   line. Re-read in game by !npcreload, with no restart and
+                   without disconnecting anybody - see world::config
   --quest-scripts PATH  authored openings for the 12 quests whose bodies the
                       client does NOT ship (default data/quest-scripts.txt).
                       An overlay: it only fills nodes the WZ left empty, and a
@@ -72,6 +77,9 @@ fn main() -> ExitCode {
     let mut equips_path = PathBuf::from("gm-handbook/equips.txt");
     let mut mob_templates_path = PathBuf::from("gm-handbook/mobtemplates.txt");
     let mut npc_strings_path = PathBuf::from("gm-handbook/npcstrings.txt");
+    // Authored source like data/shops.txt: hand-written, committed, and NOT in gm-handbook/,
+    // which is generated and would be overwritten by the next dump_npcstrings.py run.
+    let mut npc_dialogue_path = PathBuf::from("data/npc-dialogue.txt");
     let mut quests_path = PathBuf::from("gm-handbook/questlines.txt");
     // Authored source like data/shops.txt: the script bodies are not in the client at all.
     let mut quest_scripts_path = PathBuf::from("data/quest-scripts.txt");
@@ -123,6 +131,7 @@ fn main() -> ExitCode {
             "--equips" => value().map(|v| equips_path = PathBuf::from(v)),
             "--mob-templates" => value().map(|v| mob_templates_path = PathBuf::from(v)),
             "--npc-strings" => value().map(|v| npc_strings_path = PathBuf::from(v)),
+            "--npc-dialogue" => value().map(|v| npc_dialogue_path = PathBuf::from(v)),
             "--quests" => value().map(|v| quests_path = PathBuf::from(v)),
             "--quest-scripts" => value().map(|v| quest_scripts_path = PathBuf::from(v)),
             "--shops" => value().map(|v| shops_path = PathBuf::from(v)),
@@ -303,13 +312,28 @@ fn main() -> ExitCode {
         );
     }
 
-    config.npc_strings = world::config::load_npc_strings(&npc_strings_path);
+    // **The generated base, read once.** It is not re-read by `!npcreload`, on purpose:
+    // `shop_by_template` below is derived from these NPC *names* and sits behind no lock, so
+    // a name that changed mid-session would silently re-point a shop. See
+    // `world::config::NpcStringTable`.
+    config.npc_strings = world::config::load_npc_strings(&npc_strings_path).into();
+    config.npc_strings_path = npc_strings_path.clone();
+    config.npc_dialogue_path = npc_dialogue_path.clone();
     if config.npc_strings.is_empty() {
         eprintln!(
             "maplecw-world: no NPC text from {} - NPCs will fall back to placeholder dialogue. Regenerate with: python tools/dump_npcstrings.py",
             npc_strings_path.display()
         );
     }
+    // The authored overlay, applied through **the same function `!npcreload` calls**, so the
+    // start-up banner and the in-game acknowledgement are the same sentence and cannot drift.
+    // Loud on stdout in both directions: an overlay that read nothing is invisible on screen,
+    // because an un-amended NPC still says its generated line.
+    let npc_reload = world::config::reload_npc_dialogue(&config);
+    for line in &npc_reload.refused {
+        println!("maplecw-world: npc dialogue: refused {line}");
+    }
+    println!("maplecw-world: npc dialogue: {}", npc_reload.summary());
 
     config.quests = world::config::load_quests(&quests_path);
     if config.quests.is_empty() {
@@ -391,8 +415,14 @@ fn main() -> ExitCode {
     // The NPC name -> template join. A shop whose name matches nothing can never open, and
     // that is invisible on screen - it looks exactly like an NPC with no shop - so every
     // failure is printed rather than counted.
+    //
+    // **From the generated BASE, not the live table.** The join is on NPC *names* and this
+    // map is a plain `HashMap` behind no lock, read by `session::shop` for the life of the
+    // process - so it must be derived from the one half of the table a reload cannot touch.
+    // `data/npc-dialogue.txt` refuses `name` rows for the same reason.
+    let base_names = config.npc_strings.base();
     let (by_template, shop_problems) =
-        world::shops::resolve_npc_templates(&config.shops, &config.npc_strings);
+        world::shops::resolve_npc_templates(&config.shops, &base_names);
     config.shop_by_template = by_template;
     for line in &shop_problems {
         println!("maplecw-world: shops: {line}");

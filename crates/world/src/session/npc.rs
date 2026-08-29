@@ -879,15 +879,15 @@ impl Session {
     ///
     /// An NPC with no entry keeps the placeholder, which is honest about the state of the
     /// server rather than silently saying nothing.
+    ///
+    /// **Read fresh from [`crate::config::NpcStringTable`] on every box, not cached.** That is
+    /// what makes `!npcreload` reach a conversation this session is already having: the string
+    /// is fetched at the instant `say_line` builds the packet, so an amendment is live for the
+    /// next click with no restart and no reconnect.
     pub(super) fn npc_line(&self, template: u32) -> String {
-        self.config
-            .npc_strings
-            .get(&template)
-            .and_then(|s| s.dialogue.first())
-            .cloned()
-            .unwrap_or_else(|| {
-                format!("This server has no dialogue for NPC template {template} yet.")
-            })
+        self.config.npc_strings.dialogue_line(template).unwrap_or_else(|| {
+            format!("This server has no dialogue for NPC template {template} yet.")
+        })
     }
 
 

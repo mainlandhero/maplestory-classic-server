@@ -153,6 +153,8 @@ impl Session {
             "kit" => self.gm_kit(arg),
             "buy" => self.gm_buy(arg),
             "locker" => self.gm_locker(arg),
+            // Re-read `data/npc-dialogue.txt` without restarting. See `gm_npc_reload`.
+            "npcreload" => self.gm_npc_reload(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -1652,6 +1654,83 @@ impl Session {
     }
 
 
+    /// `!npcreload [templateId]` - re-read `data/npc-dialogue.txt` **without a restart**.
+    ///
+    /// The owner, 2026-08-29: *"Restarting the server kicks all of the clients off, but if
+    /// possible, I would like to introduce a command to reload all of the NPC server side
+    /// chats, so we can amend server side NPC dialogue whenever necessary without disrupting
+    /// client connection."*
+    ///
+    /// # It reaches sessions that were already connected, and that is the whole trick
+    ///
+    /// `Arc<Config>` is cloned into a `Session` at accept time, so replacing the server's
+    /// `Arc` would change nothing for anybody already playing. The table is swapped **inside**
+    /// the shared allocation instead - `config::NpcStringTable` - and `npc_line` reads it
+    /// fresh for every box it builds, so the next click on that NPC gets the new line.
+    ///
+    /// # What it does NOT reach
+    ///
+    /// * **Another channel.** One channel is one `maplecw-world` process with its own
+    ///   `Config`; the reply says so rather than implying a world-wide effect.
+    /// * **`gm-handbook/npcstrings.txt`.** The generated base is named in the answer but not
+    ///   re-read - see `config::NpcStringTable` for why that is a guarantee about the shop
+    ///   join rather than laziness.
+    /// * **Quest dialogue.** Those lines come from `Config::quests`, not from this table.
+    ///
+    /// # The optional argument is a read-back, not a filter
+    ///
+    /// `!npcreload 8` reloads everything and then says what template 8's `d0` now is, so an
+    /// edit can be checked from the chat box instead of by walking to the NPC. It cannot
+    /// reload one NPC: the file is read whole or not at all.
+    pub(super) fn gm_npc_reload(&mut self, arg: &str) -> Vec<Reply> {
+        // Reject a bad argument BEFORE reloading. Doing the work and then complaining about
+        // the argument would leave the person unsure whether the reload happened.
+        let want: Option<u32> = if arg.is_empty() {
+            None
+        } else {
+            match arg.parse::<u32>() {
+                Ok(t) => Some(t),
+                Err(_) => {
+                    return self.gm_ack(format!(
+                        "!npcreload: {arg:?} is not an NPC template id, and NOTHING was \
+                         reloaded. Use !npcreload on its own, or !npcreload 8 to read Robin's \
+                         line back afterwards."
+                    ))
+                }
+            }
+        };
+
+        let report = crate::config::reload_npc_dialogue(&self.config);
+        // The server console gets every refusal; the chat notice gets the first two. A row
+        // the author cannot see refused is a row they will conclude the command ignored.
+        for line in &report.refused {
+            crate::server::log(&format!("npcreload: refused {line}"));
+        }
+        crate::server::log(&format!("npcreload: {}", report.summary()));
+
+        let mut text = format!("!npcreload: {}", report.summary());
+        if let Some(template) = want {
+            // Read back through the same accessor the dialogue path uses, so this echoes what
+            // the next click will actually send rather than what the file says.
+            let now = self
+                .config
+                .npc_strings
+                .dialogue_line(template)
+                .unwrap_or_else(|| "(no d0 - this NPC falls through to the placeholder)".into());
+            let now: String = now.chars().take(120).collect();
+            text.push_str(&format!(" Template {template} d0 is now: {now:?}"));
+        }
+        let mut out = self.gm_ack(text);
+        // A SECOND notice rather than a longer one. The summary already runs about as long as
+        // `GM_COMMANDS`, which is the longest notice this client has been seen to draw, and a
+        // list of parse errors has no bound. Both are `0x00BB` and neither is blocked on.
+        if let Some(line) = report.refusal_line() {
+            out.extend(self.gm_ack(format!("!npcreload: {line}")));
+        }
+        out
+    }
+
+
     /// A map's name, for a line a person reads. The id alone if there is no table.
     pub(super) fn map_name(&self, map: u32) -> String {
         self.config.map_names.get(&map).cloned().unwrap_or_else(|| "unnamed".to_string())
@@ -1702,5 +1781,326 @@ impl Session {
             body: net::userchat::user_chat(chr.id, text),
             what: format!("UserChat: {} ({}) says {:?}", chr.id, chr.name, text),
         }]
+    }
+}
+
+
+/// `!npcreload`, tested through **sessions that were built before it ran**.
+///
+/// That is the only claim worth making about this feature. `Arc<Config>` is cloned into a
+/// `Session` at accept time, so a test that reloads and then builds a session proves nothing
+/// at all: it would pass just as happily against a design that swaps the server's `Arc` and
+/// leaves every live player on the old text, which is the exact failure this exists to avoid.
+/// Every test below therefore constructs its sessions first and never rebuilds them.
+#[cfg(test)]
+mod npc_reload_tests {
+    use super::*;
+
+    /// One `0x00E7`, the way a client sends a typed line.
+    fn gm_chat(text: &str) -> Vec<u8> {
+        let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+        b.extend_from_slice(&[0u8; 4]);
+        b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+        b.extend_from_slice(text.as_bytes());
+        b.push(3);
+        b
+    }
+
+    /// The `0x00F2` body: u32 npcObjectId, i16 x, i16 y, u32 tail.
+    fn npc_click(object_id: u32) -> Vec<u8> {
+        let mut b = net::script::CLIENT_NPC_CLICK.to_le_bytes().to_vec();
+        b.extend_from_slice(&object_id.to_le_bytes());
+        b.extend_from_slice(&0i16.to_le_bytes());
+        b.extend_from_slice(&0i16.to_le_bytes());
+        b.extend_from_slice(&u32::MAX.to_le_bytes());
+        b
+    }
+
+    /// The `0x00F3` body: u32 handle, u8 messageType, u32 echo, a u16-prefixed string, u8
+    /// action.
+    fn script_reply(action: i8) -> Vec<u8> {
+        let mut b = net::script::CLIENT_SCRIPT_REPLY.to_le_bytes().to_vec();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.push(0);
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&0u16.to_le_bytes());
+        b.push(action as u8);
+        b
+    }
+
+    fn notice_text(r: &Reply) -> String {
+        assert_eq!(r.opcode, net::notice::CHAT_NOTICE, "{}", r.what);
+        let len = u16::from_le_bytes([r.body[1], r.body[2]]) as usize;
+        String::from_utf8(r.body[3..3 + len].to_vec()).unwrap()
+    }
+
+    /// **The observable that matters**: the text is in the bytes going to the client, not
+    /// merely in a struct the server kept.
+    fn body_carries(r: &Reply, text: &str) -> bool {
+        r.body.windows(text.len()).any(|w| w == text.as_bytes())
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("maplecw-gmreload-{tag}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Two sessions on one channel, both claimed, both standing on map 40 in front of
+    /// template 8 - and **both built before any reload runs**.
+    fn two_players(
+        overlay: &std::path::Path,
+        gm_second: bool,
+    ) -> (Session, Session, Arc<Config>, std::path::PathBuf) {
+        let mut base = std::collections::HashMap::new();
+        base.insert(
+            8u32,
+            crate::config::NpcStrings {
+                name: "Robin".to_string(),
+                dialogue: vec!["THE SHIPPED LINE".to_string()],
+                info: vec!["chatter".to_string()],
+                ..Default::default()
+            },
+        );
+        let npcs = vec![net::opcode::FieldNpc {
+            object_id: 1000, template_id: 8, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0,
+        }];
+        let config = Arc::new(Config {
+            set_field_probe: true,
+            npcs: [(40u32, npcs)].into_iter().collect(),
+            npc_strings: base.into(),
+            npc_dialogue_path: overlay.to_path_buf(),
+            ..Config::default()
+        });
+
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap();
+        let other = store.create_account("guest", "correct horse battery").unwrap();
+        if gm_second {
+            store.set_gm("guest", true).unwrap();
+        }
+
+        let mut made = Vec::new();
+        for (n, acct) in [("Reloader", account), ("Bystander", other)] {
+            let chr = net::opcode::Character {
+                name: n.to_string(), map_id: 40, ..Default::default()
+            };
+            let id = store.create_character(acct, 0, &chr).unwrap().id;
+            store.create_migration(acct, id, 0, 0).unwrap();
+            // The `Arc<Config>` is cloned into the session HERE, before any reload. That is
+            // the whole point of the test.
+            let mut s = Session::new(store.clone(), config.clone());
+            assert!(s.claim_for_character(id).contains("claimed the migration"));
+            made.push(s);
+        }
+        let bystander = made.pop().unwrap();
+        let gm = made.pop().unwrap();
+        (gm, bystander, config, overlay.to_path_buf())
+    }
+
+    /// **The feature, stated as a test.**
+    ///
+    /// The owner: *"I would like to introduce a command to reload all of the NPC server side chats,
+    /// so we can amend server side NPC dialogue whenever necessary without disrupting client
+    /// connection."*
+    ///
+    /// Both sessions exist before the file is written and neither is rebuilt. The second one
+    /// never runs the command and never even sees it - it is the one that proves the swap
+    /// reaches connections that are already open, which is the half a per-session reload would
+    /// silently fail.
+    #[test]
+    fn a_session_built_before_the_reload_sends_the_amended_line() {
+        let dir = scratch("live");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, mut bystander, _config, _) = two_players(&file, false);
+
+        // Before: the generated line, in the bytes.
+        let before = bystander.handle(&npc_click(1000));
+        assert_eq!(before.len(), 1, "one script box");
+        assert!(body_carries(&before[0], "THE SHIPPED LINE"), "{}", before[0].what);
+
+        std::fs::write(&file, "8\td0\tAMENDED WITHOUT A RESTART\n").unwrap();
+
+        let ack = gm.handle(&gm_chat("!npcreload"));
+        assert_eq!(ack.len(), 1);
+        let ack = notice_text(&ack[0]);
+        assert!(ack.starts_with("!npcreload: 1 NPC templates live"), "{ack}");
+        assert!(ack.contains("1 replaced a line the NPC already had"), "{ack}");
+        assert!(ack.contains("npc-dialogue.txt"), "it names the file it read: {ack}");
+        assert!(ack.contains("npcstrings.txt"), "and the base it sat on: {ack}");
+        assert!(!ack.contains("REFUSED"), "{ack}");
+
+        // After: the SAME session object, never rebuilt, never reconnected.
+        let after = bystander.handle(&npc_click(1000));
+        assert_eq!(after.len(), 1);
+        assert!(body_carries(&after[0], "AMENDED WITHOUT A RESTART"), "{}", after[0].what);
+        assert!(!body_carries(&after[0], "THE SHIPPED LINE"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A refused reload must leave the live sessions on the text they had. The control is the
+    /// same click, run before and after, on a session that is not rebuilt in between.
+    #[test]
+    fn a_broken_file_is_refused_and_a_live_session_keeps_the_line_it_had() {
+        let dir = scratch("broken");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, mut bystander, _config, _) = two_players(&file, false);
+
+        std::fs::write(&file, "8\td0\tGOOD EDIT\n").unwrap();
+        assert!(!notice_text(&gm.handle(&gm_chat("!npcreload"))[0]).contains("REFUSED"));
+        assert!(body_carries(&bystander.handle(&npc_click(1000))[0], "GOOD EDIT"));
+
+        // Saved with spaces. Every row is unusable.
+        std::fs::write(&file, "8 d0 BAD EDIT\n9 d0 ALSO BAD\n").unwrap();
+        let ack = notice_text(&gm.handle(&gm_chat("!npcreload"))[0]);
+        assert!(ack.contains("REFUSED and NOTHING changed"), "{ack}");
+        assert!(ack.contains("TAB, not spaces"), "{ack}");
+
+        let after = bystander.handle(&npc_click(1000));
+        assert!(body_carries(&after[0], "GOOD EDIT"), "the old table survived: {}", after[0].what);
+        assert!(!body_carries(&after[0], "BAD EDIT"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A missing file is not a failure, and it says how many it applied - zero. This is the
+    /// case a naive wiring reports as plain success, because `load_npc_strings` returns an
+    /// empty map on a read error.
+    #[test]
+    fn a_missing_overlay_reports_zero_overrides_rather_than_a_bare_ok() {
+        let dir = scratch("absent");
+        let file = dir.join("nothing-here.txt");
+        let (mut gm, mut bystander, _config, _) = two_players(&file, false);
+
+        let ack = notice_text(&gm.handle(&gm_chat("!npcreload"))[0]);
+        assert!(!ack.contains("REFUSED"), "{ack}");
+        assert!(ack.contains("0 overlaid from"), "{ack}");
+        assert!(body_carries(&bystander.handle(&npc_click(1000))[0], "THE SHIPPED LINE"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **A mid-conversation reload must not wedge the client.**
+    ///
+    /// `CLAUDE.md`: an unanswered packet freezes the whole UI. The control is the identical
+    /// exchange with no reload in the middle - the two answers have to match, or the reload
+    /// changed how a conversation ends.
+    #[test]
+    fn a_reload_between_the_box_and_the_ok_answers_exactly_as_no_reload_does() {
+        let dir = scratch("midconvo");
+        let file = dir.join("npc-dialogue.txt");
+
+        // Control: click, OK, no reload.
+        let (_gm0, mut player0, _c0, _) = two_players(&file, false);
+        assert_eq!(player0.handle(&npc_click(1000)).len(), 1);
+        let control = player0.handle(&script_reply(net::script::SCRIPT_ACTION_YES));
+
+        // Variant: click, reload, OK.
+        let (mut gm, mut player, _config, _) = two_players(&file, false);
+        assert_eq!(player.handle(&npc_click(1000)).len(), 1);
+        std::fs::write(&file, "8\td0\tCHANGED MID CONVERSATION\n").unwrap();
+        assert!(!notice_text(&gm.handle(&gm_chat("!npcreload"))[0]).contains("REFUSED"));
+        let variant = player.handle(&script_reply(net::script::SCRIPT_ACTION_YES));
+
+        assert_eq!(
+            control.len(),
+            variant.len(),
+            "the reload changed how an open conversation is answered"
+        );
+        // And the next click gets the new line, so the conversation state was not left stale.
+        let next = player.handle(&npc_click(1000));
+        assert!(body_carries(&next[0], "CHANGED MID CONVERSATION"), "{}", next[0].what);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The read-back argument echoes what the next click will send, through the same accessor
+    /// the dialogue path uses - so it cannot agree with the file while disagreeing with the
+    /// wire.
+    #[test]
+    fn the_template_argument_reads_the_new_line_back() {
+        let dir = scratch("readback");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, _bystander, _config, _) = two_players(&file, false);
+        std::fs::write(&file, "8\td0\tREAD ME BACK\n").unwrap();
+
+        let ack = notice_text(&gm.handle(&gm_chat("!npcreload 8"))[0]);
+        assert!(ack.contains("Template 8 d0 is now: \"READ ME BACK\""), "{ack}");
+
+        let ack = notice_text(&gm.handle(&gm_chat("!npcreload 99"))[0]);
+        assert!(ack.contains("falls through to the placeholder"), "{ack}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A bad argument must reload NOTHING, and say so. Doing the work and then complaining
+    /// about the argument leaves the person unable to tell whether the file was read.
+    #[test]
+    fn a_bad_argument_reloads_nothing_at_all() {
+        let dir = scratch("badarg");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, mut bystander, _config, _) = two_players(&file, false);
+        std::fs::write(&file, "8\td0\tSHOULD NOT BE READ\n").unwrap();
+
+        let ack = notice_text(&gm.handle(&gm_chat("!npcreload potato"))[0]);
+        assert!(ack.contains("NOTHING was reloaded"), "{ack}");
+        assert!(body_carries(&bystander.handle(&npc_click(1000))[0], "THE SHIPPED LINE"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The GM gate covers this command like every other one. A non-GM's `!npcreload` is said
+    /// out loud as ordinary chat and reloads nothing.
+    #[test]
+    fn a_non_gm_cannot_reload_and_is_answered_with_chat() {
+        let dir = scratch("nongm");
+        let file = dir.join("npc-dialogue.txt");
+        let (_gm, mut bystander, _config, _) = two_players(&file, false);
+        std::fs::write(&file, "8\td0\tSHOULD NOT BE READ\n").unwrap();
+
+        let out = bystander.handle(&gm_chat("!npcreload"));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].opcode, net::userchat::USER_CHAT, "{}", out[0].what);
+        assert!(body_carries(&bystander.handle(&npc_click(1000))[0], "THE SHIPPED LINE"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A refused row is a SECOND notice, not a longer first one - and it is said, not
+    /// counted. A row an author cannot see refused is a row they conclude was applied.
+    ///
+    /// The length bound matters: `GM_COMMANDS` at 474 characters is the longest notice this
+    /// client has been seen to draw, so neither line may run away.
+    #[test]
+    fn a_refused_row_gets_its_own_bounded_notice_and_the_good_rows_still_apply() {
+        let dir = scratch("refusedrow");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, mut bystander, _config, _) = two_players(&file, false);
+        std::fs::write(&file, "8\tname\tNot Robin\n8\tinfo0\tnope\n8\td0\tTHE GOOD ROW\n").unwrap();
+
+        let out = gm.handle(&gm_chat("!npcreload"));
+        assert_eq!(out.len(), 2, "the counts, then the refusals");
+        let counts = notice_text(&out[0]);
+        let refused = notice_text(&out[1]);
+        assert!(!counts.contains("REFUSED"), "the summary stays about the counts: {counts}");
+        assert!(refused.contains("2 overlay row(s) REFUSED"), "{refused}");
+        assert!(counts.len() <= GM_COMMANDS.len(), "{} chars: {counts}", counts.len());
+        assert!(refused.len() <= GM_COMMANDS.len(), "{} chars: {refused}", refused.len());
+
+        // And the one good row was still applied - a refusal is per row, not per file.
+        assert!(body_carries(&bystander.handle(&npc_click(1000))[0], "THE GOOD ROW"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `!help` and the dispatcher must agree. A help text missing a real command is the same
+    /// drift `GM_COMMANDS`' own doc warns about, in the other direction.
+    #[test]
+    fn the_help_text_lists_the_command_the_dispatcher_has() {
+        assert!(GM_COMMANDS.contains("!npcreload"), "{GM_COMMANDS}");
+        let dir = scratch("help");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, _b, _config, _) = two_players(&file, false);
+        let ack = notice_text(&gm.handle(&gm_chat("!npcreload"))[0]);
+        assert!(!ack.contains("is not a command"), "{ack}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

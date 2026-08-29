@@ -1,0 +1,62 @@
+# Server-side NPC dialogue - the lines this server sends when an NPC is clicked.
+#
+# AUTHORED DATA, NOT GENERATED. Committed on purpose, like `data/shops.txt` and
+# `data/quest-scripts.txt`. Nothing regenerates this file and `tools/dump_npcstrings.py`
+# must never write to it.
+#
+# ## Why it is here and not in gm-handbook/
+#
+# `gm-handbook/npcstrings.txt` is extracted from the client's own `String.wz/Npc.img` by
+# `tools/dump_npcstrings.py`. `CLAUDE.md`: that directory is generated, gitignored, "never
+# hand-edit, never commit". Writing dialogue there survives exactly until the next dump.
+# This file is the overlay that does survive.
+#
+# ## Format
+#
+#     <templateId> <TAB> d<n> <TAB> the text
+#
+# TAB separated - **not spaces**. That is the single most likely way to break this file, and
+# a save that turns the tabs into spaces is refused as a whole rather than applied in part:
+# `!npcreload` will say "N row(s) and not one is usable" and leave the running table alone.
+#
+# Lines beginning with `#` are comments. Blank lines are ignored.
+#
+# ## What it overrides
+#
+# A `d<n>` row REPLACES that NPC's spoken dialogue. This is the opposite of
+# `data/quest-scripts.txt`, where the client's own data always wins - and deliberately so:
+# that file exists to fill holes the client left, this one exists to amend lines the client
+# has. If a template appears here with at least one `d<n>` row, its whole `d` list is the
+# list written here.
+#
+# **Only `d0` reaches the screen today.** `Session::npc_line` sends the first line as a
+# one-box conversation; paging a quest-less NPC through `d1`, `d2` ... with the Next button
+# is not built. Writing `d1` and up is legal and is stored, and nothing sends it yet.
+#
+# ## What it does NOT accept, and why each one is refused rather than ignored
+#
+#   name    - never goes on a wire. `shops::resolve_npc_templates` joins `data/shops.txt`
+#             onto template ids BY THIS NAME, once, at start-up, into a table behind no
+#             lock. Renaming an NPC here would silently re-point a shop, and a shop that
+#             does not open looks exactly like an NPC that never had one.
+#   infoN   - the CLIENT holds this text. `0x0453` carries an index, never a string. Writing
+#             it here would change nothing on screen while changing how many indices the
+#             chatter tick cycles through, and an index past what the client's own
+#             `info/speak` group holds has never been sent and is not established as safe.
+#   idleN   - same, and that group cannot even be reached by a balloon without an animation
+#             action nobody has established. See `config::NpcStrings::chatter`.
+#
+# ## Reloading
+#
+# In game, from a GM account:  !npcreload            (or !npcreload 8 to read a line back)
+#
+# It re-reads THIS file only, rebuilds the table from the generated base plus these rows,
+# and swaps it in whole. Every connection already open on that channel sees it at once -
+# nobody is disconnected. It is per **channel process**: channel 1 needs its own.
+#
+# Regenerating `gm-handbook/npcstrings.txt` still needs a restart, for the shop-join reason
+# above.
+#
+# ## Example - uncomment, run !npcreload, click Robin on map 40
+#
+# 8	d0	Amended without a restart, and nobody was kicked off.

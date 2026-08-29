@@ -28,7 +28,7 @@ use crate::config::Config;
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
 /// does not have is worse than no help text.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level] [tailBytes], !unbuff [tailBytes], !nx [amount], !lp [amount], !buy <commoditySN>, !locker [slot], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !kit, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level] [tailBytes], !unbuff [tailBytes], !nx [amount], !lp [amount], !buy <commoditySN>, !locker [slot], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !kit, !npcreload [templateId], !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -557,6 +557,14 @@ impl Session {
         // The rng is moved out and back so the closure below can take it mutably while the
         // config is borrowed immutably.
         let mut rng = std::mem::replace(&mut self.rng, Xorshift(1));
+        // One snapshot for the whole field rather than a lock acquisition per NPC. The guard
+        // is released inside `snapshot()`, so nothing is held while the vector is built.
+        //
+        // **This count is cached until the next field entry**, which is the one thing
+        // `!npcreload` does not reach live. It does not matter today: the authored overlay
+        // carries `d<n>` rows only and cannot change an `info` count - see
+        // `config::parse_npc_dialogue_overlay`.
+        let strings = self.config.npc_strings.snapshot();
         let chatter: Vec<Chatter> = self
             .config
             .npcs
@@ -565,12 +573,7 @@ impl Session {
             .iter()
             .map(|npc| Chatter {
                 object_id: npc.object_id,
-                lines: self
-                    .config
-                    .npc_strings
-                    .get(&npc.template_id)
-                    .map(|s| s.info.len())
-                    .unwrap_or(0),
+                lines: strings.get(&npc.template_id).map(|s| s.info.len()).unwrap_or(0),
                 cursor: 0,
                 // Stagger by position on the field so they do not all speak at once.
                 // The first line waits a full random interval too, so a field does not

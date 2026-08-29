@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 /// One channel of one world.
 ///
@@ -10,6 +11,18 @@ use std::path::PathBuf;
 /// the client connects to it, so every channel needs its own listener and its own
 /// advertised address. `world_id` and `channel_id` are here so the log says which channel
 /// a line belongs to, and so a migration minted for channel 1 is not claimed by channel 2.
+///
+/// # Cloning one SHARES its NPC dialogue rather than copying it
+///
+/// `serve` builds exactly one of these, wraps it in an `Arc`, and hands a clone of the
+/// **`Arc`** to every connection - so all of them share one allocation, and [`NpcStringTable`]
+/// is swapped in place through it. That is the only reason `!npcreload` can reach a session
+/// which connected before it ran.
+///
+/// A `Config::clone` is a different thing and only tests do it, but the obvious deep copy
+/// would be a trap: a session holding the copy would go on serving the old dialogue with
+/// nothing in any log to say so. [`NpcStringTable`] is therefore `Clone` by sharing its lock,
+/// so the two halves of a cloned `Config` reload together.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// What this channel listens on.
@@ -192,7 +205,26 @@ pub struct Config {
     /// the behaviour confirmed on screen on 2026-08-19.
     pub equips: HashMap<u32, EquipTemplate>,
     /// Every NPC template's name, spoken dialogue and idle chatter, keyed by template id.
-    pub npc_strings: HashMap<u32, NpcStrings>,
+    ///
+    /// **Behind a lock, so `!npcreload` reaches connections that are already open.** Every
+    /// session on a channel shares one `Arc<Config>`, taken at accept time - replacing the
+    /// server's `Arc` would do nothing for anybody already playing. See [`NpcStringTable`].
+    pub npc_strings: NpcStringTable,
+
+    /// Where [`NpcStringTable::base`] was read from. **Reported, not re-read.**
+    ///
+    /// It is carried so `!npcreload` can name the file in its answer. The generated base is
+    /// deliberately *not* re-read - see [`reload_npc_dialogue`] for why that is a guarantee
+    /// rather than a shortcut.
+    pub npc_strings_path: PathBuf,
+
+    /// The hand-authored dialogue overlay `!npcreload` re-reads. `data/npc-dialogue.txt`.
+    ///
+    /// **Authored and committed, like `data/shops.txt` and `data/quest-scripts.txt`.** It is
+    /// deliberately not in `gm-handbook/`: that directory is generated from the client's WZ
+    /// and `CLAUDE.md` says never hand-edit it, so writing dialogue there would be destroyed
+    /// by the next `tools/dump_npcstrings.py` run.
+    pub npc_dialogue_path: PathBuf,
     /// Every quest the client ships, keyed by quest id, from `gm-handbook/questlines.txt`.
     pub quests: HashMap<u32, Quest>,
     /// Every NPC shop, from `data/shops.txt` - **authored, not generated**.
@@ -1198,9 +1230,23 @@ pub struct NpcStrings {
 /// Every NPC's text, from `tools/dump_npcstrings.py`'s `npcstrings.txt`.
 ///
 /// TSV, because the lines contain commas, apostrophes and quotes.
+///
+/// **A missing or unreadable file is an empty table, silently.** That is the behaviour every
+/// other loader in this file has and it is kept - but it is also exactly the shape that makes
+/// a naive reload report success after reading nothing, so anything that needs to tell
+/// "empty file" from "no file" must call [`read_npc_strings`] instead.
 pub fn load_npc_strings(path: &std::path::Path) -> HashMap<u32, NpcStrings> {
+    read_npc_strings(path).unwrap_or_default()
+}
+
+/// [`load_npc_strings`], but a read error is returned rather than swallowed.
+pub fn read_npc_strings(path: &std::path::Path) -> std::io::Result<HashMap<u32, NpcStrings>> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(parse_npc_strings(&text))
+}
+
+fn parse_npc_strings(text: &str) -> HashMap<u32, NpcStrings> {
     let mut out: HashMap<u32, NpcStrings> = HashMap::new();
-    let Ok(text) = std::fs::read_to_string(path) else { return out };
     for line in text.lines() {
         if line.trim().is_empty() || line.starts_with('#') {
             continue;
@@ -1223,6 +1269,394 @@ pub fn load_npc_strings(path: &std::path::Path) -> HashMap<u32, NpcStrings> {
         }
     }
     out
+}
+
+/// The NPC text every live session reads, and the one table in `Config` that can be
+/// **replaced while the server is running**.
+///
+/// # Why a lock and not a new `Arc<Config>`
+///
+/// The owner, 2026-08-29: *"Restarting the server kicks all of the clients off, but ... I would
+/// like to introduce a command to reload all of the NPC server side chats."*
+///
+/// `crate::server::serve` builds one `Config`, wraps it in an `Arc`, and gives every accepted
+/// connection a clone of that `Arc` (`server.rs:210,258`). A session therefore holds a handle
+/// to **one allocation**, taken when it connected. Swapping the server's `Arc` for a freshly
+/// loaded one would change what the *next* connection sees and nothing at all for anybody
+/// already playing - which is the entire feature. So the mutable part has to be inside the
+/// allocation they already share.
+///
+/// # The read never holds the guard
+///
+/// [`Self::snapshot`] clones an `Arc` and drops the guard immediately, so no lock is held
+/// across packet construction or a send. Dialogue opens at human speed; an `Arc` clone per
+/// box is free next to the alternative, which is a reader holding a lock while a `Vec<Reply>`
+/// is built.
+///
+/// # `base` is not swappable, and that is a guarantee rather than an oversight
+///
+/// `Config::shop_by_template` is **derived** from this table's NPC *names* at start-up
+/// (`shops::resolve_npc_templates`) and is a plain `HashMap` behind no lock at all, read by
+/// `session::shop`. A reload that changed a name would leave that join pointing at the wrong
+/// shopkeeper, with nothing on screen to say so - a shop that simply does not open looks
+/// exactly like an NPC that never had one.
+///
+/// Two things make that impossible rather than merely unlikely:
+///
+/// * `base` is private, set once at construction, and has no setter. The reload rebuilds
+///   `live` from it; it never replaces it.
+/// * the overlay parser accepts **`d<n>` rows only** and refuses `name` out loud
+///   ([`parse_npc_dialogue_overlay`]).
+///
+/// Regenerating `gm-handbook/npcstrings.txt` therefore still needs a restart, and
+/// [`NpcDialogueReload::summary`] says so.
+///
+/// # Three layers, and each one is doing a different job
+///
+/// `Arc<RwLock<Arc<HashMap<..>>>>` looks like one `Arc` too many and is not:
+///
+/// * the **outer `Arc`** is what makes `Clone` share rather than copy. A cloned [`Config`]
+///   reloads with the original instead of quietly keeping the old lines
+/// * the **`RwLock`** is the swap itself
+/// * the **inner `Arc`** is what lets [`Self::snapshot`] hand back the whole table and drop
+///   the guard in the same expression, so no lock is ever held while a packet is built
+#[derive(Debug, Clone, Default)]
+pub struct NpcStringTable {
+    /// The generated table exactly as it was read at start-up. Never replaced.
+    base: Arc<HashMap<u32, NpcStrings>>,
+    /// `base` with the authored overlay applied. Swapped whole by a reload.
+    live: Arc<RwLock<Arc<HashMap<u32, NpcStrings>>>>,
+}
+
+impl From<HashMap<u32, NpcStrings>> for NpcStringTable {
+    fn from(base: HashMap<u32, NpcStrings>) -> Self {
+        let base = Arc::new(base);
+        NpcStringTable { live: Arc::new(RwLock::new(Arc::clone(&base))), base }
+    }
+}
+
+impl NpcStringTable {
+    /// The table as it stands, as a cheap handle. **The lock is released before this
+    /// returns.**
+    ///
+    /// A poisoned lock is recovered from rather than propagated. A panic elsewhere must not
+    /// turn every NPC mute for the rest of the process: the data behind the lock is a
+    /// whole-value swap, so it is never observed half-written, and `CLAUDE.md`'s "always
+    /// answer" points the same way.
+    pub fn snapshot(&self) -> Arc<HashMap<u32, NpcStrings>> {
+        match self.live.read() {
+            Ok(g) => Arc::clone(&g),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    /// The generated base, before any overlay. Only the start-up shop join wants this.
+    pub fn base(&self) -> Arc<HashMap<u32, NpcStrings>> {
+        Arc::clone(&self.base)
+    }
+
+    /// What this NPC says when talked to - its `d0`, cloned out from under the lock.
+    pub fn dialogue_line(&self, template: u32) -> Option<String> {
+        self.snapshot().get(&template).and_then(|s| s.dialogue.first()).cloned()
+    }
+
+    /// How many `info/speak` lines this NPC has, which is all the idle-chatter tick needs:
+    /// the client holds the text and only an index goes on the wire.
+    pub fn info_lines(&self, template: u32) -> usize {
+        self.snapshot().get(&template).map(|s| s.info.len()).unwrap_or(0)
+    }
+
+    pub fn len(&self) -> usize {
+        self.snapshot().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.snapshot().is_empty()
+    }
+
+    /// Build `base + overlay` into a **new** map and swap it in whole.
+    ///
+    /// **Never clear-then-fill.** A half-applied table is every NPC mute, and the failure
+    /// would arrive between two packets rather than at start-up where it could be seen.
+    fn apply_overlay(&self, overlay: &HashMap<u32, Vec<String>>) -> usize {
+        let mut next = (*self.base).clone();
+        for (template, lines) in overlay {
+            next.entry(*template).or_default().dialogue = lines.clone();
+        }
+        let live = next.len();
+        let next = Arc::new(next);
+        match self.live.write() {
+            Ok(mut g) => *g = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
+        }
+        live
+    }
+}
+
+/// What one `!npcreload` did, in enough detail to tell it from one that did nothing.
+///
+/// **`load_npc_strings` returns an empty map on a read error**, so a naive wiring of this
+/// command would report success after reading no file at all. Every count here is separate
+/// for that reason, and [`Self::refusal`] is what a caller must check before saying "ok".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NpcDialogueReload {
+    /// The generated file the base table came from. Named, not re-read.
+    pub base_path: PathBuf,
+    /// The authored file this reload read.
+    pub overlay_path: PathBuf,
+    /// NPC templates in the generated base.
+    pub base_templates: usize,
+    /// Templates the overlay gave at least one usable `d<n>` line for.
+    pub overlay_templates: usize,
+    /// Of those, how many replaced dialogue the base already had.
+    pub overridden: usize,
+    /// And how many are templates the base had no dialogue for at all.
+    pub added: usize,
+    /// Non-comment overlay rows that were read and not used, each with its reason.
+    pub refused: Vec<String>,
+    /// Templates live after the swap. **Unchanged from before when [`Self::refusal`] is set.**
+    pub live_templates: usize,
+    /// Why nothing was swapped. `None` means the table really was replaced.
+    pub refusal: Option<String>,
+}
+
+impl NpcDialogueReload {
+    pub fn applied(&self) -> bool {
+        self.refusal.is_none()
+    }
+
+    /// One line, for the GM acknowledgement and for the start-up banner.
+    ///
+    /// It says what happened rather than that something happened: the file, the counts, and
+    /// on a refusal, that the old table is still the live one. A command that silently works
+    /// and one that silently does nothing look identical on screen.
+    ///
+    /// **The refused rows are deliberately NOT in here** - [`Self::refusal_line`] carries
+    /// them. This string is already about as long as `GM_COMMANDS`, which is the longest
+    /// notice this client has been seen to draw; appending an unbounded list of parse errors
+    /// to it would take it somewhere unproven, and the rows are more useful on a line of
+    /// their own anyway.
+    pub fn summary(&self) -> String {
+        if let Some(why) = &self.refusal {
+            return format!(
+                "REFUSED and NOTHING changed - {} NPC templates still live: {why}",
+                self.live_templates
+            );
+        }
+        format!(
+            "{} NPC templates live. {} from {} (generated; regenerating it still needs a \
+             restart, because the shop join is built from its names at start-up). {} \
+             overlaid from {}: {} replaced a line the NPC already had, {} added to an NPC \
+             that had none. Every connection on THIS channel process sees it at once; \
+             another channel is another process and needs its own reload.",
+            self.live_templates,
+            self.base_templates,
+            clip_tail(&self.base_path.display().to_string()),
+            self.overlay_templates,
+            clip_tail(&self.overlay_path.display().to_string()),
+            self.overridden,
+            self.added,
+        )
+    }
+
+    /// The refused rows as one bounded line, or `None` when every row was taken.
+    ///
+    /// Bounded on purpose: two rows, each clipped, then a count. The whole list goes to the
+    /// server console, which has no length to worry about.
+    pub fn refusal_line(&self) -> Option<String> {
+        if self.refused.is_empty() {
+            return None;
+        }
+        let shown: Vec<String> = self
+            .refused
+            .iter()
+            .take(2)
+            .map(|r| r.chars().take(110).collect::<String>())
+            .collect();
+        let more = self.refused.len().saturating_sub(shown.len());
+        Some(format!(
+            "{} overlay row(s) REFUSED and NOT applied: {}{}",
+            self.refused.len(),
+            shown.join(" | "),
+            if more > 0 { format!(" | +{more} more, see the server console") } else { String::new() }
+        ))
+    }
+}
+
+/// The **tail** of a path, so a long `--npc-dialogue` cannot make the acknowledgement run
+/// away.
+///
+/// The tail rather than the head, because the informative half of a path is its end. Nothing
+/// is clipped at the shipped defaults; this is a bound, not a formatter. The server console
+/// always gets the whole path - only the on-screen notice is bounded, and it is bounded
+/// because `GM_COMMANDS` at 474 characters is the longest notice this client has been
+/// **seen** to draw and anything past that is unproven.
+fn clip_tail(path: &str) -> String {
+    const KEEP: usize = 60;
+    let n = path.chars().count();
+    if n <= KEEP {
+        return path.to_string();
+    }
+    format!("...{}", path.chars().skip(n - KEEP).collect::<String>())
+}
+
+/// One overlay file, parsed: `template -> the `d` lines in index order`, plus every refusal.
+///
+/// `rows` counts non-blank, non-comment lines, so "the file had rows and produced nothing"
+/// is a state the caller can recognise - which is what a file edited with spaces instead of
+/// tabs looks like, and it is the most likely way this file gets broken.
+#[derive(Debug, Clone, Default)]
+pub struct NpcDialogueOverlay {
+    pub lines: HashMap<u32, Vec<String>>,
+    pub refused: Vec<String>,
+    pub rows: usize,
+}
+
+/// Parse `data/npc-dialogue.txt`: `templateId <TAB> d<n> <TAB> text`.
+///
+/// # Only `d<n>`, and the other three keys are refused out loud
+///
+/// The generated file carries four kinds of key and only one of them is text this server
+/// puts on a wire:
+///
+/// | key | who holds the text | why the overlay refuses it |
+/// |---|---|---|
+/// | `d<n>` | **the server** | this is the one that works |
+/// | `name` | nobody - it never goes on a wire | `shops::resolve_npc_templates` joins `data/shops.txt` onto template ids **by this name**, at start-up, into a table behind no lock. Renaming here would silently re-point a shop |
+/// | `info<n>` | **the client** | `0x0453` carries an *index*, never the text. Authoring it here would change nothing on screen while changing how many indices the chatter tick cycles - and an index past what the client's own `info/speak` group holds has never been sent, so it is not established as safe |
+/// | `idle<n>` | **the client** | same, and this group is not even the one a balloon can reach - see [`NpcStrings::info`] |
+///
+/// A refusal is counted and named. Silently ignoring a row is how an author concludes the
+/// reload is broken.
+///
+/// # Order comes from the index, not from the file
+///
+/// `d10` sorts before `d2` as a string. `read_quest_rows` documents the same trap and it is
+/// the reason this parses the suffix into a `BTreeMap<usize, _>` rather than pushing.
+pub fn parse_npc_dialogue_overlay(text: &str) -> NpcDialogueOverlay {
+    use std::collections::BTreeMap;
+    let mut indexed: HashMap<u32, BTreeMap<usize, String>> = HashMap::new();
+    let mut out = NpcDialogueOverlay::default();
+    for (n, line) in text.lines().enumerate() {
+        let n = n + 1;
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        out.rows += 1;
+        let mut f = line.splitn(3, '\t');
+        let (Some(id), Some(key), Some(value)) = (f.next(), f.next(), f.next()) else {
+            out.refused.push(format!(
+                "line {n}: not three TAB-separated fields (templateId, d<n>, text)"
+            ));
+            continue;
+        };
+        let Ok(template) = id.trim().parse::<u32>() else {
+            out.refused.push(format!("line {n}: {:?} is not an NPC template id", id.trim()));
+            continue;
+        };
+        let key = key.trim();
+        let Some(index) = key.strip_prefix('d').and_then(|i| i.parse::<usize>().ok()) else {
+            out.refused.push(format!(
+                "line {n}: key {key:?} - this file carries spoken dialogue only, as d0, d1, \
+                 ...; name/info/idle rows are refused because that text is not the server's \
+                 to send"
+            ));
+            continue;
+        };
+        if value.trim().is_empty() {
+            out.refused.push(format!(
+                "line {n}: template {template} {key} is empty - an empty box is worse than \
+                 the placeholder"
+            ));
+            continue;
+        }
+        if indexed.entry(template).or_default().insert(index, value.to_string()).is_some() {
+            out.refused.push(format!(
+                "line {n}: template {template} has two {key} rows - the later one won"
+            ));
+        }
+    }
+    out.lines = indexed
+        .into_iter()
+        .map(|(t, lines)| (t, lines.into_values().collect::<Vec<String>>()))
+        .collect();
+    out
+}
+
+/// Re-read the authored overlay and swap the live NPC dialogue table. **No restart.**
+///
+/// This is the whole of `!npcreload`, and it is also what the world server runs at start-up,
+/// so the two cannot drift - the start-up banner and the in-game acknowledgement are the same
+/// sentence from the same function.
+///
+/// # A parse failure leaves the running table exactly as it was
+///
+/// The new table is built beside the old one and swapped whole ([`NpcStringTable::apply_overlay`]).
+/// Three states refuse the swap outright, and each says which:
+///
+/// * the overlay file cannot be read for a reason other than "it is not there" - a missing
+///   file is legal and means "no overrides", exactly as `data/quest-scripts.txt` is
+/// * the file has rows and **not one** of them parsed. That is what an edit saved with spaces
+///   instead of tabs looks like, and applying it would quietly revert every override the
+///   author already had working
+/// * the generated base is empty, so there is nothing for an overlay to sit on and the
+///   command would report success over a table that cannot say anything
+pub fn reload_npc_dialogue(config: &Config) -> NpcDialogueReload {
+    let base = config.npc_strings.base();
+    let mut r = NpcDialogueReload {
+        base_path: config.npc_strings_path.clone(),
+        overlay_path: config.npc_dialogue_path.clone(),
+        base_templates: base.len(),
+        live_templates: config.npc_strings.len(),
+        ..Default::default()
+    };
+
+    let text = match std::fs::read_to_string(&config.npc_dialogue_path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            r.refusal =
+                Some(format!("could not read {}: {e}", clip_tail(&config.npc_dialogue_path.display().to_string())));
+            return r;
+        }
+    };
+
+    if base.is_empty() {
+        r.refusal = Some(format!(
+            "the generated base {} holds no NPC text at all, so there is nothing for an \
+             overlay to amend. Regenerate it with: python tools/dump_npcstrings.py, then \
+             restart",
+            clip_tail(&config.npc_strings_path.display().to_string())
+        ));
+        return r;
+    }
+
+    let overlay = parse_npc_dialogue_overlay(&text);
+    r.refused = overlay.refused;
+    if overlay.rows > 0 && overlay.lines.is_empty() {
+        r.refusal = Some(format!(
+            "{} has {} row(s) and not one is a usable \"<templateId> TAB d<n> TAB text\" row. \
+             The separator is a TAB, not spaces",
+            clip_tail(&config.npc_dialogue_path.display().to_string()),
+            overlay.rows
+        ));
+        return r;
+    }
+
+    r.overlay_templates = overlay.lines.len();
+    for template in overlay.lines.keys() {
+        // "Overrode a base entry" means the NPC already had something to say. An entry that
+        // exists with an empty `dialogue` is an NPC that fell through to the placeholder, and
+        // counting it as an override would make a new line look like a replaced one.
+        let had = base.get(template).is_some_and(|s| !s.dialogue.is_empty());
+        if had {
+            r.overridden += 1;
+        } else {
+            r.added += 1;
+        }
+    }
+    r.live_templates = config.npc_strings.apply_overlay(&overlay.lines);
+    r
 }
 
 /// A mob template's stats, as `Mob.wz` has them. Field names are the WZ's own.
@@ -1370,7 +1804,9 @@ impl Default for Config {
             quest_reqs: net::quest::QuestRequirementTable::default(),
             chatter_off: false,
             equips: HashMap::new(),
-            npc_strings: HashMap::new(),
+            npc_strings: NpcStringTable::default(),
+            npc_strings_path: PathBuf::from("gm-handbook/npcstrings.txt"),
+            npc_dialogue_path: PathBuf::from("data/npc-dialogue.txt"),
             quests: HashMap::new(),
             shops: crate::shops::ShopTable::default(),
             shop_by_template: HashMap::new(),
@@ -1899,5 +2335,332 @@ mod spawn_tests {
         let n = overlay_quests(&mut quests, std::path::Path::new("no/such/overlay.txt"));
         assert_eq!(n, 0);
         assert_eq!(quests[&1000].name, "Kept");
+    }
+}
+
+/// The hot-swappable NPC dialogue overlay: its parser, and the table it swaps.
+///
+/// The session-level claim - *a reload reaches a connection that was already open* - is not
+/// here. It cannot be: it is a property of two `Session`s sharing one `Arc<Config>`, and it
+/// is tested in `session::gm`.
+#[cfg(test)]
+mod npc_dialogue_tests {
+    use super::*;
+
+    fn base(rows: &[(u32, &str)]) -> HashMap<u32, NpcStrings> {
+        rows.iter()
+            .map(|(id, d0)| {
+                let dialogue = if d0.is_empty() { Vec::new() } else { vec![(*d0).to_string()] };
+                (*id, NpcStrings { name: format!("NPC {id}"), dialogue, ..Default::default() })
+            })
+            .collect()
+    }
+
+    /// The happy path, and the only thing the parser is allowed to accept.
+    #[test]
+    fn a_d_row_is_taken_and_its_text_survives_a_tab_free_body() {
+        let o = parse_npc_dialogue_overlay("8\td0\tHello, and #p8# too\n");
+        assert_eq!(o.rows, 1);
+        assert!(o.refused.is_empty(), "{:?}", o.refused);
+        assert_eq!(o.lines[&8], vec!["Hello, and #p8# too".to_string()]);
+    }
+
+    /// **`d10` must follow `d9`.** A string sort puts it second, and `read_quest_rows` carries
+    /// the same warning - the screen would show it as a conversation that jumps.
+    #[test]
+    fn overlay_lines_come_out_in_index_order_not_string_order() {
+        let mut text = String::new();
+        for i in 0..12 {
+            text.push_str(&format!("8\td{i}\tline {i}\n"));
+        }
+        let o = parse_npc_dialogue_overlay(&text);
+        assert!(o.refused.is_empty(), "{:?}", o.refused);
+        let lines = &o.lines[&8];
+        assert_eq!(lines.len(), 12);
+        assert_eq!(lines[9], "line 9");
+        assert_eq!(lines[10], "line 10", "string order would put this second");
+    }
+
+    /// **The guarantee `Config::shop_by_template` rests on, enforced rather than commented.**
+    ///
+    /// `CLAUDE.md`: *"A comment describing a guarantee is not the guarantee."* The shop join is
+    /// built from NPC names at start-up into a table behind no lock; if this file could carry a
+    /// `name` row, a reload could silently re-point a shop. So the parser refuses it, and the
+    /// refusal is counted rather than dropped.
+    #[test]
+    fn a_name_row_is_refused_so_a_reload_can_never_move_a_shop() {
+        let o = parse_npc_dialogue_overlay("21\tname\tNot Lucy\n21\td0\tKept\n");
+        assert_eq!(o.rows, 2);
+        assert_eq!(o.lines[&21], vec!["Kept".to_string()]);
+        assert_eq!(o.refused.len(), 1, "{:?}", o.refused);
+        assert!(o.refused[0].contains("line 1"), "{}", o.refused[0]);
+        assert!(o.refused[0].contains("name"), "{}", o.refused[0]);
+    }
+
+    /// `info`/`idle` text lives in the CLIENT - only an index goes on the wire - so authoring
+    /// it here would change nothing on screen while changing how many indices are cycled.
+    #[test]
+    fn info_and_idle_rows_are_refused_because_that_text_is_not_the_servers_to_send() {
+        let o = parse_npc_dialogue_overlay("8\tinfo0\tnope\n8\tidle3\talso nope\n");
+        assert!(o.lines.is_empty(), "{:?}", o.lines);
+        assert_eq!(o.refused.len(), 2, "{:?}", o.refused);
+    }
+
+    /// Every other way a row can be wrong is named, not silently skipped. An author who cannot
+    /// see the refusal concludes the command is broken.
+    #[test]
+    fn each_malformed_row_is_refused_by_name() {
+        let o = parse_npc_dialogue_overlay(
+            "8 d0 spaces not tabs\nrobin\td0\tnot an id\n8\tdx\tnot an index\n8\td0\t   \n\
+             8\td1\tone\n8\td1\ttwo\n",
+        );
+        assert_eq!(o.rows, 6);
+        assert_eq!(o.refused.len(), 5, "{:?}", o.refused);
+        // The duplicate is a refusal AND the later row wins, which is stated in the message.
+        assert_eq!(o.lines[&8], vec!["two".to_string()]);
+    }
+
+    /// Comments and blank lines are not rows, so a file of nothing but the header is not a
+    /// file that "had rows and produced nothing".
+    #[test]
+    fn comments_and_blank_lines_are_not_counted_as_rows() {
+        let o = parse_npc_dialogue_overlay("# a header\n\n   \n#\tso is this\n");
+        assert_eq!(o.rows, 0);
+        assert!(o.refused.is_empty());
+        assert!(o.lines.is_empty());
+    }
+
+    // ---- the table and the reload -------------------------------------------------------
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("maplecw-npcreload-{tag}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn config_with(base_rows: &[(u32, &str)], overlay: &std::path::Path) -> Config {
+        Config {
+            npc_strings: base(base_rows).into(),
+            npc_strings_path: PathBuf::from("gm-handbook/npcstrings.txt"),
+            npc_dialogue_path: overlay.to_path_buf(),
+            ..Config::default()
+        }
+    }
+
+    /// The counts the command reports, split the way a person would ask the question:
+    /// *did my edit replace something, or add something that was not there?*
+    #[test]
+    fn the_report_separates_a_replaced_line_from_an_added_one() {
+        let dir = scratch("counts");
+        let file = dir.join("npc-dialogue.txt");
+        // 8 already speaks; 9 has an entry with no `d0` at all; 10 is not in the base.
+        let config = config_with(&[(8, "shipped"), (9, "")], &file);
+        std::fs::write(&file, "8\td0\tA\n9\td0\tB\n10\td0\tC\n").unwrap();
+
+        let r = reload_npc_dialogue(&config);
+        assert!(r.applied(), "{:?}", r.refusal);
+        assert_eq!(r.base_templates, 2);
+        assert_eq!(r.overlay_templates, 3);
+        assert_eq!(r.overridden, 1, "only template 8 had a line to replace");
+        assert_eq!(r.added, 2, "9 had an entry but no dialogue, 10 had no entry");
+        assert_eq!(r.live_templates, 3);
+        assert_eq!(config.npc_strings.dialogue_line(8).as_deref(), Some("A"));
+        assert_eq!(config.npc_strings.dialogue_line(10).as_deref(), Some("C"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **A file that fails to parse leaves the running table exactly as it was.**
+    ///
+    /// The realistic failure is an edit saved with spaces instead of tabs. Applying that would
+    /// quietly revert every override the author already had working, between two packets,
+    /// with the command reporting success.
+    #[test]
+    fn a_file_with_rows_and_no_usable_row_is_refused_and_changes_nothing() {
+        let dir = scratch("spaces");
+        let file = dir.join("npc-dialogue.txt");
+        let config = config_with(&[(8, "shipped")], &file);
+
+        std::fs::write(&file, "8\td0\tamended\n").unwrap();
+        assert!(reload_npc_dialogue(&config).applied());
+        assert_eq!(config.npc_strings.dialogue_line(8).as_deref(), Some("amended"));
+
+        std::fs::write(&file, "8 d0 saved with spaces\n9 d0 and another\n").unwrap();
+        let r = reload_npc_dialogue(&config);
+        assert!(!r.applied(), "a file with rows and no usable row must refuse");
+        assert!(r.refusal.as_ref().unwrap().contains("TAB"), "{:?}", r.refusal);
+        assert_eq!(r.live_templates, 1, "the count reported is the SURVIVING table");
+        assert_eq!(
+            config.npc_strings.dialogue_line(8).as_deref(),
+            Some("amended"),
+            "the previous overlay must survive a failed reload"
+        );
+        assert!(r.summary().contains("NOTHING changed"), "{}", r.summary());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A missing overlay is legal - the same handling `data/quest-scripts.txt` has - and it
+    /// means "no overrides", so a file that is deleted takes its overrides with it.
+    #[test]
+    fn a_missing_overlay_file_is_not_a_failure_and_reverts_to_the_generated_base() {
+        let dir = scratch("missing");
+        let file = dir.join("npc-dialogue.txt");
+        let config = config_with(&[(8, "shipped")], &file);
+
+        std::fs::write(&file, "8\td0\tamended\n").unwrap();
+        assert!(reload_npc_dialogue(&config).applied());
+        assert_eq!(config.npc_strings.dialogue_line(8).as_deref(), Some("amended"));
+
+        std::fs::remove_file(&file).unwrap();
+        let r = reload_npc_dialogue(&config);
+        assert!(r.applied(), "{:?}", r.refusal);
+        assert_eq!(r.overlay_templates, 0);
+        assert_eq!(config.npc_strings.dialogue_line(8).as_deref(), Some("shipped"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An empty generated base is refused rather than reported as a successful reload of
+    /// nothing. `load_npc_strings` returns an empty map on a read error, so without this the
+    /// command says "ok" over a server whose NPCs cannot say anything.
+    #[test]
+    fn an_empty_generated_base_is_refused_rather_than_reported_as_success() {
+        let dir = scratch("nobase");
+        let file = dir.join("npc-dialogue.txt");
+        std::fs::write(&file, "8\td0\tamended\n").unwrap();
+        let config = config_with(&[], &file);
+
+        let r = reload_npc_dialogue(&config);
+        assert!(!r.applied());
+        assert!(r.refusal.as_ref().unwrap().contains("dump_npcstrings"), "{:?}", r.refusal);
+        assert_eq!(r.live_templates, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The base is never re-read and never overwritten, which is what keeps
+    /// `Config::shop_by_template` honest for the life of the process.
+    #[test]
+    fn a_reload_leaves_the_generated_base_and_every_name_untouched() {
+        let dir = scratch("names");
+        let file = dir.join("npc-dialogue.txt");
+        let config = config_with(&[(21, "shipped")], &file);
+        std::fs::write(&file, "21\tname\tNot Lucy\n21\td0\tamended\n").unwrap();
+
+        let r = reload_npc_dialogue(&config);
+        assert!(r.applied(), "{:?}", r.refusal);
+        assert_eq!(r.refused.len(), 1, "{:?}", r.refused);
+        assert_eq!(config.npc_strings.base()[&21].name, "NPC 21");
+        assert_eq!(config.npc_strings.snapshot()[&21].name, "NPC 21", "the live name too");
+        assert_eq!(config.npc_strings.dialogue_line(21).as_deref(), Some("amended"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `Config::clone` must SHARE the table, not copy it. A copy would keep serving the old
+    /// dialogue after a reload with nothing in any log to say so.
+    #[test]
+    fn cloning_a_config_shares_the_swappable_table_instead_of_copying_it() {
+        let dir = scratch("clone");
+        let file = dir.join("npc-dialogue.txt");
+        let config = config_with(&[(8, "shipped")], &file);
+        let twin = config.clone();
+
+        std::fs::write(&file, "8\td0\tamended\n").unwrap();
+        assert!(reload_npc_dialogue(&config).applied());
+        assert_eq!(twin.npc_strings.dialogue_line(8).as_deref(), Some("amended"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The notice has to stay inside the longest one this client has been seen to draw, and
+    /// the only unbounded parts of it are the two paths. Nothing is clipped at the defaults.
+    #[test]
+    fn the_acknowledgement_stays_within_the_longest_notice_this_client_has_drawn() {
+        // `GM_COMMANDS`, the `!help` text, is 474 characters and is shipping.
+        const PROVEN: usize = 474;
+        assert_eq!(clip_tail("data/npc-dialogue.txt"), "data/npc-dialogue.txt", "no clipping at the default");
+        let long = format!("C:\\{}\\npc-dialogue.txt", "d".repeat(300));
+        assert!(clip_tail(&long).chars().count() <= 63);
+        assert!(clip_tail(&long).ends_with("npc-dialogue.txt"), "the tail is the useful half");
+
+        let r = NpcDialogueReload {
+            base_path: PathBuf::from("gm-handbook/npcstrings.txt"),
+            overlay_path: PathBuf::from(long),
+            base_templates: 266,
+            overlay_templates: 12,
+            overridden: 9,
+            added: 3,
+            live_templates: 269,
+            ..Default::default()
+        };
+        assert!(r.summary().len() <= PROVEN, "{} chars: {}", r.summary().len(), r.summary());
+
+        // The refusal branch is a different sentence and embeds a path of its own, so it gets
+        // its own bound rather than being assumed to inherit this one.
+        let dir = scratch("longpath");
+        let deep = dir.join("a".repeat(80)).join("b".repeat(80));
+        std::fs::create_dir_all(&deep).unwrap();
+        let file = deep.join("npc-dialogue.txt");
+        std::fs::write(&file, "8 d0 saved with spaces\n").unwrap();
+        let config = config_with(&[(8, "shipped")], &file);
+        let refused = reload_npc_dialogue(&config);
+        assert!(!refused.applied());
+        assert!(
+            refused.summary().len() <= PROVEN,
+            "{} chars: {}",
+            refused.summary().len(),
+            refused.summary()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **The files that actually ship, through the code that actually runs.**
+    ///
+    /// Everything above is synthetic. This one reads the committed `data/npc-dialogue.txt`
+    /// against the generated `gm-handbook/npcstrings.txt` and asserts the reload applies with
+    /// nothing refused - which is what catches a header comment that accidentally parses as a
+    /// row, or a file saved with the tabs expanded.
+    #[test]
+    fn the_committed_overlay_applies_cleanly_against_the_real_generated_table() {
+        let base_path = std::path::Path::new("../../gm-handbook/npcstrings.txt");
+        let overlay = std::path::Path::new("../../data/npc-dialogue.txt");
+        assert!(overlay.exists(), "data/npc-dialogue.txt is authored source and is committed");
+        if !base_path.exists() {
+            return; // generated data, gitignored
+        }
+        let config = Config {
+            npc_strings: load_npc_strings(base_path).into(),
+            npc_strings_path: base_path.to_path_buf(),
+            npc_dialogue_path: overlay.to_path_buf(),
+            ..Config::default()
+        };
+        let before = config.npc_strings.len();
+        let r = reload_npc_dialogue(&config);
+        assert!(r.applied(), "{:?}", r.refusal);
+        assert!(r.refused.is_empty(), "{:?}", r.refused);
+        assert!(r.base_templates > 200, "only {} templates", r.base_templates);
+        assert!(r.live_templates >= before);
+        // Robin is the fixture the rest of this file uses, so their line is the control that
+        // the base really was read rather than the overlay having supplied everything.
+        assert!(config.npc_strings.dialogue_line(8).is_some(), "Robin still has a d0");
+    }
+
+    /// Two reloads of the same file are the same table - the overlay is applied to the base
+    /// each time, never to the result of the last one.
+    #[test]
+    fn a_second_reload_of_the_same_file_does_not_accumulate() {
+        let dir = scratch("twice");
+        let file = dir.join("npc-dialogue.txt");
+        let config = config_with(&[(8, "shipped")], &file);
+        std::fs::write(&file, "8\td0\tone\n8\td1\ttwo\n").unwrap();
+
+        let first = reload_npc_dialogue(&config);
+        let live_after_first = config.npc_strings.snapshot()[&8].dialogue.clone();
+        let second = reload_npc_dialogue(&config);
+        assert_eq!(config.npc_strings.snapshot()[&8].dialogue, live_after_first);
+        assert_eq!(live_after_first, vec!["one".to_string(), "two".to_string()]);
+        assert_eq!(first.live_templates, second.live_templates);
+        assert_eq!(first.overridden, second.overridden);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

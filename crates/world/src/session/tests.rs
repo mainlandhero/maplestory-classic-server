@@ -3247,7 +3247,7 @@ fn npcs_chatter_in_order_on_the_clients_own_cadence() {
     let config = Config {
         set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
-        npc_strings: strings,
+        npc_strings: strings.into(),
         ..Config::default()
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
@@ -3330,7 +3330,7 @@ fn entering_a_field_late_does_not_make_everyone_speak_at_once() {
     let config = Config {
         set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
-        npc_strings: strings,
+        npc_strings: strings.into(),
         ..Config::default()
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
@@ -3459,7 +3459,7 @@ fn a_late_tick_does_not_burst() {
     let config = Config {
         set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
-        npc_strings: strings,
+        npc_strings: strings.into(),
         ..Config::default()
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
@@ -6681,7 +6681,7 @@ fn the_cash_shop_silences_idle_chatter_and_the_field_gets_it_back() {
     let config = Config {
         set_field_probe: true,
         npcs: [(40u32, npcs)].into_iter().collect(),
-        npc_strings: strings,
+        npc_strings: strings.into(),
         ..Config::default()
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
