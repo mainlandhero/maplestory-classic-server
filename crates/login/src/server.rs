@@ -141,11 +141,21 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     ));
     let characters = store.character_count(account.id, config.world.id).unwrap_or(0);
     log(&format!(
-        "serving every connection as account {:?} (id {}), {characters} character(s) stored",
+        "fallback account {:?} (id {}), {characters} character(s) stored",
         account.name, account.id
     ));
+    match store.current_login_claim() {
+        Ok(Some(c)) => log(&format!(
+            "a login claim is live: {:?} until {} - connections are served as THAT, not the fallback",
+            c.account_name, c.expires_at
+        )),
+        Ok(None) => log("no login claim is live - run maplecw-launcher to pick an account"),
+        Err(e) => log(&format!("could not read login claims: {e} - the fallback will be used")),
+    }
     log("NOT AUTHENTICATED: the game socket carries no credentials, so anyone who");
-    log("  connects is served as that account. See docs/launcher.md.");
+    log("  connects is served as whichever account the claim or the fallback names.");
+    log("  The launcher checks a password before staking a claim; this socket does not.");
+    log("  See docs/launcher.md.");
 
     // The migration makes the client come back on a second connection, so the log has to
     // say which one a line belongs to - the peer address alone differs only in an ephemeral
@@ -165,6 +175,10 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                         .unwrap_or_else(|_| "unknown".to_string());
                     let peer = format!("#{nth} {peer}");
                     log(&format!("connection from {peer}"));
+                    // Resolved HERE, per connection, not once at startup - that is what lets
+                    // the launcher decide who is playing without restarting the server.
+                    let (account, why) = resolve_account(&store, &account);
+                    log(&format!("{peer} served as {why}"));
                     match connection(stream, store, config, account) {
                         Ok(()) => log(&format!("{peer} closed")),
                         Err(e) => log(&format!("{peer} ended: {e}")),
@@ -175,6 +189,69 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Who this connection is served as, and the sentence that explains it.
+///
+/// **This is the resolver `docs/launcher.md` asked for**, and it is the whole of what makes
+/// more than one account usable on one machine. Until now the account came from `--account`
+/// and was resolved once in [`serve`], so the process could only ever be one player.
+///
+/// The order is: a live login claim, else the configured fallback. A claim is staked by
+/// `maplecw-launcher` after it verifies a password (argon2id), and it says "serve the next
+/// game connection as this account".
+///
+/// # Three things this is not
+///
+/// 1. **It is not authentication.** The game socket carries no credentials - the client never
+///    sends a username - so anything that connects to this port gets whatever claim is live.
+///    The launcher authenticates a *person* before staking the claim; the socket is still
+///    open. Say so when reporting progress.
+/// 2. **It does not consume the claim.** The client opens a *second* login connection after
+///    "Log Out" and "Choose another world" - `CLAUDE.md` records two `0x0010`s in one launch -
+///    and a single-use claim would drop that second connection back to the fallback account.
+///    On screen that reads as "my characters vanished when I logged out", which is a much
+///    worse bug than the one it would be guarding against.
+/// 3. **It does not fail the connection.** A claim naming an account that has since been
+///    deleted or disabled falls back rather than refusing, because an unanswered connection
+///    freezes the client's entire UI. The log line says which one was used and why, every
+///    time, so a run is never ambiguous about whose characters are on screen.
+fn resolve_account(store: &Store, fallback: &Account) -> (Account, String) {
+    match store.current_login_claim() {
+        Ok(Some(claim)) => match store.get_account(&claim.account_name) {
+            Ok(Some(acc)) if acc.enabled => {
+                let why = format!(
+                    "account {:?} (id {}) from a login claim staked by the launcher",
+                    acc.name, acc.id
+                );
+                (acc, why)
+            }
+            // The claim resolved to nothing usable. `current_login_claim` already joins to
+            // `accounts` and skips disabled ones, so reaching here means the row changed
+            // underneath us between the two statements - rare, and not worth a refusal.
+            _ => (
+                fallback.clone(),
+                format!(
+                    "account {:?} (id {}) - a claim named {:?} but it is no longer usable",
+                    fallback.name, fallback.id, claim.account_name
+                ),
+            ),
+        },
+        Ok(None) => (
+            fallback.clone(),
+            format!(
+                "account {:?} (id {}) from --account; no launcher claim is live",
+                fallback.name, fallback.id
+            ),
+        ),
+        Err(e) => (
+            fallback.clone(),
+            format!(
+                "account {:?} (id {}) from --account; the claim lookup FAILED: {e}",
+                fallback.name, fallback.id
+            ),
+        ),
+    }
 }
 
 /// How long a client may say nothing before it is sent the startup gate again.
@@ -283,4 +360,102 @@ fn send(
     log(&format!("-> {} {what}", label(*opcode)));
     log(&format!("   body {}", body_hex(*opcode, &packet[2.min(packet.len())..])));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use store::LOGIN_CLAIM_TTL_SECS;
+
+    /// Two accounts and a store, which is the situation this whole resolver exists for:
+    /// before it, one process could only ever be one player.
+    fn two_accounts() -> (Store, Account, Account) {
+        let store = Store::open_in_memory().unwrap();
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        store.create_account("second_one", "correct horse battery").unwrap();
+        let fallback = store.get_account("maplecw").unwrap().unwrap();
+        let other = store.get_account("second_one").unwrap().unwrap();
+        (store, fallback, other)
+    }
+
+    #[test]
+    fn with_no_claim_a_connection_is_served_as_the_configured_fallback() {
+        let (store, fallback, _) = two_accounts();
+        let (acc, why) = resolve_account(&store, &fallback);
+        assert_eq!(acc.id, fallback.id);
+        assert!(why.contains("--account"), "{why}");
+    }
+
+    #[test]
+    fn a_claim_overrides_the_fallback() {
+        let (store, fallback, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        let (acc, why) = resolve_account(&store, &fallback);
+        assert_eq!(acc.id, other.id, "the launcher's claim decides, not --account");
+        assert!(why.contains("login claim"), "{why}");
+    }
+
+    /// **The regression test for logging out.** The client opens a SECOND login connection
+    /// after "Log Out" and "Choose another world" - `CLAUDE.md` records two `0x0010`s in one
+    /// launch. If resolving consumed the claim, that second connection would fall back to
+    /// `--account` and the player would watch their characters turn into someone else's.
+    #[test]
+    fn resolving_twice_serves_the_same_account_because_a_claim_is_not_consumed() {
+        let (store, fallback, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        let first = resolve_account(&store, &fallback).0;
+        let second = resolve_account(&store, &fallback).0;
+        assert_eq!(first.id, other.id);
+        assert_eq!(second.id, other.id, "the log-out reconnect must not change account");
+    }
+
+    #[test]
+    fn a_later_claim_replaces_an_earlier_one() {
+        let (store, fallback, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        store.stake_login_claim(fallback.id, "b-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        assert_eq!(resolve_account(&store, &fallback).0.id, fallback.id);
+    }
+
+    #[test]
+    fn an_expired_claim_falls_back_rather_than_serving_a_stale_account() {
+        let (store, fallback, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", -1).unwrap();
+        let (acc, why) = resolve_account(&store, &fallback);
+        assert_eq!(acc.id, fallback.id);
+        assert!(why.contains("no launcher claim is live"), "{why}");
+    }
+
+    /// A disabled account must not keep playing on a claim staked before it was disabled -
+    /// and the fall-back must still answer, because refusing the connection outright would
+    /// leave the client with no reply, which freezes its entire UI.
+    #[test]
+    fn disabling_an_account_mid_claim_falls_back_instead_of_refusing() {
+        let (store, fallback, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        store.set_enabled("second_one", false).unwrap();
+        let (acc, _) = resolve_account(&store, &fallback);
+        assert_eq!(acc.id, fallback.id);
+    }
+
+    #[test]
+    fn clearing_the_claim_returns_the_process_to_its_fallback() {
+        let (store, fallback, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        store.clear_login_claims().unwrap();
+        assert_eq!(resolve_account(&store, &fallback).0.id, fallback.id);
+    }
+
+    /// The log line is the only way a run says whose characters were on screen, and three of
+    /// this project's answers came from reading a log after the fact. It must always name the
+    /// account it chose.
+    #[test]
+    fn every_outcome_names_the_account_it_chose() {
+        let (store, fallback, other) = two_accounts();
+        let (_, no_claim) = resolve_account(&store, &fallback);
+        assert!(no_claim.contains("maplecw"), "{no_claim}");
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        let (_, claimed) = resolve_account(&store, &fallback);
+        assert!(claimed.contains("second_one"), "{claimed}");
+    }
 }

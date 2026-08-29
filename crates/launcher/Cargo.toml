@@ -1,0 +1,15 @@
+[package]
+name = "launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MapleCW launcher: sign in, stake the login claim, patch the client, start the game."
+
+[dependencies]
+store = { path = "../store" }
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow"] }
+egui = "0.29"
+
+[[bin]]
+name = "maplecw-launcher"
+path = "src/main.rs"

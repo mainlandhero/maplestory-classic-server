@@ -1,0 +1,206 @@
+<#
+.SYNOPSIS
+    Install MapleCW on a machine that has nothing on it.
+
+.DESCRIPTION
+    Run this from an ELEVATED PowerShell window, from inside the unzipped payload:
+
+      powershell -ExecutionPolicy Bypass -File "C:\path\to\MapleCW\install.ps1"
+
+    It copies the payload into place, creates the database, creates the first account,
+    writes the launcher's configuration, adds the firewall rule that keeps the patched
+    client off the internet, and puts a shortcut on the desktop.
+
+    Elevation is needed for exactly one step - the firewall rule. Everything else works
+    without it, and -NoFirewall skips that step and the requirement with it. Do not skip
+    it casually: the client still contains Nexon's endpoints and a full TLS stack, and
+    running a *modified* client with live internet access is how a machine gets flagged.
+
+    Nothing here is authenticated at the game socket. The launcher checks a password
+    (argon2id) before it stakes a claim saying which account is playing; the game socket
+    itself carries no credentials, so anything that can reach the login port is served as
+    whichever account the claim names. That is true of this project everywhere and it is
+    true here.
+#>
+[CmdletBinding()]
+param(
+    [string]$InstallDir = 'C:\MapleCW',
+    [string]$Account,
+    [string]$Email,
+    [string]$ServerIp = '127.0.0.1',
+    [int]$Port = 8484,
+    [switch]$NoFirewall,
+    [switch]$NoShortcut,
+    [switch]$NoAccount
+)
+
+$ErrorActionPreference = 'Stop'
+$payload = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+
+function Test-Elevated {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+Write-Host ''
+Write-Host '=== MapleCW install ===' -ForegroundColor Cyan
+Write-Host "payload  $payload"
+Write-Host "target   $InstallDir"
+Write-Host ''
+
+# ---------------------------------------------------------------- preflight
+foreach ($needed in @('maplecw-launcher.exe', 'grap64.dll',
+                      'bin\maplecw-login.exe', 'bin\maplecw-world.exe',
+                      'bin\maplecw-useradd.exe', 'gm-handbook', 'data')) {
+    if (-not (Test-Path (Join-Path $payload $needed))) {
+        throw "the payload is incomplete - $needed is missing. Re-run tools\make-installer.ps1."
+    }
+}
+$hasClient = Test-Path (Join-Path $payload 'client\MapleStory.exe')
+if (-not $hasClient) {
+    Write-Host 'NOTE: this payload carries no client (built with -NoClient).' -ForegroundColor Yellow
+    Write-Host '      The servers will install and run; there is nothing to launch.' -ForegroundColor Yellow
+    Write-Host ''
+}
+if (-not $NoFirewall -and -not (Test-Elevated)) {
+    throw @"
+not elevated, and the firewall rule needs it.
+Either re-run this from an elevated PowerShell window, or pass -NoFirewall and add the rule
+later with tools\firewall.ps1 -Add. Do not leave a patched client able to reach Nexon.
+"@
+}
+
+# ---------------------------------------------------------------- copy
+if (Test-Path $InstallDir) {
+    Write-Host "$InstallDir already exists - updating in place, leaving maplecw.db alone" -ForegroundColor Yellow
+} else {
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+}
+
+Write-Host 'copying...' -ForegroundColor Cyan
+# /XF maplecw.db protects an existing database on a re-install: accounts and characters are
+# real state and a payload must never overwrite them.
+& robocopy $payload $InstallDir /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1 /XF 'maplecw.db' 'install.ps1' | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed with code $LASTEXITCODE" }
+
+$bin      = Join-Path $InstallDir 'bin'
+$clientDir= Join-Path $InstallDir 'client'
+$db       = Join-Path $InstallDir 'maplecw.db'
+$useradd  = Join-Path $bin 'maplecw-useradd.exe'
+# At the root, beside client\, maplecw.db and grap64.dll. That is exactly the layout the
+# launcher detects on its own, so it works even if the config file below is never written.
+$launcher = Join-Path $InstallDir 'maplecw-launcher.exe'
+
+# ---------------------------------------------------------------- the first account
+# Created by prompting, never by inventing one: an account with a password nobody chose is
+# a login that looks real and is not. `maplecw-useradd` reads the password from a hidden
+# prompt and refuses to take one as an argument, so it cannot end up in shell history.
+if (-not $NoAccount) {
+    Write-Host ''
+    Write-Host '--- first account ---' -ForegroundColor Cyan
+    if (-not $Account) {
+        $Account = Read-Host 'Account name (3-24 chars, letters, digits and underscore)'
+    }
+    if (-not $Email) {
+        $Email = Read-Host 'Email for this account (optional - press Enter to skip)'
+    }
+
+    $existing = & $useradd --db "$db" --list 2>&1 | Out-String
+    if ($existing -match ("(?m)^\s*\d+\s+" + [regex]::Escape($Account) + "\s")) {
+        Write-Host "account '$Account' already exists - leaving it alone" -ForegroundColor Yellow
+    } else {
+        Write-Host "You will be asked for a password twice. It is hashed with argon2id;"
+        Write-Host "nothing here stores it in plain text."
+        if ($Email) {
+            & $useradd --db "$db" $Account --email $Email
+        } else {
+            & $useradd --db "$db" $Account
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'could not create the account' }
+    }
+    Write-Host ''
+    Write-Host 'More accounts at any time:' -ForegroundColor Cyan
+    Write-Host "  `"$useradd`" --db `"$db`" <name> --email <address>"
+} else {
+    Write-Host 'skipping account creation (-NoAccount)' -ForegroundColor Yellow
+    Write-Host "create one before launching:  `"$useradd`" --db `"$db`" <name>"
+}
+
+# ---------------------------------------------------------------- launcher config
+# The launcher already finds client\, maplecw.db and grap64.dll beside itself, so this file
+# is an OVERRIDE rather than a requirement. It is written for the one thing detection cannot
+# infer - which server to reach - and the paths are included so `--print-paths` shows an
+# answer that came from configuration rather than from a guess.
+#
+# Paths are written LITERALLY, with single backslashes.
+#
+# The first version of this doubled them with `-replace '\\', '\\'`, on the assumption that
+# the reader needed TOML escaping. It does not - it is a deliberately literal key = "value"
+# reader, because a real TOML parser would reject "C:\Users\..." as a bad \U escape. And the
+# `-replace` was wrong in its own right: `\` is not special in a .NET replacement string, so
+# that expression turns C:\MapleCW\client into C:\\MapleCW\\client. Measured in 5.1, not
+# assumed. Win32 collapses the duplicate separators so it happened to work, which is the
+# worst kind of bug - it would have sat here looking fine.
+$toml = @"
+# Written by install.ps1. The launcher reads this from beside its own executable.
+# Paths are literal - single backslashes, no escaping.
+client_dir = "$clientDir"
+db_path    = "$db"
+stub_path  = "$(Join-Path $InstallDir 'grap64.dll')"
+server_ip  = "$ServerIp"
+port       = "$Port"
+"@
+Set-Content -Path (Join-Path $InstallDir 'maplecw-launcher.toml') -Value $toml -Encoding ascii
+Write-Host ''
+Write-Host "wrote $InstallDir\maplecw-launcher.toml"
+
+# ---------------------------------------------------------------- firewall
+if ($NoFirewall) {
+    Write-Host 'skipping the firewall rule (-NoFirewall)' -ForegroundColor Yellow
+    Write-Host '  the patched client can reach the internet until you add it.' -ForegroundColor Yellow
+} elseif (-not $hasClient) {
+    Write-Host 'no client in this payload, so no firewall rule to scope to one'
+} else {
+    $ruleName = 'MapleCW - block patched client outbound'
+    $clientExe = Join-Path $clientDir 'MapleStory.exe'
+    $null = netsh advfirewall firewall show rule name="$ruleName" 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        netsh advfirewall firewall delete rule name="$ruleName" | Out-Null
+    }
+    netsh advfirewall firewall add rule name="$ruleName" dir=out action=block `
+        program="$clientExe" enable=yes profile=any | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not add the firewall rule' }
+    Write-Host "firewall rule added, scoped to $clientExe" -ForegroundColor Green
+    Write-Host '  loopback is not filtered by Windows Firewall, so a local server still works.'
+}
+
+# ---------------------------------------------------------------- shortcut
+if (-not $NoShortcut) {
+    try {
+        $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'MapleCW Launcher.lnk'
+        $ws = New-Object -ComObject WScript.Shell
+        $s = $ws.CreateShortcut($lnk)
+        $s.TargetPath = $launcher
+        $s.WorkingDirectory = $InstallDir
+        $s.Description = 'Sign in and start MapleCW'
+        $s.Save()
+        Write-Host "desktop shortcut -> $lnk"
+    } catch {
+        Write-Host "could not create the shortcut: $_" -ForegroundColor Yellow
+    }
+}
+
+# ---------------------------------------------------------------- done
+Write-Host ''
+Write-Host '=== installed ===' -ForegroundColor Green
+Write-Host ''
+Write-Host 'Start the servers (leave this window open):' -ForegroundColor Cyan
+Write-Host "  powershell -ExecutionPolicy Bypass -File `"$InstallDir\start-server.ps1`""
+Write-Host ''
+Write-Host 'Then run the launcher, sign in, and press Start Game:' -ForegroundColor Cyan
+Write-Host "  `"$launcher`""
+Write-Host ''
+Write-Host 'The launcher signs you in against the database and marks which account is'
+Write-Host 'playing. The game socket itself carries no credentials - anything that can'
+Write-Host 'reach the login port is served as that account. Local testing only.'

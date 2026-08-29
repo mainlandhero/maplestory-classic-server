@@ -48,6 +48,12 @@ pub const FIRST_CHARACTER_ID: u32 = 200;
 pub struct Account {
     pub id: i64,
     pub name: String,
+    /// The address the launcher's sign-in field accepts, when one is set.
+    ///
+    /// `None` for every account made before the column existed, and for any account made
+    /// with `maplecw-useradd` without one. An account with no email signs in by name; the
+    /// two are alternative identities for the same row, never a second credential.
+    pub email: Option<String>,
     pub enabled: bool,
     pub created_at: i64,
     pub last_login: Option<i64>,
@@ -208,6 +214,7 @@ impl Store {
         Self::add_inventory_slot_columns(&conn)?;
         Self::add_meso_column(&conn)?;
         Self::add_experience_column(&conn)?;
+        Self::add_account_email_column(&conn)?;
         // Whole new tables, so a plain `CREATE TABLE IF NOT EXISTS` is enough - unlike the
         // slot columns above, which had to be ALTERed onto a table that already existed.
         crate::quest::create_tables(&conn)?;
@@ -222,6 +229,14 @@ impl Store {
         // already has skills learned.
         crate::skillpoints::create_tables(&conn)?;
         crate::rates::create_tables(&conn)?;
+        // Which account a credential-less game connection is served as. New table, so
+        // `CREATE TABLE IF NOT EXISTS` is enough. `claims.rs` ALSO ensures the table inside
+        // each of its three methods, and that belt-and-braces is deliberate rather than
+        // redundant: `current_login_claim` runs once per login connection, and a missing
+        // table would make it return `Err` - which the login server would have to turn into
+        // either a wrong account or no reply at all, and an unanswered packet freezes the
+        // client's whole UI.
+        crate::claims::create_tables(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -258,6 +273,48 @@ impl Store {
                 [],
             )?;
         }
+        Ok(())
+    }
+
+    /// `accounts.email`, added to `accounts` after the fact.
+    ///
+    /// Same shape and same reason as [`Self::add_meso_column`]: `CREATE TABLE IF NOT EXISTS`
+    /// does nothing to a table that already exists, and the owner's database has accounts in it,
+    /// so a column named in the schema above would exist only in a fresh database. `ALTER
+    /// TABLE ADD COLUMN` raises "duplicate column name" on the second open, hence the guard.
+    ///
+    /// **Nullable, and every existing account gets NULL.** That is a statement of fact rather
+    /// than a default being imposed: nothing has ever recorded an email here, so there is no
+    /// value that could be overwritten, and an account without one still signs in by name.
+    ///
+    /// It exists because the launcher's sign-in field is labelled *email* - the real service
+    /// authenticates by email and the login screen shows a masked one - and because
+    /// [`Self::validate_name`] allows only `[A-Za-z0-9_]`, so an email-shaped string can
+    /// never be an account **name**. Without this column "log in with your email" would be a
+    /// field that cannot match anything.
+    ///
+    /// The uniqueness index is `WHERE email IS NOT NULL`: a plain `UNIQUE` column in SQLite
+    /// permits many NULLs, which is the behaviour wanted, but being explicit means the intent
+    /// survives someone later making the column `NOT NULL`. `COLLATE NOCASE` because email
+    /// addresses are not case-sensitive in the half anyone types.
+    fn add_account_email_column(conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(accounts)")?;
+        let exists = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "email");
+        drop(stmt);
+        if !exists {
+            conn.execute("ALTER TABLE accounts ADD COLUMN email TEXT COLLATE NOCASE", [])?;
+        }
+        // Outside the `if`: an index is idempotent on its own and a database that gained the
+        // column before this index existed still needs it.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email
+                 ON accounts(email) WHERE email IS NOT NULL",
+            [],
+        )?;
         Ok(())
     }
 
@@ -424,16 +481,17 @@ impl Store {
     pub fn get_account(&self, name: &str) -> Result<Option<Account>> {
         let acc = self.conn()
             .query_row(
-                "SELECT id, name, enabled, created_at, last_login
+                "SELECT id, name, email, enabled, created_at, last_login
                  FROM accounts WHERE name = ?1",
                 params![name],
                 |r| {
                     Ok(Account {
                         id: r.get(0)?,
                         name: r.get(1)?,
-                        enabled: r.get::<_, i64>(2)? != 0,
-                        created_at: r.get(3)?,
-                        last_login: r.get(4)?,
+                        email: r.get(2)?,
+                        enabled: r.get::<_, i64>(3)? != 0,
+                        created_at: r.get(4)?,
+                        last_login: r.get(5)?,
                     })
                 },
             )
@@ -441,21 +499,96 @@ impl Store {
         Ok(acc)
     }
 
+    /// Resolve an account by **name or email**, whichever the string matches.
+    ///
+    /// The launcher's sign-in field is labelled *email*, but [`Self::validate_name`] allows
+    /// only `[A-Za-z0-9_]`, so an email-shaped string can never be an account name and a
+    /// name can never be an email. **The two namespaces cannot collide**, which is what makes
+    /// one field for both safe rather than merely convenient: there is no string that is a
+    /// valid name and a valid email at once, so this can never have to choose between two
+    /// accounts.
+    ///
+    /// Both comparisons are `COLLATE NOCASE` - `accounts.name` was declared that way and the
+    /// email index matches it - so case is not a way to miss your own account.
+    pub fn get_account_by_identity(&self, identity: &str) -> Result<Option<Account>> {
+        let acc = self
+            .conn()
+            .query_row(
+                "SELECT id, name, email, enabled, created_at, last_login
+                   FROM accounts
+                  WHERE name = ?1 OR email = ?1",
+                params![identity],
+                |r| {
+                    Ok(Account {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        email: r.get(2)?,
+                        enabled: r.get::<_, i64>(3)? != 0,
+                        created_at: r.get(4)?,
+                        last_login: r.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(acc)
+    }
+
+    /// Set or clear an account's email.
+    ///
+    /// `None` clears it. A duplicate is refused by the unique index rather than silently
+    /// reseating which account an address signs into.
+    pub fn set_email(&self, name: &str, email: Option<&str>) -> Result<()> {
+        let n = self.conn().execute(
+            "UPDATE accounts SET email = ?2 WHERE name = ?1",
+            params![name, email],
+        )?;
+        if n == 0 {
+            return Err(StoreError::NoSuchAccount {
+                name: name.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// [`Self::authenticate`], but the identity may be a name **or** an email.
+    ///
+    /// This is what the launcher calls. It resolves the identity to a name and defers to
+    /// `authenticate`, so there is exactly one implementation of "check a password and issue
+    /// a token" and this cannot drift away from it - in particular it cannot accidentally
+    /// skip the `enabled` check or the token write.
+    ///
+    /// **The unknown-identity path still costs a verify.** `authenticate` already burns a
+    /// dummy argon2id verification when the name does not exist, so routing an unresolvable
+    /// email to a name that cannot exist keeps the timing indistinguishable. Returning
+    /// `InvalidCredentials` directly from here would answer a bad email far faster than a bad
+    /// password and hand back exactly the account-enumeration oracle
+    /// [`AuthOutcome`] exists to deny.
+    pub fn authenticate_identity(&self, identity: &str, password: &str) -> Result<AuthOutcome> {
+        let name = match self.get_account_by_identity(identity)? {
+            Some(acc) => acc.name,
+            // Not a valid account name (spaces are outside `validate_name`'s alphabet), so
+            // the lookup inside `authenticate` misses and its dummy verify runs.
+            None => " no such identity ".to_string(),
+        };
+        self.authenticate(&name, password)
+    }
+
     pub fn list_accounts(&self) -> Result<Vec<Account>> {
         // Bind the guard: a prepared statement borrows the connection, so the lock has
         // to outlive it.
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, name, enabled, created_at, last_login FROM accounts ORDER BY id",
+            "SELECT id, name, email, enabled, created_at, last_login FROM accounts ORDER BY id",
         )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(Account {
                     id: r.get(0)?,
                     name: r.get(1)?,
-                    enabled: r.get::<_, i64>(2)? != 0,
-                    created_at: r.get(3)?,
-                    last_login: r.get(4)?,
+                    email: r.get(2)?,
+                    enabled: r.get::<_, i64>(3)? != 0,
+                    created_at: r.get(4)?,
+                    last_login: r.get(5)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -553,16 +686,17 @@ impl Store {
         };
         let acc = self.conn()
             .query_row(
-                "SELECT id, name, enabled, created_at, last_login
+                "SELECT id, name, email, enabled, created_at, last_login
                  FROM accounts WHERE id = ?1 AND enabled = 1",
                 params![id],
                 |r| {
                     Ok(Account {
                         id: r.get(0)?,
                         name: r.get(1)?,
-                        enabled: r.get::<_, i64>(2)? != 0,
-                        created_at: r.get(3)?,
-                        last_login: r.get(4)?,
+                        email: r.get(2)?,
+                        enabled: r.get::<_, i64>(3)? != 0,
+                        created_at: r.get(4)?,
+                        last_login: r.get(5)?,
                     })
                 },
             )
@@ -1001,6 +1135,148 @@ mod tests {
         assert!(matches!(
             s.create_account("player_one", "short"),
             Err(StoreError::PasswordTooShort { .. })
+        ));
+    }
+
+    // ---- email as a second identity for the launcher's sign-in field ----
+
+    #[test]
+    fn an_account_starts_with_no_email() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        assert_eq!(s.get_account("player_one").unwrap().unwrap().email, None);
+    }
+
+    #[test]
+    fn identity_resolves_by_name_or_by_email() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("wisp@example.test")).unwrap();
+
+        let by_name = s.get_account_by_identity("player_one").unwrap().unwrap();
+        let by_mail = s.get_account_by_identity("wisp@example.test").unwrap().unwrap();
+        assert_eq!(by_name.id, by_mail.id);
+        assert_eq!(by_mail.email.as_deref(), Some("wisp@example.test"));
+    }
+
+    #[test]
+    fn identity_lookup_ignores_case_in_both_namespaces() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("the owner@Example.test")).unwrap();
+        assert!(s.get_account_by_identity("PLAYER_ONE").unwrap().is_some());
+        assert!(s.get_account_by_identity("wisp@EXAMPLE.TEST").unwrap().is_some());
+    }
+
+    #[test]
+    fn signing_in_by_email_issues_a_token() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("wisp@example.test")).unwrap();
+
+        let out = s.authenticate_identity("wisp@example.test", "hunter2hunter2").unwrap();
+        let AuthOutcome::Ok { account_id, token } = out else {
+            panic!("email sign-in should succeed, got {out:?}");
+        };
+        assert_eq!(account_id, s.get_account("player_one").unwrap().unwrap().id);
+        // The token is a real session, not a placeholder.
+        assert_eq!(
+            s.validate_session(&token).unwrap().map(|a| a.name),
+            Some("player_one".to_string())
+        );
+    }
+
+    #[test]
+    fn signing_in_by_email_with_the_wrong_password_is_refused() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("wisp@example.test")).unwrap();
+        assert_eq!(
+            s.authenticate_identity("wisp@example.test", "not-the-password").unwrap(),
+            AuthOutcome::InvalidCredentials
+        );
+    }
+
+    #[test]
+    fn a_disabled_account_cannot_sign_in_by_email_either() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("wisp@example.test")).unwrap();
+        s.set_enabled("player_one", false).unwrap();
+        assert_eq!(
+            s.authenticate_identity("wisp@example.test", "hunter2hunter2").unwrap(),
+            AuthOutcome::Disabled
+        );
+    }
+
+    #[test]
+    fn two_accounts_cannot_share_one_email() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.create_account("player_two", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("wisp@example.test")).unwrap();
+        assert!(
+            s.set_email("player_two", Some("wisp@example.test")).is_err(),
+            "the unique index must refuse to reseat which account an address signs into"
+        );
+    }
+
+    #[test]
+    fn many_accounts_may_have_no_email() {
+        // A UNIQUE column in SQLite permits many NULLs. That is the behaviour wanted -
+        // every account that predates the column has one - so pin it rather than trust it.
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.create_account("player_two", "hunter2hunter2").unwrap();
+        assert!(s.get_account("player_one").unwrap().unwrap().email.is_none());
+        assert!(s.get_account("player_two").unwrap().unwrap().email.is_none());
+    }
+
+    #[test]
+    fn an_unknown_email_still_pays_for_a_password_verification() {
+        // Same guarantee as `unknown_account_costs_similar_time_to_wrong_password`, on the
+        // email path. Returning InvalidCredentials straight from `authenticate_identity`
+        // would answer a bad email far faster than a bad password and hand back exactly the
+        // account-enumeration oracle AuthOutcome exists to deny.
+        use std::time::Instant;
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("wisp@example.test")).unwrap();
+
+        let t0 = Instant::now();
+        s.authenticate_identity("wisp@example.test", "wrong-password").unwrap();
+        let wrong_pw = t0.elapsed();
+
+        let t1 = Instant::now();
+        s.authenticate_identity("nobody@example.test", "wrong-password").unwrap();
+        let unknown = t1.elapsed();
+
+        assert!(
+            unknown * 5 > wrong_pw,
+            "unknown-email path far faster than wrong-password path              ({unknown:?} vs {wrong_pw:?}), which leaks which addresses have accounts"
+        );
+    }
+
+    #[test]
+    fn clearing_an_email_frees_it_for_another_account() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        s.create_account("player_two", "hunter2hunter2").unwrap();
+        s.set_email("player_one", Some("wisp@example.test")).unwrap();
+        s.set_email("player_one", None).unwrap();
+        s.set_email("player_two", Some("wisp@example.test")).unwrap();
+        assert_eq!(
+            s.get_account_by_identity("wisp@example.test").unwrap().unwrap().name,
+            "player_two"
+        );
+    }
+
+    #[test]
+    fn setting_an_email_on_a_missing_account_is_an_error() {
+        let s = store();
+        assert!(matches!(
+            s.set_email("nobody_here", Some("a@b.test")),
+            Err(StoreError::NoSuchAccount { .. })
         ));
     }
 }

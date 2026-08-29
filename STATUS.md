@@ -90,6 +90,26 @@ game socket at all** — `CNMGuildChatMessageEvent`, `CNMGetMyGuildListExFunc` a
 SOAP endpoints own guild chat, the member list and the mark image. Server side: **zero guild
 code, and that is the right amount for now.** `research/guilds.md`.
 
+**MORE THAN ONE ACCOUNT WORKS NOW — 2026-08-28, and it is unconfirmed on a client.** The
+login server used to resolve `--account` **once, at startup**, so one process could only ever
+be one player. It resolves **per connection** now: `maplecw-launcher` verifies a password
+(argon2id), stakes a *login claim* in the shared database, and `login::server::resolve_account`
+reads it on every accept, falling back to `--account` when none is live. Sign in as someone
+else and press Start Game — no restart. `tools/test-server.ps1 -Launcher` drives it.
+
+Three things that are easy to get wrong and are pinned by tests: **the claim is not consumed
+on read** (the client opens a second login connection after Log Out — a single-use claim would
+turn "log out" into "my characters vanished"); a **stale claim falls back rather than refusing**,
+because an unanswered connection freezes the client's whole UI; and every connection **logs
+which account it chose and why**. The sign-in field takes an account name *or* an email —
+`accounts.email` is a new nullable unique column, and the two namespaces cannot collide
+because `validate_name` allows only `[A-Za-z0-9_]`.
+
+**It is still not authentication, and the wording matters.** The claim decides *which* account
+a credential-less connection is served as. The game socket carries no credentials, `0x0073` has
+been measured carrying none, and anything that reaches the login port is served as whatever the
+claim names. The launcher authenticates a *person*, not a *connection*. `docs/launcher.md`.
+
 Where the answers land:
 
 | file | what is in it |

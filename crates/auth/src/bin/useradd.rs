@@ -1,10 +1,17 @@
 //! Local account administration.
 //!
-//!   maplecw-useradd <name>              create an account
-//!   maplecw-useradd --list              list accounts
-//!   maplecw-useradd --passwd <name>     change a password
+//!   maplecw-useradd <name> [--email ADDR]   create an account
+//!   maplecw-useradd --list                  list accounts
+//!   maplecw-useradd --passwd <name>         change a password
+//!   maplecw-useradd --email <name> <addr>   set or clear an email ("" clears)
 //!   maplecw-useradd --disable <name>
 //!   maplecw-useradd --enable  <name>
+//!   maplecw-useradd --clear-claims          forget which account is "playing"
+//!
+//! The email is a second **identity**, not a second credential: `maplecw-launcher`'s
+//! sign-in field accepts either it or the account name, and `Store::validate_name` allows
+//! only `[A-Za-z0-9_]` so the two namespaces cannot collide. An account without one signs
+//! in by name exactly as before.
 //!
 //! Passwords are read from a hidden prompt, or from stdin when it is piped. They are
 //! **never** accepted as a command-line argument: arguments land in shell history and
@@ -23,13 +30,18 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::SUCCESS;
     }
 
-    // Optional --db, anywhere in the arguments.
+    // Optional --db, anywhere in the arguments. `--email ADDR` is the same shape, but only
+    // when it is not the leading verb - `--email <name> <addr>` is its own command below.
     let mut db_path = String::from(DEFAULT_DB);
+    let mut new_email: Option<String> = None;
     let mut rest: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--db" && i + 1 < args.len() {
             db_path = args[i + 1].clone();
+            i += 2;
+        } else if args[i] == "--email" && i > 0 && i + 1 < args.len() {
+            new_email = Some(args[i + 1].clone());
             i += 2;
         } else {
             rest.push(args[i].clone());
@@ -59,8 +71,13 @@ fn main() -> std::process::ExitCode {
             Some(name) => toggle(&store, name, true),
             None => Err("--enable needs an account name".into()),
         },
+        Some("--clear-claims") => clear_claims(&store),
+        Some("--email") => match (rest.get(1), rest.get(2)) {
+            (Some(name), Some(addr)) => set_email(&store, name, addr),
+            _ => Err("--email needs an account name and an address (\"\" clears it)".into()),
+        },
         Some(flag) if flag.starts_with('-') => Err(format!("unknown option: {flag}")),
-        Some(name) => create(&store, name),
+        Some(name) => create(&store, name, new_email.as_deref()),
         None => {
             usage();
             Ok(())
@@ -117,12 +134,50 @@ fn read_password(prompt: &str, confirm: bool) -> Result<String, String> {
     Ok(pw)
 }
 
-fn create(store: &Store, name: &str) -> Result<(), String> {
+fn create(store: &Store, name: &str, email: Option<&str>) -> Result<(), String> {
     let pw = read_password(&format!("Password for {name}: "), true)?;
     let id = store
         .create_account(name, &pw)
         .map_err(|e| format!("could not create account: {e}"))?;
     println!("created account {name:?} (id {id})");
+    // After the account exists, so a rejected address leaves a usable account rather than
+    // no account at all - the password has already been typed twice by this point.
+    if let Some(addr) = email.filter(|a| !a.is_empty()) {
+        store
+            .set_email(name, Some(addr))
+            .map_err(|e| format!("account created, but the email was NOT set: {e}"))?;
+        println!("  email {addr:?} - the launcher accepts this or the name");
+    }
+    Ok(())
+}
+
+/// Drop every login claim, so the login server falls back to its `--account`.
+///
+/// A claim says "serve the next game connection as this account" and lives for hours, which
+/// is right when the launcher is driving. It is a trap when it is not: a run started with an
+/// explicit `--account` would quietly serve yesterday's launcher account instead, and on
+/// screen that is someone else's characters with no explanation. `tools/test-server.ps1`
+/// calls this on the path that does not use the launcher, so explicit configuration wins.
+fn clear_claims(store: &Store) -> Result<(), String> {
+    let n = store
+        .clear_login_claims()
+        .map_err(|e| format!("could not clear login claims: {e}"))?;
+    match n {
+        0 => println!("no login claim was live; the login server was already using --account"),
+        _ => println!("cleared {n} login claim(s); the login server now uses its --account"),
+    }
+    Ok(())
+}
+
+fn set_email(store: &Store, name: &str, addr: &str) -> Result<(), String> {
+    let value = if addr.is_empty() { None } else { Some(addr) };
+    store
+        .set_email(name, value)
+        .map_err(|e| format!("could not set email: {e}"))?;
+    match value {
+        Some(a) => println!("account {name:?} now signs in as {name:?} or {a:?}"),
+        None => println!("account {name:?} has no email; it signs in by name only"),
+    }
     Ok(())
 }
 
@@ -159,16 +214,17 @@ fn list(store: &Store) -> Result<(), String> {
         println!("no accounts yet");
         return Ok(());
     }
-    println!("{:<5} {:<24} {:<9} last login", "id", "name", "state");
+    println!("{:<5} {:<24} {:<28} {:<9} last login", "id", "name", "email", "state");
     for a in accounts {
         let last = a
             .last_login
             .map(|t| format!("{t}"))
             .unwrap_or_else(|| "never".into());
         println!(
-            "{:<5} {:<24} {:<9} {}",
+            "{:<5} {:<24} {:<28} {:<9} {}",
             a.id,
             a.name,
+            a.email.as_deref().unwrap_or("-"),
             if a.enabled { "enabled" } else { "disabled" },
             last
         );

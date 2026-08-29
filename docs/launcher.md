@@ -1,13 +1,23 @@
 # The launcher
 
-Written 2026-08-17. Not built yet. The owner asked for "a minimal launcher for the client to
-perform any patching you need to do in order to neutralize GameGuard and skip net check when
-the client starts, so it is more professional looking", and noted it probably needs the
-username and password, since the real client uses a validated session.
+Written 2026-08-17 as a design. **Built 2026-08-28** as `crates/launcher` /
+`maplecw-launcher`, after the owner asked for "a separate simplified login client that launches
+before the regular MapleStory client to establish account and session… We need to have more
+than 1 account to be able to connect to this server", and then for the shape: "input of email
+and password and server IP… two buttons, Login then Start Game. Login validates the session
+and then enables the Start Game button. The Start Game button should invalidate the game
+guard, stub the grap.dll and do whatever it needs to do."
 
-This is the design. It replaces `tools/test-charselect.ps1` for *using* the client; that
-script stays as the instrumented harness for *investigating* it, and the two should keep
-working side by side.
+The original brief was "a minimal launcher for the client to perform any patching you need to
+do in order to neutralize GameGuard and skip net check when the client starts, so it is more
+professional looking".
+
+It replaces `tools/test-charselect.ps1` for *using* the client; that script stays as the
+instrumented harness for *investigating* it, and the two should keep working side by side.
+`tools/test-server.ps1 -Launcher` starts the servers and hands over to it.
+
+**Read "How more than one account actually works" below before anything else** - it is the
+part that changed, and the two options this document used to end on were both wrong.
 
 ## What it does, in order
 
@@ -108,12 +118,10 @@ through `0x0073`**, and the "launcher authenticates, passes the token, login ser
 the splash, from a path that is *not* the `FUN_141b2a280` we suppress (its watch was armed
 and never fired). Do not pass them in ordinary runs.
 
-### What is left, and neither is pretty
+### What was left, and neither was taken
 
 1. **One login server per account, each on its own port**, with the launcher choosing the
-   port after it authenticates. Needs no protocol at all, works today, and the owner has said
-   testing-grade is acceptable for now. The account stops being global configuration and
-   becomes per-instance, which is the only property that actually matters for testing.
+   port after it authenticates.
 2. **Write the identity string from `grap-stub`.** `0x0073`'s second field is a `char *` at
    `DAT_143ac1898+0x1b8`, sent as a **zero-length string because nothing computes it**. The
    stub is already in-process and could write a token there before the packet is built. That
@@ -121,11 +129,91 @@ and never fired). Do not pass them in ordinary runs.
    a session**, and it belongs in the patch inventory above with a retirement column, not
    described as authentication.
 
-Either way `Session` should take its account from a resolver rather than from `Config`, so
-whichever route wins is one function.
+The one true sentence in that pair was the one after it: *"Either way `Session` should take
+its account from a resolver rather than from `Config`, so whichever route wins is one
+function."* That is what was built, and it turned out that once the resolver existed neither
+option was needed.
 
-**Nothing here is authenticated today**, and the login server says so at startup. Do not
-describe it otherwise until `/consume` is gating the login result.
+## How more than one account actually works
+
+**A login claim in the shared database, and per-connection resolution.** Built 2026-08-28.
+
+```text
+launcher                              login server
+--------                              ------------
+authenticate_identity(email|name, pw)
+  -> argon2id verify, session token
+stake_login_claim(account_id, token)
+  -> "serve the next connection as this"
+                                      accept()
+                                      resolve_account()  <- reads the claim, per connection
+                                      Session::new(.., that account)
+```
+
+`store::claims` holds it, `login::server::resolve_account` reads it, and `--account` survives
+as the fallback for a connection that arrives before anyone has signed in.
+
+**Why this beats one-server-per-port.** That option needed N processes on N ports for N
+accounts, the launcher had to know the mapping, and adding an account meant editing a
+launch script. This needs one process, one port, and no restart to swap accounts. It also
+composes with the installer: a target machine runs one pair of servers whoever is playing.
+
+Three properties that are load-bearing, and the second one is the one that would have been
+got wrong:
+
+* **The claim is not consumed on read.** The client opens a *second* login connection after
+  "Log Out" and "Choose another world" - `CLAUDE.md` records two `0x0010`s in one launch - so
+  a single-use claim would drop that connection back to the fallback account. On screen that
+  is "my characters vanished when I logged out", which is worse than the replay it would be
+  guarding against. `resolving_twice_serves_the_same_account_because_a_claim_is_not_consumed`
+  is the regression test and it is named to say so.
+* **A stale claim falls back rather than refusing.** An account deleted or disabled while a
+  claim named it resolves to the fallback and the connection is answered. Refusing would
+  leave the client with no reply, and an unanswered packet freezes its entire UI.
+* **Every connection logs which account it chose and why.** `world.log` and `login.log` are
+  the only record of whose characters were on screen, and three of this project's answers
+  came from reading a log after the fact.
+
+**The email is an identity, not a credential.** `accounts.email` is a nullable unique column;
+`Store::get_account_by_identity` matches name **or** email. The two namespaces cannot collide
+because `validate_name` allows only `[A-Za-z0-9_]`, so no string is a valid name and a valid
+email at once - which is what makes one sign-in field safe rather than merely convenient. An
+unresolvable identity is still routed through argon2id's dummy verify, so a bad email does
+not answer faster than a bad password and hand back an account-enumeration oracle.
+
+### And it is still not authentication
+
+`resolve_account` decides **which** account a credential-less connection is served as. It
+does not check anything about the connection, because there is nothing on the wire to check:
+the game socket carries no credentials and `0x0073` has been measured carrying none. The
+launcher verifies a *person* before staking a claim; anything that can reach the login port
+is then served as that account. The login server says so at startup, the launcher says so on
+screen, and the installer's README says so. Do not describe it otherwise until something is
+gating the login result.
+
+## Shipping it: the installer
+
+The owner, 2026-08-28: *"we'll need to ship an installer too with all of these client files.
+Including the wz files since the test machines will not have any client files and it needs to
+start from 0."*
+
+`tools/make-installer.ps1` stages a payload on the dev box; `tools/installer/install.ps1`
+runs on the target. What goes in, what does not, and why the client is staged **unstubbed**
+is documented in the packaging script's own header rather than repeated here.
+
+Two things worth knowing before running either:
+
+* **`gm-handbook/` must be regenerated before packaging.** It is gitignored game data, the
+  world server reads its tables from it, and a payload without it installs cleanly and then
+  cannot load a map. The packaging script refuses rather than shipping one.
+* **`--set-field-probe` is passed unconditionally** by `start-server.ps1`, with no switch to
+  turn it off. Without it `Session::handle` returns nothing for every packet and the client
+  sits on "Connecting..." looking exactly like a server that is not running - a failure that
+  has already cost one manual launch, and one an installed machine must not be able to
+  reproduce.
+
+The client and its WZ data are Nexon's. The payload exists so machines the owner owns can run
+files they own; it is not a distribution channel.
 
 ## Implementation notes
 

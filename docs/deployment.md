@@ -77,13 +77,40 @@ practical purposes.
 Tokens are 32 bytes from the OS CSPRNG and the database stores only their hash; passwords
 are argon2id with a per-password salt. Nothing in the crate logs a password or a token.
 
-So the flow is: **launcher → auth (TLS) → token → client launch argument → game socket →
-login server → auth `/consume`.** The password never touches the game protocol, and the
-token on the game socket is single-use and short-lived.
+**That flow was: launcher → auth → token → client launch argument → game socket → login
+server → `/consume`. The middle of it does not exist and cannot be built.** Measured
+2026-08-18 and recorded in `docs/launcher.md`: `-NXLDEBUG` does route launch arguments into
+the client's session array at config `+0x90`, but **nothing puts them on the wire** - six
+distinguishable tokens were passed and outbound `0x0073` came back byte-identical to a run
+without them. Passing them also broke the run with a "trouble connecting" dialog. So there is
+no transport for a token on the game socket, and `/consume` has nothing to consume.
 
-**Change required:** `crates/auth/src/http.rs` hardcodes `127.0.0.1` and says so in its own
-doc comment. It needs a configurable bind, and once it is off-box it needs TLS - a homelab CA
-with a certificate for the server name is enough. Do not put it on the internet.
+**What replaced it, 2026-08-28**, is not a smaller version of the same idea. The launcher
+authenticates and then writes a **login claim** to the database; the login server resolves an
+account from that claim on every accept. See `docs/launcher.md`. The password still never
+touches the game protocol - but neither does anything else, and the honest statement is that
+the game socket is unauthenticated rather than weakly authenticated.
+
+**This is the single biggest gap between the local setup and an off-box one.** On one machine
+the launcher opens the SQLite file directly and the claim is machine-local state, which is
+sound because the only party that can stake one has already authenticated to the launcher. On
+a network that stops being true twice over: a claim is **global to the database**, so two
+players staking claims would fight over who the next connection is; and anything that can
+reach the login port is served as whatever the current claim names.
+
+So for a real multi-machine deployment the remaining work is:
+
+* **`crates/auth` needs a bind that is not hardcoded loopback** - its own doc comment says it
+  hardcodes `127.0.0.1` - and TLS once it is off-box. A homelab CA with a certificate for the
+  server name is enough. Do not put it on the internet.
+* **The launcher needs to authenticate over that service rather than against a local database
+  file**, because a client machine will not have one. It has a server IP field already; today
+  that field directs the *game* connection only.
+* **The claim needs to stop being global.** There is nothing on the game socket to key it by,
+  which is the whole difficulty - the honest options are one login port per player, or the
+  `grap-stub` identity-string route in `docs/launcher.md`, and neither is pretty.
+
+Until those exist, treat the installed configuration as **one player per server box**.
 
 ## Machine identity is not an authorisation input
 

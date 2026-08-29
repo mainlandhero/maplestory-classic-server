@@ -281,6 +281,18 @@ THE /hitdamagetest ROUTE IS DEAD, but that is one lever, not the answer.
         already safe. That is one thing this step does not have to establish.
         research/keymap-not-saved.md.
 
+    MORE THAN ONE ACCOUNT - new 2026-08-28, and not a step in this plan
+    -------------------------------------------------------------------
+    The login server used to resolve --account ONCE at startup, so one process could only
+    ever be one player. It resolves PER CONNECTION now, from a claim staked by
+    maplecw-launcher after it checks a password (argon2id). Relaunch with -Launcher to use
+    it; sign in with an account name OR its email.
+      .\target\release\maplecw-useradd.exe <name> --email <addr>
+      .\target\release\maplecw-useradd.exe --list
+    An ordinary run (no -Launcher) CLEARS any leftover claim first, so --account wins and a
+    claim from yesterday cannot quietly serve someone else's characters through a whole plan.
+    Still not authentication: the game socket carries no credentials.
+
     BUILT BUT NOT WIRED - say so rather than let it look like a bug
     --------------------------------------------------------------
     DAMAGE VALIDATION. world::damage::check_hit and world::magic::check_magic_hit are written
@@ -442,10 +454,23 @@ param(
     # world-ch<N>.log (the rest). Channel 0 keeps the plain name because every doc and
     # instruction in this repo points at world.log.
     [int]$Channels = 2,
-    # The account every connection is served as. The game socket carries no credentials,
-    # so this is not a login - it decides whose characters appear. Create it first with
-    #   .\target\release\maplecw-useradd.exe <name>
+    # The FALLBACK account - who a connection is served as when no launcher claim is live.
+    #
+    # It used to be the only answer: the login server resolved it once at startup, so one
+    # process could only ever be one player. It is now resolved PER CONNECTION, and a claim
+    # staked by maplecw-launcher wins. Create the account first with
+    #   .\target\release\maplecw-useradd.exe <name> --email <address>
+    # The game socket still carries no credentials, so neither this nor a claim is a login:
+    # they decide whose characters appear, and anything that reaches the port gets them.
     [string]$Account = 'maplecw',
+    # Start maplecw-launcher instead of the client, and let IT start the client.
+    #
+    # This is the multi-account path: sign in as whoever you want, press Start Game, and the
+    # launcher installs the hook and launches. The servers are started either way. Use it
+    # when the question is about accounts; use the ordinary path when the question is about
+    # the game, because the launcher writes the same marker files by a different route and
+    # that is one more thing standing between a run and its evidence.
+    [switch]$Launcher,
     # What the login screen displays. Server-supplied; the client cannot compute it.
     [string]$DisplayName = 'wisp****@example.com',
     [string]$Database,
@@ -895,7 +920,14 @@ try {
     # target/release/maplecw-world.exe but never built it, so every change to the channel
     # server reached a run only if someone had happened to build it by hand - the same
     # silent-stale-binary failure the grap-stub note above warns about, one crate over.
-    & cargo build --release -p login -p world -p store -p grap-stub
+    # `auth` is here for maplecw-useradd, which this script now calls to clear a stale login
+    # claim. `launcher` only when it is going to be run - it pulls eframe, and a first build
+    # of that is minutes nobody asked for on a run that is not about accounts.
+    if ($Launcher) {
+        & cargo build --release -p login -p world -p store -p auth -p grap-stub -p launcher
+    } else {
+        & cargo build --release -p login -p world -p store -p auth -p grap-stub
+    }
     if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 }
 finally { Pop-Location }
@@ -945,6 +977,24 @@ function Save-PreviousLog([string]$Path, [string]$Into) {
 
 Save-PreviousLog $serverLog
 Remove-Item $serverLog -Force -ErrorAction SilentlyContinue
+
+# On the ordinary path, EXPLICIT CONFIGURATION WINS.
+#
+# A launcher claim says "serve the next connection as this account" and lives for hours. That
+# is right when the launcher is driving. It is a trap when it is not: this run passes
+# --account, and a claim left over from a launcher run yesterday would quietly serve that
+# account instead - which on screen is someone else's characters, with a plan full of steps
+# that then all read as broken. The login server logs which one it used every time, but the
+# banner the owner reads at launch is not the server log.
+#
+# -Launcher deliberately does NOT do this: there, the claim is the whole point.
+if (-not $Launcher) {
+    $userAddExe = Join-Path $root 'target\release\maplecw-useradd.exe'
+    if (Test-Path $userAddExe) {
+        & $userAddExe --db "$Database" --clear-claims | ForEach-Object { Write-Host "  $_" }
+    }
+}
+
 $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru `
     -WindowStyle Hidden `
     -ArgumentList @(
@@ -1069,6 +1119,29 @@ if ($SetFieldProbe) {
     Write-Host "              at all means the hook never armed and the log proves nothing."
     Write-Host "              It arms ~4.5s after connect."
 }
+if ($Launcher) {
+    # Hand over to maplecw-launcher and stop here. It writes the same marker files this
+    # script does and launches the client itself, so doing both would mean two writers for
+    # one set of files - and the second one to run would silently win.
+    $launcherExe = Join-Path $root 'target\release\maplecw-launcher.exe'
+    if (-not (Test-Path $launcherExe)) {
+        throw "no launcher at $launcherExe - build it with: cargo build --release -p launcher"
+    }
+    Write-Host ''
+    Write-Host 'THE LAUNCHER IS DRIVING THIS RUN.' -ForegroundColor Cyan
+    Write-Host '  Sign in with an account name OR its email, check the server IP, press'
+    Write-Host '  Login, then Start Game. The login server picks up whoever you signed in'
+    Write-Host '  as - it is resolved per connection now, so no restart is needed to swap.'
+    Write-Host ''
+    Write-Host ("  accounts:  `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" --list" -f $root, $Database)
+    Write-Host ("  add one:   `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" <name> --email <addr>" -f $root, $Database)
+    Write-Host ''
+    Start-Process -FilePath $launcherExe -WorkingDirectory $root | Out-Null
+    Write-Host 'launcher started. Stop the servers when done:' -ForegroundColor Green
+    Write-Host ("  powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -Stop" -f $root)
+    return
+}
+
 # ShellExecute is required: the client has an elevation manifest, and CreateProcess fails
 # with "requires elevation".
 $launchArgs = @('-NXLDEBUG', '127.0.0.1', "$Port")
@@ -1347,6 +1420,18 @@ if ($SetFieldProbe) {
     Write-Host '  the chat log; level-up +16 HP / +12 MP; relog keeps Etc and mesos;'
     Write-Host '  ores stack; !setrates 2 3 5 -> one banner. NPC chatter no longer'
     Write-Host '  follows you into the cash shop.'
+    Write-Host ''
+    Write-Host '  MORE THAN ONE ACCOUNT WORKS NOW - relaunch with -Launcher.' -ForegroundColor Cyan
+    Write-Host '  The login server used to resolve --account ONCE at startup, so one'
+    Write-Host '  process could only ever be one player. It resolves per CONNECTION now:'
+    Write-Host '  maplecw-launcher checks a password, marks who is playing, and you can'
+    Write-Host '  swap accounts without restarting anything. Sign in with the account'
+    Write-Host '  name OR its email.'
+    Write-Host '    add one:  .\target\release\maplecw-useradd.exe <name> --email <addr>'
+    Write-Host '    list:     .\target\release\maplecw-useradd.exe --list'
+    Write-Host '  THIS run cleared any leftover claim, so it is served as --account.'
+    Write-Host '  Still not authentication: the game socket carries no credentials, so'
+    Write-Host '  this picks an account, it does not verify the client.'
     Write-Host ''
     Write-Host '  COMMANDS: !map !item !exp !heal !job !learn !kit !buff !unbuff'
     Write-Host '  !npcecho !npcfx !migsweep !exprate !mesorate !droprate !setrates'
