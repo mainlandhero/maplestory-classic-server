@@ -116,6 +116,30 @@ encodeInt(chr.getId());` — a literal zero in slot 2 followed by the real id. T
 shape this branch consumes. **[I]** — but it means **both encodings decode**, and the shorter one
 (a nonzero id in slot 2, three u32s total) is what the client's own code reads first.
 
+A **captured** body from that tree agrees, and it is worth having because it is bytes rather than
+a code reading — `ModernMapleSource/v214 src/logs/26 February 2026/Packets/Paladin.txt` line 1929,
+929 bytes, **logged as `v.265`**:
+
+```text
+03 00 00 00      userId = 3
+00 00 00 00      <- the literal zero in slot 2
+05 00 00 00      charId = 5
+00               byte
+00 00 00 00      guildId
+2C 01 00 00      level = 300              <- our body field 1
+0C 00 <12 bytes> name                     <- our body field 2
+00 00            "" parent name           <- our body field 3
+...              then a long run of zeros: empty guild block, gender, fame, name-tag mark
+```
+
+**Read that as corroboration of the *idiom*, not of our layout.** The capture is `v.265`, a
+version further from this client than the v214 source already is, and it diverges immediately
+after: it carries a `byte` and a `guildId` between the header and the level, which
+`FUN_1429ba3e0` does not read, and its avatar look terminates the equipment maps with **three**
+`FF` where `FUN_1402ee8d0` has **two** loops. What it does establish is that "a zero in the id
+slot, with the real id in the next dword" is a real encoding in this family — which is what the
+branch at `0x1429ba444` exists to consume. Still **[I]**.
+
 *And the `% 31` test next to it is harmless.* Both arms converge on a `std::function`-shaped local
 `{ vtable 0x143409208, &LAB_140c93920 }`, and `0x140c93920` is **seven bytes**:
 `c6 05 09 44 e3 02 01` `c3` = `mov byte [0x143AC7D30], 1 ; ret`. It sets a global flag and

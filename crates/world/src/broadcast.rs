@@ -64,6 +64,47 @@
 //! pending move per character, and spawns, farewells and attacks are never dropped.
 //!
 //! Attacks are **not** supersedable: two swings are two events.
+//!
+//! # The second channel: a *fact* to a *character*, not a packet to a map
+//!
+//! [`Bus::publish`] carries a finished [`Reply`] to everyone on a map. That works
+//! because a movement packet says the same thing to every observer. **Experience does
+//! not.**
+//!
+//! `0x007C` (`net::stats::STAT_CHANGED`) carries the recipient's **own new total and
+//! own new level**. Only the recipient's session can compute those: it needs that
+//! character's database record, its own `config.exp_curve.award(...)`, and its own
+//! `store::save_character_progress`. If the killing session built that packet and
+//! posted it, the second contributor would be shown *somebody else's* EXP total and
+//! *somebody else's* level - and the level is the number a level-up effect hangs off,
+//! so the error would not stay quiet.
+//!
+//! So the second channel carries **"you earned N, for reason R, in colour C"** and the
+//! receiving session builds its own packet from its own record. That is why [`Event`]
+//! is an `enum` and not a `Vec<u8>`: the bus is deliberately unable to express a
+//! finished EXP packet, because a finished EXP packet cannot be correct for anyone but
+//! its author.
+//!
+//! It is addressed to a **character**, not a map and not a [`SubscriberId`], because
+//! the killing session knows *who contributed damage* - it has a character id out of
+//! `Fields::hurt` - and has no idea which connection that is.
+//!
+//! ## The lifetime rule that is different from the packet queue
+//!
+//! [`Bus::enter_field`] clears `queue` and deliberately does **not** clear `events`.
+//! A queued packet names an object in a field that the client has just torn down; a
+//! fact is owed to a *person*. A contributor who lands a hit and walks through a
+//! portal before the mob dies has still earned the share, and the portal is not a
+//! reason to take it away. See the comment at the `clear` itself.
+//!
+//! ## What this channel cannot reach, stated rather than papered over
+//!
+//! Delivery matches on `mailbox.presence`, and `leave_field` clears the presence while
+//! keeping the mailbox. So a connection sitting at character select - or between a
+//! channel change's two halves - has **no character id to match on** and does not
+//! receive. [`Bus::send_to_character`] returns `false` for it, the same as for a
+//! player who has genuinely logged out. The two cases are not distinguished, and
+//! nothing here retries.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -107,6 +148,32 @@ pub struct Presence {
     pub farewell: Reply,
 }
 
+/// One fact that crosses the bus, addressed to one character.
+///
+/// Not a packet. See the module docs: the recipient's session builds the packet,
+/// because `0x007C` carries the recipient's own totals and nobody else can compute
+/// them. Adding a variant here is adding a *fact*; if a variant is ever tempted to
+/// carry bytes, it belongs in [`Bus::publish`] instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// `amount` experience is owed to this character, for `why`, drawn in white if
+    /// `white` - the flag the client uses to distinguish a share from one's own kill.
+    ///
+    /// The **amount** is what crosses; the new total and the new level are not, and
+    /// must not be. The receiving session applies its own curve and its own save -
+    /// that is the whole point, since only it can turn an amount into *its* total.
+    ///
+    /// **The EXP rate is already in `amount` and must not be applied again.**
+    /// `Session::exp_for_kill` multiplies by the rate *before* `Fields::hurt`'s split,
+    /// so every share crosses pre-scaled. That is correct today only because
+    /// `Session::rate` reads one server-wide table (`store.rates()`), so the killer's
+    /// rate and the recipient's are the same number. **If per-character or per-party
+    /// rates are ever added, this stops being equivalent** and the decision - whose
+    /// rate applies to a share - has to be made deliberately rather than inherited
+    /// from whoever happened to land the killing blow.
+    Experience { amount: u64, why: String, white: bool },
+}
+
 /// One queued packet and whether a newer one may replace it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Queued {
@@ -123,6 +190,11 @@ struct Mailbox {
     /// select, or one that has just been accepted, is subscribed to nothing.
     presence: Option<Presence>,
     queue: Vec<Queued>,
+    /// The second channel, and it has a **different lifetime from `queue`**: a packet
+    /// is owed to a place and an event is owed to a person. `enter_field` clears the
+    /// one and not the other. Nothing supersedes here - two shares of two kills are
+    /// two shares.
+    events: Vec<Event>,
 }
 
 #[derive(Debug, Default)]
@@ -160,6 +232,13 @@ impl Bus {
     /// Idempotent: a session that left its field cleanly and is then dropped calls
     /// this with nothing left to announce, and that must not announce a second
     /// departure. `leave_field` clears the presence, so the second call is a no-op.
+    ///
+    /// **Undelivered [`Event`]s die here, and that is correct - checked, not assumed.**
+    /// The `remove` below takes the whole `Mailbox`, `events` included, so no code was
+    /// added for this. The connection is gone: there is nobody left to compute a new
+    /// total for, and an EXP share that outlived its session would be applied to
+    /// whichever connection next claimed that character - i.e. handed out twice. Pinned
+    /// by `parting_drops_undelivered_events`.
     pub fn part(&self, id: SubscriberId) {
         let mut inner = self.lock();
         let gone = inner.boxes.remove(&id).and_then(|m| m.presence);
@@ -208,6 +287,16 @@ impl Bus {
             // an unknown id in silence, but a stale *spawn* would leave a character
             // standing on the new map who is not there.
             mine.queue.clear();
+            // `mine.events` is deliberately NOT cleared, and the reasoning above does
+            // not reach it. A queued packet is addressed to a *place* - it names an
+            // object id in a user pool that a `SetField` has just emptied. An `Event`
+            // is addressed to a *person*: it carries no object id, no map and no
+            // packet, only "you earned N". A contributor can land a hit and walk
+            // through a portal before the mob dies, and they have still earned it.
+            // Clearing here would be a refusal reported to nobody - the share would
+            // vanish with no error and no log line, which is precisely the failure
+            // CLAUDE.md describes under "a guard whose answer is ignored", wearing a
+            // portal. Pinned by `events_survive_a_field_change_while_queued_packets_do_not`.
         } else {
             // No mailbox: this connection has already parted. Do not resurrect it,
             // and do not announce it.
@@ -264,11 +353,78 @@ impl Bus {
         self.lock().post(from, map, reply, supersedes);
     }
 
+    /// Hand one [`Event`] to whichever connection is playing `character`.
+    ///
+    /// Returns **whether anyone was listening**.
+    ///
+    /// `false` is the ORDINARY case, not an error and **not retryable**. The other
+    /// player may have logged out between landing a hit and the mob dying; that is a
+    /// completely normal thing to do and the share is simply not owed to anyone. A
+    /// caller that treats `false` as a failure - retrying it, logging it as an error,
+    /// or refusing to pay out the other contributors - is wrong. Log it at most as a
+    /// count, and carry on.
+    ///
+    /// **Two things it cannot see, said plainly rather than implied:**
+    ///
+    /// * A connection whose `presence` is `None` does not receive, because there is no
+    ///   character id to match on. `leave_field` clears the presence and keeps the
+    ///   mailbox, so a character sitting at character select, or mid-channel-change, is
+    ///   indistinguishable here from one that has gone. Both give `false`.
+    /// * It matches on the **character**, not the connection. If the same character
+    ///   were somehow present twice - a duplicate login that the login server is
+    ///   supposed to prevent - every match is delivered to, and this returns `true`.
+    ///   It does not pick a winner, because it has no basis to.
+    ///
+    /// Nothing supersedes: two shares from two kills are two events, for the same
+    /// reason two swings are two packets.
+    ///
+    /// # There is no `from`, so this does not exclude the caller
+    ///
+    /// [`Bus::publish`] takes a `from` and skips it. This cannot: it is addressed by
+    /// character, and the bus has no idea which character the caller is. **A killing
+    /// session that loops over every contributor and calls this for each one will send
+    /// itself its own share** - and if it also awards itself directly, it pays twice.
+    /// Skip your own character at the call site; the bus cannot do it for you.
+    pub fn send_to_character(&self, character: u32, event: Event) -> bool {
+        let mut inner = self.lock();
+        let mut delivered = false;
+        for mailbox in inner.boxes.values_mut() {
+            match mailbox.presence.as_ref() {
+                Some(p) if p.character == character => {}
+                _ => continue,
+            }
+            mailbox.events.push(event.clone());
+            delivered = true;
+        }
+        delivered
+    }
+
     /// Everything this connection is owed, oldest first. Clears the mailbox.
+    ///
+    /// Packets only. [`Bus::drain_events`] is a separate channel and this does not
+    /// touch it - a session must call both.
     pub fn drain(&self, id: SubscriberId) -> Vec<Reply> {
         let mut inner = self.lock();
         match inner.boxes.get_mut(&id) {
             Some(m) => std::mem::take(&mut m.queue).into_iter().map(|q| q.reply).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Every fact this connection has been handed since it last looked. Clears them.
+    ///
+    /// Oldest first, and the caller must apply them in that order: two EXP awards
+    /// against one record are two `save_character_progress` calls, and the second one's
+    /// total depends on the first.
+    ///
+    /// Separate from [`Bus::drain`] on purpose - draining packets does not drain
+    /// events and vice versa, so a session that forgets one of the two calls fails
+    /// loudly on that feature rather than quietly on both. An unknown `id` gives an
+    /// empty `Vec`, the same as `drain`.
+    pub fn drain_events(&self, id: SubscriberId) -> Vec<Event> {
+        let mut inner = self.lock();
+        match inner.boxes.get_mut(&id) {
+            Some(m) => std::mem::take(&mut m.events),
             None => Vec::new(),
         }
     }
@@ -647,5 +803,292 @@ mod tests {
         }
 
         assert_eq!(bus.drain(watcher).len(), 100);
+    }
+
+    // ---------------------------------------------------------------------------
+    // The second channel: a fact to a character.
+    // ---------------------------------------------------------------------------
+
+    fn exp(amount: u64, why: &str) -> Event {
+        Event::Experience { amount, why: why.to_string(), white: true }
+    }
+
+    fn amounts(events: &[Event]) -> Vec<u64> {
+        events
+            .iter()
+            .map(|e| match e {
+                Event::Experience { amount, .. } => *amount,
+            })
+            .collect()
+    }
+
+    /// Addressed to a character, delivered to that character's connection, and to no
+    /// other. The `nobody else` half is the one worth asserting: an EXP share that
+    /// fanned out like a packet would credit the whole map.
+    #[test]
+    fn an_event_reaches_the_named_character_and_nobody_else() {
+        let bus = Bus::new();
+        let killer = bus.join();
+        let helper = bus.join();
+        let bystander = bus.join();
+        bus.enter_field(killer, presence(200, 1));
+        bus.enter_field(helper, presence(201, 1));
+        bus.enter_field(bystander, presence(202, 1));
+
+        assert!(bus.send_to_character(201, exp(37, "kill share")), "someone was listening");
+
+        assert_eq!(amounts(&bus.drain_events(helper)), vec![37]);
+        assert!(bus.drain_events(killer).is_empty(), "the sender is not a recipient");
+        assert!(bus.drain_events(bystander).is_empty(), "the map is not the address");
+    }
+
+    /// A character on another map is still reachable - this is not a field broadcast.
+    /// A contributor who walked out of the map before the mob died is owed the share,
+    /// and that is the whole reason the address is a character rather than a map.
+    #[test]
+    fn an_event_is_not_scoped_to_a_map() {
+        let bus = Bus::new();
+        let killer = bus.join();
+        let elsewhere = bus.join();
+        bus.enter_field(killer, presence(200, 1));
+        bus.enter_field(elsewhere, presence(201, 999));
+
+        assert!(bus.send_to_character(201, exp(12, "kill share")));
+        assert_eq!(amounts(&bus.drain_events(elsewhere)), vec![12]);
+    }
+
+    /// The ordinary miss. `false`, and **nothing** was queued anywhere - neither an
+    /// event on some other mailbox nor a stray packet. Both are asserted because a
+    /// delivery that goes to the wrong mailbox and a delivery that goes nowhere both
+    /// return `false` from a test that only reads the return value.
+    #[test]
+    fn an_event_for_an_absent_character_returns_false_and_queues_nothing() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let b = bus.join();
+        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(b, presence(201, 1));
+        let _ = bus.drain(a);
+        let _ = bus.drain(b);
+
+        // 999 has logged out - or was never here.
+        assert!(!bus.send_to_character(999, exp(50, "kill share")), "nobody was listening");
+
+        for who in [a, b] {
+            assert!(bus.drain_events(who).is_empty(), "no event went to the wrong box");
+            assert!(bus.drain(who).is_empty(), "and no packet was invented either");
+        }
+    }
+
+    /// **The rule most likely to be broken by a later edit, so it is pinned with both
+    /// halves in one test.** `enter_field` clears `queue` and must not clear `events`.
+    ///
+    /// Asserting only that events survive would pass against a version that had
+    /// stopped clearing the queue too - which is a different bug (a stale spawn leaves
+    /// a ghost on the new map). The contrast is the measurement, so both are observed
+    /// under the same conditions, in the same call.
+    #[test]
+    fn events_survive_a_field_change_while_queued_packets_do_not() {
+        let bus = Bus::new();
+        let other = bus.join();
+        let walker = bus.join();
+        bus.enter_field(other, presence(200, 1));
+        bus.enter_field(walker, presence(201, 1));
+        let _ = bus.drain(walker);
+
+        // Both channels have something pending for the walker on map 1.
+        bus.publish(other, 1, reply(0x02B2, "a swing on map 1"), None);
+        assert!(bus.send_to_character(201, exp(80, "kill share")));
+
+        // ...and then the walker takes a portal before draining either.
+        let seen = bus.enter_field(walker, presence(201, 2));
+        assert!(seen.is_empty(), "map 2 is empty");
+
+        assert!(bus.drain(walker).is_empty(), "the packet named an object map 2 has not");
+        assert_eq!(
+            amounts(&bus.drain_events(walker)),
+            vec![80],
+            "the share is owed to a person, not to a place - a portal does not cancel it"
+        );
+    }
+
+    /// The same rule, in the direction the feature actually needs: hit the mob, walk
+    /// out, mob dies afterwards. The share is sent while the contributor is already on
+    /// the new map and must land there.
+    #[test]
+    fn a_share_sent_after_the_contributor_walked_away_still_lands() {
+        let bus = Bus::new();
+        let killer = bus.join();
+        let helper = bus.join();
+        bus.enter_field(killer, presence(200, 1));
+        bus.enter_field(helper, presence(201, 1));
+        let _ = bus.drain(helper);
+
+        bus.enter_field(helper, presence(201, 2));
+        let _ = bus.drain(helper);
+
+        assert!(bus.send_to_character(201, exp(80, "kill share")), "still a live character");
+        assert_eq!(amounts(&bus.drain_events(helper)), vec![80]);
+    }
+
+    /// `part` removes the whole mailbox, so undelivered events go with it. No code was
+    /// added for this - the test exists to prove the claim in `part`'s doc comment is
+    /// true rather than merely written down.
+    #[test]
+    fn parting_drops_undelivered_events() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let leaver = bus.join();
+        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(leaver, presence(201, 1));
+
+        assert!(bus.send_to_character(201, exp(80, "kill share")));
+        bus.part(leaver);
+
+        assert!(bus.drain_events(leaver).is_empty(), "a gone mailbox owes nothing");
+        assert_eq!(bus.subscribers(), 1);
+        // And the character is now unreachable, which is the ordinary `false`.
+        assert!(!bus.send_to_character(201, exp(80, "too late")));
+        assert!(bus.drain_events(a).is_empty(), "and it did not fall through to a neighbour");
+    }
+
+    /// `leave_field` keeps the mailbox and clears the presence. Two consequences, and
+    /// the honest one is the second: **already-queued events survive**, but a *new*
+    /// event cannot be addressed, because there is no character id left to match on.
+    /// That is a real limitation of this design and it is pinned rather than hidden.
+    #[test]
+    fn leaving_the_field_keeps_owed_events_but_makes_the_character_unaddressable() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let quitter = bus.join();
+        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(quitter, presence(201, 1));
+
+        assert!(bus.send_to_character(201, exp(80, "earned before leaving")));
+        bus.leave_field(quitter);
+
+        // The miss, and it is silent by design.
+        assert!(
+            !bus.send_to_character(201, exp(90, "earned while at character select")),
+            "no presence means no character id to match on"
+        );
+
+        assert_eq!(
+            amounts(&bus.drain_events(quitter)),
+            vec![80],
+            "what was already owed is still owed; what arrived after is gone"
+        );
+    }
+
+    /// The two channels are independent in **both** directions. A session drains both;
+    /// if either drain silently emptied the other, one feature would go missing with no
+    /// error - and it would be the feature nobody was looking at.
+    #[test]
+    fn the_two_drains_do_not_touch_each_other() {
+        let bus = Bus::new();
+        let watcher = bus.join();
+        let other = bus.join();
+        bus.enter_field(watcher, presence(200, 1));
+        bus.enter_field(other, presence(201, 1));
+        let _ = bus.drain(watcher);
+
+        bus.publish(other, 1, reply(0x02B2, "a swing"), None);
+        assert!(bus.send_to_character(200, exp(15, "kill share")));
+
+        // Packets first: the event must survive it.
+        assert_eq!(whats(&bus.drain(watcher)), vec!["a swing"]);
+        assert_eq!(amounts(&bus.drain_events(watcher)), vec![15]);
+
+        // Now the other order.
+        bus.publish(other, 1, reply(0x02B2, "another swing"), None);
+        assert!(bus.send_to_character(200, exp(16, "kill share")));
+        assert_eq!(amounts(&bus.drain_events(watcher)), vec![16]);
+        assert_eq!(whats(&bus.drain(watcher)), vec!["another swing"]);
+    }
+
+    /// `drain_events` clears, and clears completely - a second look owes nothing.
+    /// Order is oldest-first, which the caller depends on: two awards against one
+    /// record are two saves and the second one's total depends on the first.
+    #[test]
+    fn drain_events_returns_them_in_order_and_clears() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let earner = bus.join();
+        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(earner, presence(201, 1));
+
+        for n in 1..=4u64 {
+            assert!(bus.send_to_character(201, exp(n * 10, "kill share")));
+        }
+
+        assert_eq!(amounts(&bus.drain_events(earner)), vec![10, 20, 30, 40]);
+        assert!(bus.drain_events(earner).is_empty(), "a drain empties the events");
+    }
+
+    /// Nothing supersedes on this channel. Two shares of two kills are two shares, and
+    /// coalescing them would silently halve a party's experience - the same rule that
+    /// keeps two swings from rendering as one hit, with money attached.
+    #[test]
+    fn identical_events_are_not_coalesced() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let earner = bus.join();
+        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(earner, presence(201, 1));
+
+        for _ in 0..3 {
+            assert!(bus.send_to_character(201, exp(25, "kill share")));
+        }
+        assert_eq!(amounts(&bus.drain_events(earner)), vec![25, 25, 25]);
+    }
+
+    /// A connection that has a mailbox but has never entered a field has no character
+    /// id, so it cannot be addressed - and, importantly, entering a field afterwards
+    /// must not hand it a backlog of somebody else's facts.
+    #[test]
+    fn a_connection_that_never_entered_a_field_is_unaddressable() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let waiting = bus.join();
+        bus.enter_field(a, presence(200, 1));
+
+        assert!(!bus.send_to_character(201, exp(80, "for a character not in a field")));
+
+        let _ = bus.enter_field(waiting, presence(201, 1));
+        assert!(bus.drain_events(waiting).is_empty(), "no backlog from before it arrived");
+        // ...and now it is reachable.
+        assert!(bus.send_to_character(201, exp(80, "kill share")));
+        assert_eq!(amounts(&bus.drain_events(waiting)), vec![80]);
+    }
+
+    /// `drain_events` on an id that was never issued, or has parted, is empty rather
+    /// than a panic - the same contract `drain` already has.
+    #[test]
+    fn draining_events_for_an_unknown_subscriber_is_empty() {
+        let bus = Bus::new();
+        let gone = bus.join();
+        bus.part(gone);
+        assert!(bus.drain_events(gone).is_empty());
+    }
+
+    /// The `white` flag and the `why` string cross unchanged. They are the two fields
+    /// the receiving session cannot re-derive: whether this was a share or its own
+    /// kill, and what to write in the log.
+    #[test]
+    fn the_event_carries_its_reason_and_its_colour_unchanged() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let earner = bus.join();
+        bus.enter_field(a, presence(200, 1));
+        bus.enter_field(earner, presence(201, 1));
+
+        assert!(bus.send_to_character(
+            201,
+            Event::Experience { amount: 7, why: "party share".to_string(), white: false }
+        ));
+        assert_eq!(
+            bus.drain_events(earner),
+            vec![Event::Experience { amount: 7, why: "party share".to_string(), white: false }]
+        );
     }
 }

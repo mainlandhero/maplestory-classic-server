@@ -76,7 +76,23 @@ impl Session {
     /// from `Session::tick` (for a client that is standing still and therefore
     /// sending nothing). Both, because either alone leaves a case uncovered.
     pub(super) fn collect_mail(&mut self) -> Vec<Reply> {
-        self.bus().drain(self.subscriber)
+        let mut out = self.bus().drain(self.subscriber);
+
+        // **Facts become packets here, and only here.** See `crate::broadcast::Event` for
+        // why they cross the bus in that shape rather than as a `Reply`: an EXP award
+        // carries the recipient's own new total and level, which only this session can
+        // compute from this character's own record.
+        //
+        // Bound to a local first so the `&Bus` borrow ends before the loop needs `&mut self`.
+        let events = self.bus().drain_events(self.subscriber);
+        for event in events {
+            match event {
+                crate::broadcast::Event::Experience { amount, why, white } => {
+                    out.extend(self.award_experience(amount, &why, white, false));
+                }
+            }
+        }
+        out
     }
 
     /// Drop out of the field without ending the connection.
@@ -307,6 +323,125 @@ mod tests {
             u32::from_le_bytes(told[0].body[4..8].try_into().unwrap()),
             ids[1],
         );
+    }
+
+    /// **A kill on one connection pays a character on another.** This is the whole
+    /// EXP-share feature end to end, and it is the test that fails if any link is
+    /// unhooked: `award_kill_experience`, `Bus::send_to_character`, the mailbox,
+    /// `Bus::drain_events`, or the conversion back into a packet in `collect_mail`.
+    ///
+    /// The assertion that matters most is the one *before* the tick. The helper has
+    /// earned nothing at the moment the killer is paid, because the fact has crossed
+    /// the bus but nobody has turned it into a packet yet - which is the design:
+    /// `0x007C` carries the recipient's own new total, so only the recipient's session
+    /// may compute it. If a future change ever builds the helper's packet inside the
+    /// killer's session, that line is what catches it.
+    #[test]
+    fn a_helpers_share_of_a_kill_reaches_their_own_session() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Killer", "Helper"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: 104_040_000,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+
+        let mut killer = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut helper = Session::joining(store.clone(), config, fields.clone());
+        killer.claim_for_character(ids[0]);
+        helper.claim_for_character(ids[1]);
+        killer.on_field_entered();
+        helper.on_field_entered();
+        // Clear the entry announcements so what is left is the EXP and nothing else.
+        killer.tick(1_000);
+        helper.tick(1_000);
+
+        let exp_of = |id: u32| {
+            store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp
+        };
+
+        // 70/30, so the killer holds the majority and the helper is owed 30 of 100.
+        let shares = vec![
+            crate::fields::DamageShare { character: ids[0], dealt: 70, total: 100, majority: true },
+            crate::fields::DamageShare { character: ids[1], dealt: 30, total: 100, majority: false },
+        ];
+        let paid = killer.award_kill_experience(100, "a kill", ids[0], &shares);
+
+        assert!(
+            paid.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+            "the killer is paid in their own reply: {paid:?}"
+        );
+        assert_eq!(exp_of(ids[0]), 100, "the majority holder takes the whole amount");
+        assert_eq!(
+            exp_of(ids[1]),
+            0,
+            "and the helper has NOT been paid yet - the fact is on the bus, but only the              helper's own session may build a packet carrying the helper's own total"
+        );
+
+        // The helper collects their mail, and only now is anything written for them.
+        let mail = helper.tick(2_000);
+        assert!(
+            mail.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+            "the helper's own session turns the fact into a packet: {mail:?}"
+        );
+        assert_eq!(exp_of(ids[1]), 30, "30/100 of the damage, so 30 of the 100 exp");
+
+        // **And the killer collects their own mail too.** Without this tick the test
+        // cannot see a double payout at all: a share the killer wrongly addressed to
+        // itself would sit undrained in its own mailbox and every assertion above would
+        // still pass. Verified by injecting exactly that bug - dropping the
+        // `s.character != chr_id` filter in `award_kill_experience` - which this line
+        // catches and nothing else did.
+        let again = killer.tick(3_000);
+        assert!(
+            !again.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+            "the killer must not have addressed a share to itself: {again:?}"
+        );
+        assert_eq!(exp_of(ids[0]), 100, "and so it is still paid exactly once");
+    }
+
+    /// A share owed to somebody who is not on this channel is dropped, not retried and
+    /// not panicked over. They logged out between landing the hit and the mob dying,
+    /// which is ordinary. The killer is still paid.
+    #[test]
+    fn a_share_owed_to_an_absent_character_is_dropped_and_the_killer_still_pays_itself() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Lonely".to_string(),
+            map_id: 104_040_000,
+            ..Default::default()
+        };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+
+        let mut killer = Session::joining(store.clone(), config, fields);
+        killer.claim_for_character(id);
+        killer.on_field_entered();
+        killer.tick(1_000);
+
+        // 9_999 is nobody: no session on this channel is playing them.
+        let shares = vec![
+            crate::fields::DamageShare { character: id, dealt: 70, total: 100, majority: true },
+            crate::fields::DamageShare { character: 9_999, dealt: 30, total: 100, majority: false },
+        ];
+        let paid = killer.award_kill_experience(100, "a kill", id, &shares);
+
+        assert!(paid.iter().any(|r| r.opcode == net::stats::STAT_CHANGED), "{paid:?}");
+        let exp = store
+            .characters_for(account, 0)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .exp;
+        assert_eq!(exp, 100, "the absent share changes nothing about the killer's own");
     }
 
     /// **A real captured walk crosses between two sessions.** This is the other

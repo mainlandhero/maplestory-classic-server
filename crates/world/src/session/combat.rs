@@ -505,14 +505,17 @@ impl Session {
     /// damage, I would only get a % portion of the EXP that belonged to the mob ... and that
     /// line would be yellow."*
     ///
-    /// **This connection only ever pays itself.** The share list names every contributor, but
-    /// there is no way to push a packet to another player's thread - a channel is a process
-    /// and each connection is its own thread with its own socket, `crates/world/src/server.rs`.
-    /// So each session finds *itself* in the list and pays its own cut. With one player that
-    /// is the whole list; with two, each pays itself the moment it kills something, and the
-    /// second player's share of a kill they helped with is **not yet delivered**. Said out
-    /// loud rather than left to look finished: `Fields::hurt` already returns the whole split
-    /// and it is only the delivery that is missing.
+    /// **Every contributor is paid, including the ones on other connections.** This session
+    /// pays itself directly; everyone else is paid across the channel's message bus, as a
+    /// *fact* rather than a packet - `crate::broadcast::Event::Experience`.
+    ///
+    /// It has to be a fact. `0x007C` carries the **recipient's own** new total and level,
+    /// which only their session can compute from their own record, so a packet built here
+    /// would show them somebody else's EXP. Each session turns the fact into its own packet
+    /// when it collects its mail, in `Session::collect_mail`.
+    ///
+    /// A share addressed to nobody - they logged out or changed channel between landing the
+    /// hit and the mob dying - is dropped and logged. That is ordinary, not an error.
     ///
     /// **Parties do not exist**, so the 70/30 split and `You received party EXP` are not
     /// implemented. `research/exp-sharing.md` records the rule so it does not have to be
@@ -529,13 +532,50 @@ impl Session {
         let Some(mine) = shares.iter().find(|s| s.character == chr_id) else {
             return self.award_experience(worth, why, true, false);
         };
-        let cut = mine.cut_of(worth);
-        let why = if mine.majority {
+        // Ours first, and through the same reason-line builder everyone else gets, so the
+        // two paths cannot drift apart.
+        let out = self.award_experience(
+            mine.cut_of(worth),
+            &Self::share_reason(why, mine),
+            mine.majority,
+            false,
+        );
+
+        // **And now everyone else who helped.** This is what the bus was built for.
+        for share in shares.iter().filter(|s| s.character != chr_id) {
+            let delivered = self.bus().send_to_character(
+                share.character,
+                crate::broadcast::Event::Experience {
+                    amount: share.cut_of(worth),
+                    why: Self::share_reason(why, share),
+                    white: share.majority,
+                },
+            );
+            if !delivered {
+                // Reported rather than swallowed. A share that evaporates in silence is
+                // indistinguishable from a share that was never computed, and this project
+                // has already shipped one guard whose answer nobody read.
+                crate::server::log(&format!(
+                    "exp: character {} earned {} from {why}, but nobody on this channel is playing them",
+                    share.character,
+                    share.cut_of(worth),
+                ));
+            }
+        }
+        out
+    }
+
+    /// The reason line for one contributor's cut.
+    ///
+    /// The majority holder is paid in full and told the plain reason; everyone else is told
+    /// what fraction of the damage they did, because a smaller number with no denominator
+    /// reads as a bug rather than as a share.
+    fn share_reason(why: &str, share: &crate::fields::DamageShare) -> String {
+        if share.majority {
             why.to_string()
         } else {
-            format!("{why}, {}/{} of the damage", mine.dealt, mine.total)
-        };
-        self.award_experience(cut, &why, mine.majority, false)
+            format!("{why}, {}/{} of the damage", share.dealt, share.total)
+        }
     }
 
 

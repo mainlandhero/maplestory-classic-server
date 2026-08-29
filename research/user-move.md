@@ -11,7 +11,10 @@ Read out of `client-patched/MapleStory.exe` with `tools/encodes.py`, `tools/read
 **[L]** is off the listing, **[D]** is derived from two or more [L] or measured on the
 captures, **[I]** is inferred.
 
-Parser: `crates/net/src/usermove.rs`. **It is not wired to anything.**
+Parser: `crates/net/src/usermove.rs`. **Wired since 2026-08-29** — `crates/world/src/session/mod.rs`
+parses every `0x00D9`, keeps the end position, and rebroadcasts the path to the rest of the
+map. See §9. (Until then this line read *"It is not wired to anything"*, which was true for
+nine days.)
 
 ---
 
@@ -244,6 +247,12 @@ That is a measured negative over the captures, not a proof about the client. It 
 kind of evidence as the 47 distinct inbound opcodes this server has received and mostly
 ignored without a freeze.
 
+The 1082 above is this section's original count. `crates/net/src/usermove.rs`'s module docs
+now put it at **5221 distinct bodies over 172 world logs**, still all unanswered — so the
+negative holds over five times the evidence, and it is still the same *kind* of claim.
+Since 2026-08-29 the server parses every one of them and rebroadcasts (§9), and still replies
+to none.
+
 ---
 
 ## 8. What is NOT established
@@ -259,5 +268,84 @@ ignored without a freeze.
    reference that scores 1 of 8.
 5. **The key-state entries.** Four bits each, 17 of them in nearly every body. Not decoded,
    not needed.
-6. **Whether the server is expected to broadcast this to other players.** There is exactly one
-   player here, so it has never mattered.
+6. **Whether the client accepts the rebroadcast.** This item used to read *"whether the server
+   is expected to broadcast this to other players — there is exactly one player here, so it has
+   never mattered."* **The premise is gone**: two players can be on one map and the server does
+   rebroadcast, §9. What is not established is everything downstream of the send, and it is one
+   run's worth of work:
+   * **No `0x0293` has ever been on the wire.** `crates/world/src/session/multiplayer.rs`
+     records that no packet in `0x224..0x39F` has been observed to do anything in any archived
+     run. The body in §9 is built entirely from static reads of this client.
+   * **A player who has not moved is broadcast at the map origin.** `0x00D9` and the attack
+     packets are the server's only sources of a position (§6), so a character who has just
+     arrived and stood still has none, and `Session::remote_at` announces them at `(0, 0)`.
+     It corrects itself on their first step, because `0x0293` moves a remote user the client
+     already has. The real fix is portal coordinates, which `gm-handbook/portals.txt` does not
+     carry.
+   * **Nothing throttles it.** Superseding bounds a *stalled* observer's mailbox to one pending
+     move per character; an observer that drains promptly receives every report, at the ~510 ms
+     cadence §1 measures, multiplied by the number of players on the map. Whether that is a
+     problem is unmeasured — there has never been more than one player.
+
+---
+
+## 9. The rebroadcast, added 2026-08-29
+
+The owner: *"Now that we potentially will have multiple clients and multiple characters appear in
+the same map at the same time, their movements and their attacks need to be broadcasted and
+shown on all clients."* The movement half is built. This section is what it does; item 6 above
+is what it does not settle.
+
+**The wiring.** `crates/world/src/session/mod.rs`'s `CLIENT_USER_MOVE` arm parses the body,
+stores the end position in `Session::last_position`, marks activity, and calls
+`Session::publish_user_move` (`crates/world/src/session/multiplayer.rs`). It then returns an
+empty `Vec` — **the mover is still not answered**, which §7 says is safe and which 5221
+captured bodies still support.
+
+**The packet.** `0x0293` `USER_MOVE_REMOTE`, `net::userpool::user_move_remote`:
+
+```text
+  0  u32  charId               read by FUN_1429bb720 at 1429bb745, before the dispatch
+  4  ...  the path block, copied BYTE FOR BYTE out of the inbound 0x00D9
+           END - nothing follows it
+```
+
+Two things are dropped and both are deliberate, so the outbound body is **shorter than the
+inbound one**:
+
+| dropped | why |
+|---|---|
+| the ten-byte head of §1 | `FUN_1429d2e70` is 102 bytes with one read site, the call into `FUN_141d598b0`; the field key and the tick are the *sender's* and mean nothing to an observer. **[L]** |
+| the key-state trailer of §4 | `0x0293`'s decoder passes zero — `1429d2eb5 XOR R8D,R8D` — so it never reads the count. Byte-identical to the `141c82000` that makes outbound `MOB_MOVE` drop `0x02FF`'s trailer. **[L]** |
+
+**The path is copied, not re-encoded**, and §2 is the licence for that: the same encoder
+`FUN_141d57c60` writes the block in both packets, so re-emitting the bytes is exactly what the
+client would have written itself.
+
+**A path that did not walk closed is refused, not truncated.** `UserMove::path` returns `None`
+unless `walk_closed` (§5), and `publish_user_move` treats that `None` as a refusal to
+rebroadcast and logs it. This is the one place in this whole decode where a mistake goes
+*outbound*, which the module docs of `crates/net/src/usermove.rs` call out: a wrong length on
+the wire has killed this client twice.
+
+**Who receives it.** `Bus::publish` on the channel's message bus (`crates/world/src/broadcast.rs`)
+— everyone else on the same map, never the mover. It is published with
+`supersedes = Some(character)`, so a later `0x0293` about the same character **replaces an
+unsent earlier one** in a stalled observer's mailbox: an observer who has been away sees where
+you are rather than a replay of where you have been. That key is only ever right for a
+*position*; the bus's rule is that an event — an attack, a chat line — must be published
+without one, because two swings are two events and a coalesced fight renders as one hit.
+
+**Only the movement half of the owner's sentence is built.** They asked for movements *and* attacks.
+`Session::publish_user_move` is the **one** production caller of `Bus::publish` in the whole
+crate: `grep -rn "bus().publish" crates/world/src/session/` returns three hits, and the other
+two are inside the test module. A remote player's swing — `0x029E..0x02A1`, four opcodes and
+one handler, `FUN_1429d2ee0` — is decoded in `research/user-pool-tables.md` and nothing sends
+it. Field entry and departure do cross, but through `Bus::enter_field` and `Bus::part` rather
+than through `publish`.
+
+**How `0x0293` was identified**, since it comes from no name table: by reachability. All 315
+handler functions across the user pool's four dispatch tables were walked to depth 6, and
+**exactly two** reach `FUN_1404b2630` — the 79-command path decoder this document's §3 is
+about. One is `0x02F5` in the *local* table; the other is this. `research/user-pool-tables.md`.
+**[L]**
