@@ -26,6 +26,7 @@ pub mod abilityspend;
 pub mod cash;
 pub mod character;
 pub mod claims;
+pub mod codes;
 pub mod db;
 pub mod inventory;
 pub mod migration;
@@ -41,6 +42,7 @@ pub mod storage;
 pub use abilityspend::ApSpend;
 pub use character::{NameCheck, MAX_CHARACTER_NAME_LEN, MIN_CHARACTER_NAME_LEN};
 pub use claims::{LoginClaim, LOGIN_CLAIM_TTL_SECS};
+pub use codes::{NewCode, CODE_ALPHABET, CODE_CHARS, INVITE_TTL_SECS, RECOVERY_TTL_SECS};
 pub use inventory::{
     Bag, Equipped, EquippedItem, InvItem, InventoryType, Item, ItemKind, ItemRules, MoveOutcome,
 };

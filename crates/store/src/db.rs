@@ -294,6 +294,12 @@ impl Store {
         // The two AP-spend counters. ALTERed onto `characters`, which is NOT a new table, so
         // this carries its own PRAGMA guard - see the note in that module.
         crate::abilityspend::create_tables(&conn)?;
+        // Invite codes and recovery codes. New tables, so `CREATE TABLE IF NOT EXISTS` is
+        // enough. `codes.rs` also ensures them inside each entry point, for the same
+        // belt-and-braces reason `claims.rs` does - but this line is the one that makes the
+        // module WIRED rather than merely working, and its absence is exactly the state
+        // CLAUDE.md calls "built is not wired".
+        crate::codes::create_tables(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
