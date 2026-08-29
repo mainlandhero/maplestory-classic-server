@@ -59,6 +59,7 @@ pub mod storage;
 pub mod userchat;
 pub mod userhit;
 pub mod usermove;
+pub mod userpool;
 
 pub use codec::{
     shift_body, ByteShiftCipher, Cipher, Direction, MapleCipher, PlainCipher, Shift,

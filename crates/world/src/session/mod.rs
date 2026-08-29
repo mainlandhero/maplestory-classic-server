@@ -272,6 +272,16 @@ pub struct Session {
     /// `crate::session::recovery`.
     recovering: Option<recovery::Recovering>,
 
+    /// This connection's mailbox on the channel's message bus.
+    ///
+    /// Taken at construction rather than at field entry, so that the `Drop` below
+    /// always has one to hand back. A connection that dies before it ever reaches a
+    /// field still has to be cleaned up, and a mailbox that is only created on
+    /// success is missing from exactly the failure case that needs it.
+    ///
+    /// `crate::broadcast`.
+    subscriber: crate::broadcast::SubscriberId,
+
     /// What this connection last put in the client's scrolling banner, `None` for "nothing".
     ///
     /// The banner is not pushed to anyone - every session works out what should be on screen
@@ -365,6 +375,23 @@ struct Conversation {
     sent_with_next: bool,
 }
 
+/// Hand the mailbox back, and tell the field this player is gone.
+///
+/// **This is the only departure path that always runs.** A clean log out goes
+/// through `on_log_out`, a channel change through `on_change_channel` - and a client
+/// that is killed, or a socket that dies, sends neither. If only the tidy exits
+/// announced a departure, a crashed client would leave a character standing on the
+/// field of every other player until the channel restarted, which is the one
+/// multiplayer bug that cannot be cleaned up from the client side.
+///
+/// `Bus::part` is idempotent, so the ordinary path - leave the field, then close the
+/// socket - still announces exactly one departure. `crate::broadcast::Bus::part`.
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.fields.bus().part(self.subscriber);
+    }
+}
+
 mod ability;
 mod buff;
 mod cashshop;
@@ -374,6 +401,7 @@ mod field;
 mod gm;
 mod ground;
 mod inventory;
+mod multiplayer;
 mod npc;
 mod rates;
 mod recovery;
@@ -400,9 +428,12 @@ impl Session {
         // Any non-zero seed will do; the config's address is simply something that differs
         // between connections in the same process.
         let seed = Arc::as_ptr(&config) as u64 | 1;
+        // Before the `Arc` is moved into the struct.
+        let subscriber = fields.bus().join();
         Session {
             store,
             config,
+            subscriber,
             claimed: None,
             conversation: None,
             in_cash_shop: false,
@@ -454,7 +485,11 @@ impl Session {
         if !self.config.set_field_probe {
             return Vec::new();
         }
-        let mut out = Vec::new();
+        // **First**, because this is the path that carries another player's movement
+        // to a client that is standing still and therefore sending nothing. `handle`
+        // covers the busy case; this covers the idle one, and between them a
+        // broadcast waits at most one tick.
+        let mut out = self.collect_mail();
         // Expire drops BEFORE the chatter switch is consulted. `chatter_off` turns off NPC
         // idle lines and nothing else; if the sweep sat after it, a run with chatter
         // disabled would leave items on the floor forever and the bug would look like the
@@ -566,6 +601,20 @@ impl Session {
     /// the client into a state nobody has read, which is worse than silence. Every opcode
     /// below is one whose handler has been read, and unknown ones fall through to nothing.
     pub fn handle(&mut self, body: &[u8]) -> Vec<Reply> {
+        let mut out = self.dispatch(body);
+        // **After** whatever this packet asked for, never before or inside it. A
+        // reply sequence like a `SetField` and its field contents is a script the
+        // client walks in order, and another player's movement spliced into the
+        // middle of one is the kind of reordering that is invisible in a log and
+        // fatal on screen.
+        out.extend(self.collect_mail());
+        out
+    }
+
+    /// The dispatch itself. `handle` wraps it so that every arm below can `return`
+    /// early - which most of them do - without each one having to remember to
+    /// collect this connection's mail on the way out.
+    fn dispatch(&mut self, body: &[u8]) -> Vec<Reply> {
         let opcode = match body.get(..2) {
             Some(b) => u16::from_le_bytes([b[0], b[1]]),
             None => return Vec::new(),

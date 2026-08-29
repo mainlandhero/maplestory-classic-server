@@ -176,11 +176,28 @@ struct FieldState {
 #[derive(Debug, Default)]
 pub struct Fields {
     maps: Mutex<HashMap<u32, FieldState>>,
+    /// Who is connected, and what each of them is owed.
+    ///
+    /// Hung here rather than threaded separately for one reason: this `Arc` is
+    /// **already** handed to every `Session` (`Session::joining`, and the server's
+    /// one-per-channel `Fields` in `crate::server::serve`), so a bus reached
+    /// through it needs no change to any constructor, to the socket loop, or to
+    /// the ~7000 lines of session tests. It is also not a category error - this
+    /// type is what is alive on the channel's maps, and players are.
+    ///
+    /// Its lock is its own and is a **leaf**: nothing in `crate::broadcast` calls
+    /// back into `Fields`, so the two are never held at once and cannot deadlock.
+    bus: crate::broadcast::Bus,
 }
 
 impl Fields {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// This channel's message bus. See [`crate::broadcast`].
+    pub fn bus(&self) -> &crate::broadcast::Bus {
+        &self.bus
     }
 
     /// Register a map's spawn points the first time anyone sets foot on it.

@@ -31,11 +31,20 @@ pub fn log(msg: &str) {
 
 /// How often a quiet connection wakes up to let the session send something.
 ///
-/// Short enough that a 6-second chatter interval lands within about half a second of when it
-/// is due, long enough that an idle connection is not spinning. It is **not** the chatter
-/// interval - that lives in `session::CHATTER_INTERVAL_MS`, because it is a game decision
-/// and this is a socket one.
-const TICK_MS: u64 = 500;
+/// Short enough that a 6-second chatter interval lands within about a tenth of a
+/// second of when it is due, long enough that an idle connection is not spinning. It
+/// is **not** the chatter interval - that lives in `session::CHATTER_INTERVAL_MS`,
+/// because it is a game decision and this is a socket one.
+///
+/// **Was 500 until 2026-08-29, and what moved it is multiplayer.** This is the
+/// wakeup that lets a session collect its mail (`crate::broadcast`), and mail is
+/// how one player's movement reaches another. A player standing still sends
+/// nothing, so this timeout is the *only* thing waking their connection up -
+/// at 500 ms another player's walk arrived in half-second jumps. The cost of
+/// 100 ms is ten wakeups a second per connection doing a drop sweep, a respawn
+/// check and an empty drain; the benefit is that a broadcast waits at most a
+/// tenth of a second.
+const TICK_MS: u64 = 100;
 
 fn send(
     stream: &mut TcpStream,

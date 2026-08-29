@@ -389,6 +389,14 @@ impl Session {
         // handler return.
         // One packet now, not ten: the sweep found it on 2026-08-21 and there is nothing
         // left to search. `!migsweep` keeps the ranged form for the next unknown opcode.
+        // The character is leaving this channel's field - and therefore this
+        // channel's bus - who is watching it. Done here rather than on the
+        // reply's arrival, because the reply's opcode is one of the sweep
+        // candidates and we do not know that it lands; a migration that fails
+        // leaves a client that has already been told to go. `Bus::part` in
+        // `Drop` covers that case too, late, and a ghost on the field is
+        // exactly the failure `crate::session::multiplayer` exists to avoid.
+        self.leave_the_field();
         self.migrate_candidates(
             target,
             addr,
@@ -468,6 +476,11 @@ impl Session {
         // The conversation and the field's chatter belong to a session that is ending.
         self.conversation = None;
         self.chatter.clear();
+        // And the character stops standing on the map, for everyone else on it.
+        // The socket lives on - the client goes back to character select on this
+        // same connection - so this is a leave rather than a part; `Drop` still
+        // runs later and `Bus::part` is idempotent. `crate::session::multiplayer`.
+        self.leave_the_field();
         vec![Reply {
             opcode: net::notice::LOG_OUT_RESULT,
             body: net::notice::log_out_result("Returning to the login screen."),
