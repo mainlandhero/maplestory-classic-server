@@ -228,13 +228,32 @@ impl Session {
         self.world_head(cause)
     }
 
+    /// What the client's login screen displays - **the account's own masked email**.
+    ///
+    /// The client cannot compute this: `research/` established that the name on the login
+    /// screen comes from the server or the field stays blank. It used to come from
+    /// `--display-name`, a hard-coded `wisp****@example.com` that `config.rs` described as
+    /// standing in *"until there is something real to show"* - because the accounts table held
+    /// no email. It holds one now, so the masked address is derived from the account this
+    /// connection is actually being served as, and it changes with the claim.
+    ///
+    /// **The fallback is not decoration.** An account with no email - which is every account
+    /// created before the column existed - would otherwise put an empty string in the field,
+    /// and the client draws that as a blank line where a person expects to see themselves. So
+    /// `--display-name` remains, as the answer for an account that cannot supply one.
+    fn display_name(&self) -> String {
+        self.account
+            .masked_email()
+            .unwrap_or_else(|| self.config.display_name.clone())
+    }
+
     /// Account info, the world entry, and the end-of-list terminator.
     fn world_head(&mut self, cause: &str) -> Vec<Reply> {
         let world = &self.config.world;
         vec![
             Reply::new(
                 ACCOUNT_INFO,
-                account_info(&self.account.name, &self.config.display_name),
+                account_info(&self.account.name, &self.display_name()),
                 format!("{cause}: account info"),
             ),
             Reply::new(
@@ -251,7 +270,7 @@ impl Session {
         let mut out = vec![
             Reply::new(
                 ACCOUNT_INFO,
-                account_info(&self.account.name, &self.config.display_name),
+                account_info(&self.account.name, &self.display_name()),
                 format!("{cause}: account info"),
             ),
             Reply::new(
@@ -575,6 +594,64 @@ mod tests {
         let account = store.get_account("maplecw").unwrap().unwrap();
         assert_eq!(account.id, id);
         Session::new(store, Arc::new(Config::default()), account)
+    }
+
+    /// A session whose account carries an email, so the login screen has something real.
+    fn session_with_email(email: &str) -> Session {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_email("maplecw", Some(email)).unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        Session::new(store, Arc::new(Config::default()), account)
+    }
+
+    /// The login screen shows the ACCOUNT's masked email, not a configured constant.
+    ///
+    /// `--display-name` used to be the only answer, and `config.rs` said it stood in "until
+    /// there is something real to show". This is that.
+    #[test]
+    fn the_login_screen_shows_the_masked_email_of_the_account_being_served() {
+        let s = session_with_email("wispplayer@example.com");
+        assert_eq!(s.display_name(), "wisp****@example.com");
+    }
+
+    #[test]
+    fn the_masked_email_reaches_the_account_info_packet() {
+        // Not just the helper - the bytes. `account_info` writes the display name as the last
+        // string in the body, and that is the field the client draws.
+        let mut s = session_with_email("wispplayer@example.com");
+        let replies = s.world_head("test");
+        let info = replies.iter().find(|r| r.opcode == ACCOUNT_INFO).expect("account info");
+        let body = info.packet();
+        let needle = "wisp****@example.com".as_bytes();
+        assert!(
+            body.windows(needle.len()).any(|w| w == needle),
+            "the masked address is not in the packet the client reads"
+        );
+        assert!(
+            !body.windows(21).any(|w| w == "wispplayer@example.com".as_bytes()),
+            "the FULL address must never reach the client"
+        );
+    }
+
+    /// An account with no email must not blank the field - the client draws an empty string
+    /// as a blank line where a person expects to see themselves.
+    #[test]
+    fn an_account_without_an_email_falls_back_to_the_configured_display_name() {
+        let s = session();
+        assert_eq!(s.display_name(), Config::default().display_name);
+        assert!(!s.display_name().is_empty(), "a blank field is the failure this avoids");
+    }
+
+    /// The account is resolved per connection now, so the screen has to follow it. If this
+    /// ever regresses, the launcher would sign in as one account and the login screen would
+    /// name another - and the two would be reported as the claim not working.
+    #[test]
+    fn the_screen_follows_the_account_not_the_configuration() {
+        let a = session_with_email("wispplayer@example.com");
+        let b = session_with_email("someone.else@example.com");
+        assert_ne!(a.display_name(), b.display_name());
+        assert_eq!(b.display_name(), "some****@example.com");
     }
 
     fn opcodes(replies: &[Reply]) -> Vec<u16> {

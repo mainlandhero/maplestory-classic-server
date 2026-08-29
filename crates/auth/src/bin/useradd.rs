@@ -2,7 +2,7 @@
 //!
 //!   maplecw-useradd <name> [--email ADDR]   create an account
 //!   maplecw-useradd --list                  list accounts
-//!   maplecw-useradd --passwd <name>         change a password
+//!   maplecw-useradd --passwd <name|email>   change a password
 //!   maplecw-useradd --email <name> <addr>   set or clear an email ("" clears)
 //!   maplecw-useradd --disable <name>
 //!   maplecw-useradd --enable  <name>
@@ -40,7 +40,19 @@ fn main() -> std::process::ExitCode {
         if args[i] == "--db" && i + 1 < args.len() {
             db_path = args[i + 1].clone();
             i += 2;
-        } else if args[i] == "--email" && i > 0 && i + 1 < args.len() {
+        // `--email` is two different things and they are told apart by POSITION:
+        //   maplecw-useradd <name> --email <addr>     an option on `create`
+        //   maplecw-useradd --email <name> <addr>     its own command
+        //
+        // The test is "has a verb been seen yet", i.e. is `rest` non-empty - NOT the raw
+        // argument index. The first version used `i > 0`, which looks equivalent and is not:
+        // `--db <path>` is stripped out here too, so in
+        //   --db C:\maplecw.db --email maplecw wisp@example.com
+        // the command form sits at index 2 and was read as the option form. It silently took
+        // "maplecw" as an email address and then tried to CREATE an account called
+        // "wisp@example.com", which failed on a password prompt with no terminal - an error
+        // three steps removed from the mistake.
+        } else if args[i] == "--email" && !rest.is_empty() && i + 1 < args.len() {
             new_email = Some(args[i + 1].clone());
             i += 2;
         } else {
@@ -60,8 +72,8 @@ fn main() -> std::process::ExitCode {
     let result = match rest.first().map(String::as_str) {
         Some("--list") => list(&store),
         Some("--passwd") => match rest.get(1) {
-            Some(name) => set_password(&store, name),
-            None => Err("--passwd needs an account name".into()),
+            Some(identity) => set_password(&store, identity),
+            None => Err("--passwd needs an account name or email".into()),
         },
         Some("--disable") => match rest.get(1) {
             Some(name) => toggle(&store, name, false),
@@ -181,19 +193,31 @@ fn set_email(store: &Store, name: &str, addr: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn set_password(store: &Store, name: &str) -> Result<(), String> {
-    if store
-        .get_account(name)
+/// Reset a password. `identity` may be the account **name or its email**.
+///
+/// The account is resolved BEFORE the password is typed, so a mistyped identity costs one
+/// line rather than two careful password entries - and so the prompt can name the account
+/// that is actually about to change, which matters when the identity given was an email and
+/// the account is called something else.
+fn set_password(store: &Store, identity: &str) -> Result<(), String> {
+    let account = store
+        .get_account_by_identity(identity)
         .map_err(|e| e.to_string())?
-        .is_none()
-    {
-        return Err(format!("no such account: {name}"));
-    }
-    let pw = read_password(&format!("New password for {name}: "), true)?;
+        .ok_or_else(|| format!("no account with the name or email {identity:?}"))?;
+
+    let label = match &account.email {
+        Some(email) if !identity.eq_ignore_ascii_case(&account.name) => {
+            format!("{} ({email})", account.name)
+        }
+        _ => account.name.clone(),
+    };
+    let pw = read_password(&format!("New password for {label}: "), true)?;
     store
-        .set_password(name, &pw)
+        .set_password(&account.name, &pw)
         .map_err(|e| format!("could not set password: {e}"))?;
-    println!("password updated for {name:?}; existing sessions revoked");
+    println!("password updated for {:?}", account.name);
+    println!("  existing sessions revoked, and any login claim on this account cleared");
+    println!("  sign in again in the launcher to decide who plays");
     Ok(())
 }
 

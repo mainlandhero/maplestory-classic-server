@@ -261,6 +261,25 @@ impl Store {
         create_tables(&conn)?;
         Ok(conn.execute("DELETE FROM login_claims", [])?)
     }
+
+    /// Drop only this account's claim.
+    ///
+    /// Called by [`Store::set_password`], for the same reason it already revokes sessions: a
+    /// password is changed when someone has lost control of it, and a live claim is a
+    /// standing instruction to serve the next game connection as that account. Leaving it
+    /// would mean the old password's last act outlives the password.
+    ///
+    /// Scoped rather than [`Self::clear_login_claims`] because clearing everything would also
+    /// evict a *different* account that happens to be playing - one person changing their
+    /// password should not drop another out of the game.
+    pub fn clear_login_claims_for(&self, account_id: i64) -> Result<usize> {
+        let conn = self.conn();
+        create_tables(&conn)?;
+        Ok(conn.execute(
+            "DELETE FROM login_claims WHERE account_id = ?1",
+            rusqlite::params![account_id],
+        )?)
+    }
 }
 
 #[cfg(test)]

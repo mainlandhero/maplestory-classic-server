@@ -59,6 +59,52 @@ pub struct Account {
     pub last_login: Option<i64>,
 }
 
+/// How many characters of the local part survive masking. `wispplayer@example.com` becomes
+/// `wisp****@example.com`, which is the shape the real service shows and the shape
+/// `tools/test-server.ps1` has been hard-coding as `-DisplayName` since before there was an
+/// email column to build it from.
+const MASK_KEEP: usize = 4;
+
+/// The stars. A **fixed** count, deliberately: one star per hidden character would leak the
+/// length of the address, which is the one thing masking is for.
+const MASK_STARS: &str = "****";
+
+/// Mask an email for the login screen.
+///
+/// ```text
+/// wispplayer@example.com -> wisp****@example.com
+/// abc@example.com        -> abc****@example.com     (shorter than the keep length)
+/// not-an-email           -> not-****                (no @: mask anyway rather than show it)
+/// ```
+///
+/// The domain is kept whole. That is what the address is recognisable by, and the point of the
+/// field is for a person to see their own account rather than for it to be a secret.
+pub fn mask_email(email: &str) -> String {
+    let (local, domain) = match email.split_once('@') {
+        Some((l, d)) => (l, Some(d)),
+        // Not an address. Mask the front of it anyway - showing an unrecognised value in full
+        // on the login screen is the one behaviour that has no argument for it.
+        None => (email, None),
+    };
+    let kept: String = local.chars().take(MASK_KEEP).collect();
+    match domain {
+        Some(d) => format!("{kept}{MASK_STARS}@{d}"),
+        None => format!("{kept}{MASK_STARS}"),
+    }
+}
+
+impl Account {
+    /// What the client's login screen should display for this account.
+    ///
+    /// `None` when the account has no email, which is every account made before the column
+    /// existed. The caller decides what to show instead - the login server falls back to its
+    /// `--display-name`, because leaving the field empty makes the client draw a blank line
+    /// where a person expects to see themselves.
+    pub fn masked_email(&self) -> Option<String> {
+        self.email.as_deref().map(mask_email)
+    }
+}
+
 /// Outcome of an authentication attempt.
 ///
 /// Deliberately does **not** distinguish "no such account" from "wrong password":
@@ -619,11 +665,37 @@ impl Store {
                 name: name.to_string(),
             });
         }
-        // Changing a password invalidates existing sessions.
+        // Changing a password invalidates existing sessions - and the login claim with them.
+        //
+        // The claim is not a credential, but it is a standing instruction to serve the next
+        // game connection as this account, and it outlives a session by hours. Leaving it
+        // would let the old password's last act survive the password itself, which is exactly
+        // what revoking the sessions is for. Scoped to this account, so changing one
+        // password cannot drop somebody else out of the game.
         if let Some(acc) = self.get_account(name)? {
             self.revoke_account_sessions(acc.id)?;
+            self.clear_login_claims_for(acc.id)?;
         }
         Ok(())
+    }
+
+    /// [`Self::set_password`], but the account may be named by its **email** as well.
+    ///
+    /// The launcher signs in with either identity, so an administrator resetting a password
+    /// should be able to name the account the same way - otherwise "log in with your email"
+    /// is a half-built idea that works until the day it matters. `maplecw-useradd --passwd`
+    /// calls this.
+    ///
+    /// Unlike [`Self::authenticate_identity`] this does **not** have to hide whether the
+    /// account exists: it is an administrative command run by someone holding the database,
+    /// not an authentication path, and telling them "no such account" is the useful answer.
+    pub fn set_password_by_identity(&self, identity: &str, password: &str) -> Result<()> {
+        let account = self.get_account_by_identity(identity)?.ok_or_else(|| {
+            StoreError::NoSuchAccount {
+                name: identity.to_string(),
+            }
+        })?;
+        self.set_password(&account.name, password)
     }
 
     /// Authenticate and, on success, issue a session token.
@@ -1269,6 +1341,68 @@ mod tests {
             s.get_account_by_identity("wisp@example.test").unwrap().unwrap().name,
             "player_two"
         );
+    }
+
+    // ---- the masked email the client's login screen shows ----
+
+    #[test]
+    fn masking_keeps_four_characters_and_the_whole_domain() {
+        // The exact shape tools/test-server.ps1 hard-coded as -DisplayName before there was
+        // an email column to build it from, so the screen does not change appearance.
+        assert_eq!(mask_email("wispplayer@example.com"), "wisp****@example.com");
+    }
+
+    #[test]
+    fn the_star_count_does_not_leak_the_length() {
+        // One star per hidden character would give away how long the address is, which is the
+        // one thing masking exists to hide. Two very different local parts must look alike.
+        assert_eq!(mask_email("wispa@example.com"), "wisp****@example.com");
+        assert_eq!(mask_email("wispplayerandthensome@example.com"), "wisp****@example.com");
+    }
+
+    #[test]
+    fn a_local_part_shorter_than_the_keep_length_is_not_padded_out() {
+        assert_eq!(mask_email("abc@example.com"), "abc****@example.com");
+        assert_eq!(mask_email("a@example.com"), "a****@example.com");
+        assert_eq!(mask_email("@example.com"), "****@example.com");
+    }
+
+    #[test]
+    fn something_that_is_not_an_address_is_still_masked() {
+        // Showing an unrecognised value in full on the login screen is the one behaviour with
+        // no argument for it.
+        assert_eq!(mask_email("not-an-email"), "not-****");
+        assert_eq!(mask_email(""), "****");
+    }
+
+    #[test]
+    fn masking_does_not_split_a_multi_byte_character() {
+        // `.chars().take()` rather than a byte slice, which would panic on this input.
+        assert_eq!(mask_email("ééééé@example.com"), "éééé****@example.com");
+    }
+
+    #[test]
+    fn an_account_with_an_email_offers_a_masked_one_and_one_without_offers_none() {
+        let s = store();
+        s.create_account("player_one", "hunter2hunter2").unwrap();
+        assert_eq!(s.get_account("player_one").unwrap().unwrap().masked_email(), None);
+
+        s.set_email("player_one", Some("wispplayer@example.com")).unwrap();
+        assert_eq!(
+            s.get_account("player_one").unwrap().unwrap().masked_email().as_deref(),
+            Some("wisp****@example.com")
+        );
+    }
+
+    #[test]
+    fn the_masked_form_never_contains_the_whole_address() {
+        // The property rather than one example: whatever the local part was, it must not
+        // survive into what the screen shows.
+        for addr in ["wispplayer@example.com", "someone.long@example.co.uk"] {
+            let masked = mask_email(addr);
+            assert!(!masked.contains(addr), "{addr} -> {masked}");
+            assert!(masked.contains('*'), "{addr} -> {masked}");
+        }
     }
 
     #[test]

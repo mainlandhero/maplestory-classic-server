@@ -481,7 +481,12 @@ param(
     # Like -Launcher, this does NOT clear a live login claim: the launcher is about to stake
     # one, and clearing it here would only matter if it managed to race the sign-in.
     [switch]$ServersOnly,
-    # What the login screen displays. Server-supplied; the client cannot compute it.
+    # What the login screen displays when the account has NO email - a fallback now, not the
+    # answer. The masked address is derived from the account being served
+    # (`Account::masked_email`), so it follows the launcher's claim instead of being fixed at
+    # startup. This value is what an account created before the email column existed gets,
+    # because an empty field draws as a blank line where a person expects to see themselves.
+    #   .	argetelease\maplecw-useradd.exe --email <name> <address>
     [string]$DisplayName = 'wisp****@example.com',
     [string]$Database,
     [string]$World = 'Scania',

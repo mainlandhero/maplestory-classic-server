@@ -76,8 +76,17 @@ pub struct Config {
     /// What the login screen displays as the account name.
     ///
     /// Server-supplied: the client cannot compute it, and leaving it out makes the field
-    /// go blank. It is a masked email in the real service. The accounts table holds no
-    /// email, so this is configured until there is something real to show.
+    /// go blank. It is a masked email in the real service.
+    ///
+    /// **This is the fallback now, not the answer.** It used to say "the accounts table holds
+    /// no email, so this is configured until there is something real to show" - and the table
+    /// holds one as of 2026-08-28. [`crate::session::Session::display_name`] derives the
+    /// masked address from the account the connection is actually being served as, so the
+    /// screen follows the launcher's claim instead of a value fixed at startup.
+    ///
+    /// This value is what an account with **no** email gets, which is every account created
+    /// before the column existed. It exists because an empty string draws as a blank line
+    /// where a person expects to see themselves, not because a constant is ever right.
     pub display_name: String,
 
     pub world: World,
