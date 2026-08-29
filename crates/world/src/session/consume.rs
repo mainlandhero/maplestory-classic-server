@@ -42,10 +42,29 @@ impl Session {
                 row.item.item_id, req.item_id
             ));
         }
+        // How many are in the slot **before** this use. Read from the row that was just
+        // checked rather than re-queried, for the same reason the potion path does it:
+        // `remove_item` returns what it took, not what remains.
+        let held = row.item.kind.quantity();
+
+        // **A Return Scroll is checked before the potion table, and it is not a potion.**
+        // Until 2026-08-29 this fell straight through to the refusal below - the comment
+        // there named "a return scroll" as one of the things nothing here knew how to do.
+        // [`Session::use_return_scroll`] answers `None` for anything that is not one of the
+        // ten, so the potion path is unchanged for every other item.
+        if let Some(out) = self.use_return_scroll(&mut chr, req.item_id, inv, slot, held) {
+            return out;
+        }
+
         let Some(restores) = self.config.consumables.get(req.item_id) else {
-            // A real item that simply is not a potion - a scroll, a summoning sack, a return
-            // scroll. Nothing here knows what those do, and pretending otherwise would take
-            // the item away for no effect.
+            // A real item that simply is not a potion - an upgrade scroll, a summoning sack.
+            // Nothing here knows what those do, and pretending otherwise would take the item
+            // away for no effect.
+            //
+            // **Return scrolls are no longer in that list** - they are handled above, since
+            // 2026-08-29. This comment used to name them and it is worth saying they left,
+            // because "the item is refused" is what a stale branch and a missing feature look
+            // like from the same seat.
             return self.use_refused(format!(
                 "item {} restores nothing this server knows about",
                 req.item_id
@@ -67,9 +86,8 @@ impl Session {
         // health still drinks the potion, and refusing here would let a player at full HP
         // hold an infinite stack. That is a rule rather than an observation, and it is the
         // same one every version of this game has.
-        // What is left AFTER this one is drunk. Taken from the row that was just read, not
-        // re-queried: `remove_item` returns what it took, not what remains.
-        let left = row.item.kind.quantity().saturating_sub(1);
+        // What is left AFTER this one is drunk.
+        let left = held.saturating_sub(1);
         if let Err(e) = self.store.remove_item(chr.id, inv, slot, Some(1)) {
             return self.use_refused(format!("could not consume the item: {e}"));
         }
@@ -109,6 +127,105 @@ impl Session {
         // consumes the apple, the quest would be completed."*
         out.extend(self.quests_completed_by_consuming(req.item_id));
         out
+    }
+
+
+    /// A Return Scroll: teleport, or refuse and **keep the scroll**.
+    ///
+    /// `None` means "this is not one of the ten", and the caller carries on to the potion
+    /// table. Every other answer is a complete set of replies.
+    ///
+    /// # Every effect hangs off the transition
+    ///
+    /// [`crate::returnscroll::resolve`] decides and performs nothing; consuming, warping and
+    /// the stack reply all live inside the single `Teleport` arm below. That is
+    /// `CLAUDE.md`'s Heena-quest rule applied before it can be broken rather than after:
+    /// there is no arrangement of this function where the scroll is spent and the character
+    /// stays put, because the removal and the warp are the same three lines.
+    ///
+    /// **A refusal consumes nothing.** Wrong continent, no return row, a destination this
+    /// client has no field image for, an empty field table - all of them leave the stack
+    /// exactly as it was and say why on screen. A scroll eaten by a refusal is the bug a
+    /// player notices first.
+    ///
+    /// # The guard is the one `gm_map` has, and it is not weaker
+    ///
+    /// `session::gm_map` refuses a map with no field image because a bad id strands or kills
+    /// the client - the owner lost a session to `!map 45` on 2026-08-20 - and it refuses *louder*
+    /// when the field table is empty, because `Config::map_exists` is fail-open and would
+    /// otherwise let every id through while looking checked. Both are here. The existence
+    /// check is an argument of `resolve` rather than a step in it, so it cannot be skipped
+    /// by a future caller.
+    ///
+    /// # The latch
+    ///
+    /// The success path sends an empty `StatChanged` before anything else, exactly as
+    /// [`Session::use_refused`] does. Its `bExclRequestSent` clears the client's
+    /// one-request-outstanding latch at `+0x2330`; the `InventoryOperation` that follows
+    /// carries the same byte. Both are already-shipped packet shapes - this path invents
+    /// none - and the reason for the belt as well as the braces is that a `0x010E` that
+    /// leaves the latch set costs not one scroll but **every later item use in the
+    /// session**.
+    fn use_return_scroll(
+        &mut self,
+        chr: &mut net::opcode::Character,
+        item_id: u32,
+        inv: store::InventoryType,
+        slot: u16,
+        held: u16,
+    ) -> Option<Vec<Reply>> {
+        use crate::returnscroll::{self, Outcome};
+
+        if !returnscroll::is_return_scroll(item_id) {
+            return None;
+        }
+        // Said out loud rather than silently fail-open. `map_exists` answers `true` for
+        // everything when the table is empty, so without this a missing
+        // `gm-handbook/fields.txt` would turn the strand guard off while the log still
+        // read as though it had run.
+        if self.config.fields.is_empty() {
+            return Some(self.use_refused(format!(
+                "the field table is empty, so this server cannot check that the scroll's \
+                 destination exists, and a bad map id kills the client. Item {item_id} was \
+                 NOT consumed. Regenerate gm-handbook/fields.txt with tools/dump_portals.py, \
+                 or restart the server so it loads"
+            )));
+        }
+
+        // Cloned so the closure below borrows the table rather than `self`, which the
+        // teleport needs mutably a few lines later.
+        let cfg = self.config.clone();
+        let from = chr.map_id;
+        let anchor = cfg.revive_field(from);
+        let (to, why) = match returnscroll::resolve(item_id, from, anchor, |m| cfg.map_exists(m)) {
+            Outcome::Teleport { to, why } => (to, why),
+            Outcome::Refused { why } => return Some(self.use_refused(why)),
+            // Unreachable: `is_return_scroll` above already said it is one. Falling through
+            // to the potion table is the only harmless reading of it.
+            Outcome::NotAScroll => return None,
+        };
+
+        let left = held.saturating_sub(1);
+        if let Err(e) = self.store.remove_item(chr.id, inv, slot, Some(1)) {
+            return Some(self.use_refused(format!("could not consume the scroll: {e}")));
+        }
+        let mut out = vec![Reply {
+            opcode: net::stats::STAT_CHANGED,
+            body: net::stats::StatChange::default().build(),
+            what: format!(
+                "StatChanged: EMPTY - item {item_id} is a Return Scroll and moves no stat. Sent \
+                 because byte 0 clears the client's 0x010E request latch"
+            ),
+        }];
+        out.extend(self.stack_change_replies(inv, slot, left));
+        // Portal 0 is the map's spawn point, which is where `gm_map` lands a warp too.
+        out.extend(self.go_to_map(
+            chr,
+            to,
+            0,
+            format!("{why}, item {item_id} from Use slot {slot}"),
+        ));
+        Some(out)
     }
 
 
@@ -188,5 +305,262 @@ impl Session {
             what: format!("StatChanged: EMPTY - 0x010E refused ({why}). Sent anyway because byte 0 clears the client's request latch, and a silent refusal is what kills the next use"),
         });
         out
+    }
+}
+
+
+/// Return Scrolls, end to end through `0x010E`.
+///
+/// `crate::returnscroll` proves the *decision*; these prove the **effects**, and there are
+/// four of them on a success and four matching absences on a refusal. `CLAUDE.md`: a test
+/// that checks one of several effects gives false confidence about the rest - the Heena
+/// turn-in counted fanfares while the experience doubled beside it - so every test below
+/// asserts on all four, or names the ones it is not covering.
+///
+/// | effect | on a success | on a refusal |
+/// |---|---|---|
+/// | the stack in the Use slot | one fewer | **unchanged** |
+/// | `InventoryOperation` | mode 1, or mode 3 for the last one | **absent** |
+/// | the character's stored map | the destination | **unchanged** |
+/// | `SetField` | sent | **absent** |
+///
+/// Plus the one that is the same in both directions and is the most expensive to get wrong:
+/// **something with `bExclRequestSent` always goes out**, or the client's `0x010E` latch
+/// stays set and every later item use in the session is dropped.
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    /// A character standing on `on_map` with `count` of `item_id` in Use slot 1, and a
+    /// config that knows the maps these tests warp between.
+    ///
+    /// The two tables are the real ones' shape, not the real ones' contents: `fields` is the
+    /// `gm-handbook/fields.txt` set and `revive_maps` the `reviveMap` column of
+    /// `returnmaps.txt`. Their real values for these ids are asserted by
+    /// `returnscroll`'s own cross-check against the generated file, so hard-coding a handful
+    /// here cannot make a test agree with a wrong table.
+    fn session_with_scroll(item_id: u32, count: u16, on_map: u32) -> (Session, i64, u32) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Wanderer".to_string(), ..Default::default() };
+        let made = store.create_character(account_id, 0, &chr).unwrap();
+        store.set_character_map(made.id, on_map).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        store
+            .set_inventory_slot(
+                made.id,
+                store::InventoryType::Use,
+                1,
+                &store::Item::bundle(item_id, count),
+            )
+            .unwrap();
+        let config = Config {
+            // Map 40's anchor is Southperry; a Victoria field's is its own town. Both are
+            // rows of the real generated table.
+            revive_maps: [
+                (40, 60),
+                (60, 60),
+                (10_001_090, 10_001_000),
+                (10_001_000, 10_001_000),
+                (20_001_000, 20_001_000),
+            ]
+            .into_iter()
+            .collect(),
+            fields: [40, 60, 10_000_000, 10_001_000, 10_001_090, 20_001_000]
+                .into_iter()
+                .collect(),
+            consumables: crate::consumables::Consumables::parse("2000000, 100, 0, 0, 0\n"),
+            ..Config::default()
+        };
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(made.id);
+        (s, account_id, made.id)
+    }
+
+    fn stored_map(s: &Session, account: i64, id: u32) -> u32 {
+        s.store
+            .characters_for(account, 0)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == id)
+            .expect("the character is still there")
+            .map_id
+    }
+
+    fn held(s: &Session, id: u32) -> Option<u16> {
+        s.store
+            .inventory_slot(id, store::InventoryType::Use, 1)
+            .unwrap()
+            .map(|i| i.kind.quantity())
+    }
+
+    fn has(rs: &[Reply], opcode: u16) -> bool {
+        rs.iter().any(|r| r.opcode == opcode)
+    }
+
+    /// **The success, all four effects.** The owner: *"Return Scroll to Nearest Town should adhere
+    /// to the map's return map and teleport the player there."* Map 40's `reviveMap` is 60,
+    /// Southperry.
+    #[test]
+    fn the_nearest_town_scroll_warps_to_the_maps_own_anchor_and_costs_one() {
+        let (mut s, acct, id) = session_with_scroll(2_030_000, 2, 40);
+        assert_eq!(stored_map(&s, acct, id), 40);
+
+        let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_030_000, 1));
+
+        // 1. the character moved, in the DATABASE and not only in a reply
+        assert_eq!(stored_map(&s, acct, id), 60, "map 40 anchors to Southperry");
+        // 2. and the client was told, with a SetField naming it
+        let sf = out
+            .iter()
+            .find(|r| r.opcode == net::opcode::SET_FIELD)
+            .expect("a teleport always sends a SetField");
+        assert!(sf.what.contains("anchors to 60"), "{}", sf.what);
+        // 3. the scroll was paid for
+        assert_eq!(held(&s, id), Some(1), "one of the two is gone");
+        let op = out
+            .iter()
+            .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+            .expect("the Use tab is told the stack shrank");
+        assert_eq!(
+            op.body,
+            net::inventory::inventory_quantity(store::InventoryType::Use.as_u8() as i8, 1, 1)
+        );
+        // 4. and the request latch is cleared, or nothing else works this session
+        let stat = out
+            .iter()
+            .find(|r| r.opcode == net::stats::STAT_CHANGED)
+            .expect("every 0x010E is answered");
+        assert_eq!(stat.body[0], 1, "bExclRequestSent");
+        assert_eq!(op.body[0], 1, "and the inventory reply carries it too");
+    }
+
+    /// **The owner's own example, and the four absences.** *"Return Scroll to El Nath should not
+    /// be allowed on Victoria Island."*
+    #[test]
+    fn an_el_nath_scroll_on_victoria_island_is_refused_and_not_consumed() {
+        let (mut s, acct, id) = session_with_scroll(2_030_009, 1, 10_001_090);
+
+        let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_030_009, 1));
+
+        assert_eq!(stored_map(&s, acct, id), 10_001_090, "the character did not move");
+        assert!(!has(&out, net::opcode::SET_FIELD), "and no SetField was sent");
+        assert_eq!(held(&s, id), Some(1), "the scroll is still in the bag");
+        assert!(
+            !has(&out, net::inventory::INVENTORY_OPERATION),
+            "and nothing told the client otherwise"
+        );
+
+        // It still answers, and it says why on screen rather than only in world.log.
+        let stat = out
+            .iter()
+            .find(|r| r.opcode == net::stats::STAT_CHANGED)
+            .expect("a refusal answers or the next use never leaves the client");
+        assert_eq!(stat.body[0], 1, "bExclRequestSent");
+        let notice = out
+            .iter()
+            .find(|r| r.opcode == net::notice::CHAT_NOTICE)
+            .expect("the refusal is visible on screen");
+        let text = String::from_utf8_lossy(&notice.body).to_string();
+        assert!(text.contains("Ossyria"), "{text}");
+        assert!(text.contains("Victoria Island"), "{text}");
+    }
+
+    /// The other half of the same rule: on its own continent the same shape of scroll works.
+    /// Without this the test above would pass on a handler that refused everything.
+    #[test]
+    fn a_henesys_scroll_works_while_standing_on_victoria_island() {
+        let (mut s, acct, id) = session_with_scroll(2_030_004, 1, 10_001_090);
+        let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_030_004, 1));
+
+        assert_eq!(stored_map(&s, acct, id), 10_001_000, "Henesys");
+        assert!(has(&out, net::opcode::SET_FIELD));
+        assert_eq!(held(&s, id), None, "the last one empties the slot");
+        let op = out
+            .iter()
+            .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+            .expect("the slot change is reported");
+        assert_eq!(
+            op.body,
+            net::inventory::inventory_removed(store::InventoryType::Use.as_u8() as i8, 1),
+            "mode 3 REMOVE - mode 1 would leave a phantom stack of 0 on screen"
+        );
+    }
+
+    /// The `gm_map` guard, on this path, in the state that made it necessary: `map_exists` is
+    /// **fail-open** on an empty table, so a missing `gm-handbook/fields.txt` would otherwise
+    /// let every destination through while the code read as though it had checked.
+    #[test]
+    fn an_empty_field_table_refuses_loudly_and_keeps_the_scroll() {
+        let (mut s, acct, id) = session_with_scroll(2_030_000, 1, 40);
+        let mut cfg = (*s.config).clone();
+        cfg.fields.clear();
+        s.config = Arc::new(cfg);
+
+        let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_030_000, 1));
+
+        assert_eq!(stored_map(&s, acct, id), 40, "nobody moved");
+        assert!(!has(&out, net::opcode::SET_FIELD));
+        assert_eq!(held(&s, id), Some(1), "and the scroll is still there");
+        let notice = out
+            .iter()
+            .find(|r| r.opcode == net::notice::CHAT_NOTICE)
+            .expect("the refusal is visible on screen");
+        let text = String::from_utf8_lossy(&notice.body).to_string();
+        assert!(text.contains("field table is empty"), "{text}");
+        assert!(text.contains("NOT consumed"), "{text}");
+    }
+
+    /// A map with no row in the return table: refuse, and do not invent a town.
+    #[test]
+    fn a_map_with_no_return_row_keeps_the_scroll() {
+        let (mut s, acct, id) = session_with_scroll(2_030_000, 1, 40);
+        let mut cfg = (*s.config).clone();
+        cfg.revive_maps.clear();
+        s.config = Arc::new(cfg);
+
+        let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_030_000, 1));
+
+        assert_eq!(stored_map(&s, acct, id), 40);
+        assert!(!has(&out, net::opcode::SET_FIELD));
+        assert_eq!(held(&s, id), Some(1));
+        assert!(has(&out, net::stats::STAT_CHANGED), "still answered");
+    }
+
+    /// **The regression this branch could most easily cause.** The scroll check runs before
+    /// the potion table, so a potion must still heal, still shrink its stack, and still send
+    /// no SetField.
+    #[test]
+    fn a_red_potion_is_untouched_by_the_scroll_branch() {
+        let (mut s, acct, id) = session_with_scroll(2_000_000, 2, 40);
+        let mut chr = s.claimed_character().unwrap();
+        chr.max_hp = 500;
+        chr.hp = 1;
+        s.store.save_character_progress(&chr).unwrap();
+
+        let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_000_000, 1));
+
+        let after = s
+            .store
+            .characters_for(acct, 0)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap();
+        assert_eq!(after.hp, 101, "1 + 100 - the potion path still runs");
+        assert_eq!(after.map_id, 40, "and a potion is not a teleport");
+        assert!(!has(&out, net::opcode::SET_FIELD));
+        assert_eq!(held(&s, id), Some(1));
+    }
+
+    /// An item that is neither a scroll nor in the potion table is still refused rather than
+    /// eaten - the branch must not have turned "unknown" into "scroll".
+    #[test]
+    fn an_unknown_item_is_still_refused_and_kept() {
+        let (mut s, _acct, id) = session_with_scroll(2_040_000, 1, 40);
+        let out = s.on_use_item(&net::useitem::use_item(0, 1, 2_040_000, 1));
+        assert_eq!(held(&s, id), Some(1), "a magic scroll is not drunk and not a warp");
+        assert!(!has(&out, net::opcode::SET_FIELD));
+        assert!(has(&out, net::stats::STAT_CHANGED), "still answered");
     }
 }

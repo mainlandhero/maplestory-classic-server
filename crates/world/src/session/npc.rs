@@ -53,6 +53,21 @@ impl Session {
         let Some(req) = net::script::parse_quest_request(body) else {
             return Vec::new();
         };
+
+        // **Phil is the job guide, and a click on them arrives as EITHER packet.** Measured:
+        // `0x0151` while "Phil's Call" (10001) is offerable or completable, `0x00F2` once it
+        // is finished - previous-runs/world-20260821-230104.log, 02:50:44 and 02:50:56. A
+        // patch that hooked only `on_npc_click` would do nothing for a beginner who has just
+        // met them.
+        //
+        // It must NOT swallow the quest: 10001 pays exp, mesos and ten potions, and its own
+        // last line is *"come talk to me again"*. The quest runs first; the menu takes over
+        // only once there is nothing left for it to say.
+        if req.npc_template_id == crate::jobguide::PHIL_TEMPLATE && self.phil_has_nothing_left(&req) {
+            if let Some(replies) = self.phil_job_guide() {
+                return replies;
+            }
+        }
         // Which half of the quest's Say tree the action selects. With no quest state, a
         // start and an opening script both land on "0".
         let state = match req.action {
@@ -622,6 +637,21 @@ impl Session {
             return replies;
         }
 
+        // **And Phil hands out a map instead of talking.** They have no `d0` line at all, so
+        // before this a click on them printed the "no dialogue for template 101" placeholder -
+        // observed, previous-runs/world-20260821-230104.log 02:50:56.185.
+        if template == crate::jobguide::PHIL_TEMPLATE {
+            if let Some(replies) = self.phil_job_guide() {
+                return replies;
+            }
+        }
+
+        // **And a taxi sells a ride instead of talking.** Same shape, and the same failure it
+        // fixes: Lyn has no `d0` at all, so clicking their printed the placeholder.
+        if let Some(replies) = self.open_taxi_for(template) {
+            return replies;
+        }
+
         // **And an instructor advances the job instead of talking.** Same shape again, and
         // the same failure it fixes: `world::jobs` has decided this correctly since it was
         // written, and nothing called it - `!job` was the only way to reach a job change, so
@@ -718,7 +748,137 @@ impl Session {
         }
     }
 
-    /// One `0x055B` from an instructor, with no conversation state behind it.
+    /// Put Phil's job-path choice on screen, or say why not.
+    ///
+    /// `None` only when no character is claimed, which both callers have already ruled out.
+    /// **Phil has no `d0` line**, so falling through here prints the "no dialogue for NPC
+    /// template 101" placeholder, which is what they do today.
+    ///
+    /// **A chain of yes/no boxes, not one list.** `crate::taxi` sends the type-6 menu form;
+    /// this sends the mechanism already proven on the owner's screen, because the fill site of
+    /// `[ui+0x3e0]` was never isolated and "a server-sent type 6 draws its `#L` lines" is
+    /// **[D]**. One launch measures both, with this as the control. `jobguide.rs` section 6
+    /// carries the addresses so it never has to be re-derived.
+    fn phil_job_guide(&mut self) -> Option<Vec<Reply>> {
+        let chr = self.claimed_character()?;
+        let step = crate::jobguide::opening(&chr);
+        self.conversation = self.jobguide_conversation(&step);
+        Some(crate::jobguide::script_replies(&step))
+    }
+
+    /// Whether Phil has nothing left to say about the quest the client just named.
+    ///
+    /// Keeps "Phil's Call" working: the quest runs first and pays out, and the guide takes
+    /// over only once it is finished, or is one this server has no data for (which would
+    /// otherwise print the placeholder).
+    fn phil_has_nothing_left(&self, req: &net::script::QuestRequest) -> bool {
+        if self.config.quests.get(&req.quest_id).is_none() {
+            return true;
+        }
+        let Some(chr) = self.claimed_character() else { return false };
+        matches!(
+            self.store.quest_row(chr.id, req.quest_id).ok().flatten().map(|r| r.state),
+            Some(store::QuestState::Complete)
+        )
+    }
+
+    /// The conversation a step leaves behind. **Only an `Ask` keeps one**: a `Done` or a
+    /// `Ride` ends the exchange, and a stale conversation is what the next `0x00F3` walks into.
+    fn jobguide_conversation(&self, step: &crate::jobguide::Step) -> Option<Conversation> {
+        match step {
+            crate::jobguide::Step::Ask { path, .. } => Some(Conversation {
+                npc_template: crate::jobguide::PHIL_TEMPLATE,
+                quest_id: None,
+                path: path.clone(),
+                sent: 0,
+                awaiting_yes_no: true,
+                sent_with_next: false,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The player answered one of Phil's yes/no boxes.
+    ///
+    /// **Every effect hangs off the transition.** `jobguide::on_reply` is the single decision
+    /// and only `Step::Ride` carries a destination, so a refusal cannot warp anyone by
+    /// accident - there is no map id on any other arm to read.
+    fn jobguide_reply(&mut self, index: usize, action: i8) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else {
+            self.conversation = None;
+            return Vec::new();
+        };
+        let step = crate::jobguide::on_reply(&chr, index, action, &self.config.fields);
+        self.conversation = self.jobguide_conversation(&step);
+        let mut out = crate::jobguide::script_replies(&step);
+        if let crate::jobguide::Step::Ride(dest) = step {
+            // Bound before the call: `go_to_map` takes `&mut chr`, so reading `chr.name` inside
+            // its own argument list is a borrow conflict.
+            let who = chr.name.clone();
+            // **The notice goes BEFORE the SetField.** That is the order `gm_map` uses and the
+            // order observed working - world-20260827-210956.log 01:07:51.738 has the
+            // ChatNotice and the SetField at the same millisecond, notice first. And
+            // `script_replies` deliberately returns nothing for a Ride: a script message with
+            // or just before a SetField is torn down silently by field entry.
+            out.extend(self.notice(crate::jobguide::arrival_line(dest)));
+            out.extend(self.go_to_map(
+                &mut chr,
+                dest.map_id,
+                0,
+                format!(
+                    "Phil's job guide: {who} chose {} and rides to {} ({}), where {} (template \
+                     {}) is waiting. Phil grants no job - advance_job_for does.",
+                    dest.job_name, dest.map_id, dest.map_name, dest.npc_name, dest.npc_template
+                ),
+            ));
+        }
+        out
+    }
+
+    /// **A taxi's menu.** `None` for any NPC that is not one, so the click chain carries on.
+    ///
+    /// `awaiting_yes_no` is deliberately `false`: a menu is not a yes/no box, and if this
+    /// branch were ever skipped a stray reply must not be mistaken for a quest Accept.
+    pub(super) fn open_taxi_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let taxi = crate::taxi::taxi_for(template)?;
+        let step = crate::taxi::opening(taxi, &self.config)?;
+        self.conversation = Some(Conversation {
+            npc_template: template,
+            quest_id: None,
+            path: crate::taxi::MENU_PATH.to_string(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        Some(crate::taxi::script_replies(taxi, &step))
+    }
+
+    /// The player answered a taxi's menu. `None` means "not mine" - fall through.
+    ///
+    /// **Every effect hangs off `Step::Ride`**: no other arm carries a map id, so a refusal
+    /// cannot teleport anyone. By the time a `Ride` exists the fare is already taken, in one
+    /// transaction.
+    fn taxi_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        if !crate::taxi::is_taxi_path(&convo.path) {
+            return None; // Phil's, or a quest's, or a plain talk's
+        }
+        let taxi = crate::taxi::taxi_for(convo.npc_template)?;
+        let mut chr = self.claimed_character()?;
+        // `None` is "not a type-6 body at all" - leave the conversation alone and let the
+        // ordinary script path have it.
+        let step = crate::taxi::on_reply(&self.store, &self.config, chr.id, taxi, body)?;
+        self.conversation = None;
+        let mut out = crate::taxi::script_replies(taxi, &step);
+        if let crate::taxi::Step::Ride { map_id, map_name, balance, .. } = step {
+            // The balance moves before the screen does. Field entry states it again ~420 ms
+            // later; belt and braces, not a duplicate - the character record has no meso field.
+            out.extend(self.meso_reply(chr.id));
+            let why = crate::taxi::ride_note(taxi, &chr, map_id, &map_name, balance);
+            out.extend(self.go_to_map(&mut chr, map_id, 0, why));
+        }
+        Some(out)
+    }    /// One `0x055B` from an instructor, with no conversation state behind it.
     ///
     /// Deliberately **not** routed through [`Session::say_line`]: that walks a WZ line list and
     /// leaves a `Conversation` for the next `0x00F3` to step through. This is a single
@@ -808,12 +968,34 @@ impl Session {
     /// is inference from our own state rather than something read off the wire, and it is
     /// worth knowing which of the two it is.
     pub(super) fn on_script_reply(&mut self, body: &[u8]) -> Vec<Reply> {
+        // **A taxi's menu is message type 6, which `parse_script_reply` cannot decode.** Its
+        // fall-through arm reads a Say-shaped `u32 echo, str, u8`; against a 10-byte type-6
+        // body the string's u16 length wants two bytes that are not there, the reader errors,
+        // and the whole packet is dropped - the same silent failure that cost Roger's quest.
+        //
+        // This comes FIRST, before the Say-shaped decoder, and it is the branch with a
+        // precondition: it answers only when this session has a taxi conversation parked.
+        if let Some(replies) = self.taxi_menu_answer(body) {
+            return replies;
+        }
         let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };
         let Some(convo) = self.conversation.clone() else { return Vec::new() };
 
         if reply.action == net::script::SCRIPT_ACTION_CLOSED {
             self.conversation = None;
             return Vec::new();
+        }
+
+        // **Phil's job guide holds its place in `Conversation::path`.** This must come BEFORE
+        // the `awaiting_yes_no` block, not after: that flag is true on Phil's box too, so the
+        // quest branch would otherwise take it - `accept_quest` returns nothing for a
+        // conversation with no quest id, `has_branch` is false, and the conversation would be
+        // dropped with NO PACKET SENT. Phil would go silent on the first Yes.
+        //
+        // Order against the taxi branch does not matter: the two path prefixes are disjoint
+        // and there is a test in each module asserting neither claims the other's.
+        if let Some(index) = crate::jobguide::offer_index(&convo.path) {
+            return self.jobguide_reply(index, reply.action);
         }
 
         if convo.awaiting_yes_no {
