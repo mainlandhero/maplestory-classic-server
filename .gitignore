@@ -53,6 +53,12 @@ gm-handbook/
 # target/release open. See tools/channel_smoke.py MAPLECW_BIN_DIR.
 /target-smoke
 
+# tools/package-server.ps1's build tree. Separate from target/ on purpose: RUSTFLAGS is part
+# of cargo's fingerprint, so sharing one would make every static/dynamic switch a full
+# rebuild - and would leave target/release holding statically linked binaries that the dev
+# scripts then run without anyone noticing the difference.
+/target-static
+
 # The launcher now archives the previous run here instead of deleting it. Generated
 # per-run output, not source - runs worth keeping are copied into research/fixtures/.
 previous-runs/
