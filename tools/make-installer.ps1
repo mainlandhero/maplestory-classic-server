@@ -190,9 +190,10 @@ Write-Host ("staged {0} binaries" -f $binaries.Count)
 
 Copy-Item $handbook (Join-Path $stage 'gm-handbook') -Recurse -Force
 Copy-Item $dataDir  (Join-Path $stage 'data')        -Recurse -Force
-Copy-Item (Join-Path $here 'installer\install.ps1')      $stage -Force
-Copy-Item (Join-Path $here 'installer\start-server.ps1') $stage -Force
-Copy-Item (Join-Path $here 'installer\README.txt')       $stage -Force
+foreach ($f in @('install.ps1', 'start-server.ps1', 'start-servers.cmd',
+                 'stop-servers.cmd', 'README.txt')) {
+    Copy-Item (Join-Path $here "installer\$f") $stage -Force
+}
 
 if ($NoClient) {
     Write-Host 'skipping the client (-NoClient)' -ForegroundColor Yellow

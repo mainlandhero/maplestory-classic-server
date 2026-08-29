@@ -112,6 +112,24 @@ impl Layout {
         self.client_dir.join(CLIENT_EXE_NAME)
     }
 
+    /// The dev checkout this launcher is running out of, if it is running out of one.
+    ///
+    /// Used to name the exact command in an error rather than describing it - "run
+    /// `tools\test-server.ps1`" is much less useful than the full quoted path, because an
+    /// elevated window opens in `system32` and a relative path there is a command that fails.
+    ///
+    /// **It checks that the script is actually there** rather than trusting
+    /// [`Source::Dev`]. A config file can point a dev-layout launcher at an installed client,
+    /// and a message naming a `tools\` directory that does not exist is worse than one that
+    /// says nothing: it sends someone to a path to find out it is wrong.
+    pub fn repo_root(&self) -> Option<PathBuf> {
+        if self.source != Source::Dev {
+            return None;
+        }
+        let root = self.data_root.clone();
+        root.join("tools").join("test-server.ps1").is_file().then_some(root)
+    }
+
     pub fn previous_runs_dir(&self) -> PathBuf {
         self.data_root.join("previous-runs")
     }

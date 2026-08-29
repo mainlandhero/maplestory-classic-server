@@ -17,6 +17,7 @@ use std::path::Path;
 use crate::client;
 use crate::launch;
 use crate::paths::Layout;
+use crate::servers;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Level {
@@ -114,6 +115,24 @@ pub fn prepare_and_launch(
 ) -> Result<(), String> {
     prepare(layout, log)?;
 
+    // BEFORE the client, and after everything else: a client launched at a dead port sits on
+    // "Connecting..." forever and reads as a broken client. `tools/test-server.ps1` carries
+    // the same guard for the same reason. One TCP connect is cheap; a manual launch is not.
+    //
+    // The probe does put one connection in `login.log` that no client made - a `connection
+    // from #N` with a close and nothing between. That is a real cost in a project whose logs
+    // are its evidence, so it happens exactly once, here, and is announced.
+    log(
+        Level::Info,
+        format!("checking for a server on {}:{}", plan.ip, plan.port),
+    );
+    servers::check(&plan.ip, plan.port, layout.repo_root().as_deref()).map_err(|e| {
+        // Not a warning that scrolls past. Returning Err stops the launch, which is the whole
+        // point: the client is not started, so nothing has been spent.
+        format!("{e}\n\n(The client was NOT launched.)")
+    })?;
+    log(Level::Good, "a server is answering".into());
+
     let args = launch_args(plan);
     log(
         Level::Info,
@@ -122,12 +141,6 @@ pub fn prepare_and_launch(
             layout.client_exe().display(),
             launch::quote_args(&args)
         ),
-    );
-    log(
-        Level::Warn,
-        "this launcher does not start the servers - maplecw-login must already be listening on \
-         that address, or the client sits on \"Connecting...\" forever"
-            .into(),
     );
     launch::launch(&layout.client_exe(), &args, &layout.client_dir)?;
     log(Level::Good, "client started (Windows will ask for elevation)".into());

@@ -30,12 +30,20 @@ Options worth knowing:
 RUN
 ---
 
-1. Start the servers and leave the window open:
+Two double-clicks. No typing.
+
+1. Double-click  C:\MapleCW\start-servers.cmd
+   Leave the window it opens alone - closing it stops the servers.
+
+2. Double-click  C:\MapleCW\maplecw-launcher.exe   (or the desktop shortcut)
+   Windows asks for administrator. Say yes: the game client requires it, and
+   accepting here means the client does not ask a second time.
+
+To stop everything afterwards, double-click  C:\MapleCW\stop-servers.cmd
+
+If you would rather use a PowerShell window, the same two steps are:
 
        powershell -ExecutionPolicy Bypass -File "C:\MapleCW\start-server.ps1"
-
-2. Run the launcher - there is a desktop shortcut, or:
-
        & "C:\MapleCW\maplecw-launcher.exe"
 
    The leading & is required. PowerShell reads a line starting with a quoted string as

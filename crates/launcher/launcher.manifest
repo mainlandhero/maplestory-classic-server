@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!--
+    Run the launcher elevated.
+
+    The owner, 2026-08-28: "the client I would also like to start by double clicking the new login
+    client as administrator."
+
+    This is not only about honouring that. MapleStory.exe carries its own
+    requireAdministrator manifest, so it raises UAC no matter who starts it. A process that
+    is ALREADY elevated does not get a second prompt when it launches one - so putting the
+    elevation here turns two prompts into one, at the moment a person is looking at the
+    window and expecting it.
+
+    docs/launcher.md argued the other way when it was written: "a launcher that demands admin
+    every time is the opposite of professional", and suggested elevating only to add the
+    firewall rule. That reasoning was about the firewall rule, which is now a one-time step in
+    install.ps1. The client's own manifest is the part that could not be designed away.
+  -->
+  <!--
+    THE ELEVATION IS NOT DECLARED HERE. It is `/MANIFESTUAC:level='requireAdministrator'` in
+    build.rs, and that is not a style choice - putting a <trustInfo> block in this file fails
+    the build:
+
+        manifest authoring error c1010001: Values of attribute "level" not equal in
+        different manifest snippets
+        LINK : fatal error LNK1327: failure during running mt.exe
+
+    The MSVC linker always generates its own UAC fragment (`asInvoker` by default) and then
+    merges it with this file. Two fragments naming different levels is an error rather than
+    an override, so exactly one of them may say it, and the linker's own switch is the one
+    that wins cleanly. This file supplies what the switch cannot: DPI and OS compatibility.
+  -->
+
+  <!-- Per-monitor DPI, so the window is not blurry on a scaled display. -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">permonitorv2,permonitor</dpiAwareness>
+    </windowsSettings>
+  </application>
+
+  <!-- Ask for the modern common controls and declare Windows 10/11 support, so the UAC
+       shield and the title bar look like every other application on the machine. -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+    </application>
+  </compatibility>
+</assembly>

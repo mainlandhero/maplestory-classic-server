@@ -471,6 +471,16 @@ param(
     # the game, because the launcher writes the same marker files by a different route and
     # that is one more thing standing between a run and its evidence.
     [switch]$Launcher,
+    # Start the servers and stop there - launch neither the client nor the launcher.
+    #
+    # This is what start-servers.cmd uses. The owner starts the servers by double-clicking that,
+    # and then starts the CLIENT by double-clicking maplecw-launcher.exe, which carries its
+    # own requireAdministrator manifest. Without this switch the only two outcomes were "also
+    # launch the client" and "also launch the launcher", and neither is that flow.
+    #
+    # Like -Launcher, this does NOT clear a live login claim: the launcher is about to stake
+    # one, and clearing it here would only matter if it managed to race the sign-in.
+    [switch]$ServersOnly,
     # What the login screen displays. Server-supplied; the client cannot compute it.
     [string]$DisplayName = 'wisp****@example.com',
     [string]$Database,
@@ -988,7 +998,7 @@ Remove-Item $serverLog -Force -ErrorAction SilentlyContinue
 # banner the owner reads at launch is not the server log.
 #
 # -Launcher deliberately does NOT do this: there, the claim is the whole point.
-if (-not $Launcher) {
+if (-not $Launcher -and -not $ServersOnly) {
     $userAddExe = Join-Path $root 'target\release\maplecw-useradd.exe'
     if (Test-Path $userAddExe) {
         & $userAddExe --db "$Database" --clear-claims | ForEach-Object { Write-Host "  $_" }
@@ -1049,6 +1059,26 @@ if ($server.HasExited) {
 }
 Write-Host "login server pid $($server.Id) -> $serverLog"
 Get-Content $serverLog -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+
+if ($ServersOnly) {
+    # Stop here. The launcher writes the hook markers and starts the client, so neither the
+    # marker block below nor the launch after it should run - one writer, and it is whichever
+    # of the two is driving. See the note in the -Launcher block just below.
+    Write-Host ''
+    Write-Host 'SERVERS ARE UP. The client has NOT been started.' -ForegroundColor Green
+    Write-Host ''
+    Write-Host '  Now double-click the launcher:' -ForegroundColor Cyan
+    Write-Host ("    {0}\target\release\maplecw-launcher.exe" -f $root)
+    Write-Host '  It asks for administrator, which is what lets the client start without a'
+    Write-Host '  second prompt. Sign in with an account name OR its email, then Start Game.'
+    Write-Host ''
+    Write-Host ("  accounts:  & `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" --list" -f $root, $Database)
+    Write-Host ("  add one:   & `"{0}\target\release\maplecw-useradd.exe`" --db `"{1}`" <name> --email <addr>" -f $root, $Database)
+    Write-Host ''
+    Write-Host 'Stop the servers when done:' -ForegroundColor Green
+    Write-Host ("  powershell -ExecutionPolicy Bypass -File `"{0}\tools\test-server.ps1`" -Stop" -f $root)
+    return
+}
 
 if ($Launcher) {
     # Hand over to maplecw-launcher and stop here, BEFORE the marker block below.

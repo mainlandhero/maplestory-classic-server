@@ -10,6 +10,15 @@ store = { path = "../store" }
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow"] }
 egui = "0.29"
 
+[lib]
+name = "launcher"
+path = "src/lib.rs"
+
 [[bin]]
 name = "maplecw-launcher"
 path = "src/main.rs"
+# No test harness for the binary. It is built with requireAdministrator embedded, and a
+# harness compiled from this target inherits that manifest - `cargo test` then fails with
+# "The requested operation requires elevation. (os error 740)" before running anything. The
+# tests live in the library. See src/main.rs.
+test = false
