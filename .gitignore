@@ -39,6 +39,10 @@ client-exit.log
 # Login server run log
 login.log
 login.log.err
+# Sign-in service run log. Added with the service itself on 2026-08-29;
+# it was the one server log nothing ignored.
+auth.log
+auth.log.err
 world.log
 # One log per channel: channel 0 keeps world.log, the rest are world-ch<N>.log.
 world-ch*.log
@@ -69,3 +73,8 @@ previous-runs/
 # The hook logs unconditionally, so `cargo test -p grap-stub` leaves one of these in
 # the crate directory. The real one lives in client-patched/ and is gitignored with it.
 maplecw-hook.log
+
+# The packaged client, built by tools/make-installer.ps1. 551 MB, and it is a
+# BUILD OUTPUT - the repo carries the code, not the content, same arrangement as
+# gm-handbook/. Regenerate it rather than committing it.
+MapleClient.zip
