@@ -6234,15 +6234,17 @@ fn gm_commands_are_refused_without_gm_status_and_allowed_with_it() {
     // The helper grants it, so take it away and watch the same command stop working.
     store.set_gm("maplecw", false).unwrap();
     let refused = s.handle(&gm_chat("!heal"));
-    let said = refused
-        .iter()
-        .find(|r| r.opcode == net::notice::CHAT_NOTICE || r.opcode == net::userchat::USER_CHAT)
-        .map(|r| r.what.clone())
-        .unwrap_or_default();
     assert!(
         refused.iter().all(|r| r.opcode != net::stats::STAT_CHANGED),
         "!heal must not heal without GM status"
     );
+    // And it is SAID rather than refused: to an account that cannot run commands, "!heal" is
+    // just text someone typed.
+    let said = refused
+        .iter()
+        .find(|r| r.opcode == net::userchat::USER_CHAT)
+        .map(|r| r.what.clone())
+        .expect("a non-GM's ! line goes out as ordinary chat");
 
     // The positive control: the identical command, with the flag back on.
     store.set_gm("maplecw", true).unwrap();
@@ -6254,6 +6256,28 @@ fn gm_commands_are_refused_without_gm_status_and_allowed_with_it() {
     );
 }
 
+/// **The GM gate must not touch ordinary chat.** A non-GM who cannot speak would be a far
+/// worse regression than the one the gate prevents, and it is one misplaced line away: the
+/// gate sits inside `on_chat`, and moving it above the `!` check would silence everybody.
+///
+/// Nothing else pinned this, so it is pinned here.
+#[test]
+fn a_non_gm_can_still_talk() {
+    let (mut s, store, _id) = gm_session();
+    store.set_gm("maplecw", false).unwrap();
+
+    let out = s.handle(&gm_chat("Hello"));
+    assert!(
+        out.iter().any(|r| r.opcode == net::userchat::USER_CHAT),
+        "plain chat must still be said out loud: {:?}",
+        out.iter().map(|r| &r.what).collect::<Vec<_>>()
+    );
+    assert!(
+        !out.iter().any(|r| r.what.contains("does not have GM status")),
+        "and it must not be answered as a refused command"
+    );
+}
+
 /// Every command, not a list of the dangerous ones. "All commands should have this gate for
 /// now until otherwise specified" - including `!help` and the read-only `!rates`.
 #[test]
@@ -6262,9 +6286,16 @@ fn even_help_and_rates_are_gated() {
     store.set_gm("maplecw", false).unwrap();
     for command in ["!help", "!rates", "!item 1302000", "!map 1"] {
         let out = s.handle(&gm_chat(command));
+        // Said out loud, and nothing else. No notice, no stat change, no item.
         assert!(
-            out.iter().any(|r| r.what.contains("does not have GM status")),
-            "{command} was not gated: {:?}",
+            out.iter().any(|r| r.opcode == net::userchat::USER_CHAT),
+            "{command} should have been said out loud: {:?}",
+            out.iter().map(|r| &r.what).collect::<Vec<_>>()
+        );
+        assert!(
+            out.iter().all(|r| r.opcode != net::stats::STAT_CHANGED
+                && r.opcode != net::notice::CHAT_NOTICE),
+            "{command} did something: {:?}",
             out.iter().map(|r| &r.what).collect::<Vec<_>>()
         );
     }

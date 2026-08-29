@@ -105,14 +105,23 @@ impl Session {
         // stops a *second account on this machine* from using `!item`; it stops nothing that
         // can reach the port. Say so when reporting it.
         //
-        // The refusal is a chat line rather than silence, for the reason every refusal here
-        // is: "nothing happened" with no explanation is indistinguishable from a broken
-        // command, and that has cost this project two rounds of investigation already.
+        // **A refused command is SAID OUT LOUD, not answered with a refusal.** The owner,
+        // 2026-08-29: *"For items that are GM account specific, if the ! commands do not
+        // work, please make sure that it is sent as a normal chat message."*
+        //
+        // Which is the right way round, and better than the system notice this used to send.
+        // To an account that cannot run commands, `!heal` is not a refused command - it is a
+        // person typing text that begins with an exclamation mark, and the game's answer to
+        // typed text is to say it. It also means the server never tells a non-GM which `!`
+        // words are real, which the old message did by naming the flag that grants them.
+        //
+        // The "always answer" rule is still satisfied: `say_out_loud` sends `0x0231`, so the
+        // client draws a balloon and a chat line exactly as it would for "Hello". Silence
+        // here would be the failure - the client draws nothing for its own chat, so a
+        // dropped line is invisible, which is what the owner hit with "Hello", "Hello2" and
+        // "Hello3" on 2026-08-19.
         if !self.account_is_gm() {
-            return self.gm_ack(format!(
-                "!{name} is a GM command and this account does not have GM status. Grant it \
-                 with: maplecw-useradd --gm <account>"
-            ));
+            return self.say_out_loud(text);
         }
 
         match name {

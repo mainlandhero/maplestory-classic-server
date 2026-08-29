@@ -29,54 +29,32 @@
 
     WHAT THE LAST RUN CLOSED - none of this needs testing again
     ----------------------------------------------------------
-    THE TWO DAMAGE NUMBERS AGREE, and the duplicate has been REMOVED since. The owner,
-    2026-08-29: "the mob damage numbers are now agreeing with each other. No need to show
-    the number twice." MobForcedStat told the client the mob's attack power, so it stopped
-    drawing its max(damage,1) stub and computed the real number - and ours became the
-    redundant one. Step 3 is the one-glance confirmation that only one is left.
-    MP COST ON SKILLS IS ACCURATE. Same run.
-    SELLING WORKS and there is no Buy Back tab in this client. Closed.
-    WARRIOR SKILLS CAST and the client refuses at 0 MP.
-    THE CLASSIC SHOP WINDOW DRAWS - 1905 bytes = 21 + 12x157.
+    THE LAUNCHER WORKS, and the whole flow with it. The owner, 2026-08-29: "UAC prompt is
+    present. Wrong password is refused. Client does start with no second UAC prompt." So
+    the manifest is embedded, the elevation is inherited by the client, and the Login gate
+    holds. The paths resolved too, or the client could not have started.
+    A SECOND ACCOUNT WORKS, and it signs in BY EMAIL - tester@example.test.
+    THE MASKED EMAIL FOLLOWS THE ACCOUNT. It showed the tester address, not the
+    -DisplayName constant, which is the whole point of deriving it.
+    ONE DAMAGE NUMBER. "I only see 1 number now." The forced-stat block made the client
+    compute the real number and ours was removed; both halves are now confirmed on screen.
+    MP COST ON SKILLS IS ACCURATE. Selling works and there is no Buy Back tab in this
+    client. Warrior skills cast. The classic shop window draws.
 
-    THE RUN NOW STARTS DIFFERENTLY - THE LAUNCHER
-    ---------------------------------------------
+    HOW A RUN STARTS NOW
+    --------------------
     This window is the SERVER. Close it to stop; there is no stop script any more. The
-    CLIENT is started from maplecw-launcher.exe, which asks for administrator - say yes,
-    and the client then does not ask a second time.
+    CLIENT comes from maplecw-launcher.exe, which asks for administrator - say yes, and the
+    client does not ask again.
 
-    Sign in with `maplecw` or `wispplayer@example.com`. If the password is not known:
+    Accounts: `maplecw` (GM) and `tester` / tester@example.test (NOT a GM, no characters).
+    A forgotten password is a reset, and it never asks for the old one:
       & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw
-    It asks for a NEW password twice and never asks for the old one.
 
     THE STEPS. Each is a claim that can come back false; report them separately.
-    ORDER: 1 first - nothing else can run until the launcher works. Then 2, then whatever
-    order suits. 9 costs no launch of its own and 10 is a question, not a test.
+    ORDER: whatever suits. 6 costs no launch of its own and 7 is a question, not a test.
 
-     1. THE LAUNCHER - blocking, and it has never been rendered.
-        I have never seen this window. Layout, spacing, whether the log pane scrolls - all
-        unknown. If it looks wrong, that is expected feedback rather than a surprise.
-          a) double-click target\release\maplecw-launcher.exe. UAC prompt?
-          b) do the paths it prints look right, and does it say MISSING anything?
-             MISSING anything -> the resolution logic guessed wrong. Say which line;
-                        this is the same code a test machine depends on
-          c) Login with the WRONG password. It must refuse and leave Start Game disabled
-             Start Game becomes available anyway -> the gate is broken, do not press it
-          d) Login properly, then Start Game. Client starts with no SECOND UAC prompt?
-             a second prompt -> the launcher is not running elevated after all
-             nothing at all -> ShellExecuteW failed; the log pane says why
-
-     2. THE MASKED EMAIL, on the login screen. It should read wisp****@example.com, and it is
-        now derived from the ACCOUNT rather than from a -DisplayName constant.
-          the right masked address -> the account drives the screen
-          blank -> the account has no email and the fallback did not fire either
-          the old constant when signed in as somebody else -> it is still hard-coded
-
-     3. ONE DAMAGE NUMBER. Get hit by a mob.
-          exactly one number, and the HP bar agrees with it -> closed for good
-          two numbers again -> ours came back; four lines in combat.rs
-
-     4. RECOVERY (skill 1001). !learn 1001 3, then cast it.
+     1. RECOVERY (skill 1001). !learn 1001 3, then cast it.
         NO BUFF ICON WILL APPEAR and that is expected - Recovery has no stat bit anybody
         has identified. The heal is real, the tray is empty, and the cast says so in chat.
           a) six blue +12 numbers, one every five seconds, over thirty seconds?
@@ -85,7 +63,7 @@
              one number then nothing -> the tick is not being driven
           b) does it stop on its own after six, or keep going?
 
-     5. !resetap. Put points into STR, HP and MP first, then run it.
+     2. !resetap. Put points into STR, HP and MP first, then run it.
           a) STR/DEX/INT/LUK all read 4?
           b) did max HP and max MP come back DOWN, and the points return to the pool?
              the four stats reset but max HP did not -> the HP ledger is not recording
@@ -93,23 +71,34 @@
              more points the second time -> the counters are not being cleared, which is
                         free stats out of a command whose job is to be safe to repeat
 
-     6. OVERALLS. Wear trousers, then equip a robe (1050000 is a Beige Plain Robe).
+     3. OVERALLS. Wear trousers, then equip a robe (1050000 is a Beige Plain Robe).
           a) do the trousers come off into the bag?
           b) now put the trousers back on. The robe should come off - it is symmetric
           c) the control: equip a plain TOP (1040000) over trousers. The trousers must
              STAY ON. A shirt taking your trousers off is a worse bug than the one fixed
 
-     7. THE GM GATE. Everything with a ! is now gated on the account.
-          a) !heal as maplecw - works?
-          b) make a second account, sign in as it, and try !heal. It must refuse with a
-             line naming --gm. Anything happening -> the gate is not reached
+     4. THE GM GATE, as `tester`. Every ! command is gated on the account now.
+        A refused command is SAID OUT LOUD rather than answered with a refusal - the owner,
+        2026-08-29: "if the ! commands do not work, please make sure that it is sent as a
+        normal chat message." To an account that cannot run commands, `!heal` is a person
+        typing text, so the game says it.
+          a) !heal as tester -> appears as a CHAT BALLOON reading "!heal", and nothing
+             happens to your HP
+          b) it must NOT print a system notice about GM status - that told a non-GM which
+             ! words are real, which is why it went
+          c) ordinary chat still works? Type "Hello". A gate one line higher would have
+             silenced everybody, and the client draws nothing for its own chat, so a
+             dropped line is invisible
+          d) then as maplecw: !heal works
 
-     8. A SECOND ACCOUNT SEES ITS OWN CHARACTERS. Same second account as 7.
+     5. THE tester ACCOUNT SEES ITS OWN CHARACTERS - it has none.
           empty character list -> the login claim is being read
           Cobalt is there -> the claim is not, and you are still maplecw. login.log names
                      the account on every connection; that line says which
+        Making a character here also exercises the create path on a fresh account, which
+        nothing has done since the name check went in.
 
-     9. THE KEYBOARD LAYOUT - free, rides along, do it whenever.
+     6. THE KEYBOARD LAYOUT - free, rides along, do it whenever.
         Open keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close the window. Say
         roughly when. 162 archived captures contain no keymap packet, but nobody has ever
         changed a key DURING one, so that is "never captured" and not "never sent".
@@ -118,7 +107,7 @@
           nothing new -> the client never volunteers it, and the only route left is the
                      hook reading the client's own memory
 
-    10. THE CRASH - a question, not a test.
+     7. THE CRASH - a question, not a test.
         A 1.36 GB dump was written at 00:08 from a fault at 0x14090a6f0, an address that
         appears NOWHERE else in the archive. It is an std::map node walk hitting a bad
         pointer, with 38 C++ throws before it. You said you were "just in the map with
@@ -1153,49 +1142,27 @@ if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (co
 Write-Host ''
 Write-Host 'On screen:'
 if ($SetFieldProbe) {
-    Write-Host '  STEPS 1-10. Do 1 first - nothing else runs until it works.' -ForegroundColor Yellow
-    Write-Host '  9 costs no launch of its own. 10 is a question, not a test.' -ForegroundColor Yellow
+    Write-Host '  STEPS 1-7. 6 costs no launch of its own; 7 is a question.' -ForegroundColor Yellow
     Write-Host '  Full text: Get-Help on this script.'
     Write-Host ''
     Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
-    Write-Host '  The CLIENT comes from maplecw-launcher.exe, which asks for'
-    Write-Host '  administrator. Say yes - the client then does not ask again.'
-    Write-Host '  Sign in as maplecw or wispplayer@example.com. Forgotten password:'
+    Write-Host '  The CLIENT comes from maplecw-launcher.exe (asks for administrator).'
+    Write-Host '  ACCOUNTS: maplecw (GM), tester / tester@example.test (NOT a GM,'
+    Write-Host '  no characters). A forgotten password is a reset, and it never asks'
+    Write-Host '  for the old one:'
     Write-Host '    & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw'
-    Write-Host '    It asks for a NEW one twice and never asks for the old one.'
     Write-Host ''
     Write-Host '  CONFIRMED LAST RUN, DO NOT RE-TEST.' -ForegroundColor Green
-    Write-Host '  THE DAMAGE NUMBERS AGREE - the forced-stat block worked, so the'
-    Write-Host '  client computes the real number instead of its max(damage,1) stub.'
-    Write-Host '  Ours is REMOVED since; step 3 checks only one is left.'
-    Write-Host '  MP COST ON SKILLS IS ACCURATE. Selling works and there is no Buy'
-    Write-Host '  Back tab in this client. Warrior skills cast. The shop window draws.'
+    Write-Host '  THE LAUNCHER WORKS - UAC prompt present, wrong password refused,'
+    Write-Host '  and the client starts with NO second prompt. So the manifest is'
+    Write-Host '  embedded and the client inherits the elevation.'
+    Write-Host '  A SECOND ACCOUNT WORKS and signs in BY EMAIL.'
+    Write-Host '  THE MASKED EMAIL FOLLOWS THE ACCOUNT - it showed the tester address,'
+    Write-Host '  not the -DisplayName constant, which is the point of deriving it.'
+    Write-Host '  ONE DAMAGE NUMBER. Both halves confirmed on screen.'
+    Write-Host '  MP COST ACCURATE. Selling works, no Buy Back tab. Warrior casts.'
     Write-Host ''
-    Write-Host '  1. THE LAUNCHER - blocking, and I have NEVER seen this window.' -ForegroundColor White
-    Write-Host '     Layout, spacing, whether the log pane scrolls - all unknown.'
-    Write-Host '     If it looks wrong that is expected feedback, not a surprise.'
-    Write-Host '       a) double-click target\release\maplecw-launcher.exe. UAC prompt?'
-    Write-Host '       b) do the paths look right? Does it say MISSING anything?'
-    Write-Host '            MISSING -> resolution guessed wrong. Say WHICH line; a test'
-    Write-Host '                       machine depends on the same code'
-    Write-Host '       c) Login with the WRONG password. It must refuse and leave'
-    Write-Host '          Start Game disabled.'
-    Write-Host '            enabled anyway -> the gate is broken, do not press it'
-    Write-Host '       d) Login properly, then Start Game. Client starts with NO second'
-    Write-Host '          UAC prompt?'
-    Write-Host '            a second prompt -> the launcher is not elevated after all'
-    Write-Host '            nothing at all  -> ShellExecuteW failed; the log pane says why'
-    Write-Host ''
-    Write-Host '  2. THE MASKED EMAIL on the login screen.' -ForegroundColor White
-    Write-Host '     It should read wisp****@example.com, and it now comes from the'
-    Write-Host '     ACCOUNT rather than a -DisplayName constant.'
-    Write-Host '       blank -> the account has no email and the fallback did not fire'
-    Write-Host ''
-    Write-Host '  3. ONE DAMAGE NUMBER. Get hit by a mob.' -ForegroundColor White
-    Write-Host '       one number, and the HP bar agrees -> closed for good'
-    Write-Host '       two again -> ours came back; four lines in combat.rs'
-    Write-Host ''
-    Write-Host '  4. RECOVERY (1001). !learn 1001 3, then cast it.' -ForegroundColor White
+    Write-Host '  1. RECOVERY (1001). !learn 1001 3, then cast it.' -ForegroundColor White
     Write-Host '     NO BUFF ICON WILL APPEAR and that is expected - Recovery has no'
     Write-Host '     stat bit anybody has identified. The heal is real, the tray is'
     Write-Host '     empty, and the cast says so in chat.'
@@ -1206,7 +1173,7 @@ if ($SetFieldProbe) {
     Write-Host '            one then nothing -> the tick is not being driven'
     Write-Host '       b) does it stop on its own after six?'
     Write-Host ''
-    Write-Host '  5. !resetap. Put points into STR, HP and MP first.' -ForegroundColor White
+    Write-Host '  2. !resetap. Put points into STR, HP and MP first.' -ForegroundColor White
     Write-Host '       a) STR/DEX/INT/LUK all read 4?'
     Write-Host '       b) did max HP and max MP come DOWN, and the points come back?'
     Write-Host '            stats reset but max HP did not -> the ledger is not recording'
@@ -1214,30 +1181,40 @@ if ($SetFieldProbe) {
     Write-Host '            more points -> the counters are not cleared, which is free'
     Write-Host '                       stats out of a command meant to be safe to repeat'
     Write-Host ''
-    Write-Host '  6. OVERALLS. Wear trousers, then equip a robe (1050000).' -ForegroundColor White
+    Write-Host '  3. OVERALLS. Wear trousers, then equip a robe (1050000).' -ForegroundColor White
     Write-Host '       a) do the trousers come off into the bag?'
     Write-Host '       b) put them back on - the robe should come off. It is symmetric'
     Write-Host '       c) THE CONTROL: equip a plain TOP (1040000) over trousers. They'
     Write-Host '          must STAY ON. A shirt removing trousers is a worse bug than'
     Write-Host '          the one being fixed'
     Write-Host ''
-    Write-Host '  7. THE GM GATE. Every ! command is gated on the account now.' -ForegroundColor White
-    Write-Host '       a) !heal as maplecw - works?'
-    Write-Host '       b) make a second account, sign in as it, try !heal. It must'
-    Write-Host '          refuse with a line naming --gm'
+    Write-Host '  4. THE GM GATE, as tester. Every ! command is gated now.' -ForegroundColor White
+    Write-Host '     A refused command is SAID OUT LOUD rather than answered with a'
+    Write-Host '     refusal - to an account that cannot run commands, !heal is a'
+    Write-Host '     person typing text, so the game says it.'
+    Write-Host '       a) !heal as tester -> a CHAT BALLOON reading "!heal", and'
+    Write-Host '          nothing happens to your HP'
+    Write-Host '       b) it must NOT print a system notice about GM status - that told'
+    Write-Host '          a non-GM which ! words are real, which is why it went'
+    Write-Host '       c) ordinary chat still works? Type "Hello". A gate one line'
+    Write-Host '          higher would have silenced everybody, and the client draws'
+    Write-Host '          nothing for its own chat, so a dropped line is invisible'
+    Write-Host '       d) then as maplecw: !heal works'
     Write-Host ''
-    Write-Host '  8. THAT SECOND ACCOUNT SEES ITS OWN CHARACTERS.' -ForegroundColor White
+    Write-Host '  5. THE tester ACCOUNT SEES ITS OWN CHARACTERS - it has none.' -ForegroundColor White
     Write-Host '       empty list -> the login claim is being read'
     Write-Host '       Cobalt -> it is not, and you are still maplecw. login.log names'
     Write-Host '                 the account on every connection'
+    Write-Host '     Making a character here also exercises the create path on a fresh'
+    Write-Host '     account, which nothing has done since the name check went in.'
     Write-Host ''
-    Write-Host '  9. THE KEYBOARD LAYOUT - free, rides along, do it whenever.' -ForegroundColor White
+    Write-Host '  6. THE KEYBOARD LAYOUT - free, rides along, do it whenever.' -ForegroundColor White
     Write-Host '     Open keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close'
     Write-Host '     the window. Say roughly when. 162 archived captures have no keymap'
     Write-Host '     packet - but nobody has ever changed a key DURING one, so that is'
     Write-Host '     "never captured", not "never sent".'
     Write-Host ''
-    Write-Host ' 10. THE CRASH - a question, not a test.' -ForegroundColor White
+    Write-Host '  7. THE CRASH - a question, not a test.' -ForegroundColor White
     Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
     Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
     Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'
