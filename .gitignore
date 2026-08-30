@@ -78,3 +78,9 @@ maplecw-hook.log
 # BUILD OUTPUT - the repo carries the code, not the content, same arrangement as
 # gm-handbook/. Regenerate it rather than committing it.
 MapleClient.zip
+
+# Agent working directories. CLAUDE.md has a whole section on why a scratchpad is
+# dangerous - a script run from one imports ITS copy of a repo tool, silently, and a
+# stale copy answers instead of raising. It must never be committed, and a common
+# filename in there is a collision between concurrent agents, not just clutter.
+scratchpad/
