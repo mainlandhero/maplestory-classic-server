@@ -1016,6 +1016,188 @@ if ($server.HasExited) {
 Write-Host "login server pid $($server.Id) -> $serverLog"
 Get-Content $serverLog -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
 
+# ---------------------------------------------------------------- the test plan
+#
+# **This is one of the TWO copies CLAUDE.md requires, and it is the one the owner actually
+# reads.** The other is the .NOTES block at the top of this file. Update both together,
+# then RENDER this one and read it - a parse check does not catch a plan that is simply
+# out of date, and it does not catch a quoting bug that mangles the text.
+#
+# It is a FUNCTION because it has two callers, and for a while it had none that the owner
+# ever saw: the body used to sit after the client launch, so -ServersOnly - which is
+# what start-servers.cmd uses, and therefore how every launch now happens - returned
+# before reaching it. The plan silently stopped printing and nobody noticed until the owner
+# asked where it had gone. One copy, two callers; do not inline it back.
+function Show-TestPlan {
+    Write-Host ''
+    Write-Host 'On screen:'
+    if ($SetFieldProbe) {
+        Write-Host '  T1-T6 FIRST, then the carried-over steps 1-7.' -ForegroundColor Yellow
+        Write-Host '  Full text: Get-Help on this script.'
+        Write-Host ''
+        Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
+        Write-Host '  The CLIENT comes from maplecw-launcher.exe (asks for administrator).'
+        Write-Host '  ACCOUNTS: maplecw (GM), tester / tester@example.test (NOT a GM).'
+        Write-Host '  A forgotten password is a reset and never asks for the old one:'
+        Write-Host '    & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw'
+        Write-Host ''
+        Write-Host '  CONFIRMED ALREADY, DO NOT RE-TEST.' -ForegroundColor Green
+        Write-Host '  Launcher, UAC, wrong-password refusal, second account by email,'
+        Write-Host '  masked email, one damage number, MP costs, selling, warrior casts.'
+        Write-Host ''
+        Write-Host '  SIGN IN IN ANY ORDER NOW - this changed.' -ForegroundColor Cyan
+        Write-Host '  The login server used to serve whichever account claimed LAST, so'
+        Write-Host '  one player got the other characters. That was real and it is fixed:'
+        Write-Host '  one claim per launch, matched by asking the OS which process owns'
+        Write-Host '  the socket. Two accounts on 127.0.0.1 now each get their own.'
+        Write-Host '  If both clients STILL show the same account, that is a new finding.'
+        Write-Host '  UNKNOWN: whether this client runs twice on one machine at all. If'
+        Write-Host '  the second refuses to start, SAY SO - that is a finding, and the'
+        Write-Host '  answer is two machines.'
+        Write-Host ''
+        Write-Host '  T3 IS WHAT THIS RUN IS FOR. The rest gates it or controls it.' -ForegroundColor Magenta
+        Write-Host '  The client has a list box - message type 6 - that draws clickable'
+        Write-Host '  lines from ONE string. The client uses it for its own menus. Whether'
+        Write-Host '  it draws when the SERVER sends one has never been observed. So the'
+        Write-Host '  taxis send type 6 and Phil sends yes/no boxes, which ARE proven.'
+        Write-Host '  T4 is the control for T3.'
+        Write-Host ''
+        Write-Host '  T1. TWO CLIENTS, SAME MAP. First, and T2 waits on it.' -ForegroundColor White
+        Write-Host '        a) the other character appears -> it all works'
+        Write-Host '        b) a client dies when the second arrives -> the 0x0224 body'
+        Write-Host '           is wrong. Say WHICH died, arriving or already there -'
+        Write-Host '           that names the direction the bad packet went'
+        Write-Host '        c) nothing appears and nothing dies -> dropped in silence'
+        Write-Host '  T2. KILL ONE MOB TOGETHER, both hitting it.' -ForegroundColor White
+        Write-Host '        Most damage sees a WHITE exp line, the other YELLOW and less.'
+        Write-Host '          only the killer paid -> the fact never crossed the bus'
+        Write-Host '          both white -> the majority flag is wrong'
+        Write-Host '          helper paid in FULL -> the split is not applied'
+        Write-Host '  T3. CLICK LYN, tour guide on the Lith Harbor dock. THE ONE.' -ForegroundColor Yellow
+        Write-Host '        ONE box, five towns, each a clickable line.'
+        Write-Host '          five clickable lines -> type 6 renders. Say so loudly'
+        Write-Host '          text but nothing clickable -> the markup, and only that'
+        Write-Host '          no box at all -> the packet or the message type'
+        Write-Host '        world.log settles it if the screen is unclear: a 10-byte'
+        Write-Host '        0x00F3 ending 06 01 = worked; 6 bytes 06 00 = drew but dead;'
+        Write-Host '        no 0x00F3 = never came up. A town costs 500 mesos and warps.'
+        Write-Host '  T4. CLICK PHIL in Lith Harbor, Beginner at LEVEL 10. CONTROL.' -ForegroundColor White
+        Write-Host '        Four yes/no boxes, one per job path. Yes warps you.'
+        Write-Host '          T4 works, T3 does not -> type 6 is the problem, only it'
+        Write-Host '          NEITHER works -> something common to both'
+        Write-Host '        Then talk to the instructor you land on. Job advancement has'
+        Write-Host '        NEVER been observed to run - this is its first test.'
+        Write-Host '  T5. RETURN SCROLLS. !item 2030000 3 then !item 2030009 1.' -ForegroundColor White
+        Write-Host '        Nearest Town warps to the map return town, taking ONE.'
+        Write-Host '        El Nath must REFUSE and LEAVE THE SCROLL IN THE BAG.'
+        Write-Host '          scroll vanishes on a refusal -> the guard is broken'
+        Write-Host '          nothing at all -> the client never sent 0x010E. Grep it'
+        Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
+        Write-Host '      server RUNNING, run the command, click that NPC.'
+        Write-Host '        a) new line with no restart?'
+        Write-Host '        b) the reply names counts. A reload that read nothing must'
+        Write-Host '           say zero, not ok'
+        Write-Host ''
+        Write-Host '  ---- carried over, unchanged ----' -ForegroundColor DarkGray
+        Write-Host '  1. RECOVERY (1001). !learn 1001 3, then cast it.' -ForegroundColor White
+        Write-Host '     NO BUFF ICON WILL APPEAR and that is expected - Recovery has no'
+        Write-Host '     stat bit anybody has identified. The heal is real, the tray is'
+        Write-Host '     empty, and the cast says so in chat.'
+        Write-Host '       a) six blue +12 numbers, one every 5s, over 30s?'
+        Write-Host '            numbers but wrong spacing -> the 5s interval is DERIVED from'
+        Write-Host '                       the tooltip arithmetic, not read from a column.'
+        Write-Host '                       Say the spacing you saw'
+        Write-Host '            one then nothing -> the tick is not being driven'
+        Write-Host '       b) does it stop on its own after six?'
+        Write-Host ''
+        Write-Host '  2. !resetap. Put points into STR, HP and MP first.' -ForegroundColor White
+        Write-Host '       a) STR/DEX/INT/LUK all read 4?'
+        Write-Host '       b) did max HP and max MP come DOWN, and the points come back?'
+        Write-Host '            stats reset but max HP did not -> the ledger is not recording'
+        Write-Host '       c) run it AGAIN. It must refund NOTHING.'
+        Write-Host '            more points -> the counters are not cleared, which is free'
+        Write-Host '                       stats out of a command meant to be safe to repeat'
+        Write-Host ''
+        Write-Host '  3. OVERALLS. Wear trousers, then equip a robe (1050000).' -ForegroundColor White
+        Write-Host '       a) do the trousers come off into the bag?'
+        Write-Host '       b) put them back on - the robe should come off. It is symmetric'
+        Write-Host '       c) THE CONTROL: equip a plain TOP (1040000) over trousers. They'
+        Write-Host '          must STAY ON. A shirt removing trousers is a worse bug than'
+        Write-Host '          the one being fixed'
+        Write-Host ''
+        Write-Host '  4. THE GM GATE, as tester. Every ! command is gated now.' -ForegroundColor White
+        Write-Host '     A refused command is SAID OUT LOUD rather than answered with a'
+        Write-Host '     refusal - to an account that cannot run commands, !heal is a'
+        Write-Host '     person typing text, so the game says it.'
+        Write-Host '       a) !heal as tester -> a CHAT BALLOON reading "!heal", and'
+        Write-Host '          nothing happens to your HP'
+        Write-Host '       b) it must NOT print a system notice about GM status - that told'
+        Write-Host '          a non-GM which ! words are real, which is why it went'
+        Write-Host '       c) ordinary chat still works? Type "Hello". A gate one line'
+        Write-Host '          higher would have silenced everybody, and the client draws'
+        Write-Host '          nothing for its own chat, so a dropped line is invisible'
+        Write-Host '       d) then as maplecw: !heal works'
+        Write-Host ''
+        Write-Host '  5. THE tester ACCOUNT SEES ITS OWN CHARACTERS - it has none.' -ForegroundColor White
+        Write-Host '       empty list -> the login claim is being read'
+        Write-Host '       Cobalt -> it is not, and you are still maplecw. login.log names'
+        Write-Host '                 the account on every connection'
+        Write-Host '     Making a character here also exercises the create path on a fresh'
+        Write-Host '     account, which nothing has done since the name check went in.'
+        Write-Host ''
+        Write-Host '  6. THE KEYBOARD LAYOUT - free, rides along, do it whenever.' -ForegroundColor White
+        Write-Host '     Open keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close'
+        Write-Host '     the window. Say roughly when. 162 archived captures have no keymap'
+        Write-Host '     packet - but nobody has ever changed a key DURING one, so that is'
+        Write-Host '     "never captured", not "never sent".'
+        Write-Host ''
+        Write-Host '  7. THE CRASH - a question, not a test.' -ForegroundColor White
+        Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
+        Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
+        Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'
+        Write-Host '     the map with monsters", so there is no action to blame and what is'
+        Write-Host '     left is something that accumulates.'
+        Write-Host '     WHAT WOULD HELP: roughly how long had the client been up?'
+        Write-Host ''
+        Write-Host '  CARRIED OVER, lower value than the above:' -ForegroundColor DarkGray
+        Write-Host '     IRON BODY reducing damage - fixed and unretested. SAY THE W.DEF'
+        Write-Host '     NUMBER BEFORE AND AFTER: about a quarter means the percent-to-flat'
+        Write-Host '     conversion is right; exactly 25 means the raw percent reached the wire.'
+        Write-Host '     !learn 1000001 15 killed the client once, 3.7s after a byte-correct'
+        Write-Host '     packet. At ~40s of life: dies early -> fatal; does not -> the'
+        Write-Host '     session was long and the command is innocent.'
+        Write-Host '     Bowman, Thief and Magician branches. Shop buying. The cash purchase.'
+        Write-Host ''
+        Write-Host '  COMMANDS: !map !item !exp !heal !job !learn !kit !buff !unbuff'
+        Write-Host '  !npcecho !npcfx !migsweep !exprate !mesorate !droprate !setrates'
+        Write-Host '  !rates !nx !lp !buy !locker !resetap !resetsp.'
+        Write-Host '  gm-handbook/equips.txt NOW HAS NAMES - and reqLevel, reqSTR, reqDEX,'
+        Write-Host '  reqINT, reqLUK and reqJob. 1759 rows, name is the LAST column. That is'
+        Write-Host '  the file to read when picking something to !item in.'
+        Write-Host '  !learn and !kit are NEW and do this run setup for you. !lp grants'
+        Write-Host '  LEAF POINTS and is the one that BUYS; !nx buys nothing. !help'
+        Write-Host '  lists them all.'
+    } else {
+        # THIS BRANCH IS A TRAP UNLESS IT SAYS SO. Without -SetFieldProbe the LOGIN server is
+        # fine - character list, create, delete all work - but the CHANNEL answers nothing at
+        # all, so picking a character hangs on "Connecting...". That looked like a server bug
+        # for a whole launch on 2026-08-20. The steps below are a real run; they are just not
+        # THIS run, and today's plan lives entirely in the other branch.
+        Write-Host '  NO -SetFieldProbe, SO THE WORLD IS OFF.' -ForegroundColor Red
+        Write-Host '  Login, character list, create and delete all work. But the CHANNEL' -ForegroundColor Red
+        Write-Host '  answers NOTHING - Session::handle returns empty for every packet -' -ForegroundColor Red
+        Write-Host '  so picking a character will hang on "Connecting...". That is this' -ForegroundColor Red
+        Write-Host '  flag, not a bug. The cash shop plan is NOT printed on this branch.' -ForegroundColor Red
+        Write-Host '  Relaunch with -SetFieldProbe to get into the world.' -ForegroundColor Red
+        Write-Host ''
+        Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
+        Write-Host '  2. create one. Check the name first - a name already used is now refused'
+        Write-Host '     by the server rather than always accepted.'
+        Write-Host '  3. close the client, run this script again, and click Login. The character'
+        Write-Host '     should still be listed. That is the whole point of this run.'
+    }
+}
+
 if ($ServersOnly) {
     # Stop here. The launcher writes the hook markers and starts the client, so neither the
     # marker block below nor the launch after it should run - one writer, and it is whichever
@@ -1034,6 +1216,16 @@ if ($ServersOnly) {
     Write-Host 'THIS WINDOW IS THE SERVER. Close it, or press Ctrl+C, to stop.' -ForegroundColor Green
     Write-Host '  There is no separate stop script on this path and that is the point:' -ForegroundColor Green
     Write-Host '  the servers share this console, so closing it takes them with it.' -ForegroundColor Green
+    Write-Host ''
+
+    # **The plan, on the path the owner actually launches from.** It used to sit after the
+    # client launch, which -ServersOnly never reaches, so start-servers.cmd printed
+    # everything EXCEPT the one thing this file exists to put in front of them. They
+    # noticed; the script did not.
+    Show-TestPlan
+    Write-Host ''
+    Write-Host '  Scroll up for the plan above, or read it any time with:' -ForegroundColor DarkGray
+    Write-Host '    Get-Help "C:\MapleCW\tools\test-server.ps1" -Full' -ForegroundColor DarkGray
     Write-Host ''
 
     # THE WAIT. Two things stop it, and they arrive by different routes:
@@ -1220,173 +1412,7 @@ try {
 $actual = (Get-CimInstance Win32_Process -Filter "ProcessId = $($p.Id)" -ErrorAction SilentlyContinue).CommandLine
 if ($actual) { Write-Host "launched: $actual" } else { Write-Host 'launched: (command line unreadable)' }
 
-Write-Host ''
-Write-Host 'On screen:'
-if ($SetFieldProbe) {
-    Write-Host '  T1-T6 FIRST, then the carried-over steps 1-7.' -ForegroundColor Yellow
-    Write-Host '  Full text: Get-Help on this script.'
-    Write-Host ''
-    Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
-    Write-Host '  The CLIENT comes from maplecw-launcher.exe (asks for administrator).'
-    Write-Host '  ACCOUNTS: maplecw (GM), tester / tester@example.test (NOT a GM).'
-    Write-Host '  A forgotten password is a reset and never asks for the old one:'
-    Write-Host '    & ".\target\release\maplecw-useradd.exe" --db ".\maplecw.db" --passwd maplecw'
-    Write-Host ''
-    Write-Host '  CONFIRMED ALREADY, DO NOT RE-TEST.' -ForegroundColor Green
-    Write-Host '  Launcher, UAC, wrong-password refusal, second account by email,'
-    Write-Host '  masked email, one damage number, MP costs, selling, warrior casts.'
-    Write-Host ''
-    Write-Host '  SIGN IN IN ANY ORDER NOW - this changed.' -ForegroundColor Cyan
-    Write-Host '  The login server used to serve whichever account claimed LAST, so'
-    Write-Host '  one player got the other characters. That was real and it is fixed:'
-    Write-Host '  one claim per launch, matched by asking the OS which process owns'
-    Write-Host '  the socket. Two accounts on 127.0.0.1 now each get their own.'
-    Write-Host '  If both clients STILL show the same account, that is a new finding.'
-    Write-Host '  UNKNOWN: whether this client runs twice on one machine at all. If'
-    Write-Host '  the second refuses to start, SAY SO - that is a finding, and the'
-    Write-Host '  answer is two machines.'
-    Write-Host ''
-    Write-Host '  T3 IS WHAT THIS RUN IS FOR. The rest gates it or controls it.' -ForegroundColor Magenta
-    Write-Host '  The client has a list box - message type 6 - that draws clickable'
-    Write-Host '  lines from ONE string. The client uses it for its own menus. Whether'
-    Write-Host '  it draws when the SERVER sends one has never been observed. So the'
-    Write-Host '  taxis send type 6 and Phil sends yes/no boxes, which ARE proven.'
-    Write-Host '  T4 is the control for T3.'
-    Write-Host ''
-    Write-Host '  T1. TWO CLIENTS, SAME MAP. First, and T2 waits on it.' -ForegroundColor White
-    Write-Host '        a) the other character appears -> it all works'
-    Write-Host '        b) a client dies when the second arrives -> the 0x0224 body'
-    Write-Host '           is wrong. Say WHICH died, arriving or already there -'
-    Write-Host '           that names the direction the bad packet went'
-    Write-Host '        c) nothing appears and nothing dies -> dropped in silence'
-    Write-Host '  T2. KILL ONE MOB TOGETHER, both hitting it.' -ForegroundColor White
-    Write-Host '        Most damage sees a WHITE exp line, the other YELLOW and less.'
-    Write-Host '          only the killer paid -> the fact never crossed the bus'
-    Write-Host '          both white -> the majority flag is wrong'
-    Write-Host '          helper paid in FULL -> the split is not applied'
-    Write-Host '  T3. CLICK LYN, tour guide on the Lith Harbor dock. THE ONE.' -ForegroundColor Yellow
-    Write-Host '        ONE box, five towns, each a clickable line.'
-    Write-Host '          five clickable lines -> type 6 renders. Say so loudly'
-    Write-Host '          text but nothing clickable -> the markup, and only that'
-    Write-Host '          no box at all -> the packet or the message type'
-    Write-Host '        world.log settles it if the screen is unclear: a 10-byte'
-    Write-Host '        0x00F3 ending 06 01 = worked; 6 bytes 06 00 = drew but dead;'
-    Write-Host '        no 0x00F3 = never came up. A town costs 500 mesos and warps.'
-    Write-Host '  T4. CLICK PHIL in Lith Harbor, Beginner at LEVEL 10. CONTROL.' -ForegroundColor White
-    Write-Host '        Four yes/no boxes, one per job path. Yes warps you.'
-    Write-Host '          T4 works, T3 does not -> type 6 is the problem, only it'
-    Write-Host '          NEITHER works -> something common to both'
-    Write-Host '        Then talk to the instructor you land on. Job advancement has'
-    Write-Host '        NEVER been observed to run - this is its first test.'
-    Write-Host '  T5. RETURN SCROLLS. !item 2030000 3 then !item 2030009 1.' -ForegroundColor White
-    Write-Host '        Nearest Town warps to the map return town, taking ONE.'
-    Write-Host '        El Nath must REFUSE and LEAVE THE SCROLL IN THE BAG.'
-    Write-Host '          scroll vanishes on a refusal -> the guard is broken'
-    Write-Host '          nothing at all -> the client never sent 0x010E. Grep it'
-    Write-Host '  T6. !npcreload. Add a line to data/npc-dialogue.txt with the' -ForegroundColor White
-    Write-Host '      server RUNNING, run the command, click that NPC.'
-    Write-Host '        a) new line with no restart?'
-    Write-Host '        b) the reply names counts. A reload that read nothing must'
-    Write-Host '           say zero, not ok'
-    Write-Host ''
-    Write-Host '  ---- carried over, unchanged ----' -ForegroundColor DarkGray
-    Write-Host '  1. RECOVERY (1001). !learn 1001 3, then cast it.' -ForegroundColor White
-    Write-Host '     NO BUFF ICON WILL APPEAR and that is expected - Recovery has no'
-    Write-Host '     stat bit anybody has identified. The heal is real, the tray is'
-    Write-Host '     empty, and the cast says so in chat.'
-    Write-Host '       a) six blue +12 numbers, one every 5s, over 30s?'
-    Write-Host '            numbers but wrong spacing -> the 5s interval is DERIVED from'
-    Write-Host '                       the tooltip arithmetic, not read from a column.'
-    Write-Host '                       Say the spacing you saw'
-    Write-Host '            one then nothing -> the tick is not being driven'
-    Write-Host '       b) does it stop on its own after six?'
-    Write-Host ''
-    Write-Host '  2. !resetap. Put points into STR, HP and MP first.' -ForegroundColor White
-    Write-Host '       a) STR/DEX/INT/LUK all read 4?'
-    Write-Host '       b) did max HP and max MP come DOWN, and the points come back?'
-    Write-Host '            stats reset but max HP did not -> the ledger is not recording'
-    Write-Host '       c) run it AGAIN. It must refund NOTHING.'
-    Write-Host '            more points -> the counters are not cleared, which is free'
-    Write-Host '                       stats out of a command meant to be safe to repeat'
-    Write-Host ''
-    Write-Host '  3. OVERALLS. Wear trousers, then equip a robe (1050000).' -ForegroundColor White
-    Write-Host '       a) do the trousers come off into the bag?'
-    Write-Host '       b) put them back on - the robe should come off. It is symmetric'
-    Write-Host '       c) THE CONTROL: equip a plain TOP (1040000) over trousers. They'
-    Write-Host '          must STAY ON. A shirt removing trousers is a worse bug than'
-    Write-Host '          the one being fixed'
-    Write-Host ''
-    Write-Host '  4. THE GM GATE, as tester. Every ! command is gated now.' -ForegroundColor White
-    Write-Host '     A refused command is SAID OUT LOUD rather than answered with a'
-    Write-Host '     refusal - to an account that cannot run commands, !heal is a'
-    Write-Host '     person typing text, so the game says it.'
-    Write-Host '       a) !heal as tester -> a CHAT BALLOON reading "!heal", and'
-    Write-Host '          nothing happens to your HP'
-    Write-Host '       b) it must NOT print a system notice about GM status - that told'
-    Write-Host '          a non-GM which ! words are real, which is why it went'
-    Write-Host '       c) ordinary chat still works? Type "Hello". A gate one line'
-    Write-Host '          higher would have silenced everybody, and the client draws'
-    Write-Host '          nothing for its own chat, so a dropped line is invisible'
-    Write-Host '       d) then as maplecw: !heal works'
-    Write-Host ''
-    Write-Host '  5. THE tester ACCOUNT SEES ITS OWN CHARACTERS - it has none.' -ForegroundColor White
-    Write-Host '       empty list -> the login claim is being read'
-    Write-Host '       Cobalt -> it is not, and you are still maplecw. login.log names'
-    Write-Host '                 the account on every connection'
-    Write-Host '     Making a character here also exercises the create path on a fresh'
-    Write-Host '     account, which nothing has done since the name check went in.'
-    Write-Host ''
-    Write-Host '  6. THE KEYBOARD LAYOUT - free, rides along, do it whenever.' -ForegroundColor White
-    Write-Host '     Open keyboard settings, DRAG ONE SKILL ONTO AN EMPTY KEY, close'
-    Write-Host '     the window. Say roughly when. 162 archived captures have no keymap'
-    Write-Host '     packet - but nobody has ever changed a key DURING one, so that is'
-    Write-Host '     "never captured", not "never sent".'
-    Write-Host ''
-    Write-Host '  7. THE CRASH - a question, not a test.' -ForegroundColor White
-    Write-Host '     A 1.36 GB dump at 00:08, fault 0x14090a6f0 - an address that'
-    Write-Host '     appears NOWHERE else in the archive. It is an std::map node walk'
-    Write-Host '     hitting a bad pointer, 38 C++ throws before it. You were "just in'
-    Write-Host '     the map with monsters", so there is no action to blame and what is'
-    Write-Host '     left is something that accumulates.'
-    Write-Host '     WHAT WOULD HELP: roughly how long had the client been up?'
-    Write-Host ''
-    Write-Host '  CARRIED OVER, lower value than the above:' -ForegroundColor DarkGray
-    Write-Host '     IRON BODY reducing damage - fixed and unretested. SAY THE W.DEF'
-    Write-Host '     NUMBER BEFORE AND AFTER: about a quarter means the percent-to-flat'
-    Write-Host '     conversion is right; exactly 25 means the raw percent reached the wire.'
-    Write-Host '     !learn 1000001 15 killed the client once, 3.7s after a byte-correct'
-    Write-Host '     packet. At ~40s of life: dies early -> fatal; does not -> the'
-    Write-Host '     session was long and the command is innocent.'
-    Write-Host '     Bowman, Thief and Magician branches. Shop buying. The cash purchase.'
-    Write-Host ''
-    Write-Host '  COMMANDS: !map !item !exp !heal !job !learn !kit !buff !unbuff'
-    Write-Host '  !npcecho !npcfx !migsweep !exprate !mesorate !droprate !setrates'
-    Write-Host '  !rates !nx !lp !buy !locker !resetap !resetsp.'
-    Write-Host '  gm-handbook/equips.txt NOW HAS NAMES - and reqLevel, reqSTR, reqDEX,'
-    Write-Host '  reqINT, reqLUK and reqJob. 1759 rows, name is the LAST column. That is'
-    Write-Host '  the file to read when picking something to !item in.'
-    Write-Host '  !learn and !kit are NEW and do this run setup for you. !lp grants'
-    Write-Host '  LEAF POINTS and is the one that BUYS; !nx buys nothing. !help'
-    Write-Host '  lists them all.'
-} else {
-    # THIS BRANCH IS A TRAP UNLESS IT SAYS SO. Without -SetFieldProbe the LOGIN server is
-    # fine - character list, create, delete all work - but the CHANNEL answers nothing at
-    # all, so picking a character hangs on "Connecting...". That looked like a server bug
-    # for a whole launch on 2026-08-20. The steps below are a real run; they are just not
-    # THIS run, and today's plan lives entirely in the other branch.
-    Write-Host '  NO -SetFieldProbe, SO THE WORLD IS OFF.' -ForegroundColor Red
-    Write-Host '  Login, character list, create and delete all work. But the CHANNEL' -ForegroundColor Red
-    Write-Host '  answers NOTHING - Session::handle returns empty for every packet -' -ForegroundColor Red
-    Write-Host '  so picking a character will hang on "Connecting...". That is this' -ForegroundColor Red
-    Write-Host '  flag, not a bug. The cash shop plan is NOT printed on this branch.' -ForegroundColor Red
-    Write-Host '  Relaunch with -SetFieldProbe to get into the world.' -ForegroundColor Red
-    Write-Host ''
-    Write-Host '  1. click Login. Any character created in an EARLIER run should be there.'
-    Write-Host '  2. create one. Check the name first - a name already used is now refused'
-    Write-Host '     by the server rather than always accepted.'
-    Write-Host '  3. close the client, run this script again, and click Login. The character'
-    Write-Host '     should still be listed. That is the whole point of this run.'
-}
+Show-TestPlan
 Write-Host ''
 # WHAT THIS PROJECT COSTS THE MACHINE, said at the moment the owner can act on it.
 #
