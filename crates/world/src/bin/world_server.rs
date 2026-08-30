@@ -452,9 +452,70 @@ fn main() -> ExitCode {
         );
     }
 
+    report_binding_readiness();
+
     if let Err(e) = world::serve(config) {
         eprintln!("maplecw-world: {e}");
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// **Say whether this channel could satisfy a bound migration, before anybody turns binding
+/// on.**
+///
+/// A channel server cannot present a session token - the client measurably does not carry one
+/// back. What it can do is ask the operating system which process owns the connection and look
+/// that process up among the launcher's registered sign-ins
+/// (`store::Store::attest_channel_connection`). Two instruments carry that, and **both were
+/// written from headers**: the TCP-table row layout in `store::peerowner`, and
+/// `GetProcessTimes` in `store::migration::launchtime`. `CLAUDE.md`: *"a constant that came
+/// from reading a header is a claim, not a fact"*, and *"an instrument that has never produced
+/// a positive is exactly the shape this file keeps warning about"*.
+///
+/// So both are exercised here, at startup, on this machine, against a socket of exactly the
+/// shape the accept path will hand them. This is the control that is *close to the subject* -
+/// the distinction the WER episode turned on - and it costs one loopback connection and one
+/// `cmd.exe /c exit` per launch, no client run at all.
+///
+/// # Why the failure text is this long
+///
+/// Because `--bind-migrations` is the one flag on this project that can produce a **total
+/// outage that looks like a crash**: a bound migration presented with nothing is refused, the
+/// character never enters the world, and the client sits there. The banner is where the owner finds
+/// out that the pid path is dead *before* they flip it, rather than afterwards from a frozen
+/// client.
+fn report_binding_readiness() {
+    println!("maplecw-world: migration binding readiness -");
+    match store::peerowner::self_test() {
+        Ok(pid) => println!(
+            "  OK   this machine's TCP table attributes a loopback connection to the process \
+             that opened it (proved against this process, {pid}). A same-machine client the \
+             launcher registered CAN satisfy a migration bound to its sign-in."
+        ),
+        Err(why) => println!(
+            "  DEAD the peer-owner lookup does not work here: {why}\n       \
+             Nothing can be attested, so with --bind-migrations ON at the login server EVERY \
+             character select would be refused and the client would never leave 'Connecting'. \
+             Leave it OFF."
+        ),
+    }
+    match store::migration::launchtime::self_test() {
+        Ok(what) => println!("  OK   {what} (recorded per attestation, so a recycled process id is readable afterwards)"),
+        Err(why) => println!(
+            "  WARN process start times are not readable here: {why}\n       \
+             Not fatal and not a refusal - it only means an attestation line will not carry \
+             the client process's age, which is the datum a recycled-pid investigation needs."
+        ),
+    }
+    println!(
+        "  NOTE binding is decided at the LOGIN server (--bind-migrations), not here. This \
+         channel logs one ATTESTED / NOT ATTESTED line per migration hello either way, so a \
+         run with binding still OFF measures whether turning it on would work."
+    );
+    println!(
+        "  NOTE if no such line appears beside 'MIGRATION HELLO', then \
+         session::claim_for_character has NOT been wired to Store::attest_channel_connection \
+         and this channel still presents nothing - built, not wired."
+    );
 }

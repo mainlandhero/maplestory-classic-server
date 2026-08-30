@@ -148,6 +148,18 @@ pub struct Session {
     /// **Recorded and reported, never decisive.** Two clients on one machine share it, so
     /// it cannot separate them - which is exactly the case the owner asked about.
     peer: Option<String>,
+    /// The **full** source address, port included.
+    ///
+    /// `peer` above is the address alone and is only ever a log line. This is the one the
+    /// operating system's TCP table is keyed by, and the port is not optional there: every
+    /// client on this machine shares `127.0.0.1`, so the port is the whole of what picks one
+    /// socket out. `store::peerowner::owning_pid` takes a `SocketAddr` for exactly that
+    /// reason, and an IP-only lookup would match the first row and return a confident wrong
+    /// pid rather than nothing.
+    ///
+    /// `None` for every constructed-in-a-test session, which is why the attestation below
+    /// degrades to "presents nothing" rather than failing.
+    peer_addr: Option<std::net::SocketAddr>,
     // `asked_to_hide_hit_damage` was removed 2026-08-28 with the packet it gated. `0x00EA`
     // carrying "/hitdamagetest 0" reached the client and was ECHOED into chat, and no
     // `0x0189` ever came back - so the command's permission gate refused it and the stub
@@ -441,6 +453,7 @@ impl Session {
             subscriber,
             claimed: None,
             peer: None,
+            peer_addr: None,
             conversation: None,
             in_cash_shop: false,
             chatter: Vec::new(),
@@ -465,6 +478,22 @@ impl Session {
     /// are unchanged. See the `peer` field: this is evidence for a log line, not a guard.
     pub fn with_peer(mut self, peer: impl Into<String>) -> Self {
         self.peer = Some(peer.into());
+        self
+    }
+
+    /// Record the **full** address this connection came from, port included.
+    ///
+    /// Supersedes [`Session::with_peer`] on the server path and **sets both fields**, so the
+    /// log line is unchanged and `claim_for_character` gains the one fact it can attest with.
+    /// See the `peer_addr` field for why the port is not optional.
+    ///
+    /// `with_peer` is kept rather than replaced, and that is deliberate: roughly sixty test
+    /// call sites use it, and they must keep resolving to `peer_addr: None` so they keep
+    /// presenting no credential. An address without a port is still worth logging; it simply
+    /// cannot attest.
+    pub fn with_peer_addr(mut self, addr: std::net::SocketAddr) -> Self {
+        self.peer = Some(addr.ip().to_string());
+        self.peer_addr = Some(addr);
         self
     }
 
@@ -915,20 +944,57 @@ impl Session {
     pub fn claim_for_character(&mut self, character_id: u32) -> String {
         use store::migration::{ClaimOutcome, MigrationEvidence, PeerPolicy};
 
-        // What this connection can prove. **TODAY THAT IS NOTHING**, and that is the whole
-        // state of this feature. The client does not carry the seed back - measured
-        // 2026-08-29: 115 distinct hello bodies against all 74 seeds ever minted, plain and
-        // both endiannesses and the XOR form the decompiler predicts, 8510 trials, zero
-        // hits, with the character id at offset 8 passing as a positive control on all 115.
-        // No token reaches us until the hook sends one. The address is recorded, never
-        // decisive: two clients on one machine share it.
+        // **What this connection can prove, and it is no longer nothing.**
         //
-        // TODO(hook): when grap-stub presents the launcher's session token on this socket,
-        // build `MigrationEvidence::with_token(tok)` here. That is the whole of what makes
-        // `--bind-migrations` safe to switch on.
+        // Nothing on the wire changed and nothing on the wire can: the client does not carry
+        // the seed back - measured 2026-08-29, 115 distinct hello bodies against all 74 seeds
+        // ever minted, plain and both endiannesses and the XOR form the decompiler predicts,
+        // 8510 trials, zero hits, with the character id at offset 8 passing as a positive
+        // control on all 115 - and its identity block is per-machine rather than per-launch.
+        //
+        // What changed is that the SERVER can derive the credential instead of being handed
+        // one: peer address -> the process the kernel's TCP table says owns that socket -> the
+        // login claim the launcher registered for that process -> that claim's token_hash.
+        // `store::Store::attest_channel_connection` is that walk, and it is the only thing
+        // that can mint the `AttestedTokenHash` `with_token_hash` demands - a hash out of a
+        // packet body cannot reach it, which is a type error rather than a review comment.
+        //
+        // **The outcome is logged every time, attested or not.** A silent fallback is the
+        // exact failure this feature exists to prevent, and there is a second reason: a run
+        // made with `--bind-migrations` still OFF at the login server now measures whether
+        // turning it on would work, so the flag can be flipped on evidence rather than hope.
+        //
+        // The address is still recorded and still never decisive - two clients on one machine
+        // share it - so it is attached to whatever the attestation produced rather than being
+        // the attestation.
+        let (attested_note, evidence) = match self.peer_addr {
+            Some(addr) => {
+                let attestation = self.store.attest_channel_connection(addr);
+                let why = attestation.why();
+                let evidence = match attestation {
+                    store::migration::Attestation::Attested(hash) => {
+                        MigrationEvidence::with_token_hash(hash)
+                    }
+                    // Every other outcome presents NO credential. That refuses a bound row and
+                    // is a no-op for an unbound one, and it is deliberate in both directions: a
+                    // fallback here would let an unattributable connection past the binding by
+                    // simply being unattributable, which is the hole the binding closes.
+                    _ => MigrationEvidence::none(),
+                };
+                (why, evidence)
+            }
+            None => (
+                "NOT ATTESTED: this session has no socket address, so the owning process \
+                 could not be looked up at all. A bound migration will be REFUSED. On the \
+                 server path this means Session::with_peer_addr was not called - see \
+                 crates/world/src/server.rs; in a test it is simply the default."
+                    .to_string(),
+                MigrationEvidence::none(),
+            ),
+        };
         let evidence = match self.peer.as_deref() {
-            Some(p) => MigrationEvidence::none().from_peer(p),
-            None => MigrationEvidence::none(),
+            Some(p) => evidence.from_peer(p),
+            None => evidence,
         };
 
         let mut accept = |claimed: store::ClaimedMigration, how: &str, mismatch: bool| {
@@ -953,7 +1019,15 @@ impl Session {
             note
         };
 
-        match self.store.claim_migration_for_character_with(character_id, &evidence, PeerPolicy::Record) {
+        // The attestation sentence goes in FRONT of whatever happened next, so `world.log`
+        // records what this connection could present *and* what it got, on one line, in that
+        // order. Reading only the second half is how "REFUSED" becomes an unexplained outage.
+        //
+        // **A prefix rather than a replacement, and that is what keeps it safe.** Every
+        // existing assertion on this string is `.contains(..)` - there is no `assert_eq!` on
+        // it anywhere in the crate - so prefixing moves no test. Appending would have been
+        // equally safe; leading with what the connection could prove is the useful order.
+        let outcome = match self.store.claim_migration_for_character_with(character_id, &evidence, PeerPolicy::Record) {
             Ok(ClaimOutcome::Claimed { migration, peer_mismatch }) => {
                 accept(migration, "by character id", peer_mismatch)
             }
@@ -987,7 +1061,8 @@ impl Session {
                 Err(e) => format!("character {character_id} could not be checked: {e}"),
             },
             Err(e) => format!("character {character_id} could not be checked: {e}"),
-        }
+        };
+        format!("{attested_note} || {outcome}")
     }
 
 

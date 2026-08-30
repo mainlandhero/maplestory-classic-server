@@ -105,14 +105,20 @@ fn connection(
         Shift::Add,
     ));
 
-    // The address this connection came from. **Recorded, never decisive** - two clients on
-    // one machine share it, and a dual-stack client legitimately arrives as ::1 on one
-    // socket and 127.0.0.1 on the other. Refusing on it would lock the owner out of their own
+    // The address this connection came from. The **address** is recorded and never decisive -
+    // two clients on one machine share it, and a dual-stack client legitimately arrives as ::1
+    // on one socket and 127.0.0.1 on the other. Refusing on it would lock the owner out of their own
     // server; it is here so a suspected impersonation has something to read.
+    //
+    // **The whole `SocketAddr` is kept, port included, and the port is the load-bearing half.**
+    // `Session::claim_for_character` asks the operating system which process owns this socket
+    // (`store::peerowner`), and that lookup is keyed on the client's local endpoint - address
+    // AND port. Every client on this machine shares `127.0.0.1`, so an address-only lookup
+    // matches the first row and returns a confident wrong pid. `with_peer_addr` sets both
+    // fields, so this line changes nothing about the log and adds the one fact the attestation
+    // needs.
     let mut session = match stream.peer_addr() {
-        Ok(addr) => {
-            Session::joining(store, config.clone(), fields).with_peer(addr.ip().to_string())
-        }
+        Ok(addr) => Session::joining(store, config.clone(), fields).with_peer_addr(addr),
         Err(_) => Session::joining(store, config.clone(), fields),
     };
     for reply in session.on_connect() {
