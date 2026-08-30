@@ -522,6 +522,46 @@ pub fn meso_gained(gain: i32) -> Vec<u8> {
     meso_pickup(gain, 0, 0, false, false)
 }
 
+/// `Meso Penalty Applied (-n)`, for mesos the player **spent** rather than found.
+///
+/// The owner, 2026-08-29, about the taxi fare: *"The client should receive a message similar to
+/// the quest items that they have lost mesos -500 when paying for taxi."*
+///
+/// # Which string this reaches, and why it is the `bonus` field that picks it
+///
+/// The client owns the wording. Its table has no "you lost mesos" line in the pick-up
+/// family - what it has is:
+///
+/// ```text
+/// 0x00E1  'You have gained mesos (+%I64d)'      <- the plain line, from `gain - bonus`
+/// 0x00E2  'You have gained additional Mesos (+%I64d)'
+/// 0x00E3  'Meso Penalty Applied (%I64d)'        <- no leading '+', and this is the one
+/// ```
+///
+/// and `142d5940a` selects between `0xE2` and `0xE3` on the **sign of `bonus`**, not of
+/// `gain`. So a penalty is expressed as a *negative bonus*. `research/client-messages.md`
+/// section "Sub-mode 1, the mesos" is the decode. **[L]**
+///
+/// # The part that is NOT measured, and how to settle it in one run
+///
+/// `gain` is documented as the total *including* `bonus`, and the plain line is built from
+/// `gain - bonus` (`142d59482 mov ebx,r14d / sub ebx,edi`). Sending the whole amount as
+/// penalty therefore leaves the plain line at **zero**, and **whether the client suppresses a
+/// zero line is unmeasured** - nobody has sent one. Two outcomes on screen:
+///
+/// * only `Meso Penalty Applied (-500)` - correct, leave it alone;
+/// * that line **and** `You have gained mesos (+0)` - then the zero line is not suppressed,
+///   and the fix is one edit here: pass `bonus: 0` instead, which puts the amount on the
+///   plain line as `(+-500)`. Uglier, but one line instead of two.
+///
+/// It is written this way round because this arm is the client's own *word* for the event.
+pub fn meso_penalty(amount: u32) -> Vec<u8> {
+    // Clamp rather than wrap: a fare larger than i32::MAX is not a thing, and a wrap would
+    // turn a charge into a gift.
+    let spent = -(amount.min(i32::MAX as u32) as i32);
+    meso_pickup(spent, spent, 0, false, false)
+}
+
 // ---------------------------------------------------------------------------------------
 // Fame — small, fully read, and here because it is one field
 // ---------------------------------------------------------------------------------------
@@ -1131,6 +1171,42 @@ mod tests {
 
     /// A negative quantity is the `'has been lost'` wording, and it must survive as a
     /// negative on the wire — the client does the `neg` itself at `14278b5bb`.
+    /// **A penalty is a NEGATIVE BONUS, and that is what picks the client's word.**
+    ///
+    /// `142d5940a` branches on the sign of `bonus`: `> 0` gives string `0xE2`
+    /// "additional Mesos", `< 0` gives `0xE3` "Meso Penalty Applied". Nothing looks at the
+    /// sign of `gain` to choose a string. So a penalty written only into `gain` reaches the
+    /// player as "You have gained mesos (+-500)" - a gain line with a minus inside it - and
+    /// the client's own loss wording is never used.
+    ///
+    /// This asserts the field that decides it, not just that some bytes differ.
+    #[test]
+    fn a_meso_penalty_is_a_negative_bonus_and_not_merely_a_negative_gain() {
+        let body = meso_penalty(500);
+        // u8 kind, bool quiet, i8 subMode, bool noticeLost, i32 gain, u16 change, i32 bonus
+        assert_eq!(body.len(), 1 + 1 + 1 + 1 + 4 + 2 + 4, "{body:02x?}");
+        let gain = i32::from_le_bytes(body[4..8].try_into().unwrap());
+        let bonus = i32::from_le_bytes(body[10..14].try_into().unwrap());
+        assert_eq!(gain, -500, "the total is the amount spent");
+        assert_eq!(bonus, -500, "and ALL of it is penalty - this is what selects 0xE3");
+        assert!(bonus < 0, "a non-negative bonus would draw 'additional Mesos' instead");
+
+        // The plain line is `gain - bonus`, so the whole amount being penalty leaves it at
+        // zero. That is deliberate and its on-screen consequence is UNMEASURED - see the
+        // builder's docs. Pin the arithmetic so a later edit cannot change it silently.
+        assert_eq!(gain - bonus, 0, "the plain line computes to zero");
+
+        // And it is genuinely different from the pick-up builder, which must stay positive.
+        let gained = meso_gained(500);
+        assert_ne!(body, gained);
+        assert_eq!(i32::from_le_bytes(gained[4..8].try_into().unwrap()), 500);
+        assert_eq!(
+            i32::from_le_bytes(gained[10..14].try_into().unwrap()),
+            0,
+            "a pick-up has no bonus, so it can never draw the penalty line"
+        );
+    }
+
     #[test]
     fn a_negative_quantity_goes_out_negative() {
         let b = item_effect_in_chat(&[ItemLine { item_id: 2000000, quantity: -4, in_bag: false }]);

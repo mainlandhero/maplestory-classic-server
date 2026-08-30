@@ -874,6 +874,21 @@ impl Session {
             // The balance moves before the screen does. Field entry states it again ~420 ms
             // later; belt and braces, not a duplicate - the character record has no meso field.
             out.extend(self.meso_reply(chr.id));
+            // **And say so on the right-hand side.** The owner: the client should be told it lost
+            // the fare, the way it is told about a quest item. `meso_reply` moves the number
+            // in the UI silently; this is the sentence. It goes BEFORE the `SetField` for the
+            // same reason the arrival notice does - a field change tears script dialogs down,
+            // and this is not one, but the ordering is the one already observed working.
+            out.push(Reply {
+                opcode: net::message::MESSAGE,
+                body: net::message::meso_penalty(crate::taxi::FARE_MESOS),
+                what: format!(
+                    "Message: Meso Penalty Applied (-{}) - the taxi fare, said out loud. The \
+                     client owns the wording; we send the number. Whether a zero plain line \
+                     also draws is UNMEASURED - see net::message::meso_penalty",
+                    crate::taxi::FARE_MESOS
+                ),
+            });
             let why = crate::taxi::ride_note(taxi, &chr, map_id, &map_name, balance);
             out.extend(self.go_to_map(&mut chr, map_id, 0, why));
         }
