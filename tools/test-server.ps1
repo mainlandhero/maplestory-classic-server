@@ -90,7 +90,24 @@
             NEITHER works -> something common to both, which is the script packet itself
           Then talk to the instructor you land on. advance_job_for has NEVER been observed
           to run - zero occurrences in 675 014 archived events - so this is its first test.
-     T5. RETURN SCROLLS. !item 2030000 3, then !item 2030009 1. Use each from the bag.
+     T0. BEFORE ANY OF THIS, and it costs no server: double-click
+         client-patched\MapleStory.exe TWICE with no server running and watch for 10
+         seconds. It dies at ~37 s on its own (the firewalled reachability check), so
+         10 s is inside the window and tells you what you need.
+          two windows -> the client runs twice on one machine, and T1/T2 are possible
+          the second exits at once -> it does NOT, and every two-client step needs a
+                     second machine. That is a finding, not a failed test
+         Nobody has ever tried this. 211 connections across 188 archived logs contain
+         ZERO overlapping pairs, and no archived instrument could have seen a second
+         process that dies before it connects.
+
+     T5. RETURN SCROLLS. **RUN THIS AS `maplecw`, NOT AS `tester`.**
+         `tester` has is_gm = 0, so `!item` comes back as a CHAT BALLOON and no scroll
+         is granted - which reads exactly like "the client never sent 0x010E, the whole
+         path is dead code" and would be a false negative on the one question T5 exists
+         to answer. **A `!` command answered by a chat balloon is the GM gate, not a
+         broken command.**
+         !item 2030000 3, then !item 2030009 1. Use each from the bag.
           Nearest Town should warp you to the map's own return town and take ONE scroll.
           The El Nath scroll must REFUSE with a chat notice and LEAVE THE SCROLL IN THE BAG.
             the scroll vanishes on the refusal -> the transition guard is broken
@@ -1087,7 +1104,22 @@ function Show-TestPlan {
         Write-Host '          NEITHER works -> something common to both'
         Write-Host '        Then talk to the instructor you land on. Job advancement has'
         Write-Host '        NEVER been observed to run - this is its first test.'
-        Write-Host '  T5. RETURN SCROLLS. !item 2030000 3 then !item 2030009 1.' -ForegroundColor White
+        Write-Host '  T0. FIRST, and it needs no server: double-click' -ForegroundColor Cyan
+    Write-Host '      client-patched\MapleStory.exe TWICE, no server, watch 10s.'
+    Write-Host '      It self-kills at ~37s, so 10s is safely inside that.'
+    Write-Host '        two windows -> it runs twice here, T1/T2 are possible'
+    Write-Host '        second exits at once -> it does NOT, and every two-client'
+    Write-Host '                   step needs a second machine. That is a finding'
+    Write-Host '      Nobody has ever tried this. 211 connections across 188 logs'
+    Write-Host '      show ZERO overlapping pairs, and nothing archived could have'
+    Write-Host '      seen a second process that dies before it connects.'
+    Write-Host '  T5. RETURN SCROLLS. RUN AS maplecw, NOT AS tester.' -ForegroundColor White
+    Write-Host '      tester has is_gm = 0, so !item comes back as a CHAT BALLOON'
+    Write-Host '      and grants nothing - which reads exactly like "the client'
+    Write-Host '      never sent 0x010E, the path is dead code". That would be a'
+    Write-Host '      FALSE NEGATIVE on the only question T5 exists to answer.'
+    Write-Host '      A ! command answered by a chat balloon is the GM GATE.' -ForegroundColor Yellow
+    Write-Host '      !item 2030000 3 then !item 2030009 1.'
         Write-Host '        Nearest Town warps to the map return town, taking ONE.'
         Write-Host '        El Nath must REFUSE and LEAVE THE SCROLL IN THE BAG.'
         Write-Host '          scroll vanishes on a refusal -> the guard is broken'
