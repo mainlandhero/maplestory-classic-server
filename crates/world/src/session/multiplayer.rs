@@ -216,6 +216,72 @@ impl Session {
             Some(chr),
         );
     }
+
+    /// Rebroadcast a swing to everyone else on this field.
+    ///
+    /// **The attack half of what the owner asked for on 2026-08-29.**
+    /// [`Session::publish_user_move`] is the movement half and was, until this,
+    /// the only production caller of [`crate::broadcast::Bus::publish`] in the
+    /// whole crate.
+    ///
+    /// `opcode` and `payload` are the inbound `0x00DF`/`0x00E0`/`0x00E1`
+    /// exactly as [`Session::on_attack`] received them.
+    ///
+    /// # Three things this deliberately does not do
+    ///
+    /// * **It does not echo the inbound body.** The two encoders are not
+    ///   symmetric - 40 header fields in, 13 out - so `crate::remoteattack`
+    ///   projects the parse field for field. `research/user-pool-tables.md` §4.
+    ///   The movement rebroadcast's byte-for-byte copy is licensed by a shared
+    ///   encoder that does not exist on this side.
+    /// * **It does not take the character id from the packet.** Nothing on this
+    ///   socket authenticates anybody, so the id comes from this session's own
+    ///   claimed migration.
+    /// * **It does not supersede.** `Bus::publish` is called with `None`
+    ///   because an attack is an *event*: two swings are two events, and a
+    ///   supersede key would render a whole fight as one hit. Pinned by
+    ///   `remoteattack::tests::three_swings_are_three_packets_and_would_not_be_with_a_supersede_key`.
+    ///
+    /// # A parse failure is not a refusal to answer
+    ///
+    /// `CLAUDE.md`'s always-answer rule. This returns nothing on every failure
+    /// path and the caller's reply to the attacker is untouched, so a body this
+    /// server cannot re-encode costs the *observers* a swing and costs the
+    /// attacker nothing at all.
+    pub(super) fn publish_user_attack(&mut self, opcode: u16, payload: &[u8]) {
+        let Some(out_opcode) = crate::remoteattack::remote_attack_opcode(opcode) else {
+            return; // 0x00E2 body attack - an undecoded layout, nothing to re-encode
+        };
+        let Some(chr) = self.claimed_character() else { return };
+        let Some(map) = self.bus().map_of(self.subscriber) else { return };
+        let attack = match net::attack::parse(opcode, payload) {
+            Ok(a) => a,
+            Err(e) => {
+                crate::server::log(&format!(
+                    "   swing NOT rebroadcast: {e}. The attacker's own reply is unaffected \
+                     - this server would be emitting a body it could not account for, and a \
+                     wrong length on this wire has killed this client twice."
+                ));
+                return;
+            }
+        };
+        let body = crate::remoteattack::user_attack_remote(
+            chr.id,
+            // `[user + 0x406c]`, the same dword `0x0224` UserEnterField fills at its body
+            // offset 12 with the level. See `crate::remoteattack`'s module docs: the
+            // argument is consistency between the two packets, not identification.
+            u16::try_from(chr.level).unwrap_or(u16::MAX),
+            &attack,
+        );
+        let what = crate::remoteattack::describe(chr.id, out_opcode, &attack, body.len());
+        self.bus().publish(
+            self.subscriber,
+            map,
+            Reply { opcode: out_opcode, body, what },
+            // An event, not a state. See the doc block above.
+            None,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -514,6 +580,231 @@ ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e0000
         assert!(
             body.len() < path_bytes.len(),
             "and it is therefore SHORTER than the inbound body, which carries one"
+        );
+    }
+
+    /// `previous-runs/world-20260820-121055.log` 16:10:28.598, `0x00DF`, 229 bytes: a
+    /// plain swing that connected — mob 2002, one hit of 19, not critical. The same body
+    /// `net::attack` and `crate::remoteattack` both test against, so all three agree about
+    /// what the bytes mean.
+    const MELEE_229: &str = "0001000000000000000000000000000001050000009fae340801040000003b80680a70028b010000000070028b0100000000000000000000000000000000000000000000000000000100000001000000000a0055736572204d656c65658901000000000000000000000000000000010000000000000000000000d20700000200000001000013000000000000000000000736028b0136028b0135027b01890100000000000001000002000000000001012302710148028b01000000007e6c3c6600000000030000000000d5c057820100000092e9bc2707000000bc6509e5000080e8da8f00";
+
+    fn hex_body(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("fixture hex"))
+            .collect()
+    }
+
+    /// Two characters on one map, and a **real captured swing** crossing between them.
+    ///
+    /// This is the attack half of the owner's 2026-08-29 sentence end to end, and it fails if
+    /// any link is unhooked: the `is_attack_opcode` arm, `on_attack`,
+    /// `publish_user_attack`, `crate::remoteattack`, `Bus::publish`, the mailbox, or the
+    /// drain in `handle`.
+    ///
+    /// **Four effects are asserted, not one.** `CLAUDE.md`: a test that checks one of
+    /// several effects gives false confidence about the rest.
+    ///
+    /// **Nothing here has been on a screen.** Every offset in the body is static analysis
+    /// (`research/user-pool-tables.md` §4), so this proves the server does what it was told
+    /// to do, not that the client likes it.
+    #[test]
+    fn a_real_captured_swing_is_rebroadcast_to_the_other_player() {
+        let payload = hex_body(MELEE_229);
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Watcher", "Swinger"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: 104_040_000,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut watcher = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut attacker = Session::joining(store.clone(), config, fields.clone());
+        watcher.claim_for_character(ids[0]);
+        attacker.claim_for_character(ids[1]);
+        // The `u16` at body offset 4 is `[user + 0x406c]` - the same dword `0x0224` fills
+        // with the level. Read it from the record rather than assuming, so this test also
+        // pins WHICH number the session chose to send.
+        let level = store
+            .characters_for(account, 0)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == ids[1])
+            .unwrap()
+            .level;
+        watcher.on_field_entered();
+        attacker.on_field_entered();
+        let _ = watcher.tick(1_000); // clear the arrivals
+        let _ = attacker.tick(1_000);
+
+        // The parse has to be the same one the session does, or this test asserts against
+        // its own arithmetic rather than against the client's bytes.
+        let parsed = net::attack::parse(net::combat::USER_MELEE_ATTACK, &payload)
+            .expect("a real captured body");
+        let expected = crate::remoteattack::user_attack_remote(
+            ids[1],
+            u16::try_from(level).unwrap(),
+            &parsed,
+        );
+
+        let mut packet = net::combat::USER_MELEE_ATTACK.to_le_bytes().to_vec();
+        packet.extend_from_slice(&payload);
+        let own = attacker.handle(&packet);
+
+        // (1) The attacker never receives their own swing - their client drew it already.
+        assert!(
+            !own.iter().any(|r| r.opcode == 0x029E),
+            "the attacker must not be sent their own broadcast: {own:?}"
+        );
+
+        // (2) The other player does, exactly once.
+        let mail = watcher.handle(&NOTHING);
+        let swings: Vec<&Reply> = mail.iter().filter(|r| r.opcode == 0x029E).collect();
+        assert_eq!(swings.len(), 1, "one swing should have crossed: {mail:?}");
+
+        // (3) ...and the body is the one `crate::remoteattack` builds, byte for byte,
+        //     addressed to the attacker and 85 bytes long.
+        assert_eq!(swings[0].body, expected, "the body must be the projected re-encode");
+        assert_eq!(
+            u32::from_le_bytes(swings[0].body[0..4].try_into().unwrap()),
+            ids[1],
+            "addressed to the swinger"
+        );
+        assert_eq!(
+            u16::from_le_bytes(swings[0].body[4..6].try_into().unwrap()),
+            u16::try_from(level).unwrap(),
+            "the u16 at 4 is the attacker's level, the same field 0x0224 sets at its 12"
+        );
+        assert_eq!(swings[0].body.len(), 85, "6 + 43 + 12 + (6 + 10 + 8)");
+        assert!(
+            swings[0].body.len() < payload.len(),
+            "and it is SHORTER than the inbound body - 13 header fields of 40, no trailer"
+        );
+        assert_eq!(
+            u64::from_le_bytes(swings[0].body[69..77].try_into().unwrap()),
+            19,
+            "the damage the attacker's own client computed, absolute and unscaled"
+        );
+
+        // (4) A second swing is a second packet. If `publish` ever gained a supersede key
+        //     here, a whole fight would render as one hit.
+        let _ = attacker.handle(&packet);
+        let _ = attacker.handle(&packet);
+        assert_eq!(
+            watcher.handle(&NOTHING).iter().filter(|r| r.opcode == 0x029E).count(),
+            2,
+            "two swings are two events - nothing coalesces"
+        );
+    }
+
+    /// **The broadcast is additive: the attacker gets exactly what they got before.**
+    ///
+    /// The same swing is run twice, on two independent channels - once with a second
+    /// player on the map and once alone - and the attacker's own replies must be
+    /// identical. That is the property the whole feature has to preserve, and it cannot be
+    /// checked by looking at one session.
+    ///
+    /// The swing is patched to carry **Power Strike level 5** so the attacker's reply is
+    /// genuinely non-empty (`session/combat.rs::spend_attack_mp` sends a `0x007C`);
+    /// comparing two empty vectors would pass against a broadcast that had eaten the
+    /// reply. That needs the generated skill table, so the test returns early without it,
+    /// exactly as `session::tests::an_attack_skill_costs_mp_and_a_potion_does_not_undo_it`
+    /// does.
+    #[test]
+    fn the_broadcast_does_not_change_what_the_attacker_gets() {
+        let skills = std::path::Path::new("../../gm-handbook/skills.txt");
+        if !skills.exists() {
+            return; // generated, gitignored - python tools/dump_skills.py
+        }
+        const POWER_STRIKE: u32 = 1_001_001;
+
+        let mut payload = hex_body(MELEE_229);
+        payload[2..6].copy_from_slice(&POWER_STRIKE.to_le_bytes());
+        payload[6] = 5;
+        assert!(
+            net::attack::parse(net::combat::USER_MELEE_ATTACK, &payload).is_ok(),
+            "the captured body must still parse after patching"
+        );
+        let mut packet = net::combat::USER_MELEE_ATTACK.to_le_bytes().to_vec();
+        packet.extend_from_slice(&payload);
+
+        // One channel, one or two players on it, and the attacker's own reply.
+        let swing_with = |companion: bool| -> Vec<(u16, Vec<u8>)> {
+            let store = Arc::new(Store::open_in_memory().unwrap());
+            let config = Arc::new(Config {
+                set_field_probe: true,
+                firstjob: crate::firstjob::CombatTable::load(skills),
+                ..Config::default()
+            });
+            let fields = Arc::new(Fields::new());
+            let account = store.create_account("maplecw", "correct horse battery").unwrap();
+
+            let mut make = |name: &str| {
+                let chr = net::opcode::Character {
+                    name: name.to_string(),
+                    map_id: 104_040_000,
+                    ..Default::default()
+                };
+                let id = store.create_character(account, 0, &chr).unwrap().id;
+                let mut rec = store
+                    .characters_for(account, 0)
+                    .unwrap()
+                    .into_iter()
+                    .find(|c| c.id == id)
+                    .unwrap();
+                rec.job = 100;
+                rec.mp = 100;
+                rec.max_mp = 100;
+                store.save_character_progress(&rec).unwrap();
+                store.set_skill_level(id, POWER_STRIKE, 5).unwrap();
+                store.create_migration(account, id, 0, 0).unwrap();
+                id
+            };
+            let attacker_id = make("Swinger");
+            let watcher_id = if companion { Some(make("Watcher")) } else { None };
+
+            let mut attacker =
+                Session::joining(store.clone(), config.clone(), fields.clone());
+            attacker.claim_for_character(attacker_id);
+            let mut watcher = watcher_id.map(|id| {
+                let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+                s.claim_for_character(id);
+                s
+            });
+            if let Some(w) = watcher.as_mut() {
+                w.on_field_entered();
+                let _ = w.tick(1_000);
+            }
+            attacker.on_field_entered();
+            let _ = attacker.tick(1_000);
+
+            attacker
+                .handle(&packet)
+                .into_iter()
+                .map(|r| (r.opcode, r.body))
+                .collect()
+        };
+
+        let alone = swing_with(false);
+        let watched = swing_with(true);
+
+        assert!(
+            alone.iter().any(|(op, _)| *op == net::stats::STAT_CHANGED),
+            "the MP spend must be in the reply, or this comparison is two empty vectors"
+        );
+        assert_eq!(
+            watched, alone,
+            "a second player on the map must not change one byte of what the attacker gets"
+        );
+        assert!(
+            !watched.iter().any(|(op, _)| *op == 0x029E),
+            "and the broadcast must never leak into the attacker's own reply"
         );
     }
 

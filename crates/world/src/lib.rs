@@ -43,6 +43,7 @@ pub mod jobs;
 pub mod loadout;
 pub mod magic;
 pub mod mobattack;
+pub mod remoteattack;
 pub mod returnscroll;
 pub mod secondjob;
 pub mod server;

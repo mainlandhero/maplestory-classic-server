@@ -234,6 +234,15 @@ impl Session {
         // legitimately kill several mobs at once.
         let killer = self.claimed_character().map(|c| (c.id, c.map_id));
         let Some((chr_id, map)) = killer else { return out };
+        // **The attack half of the owner's 2026-08-29 sentence**, and the second production
+        // caller of `Bus::publish` there has ever been. Before the target loop, so a swing
+        // that hit nothing still crosses: 43 of the 434 captured bodies have no target at
+        // all, and a miss that is invisible to everyone else reads as a frozen character.
+        //
+        // Additive by construction - it appends to other connections' mailboxes and returns
+        // `()`. Nothing about `out` changes, which is what
+        // `the_broadcast_does_not_change_what_the_attacker_gets` pins.
+        self.publish_user_attack(opcode, payload);
         for target in &attack.targets {
             let Some(hp_before) = self.fields.mob_hp(map, target.object_id) else {
                 continue; // not a mob of ours, or already dead and removed
