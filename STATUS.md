@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-31: **the second job advancement, and four maps nobody has stood in**
+# Where things stand — 2026-08-31b: **a second continent, and the third job advancement on it**
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -24,6 +24,76 @@ the stored characters and launches nothing.
 answers at all". Without it `Session::handle` returns nothing for *every* packet, the
 migration hello goes unanswered, and the client sits on "Connecting..." looking exactly
 like a server that is not running. It cost one of the owner's manual launches on 2026-08-20.
+
+### LANDED 2026-08-31b — the third advancement, and the continent it is on
+
+**This client has a third job advancement, and it is half-shipped.** The ten jobs, their skill
+books and their four instructors are all here and complete. The *test* is not — and that is an
+enumeration, not a failed search:
+
+| | second job | third job |
+|---|---|---|
+| quest chain | 16 quests, `20000`..`20303` **[L]** | **none.** All 322 enumerated; nothing above `20303` |
+| hidden test field | four, one portal each **[L]** | **none.** Every one-portal map in the archive enumerated |
+| dedicated test mobs | eight, `800010`..`800017` **[L]** | **none** |
+| test items | letter, 30 marbles, proof **[L]** | **none** |
+| level gate in the data | `Check.0.lvmin = 30`, sixteen times **[L]** | **none.** 70 is **[I]** and ours |
+
+So the owner's call was **no test — level 70 and click**, taken knowing the client offers no
+alternative. `research/third-job.md` is the working.
+
+**The four instructors are 1104 Tylus, 1105 Robeira, 1106 Rene and 1107 Arec**, all standing
+in **Chief's Residence, map 20001001**, each placed exactly once. They are identified by their
+own idle lines rather than by a remembered roster — which is worth saying because a
+from-memory roster gets two of them wrong. There is no Helena in this client, and **"Chief
+Stan" is NPC 202 in Henesys**, a father in a gold-watch quest.
+
+**There is no choice at third job.** `111` is the book under `110` in `Skill.wz`, ten times
+over, so the advancement is a statement rather than a menu.
+
+#### The real blocker was travel, and it is now solved
+
+**El Nath was unreachable.** Victoria Island is a 223-map portal component; Orbis and El Nath
+are a separate 87-map one, and the link in the real game is a ship rather than a portal. **[L]**
+
+The client ships a full ferry cast — and **four of the seven stand in rooms nothing can walk
+into**. Ellinia Station has *zero* portals targeting it in the whole archive, and Ellinia's own
+`in03` has no target map. The Orbis Ticketing Booth is different and was checked separately: it
+is reachable from Orbis.
+
+So the line runs on **Eurek the Alchemist**, who is the only NPC this client places on **both
+continents** — Sleepywood and El Nath — whose one and only `d0` is *"I wander all over the
+world of MapleStory"*, and who carries **zero** quest rows. **[L]** on all three.
+
+```text
+  any Victoria town  --cab, 500--> Sleepywood
+  Sleepywood         --Eurek, 1000--> El Nath      (or Orbis)
+  El Nath            --portal in01--> Chief's Residence
+  and home again by the same route
+```
+
+| what | state |
+|---|---|
+| `thirdjob.rs` — ten jobs, four instructors, level 70, tier 3 | wired, **never on a screen** |
+| The Ossyria ferry line — 3 stops, 1000 mesos | wired, **never on a screen** |
+| `skillpoints::Tier::Third` and the tier-3 SP pool in `0x007C` | wired, **never on a screen** |
+| The three invisible third-job skills | already filtered — `secondjob::HIDDEN_SKILLS` holds all 13 |
+| **87 Orbis/El Nath maps** | all have field images and footholds; **none has ever been loaded** |
+
+**A behaviour change worth naming: the second SP tier now stops accruing at 70**, exactly as
+the first stops at 30, because a tier with a successor should hand over to it. Nobody loses a
+point they already had — `top_up` saturates and never claws back — but a level-71 second-job
+character who does not advance stops earning second-job points. A test caught this change when
+I made it, which is the whole reason it is stated here rather than discovered later.
+
+#### Two things this run will settle that nothing cheaper can
+
+* **Can this client load an Ossyria map at all?** 87 maps, zero observations. If a client dies
+  there, that is worth more than the advancement it was on the way to.
+* **Does the ferry menu list two stops and not six?** Six would mean the network filter broke
+  and every Victoria cab is now selling 500-meso rides to another continent.
+
+---
 
 ### LANDED 2026-08-31 — the second advancement, end to end
 

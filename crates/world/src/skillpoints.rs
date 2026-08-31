@@ -48,7 +48,19 @@ pub const FIRST_JOB_LEVEL: u32 = crate::jobs::LEVEL_MINIMUM;
 
 /// The level at which the second advancement becomes possible. **[I]** - the owner's sentence, and
 /// nothing in this client has been found that states it.
+///
+/// It is corroborated *since*: all sixteen second-job chain quests carry `Check.0.lvmin = 30`.
+/// **[L]** `research/second-job.md`. So this one is no longer only a policy.
 pub const SECOND_JOB_LEVEL: u32 = 30;
+
+/// The level at which the third advancement becomes possible.
+///
+/// **[I], and unlike [`SECOND_JOB_LEVEL`] there is nothing in this client to corroborate it.**
+/// The second advancement's level could be read off sixteen quests; the third advancement has
+/// **no quest at all** - `research/third-job.md` §3.1 enumerates all 322 and finds nothing
+/// above `20303`. So 70 is the conventional MapleStory number and nothing on this machine will
+/// ever catch it being wrong. One constant, one edit, said out loud rather than buried.
+pub const THIRD_JOB_LEVEL: u32 = 70;
 
 /// Granted once, on the advancement itself.
 pub const SP_ON_ADVANCE: u32 = 1;
@@ -66,6 +78,7 @@ pub const SP_PER_LEVEL: u32 = 3;
 pub enum Tier {
     First,
     Second,
+    Third,
 }
 
 impl Tier {
@@ -74,6 +87,7 @@ impl Tier {
         match self {
             Tier::First => FIRST_JOB_LEVEL,
             Tier::Second => SECOND_JOB_LEVEL,
+            Tier::Third => THIRD_JOB_LEVEL,
         }
     }
 
@@ -84,10 +98,23 @@ impl Tier {
     /// levelling *to* 30, and only advances afterwards. The owner's *"until level 30"* is read as
     /// inclusive for that reason, and it is flagged here because the other reading is
     /// defensible and costs exactly three points.
+    /// **The second tier now stops too, and that is a behaviour change worth naming.**
+    ///
+    /// It used to be `None` because there was no third tier to take over. There is one now, so
+    /// the rule this function already documented for `First` applies to `Second` unchanged: a
+    /// character who reaches 70 and does *not* advance stops accruing second-job points, in
+    /// exactly the way a character who reaches 30 and does not advance stops accruing
+    /// first-job points. That symmetry is the whole reason `stops_at` exists.
+    ///
+    /// **Nobody loses a point they already had.** [`top_up`] is `saturating_sub`, so a
+    /// character granted 211 points under the old `None` keeps all 211 and simply gains no
+    /// more. There is no negative correction, which is the one thing this module refuses to
+    /// do - a point taken back may already have been spent.
     pub fn stops_at(self) -> Option<u32> {
         match self {
             Tier::First => Some(SECOND_JOB_LEVEL),
-            Tier::Second => None,
+            Tier::Second => Some(THIRD_JOB_LEVEL),
+            Tier::Third => None,
         }
     }
 }
@@ -97,6 +124,7 @@ impl fmt::Display for Tier {
         f.write_str(match self {
             Tier::First => "1st job",
             Tier::Second => "2nd job",
+            Tier::Third => "3rd job",
         })
     }
 }
@@ -215,10 +243,58 @@ mod tests {
         }
         // Every level from 31 up adds exactly SP_PER_LEVEL to the second pool and nothing to
         // the first - which is the same statement, checked from the other side.
-        for level in SECOND_JOB_LEVEL..80 {
+        //
+        // **This loop used to run to 80 and it caught the change that added a third tier**,
+        // which is what a test is for. The second pool now stops at [`THIRD_JOB_LEVEL`] for
+        // exactly the reason the first stops at [`SECOND_JOB_LEVEL`]: the next tier takes
+        // over. The bound is written as the constant rather than as `70` so the two cannot
+        // drift.
+        for level in SECOND_JOB_LEVEL..THIRD_JOB_LEVEL {
             let step = entitlement(Tier::Second, level + 1) - entitlement(Tier::Second, level);
             assert_eq!(step, SP_PER_LEVEL, "level {level} -> {}", level + 1);
         }
+        // And past it, the second pool is flat - the symmetric statement to the one above
+        // about the first pool.
+        let at_seventy = entitlement(Tier::Second, THIRD_JOB_LEVEL);
+        assert_eq!(at_seventy, 1 + SP_PER_LEVEL * (THIRD_JOB_LEVEL - SECOND_JOB_LEVEL));
+        for level in THIRD_JOB_LEVEL..THIRD_JOB_LEVEL + 30 {
+            assert_eq!(
+                entitlement(Tier::Second, level),
+                at_seventy,
+                "level {level} must not keep paying the second pool"
+            );
+        }
+    }
+
+    /// **The third tier, and the one thing it does differently: it never stops.**
+    ///
+    /// There is no fourth job in this client - `Skill.wz` holds 25 books and the highest are
+    /// the ten third-job ones - so nothing takes over from this pool and capping it would
+    /// strand every point a character earns past whatever number was chosen.
+    #[test]
+    fn the_third_tier_starts_at_seventy_and_never_caps() {
+        assert_eq!(entitlement(Tier::Third, 69), 0, "before the advancement, nothing");
+        assert_eq!(entitlement(Tier::Third, 70), 1, "the advancement itself");
+        assert_eq!(entitlement(Tier::Third, 71), 4, "then three a level");
+        assert_eq!(Tier::Third.starts_at(), THIRD_JOB_LEVEL);
+        assert_eq!(Tier::Third.stops_at(), None, "nothing takes over from the third pool");
+        for level in THIRD_JOB_LEVEL..200 {
+            let step = entitlement(Tier::Third, level + 1) - entitlement(Tier::Third, level);
+            assert_eq!(step, SP_PER_LEVEL, "level {level} -> {}", level + 1);
+        }
+        // Advancing late still costs nothing - the property the whole module exists for,
+        // asserted for the new tier rather than assumed to carry over.
+        let mut granted = 0;
+        granted += top_up(Tier::Third, 70, granted);
+        granted += top_up(Tier::Third, 71, granted);
+        assert_eq!(granted, top_up(Tier::Third, 71, 0), "history must not change the total");
+
+        // **And nobody loses a point they already had.** A character granted under the old
+        // uncapped second-tier rule keeps every one: `top_up` saturates rather than clawing
+        // back, and a point taken away may already have been spent.
+        let under_the_old_rule = 1 + SP_PER_LEVEL * (120 - SECOND_JOB_LEVEL);
+        assert_eq!(top_up(Tier::Second, 120, under_the_old_rule), 0, "no negative correction");
+        assert_eq!(Tier::Third.to_string(), "3rd job");
     }
 
     /// **A surplus is never clawed back.** A point already granted may already have been

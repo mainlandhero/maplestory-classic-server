@@ -1308,13 +1308,21 @@ impl Session {
     pub(super) fn job_change_reply(&self, was: u16, job: u16) -> Reply {
         let level = self.claimed_character().map(|c| c.level).unwrap_or(0);
         let mut pools = Vec::new();
-        for tier in [crate::skillpoints::Tier::First, crate::skillpoints::Tier::Second] {
+        for tier in [
+            crate::skillpoints::Tier::First,
+            crate::skillpoints::Tier::Second,
+            crate::skillpoints::Tier::Third,
+        ] {
             let amount = crate::skillpoints::entitlement(tier, level);
             if amount > 0 {
                 pools.push(net::stats::SpPool {
                     job_level: net::stats::tier_for_job(match tier {
+                        // A *representative* job per tier, because `tier_for_job` is what
+                        // the wire wants and it is derived from a job id. 111 is a Crusader;
+                        // any third job would do, since all ten end in 1 and map to tier 3.
                         crate::skillpoints::Tier::First => 100,
                         crate::skillpoints::Tier::Second => 110,
+                        crate::skillpoints::Tier::Third => 111,
                     }),
                     amount,
                 });

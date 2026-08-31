@@ -13,7 +13,7 @@
     wrong, the server is the only thing that changed.
 
 .NOTES
-    ====== THE TEST PLAN, 2026-08-31: THE SECOND JOB ADVANCEMENT ======
+    ====== THE TEST PLAN, 2026-08-31b: A CONTINENT NOBODY HAS LOADED ======
 
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
@@ -55,7 +55,13 @@
 
     ============ WHAT THIS RUN IS FOR ============
 
-    T10 IS THE MEASUREMENT. It is a walk, not a click, and every leg of it is new code.
+    T11 IS THE MEASUREMENT, and T10 is right behind it. Both are walks, not clicks.
+
+    T11 crosses to ANOTHER CONTINENT. Orbis and El Nath are 87 maps this server has never
+    served and no character has ever stood on - they are a separate portal component from
+    Victoria Island, and until today there was no way to reach them at all. If a client
+    dies loading one of them, that is the finding, and it is worth more than the
+    advancement it was on the way to.
 
     The second job advancement now exists end to end, and FOUR MAPS THAT NOBODY HAS EVER
     STOOD IN are part of it. 80001300 / 80001100 / 80001000 / 80001200 have exactly one
@@ -79,7 +85,54 @@
             only the killer is paid -> the fact never crossed the bus
             both lines white -> the majority flag is wrong
             the helper is paid the FULL amount -> the split is not being applied
-     T10. THE SECOND JOB ADVANCEMENT. THE MEASUREMENT. Set yourself up first:
+     T11. THE THIRD JOB ADVANCEMENT, AND THE FERRY. Set yourself up first:
+              !job 110   !exp 31545355   !map 10005000
+          That is a level-70 Fighter in Sleepywood. 31 545 355 is the exp curve summed 1 to
+          70 and one !exp crosses every level in it. If the level comes out wrong, say what
+          it actually was - the curve is ours and that would be a finding of its own.
+
+          a) CLICK EUREK THE ALCHEMIST in Sleepywood (they are at the far right, x=1415).
+             A menu should offer TWO stops: Orbis Ticketing Booth and El Nath, at
+             #b1000 mesos#k - twice a cab fare, on purpose.
+               a menu with two lines -> the ferry works
+               their ordinary line about wandering the world -> the click never routed
+               a menu with SIX towns -> the network filter is broken and they are being
+                          treated as a cab. Say so; it means every cab is now also
+                          offering another continent
+          b) PICK EL NATH.
+               *** THIS IS THE MOMENT. No character has ever been on an Ossyria map. ***
+               you arrive in a snowy town -> 87 maps just became reachable. Say so
+               black screen, or the client dies -> THE finding of this run. world.log's
+                          SetField line names the map; say whether the screen drew
+                          anything first
+               1000 mesos gone but no warp -> the fare moved and the field did not.
+                          world.log will say which
+          c) WALK RIGHT and take the door into Chief's Residence. Four NPCs are inside:
+             Tylus, Robeira, Rene and Arec.
+               all four visible -> the NPC list crossed the continent too
+          d) CLICK TYLUS. They serve Fighters, Pages and Spearmen.
+               "You are a Crusader now" and the job changes -> DONE
+               open the skill window: there should now be a THIRD page with points on it
+                          no third page -> the SP pool key is wrong. The job still
+                          changed, so say both halves
+               "Come back when you have reached Level 70" -> the !exp did not land
+               nothing happens -> the click never reached third_advancement_for
+          e) CLICK ROBEIRA, RENE OR AREC as the same character. They must all REFUSE
+             and name the branch rather than the level. A Crusader they will refuse too,
+             because the advancement is one-way.
+          f) CLICK EUREK AGAIN, in El Nath this time (they are there as well - they are the
+             only NPC in this client standing on both continents).
+               a menu offering Sleepywood and Orbis -> the way home works, and nobody
+                          can be stranded on the wrong continent
+               their ordinary line -> they are not a port there, and El Nath becomes a trap
+                          whose only exit is seventeen floors of the Orbis Tower
+
+          FOR THE RECORD: there is NO third-job test in this client - no quest, no hidden
+          field, no marbles. All 322 quests were enumerated. Level 70 and the right second
+          job is the whole gate, which is what you chose. If a level-69 character advances,
+          that is a bug.
+
+     T10. THE SECOND JOB ADVANCEMENT. ALSO NEW. Set yourself up first:
               !job 100   !kit   !exp 548637   !map 10004023
           548 637 is the exp curve summed from level 1 to 30 and one !exp crosses as many
           levels as it is worth, so that is a single command. THERE IS NO !level - it was
@@ -1178,7 +1231,7 @@ function Show-TestPlan {
     Write-Host ''
     Write-Host 'On screen:'
     if ($SetFieldProbe) {
-        Write-Host '  T10 FIRST. Then T0-T9, then the carried-over steps 1-7.' -ForegroundColor Yellow
+        Write-Host '  T11 FIRST, then T10. Then T0-T9 and the carried-over 1-7.' -ForegroundColor Yellow
         Write-Host '  Full text: Get-Help on this script.'
         Write-Host ''
         Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
@@ -1201,7 +1254,13 @@ function Show-TestPlan {
         Write-Host '  the second refuses to start, SAY SO - that is a finding, and the'
         Write-Host '  answer is two machines.'
         Write-Host ''
-        Write-Host '  T10 IS WHAT THIS RUN IS FOR. It is a WALK, not a click.' -ForegroundColor Magenta
+        Write-Host '  T11 IS WHAT THIS RUN IS FOR, and T10 is right behind it.' -ForegroundColor Magenta
+        Write-Host '  T11 CROSSES TO ANOTHER CONTINENT. Orbis and El Nath are 87 maps'
+        Write-Host '  this server has never served and no character has ever stood on.'
+        Write-Host '  If a client dies loading one, THAT is the finding - worth more'
+        Write-Host '  than the advancement it was on the way to.'
+        Write-Host ''
+        Write-Host '  T10 IS A WALK TOO, through four more maps nobody has loaded.' -ForegroundColor Magenta
         Write-Host '  The second job advancement now exists end to end, and it goes'
         Write-Host '  through FOUR MAPS NOBODY HAS EVER STOOD IN. Each has exactly one'
         Write-Host '  portal - the spawn point - so there is no way in or out on foot.'
@@ -1220,7 +1279,37 @@ function Show-TestPlan {
         Write-Host '          only the killer paid -> the fact never crossed the bus'
         Write-Host '          both white -> the majority flag is wrong'
         Write-Host '          helper paid in FULL -> the split is not applied'
-        Write-Host '  T10. THE SECOND JOB ADVANCEMENT. THE ONE. Set up with:' -ForegroundColor Yellow
+        Write-Host '  T11. THIRD JOB + THE FERRY. THE ONE. Set up with:' -ForegroundColor Yellow
+        Write-Host '         !job 110   !exp 31545355   !map 10005000'
+        Write-Host '       (a level-70 Fighter in Sleepywood. If the level comes out'
+        Write-Host '        wrong, say what it was - the exp curve is ours.)'
+        Write-Host '       a) CLICK EUREK THE ALCHEMIST (far right, x=1415).'
+        Write-Host '            a menu, two stops, 1000 mesos -> the ferry works'
+        Write-Host '            their wandering line -> the click never routed'
+        Write-Host '            SIX towns -> the network filter is broken and every cab'
+        Write-Host '                       now offers another continent too'
+        Write-Host '       b) PICK EL NATH. *** THIS IS THE MOMENT. ***'
+        Write-Host '            a snowy town -> 87 maps just became reachable'
+        Write-Host '            black screen / client dies -> THE finding of this run'
+        Write-Host '            mesos gone, no warp -> world.log says which half ran'
+        Write-Host '       c) WALK RIGHT into Chief Residence. Four NPCs inside.'
+        Write-Host '       d) CLICK TYLUS (they serve Fighter/Page/Spearman).'
+        Write-Host '            "You are a Crusader now" -> DONE. Then open the skill'
+        Write-Host '                       window: a THIRD page with points on it'
+        Write-Host '            no third page -> the SP pool key is wrong. Say both'
+        Write-Host '                       halves - the job still changed'
+        Write-Host '            "come back at Level 70" -> the !exp did not land'
+        Write-Host '       e) CLICK ROBEIRA / RENE / AREC. All must REFUSE, naming the'
+        Write-Host '          BRANCH rather than the level.'
+        Write-Host '       f) CLICK EUREK AGAIN, in El Nath. They stand on both'
+        Write-Host '          continents - the only NPC here that does.'
+        Write-Host '            a menu home -> nobody can be stranded'
+        Write-Host '            their ordinary line -> El Nath is a trap, exit is 17'
+        Write-Host '                       floors of the Orbis Tower'
+        Write-Host '       NO third-job test exists in this client - no quest, no field,'
+        Write-Host '       no marbles. Level 70 + the right 2nd job IS the gate.' -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  T10. THE SECOND JOB ADVANCEMENT. ALSO NEW. Set up with:' -ForegroundColor Yellow
         Write-Host '         !job 100   !kit   !exp 548637   !map 10004023'
         Write-Host '       (548637 is the curve summed 1->30; one !exp crosses all of'
         Write-Host '        them. THERE IS NO !level.) Then PUT YOUR AP INTO STR - !job'

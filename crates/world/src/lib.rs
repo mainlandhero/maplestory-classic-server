@@ -52,6 +52,7 @@ pub mod skillpoints;
 pub mod skilltable;
 pub mod shops;
 pub mod taxi;
+pub mod thirdjob;
 
 pub use config::Config;
 pub use server::serve;

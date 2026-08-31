@@ -227,8 +227,10 @@ impl Session {
         match tier {
             1 => crate::skillpoints::entitlement(crate::skillpoints::Tier::First, level),
             2 => crate::skillpoints::entitlement(crate::skillpoints::Tier::Second, level),
-            // Third job onward is not modelled. Saying `0` rather than guessing is the point:
-            // a made-up entitlement would hand out points this server cannot account for.
+            3 => crate::skillpoints::entitlement(crate::skillpoints::Tier::Third, level),
+            // Fourth job onward is not modelled - there is no fourth-job book in this client
+            // at all, so the pool would be points for skills that do not exist. Saying `0`
+            // rather than guessing is the point.
             _ => 0,
         }
     }

@@ -717,6 +717,14 @@ impl Session {
             return replies;
         }
 
+        // **And at level 70, four NPCs in one room in El Nath give the THIRD advancement.**
+        // Different templates from every other job NPC in the game - 1104 / 1105 / 1106 /
+        // 1107 - so the order against the branches above does not matter and none of them can
+        // claim a click meant for another.
+        if let Some(replies) = self.third_advancement_for(template) {
+            return replies;
+        }
+
         // A quest-less NPC is a one-line conversation: its own `d0`. Going through the
         // same state machine means its OK is handled the way a quest's is, rather than
         // leaving a stale conversation behind for the next 0x00F3 to walk into.
@@ -916,7 +924,11 @@ impl Session {
     /// `awaiting_yes_no` is deliberately `false`: a menu is not a yes/no box, and if this
     /// branch were ever skipped a stray reply must not be mistaken for a quest Accept.
     pub(super) fn open_taxi_for(&mut self, template: u32) -> Option<Vec<Reply>> {
-        let taxi = crate::taxi::taxi_for(template)?;
+        // **The map is part of the question now.** Eurek the Alchemist stands in two towns and
+        // is a ferry port in only one of them; in the other they are an ordinary NPC with their own
+        // line. `taxi_for` carries the argument for that.
+        let map = self.claimed_character()?.map_id;
+        let taxi = crate::taxi::taxi_for(template, map)?;
         let step = crate::taxi::opening(taxi, &self.config)?;
         self.conversation = Some(Conversation {
             npc_template: template,
@@ -939,8 +951,8 @@ impl Session {
         if !crate::taxi::is_taxi_path(&convo.path) {
             return None; // Phil's, or a quest's, or a plain talk's
         }
-        let taxi = crate::taxi::taxi_for(convo.npc_template)?;
         let mut chr = self.claimed_character()?;
+        let taxi = crate::taxi::taxi_for(convo.npc_template, chr.map_id)?;
         // `None` is "not a type-6 body at all" - leave the conversation alone and let the
         // ordinary script path have it.
         let step = crate::taxi::on_reply(&self.store, &self.config, chr.id, taxi, body)?;
@@ -957,12 +969,12 @@ impl Session {
             // and this is not one, but the ordering is the one already observed working.
             out.push(Reply {
                 opcode: net::message::MESSAGE,
-                body: net::message::meso_penalty(crate::taxi::FARE_MESOS),
+                body: net::message::meso_penalty(taxi.fare),
                 what: format!(
                     "Message: Meso Penalty Applied (-{}) - the taxi fare, said out loud. The \
                      client owns the wording; we send the number. Whether a zero plain line \
                      also draws is UNMEASURED - see net::message::meso_penalty",
-                    crate::taxi::FARE_MESOS
+                    taxi.fare
                 ),
             });
             let why = crate::taxi::ride_note(taxi, &chr, map_id, &map_name, balance);
@@ -1283,6 +1295,75 @@ impl Session {
             ),
         ));
         out
+    }
+
+    /// **The third advancement**, or the sentence saying why not. `None` for any NPC that is
+    /// not one of Tylus, Robeira, Rene or Arec.
+    ///
+    /// # It advances on the click, with no box in between
+    ///
+    /// The first advancement does the same; the second one asks, because a Swordsman has two
+    /// or three destinations and someone has to pick. **A third-job character has exactly
+    /// one** - `111` is the book under `110` in `Skill.wz`, ten times over - so a menu here
+    /// would be a list of length one and a yes/no box would be a question with one answer.
+    /// The owner, 2026-08-31, choosing between the options: *"No test - level 70 and click."*
+    ///
+    /// # This client ships no third-job test, and that is measured
+    ///
+    /// All 322 quests were enumerated and there is nothing above `20303`; every one-portal map
+    /// in the archive was enumerated and the only four with a job NPC are the second job's;
+    /// there are no third-job test mobs and no third-job items. `research/third-job.md` §3.
+    /// So the gate is level and job, and there was never a chain to enforce instead.
+    ///
+    /// # Every effect hangs off the transition
+    ///
+    /// The grant is computed **before** the save, so a job that cannot be granted never
+    /// reaches the database; then the write is the transition and the packet hangs off it.
+    /// `CLAUDE.md`'s Heena section - the guard that was asked and its answer ignored.
+    pub(super) fn third_advancement_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let mut chr = self.claimed_character()?;
+        match crate::thirdjob::advancement_for(&chr, template) {
+            // Not one of the four - fall through to whatever this NPC normally does.
+            crate::thirdjob::Advancement::NotAnInstructor => None,
+            crate::thirdjob::Advancement::Eligible { third, master } => {
+                // Before the save, deliberately. `Eligible` already implies this succeeds, but
+                // a `?` here after the write would leave the database advanced and the client
+                // never told, which is the one state that cannot be recovered from on screen.
+                let Some(grant) = crate::thirdjob::grant(third.job, chr.level) else {
+                    return Some(self.instructor_says(
+                        template,
+                        "Something went wrong and your job was not changed.",
+                    ));
+                };
+                let was = chr.job;
+                chr.job = grant.job;
+                if let Err(e) = self.store.save_character_progress(&chr) {
+                    // The save is the transition. Nothing follows a failed one.
+                    return Some(self.instructor_says(
+                        template,
+                        &format!("Something went wrong and your job was not changed: {e}"),
+                    ));
+                }
+                let mut out = self.instructor_says(
+                    template,
+                    &format!(
+                        "Then it is done. You are a {} now. {} has nothing left to teach you \
+                         that your own road will not - open your skill window; there is a \
+                         third page on it.",
+                        grant.job_name, master.name
+                    ),
+                );
+                // False for all ten - every `x10 -> x11` pair is on the same side of
+                // `uses_extended_sp`. Asserted rather than assumed: the wrong SP shape
+                // desynchronises the whole packet rather than merely losing the points.
+                debug_assert!(!grant.sp_encoding_changes);
+                out.push(self.job_change_reply(was, grant.job));
+                Some(out)
+            }
+            // Every other arm is a refusal with a sentence already written for it, and the
+            // sentence comes from `thirdjob` so this file and that one cannot drift.
+            other => Some(self.instructor_says(template, &crate::thirdjob::refusal_for(&other)?)),
+        }
     }
 
     /// One `0x055B` from an instructor, with no conversation state behind it.

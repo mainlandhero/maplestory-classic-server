@@ -7323,3 +7323,130 @@ fn a_dark_marble_drops_in_the_test_field_and_nowhere_else() {
     assert_eq!(out.len(), 1, "one marble, not two: {out:?}");
 }
 
+/// **The third advancement, on the click, with every refusal beside it.**
+///
+/// The owner, 2026-08-31, choosing between the options this client leaves open: *"No test - level
+/// 70 and click."* It ships no third-job quest, no hidden field, no test mobs and no test
+/// items - `research/third-job.md` §3 enumerates all four absences - so level and job is not a
+/// shortcut past a chain, it is the only gate there was ever going to be.
+///
+/// Four effects are asserted, because this is the shape the Heena quest got wrong: the
+/// database row, the `0x007C`, the sentence, and that **a refusal changes nothing**.
+#[test]
+fn clicking_a_third_job_instructor_advances_at_seventy() {
+    // Tylus, template 1104, in Chief's Residence. They serve the three Warrior second jobs.
+    const TYLUS: u32 = 1104;
+    let build = |level: u32, job: u16| {
+        let mut npcs = std::collections::HashMap::new();
+        npcs.insert(
+            net::opcode::START_MAP_ID,
+            vec![net::opcode::FieldNpc {
+                object_id: 1000, template_id: TYLUS, x: 0, cy: 0, fh: 1,
+                rx0: 0, rx1: 0, f: 0,
+            }],
+        );
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Veteran".to_string(), ..Default::default() };
+        let mut made = store.create_character(account_id, 0, &chr).unwrap();
+        made.level = level;
+        made.job = job;
+        store.save_character_progress(&made).unwrap();
+        store.create_migration(account_id, made.id, 0, 0).unwrap();
+        let config = Config { set_field_probe: true, npcs, ..Config::default() };
+        let mut s = Session::new(store.clone(), Arc::new(config));
+        s.claim_for_character(made.id);
+        (s, store, made.id)
+    };
+    let job_of = |store: &Arc<Store>, id: u32| {
+        store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().job
+    };
+
+    // ---- a level-70 Fighter becomes a Crusader, and only a Crusader --------------------
+    let (mut s, store, id) = build(crate::thirdjob::LEVEL_MINIMUM, 110);
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(job_of(&store, id), 111, "the job must PERSIST, not just be announced");
+    let stat = out
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("the client must be told, or it draws the old job forever");
+    assert!(stat.what.contains("job 110 -> 111"), "{}", stat.what);
+    // **The third pool must be in the packet.** A job change with no tier-3 row greys the
+    // `+` button with nothing on screen to say why - the failure `skillpoints` was written
+    // to prevent, one tier up.
+    assert!(stat.what.contains("tier 3"), "the third SP pool is missing: {}", stat.what);
+    assert!(
+        out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
+        "and a sentence, or nothing on screen says what happened"
+    );
+    // No box in between: there is exactly one destination, so nothing was asked.
+    assert!(
+        !out.iter().any(|r| r.what.contains("MENU")),
+        "one destination means no menu: {out:?}"
+    );
+
+    // ---- one level short: a sentence, and NOTHING else ---------------------------------
+    let (mut s, store, id) = build(crate::thirdjob::LEVEL_MINIMUM - 1, 110);
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(job_of(&store, id), 110, "a refused advancement must change nothing");
+    assert!(
+        !out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "and must not send a job packet"
+    );
+    let said = out
+        .iter()
+        .find(|r| r.opcode == net::script::SCRIPT_MESSAGE)
+        .expect("but it is still ANSWERED - a silent click is the frozen-UI failure");
+    assert!(said.what.contains("70") || said.body.len() > 10, "{}", said.what);
+
+    // ---- the wrong branch, and a first-job character -----------------------------------
+    for (level, job) in [(70u32, 210u16), (70, 100), (70, 0), (99, 111)] {
+        let (mut s, store, id) = build(level, job);
+        let out = s.handle(&npc_click(1000));
+        assert_eq!(job_of(&store, id), job, "level {level} job {job} must not change");
+        assert!(
+            !out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+            "level {level} job {job} must not send a job packet"
+        );
+        assert!(
+            out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
+            "level {level} job {job} must still be ANSWERED"
+        );
+    }
+
+    // ---- and every branch pairs with its own instructor --------------------------------
+    for m in crate::thirdjob::MASTERS {
+        for t in m.serves {
+            let mut npcs = std::collections::HashMap::new();
+            npcs.insert(
+                net::opcode::START_MAP_ID,
+                vec![net::opcode::FieldNpc {
+                    object_id: 1000, template_id: m.npc, x: 0, cy: 0, fh: 1,
+                    rx0: 0, rx1: 0, f: 0,
+                }],
+            );
+            let store = Arc::new(Store::open_in_memory().unwrap());
+            let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+            let name = format!("Third{}", t.from_job);
+            let chr = net::opcode::Character { name, ..Default::default() };
+            let mut made = store.create_character(account_id, 0, &chr).unwrap();
+            made.level = 70;
+            made.job = t.from_job;
+            store.save_character_progress(&made).unwrap();
+            store.create_migration(account_id, made.id, 0, 0).unwrap();
+            let config = Config { set_field_probe: true, npcs, ..Config::default() };
+            let mut s = Session::new(store.clone(), Arc::new(config));
+            s.claim_for_character(made.id);
+            s.handle(&npc_click(1000));
+            assert_eq!(
+                job_of(&store, made.id),
+                t.job,
+                "{} must advance job {} into {}",
+                m.name,
+                t.from_job,
+                t.job
+            );
+        }
+    }
+}
+
