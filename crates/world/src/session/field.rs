@@ -273,6 +273,43 @@ impl Session {
     {
         chr.map_id = map;
         chr.portal = portal;
+        // **Where they were standing is a fact about the map they just left.**
+        //
+        // `last_position` is fed only by `0x00D9` and by attack packets, so after a warp it
+        // holds coordinates from the *previous* field until the player takes their first
+        // step. Three things read it, and all three were wrong across a map change: the
+        // `0x0224` spawn announced to everyone on the new map (`session::multiplayer`), the
+        // fallback position for a drop (`session::combat`), and the item-drop request
+        // (`session::ground`).
+        //
+        // `None` is the honest answer and each reader already handles it - the spawn falls
+        // back to the map origin and self-heals on the first step, and the two drop paths
+        // refuse with a sentence rather than guessing. **An off-map coordinate is worse than
+        // no coordinate**: the origin is at least inside the field, while Perion's x could
+        // be past the end of Henesys, and a drop placed out of the client's own pick-up box
+        // is drawn and can never be collected - which `research/user-move.md` opens by
+        // saying is indistinguishable on screen from nothing happening.
+        self.last_position = None;
+        // **And everyone on the map we are leaving is told, by us, now.**
+        //
+        // Until this, a server-initiated warp published a farewell only as a side effect of
+        // the *arrival*: `Bus::enter_field` leaves the old field as its first act, and that
+        // runs from `on_field_entered`, which fires on the client's `0x00DC`. So the old
+        // map's players stopped seeing you **only if your client volunteered a packet**.
+        //
+        // It usually does. Measured across 444 archived logs, deduplicated on
+        // `(time, direction, opcode)`: **273 SetFields against 268 markers.** The five that
+        // did not answer are the whole point - a ghost is a character standing on a map that
+        // nothing will ever remove, because the only thing that could have removed it was the
+        // packet that did not arrive.
+        //
+        // `Bus::leave_field` reads the map out of the *stored presence*, not out of `chr`, so
+        // it posts to the field we are leaving however late in `go_to_map` this sits. And it
+        // is idempotent with the leave inside `enter_field`: that one finds no presence left
+        // to take and simply enters. `CLAUDE.md`'s rule that a guard whose answer is ignored
+        // is not a guard has a sibling here - a departure that depends on the departing
+        // client's goodwill is not a departure.
+        self.leave_the_field();
         let stored = self.store.set_character_map(chr.id, map);
         let warn = match stored {
             Ok(()) => String::new(),

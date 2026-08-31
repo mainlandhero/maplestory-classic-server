@@ -31,6 +31,13 @@ The owner sees the tombstone because `hp = 0` reached the client. They see no di
 `0x0315` never did — **nothing in `crates/` sends it, and nothing in `crates/` knows the
 opcode exists.** [L] (`grep -rn "0x0315" crates/` is empty.)
 
+> **SUPERSEDED 2026-08-22, recorded here 2026-08-31.** That was true when written and is not
+> now: `0x0315` is sent, it appears in **18** archived files, and `STATUS.md` records the
+> revive dialog working on screen — *"the dialog appears, including for a character who logged
+> in already dead"*. The paragraph is kept because the reasoning that follows it is still the
+> working; only its opening premise has expired. Nothing below this line has been re-checked
+> against the current `crates/`.
+
 The buttons, when clicked:
 
 | button | label (decrypted string table) | sends |

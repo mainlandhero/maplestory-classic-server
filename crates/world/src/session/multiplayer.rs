@@ -27,9 +27,17 @@
 //! inserts it; `0x0225` unlinks a node and calls its destructor) rather
 //! than **[D]** from enum order.
 //!
-//! **Nothing here has been on the wire.** No packet in `0x224..0x39F` has
-//! ever been observed to do anything in any archived run, so every claim
-//! below is static. The first run should carry a watch on `0x1429ba60b` -
+//! **Nothing *here* has been on the wire**, and that is still true of every
+//! packet this file builds. What used to follow it was not: this block read
+//! *"no packet in `0x224..0x39F` has ever been observed to do anything"*, and
+//! `0x02D1` is in that range, appears in 49 archived files, and is recorded
+//! in `STATUS.md` as working on screen twice - the quest fanfare and the blue
+//! recovery number. Corrected 2026-08-31; `net::userpool`'s module docs carry
+//! the counts and the control.
+//!
+//! It matters because that sentence was the reason the whole remote family
+//! looked unproven. The route above the pool is live. The one hop still
+//! unverified is whether `0x0224` puts a `CUser` in the pool. The first run should carry a watch on `0x1429ba60b` -
 //! the allocation past every gate - because if that never fires, the
 //! answer is one of the six gates in `user-enter-field.md` §5 and no
 //! amount of body work will help.
@@ -199,6 +207,34 @@ impl Session {
             );
             return;
         };
+        // **A path with no elements dereferences null in the client**, and `walk_closed`
+        // does not cover it.
+        //
+        // `141d59bef mov rax,[rbp+0x18]` reads the head of the decoded element list and
+        // then eight `movups` out of its tail, unconditionally and with no null check.
+        // The list is empty exactly when `element_count <= 0` - and a 25-byte `0x00D9`
+        // with a count of zero **walks closed**, because `for _ in 0..count` runs no
+        // iterations, `p` stays at the head length, and the key-state trailer then lands
+        // exactly on the end. A negative count is the same hole: `0..negative` is an empty
+        // range in Rust, so it closes too.
+        //
+        // **This is latent, not active.** All 170 806 movement paths in the archive were
+        // checked - 6 689 `0x00D9` and 164 117 `0x02FF`, both written by the client's own
+        // encoder `FUN_141d57c60` - and **not one** has an empty element list. So an honest
+        // client never sends it. That is precisely why the guard belongs here rather than
+        // nowhere: the packet is *rebroadcast to other people*, so a client that sends one
+        // would be killing somebody else's session, and this server is the only thing
+        // between the two. `CLAUDE.md`'s "always answer" is about the same asymmetry seen
+        // from the other side.
+        if m.element_count <= 0 {
+            crate::server::log(&format!(
+                "   move NOT rebroadcast: element_count is {}, and an empty element list \
+                 dereferences null in the remote client at 141d59bef. Never seen in 170 806 \
+                 archived paths, so a client sending this is not an honest one",
+                m.element_count
+            ));
+            return;
+        }
         self.bus().publish(
             self.subscriber,
             map,
@@ -947,4 +983,234 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
             "one departure, not two"
         );
     }
+
+    /// A real captured `0x00D9`: 14:01:40.792, map 1, three elements, walks closed.
+    /// Byte-identical to `net::usermove::tests::MAP1_FIRST`, which asserts every field of
+    /// it against the `world.log` line it came from.
+    const REAL_MOVE: &str = "0057a301a8c139cc04000000000043ffab010000000003000043ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e00000043ffe501000000002b0000000000ffff040e010011000000000000000000";
+
+    fn hex(h: &str) -> Vec<u8> {
+        (0..h.len() / 2).map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).unwrap()).collect()
+    }
+
+    /// A `0x00D9` packet: the opcode, then the body.
+    fn move_packet(body: &[u8]) -> Vec<u8> {
+        let mut b = net::usermove::CLIENT_USER_MOVE.to_le_bytes().to_vec();
+        b.extend_from_slice(body);
+        b
+    }
+
+    /// **The smallest body that walks closed with NO elements**: the 10-byte head, the
+    /// 14-byte path head with `element_count = 0`, and a key-state count of 0.
+    ///
+    /// 25 bytes. Nothing in the archive looks like this - all 170 806 captured paths carry
+    /// at least one element - which is exactly why it has to be constructed here rather
+    /// than quoted from a capture.
+    fn empty_element_body() -> Vec<u8> {
+        let mut b = vec![0u8; net::usermove::USER_MOVE_HEAD_LEN];
+        b.extend_from_slice(&[0u8; net::usermove::MOVE_PATH_HEAD_LEN]);
+        // element_count is an i16 at path-head offset 12.
+        let at = net::usermove::USER_MOVE_HEAD_LEN + 12;
+        b[at..at + 2].copy_from_slice(&0i16.to_le_bytes());
+        b.push(0); // key-state count
+        b
+    }
+
+    /// **An empty element list is not rebroadcast, and a real path is.**
+    ///
+    /// The pair is the whole test: a guard that refuses everything passes the first half on
+    /// its own, and this project has shipped exactly that shape before.
+    ///
+    /// # What the guard is for
+    ///
+    /// `141d59bef mov rax,[rbp+0x18]` reads the head of the decoded element list and then
+    /// eight `movups` out of its tail, unconditionally and with no null check. The list is
+    /// empty when `element_count <= 0`, and such a body **walks closed** - `for _ in
+    /// 0..count` runs no iterations, so `p` never moves off the path head and the key-state
+    /// trailer lands exactly on the end. `UserMove::walk_closed` therefore does not cover
+    /// it, which is the reason this is a separate check and not a stronger `walk_closed`.
+    ///
+    /// It is **latent**: no honest client sends one. The guard exists because the packet is
+    /// rebroadcast *to other people* - a client that sent this would be killing somebody
+    /// else's session, and this server is the only thing in between.
+    #[test]
+    fn a_movement_path_with_no_elements_is_not_rebroadcast() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Watcher", "Mover"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: 1,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut watcher = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut mover = Session::joining(store, config, fields.clone());
+        watcher.claim_for_character(ids[0]);
+        mover.claim_for_character(ids[1]);
+        watcher.on_field_entered();
+        mover.on_field_entered();
+        watcher.collect_mail(); // the arrival of the mover; not what this is about
+
+        // ---- the control: a real captured path IS rebroadcast --------------------------
+        let real = hex(REAL_MOVE);
+        assert_eq!(real.len(), 97, "the world.log line says 97 bytes");
+        mover.handle(&move_packet(&real));
+        let out = watcher.collect_mail();
+        assert_eq!(out.len(), 1, "a real walk must reach the other player: {out:?}");
+        assert_eq!(out[0].opcode, net::userpool::USER_MOVE_REMOTE);
+
+        // ---- the guard: an empty element list is NOT --------------------------------
+        let empty = empty_element_body();
+        assert_eq!(empty.len(), 25);
+        // It parses, and it walks closed - which is the trap.
+        let parsed = net::usermove::parse_user_move(&empty).expect("it parses");
+        assert_eq!(parsed.element_count, 0);
+        assert!(parsed.walk_closed, "THIS is why walk_closed cannot be the guard");
+        assert!(parsed.path(&empty).is_some(), "and the path accessor hands it over");
+
+        mover.handle(&move_packet(&empty));
+        assert!(
+            watcher.collect_mail().is_empty(),
+            "an empty element list must never reach another client - it dereferences null"
+        );
+
+        // And the mover is still able to move afterwards: the guard drops one packet, it
+        // does not wedge the connection.
+        mover.handle(&move_packet(&real));
+        assert_eq!(watcher.collect_mail().len(), 1, "the next real walk still goes out");
+    }
+
+    /// **Where a player was standing is a fact about the map they just left.**
+    ///
+    /// `last_position` is fed only by `0x00D9` and by attack packets, so after a warp it
+    /// held the *previous* field's coordinates until the first step. Three readers used it
+    /// and all three were wrong across a map change - the `0x0224` spawn other players are
+    /// told, and the two drop paths.
+    ///
+    /// `None` is the honest answer, and an off-map coordinate is worse than no coordinate:
+    /// the origin is at least inside the field, and a drop outside the client's own pick-up
+    /// box is drawn and can never be collected.
+    #[test]
+    fn a_map_change_forgets_where_the_player_was_standing() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Walker".to_string(),
+            map_id: 1,
+            ..Default::default()
+        };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store.clone(), config, fields);
+        s.claim_for_character(id);
+
+        // A real walk on map 1 gives the session a position - the control, because a test
+        // that only checks `None` at the end passes on a field that was never set.
+        s.handle(&move_packet(&hex(REAL_MOVE)));
+        let before = s.last_position.expect("the walk must set a position");
+        assert_ne!(before, (0, 0), "and it is a real coordinate, not the origin");
+
+        let mut moved = s.claimed_character().expect("a claimed character");
+        s.go_to_map(&mut moved, 104_040_000, 0, "a portal walk".to_string());
+        assert_eq!(
+            s.last_position, None,
+            "the new map must not inherit the old map's coordinates"
+        );
+    }
+
+
+    /// Two players on one map, and a helper to put them there.
+    fn two_on_a_map(store: &Arc<Store>, map: u32) -> (u32, u32) {
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Stayer", "Leaver"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: map,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        (ids[0], ids[1])
+    }
+
+    /// **A server-initiated warp publishes its own farewell**, without waiting for the
+    /// warped client to volunteer anything.
+    ///
+    /// Until this, the departure was a side effect of the *arrival*: `Bus::enter_field`
+    /// leaves the old field first, and that runs from `on_field_entered`, which fires on the
+    /// client's `0x00DC`. So the old map's players stopped seeing you only if your client
+    /// sent a packet. 273 SetFields against 268 markers across 444 archived logs - and the
+    /// five that did not answer are the entire point, because the thing that would have
+    /// removed the ghost was the packet that never came.
+    ///
+    /// The test deliberately **never calls `on_field_entered` on the leaver after the warp**.
+    /// That is what makes it a test of this fix rather than of the arrival path.
+    #[test]
+    fn a_server_warp_removes_the_player_from_the_old_map_by_itself() {
+        let (store, config, fields) = channel();
+        let (stayer_id, leaver_id) = two_on_a_map(&store, 1);
+        let mut stayer = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut leaver = Session::joining(store, config, fields.clone());
+        stayer.claim_for_character(stayer_id);
+        leaver.claim_for_character(leaver_id);
+        stayer.on_field_entered();
+        leaver.on_field_entered();
+        assert_eq!(
+            stayer.collect_mail().len(),
+            1,
+            "the control: the stayer was told the leaver arrived"
+        );
+
+        let mut chr = leaver.claimed_character().expect("a claimed character");
+        leaver.go_to_map(&mut chr, 104_040_000, 0, "a server warp".to_string());
+
+        let out = stayer.collect_mail();
+        assert_eq!(out.len(), 1, "the stayer must be told, without the leaver's help: {out:?}");
+        assert_eq!(out[0].opcode, net::userpool::USER_LEAVE_FIELD);
+
+        // And the leaver really is gone from the old field, not merely announced as gone -
+        // a later publish on map 1 must not reach them.
+        fields.bus().publish(
+            stayer.subscriber,
+            1,
+            Reply { opcode: 0x02B0, body: vec![1], what: "the stayer waved".into() },
+            None,
+        );
+        assert!(
+            leaver.collect_mail().is_empty(),
+            "a departed player must not keep receiving the old map's traffic"
+        );
+    }
+
+    /// **Entering the Cash Shop publishes a farewell too.**
+    ///
+    /// The shop is a different stage: the client tears the field down and the player is not
+    /// standing anywhere. Without this they stay drawn on the map they left, frozen, until
+    /// they come back - and if they log out from inside the shop, until the socket drops.
+    #[test]
+    fn entering_the_cash_shop_removes_the_player_from_the_map() {
+        let (store, config, fields) = channel();
+        let (stayer_id, shopper_id) = two_on_a_map(&store, 1);
+        let mut stayer = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut shopper = Session::joining(store, config, fields.clone());
+        stayer.claim_for_character(stayer_id);
+        shopper.claim_for_character(shopper_id);
+        stayer.on_field_entered();
+        shopper.on_field_entered();
+        assert_eq!(stayer.collect_mail().len(), 1, "the control: the shopper arrived");
+
+        shopper.on_cash_shop_request(&[]);
+        let out = stayer.collect_mail();
+        assert_eq!(out.len(), 1, "the shopper must vanish from the map: {out:?}");
+        assert_eq!(out[0].opcode, net::userpool::USER_LEAVE_FIELD);
+    }
+
 }

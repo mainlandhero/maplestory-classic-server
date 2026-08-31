@@ -16,10 +16,27 @@
 //! from the code not existing:
 //!
 //! * Nothing in `crates/world/` sends any opcode in this range.
-//! * **No packet in `0x224..0x39F` has ever been observed to do anything.** The only one ever
-//!   sent by this server is a single `0x0231` on 2026-08-19 (`world-20260819-220806.log`,
-//!   `UserChat: 204 (TestCharD) says "Hello David"`), and it drew nothing.
-//!   `research/user-chat-round2.md` §1. **[L]**
+//! * **CORRECTED 2026-08-31. This used to read "no packet in `0x224..0x39F` has ever been
+//!   observed to do anything", and that is false.** Three opcodes in this range are in the
+//!   archive and two of them are recorded working *on the owner's screen*:
+//!
+//!   ```text
+//!     0x02D1   49 archived files   the quest-finish fanfare, and the blue recovery number
+//!     0x0315   18                  the revive dialog
+//!     0x0231    4                  the chat line - it really did draw nothing
+//!   ```
+//!
+//!   **[L]**, and the counts discriminate: an opcode this server never sends returns 0 files
+//!   by the same grep. `STATUS.md` records the first two as confirmed on screen.
+//!
+//!   The old sentence mattered because it was the reason the *whole* remote family looked
+//!   unproven. It is not: the route above the pool is live, and the only hop still unverified
+//!   is whether `0x0224` puts a `CUser` in the pool - which is what the first two-client run
+//!   tests and the one thing no amount of body work can substitute for.
+//!
+//!   The mistake is this project's most familiar one wearing a range: *"nothing new arrived"*
+//!   is a different claim from *"this thing did not arrive"*, and only the second is worth
+//!   making. `research/user-chat-round2.md` §1 owns the `0x0231` half, which still stands.
 //! * The route *above* the pool is proved live - `0x3C6..0x44E` (mobs) and `0x44F..0x468`
 //!   (NPCs) are routed by the same range chain in the same function and both arrive - so
 //!   "the packet never reaches `CField::OnPacket`" is ruled out. Steps 4-6 below are not.
@@ -291,22 +308,70 @@ pub struct RemoteAt {
 /// body to resynchronise on.
 pub const REMOTE_STAT_MASK_LEN: usize = 124;
 
+/// **The seven bytes `FUN_140a46e50` reads AFTER the mask, unconditionally.**
+///
+/// `u8`, `u8`, `u32`, `u8`, at `0x140a4a007`, `0x140a4a024`, `0x140a4a041` and
+/// `0x140a4a29e`. So the remote temporary-stat **block is 131 bytes**, of which 124 are the
+/// mask. [`REMOTE_STAT_MASK_LEN`] was never wrong; the block is not the mask.
+///
+/// # Why this was missed, and it is a lesson about dumps rather than about decoders
+///
+/// `research/msexe-secondarystat-remote-140a46e50.txt` **declares** `0x140a46e50 ..
+/// 0x140a4a58f (14143 bytes)` and **stops at `0x140a46ff7`** - 3 945 bytes on disk, 423
+/// bytes into the function, about 3% of it. Its own title reads *"same mask, short list"*,
+/// which sounds like a claim about the data and is a claim about the dump. Everything after
+/// the truncation was invisible, including all four of these reads.
+///
+/// # Why the fourth byte is not conditional, when six of its neighbours are
+///
+/// `reads.py` finds reads at `0x140a4a218`, `24a`, `266`, `282`, `2d3` and `2ef` in the same
+/// neighbourhood, and those *are* mask-gated. The discriminator needs no control-flow graph:
+/// **an instruction is bypassable only if some jump before it targets past it, or some `ret`
+/// precedes it.** In this function there are 186 jumps and **all 186 have literal targets**
+/// (no `jmp rax`, no jump table), there is exactly **one `ret`, at `0x140a4a58e`**, after all
+/// four reads, and `callers.py` gives one entry - 2 call sites, 0 tail jumps, 0 data
+/// pointers. So a flat scan of jump targets is sound.
+///
+/// The gate on three of the neighbours is `0x140a4a240`, whose bytes are `74 54` - `je +0x54`
+/// - targeting **`0x140a4a296`**. And `0x140a4a296` is the `mov rcx,[rsp+0x190]` that *sets
+/// up* the read at `0x140a4a29e`. **The branch that skips the neighbours lands on the
+/// instruction feeding this read**, so it happens whether the branch is taken or not. No jump
+/// in the span targets past `0x140a4a296`.
+///
+/// # The precedent, one decoder over
+///
+/// `crates/net/src/buff.rs` records this exact error class in the sibling: `0x007E`'s body
+/// was documented as 127 bytes, the owner reported *"Nimble Feet crashed the client"* with exit
+/// `0xE06D7363`, and `FUN_142d56f80` turned out to read **three more** after the same mask.
+/// A mask length is not a block length, twice now.
+///
+/// # What is [L] here and what is not
+///
+/// The **count** is [L] - four reads, of those widths, at those addresses. That the right
+/// **values** are zeros is **[I]**: they are handed to four setters on the stat object, none
+/// of which reads the packet again, and zero is what the rest of an empty stat block already
+/// is. `CSecondaryStat::EncodeForRemote` would settle it, and it is **not in this binary** -
+/// the only 124-byte wire writer is `FUN_142973160`, the client's outbound cancel, which
+/// writes no tail at all. That negative is bounded: the scan sees a mask move only with an
+/// immediate length in `r8d`.
+pub const REMOTE_STAT_TAIL_LEN: usize = 7;
+
 /// Length of a [`USER_ENTER_FIELD`] body with an **empty** name and **no** equipped
 /// items. See [`user_enter_field_len`] for the real one.
 ///
 /// The last field is the `u32` count at offset 504, so the body ends at 508. Every one
 /// of the 60-odd offsets between 0 and 504 chains exactly, which is the check that this
 /// number is a total rather than a guess.
-pub const USER_ENTER_FIELD_MIN_LEN: usize = 508;
+pub const USER_ENTER_FIELD_MIN_LEN: usize = 508 + REMOTE_STAT_TAIL_LEN;
 
 /// Byte offset of the avatar look inside a [`USER_ENTER_FIELD`] body, for an empty name.
 ///
 /// `1429ce6a9  call 0x1402ee8d0` - the same compact-look reader `0x0107`, `0x0114` and
 /// `0x0138` use, called with the same `(&look, pkt, &str, 0)` shape. **[L]**
-pub const USER_ENTER_FIELD_LOOK_AT: usize = 187;
+pub const USER_ENTER_FIELD_LOOK_AT: usize = 187 + REMOTE_STAT_TAIL_LEN;
 
 /// Byte offset of `x` inside a [`USER_ENTER_FIELD`] body, for an empty name and no equips.
-pub const USER_ENTER_FIELD_POS_AT: usize = 426;
+pub const USER_ENTER_FIELD_POS_AT: usize = 426 + REMOTE_STAT_TAIL_LEN;
 
 /// Exactly how long [`user_enter_field`] will be for this character.
 ///
@@ -387,9 +452,21 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u8(0); //                   54  stored as (v == 1)
     debug_assert_eq!(w.len(), 55 + shift, "the stat mask moved");
     w.zeros(REMOTE_STAT_MASK_LEN); // 55  no buffs
-    w.u16(chr.job); //            179
-    w.u16(0); //                  181  sub-job
-    w.u32(0); //                  183
+    // The tail the decoder reads unconditionally after the mask - see REMOTE_STAT_TAIL_LEN.
+    // Written as four typed fields rather than seven zero bytes so the shape is visible at
+    // the one place a future edit would break it.
+    w.u8(0); //                   179  0x140a4a007
+    w.u8(0); //                   180  0x140a4a024
+    w.u32(0); //                  181  0x140a4a041
+    w.u8(0); //                   185  0x140a4a29e
+    debug_assert_eq!(
+        w.len(),
+        55 + REMOTE_STAT_MASK_LEN + REMOTE_STAT_TAIL_LEN + shift,
+        "the stat block is the mask plus its tail"
+    );
+    w.u16(chr.job); //            186
+    w.u16(0); //                  188  sub-job
+    w.u32(0); //                  190
 
     debug_assert_eq!(w.len(), USER_ENTER_FIELD_LOOK_AT + shift, "the avatar look moved");
     w.bytes(&crate::opcode::avatar_look(chr)); // 187
@@ -534,10 +611,23 @@ mod tests {
     /// is the wrong width the total is not 508, and the client has no length prefix
     /// anywhere in this body to resynchronise on.
     #[test]
-    fn an_empty_name_and_no_equips_is_the_508_byte_minimum() {
+    fn an_empty_name_and_no_equips_is_the_515_byte_minimum() {
         let body = user_enter_field(&someone("", &[]), RemoteAt::default());
         assert_eq!(body.len(), USER_ENTER_FIELD_MIN_LEN);
-        assert_eq!(body.len(), 508);
+        // **515, and it was 508 until 2026-08-31.** `FUN_140a46e50` reads seven bytes after
+        // the 124-byte mask - `u8`, `u8`, `u32`, `u8` - so the remote temporary-stat block is
+        // 131. See `REMOTE_STAT_TAIL_LEN` for why the fourth of those is unconditional when
+        // six of its neighbours are not, and for the truncated dump that hid all four.
+        //
+        // The literal is spelled out beside the constant on purpose: a test that only checks
+        // `body.len() == USER_ENTER_FIELD_MIN_LEN` agrees with the builder however wrong both
+        // are, which is exactly how this went unnoticed.
+        assert_eq!(body.len(), 515);
+        assert_eq!(
+            REMOTE_STAT_MASK_LEN + REMOTE_STAT_TAIL_LEN,
+            131,
+            "the block is the mask plus the tail, and the mask was never the wrong number"
+        );
     }
 
     /// Only two things move, and both move by a known amount. This is what makes a
@@ -548,18 +638,18 @@ mod tests {
 
         assert_eq!(
             user_enter_field(&someone("Wanderer", &[]), RemoteAt::default()).len(),
-            508 + 8,
+            515 + 8,
             "an 8-character name adds exactly its bytes"
         );
         assert_eq!(
             user_enter_field(&someone("", &equips), RemoteAt::default()).len(),
-            508 + 15,
+            515 + 15,
             "three equips add five bytes each"
         );
 
         let chr = someone("Wanderer", &equips);
         let body = user_enter_field(&chr, RemoteAt::default());
-        assert_eq!(body.len(), 508 + 8 + 15);
+        assert_eq!(body.len(), 515 + 8 + 15);
         assert_eq!(body.len(), user_enter_field_len(&chr), "the predictor agrees");
     }
 
@@ -632,11 +722,27 @@ mod tests {
     /// The 124-byte stat mask, and the number that is easy to take from the wrong place.
     #[test]
 
-    fn the_remote_stat_mask_is_124_bytes_of_zero() {
+    fn the_remote_stat_block_is_the_124_byte_mask_plus_a_seven_byte_tail() {
+        // The mask length was never the wrong number - the v214 reference's 132 is a
+        // different version, and taking it would put every later field eight places out.
         assert_eq!(REMOTE_STAT_MASK_LEN, 124, "124 here; the v214 reference has 132");
+        // What was wrong is that the mask is not the block. `FUN_140a46e50` reads
+        // `u8, u8, u32, u8` after it, unconditionally - `REMOTE_STAT_TAIL_LEN`.
+        assert_eq!(REMOTE_STAT_TAIL_LEN, 7);
+
         let body = user_enter_field(&someone("", &[]), RemoteAt::default());
-        assert!(body[55..179].iter().all(|&b| b == 0), "all clear means no buffs");
-        assert_eq!(u16::from_le_bytes([body[179], body[180]]), 100, "job right after");
+        let block = 55..55 + REMOTE_STAT_MASK_LEN + REMOTE_STAT_TAIL_LEN;
+        assert_eq!(block, 55..186);
+        assert!(body[block].iter().all(|&b| b == 0), "all clear means no buffs");
+        // **The job is what says the tail landed in the right place.** It is the first field
+        // after the block with a value we choose, so if the tail were six bytes or eight this
+        // reads as something else - which is the whole failure being fixed, one level up.
+        assert_eq!(u16::from_le_bytes([body[186], body[187]]), 100, "job right after");
+        assert_ne!(
+            u16::from_le_bytes([body[179], body[180]]),
+            100,
+            "and NOT at the old offset - that is what a seven-byte shift means"
+        );
     }
 
     /// One `u32` and nothing else - `FUN_1429ba980` reads exactly one, at `1429ba9a2`.

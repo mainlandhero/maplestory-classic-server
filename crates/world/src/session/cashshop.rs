@@ -68,6 +68,17 @@ impl Session {
         // The client stops drawing the field from here until the Exit button. See
         // `Session::in_cash_shop` - this suppresses the idle chatter and nothing else.
         self.in_cash_shop = true;
+        // **A shopper is not on the map any more, and everyone else has to be told.**
+        //
+        // The Cash Shop is a different stage: the client tears the field down and the player
+        // is not standing anywhere. Without this they stay drawn on whatever map they left,
+        // frozen, until they come back - and if they log out from inside the shop they stay
+        // drawn until the connection drops.
+        //
+        // The return trip needs nothing: leaving the shop runs `on_field_entered`, which
+        // announces the arrival again. `Bus::leave_field` is idempotent, so the `Drop` path
+        // and the log-out path can both still run.
+        self.leave_the_field();
         let (quests, _) = self.quest_book(chr.id);
         let skills = self.store.skills(chr.id).unwrap_or_default();
         let mut out = vec![Reply {

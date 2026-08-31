@@ -256,6 +256,34 @@ pub fn remote_attack_opcode(inbound: u16) -> Option<u16> {
     }
 }
 
+/// **How many targets the remote client can hold, and it does not check.**
+///
+/// `FUN_1429d2ee0` decodes the target list into a **fixed 15-slot array on its own stack
+/// frame** at `rbp+0x1b0`, and nothing clamps the count it reads off the wire. Established
+/// three independent ways, which is why this is **[L]** and not a guess:
+///
+/// * `lea r8d,[rdi+0xf]` - the slot arithmetic;
+/// * the frame's `memset` length `0x1bb0`, which is exactly `8 + 15 * 0x1d8`;
+/// * the callee's own `0x1ba8`, which is exactly `15 * 0x1d8`.
+///
+/// **Target index 15 writes from `rbp+0x1d68` to `rbp+0x1eac`.** The stack cookie sits at
+/// `rbp+0x1d60` and the return address at `rbp+0x1db8`, so the sixteenth target steps over
+/// both. That is a stack smash in **every other player's client**, from a 1.1 KB packet.
+///
+/// # Why this server is the thing that has to stop it
+///
+/// An honest client cannot produce one - its *own* attack builder uses the same fifteen
+/// slots. But `CLAUDE.md`'s standing note is that **nothing authenticates**: the channel
+/// socket carries no credentials, so "the client would not do that" is not a property this
+/// server may rely on. `net::attack::parse` bounds the target count only by
+/// `MAX_PACKET_LEN`, so roughly 246 000 targets parse, and [`user_attack_remote`] wrote one
+/// block per target with no cap. One modified client could have smashed the stack of every
+/// other player on its map.
+///
+/// So the clamp is here, at the **relay**, which is the only place that sees the packet on
+/// its way to somebody else.
+pub const MAX_REMOTE_TARGETS: usize = 15;
+
 /// The targets this broadcast may carry, in order.
 ///
 /// **A target whose object id is zero is dropped**, because the client's decoder treats a
@@ -270,7 +298,11 @@ pub fn remote_attack_opcode(inbound: u16) -> Option<u16> {
 /// which is exactly the kind this socket cannot rule out. **Nothing here authenticates
 /// anybody.**
 pub fn drawable_targets(attack: &Attack) -> impl Iterator<Item = &AttackTarget> {
-    attack.targets.iter().filter(|t| t.object_id != 0)
+    // **`take` is the clamp, and it is here rather than at the call sites on purpose.**
+    // Three places compute over this list - the length, the body and the log line - and a
+    // clamp applied at two of them is a packet whose declared count disagrees with its own
+    // contents, which is worse than either whole answer. See [`MAX_REMOTE_TARGETS`].
+    attack.targets.iter().filter(|t| t.object_id != 0).take(MAX_REMOTE_TARGETS)
 }
 
 /// Bytes [`user_attack_remote`] will produce, **recomputed from the parsed contents** rather
@@ -888,4 +920,70 @@ mod tests {
         hostile.targets[0].object_id = 0;
         assert!(describe(207, 0x029E, &hostile, 61).contains("DROPPED"));
     }
+
+    /// **A sixteenth target would smash the receiving client's stack, so there is never one.**
+    ///
+    /// `FUN_1429d2ee0` decodes the target list into a fixed **15**-slot array on its own
+    /// frame at `rbp+0x1b0` and checks no bound. Index 15 writes from `rbp+0x1d68` to
+    /// `rbp+0x1eac`, over the stack cookie at `rbp+0x1d60` and past the return address at
+    /// `rbp+0x1db8`.
+    ///
+    /// An honest client cannot send one - its own builder uses the same fifteen slots - but
+    /// **nothing authenticates the channel socket**, and `net::attack::parse` bounds the
+    /// target count only by the 16 MiB packet limit. So the relay is the only thing standing
+    /// between one modified client and every other player's process.
+    ///
+    /// The assertion is on the **declared count, the block count and the length together**,
+    /// because a clamp applied to some of those and not the others produces a packet whose
+    /// header disagrees with its own body - which is a worse packet than the one it replaced.
+    #[test]
+    fn a_swing_at_more_targets_than_the_client_can_hold_is_clamped() {
+        let mut a = attack(MELEE_229, net::combat::USER_MELEE_ATTACK);
+        // The control: the fixture is a real captured one-target swing, and it is not
+        // clamped. A test that only checks the ceiling passes on a builder that emits
+        // nothing at all.
+        assert_eq!(drawable_targets(&a).count(), 1, "the fixture is one real target");
+
+        // Twenty targets, all with distinct non-zero object ids so `drawable_targets`
+        // cannot be the thing shortening the list.
+        let one = a.targets[0].clone();
+        a.targets = (0..20u32)
+            .map(|n| {
+                let mut t = one.clone();
+                t.object_id = 2000 + n;
+                t
+            })
+            .collect();
+        assert_eq!(a.targets.len(), 20, "the parser itself imposes no ceiling");
+
+        assert_eq!(
+            drawable_targets(&a).count(),
+            MAX_REMOTE_TARGETS,
+            "the relay must offer at most the fifteen slots the client has"
+        );
+
+        let body = user_attack_remote(200, 1, &a);
+        // The declared count, at the head of the target list.
+        // `PREFIX_LEN + HEADER_LEN` is 49, asserted by
+        // `the_body_is_the_prefix_the_header_and_the_target_list`, so the count sits there.
+        let declared = le32(&body, PREFIX_LEN + HEADER_LEN);
+        assert_eq!(
+            declared as usize, MAX_REMOTE_TARGETS,
+            "the count the client will loop on"
+        );
+        // And the length agrees, so the client's loop lands exactly on the end of the body
+        // rather than reading into whatever follows.
+        assert_eq!(
+            body.len(),
+            body_len(&a),
+            "the declared length and the built body must agree after the clamp too"
+        );
+
+        // The fifteen that survive are the FIRST fifteen, in order - so a clamp cannot
+        // silently reorder who got hit.
+        for (n, t) in drawable_targets(&a).enumerate() {
+            assert_eq!(t.object_id, 2000 + n as u32, "target {n} is out of order");
+        }
+    }
+
 }

@@ -73,18 +73,54 @@
     look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
      T1. TWO CLIENTS, SAME MAP. Do this first; T2 waits on it.
-          a) the other character appears -> the whole thing works
-          b) a client dies when the second arrives -> the 0x0224 body is wrong. Say WHICH
-             client died, the one arriving or the one already there, because that names
-             the direction the bad packet went
-          c) nothing appears and nothing dies -> dropped in silence, and the next run
-             carries a watch on 0x1429ba60b rather than more body work
+
+          FOUR AGENTS WENT OVER THIS ON 2026-08-31 AND THE PREDICTION HAS CHANGED.
+          The old (b) read "a client dies when the second arrives -> the 0x0224 body is
+          wrong". That WAS wrong, it has been found and fixed, and the fix moved every
+          field after byte 179:
+
+            the remote temporary-stat block is 131 bytes, not 124. The decoder reads
+            u8, u8, u32, u8 after the mask, unconditionally. The body was 508 bytes and
+            the client wanted 515, so it would have consumed everything and then thrown
+            with one byte left. The mask length was never wrong - a mask is not a block,
+            which is the same mistake net/buff.rs already records one decoder over, where
+            it cost a client death ("Nimble Feet crashed the client").
+
+          So this run is no longer expected to die. What it settles:
+            a) the other character appears, dressed, and walks when they walk
+                       -> the whole user pool works. THE result of this run
+            b) a client STILL dies when the second arrives -> the body is wrong somewhere
+                       ELSE. Say WHICH client died - the arriving one or the one already
+                       there - because that names the direction. world.log has the length
+                       we sent; the hook log will have NO dispatch line for 0x0224, since
+                       that line is written on return
+            c) nothing appears and nothing dies -> the packet was DROPPED, not misread,
+                       and no more body work will help. Six gates in front of the insert
+                       can do that; the discriminator is a watch on 0x1429ba60b, the
+                       allocation past all six. research/user-enter-verification.md
+            d) they appear standing at the map ORIGIN and stay there until they move
+                       -> expected and self-healing. The server has no position for a
+                       player who has not moved yet
+            e) they appear at the origin and STAY there while walking -> the 0x0293
+                       rebroadcast is not arriving; that is a different packet
+
      T2. KILL ONE MOB TOGETHER, both of you hitting it.
-          The one who dealt most damage should see a WHITE exp line; the other a YELLOW
-          one with a smaller number.
+
+          EXPECT THIS TO LOOK BROKEN, AND IT IS NOT THE EXP SPLIT. Only movement and
+          attacks are broadcast; every mob and drop packet is unicast to whoever caused
+          it. So when the OTHER player hits the mob you are both on:
+            its HP bar will not move on your screen, it will not die on your screen,
+            no drop will appear - AND YOU WILL STILL BE PAID THE EXP.
+          That is known, it is measured, and it is the next feature rather than a bug to
+          report. What IS worth reporting from this step:
+            the exp line's COLOUR and amount - white for the majority contributor,
+                       yellow and smaller for the other
             only the killer is paid -> the fact never crossed the bus
             both lines white -> the majority flag is wrong
             the helper is paid the FULL amount -> the split is not being applied
+          Also expect the two screens to DISAGREE about where every mob is: each client
+          is granted control of every mob on entry, so two players run two independent
+          simulations. Also known, also next.
      T11. THE THIRD JOB ADVANCEMENT, AND THE FERRY. Set yourself up first:
               !job 110   !exp 31545355   !map 10005000
           That is a level-70 Fighter in Sleepywood. 31 545 355 is the exp curve summed 1 to
@@ -1269,13 +1305,24 @@ function Show-TestPlan {
         Write-Host '   the server. Lyn and the Cab both drew one and both were clicked.)'
         Write-Host ''
         Write-Host '  T1. TWO CLIENTS, SAME MAP. First, and T2 waits on it.' -ForegroundColor White
-        Write-Host '        a) the other character appears -> it all works'
-        Write-Host '        b) a client dies when the second arrives -> the 0x0224 body'
-        Write-Host '           is wrong. Say WHICH died, arriving or already there -'
-        Write-Host '           that names the direction the bad packet went'
-        Write-Host '        c) nothing appears and nothing dies -> dropped in silence'
+        Write-Host '      The 0x0224 body WAS 7 bytes short and is fixed - the stat'
+        Write-Host '      block is 131, not 124. So this is no longer expected to die.'
+        Write-Host '        a) the other appears, dressed, and walks -> THE result'
+        Write-Host '        b) a client STILL dies -> wrong somewhere else. Say WHICH'
+        Write-Host '           died, arriving or already there. The hook log will have'
+        Write-Host '           NO dispatch line for 0x0224 (written on return)'
+        Write-Host '        c) nothing appears and nothing dies -> DROPPED, not misread.'
+        Write-Host '           No more body work helps; next run watches 0x1429ba60b'
+        Write-Host '        d) they stand at the map ORIGIN until they move -> expected'
+        Write-Host '        e) origin AND they stay there while walking -> 0x0293'
         Write-Host '  T2. KILL ONE MOB TOGETHER, both hitting it.' -ForegroundColor White
-        Write-Host '        Most damage sees a WHITE exp line, the other YELLOW and less.'
+        Write-Host '      EXPECT THIS TO LOOK BROKEN. Only moves and attacks are'
+        Write-Host '      broadcast - every mob and drop packet is unicast. The other'
+        Write-Host '      player hitting it moves no HP bar on your screen, kills'
+        Write-Host '      nothing, drops nothing - AND YOU STILL GET THE EXP. Known.'
+        Write-Host '      The two screens will also disagree about where mobs are:'
+        Write-Host '      both clients are granted control of every mob. Also known.'
+        Write-Host '        Report the exp LINE: white for most damage, yellow for less'
         Write-Host '          only the killer paid -> the fact never crossed the bus'
         Write-Host '          both white -> the majority flag is wrong'
         Write-Host '          helper paid in FULL -> the split is not applied'
