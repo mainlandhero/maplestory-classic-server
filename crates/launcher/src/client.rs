@@ -229,11 +229,12 @@ pub fn write_markers(
 
     let dump_text = dump_dir.to_string_lossy().to_string();
     write(HOOK_DUMPDIR_MARKER, &dump_text)?;
-    // **The sentry marker is REMOVED here, never written.** The launcher is the shipping
-    // path and the sentry is an instrument for a diagnostic run driven by test-server.ps1.
-    // Removing rather than ignoring is the point: a marker left behind by a previous
-    // diagnostic run would silently arm a 100 ms allocator walk inside a player's client.
-    let _ = std::fs::remove_file(client_dir.join("maplecw-hook.sentry"));
+    // **The sentry marker is deliberately NOT touched here.** An earlier version of this
+    // removed it, on the reasoning that the launcher is the shipping path. That was wrong
+    // and it broke the ordinary diagnostic combination: `test-server.ps1 -ServersOnly` arms
+    // the sentry and the LAUNCHER starts the client, so removing it here made the two
+    // impossible to use together. The hook deletes the marker itself once it has read it,
+    // which closes the stale-marker hole without closing that path.
     if !dump_text.is_ascii() {
         steps.push(format!(
             "WARNING: the dump directory is not ASCII ({dump_text}) - the hook reads it as UTF-8, \

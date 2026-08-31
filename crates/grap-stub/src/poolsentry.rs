@@ -1045,9 +1045,19 @@ pub fn install() {
     if ARMED.swap(true, Ordering::SeqCst) {
         return;
     }
+    // **Read once, then delete**, exactly as `identity.rs` does with its own marker and for
+    // the same reason: a marker that outlives its run silently arms a 100 ms allocator walk
+    // inside whatever launches next, and that confound would be invisible in the logs of the
+    // run it contaminated.
+    //
+    // Self-clearing is what lets the LAUNCHER leave the file alone. It cannot: the ordinary
+    // diagnostic path is `test-server.ps1 -ServersOnly` writing the marker and the launcher
+    // starting the client, so a launcher that deleted it would make that combination
+    // impossible - which it briefly did.
     let Ok(text) = std::fs::read_to_string(SENTRY_MARKER) else {
         return;
     };
+    let _ = std::fs::remove_file(SENTRY_MARKER);
     let Some(cfg) = parse_config(&text) else {
         log(&format!(
             "***** POOL SENTRY: {SENTRY_MARKER} says {:?} - standing down *****",

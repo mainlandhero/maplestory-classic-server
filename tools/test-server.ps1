@@ -1328,6 +1328,21 @@ function Show-TestPlan {
     }
 }
 
+# **The sentry marker, written BEFORE the -ServersOnly return.** It sat after it, which meant
+# start-servers.cmd - the way every launch actually happens - never reached it and -PoolSentry
+# silently did nothing. That is the second time something in this file was placed past that
+# return; the test plan was the first.
+#
+# The `else` is not optional: a stale marker arms a 100 ms allocator walk on an unrelated run,
+# a confound invisible in the logs of whatever that run was measuring. The hook also deletes
+# the marker once it has read it, so this is belt and braces.
+if ($PoolSentry) {
+    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value 'on' -Encoding ascii
+    Write-Host 'POOL SENTRY ARMED - a heartbeat every 60s in the hook log, findings when they happen' -ForegroundColor Cyan
+} else {
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
+}
+
 if ($ServersOnly) {
     # Stop here. The launcher writes the hook markers and starts the client, so neither the
     # marker block below nor the launch after it should run - one writer, and it is whichever
@@ -1469,16 +1484,6 @@ Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session 
 # path is a direct run, so clear any leftover: presenting a stale token is refused, and a
 # refusal downgrades the connection to the --account fallback silently.
 Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
-
-# **The else is not optional.** A stale sentry marker silently arms a 100 ms allocator walk
-# on an unrelated run - a confound that would be invisible in the logs of whatever that run
-# was actually measuring.
-if ($PoolSentry) {
-    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value 'on' -Encoding ascii
-    Write-Host 'POOL SENTRY ARMED - expect a heartbeat every 60s in the hook log' -ForegroundColor Cyan
-} else {
-    Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
-}
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
