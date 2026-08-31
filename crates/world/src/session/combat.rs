@@ -342,10 +342,30 @@ impl Session {
         // The server's drop rate scales every chance in the table. Read before the borrow
         // below, because it is a database query and `roll_at` holds `self.rng`.
         let drop_rate = self.rate(store::rates::RateKind::Drop);
-        let rolled = {
+        let mut rolled = {
             let rng = &mut self.rng;
             self.config.drops.roll_at(template, drop_rate, &mut || rng.next())
         };
+        // **A mob with no authored meso row still drops mesos, scaled by its level.**
+        // Only 23 of the 170 mobs with a drop table have one, so without this most of the
+        // game drops items and no money at all - Slime has seventeen item rows and no mesos.
+        // `has_meso_row` asks whether a row EXISTS rather than whether it hit, so an
+        // authored row at any chance - including a `0` opt-out - wins over this default.
+        if !self.config.drops.has_meso_row(template) {
+            if let Some((min, max)) =
+                self.config
+                    .mob_templates
+                    .get(&template)
+                    .and_then(|t| crate::droptables::level_meso_range(t.level))
+            {
+                let span = u64::from(max - min) + 1;
+                let amount = min + (self.rng.next() % span) as u32;
+                rolled.push(crate::droptables::Rolled {
+                    item_id: crate::droptables::MESOS,
+                    quantity: amount,
+                });
+            }
+        }
         let mut out = Vec::new();
         // Read the meso rate ONCE, not once per drop: it is a database query, and it cannot
         // change between two items falling off the same mob.

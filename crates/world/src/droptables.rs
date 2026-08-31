@@ -30,6 +30,43 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+/// A level-scaled meso drop, for a mob whose table has no authored meso row.
+///
+/// The owner, 2026-08-30: *"some mobs ... never drops mesos. This must be a bug as all
+/// non-job advancement and tutorial mobs should drop varying amounts of mesos dependent on
+/// their level."* They are right, and the scale of it is that **only 23 of the 170 mobs with a
+/// drop table have a meso row at all** - Slime (template 7) has seventeen item rows and not
+/// one of them is mesos.
+///
+/// # The numbers are FITTED to this project's own authored rows, not invented
+///
+/// Those 23 rows are consistent enough to read a rule off, and every one of them is at 100%
+/// chance:
+///
+/// ```text
+///   level     authored      level*18/10   level*22/10
+///       7      12 - 14        12            15
+///      30      50 - 60        54            66
+///      50      92 - 110       90           110
+///      90     162 - 198      162           198
+/// ```
+///
+/// So `min = level * 1.8`, `max = level * 2.2`, and the default lands on top of the hand
+/// authored numbers rather than beside them. **[D]** from 18 usable rows.
+///
+/// Level 0 returns `None` rather than zero mesos: a template with no level is a mob this
+/// server knows nothing about, and inventing a drop for it would hide that.
+pub fn level_meso_range(level: u32) -> Option<(u32, u32)> {
+    if level == 0 {
+        return None;
+    }
+    // Floor at 1, because `level * 18 / 10` is 1 at level 1 and a drop of zero mesos is a
+    // drop that draws nothing - the same failure as a zero-price shop row.
+    let min = (level * 18 / 10).max(1);
+    let max = (level * 22 / 10).max(min);
+    Some((min, max))
+}
+
 /// The `itemId` that means **mesos** rather than an item.
 ///
 /// Zero is not a real item id in this game - ids are `1xxxxxx`..`5xxxxxx` - so it is free to
@@ -215,6 +252,18 @@ impl DropTables {
         out
     }
 
+    /// Whether this mob has an **authored** meso row, at any chance.
+    ///
+    /// The question is deliberately "is there a row", not "did it hit": an authored row is a
+    /// statement about this mob, and a `0` chance is how a mob is opted OUT of mesos. If this
+    /// asked whether a roll succeeded, a 0-chance row would silently fall through to the
+    /// level default and the opt-out would be unwritable.
+    pub fn has_meso_row(&self, template_id: u32) -> bool {
+        self.per_mob
+            .get(&template_id)
+            .is_some_and(|rows| rows.iter().any(|r| r.item_id == MESOS))
+    }
+
     /// This mob's own table, for a GM command or a test.
     pub fn for_mob(&self, template_id: u32) -> &[DropEntry] {
         self.per_mob.get(&template_id).map(Vec::as_slice).unwrap_or(&[])
@@ -377,6 +426,75 @@ mod tests {
         assert_eq!(t.problems.len(), 1, "{:?}", t.problems);
         assert_eq!(t.for_mob(2).len(), 1);
         assert_eq!(t.for_mob(3).len(), 1);
+    }
+
+    /// **The level formula is checked against the rows it was fitted to.**
+    ///
+    /// Eighteen of the 23 authored meso rows in `data/drops.txt`, level and range as written
+    /// by hand. If someone changes the multipliers, this says by how much they have moved
+    /// away from the numbers a person chose - which a formula on its own cannot.
+    ///
+    /// The tolerance is +/-5 mesos or 12%, whichever is larger. That is not a fudge: the
+    /// authored rows are themselves rounded and disagree with each other by a few percent
+    /// at the same level, so a tighter bound would be asserting noise.
+    #[test]
+    fn the_level_meso_formula_lands_on_the_hand_authored_rows() {
+        // (level, authored min, authored max)
+        const AUTHORED: &[(u32, u32, u32)] = &[
+            (7, 12, 14),
+            (10, 18, 23),
+            (11, 19, 23),
+            (14, 25, 30),
+            (17, 30, 35),
+            (19, 36, 44),
+            (22, 40, 48),
+            (28, 48, 57),
+            (30, 50, 60),
+            (35, 63, 77),
+            (50, 92, 110),
+            (53, 95, 116),
+            (58, 109, 124),
+            (59, 106, 129),
+            (80, 148, 176),
+            (90, 162, 198),
+        ];
+        let near = |got: u32, want: u32| {
+            let slack = std::cmp::max(5, want * 12 / 100);
+            got.abs_diff(want) <= slack
+        };
+        for &(level, want_min, want_max) in AUTHORED {
+            let (min, max) = level_meso_range(level).expect("a levelled mob has a range");
+            assert!(near(min, want_min), "level {level}: min {min} vs authored {want_min}");
+            assert!(near(max, want_max), "level {level}: max {max} vs authored {want_max}");
+            assert!(min <= max, "level {level}: min {min} above max {max}");
+        }
+
+        // Never zero: a drop of no mesos is a drop that draws nothing on screen.
+        assert_eq!(level_meso_range(1), Some((1, 2)));
+        // And a mob with no level is a mob we know nothing about - say so rather than invent.
+        assert_eq!(level_meso_range(0), None);
+    }
+
+    /// **An authored row wins, and "authored" means it EXISTS, not that it hit.**
+    ///
+    /// This is what makes a `0`-chance row an opt-out. If the check asked whether a roll
+    /// succeeded, a 0-chance row would fall through to the level default every time and the
+    /// opt-out would be unwritable - which is how the tutorial and job-advancement mobs the owner
+    /// excluded are meant to be excluded.
+    #[test]
+    fn an_authored_meso_row_is_respected_even_at_zero_chance() {
+        let t = DropTables::parse(
+            "7 | 4000006 | 40 | 1 | 1 | 10 | Squishy Liquid\n\
+             9 | 0 | 0 | 1 | 1 | 1 | mesos (opted out)\n\
+             10 | 0 | 100 | 5 | 5 | 1 | mesos\n",
+        );
+        // Slime's shape: item rows, no meso row at all -> the default applies.
+        assert!(!t.has_meso_row(7), "a mob with only item rows has no meso row");
+        // Opted out with a zero chance -> still authored, so the default must NOT apply.
+        assert!(t.has_meso_row(9), "a zero-chance row is still a row, and it means 'no mesos'");
+        assert!(t.has_meso_row(10));
+        // A mob with no table at all is not authored either.
+        assert!(!t.has_meso_row(999));
     }
 
     #[test]
