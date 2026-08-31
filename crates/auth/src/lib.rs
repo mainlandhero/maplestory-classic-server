@@ -41,6 +41,30 @@ pub enum LoginResponse {
         /// below names. An empty string here means the launch cannot be registered and the
         /// connection will be resolved by address or not at all; the launcher says so.
         launch_id: String,
+        /// **The one-time token the CLIENT is meant to carry**, 26 characters of uppercase
+        /// base32 (`store::claims::CLIENT_TOKEN_CHARS`).
+        ///
+        /// This is the field the launcher writes where the hook can read it - the repo already
+        /// writes `maplecw-hook.session` / `.probe` / `.dumpdir` beside the client for exactly
+        /// this kind of hand-off. The hook writes it into the client's session object
+        /// (`session+0x1b8`), and the client puts it in `0x0073` itself.
+        ///
+        /// The owner, 2026-08-29: *"using the client to pass a session should be what we aim for
+        /// instead of inference."* Every other field the login server resolves by is an
+        /// inference about a socket; this one is a claim the client makes and the server
+        /// checks.
+        ///
+        /// **It authenticates the login socket only.** `0x0073` has never appeared on a
+        /// channel connection - 103 archived files, all port 8484. `CLAUDE.md`'s standing
+        /// constraint about the game socket is untouched.
+        ///
+        /// Empty for the same reason `launch_id` is: the claim could not be staked. An empty
+        /// string means there is no credential to write and the launcher should say so rather
+        /// than writing a blank file - a blank identity is indistinguishable on the wire from
+        /// a stock client, which is exactly the ambiguity this exists to remove.
+        ///
+        /// Spent on first presentation. Pressing Login again mints a new one and kills this.
+        client_token: String,
     },
     /// One response for both a bad name and a bad password, so the API cannot be used
     /// to discover which accounts exist.
@@ -125,19 +149,19 @@ impl AuthService {
     pub fn login(&self, req: &LoginRequest, peer: Option<&str>) -> LoginResponse {
         match self.store.authenticate_identity(&req.username, &req.password) {
             Ok(AuthOutcome::Ok { account_id, token }) => {
-                let launch_id = match self.store.stake_login_claim_with(
+                let (launch_id, client_token) = match self.store.stake_login_claim_with(
                     account_id,
                     &token,
                     store::LOGIN_CLAIM_TTL_SECS,
                     peer,
                 ) {
-                    Ok(staked) => staked.launch_id,
+                    Ok(staked) => (staked.launch_id, staked.client_token),
                     Err(e) => {
                         eprintln!(
                             "auth: signed in account {account_id} but could NOT stake the login \
                              claim: {e} - the game will be served as the fallback --account"
                         );
-                        String::new()
+                        (String::new(), String::new())
                     }
                 };
                 LoginResponse::Ok {
@@ -146,6 +170,7 @@ impl AuthService {
                     token,
                     expires_in: store::SESSION_TTL_SECS,
                     launch_id,
+                    client_token,
                 }
             }
             Ok(AuthOutcome::Disabled) => LoginResponse::Disabled,

@@ -29,6 +29,16 @@ pub const HOOK_ENABLE_MARKER: &str = "maplecw-hook.enable";
 pub const HOOK_PROBE_MARKER: &str = "maplecw-hook.probe";
 pub const HOOK_SESSION_MARKER: &str = "maplecw-hook.session";
 pub const HOOK_DUMPDIR_MARKER: &str = "maplecw-hook.dumpdir";
+/// **The one-time credential the client will carry**, in plain text, beside the client.
+///
+/// Read by `grap_stub::identity`, which writes it into the client's own session object so the
+/// client sends it in `0x0073`. Written only when a sign-in produced a fresh token, and
+/// **deleted otherwise** - see [`write_identity_marker`].
+///
+/// Anything running as this user can read this file. That is the same power as being this
+/// launch, so on a single-user machine it does not widen anything - but it is a secret on
+/// disk and it is named as one here rather than left to be discovered.
+pub const HOOK_IDENTITY_MARKER: &str = "maplecw-hook.identity";
 pub const HOOK_LOG: &str = "maplecw-hook.log";
 
 /// `tools/test-server.ps1`'s `-Probe` default.
@@ -230,6 +240,66 @@ pub fn write_markers(
     steps.push(format!("client patches: {probe}"));
     steps.push(format!("session patches: {session}"));
     steps.push(format!("crash dumps -> {dump_text}"));
+    Ok(steps)
+}
+
+/// Put this launch's client token where the hook can find it - or **remove the last one**.
+///
+/// # A stale token is worse than no token, and that is the whole reason this is a function
+///
+/// The login server's anti-downgrade rule gives a connection that presents a credential *that
+/// claim or none*: it deliberately does **not** fall through to the weaker rules, because a
+/// guard that can be skipped by presenting junk is not a guard. So a marker left over from a
+/// previous launch does not merely fail to help - it takes this launch from "resolved by the
+/// process that owns the socket" down to "served as the server's fallback account".
+///
+/// Which means the `None` arm is not an omission to tidy up later. It is the arm that has to
+/// be right. Every path that does not have a fresh token deletes the file:
+///
+/// * signing in against a server that predates the client token;
+/// * a sign-in that could not stake a claim;
+/// * `Start Game` reached without one, which the caller also warns about.
+///
+/// Returns the lines for the log pane. The token itself is never one of them.
+pub fn write_identity_marker(client_dir: &Path, token: Option<&str>) -> Result<Steps, String> {
+    let path = client_dir.join(HOOK_IDENTITY_MARKER);
+    let mut steps = Steps::new();
+    match token {
+        Some(token) if !token.trim().is_empty() => {
+            // No BOM, no trailing newline, for the same reason the other markers have neither:
+            // `read_to_string` keeps a BOM and `trim` does not remove it. The hook trims ASCII
+            // whitespace, so a stray newline is harmless and a BOM would not be.
+            std::fs::write(&path, token.trim().as_bytes())
+                .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+            steps.push(format!(
+                "client credential written ({HOOK_IDENTITY_MARKER}, {} characters). The client \
+                 will carry it in 0x0073 and the server will spend it once. IT IS PLAIN TEXT \
+                 ON DISK: anything running as you can read it, which is the same power as \
+                 being this launch",
+                token.trim().chars().count()
+            ));
+        }
+        _ => {
+            // `remove_file` on a path that is not there is `NotFound`, which is success here.
+            match std::fs::remove_file(&path) {
+                Ok(()) => steps.push(format!(
+                    "removed a previous {HOOK_IDENTITY_MARKER}: this launch has no client \
+                     token, and a token from an earlier launch would be REFUSED rather than \
+                     ignored - the connection would be served as the server's fallback account \
+                     instead of being attributed by its owning process"
+                )),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(format!(
+                        "could not remove the stale {}: {e}. Refusing to launch with it in \
+                         place - the client would present a dead credential and be served as \
+                         the fallback account",
+                        path.display()
+                    ))
+                }
+            }
+        }
+    }
     Ok(steps)
 }
 
@@ -549,6 +619,57 @@ mod tests {
             assert_ne!(&raw[..raw.len().min(3)], b"\xef\xbb\xbf", "{name} has a BOM");
             assert_eq!(String::from_utf8(raw).unwrap(), expected, "{name}");
         }
+    }
+
+    /// The credential is written verbatim: no BOM, no newline, no quoting. `grap_stub::identity`
+    /// trims ASCII whitespace, so a newline would survive - but a BOM would not be trimmed and
+    /// would be sent as three bytes of the token.
+    #[test]
+    fn the_credential_marker_is_written_verbatim() {
+        let t = TempDir::new("identity");
+        let client = t.dir("client");
+        let token = "MFRGGZDFMZTWQ2LKNNWG23TP2A";
+
+        let steps = write_identity_marker(&client, Some(token)).expect("write");
+        let raw = std::fs::read(client.join(HOOK_IDENTITY_MARKER)).unwrap();
+        assert_ne!(&raw[..raw.len().min(3)], b"\xef\xbb\xbf", "a BOM would be sent as data");
+        assert_eq!(raw, token.as_bytes());
+        // The count reaches the log pane so it can be compared against the hook log and
+        // login.log; the token itself must not.
+        assert!(steps.iter().any(|s| s.contains("26 characters")), "{steps:?}");
+        assert!(!steps.iter().any(|s| s.contains(token)), "the token reached the log: {steps:?}");
+        assert!(steps.iter().any(|s| s.contains("PLAIN TEXT")), "{steps:?}");
+    }
+
+    /// **The arm that has to be right.** A stale credential is refused by the login server,
+    /// not ignored, so leaving one behind costs the next launch its account.
+    #[test]
+    fn no_credential_removes_the_previous_one_and_says_so() {
+        let t = TempDir::new("identitynone");
+        let client = t.dir("client");
+        let path = client.join(HOOK_IDENTITY_MARKER);
+
+        write_identity_marker(&client, Some("OLDTOKEN")).expect("write");
+        assert!(path.is_file());
+
+        let steps = write_identity_marker(&client, None).expect("remove");
+        assert!(!path.exists(), "the stale credential survived");
+        assert!(steps.iter().any(|s| s.contains("REFUSED")), "{steps:?}");
+
+        // Twice is fine: nothing to remove is success, not NotFound.
+        let steps = write_identity_marker(&client, None).expect("remove again");
+        assert!(steps.is_empty(), "a no-op should say nothing: {steps:?}");
+    }
+
+    /// An empty or whitespace-only token is not a credential and must take the delete arm -
+    /// otherwise a server answering `"client_token":""` leaves a file that looks like one.
+    #[test]
+    fn a_blank_credential_is_treated_as_none() {
+        let t = TempDir::new("identityblank");
+        let client = t.dir("client");
+        write_identity_marker(&client, Some("STALE")).expect("write");
+        write_identity_marker(&client, Some("  \r\n")).expect("blank");
+        assert!(!client.join(HOOK_IDENTITY_MARKER).exists());
     }
 
     #[test]

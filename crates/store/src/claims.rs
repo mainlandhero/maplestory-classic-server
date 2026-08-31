@@ -50,12 +50,48 @@
 //!
 //! | # | evidence | [`ResolvedBy`] | strength |
 //! |---|----------|----------------|----------|
-//! | 1 | a session token the connection presented | [`ResolvedBy::Token`] | a credential; nothing on the wire presents one today |
+//! | 1a | a session token the connection presented | [`ResolvedBy::Token`] | a credential; nothing on the wire presents one |
+//! | 1b | **a one-time client token the CLIENT carried in `0x0073`** | [`ResolvedBy::ClientToken`] | a credential, **on the wire**, once the hook fills the field |
 //! | 2 | the OS-attributed owning process of the peer socket | [`ResolvedBy::LaunchPid`] | same machine only; separates two clients on one box |
 //! | 3 | the source address, when it picks out exactly one claim | [`ResolvedBy::PeerAddress`] | separates two machines; useless for two clients on one |
 //! | 4 | there is exactly one live claim in the whole database | [`ResolvedBy::SoleLiveClaim`] | not a discriminator at all - it is "there was only one answer" |
 //!
 //! and if none of them does, the answer is [`ClaimResolution::Ambiguous`], **not** a guess.
+//!
+//! # Rule 1b is the point of the whole file, and everything below 1b is fallback
+//!
+//! The owner, 2026-08-29: *"if the client itself has a way to carry an identity, I would like to
+//! use that way more ... using the client to pass a session should be what we aim for instead
+//! of inference."*
+//!
+//! Rules 2, 3 and 4 are all inference: the server looks at a socket it was handed and guesses
+//! which launch opened it. Rule 1b is not. The launcher mints a token at sign-in, writes it
+//! where the hook can read it, the hook writes it into the client's own session object, and
+//! **the client transmits it itself, through its own cipher, in a packet it already builds**.
+//! Nothing is forged and no packet is injected - see `research/client-session-args.md` section 5
+//! for why that matters.
+//!
+//! Rules 2-4 are deliberately kept, and this is not indecision:
+//!
+//! * the field is **empty in all 72 captured `0x0073` bodies**, so until a client run shows a
+//!   non-empty one, removing the weaker rules would remove the only thing that works;
+//! * `0x0073` is sent **once per launch**. Measured over 57 archived runs: every run has
+//!   exactly one, while 7 runs have two or three `0x0080` login requests, on *separate
+//!   connections that carry no identity at all* (Log Out / Choose another world reconnect).
+//!   The reconnect is carried by rule 2, and it always will be.
+//!
+//! # Presenting a WRONG credential buys less than presenting nothing
+//!
+//! The anti-downgrade rule, mirrored from `crate::migration`'s invariant:
+//!
+//! > A connection that presents a client token gets **that claim or none**. It never falls
+//! > through to rules 2, 3 or 4.
+//!
+//! Presenting nothing still reaches the weaker rules, and that is not a hole - it is what a
+//! stock client does and what every reconnect does. The property that matters is the other
+//! direction: **an attacker cannot get past the credential by supplying a wrong one**, and
+//! cannot improve on silence by guessing. `CLAUDE.md` on `record_quest_forfeit`: a guard that
+//! can be skipped by not presenting the thing it checks is not a guard.
 //!
 //! **Rule 3 is why `peer` is here at all, and it does not contradict the owner's constraint.**
 //! The owner, 2026-08-29: *"The login MapleCW Launcher needs to be able to potentially handle
@@ -105,11 +141,138 @@
 //! the login server so a migration can be bound to **the claim this connection resolved to**
 //! rather than to whichever claim happens to be newest.
 
+use rand::RngCore;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::Store;
 use crate::error::{Result, StoreError};
 use crate::session::{hash_token, new_token};
+
+// ----------------------------------------------------------------------------------------
+// THE CLIENT TOKEN: the one credential that travels on the wire.
+// ----------------------------------------------------------------------------------------
+
+/// **How many random bytes a client token carries. 16 - 128 bits.**
+///
+/// # Length is NOT the reason, and the first version of this comment said it was
+///
+/// This block originally read *"a compromise against an unmeasured client-side limit ... the
+/// thing most likely to sink the whole mechanism"*, and picked 16 bytes to stay small. The
+/// limit was measured the same day, on the client half (`grap_stub::identity`), and it is
+/// enormous:
+///
+/// * **65535 bytes** is the hard ceiling - `w_str` writes the length prefix with a `u16`
+///   truncation (`movzx r8d, cx`) and the body from a `u32`, so past that the stream desyncs;
+/// * **~3996 bytes** is the largest frame the client sends without also uploading an
+///   oversized-packet report. It still sends;
+/// * **6550 bytes** is what it has actually put on this socket in an archived run
+///   (`previous-runs/login-20260826-171724.log`, `0x0090`).
+///
+/// A 26-character token has roughly 150x margin, and **so would 64 hex characters**. So the
+/// size worry was unfounded, and it is recorded rather than quietly deleted because it is the
+/// live example of this file's own habit: a guess in a doc block reads exactly like a
+/// measurement once it has been written down confidently.
+///
+/// # What the number is actually for
+///
+/// Entropy, and nothing else. 128 bits from the OS CSPRNG is not guessable over a socket by
+/// any margin that matters. The 32-byte session token would be equally safe to carry and is
+/// simply more than this needs - and reusing *it* would put a game credential in a plain-text
+/// file beside the client, which is the thing `StakedClaim`'s launch id exists to avoid.
+///
+/// The binding constraint is the character SET, not the count: see [`CLIENT_TOKEN_CHARS`].
+pub const CLIENT_TOKEN_BYTES: usize = 16;
+
+/// **The number of characters the client carries: 26.**
+///
+/// # The constraint that binds is the character set, and it is a hard one
+///
+/// **The identity is a C string on both sides of the client**, established on the client half
+/// (`grap_stub::identity::validate`): `FUN_142c50400` re-derives the length it sends with a
+/// `strlen` loop rather than reading the string header, and substitutes an empty literal when
+/// the field is null *or begins with a NUL*.
+///
+/// So an embedded NUL **truncates the credential with no error anywhere**, and a leading one
+/// sends nothing at all - and both read on the wire as "the hook did not write the field",
+/// which is exactly the outcome that cannot be told apart from the mechanism not working. The
+/// hook refuses anything outside `0x21..=0x7e` for that reason. Uppercase base32 is
+/// `A-Z` (`0x41..=0x5a`) and `2-7` (`0x32..=0x37`), comfortably inside it, with no NUL, no
+/// space, no `=` padding, no `-` and no `_`.
+/// `a_client_token_is_within_the_byte_set_the_client_can_carry` asserts that rather than
+/// trusting this paragraph, because a character set read off a doc block is a claim.
+///
+/// # The case-folding worry that motivated base32 is CLOSED, and it was not why it stayed
+///
+/// This block used to argue that base32 defends against `FUN_142c9f2d0` (`_strupr`) mangling a
+/// lower-case token in flight. **That is now measured and it does not happen.** The path from
+/// `session+0x1b8` to the wire is four calls and then `w_str`'s two leaf writers, which call
+/// nothing; corroborated on the wire by the 16-byte machine GUID that `w_str`'s own byte
+/// writer emits into this same packet appearing **verbatim in all 72 captured bodies**.
+///
+/// The comparison is byte-exact and does not fold case, and it should stay that way: folding
+/// would be defending against something that has been shown not to occur, at the cost of
+/// shrinking the credential's effective space.
+///
+/// # What 26 buys
+///
+/// 16 bytes is 128 bits; base32 packs 5 bits per character, so 128/5 rounds up to 26. Hex
+/// would need 32 for the same entropy. Both fit with enormous margin
+/// ([`CLIENT_TOKEN_BYTES`]), so this is compactness for its own sake, not a fit constraint.
+pub const CLIENT_TOKEN_CHARS: usize = 26;
+
+/// RFC 4648 base32, uppercase, no padding.
+const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+fn base32_encode(raw: &[u8]) -> String {
+    let mut out = String::with_capacity(raw.len() * 8 / 5 + 1);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in raw {
+        acc = (acc << 8) | u32::from(b);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(BASE32_ALPHABET[((acc >> bits) & 0x1f) as usize] as char);
+        }
+    }
+    if bits > 0 {
+        out.push(BASE32_ALPHABET[((acc << (5 - bits)) & 0x1f) as usize] as char);
+    }
+    out
+}
+
+/// Mint a client token: the plain value, and the SHA-256 that is the only thing stored.
+///
+/// Same hashing rule as every other secret in this crate - the standing constraint, and
+/// [`hash_token`] is reused rather than reimplemented so there is one function to be wrong.
+fn new_client_token() -> (String, String) {
+    let mut raw = [0u8; CLIENT_TOKEN_BYTES];
+    rand::rngs::OsRng.fill_bytes(&mut raw);
+    let token = base32_encode(&raw);
+    debug_assert_eq!(token.len(), CLIENT_TOKEN_CHARS);
+    let hash = hash_token(&token);
+    (token, hash)
+}
+
+/// Normalise an identity string that came off the wire before it is hashed or compared.
+///
+/// The client's string is length-prefixed, so it can legitimately carry a trailing NUL that
+/// the sender never meant as data, and a hook that writes a fixed-size buffer will produce
+/// exactly that. Trimming ASCII whitespace and NUL is the difference between "the credential
+/// works" and "the credential never matches and nobody can see why" - and it costs nothing,
+/// because [`CLIENT_TOKEN_CHARS`] of base32 contains neither.
+///
+/// **An empty result is not a credential.** Every `0x0073` this project has ever captured -
+/// 72 of them - carries a zero-length identity, so "empty" is what a stock client sends and it
+/// must keep buying the weaker rules. Only a NON-EMPTY identity is a presentation.
+pub fn normalise_client_token(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_matches(|c: char| c.is_ascii_whitespace() || c == '\0');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
 
 /// A live claim: who a game connection resolved to this should be served as.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +307,21 @@ pub struct StakedClaim {
     pub claim: LoginClaim,
     /// Give this to the launcher; never log it, never store it.
     pub launch_id: String,
+    /// **The one-time credential the CLIENT is meant to carry**, [`CLIENT_TOKEN_CHARS`]
+    /// characters of base32.
+    ///
+    /// Unlike [`Self::launch_id`], this one is not a handle for an API call - it is the thing
+    /// the launcher writes where the hook can read it, so the hook can put it in the client's
+    /// own session object and the client sends it in `0x0073`. That makes it the first value
+    /// in this project that identifies a launch **on the wire** rather than by inference.
+    ///
+    /// Spent on first presentation. See [`Store::present_client_token`].
+    ///
+    /// It authenticates the **login socket only**. `0x0073` has never appeared on a channel
+    /// connection - 103 archived files, every one port 8484, including four whose names say
+    /// "world" - so `CLAUDE.md`'s standing constraint *"the game socket carries no
+    /// credentials"* is untouched by this. Say so when reporting progress.
+    pub client_token: String,
 }
 
 /// Redacted, because a `{:?}` of a struct is how a secret reaches a log without anybody
@@ -153,6 +331,7 @@ impl std::fmt::Debug for StakedClaim {
         f.debug_struct("StakedClaim")
             .field("claim", &self.claim)
             .field("launch_id", &"<redacted>")
+            .field("client_token", &"<redacted>")
             .finish()
     }
 }
@@ -170,6 +349,14 @@ pub struct ClaimEvidence {
     /// A session token the connection presented, if any. Only its SHA-256 is ever compared or
     /// stored; the plain value does not leave this struct.
     pub token: Option<String>,
+    /// **The client token the connection carried in `0x0073`**, already normalised by
+    /// [`normalise_client_token`] - so `Some("")` is not a state this can be in.
+    ///
+    /// This is the field that turns the ladder below from inference into a claim the client
+    /// makes and the server checks. It is `None` for every client that has ever connected to
+    /// this server: 72 of 72 captured `0x0073` bodies carry a zero-length identity, because
+    /// its setter `FUN_142c503c0` has no callers. The hook is what fills it.
+    pub client_token: Option<String>,
     /// The process id that owns the far end of this connection, as the operating system
     /// reports it - see [`crate::peerowner::owning_pid`].
     ///
@@ -197,6 +384,21 @@ impl ClaimEvidence {
         Self { token: Some(token.into()), ..Self::default() }
     }
 
+    /// Evidence carrying a client token, normalised on the way in.
+    ///
+    /// Normalising here rather than at the call site is deliberate: an empty or
+    /// whitespace-only identity must land as `None`, because `None` reaches the weaker rules
+    /// and `Some` is a *presentation* that refuses if it does not match. Getting that
+    /// backwards would refuse every stock client on the first packet it sends.
+    pub fn with_client_token(token: impl AsRef<str>) -> Self {
+        Self { client_token: normalise_client_token(token.as_ref()), ..Self::default() }
+    }
+
+    pub fn and_client_token(mut self, token: Option<&str>) -> Self {
+        self.client_token = token.and_then(normalise_client_token);
+        self
+    }
+
     pub fn with_launch_pid(pid: u32) -> Self {
         Self { launch_pid: Some(pid), ..Self::default() }
     }
@@ -213,7 +415,10 @@ impl ClaimEvidence {
 
     /// True when nothing here can tell one connection from another.
     pub fn is_empty(&self) -> bool {
-        self.token.is_none() && self.launch_pid.is_none() && self.peer.is_none()
+        self.token.is_none()
+            && self.client_token.is_none()
+            && self.launch_pid.is_none()
+            && self.peer.is_none()
     }
 }
 
@@ -227,6 +432,12 @@ impl ClaimEvidence {
 pub enum ResolvedBy {
     /// The connection presented a session token that hashes to this claim's key.
     Token,
+    /// **The client itself carried a one-time client token in `0x0073` and it matched.**
+    ///
+    /// The only rule in this table that is not an inference about a credential-less socket.
+    /// It still says nothing about *who is at the keyboard* - a token in a file beside the
+    /// client is a launch credential, not a person - and it covers the **login** socket only.
+    ClientToken,
     /// The operating system attributes the far end of this connection to the process this
     /// claim was bound to. Same machine only.
     LaunchPid,
@@ -243,6 +454,10 @@ impl ResolvedBy {
     pub fn describe(self) -> &'static str {
         match self {
             ResolvedBy::Token => "the session token this connection presented",
+            ResolvedBy::ClientToken => {
+                "the one-time client token the CLIENT carried in 0x0073 - a credential on the \
+                 wire, not an inference about the socket (login socket only)"
+            }
             ResolvedBy::LaunchPid => {
                 "the process the operating system says owns this connection (same machine)"
             }
@@ -465,6 +680,22 @@ pub(crate) fn ensure_columns(conn: &Connection) -> Result<()> {
     if !existing.contains("peer") {
         conn.execute("ALTER TABLE login_claims ADD COLUMN peer TEXT", [])?;
     }
+    // The client token, added 2026-08-29. Three columns, all nullable, all arriving NULL on
+    // The owner's existing maplecw.db - which is the honest state for a claim staked before the
+    // credential existed: it has no client token, so no client token can ever match it, and it
+    // stays resolvable by the weaker rules exactly as it was.
+    if !existing.contains("client_token_hash") {
+        conn.execute("ALTER TABLE login_claims ADD COLUMN client_token_hash TEXT", [])?;
+    }
+    // When it was spent. NULL means unspent. This is what makes it one-time.
+    if !existing.contains("client_token_used_at") {
+        conn.execute("ALTER TABLE login_claims ADD COLUMN client_token_used_at INTEGER", [])?;
+    }
+    // WHICH PROCESS spent it, as the operating system attributed the socket - never asserted
+    // by the connection. See `judge_client_token` for the one thing this buys.
+    if !existing.contains("client_token_used_pid") {
+        conn.execute("ALTER TABLE login_claims ADD COLUMN client_token_used_pid INTEGER", [])?;
+    }
     // Keep the newest row per hash so the unique index below can be created. NULLs are exempt
     // - SQLite counts each of them as distinct - which is what leaves pre-migration rows alone.
     conn.execute(
@@ -482,15 +713,142 @@ pub(crate) fn ensure_columns(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_login_claims_pid ON login_claims(launch_pid)",
         [],
     )?;
+    // Unique for the same reason `token_hash` is: two claims sharing a client token would make
+    // the credential ambiguous, and an ambiguous credential is not one. Every pre-existing row
+    // holds NULL here and SQLite counts each NULL as distinct, so this cannot fail on upgrade.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_login_claims_client_token
+             ON login_claims(client_token_hash)",
+        [],
+    )?;
     Ok(())
 }
 
 /// One live claim, as read from the database. Internal to the resolver.
 struct LiveRow {
+    /// The row's own id, so a write can name exactly the row a read judged.
+    id: i64,
     claim: LoginClaim,
     token_hash: Option<String>,
+    client_token_hash: Option<String>,
+    client_token_used_at: Option<i64>,
+    client_token_used_pid: Option<u32>,
     launch_pid: Option<u32>,
     peer: Option<String>,
+}
+
+/// **The one decision about a presented client token.**
+///
+/// One function, two callers - [`Store::resolve_login_claim`] reads it and
+/// [`Store::present_client_token`] reads it and then writes. They cannot disagree, which is
+/// the point: `CLAUDE.md` has a whole section on a guard that was asked and then ignored, and
+/// two copies of a credential check is the same failure waiting to be written.
+enum Judgement {
+    /// Unspent and matching. Index into the live rows.
+    Fresh(usize),
+    /// Spent, matching, and **the operating system attributes this connection to the same
+    /// process that spent it**. See [`Store::present_client_token`] for why this is honoured.
+    ReplayBySameProcess(usize),
+    /// Spent, and this is somebody else. A refusal.
+    ReplayByAnother { index: usize },
+    /// It matches no live claim. A refusal.
+    Unknown,
+}
+
+/// Judge a presented client token against the live rows.
+///
+/// `pid` is what the **server** derived from the accepted socket via the OS TCP table
+/// (`crate::peerowner::owning_pid`), never anything the connection asserted. `None` means the
+/// peer is not on this machine and cannot be attributed - and an unattributable replay is
+/// refused, which is the conservative direction.
+fn judge_client_token(rows: &[LiveRow], presented: &str, pid: Option<u32>) -> Judgement {
+    let want = hash_token(presented);
+    let Some(index) = rows.iter().position(|r| r.client_token_hash.as_deref() == Some(&want))
+    else {
+        return Judgement::Unknown;
+    };
+    let row = &rows[index];
+    if row.client_token_used_at.is_none() {
+        return Judgement::Fresh(index);
+    }
+    match (row.client_token_used_pid, pid) {
+        (Some(spent_by), Some(now)) if spent_by == now => Judgement::ReplayBySameProcess(index),
+        _ => Judgement::ReplayByAnother { index },
+    }
+}
+
+/// What [`Store::present_client_token`] did with the identity a connection carried.
+///
+/// A separate type from [`ClaimResolution`] on purpose, and not merely for tidiness: adding a
+/// variant to `ClaimResolution` would break `crate::migration`'s exhaustive match on it, and a
+/// credential mechanism is not worth reshaping a neighbouring module's control flow for. It
+/// also lets the four outcomes carry the four *different* sentences a log needs - which is the
+/// same reasoning that made `ClaimResolution` three variants instead of an `Option`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientTokenOutcome {
+    /// **Accepted.** The claim is the account this connection should be served as.
+    ///
+    /// `replay` is `false` on first use - the normal case, and the one where the token was
+    /// just spent. `true` means the same client process presented it again; nothing was spent
+    /// a second time and the answer is the same claim.
+    Accepted { claim: Box<ResolvedClaim>, replay: bool },
+    /// The token names a live claim that has **already been spent by a different process**,
+    /// or by one this server cannot attribute. Refused: the caller must serve its fallback.
+    AlreadyUsed { account_name: String, used_at: i64, used_pid: Option<u32> },
+    /// It matches no live claim: never issued, expired, cleared, or from a previous sign-in.
+    /// Refused.
+    Unknown,
+    /// **Nothing was presented.** The identity field was empty or absent, which is what every
+    /// client that has ever connected to this server sends and what every reconnect sends.
+    ///
+    /// **This is not a refusal.** The caller keeps whatever the weaker rules gave it.
+    NotPresented,
+}
+
+impl ClientTokenOutcome {
+    /// True when the caller must discard whatever the weaker rules decided.
+    ///
+    /// The anti-downgrade rule as a function, so no call site has to re-derive it - and so
+    /// that adding an outcome later cannot silently default to "carry on".
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, ClientTokenOutcome::AlreadyUsed { .. } | ClientTokenOutcome::Unknown)
+    }
+
+    /// The whole sentence to log. Written here for the same reason [`ClaimResolution::why`] is.
+    pub fn why(&self) -> String {
+        match self {
+            ClientTokenOutcome::Accepted { claim, replay: false } => format!(
+                "ACCEPTED and SPENT - the client carried a valid one-time token in 0x0073. \
+                 Serving account {:?} (id {}). This connection is identified by a CREDENTIAL, \
+                 not by inference. It authenticates the LOGIN socket only",
+                claim.claim.account_name, claim.claim.account_id
+            ),
+            ClientTokenOutcome::Accepted { claim, replay: true } => format!(
+                "ACCEPTED as a REPLAY BY THE SAME CLIENT PROCESS - the token was already spent, \
+                 and the operating system attributes this socket to the process that spent it. \
+                 Nothing was spent again. Serving account {:?} (id {})",
+                claim.claim.account_name, claim.claim.account_id
+            ),
+            ClientTokenOutcome::AlreadyUsed { account_name, used_at, used_pid } => format!(
+                "REFUSED - the client token is SPENT. It was used at {used_at} by pid {} and \
+                 named account {account_name:?}. A one-time token is not replayable by another \
+                 process, so this connection is served the FALLBACK account instead. If this \
+                 appears on a legitimate reconnect, the client is re-sending 0x0073 - which 57 \
+                 archived runs say it does not - and the fix is here, not in the launcher",
+                used_pid.map(|p| p.to_string()).unwrap_or_else(|| "<unattributed>".into())
+            ),
+            ClientTokenOutcome::Unknown => "REFUSED - the client token matches no live claim. \
+                 It was never issued, or the sign-in expired, or Login was pressed again since \
+                 the launcher wrote it. Serving the FALLBACK account: a connection that presents \
+                 a credential gets THAT claim or none, and never falls through to the weaker \
+                 rules. Sign in again through maplecw-launcher"
+                .to_string(),
+            ClientTokenOutcome::NotPresented => "no client token was carried - the 0x0073 \
+                 identity was empty, which is what every capture to date shows and what every \
+                 reconnect sends. The account stands as the weaker rules decided it"
+                .to_string(),
+        }
+    }
 }
 
 impl LiveRow {
@@ -565,6 +923,11 @@ impl Store {
         // the plain token at all.
         let token_hash = hash_token(token);
         let launch = new_token();
+        // A FRESH client token per stake, and the used markers reset with it. Same rule as the
+        // launch id: one press of Login is one launch, and the previous launch's credential
+        // stops working. Re-staking after a client has already spent its token is therefore
+        // the supported way to re-arm one.
+        let (client_token, client_token_hash) = new_client_token();
         let now = Store::now();
         // Saturating, so an absurd ttl cannot wrap the expiry into the past and produce a
         // claim that is dead the instant it is written.
@@ -597,24 +960,40 @@ impl Store {
         tx.execute("DELETE FROM login_claims WHERE expires_at <= ?1", rusqlite::params![now])?;
         tx.execute(
             "INSERT INTO login_claims
-                 (account_id, token_hash, created_at, expires_at, peer, launch_hash)
-                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 (account_id, token_hash, created_at, expires_at, peer, launch_hash,
+                  client_token_hash, client_token_used_at, client_token_used_pid)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL)
              ON CONFLICT(token_hash) DO UPDATE SET
                  account_id  = excluded.account_id,
                  created_at  = excluded.created_at,
                  expires_at  = excluded.expires_at,
                  launch_hash = excluded.launch_hash,
+                 -- The client token is REPLACED and its used markers CLEARED. A re-stake is a
+                 -- new launch: the old credential must stop working, and the new one must not
+                 -- arrive already spent - which it would if these two were left alone.
+                 client_token_hash     = excluded.client_token_hash,
+                 client_token_used_at  = NULL,
+                 client_token_used_pid = NULL,
                  -- Keep an address that was recorded before if this stake has none, and keep
                  -- launch_pid untouched: the same token is the same sign-in, so the client
                  -- process it was bound to has not changed.
                  peer        = COALESCE(excluded.peer, login_claims.peer)",
-            rusqlite::params![account_id, token_hash, now, expires_at, peer, launch.hash],
+            rusqlite::params![
+                account_id,
+                token_hash,
+                now,
+                expires_at,
+                peer,
+                launch.hash,
+                client_token_hash
+            ],
         )?;
         tx.commit()?;
 
         Ok(StakedClaim {
             claim: LoginClaim { account_id, account_name, created_at: now, expires_at },
             launch_id: launch.token,
+            client_token,
         })
     }
 
@@ -711,13 +1090,38 @@ impl Store {
             return Ok(ClaimResolution::NoClaim);
         }
 
-        // Rule 1: a credential.
+        // Rule 1a: a session token. Nothing on the wire presents one.
         if let Some(token) = evidence.token.as_deref() {
             let want = hash_token(token);
             return Ok(match live.into_iter().find(|r| r.token_hash.as_deref() == Some(&want)) {
                 Some(row) => ClaimResolution::Resolved(row.into_resolved(ResolvedBy::Token)),
                 None => ClaimResolution::NoClaim,
             });
+        }
+
+        // Rule 1b: THE CLIENT TOKEN, carried in 0x0073 by the client's own code.
+        //
+        // `return` in every arm, deliberately: a presented credential gets its claim or none.
+        // Falling through to rules 2-4 on a mismatch would make the credential worthless -
+        // an attacker would get past it by presenting a wrong one, which is strictly easier
+        // than presenting nothing. This mirrors `crate::migration`'s invariant.
+        //
+        // **This does not spend the token.** `resolve_login_claim` is a read - it is called
+        // per connection and `live_login_claims` shares its query - and a read that consumes
+        // is exactly the shape `reading_the_claim_twice_serves_the_same_account` exists to
+        // forbid. `Store::present_client_token` is the one that writes.
+        if let Some(presented) = evidence.client_token.as_deref() {
+            return Ok(
+                match judge_client_token(&live, presented, evidence.launch_pid) {
+                    Judgement::Fresh(i) | Judgement::ReplayBySameProcess(i) => {
+                        let row = live.into_iter().nth(i).expect("index came from this slice");
+                        ClaimResolution::Resolved(row.into_resolved(ResolvedBy::ClientToken))
+                    }
+                    Judgement::ReplayByAnother { .. } | Judgement::Unknown => {
+                        ClaimResolution::NoClaim
+                    }
+                },
+            );
         }
 
         // Rule 2: the process the OS attributes this connection to.
@@ -787,7 +1191,8 @@ impl Store {
         create_tables(&conn)?;
         let mut stmt = conn.prepare(
             "SELECT c.account_id, a.name, c.created_at, c.expires_at,
-                    c.token_hash, c.launch_pid, c.peer
+                    c.token_hash, c.launch_pid, c.peer, c.id,
+                    c.client_token_hash, c.client_token_used_at, c.client_token_used_pid
                FROM login_claims c
                JOIN accounts a ON a.id = c.account_id
               WHERE c.expires_at > ?1 AND a.enabled = 1
@@ -804,9 +1209,116 @@ impl Store {
                 token_hash: row.get(4)?,
                 launch_pid: row.get::<_, Option<i64>>(5)?.map(|p| p as u32),
                 peer: row.get(6)?,
+                id: row.get(7)?,
+                client_token_hash: row.get(8)?,
+                client_token_used_at: row.get(9)?,
+                client_token_used_pid: row.get::<_, Option<i64>>(10)?.map(|p| p as u32),
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// **Present the client token a connection carried in `0x0073`, and spend it.**
+    ///
+    /// The one entry point the login server calls. It resolves *and* consumes in one place,
+    /// because the alternative - resolve here, consume there - is two guards where one of them
+    /// eventually gets skipped, which is the failure `CLAUDE.md` records about the quest
+    /// payout that sat outside the match on the store's answer.
+    ///
+    /// `pid` is what the operating system says owns the far end of this socket
+    /// (`crate::peerowner::owning_pid_of`), not anything the connection asserted. Pass `None`
+    /// for an off-box peer; the effect is that a replay from it cannot be honoured.
+    ///
+    /// # What a replay does, in one place, because this is the question that decides the design
+    ///
+    /// | who presents a spent token | answer |
+    /// |---|---|
+    /// | the same client process, as the OS attributes the socket | [`ClientTokenOutcome::Accepted`] with `replay: true`. Nothing is spent again. |
+    /// | any other process, or a peer that cannot be attributed | [`ClientTokenOutcome::AlreadyUsed`] - **refused**, and the caller serves its fallback |
+    ///
+    /// The same-process allowance is not a weakening and it is not decoration. It exists
+    /// because the failure it prevents is the exact one `store::claims` was rewritten to
+    /// avoid: the client opens a **second login connection** in one launch after "Log Out" and
+    /// "Choose another world", and if a spent token refused it, the player would watch their
+    /// characters turn into somebody else's and report it as a character-deletion bug.
+    ///
+    /// **Measured, and it says that path is currently unreachable**: across 57 archived login
+    /// runs, `0x0073` occurs exactly once per run - never twice - while 7 of those runs carry
+    /// two or three `0x0080` login requests, on separate connections that send no identity at
+    /// all. So the reconnect presents nothing and is carried by rule 2 today. The allowance is
+    /// insurance against the client behaving differently once the field is non-empty, which
+    /// nobody can rule out because nobody has ever seen a non-empty one.
+    ///
+    /// It cannot be abused from elsewhere: the pid comes from the kernel's TCP table keyed by
+    /// the socket this server accepted, so another process cannot claim to be the one that
+    /// spent the token, and an off-box peer has no row in that table at all.
+    pub fn present_client_token(
+        &self,
+        presented: &str,
+        pid: Option<u32>,
+    ) -> Result<ClientTokenOutcome> {
+        let Some(presented) = normalise_client_token(presented) else {
+            return Ok(ClientTokenOutcome::NotPresented);
+        };
+        let live = self.live_rows()?;
+        Ok(match judge_client_token(&live, &presented, pid) {
+            Judgement::Unknown => ClientTokenOutcome::Unknown,
+            Judgement::ReplayByAnother { index } => {
+                let row = &live[index];
+                ClientTokenOutcome::AlreadyUsed {
+                    account_name: row.claim.account_name.clone(),
+                    used_at: row.client_token_used_at.unwrap_or_default(),
+                    used_pid: row.client_token_used_pid,
+                }
+            }
+            Judgement::ReplayBySameProcess(index) => {
+                let row = live.into_iter().nth(index).expect("index came from this slice");
+                ClientTokenOutcome::Accepted {
+                    claim: Box::new(row.into_resolved(ResolvedBy::ClientToken)),
+                    replay: true,
+                }
+            }
+            Judgement::Fresh(index) => {
+                let row = live.into_iter().nth(index).expect("index came from this slice");
+                let id = row.id;
+                // Spend it. The predicate repeats `client_token_used_at IS NULL` so two
+                // connections racing the same fresh token cannot both be told they were first:
+                // SQLite reports one row changed to exactly one of them, the same shape
+                // `migration::claim_migration_with` uses for single use.
+                let now = Store::now();
+                let conn = self.conn();
+                let spent = conn.execute(
+                    "UPDATE login_claims
+                        SET client_token_used_at = ?2, client_token_used_pid = ?3
+                      WHERE id = ?1 AND client_token_used_at IS NULL",
+                    rusqlite::params![id, now, pid],
+                )?;
+                drop(conn);
+                let claim = Box::new(row.into_resolved(ResolvedBy::ClientToken));
+                if spent == 1 {
+                    ClientTokenOutcome::Accepted { claim, replay: false }
+                } else {
+                    // The other connection won the race and spent it between the read and the
+                    // write. Re-judging is the honest answer rather than assuming: it is
+                    // `ReplayBySameProcess` if this really is the same client, and
+                    // `AlreadyUsed` if it is not.
+                    match self.live_rows()?.into_iter().find(|r| r.id == id) {
+                        Some(row) if row.client_token_used_pid == pid && pid.is_some() => {
+                            ClientTokenOutcome::Accepted {
+                                claim: Box::new(row.into_resolved(ResolvedBy::ClientToken)),
+                                replay: true,
+                            }
+                        }
+                        Some(row) => ClientTokenOutcome::AlreadyUsed {
+                            account_name: row.claim.account_name.clone(),
+                            used_at: row.client_token_used_at.unwrap_or_default(),
+                            used_pid: row.client_token_used_pid,
+                        },
+                        None => ClientTokenOutcome::Unknown,
+                    }
+                }
+            }
+        })
     }
 
     /// **Drop every claim.** Returns how many rows went.
@@ -1697,6 +2209,510 @@ mod tests {
         }
         assert_eq!(claim_rows(&store), 2, "one row per distinct token hash survived");
         assert_eq!(store.live_login_claims().unwrap().len(), 2);
+    }
+
+    // ------------------------------------------------------------------------------------
+    // THE CLIENT TOKEN. Rule 1b - the first credential in this project that travels on the
+    // wire rather than being inferred from a socket.
+    // ------------------------------------------------------------------------------------
+
+    /// **The encoder, against RFC 4648's own vectors.**
+    ///
+    /// `CLAUDE.md`: *"A constant that came from reading a header is a claim, not a fact."* The
+    /// same goes for an alphabet typed out of a spec. These are the published test vectors,
+    /// with the `=` padding dropped because this encoder emits none - so the assertion is
+    /// against something that can disagree, not against the code's own behaviour.
+    #[test]
+    fn the_base32_encoder_matches_the_rfc4648_vectors() {
+        for (input, want) in [
+            ("", ""),
+            ("f", "MY"),
+            ("fo", "MZXQ"),
+            ("foo", "MZXW6"),
+            ("foob", "MZXW6YQ"),
+            ("fooba", "MZXW6YTB"),
+            ("foobar", "MZXW6YTBOI"),
+        ] {
+            assert_eq!(base32_encode(input.as_bytes()), want, "input {input:?}");
+        }
+    }
+
+    /// The length constant is the thing most likely to sink this - the client-side cap on the
+    /// `0x0073` identity string is unmeasured. Pin what the server will emit, in characters,
+    /// and pin the alphabet: uppercase `A-Z2-7` only, so an upper-casing transform anywhere on
+    /// the path cannot break the comparison.
+    #[test]
+    fn a_client_token_is_26_uppercase_base32_characters() {
+        for _ in 0..64 {
+            let (token, hash) = new_client_token();
+            assert_eq!(token.len(), CLIENT_TOKEN_CHARS, "{token:?}");
+            assert_eq!(token.len(), 26, "the constant itself, spelled out");
+            assert!(
+                token.bytes().all(|b| b.is_ascii_uppercase() || (b'2'..=b'7').contains(&b)),
+                "a character outside A-Z2-7 got out: {token:?}"
+            );
+            assert_eq!(token.to_uppercase(), token, "upper-casing must be a no-op");
+            assert_eq!(hash, hash_token(&token));
+            assert_eq!(normalise_client_token(&token).as_deref(), Some(token.as_str()));
+        }
+    }
+
+    /// **The cross-crate constraint, asserted rather than described.**
+    ///
+    /// The hook (`grap_stub::identity::validate`) refuses any identity byte outside
+    /// `0x21..=0x7e`, and it refuses for a real reason: the client re-derives the identity's
+    /// length with a `strlen` loop, so an embedded NUL truncates the credential silently and a
+    /// leading one sends nothing - both indistinguishable on the wire from the hook never
+    /// having run.
+    ///
+    /// The two crates cannot share the constant (`store` does not depend on `grap-stub`, and
+    /// should not), so the coupling is a **test on the mint** instead of a comment claiming it
+    /// holds. If anybody widens the alphabet, this fails here rather than as an empty identity
+    /// in a client run that costs the owner a manual launch.
+    #[test]
+    fn a_client_token_is_within_the_byte_set_the_client_can_carry() {
+        for _ in 0..256 {
+            let (token, _) = new_client_token();
+            assert!(!token.is_empty(), "a leading NUL / empty identity sends nothing at all");
+            for (at, byte) in token.bytes().enumerate() {
+                assert!(
+                    (0x21..=0x7e).contains(&byte),
+                    "byte {at} of {token:?} is {byte:#04x}; grap_stub::identity::validate \
+                     refuses anything outside 0x21..=0x7e"
+                );
+                assert_ne!(byte, 0, "a NUL truncates the credential with no error anywhere");
+                assert!(!byte.is_ascii_whitespace(), "normalise_client_token would trim it");
+            }
+            // And the server's own normaliser is a no-op on it, so what the hook writes and
+            // what the server hashes are the same string.
+            assert_eq!(normalise_client_token(&token).as_deref(), Some(token.as_str()));
+        }
+    }
+
+    /// Two mints are two different tokens. A blank or constant token would make every
+    /// assertion in this block pass while the credential proved nothing.
+    #[test]
+    fn two_stakes_mint_two_different_client_tokens() {
+        let (store, wisp, other) = store_with_accounts();
+        let a = login(&store, "wisp");
+        let b = login(&store, "wisp_alt");
+        let first = store.stake_login_claim_with(wisp, &a, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        let second = store.stake_login_claim_with(other, &b, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert_ne!(first.client_token, second.client_token);
+        assert_ne!(first.client_token, first.launch_id, "and it is not the launch handle");
+    }
+
+    /// **The raw client token is never in the database**, and what IS there is its SHA-256 -
+    /// the standing constraint, asserted rather than trusted. The whole row is dumped as text
+    /// so a second column holding the plain value could not pass.
+    #[test]
+    fn the_client_token_is_stored_only_as_a_hash() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert!(!staked.client_token.is_empty(), "a blank token makes this vacuous");
+
+        let stored: String = store
+            .conn()
+            .query_row("SELECT client_token_hash FROM login_claims", [], |r| r.get(0))
+            .unwrap();
+        assert_ne!(stored, staked.client_token);
+        assert_eq!(stored, hash_token(&staked.client_token));
+
+        let dump: String = store
+            .conn()
+            .query_row(
+                "SELECT COALESCE(account_id,'')||'|'||COALESCE(token_hash,'')||'|'||
+                        COALESCE(created_at,'')||'|'||COALESCE(expires_at,'')||'|'||
+                        COALESCE(launch_pid,'')||'|'||COALESCE(peer,'')||'|'||
+                        COALESCE(launch_hash,'')||'|'||COALESCE(client_token_hash,'')||'|'||
+                        COALESCE(client_token_used_at,'')||'|'||COALESCE(client_token_used_pid,'')
+                   FROM login_claims",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!dump.contains(&staked.client_token), "the token is somewhere in the row: {dump}");
+        // And `{:?}` - the way a secret usually reaches a log - is redacted.
+        let debug = format!("{staked:?}");
+        assert!(!debug.contains(&staked.client_token), "it leaked into Debug: {debug}");
+    }
+
+    /// **The headline.** Two launches on one address, each carrying its own client token in
+    /// `0x0073`, each served its own account - by a credential rather than by inference.
+    #[test]
+    fn two_client_tokens_resolve_two_launches_on_one_address() {
+        let (store, wisp, other) = store_with_accounts();
+        let a = login(&store, "wisp");
+        let b = login(&store, "wisp_alt");
+        let first =
+            store.stake_login_claim_with(wisp, &a, LOGIN_CLAIM_TTL_SECS, Some("127.0.0.1")).unwrap();
+        let second = store
+            .stake_login_claim_with(other, &b, LOGIN_CLAIM_TTL_SECS, Some("127.0.0.1"))
+            .unwrap();
+
+        for (token, want) in [(&first.client_token, wisp), (&second.client_token, other)] {
+            let r = store
+                .resolve_login_claim(
+                    &ClaimEvidence::with_client_token(token).from_peer("127.0.0.1"),
+                )
+                .unwrap();
+            let resolved = r.resolved().unwrap_or_else(|| panic!("{}", r.why()));
+            assert_eq!(resolved.claim.account_id, want, "{}", r.why());
+            assert_eq!(resolved.how, ResolvedBy::ClientToken);
+        }
+    }
+
+    /// **The anti-downgrade rule.** A presented-and-wrong client token gets nothing - it must
+    /// not fall through to "there was only one claim", or an attacker would get past the
+    /// credential by supplying a wrong one, which is easier than supplying none.
+    ///
+    /// The control is the point: presenting nothing DOES reach the sole claim on the same
+    /// store, so the refusal below is about the token and not about an empty table.
+    #[test]
+    fn a_wrong_client_token_refuses_rather_than_falling_through_to_the_sole_claim() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        store.stake_login_claim(wisp, &token, LOGIN_CLAIM_TTL_SECS).unwrap();
+
+        assert_eq!(
+            store
+                .resolve_login_claim(&ClaimEvidence::none())
+                .unwrap()
+                .resolved()
+                .expect("THE CONTROL: silence still reaches the sole claim")
+                .claim
+                .account_id,
+            wisp
+        );
+        assert_eq!(
+            store
+                .resolve_login_claim(&ClaimEvidence::with_client_token("AAAAAAAAAAAAAAAAAAAAAAAAAA"))
+                .unwrap(),
+            ClaimResolution::NoClaim,
+            "a wrong credential must buy strictly LESS than presenting nothing"
+        );
+        // And it cannot be laundered through the weaker rules by adding them to the evidence.
+        assert_eq!(
+            store
+                .resolve_login_claim(
+                    &ClaimEvidence::with_client_token("AAAAAAAAAAAAAAAAAAAAAAAAAA")
+                        .from_peer("127.0.0.1")
+                        .and_launch_pid(Some(4242))
+                )
+                .unwrap(),
+            ClaimResolution::NoClaim
+        );
+    }
+
+    /// **The compatibility hinge.** All 72 captured `0x0073` bodies carry a zero-length
+    /// identity, because the setter has no callers. An empty identity must therefore be
+    /// "presented nothing" and reach the weaker rules - if it counted as a presentation, every
+    /// stock client would be refused on the first packet it sends and every player would drop
+    /// to the fallback account.
+    #[test]
+    fn an_empty_identity_is_not_a_presentation() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        store.stake_login_claim(wisp, &token, LOGIN_CLAIM_TTL_SECS).unwrap();
+
+        for empty in ["", "   ", "\0", "\0\0  \t"] {
+            assert_eq!(normalise_client_token(empty), None, "{empty:?}");
+            let ev = ClaimEvidence::with_client_token(empty);
+            assert!(ev.client_token.is_none(), "{empty:?} must land as None");
+            assert!(ev.is_empty(), "and must not count as evidence");
+            let r = store.resolve_login_claim(&ev).unwrap();
+            assert_eq!(
+                r.resolved().unwrap_or_else(|| panic!("{empty:?}: {}", r.why())).how,
+                ResolvedBy::SoleLiveClaim,
+                "an empty identity must reach the weaker rules, not refuse"
+            );
+            assert_eq!(
+                store.present_client_token(empty, Some(1)).unwrap(),
+                ClientTokenOutcome::NotPresented
+            );
+        }
+        // A token with a trailing NUL - what a fixed-size hook buffer produces - is the SAME
+        // credential, not a different one.
+        let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        let padded = format!("{}\0\0", staked.client_token);
+        assert_eq!(
+            normalise_client_token(&padded).as_deref(),
+            Some(staked.client_token.as_str())
+        );
+        assert_eq!(
+            store
+                .resolve_login_claim(&ClaimEvidence::with_client_token(&padded))
+                .unwrap()
+                .resolved()
+                .expect("a NUL-padded token is the same token")
+                .how,
+            ResolvedBy::ClientToken
+        );
+    }
+
+    /// **One-time use.** The first presentation is accepted and spends the token; a second
+    /// process presenting it is refused, and the refusal names what happened.
+    #[test]
+    fn presenting_the_token_spends_it_and_another_process_is_refused() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+
+        let first = store.present_client_token(&staked.client_token, Some(1111)).unwrap();
+        match &first {
+            ClientTokenOutcome::Accepted { claim, replay } => {
+                assert_eq!(claim.claim.account_id, wisp);
+                assert_eq!(claim.how, ResolvedBy::ClientToken);
+                assert!(!replay, "the first presentation is not a replay");
+            }
+            other => panic!("the first presentation must be accepted: {other:?}"),
+        }
+        assert!(!first.is_refusal());
+        assert!(first.why().contains("SPENT"), "{}", first.why());
+
+        // The database says it is spent, and by whom.
+        let (used_at, used_pid): (Option<i64>, Option<i64>) = store
+            .conn()
+            .query_row(
+                "SELECT client_token_used_at, client_token_used_pid FROM login_claims",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(used_at.is_some(), "the spend was not recorded");
+        assert_eq!(used_pid, Some(1111));
+
+        // A DIFFERENT process replaying it is refused.
+        let replayed = store.present_client_token(&staked.client_token, Some(2222)).unwrap();
+        assert!(replayed.is_refusal(), "{replayed:?}");
+        assert!(
+            matches!(&replayed, ClientTokenOutcome::AlreadyUsed { account_name, used_pid, .. }
+                     if account_name == "wisp" && *used_pid == Some(1111)),
+            "{replayed:?}"
+        );
+        assert!(replayed.why().contains("SPENT"), "{}", replayed.why());
+        // And the read path refuses it too, rather than falling through.
+        assert_eq!(
+            store
+                .resolve_login_claim(
+                    &ClaimEvidence::with_client_token(&staked.client_token)
+                        .and_launch_pid(Some(2222))
+                )
+                .unwrap(),
+            ClaimResolution::NoClaim
+        );
+        // The CLAIM itself is untouched: spending a token must not evict a live claim.
+        assert_eq!(claim_rows(&store), 1);
+        assert_eq!(store.current_login_claim().unwrap().unwrap().account_id, wisp);
+    }
+
+    /// **The reconnect insurance.** The client opens a second login connection in one launch
+    /// ("Log Out", "Choose another world"). Measured over 57 archived runs it sends no
+    /// `0x0073` on that connection - but nobody has ever seen a run with a NON-EMPTY identity,
+    /// so if it ever does, the same client process must not be refused. Refusing it would read
+    /// on screen as "my characters vanished when I logged out".
+    #[test]
+    fn the_same_client_process_may_present_a_spent_token_again() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+
+        assert!(!store
+            .present_client_token(&staked.client_token, Some(4242))
+            .unwrap()
+            .is_refusal());
+        let again = store.present_client_token(&staked.client_token, Some(4242)).unwrap();
+        match &again {
+            ClientTokenOutcome::Accepted { claim, replay } => {
+                assert_eq!(claim.claim.account_id, wisp);
+                assert!(replay, "it is a replay, and the log line has to say so");
+            }
+            other => panic!("the same process must not be refused: {other:?}"),
+        }
+        assert!(again.why().contains("SAME CLIENT PROCESS"), "{}", again.why());
+    }
+
+    /// A peer this server cannot attribute to a process - anything off-box - cannot replay a
+    /// spent token. The allowance above is keyed on a fact the OS supplies; with no such fact
+    /// there is nothing to key on and the conservative answer is a refusal.
+    #[test]
+    fn an_unattributable_peer_cannot_replay_a_spent_token() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+
+        // Spent by a connection that could not be attributed either.
+        assert!(!store.present_client_token(&staked.client_token, None).unwrap().is_refusal());
+        let again = store.present_client_token(&staked.client_token, None).unwrap();
+        assert!(again.is_refusal(), "two unattributable connections are not known to be one");
+        assert!(matches!(again, ClientTokenOutcome::AlreadyUsed { used_pid: None, .. }));
+    }
+
+    /// A token nobody issued is refused and says so differently from a spent one - the two
+    /// have different fixes and collapsing them loses the only sentence worth logging.
+    #[test]
+    fn an_unissued_client_token_is_unknown_rather_than_spent() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        store.stake_login_claim(wisp, &token, LOGIN_CLAIM_TTL_SECS).unwrap();
+        let out = store.present_client_token("ZZZZZZZZZZZZZZZZZZZZZZZZZZ", Some(1)).unwrap();
+        assert_eq!(out, ClientTokenOutcome::Unknown);
+        assert!(out.is_refusal());
+        assert!(out.why().contains("matches no live claim"), "{}", out.why());
+    }
+
+    /// Re-staking is a new launch: a fresh token, the old one dead, and the spent markers
+    /// cleared so the new one does not arrive already used. That last clause is the whole
+    /// reason the `ON CONFLICT` sets them to NULL explicitly.
+    #[test]
+    fn re_staking_mints_a_fresh_client_token_and_clears_the_spent_marker() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        let old = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert!(!store.present_client_token(&old.client_token, Some(7)).unwrap().is_refusal());
+
+        let new = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert_ne!(old.client_token, new.client_token);
+        assert_eq!(claim_rows(&store), 1, "a re-stake refreshes one row");
+
+        // The old one is dead...
+        assert_eq!(
+            store.present_client_token(&old.client_token, Some(7)).unwrap(),
+            ClientTokenOutcome::Unknown,
+            "the previous launch's credential must stop working"
+        );
+        // ...and the new one is fresh, not inherited-as-spent.
+        let out = store.present_client_token(&new.client_token, Some(7)).unwrap();
+        assert!(
+            matches!(out, ClientTokenOutcome::Accepted { replay: false, .. }),
+            "a re-stake must not hand back an already-spent token: {out:?}"
+        );
+    }
+
+    /// Expiry and disabling apply to the credential exactly as they do to every weaker rule.
+    /// A credential that outlives the claim it belongs to would be a way past `set_enabled`.
+    #[test]
+    fn a_client_token_cannot_outlive_its_claim() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+
+        let dead = store.stake_login_claim_with(wisp, &token, -60, None).unwrap();
+        assert_eq!(
+            store.present_client_token(&dead.client_token, Some(1)).unwrap(),
+            ClientTokenOutcome::Unknown,
+            "an expired claim's token is not a credential"
+        );
+
+        let live = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        // The control: it works while the claim is live, so the refusals here are about state
+        // and not about the token being wrong.
+        assert!(!store.present_client_token(&live.client_token, Some(1)).unwrap().is_refusal());
+
+        let again = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        store.set_enabled("wisp", false).unwrap();
+        assert_eq!(
+            store.present_client_token(&again.client_token, Some(1)).unwrap(),
+            ClientTokenOutcome::Unknown,
+            "disabling an account must not be bypassable with a client token"
+        );
+        assert_eq!(
+            store
+                .resolve_login_claim(&ClaimEvidence::with_client_token(&again.client_token))
+                .unwrap(),
+            ClaimResolution::NoClaim
+        );
+    }
+
+    /// **The owner's `maplecw.db`.** A `login_claims` written before these columns existed must gain
+    /// them, keep its rows, and stay resolvable - and its rows must read as "no client token"
+    /// rather than matching one. An `Err` on the read path would make the login server answer
+    /// nothing, which freezes the client's whole UI.
+    #[test]
+    fn a_database_without_the_client_token_columns_is_upgraded_without_losing_rows() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        store.stake_login_claim(wisp, &token, LOGIN_CLAIM_TTL_SECS).unwrap();
+        {
+            let conn = store.conn();
+            conn.execute("DROP INDEX IF EXISTS idx_login_claims_client_token", []).unwrap();
+            for column in ["client_token_hash", "client_token_used_at", "client_token_used_pid"] {
+                conn.execute(&format!("ALTER TABLE login_claims DROP COLUMN {column}"), [])
+                    .unwrap();
+            }
+            let n: i64 =
+                conn.query_row("SELECT COUNT(*) FROM login_claims", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1, "the row must survive the downgrade or this proves nothing");
+        }
+
+        // The read path ensures the columns itself.
+        let live = store.current_login_claim().unwrap().expect("the old row is still served");
+        assert_eq!(live.account_id, wisp);
+        assert_eq!(claim_rows(&store), 1);
+        // A pre-upgrade row has no client token, so none can match it - and presenting one is
+        // still a refusal rather than a fall-through to the sole claim.
+        assert_eq!(
+            store.present_client_token("AAAAAAAAAAAAAAAAAAAAAAAAAA", Some(1)).unwrap(),
+            ClientTokenOutcome::Unknown
+        );
+        assert_eq!(
+            store
+                .resolve_login_claim(&ClaimEvidence::with_client_token("AAAAAAAAAAAAAAAAAAAAAAAAAA"))
+                .unwrap(),
+            ClaimResolution::NoClaim
+        );
+        // And a fresh stake on the upgraded table mints a working one.
+        let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert!(!store.present_client_token(&staked.client_token, Some(9)).unwrap().is_refusal());
+    }
+
+    /// The credential outranks the weaker rules: with a client token presented, a pid bound to
+    /// a DIFFERENT claim must not win. Otherwise rule 1b would be advisory.
+    #[test]
+    fn the_client_token_outranks_the_process_and_the_address() {
+        let (store, wisp, other) = store_with_accounts();
+        let a = login(&store, "wisp");
+        let b = login(&store, "wisp_alt");
+        let first =
+            store.stake_login_claim_with(wisp, &a, LOGIN_CLAIM_TTL_SECS, Some("10.0.0.1")).unwrap();
+        store.stake_login_claim_with(other, &b, LOGIN_CLAIM_TTL_SECS, Some("10.0.0.2")).unwrap();
+        store.bind_launch_pid_by_token(&b, 5555).unwrap();
+
+        // The control: that pid alone resolves to the OTHER account.
+        assert_eq!(
+            store
+                .resolve_login_claim(&ClaimEvidence::with_launch_pid(5555))
+                .unwrap()
+                .resolved()
+                .unwrap()
+                .claim
+                .account_id,
+            other
+        );
+        // With wisp's client token presented, wisp wins - by credential, over both weaker rules.
+        let r = store
+            .resolve_login_claim(
+                &ClaimEvidence::with_client_token(&first.client_token)
+                    .from_peer("10.0.0.2")
+                    .and_launch_pid(Some(5555)),
+            )
+            .unwrap();
+        let resolved = r.resolved().unwrap_or_else(|| panic!("{}", r.why()));
+        assert_eq!(resolved.claim.account_id, wisp, "{}", r.why());
+        assert_eq!(resolved.how, ResolvedBy::ClientToken);
+    }
+
+    /// A resolved-by-client-token claim still carries the `token_hash` a migration binds to.
+    /// Without this the credential would identify the account and then fail to protect the
+    /// hand-off to the channel, which is the half that is still open.
+    #[test]
+    fn a_claim_resolved_by_client_token_still_carries_its_binding_hash() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+        let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        let out = store.present_client_token(&staked.client_token, Some(3)).unwrap();
+        let ClientTokenOutcome::Accepted { claim, .. } = out else { panic!("{out:?}") };
+        assert_eq!(claim.token_hash.as_deref(), Some(hash_token(&token).as_str()));
     }
 
     /// A row staked before `token_hash` existed reads as `None` rather than matching anything.

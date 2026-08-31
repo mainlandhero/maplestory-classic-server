@@ -196,6 +196,10 @@ impl LauncherApp {
         // starts. `Start Game` is gated on a successful sign-in, so this is `Some` in every
         // path a person can reach - and `prepare` says so out loud if it ever is not.
         let launch_id = self.signed_in.as_ref().and_then(|s| s.launch_id()).cloned();
+        // And the credential the CLIENT will carry. `None` when the server issued none, which
+        // `prepare` turns into a deletion rather than an empty file - a stale token is refused
+        // by the login server, not ignored, so leaving one behind is worse than having none.
+        let client_token = self.signed_in.as_ref().and_then(|s| s.client_token()).cloned();
 
         self.launching = true;
         self.status = Some((Level::Info, "preparing the client…".into()));
@@ -206,8 +210,13 @@ impl LauncherApp {
                 let _ = tx.send(Msg::Log(level, text));
                 ctx.request_repaint();
             };
-            let result =
-                prepare::prepare_and_launch(&layout, &plan, launch_id.as_ref(), &mut emit);
+            let result = prepare::prepare_and_launch(
+                &layout,
+                &plan,
+                launch_id.as_ref(),
+                client_token.as_ref(),
+                &mut emit,
+            );
             let _ = tx.send(Msg::LaunchFinished(result));
             ctx.request_repaint();
         });

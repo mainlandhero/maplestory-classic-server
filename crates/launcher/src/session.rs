@@ -16,7 +16,7 @@
 //! byte-identical to a run without them. Passing them also broke the run with a "trouble
 //! connecting" dialog, which is why [`crate::app`] passes exactly three arguments.
 
-use crate::http::{self, AuthReply, LaunchId};
+use crate::http::{self, AuthReply, ClientToken, LaunchId};
 
 /// The result of a sign-in attempt, in the shape the UI needs.
 ///
@@ -36,6 +36,18 @@ pub enum SignIn {
         /// only because `crate::prepare` needs it the instant the client starts, and it is
         /// redacted in `Debug` so it cannot reach the log pane by accident.
         launch_id: LaunchId,
+        /// **The credential the client itself will carry.**
+        ///
+        /// This is the one that changes the shape of the thing. `launch_id` lets *this
+        /// program* tell the server which process it started - the server still has to infer
+        /// which socket that process owns. The client token is written beside the client, put
+        /// into the client's own session object by the hook, and sent by the client in
+        /// `0x0073`. The server then matches a claim the connection **made** rather than one
+        /// it deduced.
+        ///
+        /// Empty on a server that predates it. See [`SignIn::client_token`] for why an empty
+        /// one must produce no marker rather than an empty marker.
+        client_token: ClientToken,
     },
     /// Wrong password, or no such account. **One outcome, on purpose.**
     BadCredentials,
@@ -53,10 +65,20 @@ impl SignIn {
     /// The line shown under the buttons.
     pub fn message(&self) -> String {
         match self {
-            SignIn::Ok { account_id, identity, ttl_secs, launch_id } => format!(
+            SignIn::Ok { account_id, identity, ttl_secs, launch_id, client_token } => format!(
                 "signed in as {identity} (account {account_id}). This launch will be served as \
-                 this account; the claim lasts {}.{}",
+                 this account; the claim lasts {}.{}{}",
                 human_duration(*ttl_secs),
+                // Said at sign-in because it decides what the launch step will do, and because
+                // "the client carries a credential" and "the server infers whose socket this
+                // is" are genuinely different states worth telling apart on screen.
+                if client_token.is_empty() {
+                    " This server issued no client token, so the client will carry no \
+                     credential and the connection will be attributed the way it always has \
+                     been - by the process that owns it."
+                } else {
+                    " The client will carry a one-time credential of its own."
+                },
                 // Said here rather than only at the launch step, because it is the earliest
                 // point at which it is known and it changes what a second sign-in on this
                 // machine will do.
@@ -89,6 +111,22 @@ impl SignIn {
             _ => None,
         }
     }
+
+    /// The token the client is to carry, or `None` when there is not one.
+    ///
+    /// **An empty token is `None`, not an empty string, and that distinction is the whole
+    /// safety property here.** `crate::client::write_identity_marker` deletes any stale marker
+    /// when it is handed `None`; handing it `Some("")` would write an empty file. A stale
+    /// token is strictly worse than no token: the login server's anti-downgrade rule gives a
+    /// connection that presents a credential *that claim or none*, so a token from a previous
+    /// launch would drop this one to the fallback account rather than letting the weaker rules
+    /// serve it correctly.
+    pub fn client_token(&self) -> Option<&ClientToken> {
+        match self {
+            SignIn::Ok { client_token, .. } if !client_token.is_empty() => Some(client_token),
+            _ => None,
+        }
+    }
 }
 
 /// Sign in against the server's auth service.
@@ -105,11 +143,12 @@ pub fn sign_in(host: &str, auth_port: u16, identity: &str, password: &str) -> Si
         return SignIn::BadCredentials;
     }
     match http::login(host, auth_port, identity, password) {
-        AuthReply::Ok { account_id, launch_id, .. } => SignIn::Ok {
+        AuthReply::Ok { account_id, launch_id, client_token, .. } => SignIn::Ok {
             account_id,
             identity: identity.to_string(),
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
             launch_id,
+            client_token,
         },
         AuthReply::InvalidCredentials => SignIn::BadCredentials,
         AuthReply::Disabled => SignIn::Disabled,
@@ -163,6 +202,7 @@ mod tests {
             identity: identity.into(),
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
             launch_id: LaunchId::new("a-launch-handle"),
+            client_token: ClientToken::new("MFRGGZDFMZTWQ2LKNNWG23TP2A"),
         }
     }
 
@@ -186,10 +226,40 @@ mod tests {
             identity: "tester".into(),
             ttl_secs: LOGIN_CLAIM_TTL_SECS,
             launch_id: LaunchId::new(""),
+            client_token: ClientToken::new("MFRGGZDFMZTWQ2LKNNWG23TP2A"),
         }
         .message();
         assert!(msg.contains("cannot be registered"), "{msg}");
         assert!(msg.contains("fall back"), "{msg}");
+    }
+
+    /// **An empty client token must not become `Some("")`.** `write_identity_marker` deletes a
+    /// stale marker when handed `None` and writes a file when handed `Some` - so getting this
+    /// wrong writes an empty credential, which the login server's anti-downgrade rule would
+    /// treat as no credential, but which would also mean a *previous* launch's marker was
+    /// overwritten with nothing rather than removed. Neither is the intent.
+    #[test]
+    fn an_empty_client_token_is_none_and_says_so_on_screen() {
+        let s = SignIn::Ok {
+            account_id: 2,
+            identity: "tester".into(),
+            ttl_secs: LOGIN_CLAIM_TTL_SECS,
+            launch_id: LaunchId::new("h"),
+            client_token: ClientToken::new(""),
+        };
+        assert!(s.client_token().is_none());
+        let msg = s.message();
+        assert!(msg.contains("no client token"), "{msg}");
+        assert!(msg.contains("by the process that owns it"), "{msg}");
+
+        // And the ordinary case carries it out, or nothing downstream can write the marker.
+        let ok = signed_in("t");
+        assert_eq!(ok.client_token().map(|t| t.as_str()), Some("MFRGGZDFMZTWQ2LKNNWG23TP2A"));
+        assert!(ok.message().contains("one-time credential of its own"), "{}", ok.message());
+        // The refusals carry none, for the same reason they carry no launch handle.
+        assert!(SignIn::BadCredentials.client_token().is_none());
+        assert!(SignIn::Disabled.client_token().is_none());
+        assert!(SignIn::Unreachable("nope".into()).client_token().is_none());
     }
 
     /// The handle has to be reachable, or `prepare` cannot register the launch and the whole
@@ -222,26 +292,35 @@ mod tests {
     }
 
     #[test]
-    fn no_message_ever_mentions_a_token() {
-        // The token never reaches this machine now - the service stakes the claim itself -
-        // but the assertion stays, because a secret that cannot be printed is worth pinning.
+    fn no_message_ever_carries_a_secret() {
+        // **This used to assert the word "token" never appeared at all**, which was a good
+        // proxy while no secret on this side had a name worth printing. It cannot stay: the
+        // success message now has to say whether the client will carry a credential, because
+        // "the client presented a token" and "the server worked out whose socket this is" are
+        // different states and only one of them is what the owner asked for. So the assertion is on
+        // the *values* instead - which is what it was always standing in for.
         for s in [
             SignIn::Ok {
                 account_id: 1,
                 identity: "wisp".into(),
                 ttl_secs: 3600,
                 launch_id: LaunchId::new("SECRET-HANDLE"),
+                client_token: ClientToken::new("SECRET-CLIENT-TOKEN"),
             },
             SignIn::BadCredentials,
             SignIn::Disabled,
             SignIn::Unreachable("nope".into()),
         ] {
-            assert!(!s.message().to_ascii_lowercase().contains("token"), "{:?}", s);
             // The launch handle is the new secret on this side and must not reach the log
             // pane either - not through the message, and not through the `{:?}` that a
             // panic message like this one would print.
             assert!(!s.message().contains("SECRET-HANDLE"), "{:?}", s);
             assert!(!format!("{s:?}").contains("SECRET-HANDLE"), "{s:?}");
+            // Same for the credential the client carries. This one really does leave the
+            // process - it is written to a file - so the assertion is about the *screen*,
+            // which is where a secret gets read over somebody's shoulder or pasted into chat.
+            assert!(!s.message().contains("SECRET-CLIENT-TOKEN"), "{:?}", s);
+            assert!(!format!("{s:?}").contains("SECRET-CLIENT-TOKEN"), "{s:?}");
         }
     }
 

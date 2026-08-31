@@ -166,6 +166,20 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     log("  connects is served as whichever account the claim or the fallback names.");
     log("  The launcher checks a password before staking a claim; this socket does not.");
     log("  See docs/launcher.md.");
+    log("CLIENT TOKEN (0x0073): this server now READS the identity string the client carries");
+    log("  and resolves the account from it - a credential on the wire instead of an");
+    log("  inference about a socket. Every 0x0073 is logged with its length, so a run says");
+    log("  whether the client carried anything at all.");
+    log(&format!(
+        "  A MapleCW token is {} characters of uppercase base32. An EMPTY identity is what",
+        store::claims::CLIENT_TOKEN_CHARS
+    ));
+    log("  every capture before 2026-08-29 carried and what every reconnect sends - it is not");
+    log("  a refusal, and the weaker rules still decide. A WRONG or SPENT one downgrades the");
+    log("  connection to the fallback account, because a credential that can be skipped by");
+    log("  presenting a bad one is not a credential.");
+    log("  This authenticates the LOGIN socket only. 0x0073 has never appeared on a channel");
+    log("  connection, so the game socket is unchanged.");
     if config.bind_migrations {
         log("MIGRATION BINDING IS ON. Every migration is bound to the live login claim's");
         log("  session token and CANNOT be claimed by a connection that presents none.");
@@ -216,6 +230,11 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                         // to `..Default::default()` so the sentence sits in the code that
                         // would have to change if it ever stopped being true.
                         token: None,
+                        // Nor does the socket, AT THIS POINT. The client's own credential
+                        // arrives ~9 s later in `0x0073` - measured, and the accept path has
+                        // no packet yet - so it is presented in `Session::on_session_identity`
+                        // and cannot be part of the accept-time decision.
+                        client_token: None,
                         launch_pid,
                         // A tie-breaker between MACHINES and never the discriminator: two
                         // clients on one box share it. The owner, 2026-08-29: "IP cannot be the
@@ -225,10 +244,24 @@ pub fn serve(config: Config) -> std::io::Result<()> {
 
                     // Resolved HERE, per connection, not once at startup - that is what lets
                     // the launcher decide who is playing without restarting the server.
-                    let (account, why, claim_token_hash) =
+                    let (resolved, why, claim_token_hash) =
                         resolve_account(&store, &account, &evidence);
                     log(&format!("{peer} served as {why}"));
-                    match connection(stream, store, config, account, claim_token_hash) {
+                    log(&format!(
+                        "{peer} that decision is PROVISIONAL: if this client carries a one-time \
+                         token in 0x0073, it overrides the above - and if it carries a wrong one \
+                         this connection is downgraded to the fallback {:?}",
+                        account.name
+                    ));
+                    match connection(
+                        stream,
+                        store,
+                        config,
+                        resolved,
+                        account,
+                        claim_token_hash,
+                        launch_pid,
+                    ) {
                         Ok(()) => log(&format!("{peer} closed")),
                         Err(e) => log(&format!("{peer} ended: {e}")),
                     }
@@ -331,7 +364,9 @@ fn connection(
     store: Arc<Store>,
     config: Arc<Config>,
     account: Account,
+    fallback: Account,
     claim_token_hash: Option<String>,
+    launch_pid: Option<u32>,
 ) -> std::io::Result<()> {
     stream.set_nodelay(true)?;
 
@@ -354,7 +389,16 @@ fn connection(
     };
     // The claim THIS connection resolved to, not whichever is newest. See the note on
     // `Session::with_claim_token_hash`.
-    let mut session = session.with_claim_token_hash(claim_token_hash);
+    //
+    // The fallback and the pid are here for `0x0073`: the client's own credential arrives
+    // mid-connection, so the session needs to be able to re-resolve the account when it does -
+    // upwards to the claim the token names, or **downwards** to the fallback when the token is
+    // refused. The pid is what lets the same client process re-present a spent token; it comes
+    // from the OS's TCP table at accept time, never from the client.
+    let mut session = session
+        .with_claim_token_hash(claim_token_hash)
+        .with_fallback(fallback)
+        .with_launch_pid(launch_pid);
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
     }
@@ -405,6 +449,13 @@ fn connection(
             }
 
             let replies = session.handle(&body);
+            // Drained BEFORE the replies go out, because `0x0073`'s notes explain which
+            // account the very next packet's character list belongs to. A handler that
+            // produces no reply produces no `Reply::what` line, and `0x0073` deliberately
+            // produces no reply - without this its whole decision would be invisible.
+            for note in session.take_notes() {
+                log(&format!("   {note}"));
+            }
             if replies.is_empty() {
                 log(&format!(
                     "   {} is not answered by this server{}",

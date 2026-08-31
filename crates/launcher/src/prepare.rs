@@ -10,7 +10,8 @@
 //! 4. make sure the crash-dump directory exists;
 //! 5. **archive** the previous `maplecw-hook.log` - never delete it;
 //! 6. write the hook's four marker files;
-//! 7. `ShellExecuteW` the client with `-NXLDEBUG <ip> <port>`.
+//! 7. write **or delete** the client-credential marker;
+//! 8. `ShellExecuteW` the client with `-NXLDEBUG <ip> <port>`.
 
 use std::path::Path;
 
@@ -48,7 +49,14 @@ pub fn launch_args(plan: &Plan) -> Vec<String> {
 
 /// Everything except starting the client. Split out so it can be tested against a temp
 /// directory without launching anything.
-pub fn prepare(layout: &Layout, log: &mut dyn FnMut(Level, String)) -> Result<(), String> {
+///
+/// `client_token` is this launch's one-time credential, or `None`. **`None` deletes any marker
+/// a previous launch left**, which is not tidiness: see [`client::write_identity_marker`].
+pub fn prepare(
+    layout: &Layout,
+    client_token: Option<&str>,
+    log: &mut dyn FnMut(Level, String),
+) -> Result<(), String> {
     let client_dir = &layout.client_dir;
 
     log(Level::Info, format!("paths from: {}", layout.source.label()));
@@ -108,6 +116,25 @@ pub fn prepare(layout: &Layout, log: &mut dyn FnMut(Level, String)) -> Result<()
         log(level, step);
     }
 
+    // 7. The credential the client itself will carry, or the removal of the last one. Kept out
+    //    of `write_markers` because the other four are fixed strings that say how to debug and
+    //    this one is a secret whose absence has to delete a file.
+    for step in client::write_identity_marker(client_dir, client_token)? {
+        log(Level::Good, step);
+    }
+    if client_token.is_none() {
+        // Not silent. This is the difference between "the client presents a credential" and
+        // "the server works out whose socket this is", and on a machine where nobody else is
+        // signed in the two look identical - which is exactly how it would go unnoticed.
+        log(
+            Level::Warn,
+            "this launch has NO client credential: the client will send an empty identity in \
+             0x0073 and the server will attribute the connection the way it always has, by the \
+             process that owns it. Sign in against a server that issues one to change that."
+                .into(),
+        );
+    }
+
     Ok(())
 }
 
@@ -133,9 +160,10 @@ pub fn prepare_and_launch(
     layout: &Layout,
     plan: &Plan,
     launch_id: Option<&crate::http::LaunchId>,
+    client_token: Option<&crate::http::ClientToken>,
     log: &mut dyn FnMut(Level, String),
 ) -> Result<(), String> {
-    prepare(layout, log)?;
+    prepare(layout, client_token.map(|t| t.as_str()), log)?;
 
     // BEFORE the client, and after everything else: a client launched at a dead port sits on
     // "Connecting..." forever and reads as a broken client. `tools/test-server.ps1` carries
@@ -228,6 +256,9 @@ mod tests {
     use crate::testutil::TempDir;
     use std::path::PathBuf;
 
+    /// 26 characters of uppercase base32, the shape `store::claims` mints.
+    const TEST_TOKEN: &str = "MFRGGZDFMZTWQ2LKNNWG23TP2A";
+
     /// An installed layout with a fake client in it.
     fn installed(t: &TempDir) -> Layout {
         t.file("app/client/MapleStory.exe", "client");
@@ -259,7 +290,7 @@ mod tests {
         assert_eq!(layout.source, Source::Installed);
 
         let mut lines: Vec<(Level, String)> = Vec::new();
-        prepare(&layout, &mut |l, s| lines.push((l, s))).expect("prepare");
+        prepare(&layout, Some(TEST_TOKEN), &mut |l, s| lines.push((l, s))).expect("prepare");
 
         let client = &layout.client_dir;
         // GameGuard.
@@ -284,8 +315,64 @@ mod tests {
         );
         // Dump directory.
         assert!(layout.dumps_dir().is_dir());
+        // The credential the client will carry, written verbatim and with nothing round it.
+        assert_eq!(
+            std::fs::read(client.join(client::HOOK_IDENTITY_MARKER)).unwrap(),
+            TEST_TOKEN.as_bytes()
+        );
         // Nothing was flagged as an error.
         assert!(!lines.iter().any(|(l, _)| *l == Level::Error), "{lines:?}");
+        // And the token itself never reaches the log pane.
+        assert!(!lines.iter().any(|(_, s)| s.contains(TEST_TOKEN)), "{lines:?}");
+    }
+
+    /// **The arm that has to be right.** A launch with no token must leave no marker behind,
+    /// because a token from a previous launch is refused by the login server's anti-downgrade
+    /// rule rather than ignored - so it would take this launch from "attributed by its owning
+    /// process" down to "served as the fallback account".
+    #[test]
+    fn a_launch_with_no_token_deletes_the_previous_launchs_marker() {
+        let t = TempDir::new("prepstale");
+        let layout = installed(&t);
+        let marker = layout.client_dir.join(client::HOOK_IDENTITY_MARKER);
+
+        let mut lines: Vec<(Level, String)> = Vec::new();
+        prepare(&layout, Some(TEST_TOKEN), &mut |l, s| lines.push((l, s))).expect("first");
+        assert!(marker.is_file(), "the first launch should have written one");
+
+        lines.clear();
+        prepare(&layout, None, &mut |l, s| lines.push((l, s))).expect("second");
+        assert!(
+            !marker.exists(),
+            "a stale credential was left behind; this launch would be REFUSED, not ignored"
+        );
+        // And it is said out loud, at Warn: on a one-player machine the two states look
+        // identical on screen, which is exactly how this would go unnoticed.
+        assert!(
+            lines.iter().any(|(l, s)| *l == Level::Warn && s.contains("NO client credential")),
+            "{lines:?}"
+        );
+        assert!(lines.iter().any(|(_, s)| s.contains("removed a previous")), "{lines:?}");
+    }
+
+    /// A first launch with no token must not fail just because there is nothing to remove.
+    #[test]
+    fn no_token_and_no_previous_marker_is_not_an_error() {
+        let t = TempDir::new("prepnomarker");
+        let layout = installed(&t);
+        prepare(&layout, None, &mut |_, _| {}).expect("prepare");
+        assert!(!layout.client_dir.join(client::HOOK_IDENTITY_MARKER).exists());
+    }
+
+    /// An empty string is not a credential, and must be treated as `None` all the way down -
+    /// otherwise a server that answered with `"client_token":""` would leave an empty file,
+    /// which reads to the hook as a marker that exists and to the person as one that works.
+    #[test]
+    fn an_empty_token_writes_nothing() {
+        let t = TempDir::new("prepempty");
+        let layout = installed(&t);
+        prepare(&layout, Some("   "), &mut |_, _| {}).expect("prepare");
+        assert!(!layout.client_dir.join(client::HOOK_IDENTITY_MARKER).exists());
     }
 
     #[test]
@@ -293,8 +380,8 @@ mod tests {
         let t = TempDir::new("preptwice");
         let layout = installed(&t);
         let mut sink = |_l: Level, _s: String| {};
-        prepare(&layout, &mut sink).expect("first");
-        prepare(&layout, &mut sink).expect("second");
+        prepare(&layout, Some(TEST_TOKEN), &mut sink).expect("first");
+        prepare(&layout, Some(TEST_TOKEN), &mut sink).expect("second");
         assert_eq!(
             std::fs::read_to_string(layout.client_dir.join(client::GRAP_BACKUP)).unwrap(),
             "THE REAL GAMEGUARD DLL"
@@ -309,7 +396,7 @@ mod tests {
         std::fs::write(&hook_log, "CLIENT FAULT 0xC0000005").unwrap();
 
         let mut lines: Vec<(Level, String)> = Vec::new();
-        prepare(&layout, &mut |l, s| lines.push((l, s))).expect("prepare");
+        prepare(&layout, Some(TEST_TOKEN), &mut |l, s| lines.push((l, s))).expect("prepare");
 
         assert!(!hook_log.exists(), "the live hook log should have been moved");
         let archived: Vec<PathBuf> = std::fs::read_dir(layout.previous_runs_dir())
@@ -334,7 +421,7 @@ mod tests {
         layout.client_dir = PathBuf::from(client::ORIGINAL_INSTALL);
 
         let mut lines: Vec<(Level, String)> = Vec::new();
-        let err = prepare(&layout, &mut |l, s| lines.push((l, s))).unwrap_err();
+        let err = prepare(&layout, Some(TEST_TOKEN), &mut |l, s| lines.push((l, s))).unwrap_err();
         assert!(err.contains("refusing to touch the original install"), "{err}");
         // The dump directory is created at step 4, after the guard: nothing should exist.
         assert!(!layout.dumps_dir().exists(), "prepare wrote something before refusing");
@@ -347,7 +434,7 @@ mod tests {
         t.file("app/grap64.dll", &"S".repeat(4096));
         let layout = resolve_from(&t.path().join("app"));
 
-        let err = prepare(&layout, &mut |_, _| {}).unwrap_err();
+        let err = prepare(&layout, Some(TEST_TOKEN), &mut |_, _| {}).unwrap_err();
         assert!(err.contains("MapleStory.exe"), "{err}");
         assert!(
             !layout.client_dir.join(client::GRAP_BACKUP).exists(),

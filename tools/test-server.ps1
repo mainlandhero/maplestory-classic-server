@@ -101,6 +101,35 @@
          ZERO overlapping pairs, and no archived instrument could have seen a second
          process that dies before it connects.
 
+     T7. THE CLIENT CARRIES A CREDENTIAL. Launch through maplecw-launcher, sign in, and
+         get as far as the CHARACTER LIST - `0x0073` goes out before it, so nothing
+         in-game is needed. Read THREE lines, in this order, because they discriminate:
+
+           launcher pane            client credential written (maplecw-hook.identity, 26 characters)
+           maplecw-hook.log         IDENTITY wrote 26 bytes into 0x...+0x1b8 on getter entry #1
+           login.log                0x0073 IDENTITY: mode=5 identity length=26 ... then ACCEPTED
+
+         all three say 26 and login.log says ACCEPTED
+              -> the client carried a session, through its own cipher, no forged packet.
+                 The first non-zero identity in 73 captures. LOGIN socket only; the game
+                 socket still carries nothing
+         26 / 26 / 26 but REFUSED
+              -> the client half works and the MATCH failed. Nothing transforms the bytes
+                 in flight, so look at minting and storage, not at the wire
+         hook says 26, login.log says length=0
+              -> dropped between session+0x1b8 and the encoder. Watch the ctor store at
+                 0x142c440ce for a re-zero
+         hook says armed but no "IDENTITY wrote"
+              -> the getter never ran, so 0x0073 came from a path nobody has found. That
+                 contradicts 73 archived observations; re-check the archive, not the code
+         no `identity:` lines at all in the hook log
+              -> the marker never reached the hook. NOT a protocol result. The hook deletes
+                 `client-patched\maplecw-hook.identity` about 1.5 s in, on purpose, so look
+                 for it between Start Game and the client window appearing
+         `does not begin with the prologue`
+              -> the client binary is not the one this was built against. Nothing was
+                 patched and the run is an ordinary run
+
      T5. RETURN SCROLLS. **RUN THIS AS `maplecw`, NOT AS `tester`.**
          `tester` has is_gm = 0, so `!item` comes back as a CHAT BALLOON and no scroll
          is granted - which reads exactly like "the client never sent 0x010E, the whole
@@ -818,6 +847,11 @@ if ($Stop) {
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.probe') -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.enable') -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.session') -ErrorAction SilentlyContinue
+    # The client credential, if the hook did not get far enough to delete it itself (it
+    # deletes it ~1.5s in, on purpose). A STALE one is REFUSED by the login server rather
+    # than ignored, so leaving it costs the NEXT run its account - and that failure looks
+    # like nothing at all on a one-player machine.
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
     Write-Host 'stopped client and login server'
     exit 0
 }
@@ -1113,6 +1147,22 @@ function Show-TestPlan {
     Write-Host '      Nobody has ever tried this. 211 connections across 188 logs'
     Write-Host '      show ZERO overlapping pairs, and nothing archived could have'
     Write-Host '      seen a second process that dies before it connects.'
+    Write-Host '  T7. THE CLIENT CARRIES A CREDENTIAL. Launch via the launcher,' -ForegroundColor Cyan
+    Write-Host '      sign in, reach the CHARACTER LIST. Nothing in-game needed.'
+    Write-Host '      Read three lines - they discriminate:'
+    Write-Host '        launcher     client credential written (26 characters)'
+    Write-Host '        hook log     IDENTITY wrote 26 bytes ... getter entry #1'
+    Write-Host '        login.log    0x0073 IDENTITY: ... length=26 ... ACCEPTED'
+    Write-Host '        all 26 + ACCEPTED -> the client carried a session. First'
+    Write-Host '                   non-zero identity in 73 captures. LOGIN socket only'
+    Write-Host '        26/26 but REFUSED -> client half works, the MATCH failed.'
+    Write-Host '                   Nothing transforms the bytes; look at the server'
+    Write-Host '        hook 26, login.log 0 -> dropped after the write. Watch the'
+    Write-Host '                   ctor store at 0x142c440ce for a re-zero'
+    Write-Host '        armed, no "IDENTITY wrote" -> the getter never ran. That'
+    Write-Host '                   contradicts 73 captures; re-check the archive'
+    Write-Host '        no identity: lines -> the marker never reached the hook.'
+    Write-Host '                   NOT a protocol result. It is deleted ~1.5s in'
     Write-Host '  T5. RETURN SCROLLS. RUN AS maplecw, NOT AS tester.' -ForegroundColor White
     Write-Host '      tester has is_gm = 0, so !item comes back as a CHAT BALLOON'
     Write-Host '      and grants nothing - which reads exactly like "the client'
@@ -1367,6 +1417,10 @@ Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Enc
 if ($HeapFix) { $Session = "$Session,heapfix=on" }
 if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
+# **Only maplecw-launcher can mint a client credential, because only it signs in.** This
+# path is a direct run, so clear any leftover: presenting a stale token is refused, and a
+# refusal downgrades the connection to the --account fallback silently.
+Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
@@ -1416,7 +1470,12 @@ $launchArgs = @('-NXLDEBUG', '127.0.0.1', "$Port")
 if ($SessionTokens) {
     $launchArgs += ($SessionTokens -split '\s+' | Where-Object { $_ })
     Write-Host "session tokens (config +0x90): $SessionTokens"
-    Write-Host '  -> read login.log for the 0x0073 body and look for them'
+    Write-Host '  -> THIS CANNOT WORK AND THE STEP IS KEPT ONLY AS A LABEL.' -ForegroundColor DarkYellow
+    Write-Host '     research/client-session-args.md section 2: the reader for cfg+0x90'
+    Write-Host '     has ZERO callers, so nothing the command line puts there reaches'
+    Write-Host '     the wire. Of every slot the arguments can set, only the mode u32'
+    Write-Host '     is ever encoded. The credential goes in via the hook instead -'
+    Write-Host '     see the IDENTITY steps in the plan.'
 }
 $p = Start-Process -FilePath $exe -WorkingDirectory $ClientDir `
     -ArgumentList $launchArgs -PassThru

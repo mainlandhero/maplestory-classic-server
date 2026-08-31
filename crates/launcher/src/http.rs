@@ -74,6 +74,47 @@ impl std::fmt::Debug for LaunchId {
     }
 }
 
+/// **The credential the CLIENT carries**, as opposed to [`LaunchId`], which only this program
+/// ever sends.
+///
+/// The launcher writes it into `maplecw-hook.identity` beside the client; the hook puts it in
+/// the client's own session object at `session+0x1b8`; the client encodes it into `0x0073`
+/// with its own code and its own cipher. That makes it the first value in this project that
+/// says which launch a connection belongs to **on the wire** rather than by inference about
+/// the socket. `store::claims` rule 1b.
+///
+/// One-time and short-lived: the login server spends it on first presentation and stores only
+/// its SHA-256. `Debug` redacts for the same reason `LaunchId` does - a `{:?}` on a struct is
+/// how a secret reaches a log without anybody deciding to put it there.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClientToken(String);
+
+impl ClientToken {
+    pub fn new(token: impl Into<String>) -> Self {
+        Self(token.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    /// True when the service issued none - an older server, or one that could not stake a
+    /// claim. The launcher must then write **no** marker at all, and delete any left over from
+    /// a previous launch: a dead token is worse than none, because the server's anti-downgrade
+    /// rule refuses a connection that presents one instead of falling back to the weaker rules.
+    pub fn is_empty(&self) -> bool {
+        self.0.trim().is_empty()
+    }
+}
+
+impl std::fmt::Debug for ClientToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.is_empty() {
+            "ClientToken(<none>)"
+        } else {
+            "ClientToken(<redacted>)"
+        })
+    }
+}
+
 /// What the auth service said.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthReply {
@@ -84,6 +125,9 @@ pub enum AuthReply {
         /// could not stake a claim - which it reports rather than failing the login, because
         /// the password really was right.
         launch_id: LaunchId,
+        /// The one-time token the **client** will carry in `0x0073`. Empty on a server that
+        /// predates it, and empty when the claim could not be staked. See [`ClientToken`].
+        client_token: ClientToken,
     },
     InvalidCredentials,
     Disabled,
@@ -269,6 +313,13 @@ pub fn parse(response: &str) -> AuthReply {
                     // Both come out as an empty handle, which `bind_launch` refuses with a
                     // sentence rather than posting and reading the refusal back.
                     launch_id: LaunchId::new(field(body, "launch_id").unwrap_or_default()),
+                    // Absent on a server that predates the client token, which must read as
+                    // "no token" rather than as a failure: that server signs people in
+                    // perfectly well and the launch is resolved by the weaker rules, exactly
+                    // as it is today.
+                    client_token: ClientToken::new(
+                        field(body, "client_token").unwrap_or_default(),
+                    ),
                 },
                 None => AuthReply::Failed(format!("no account id in the answer: {}", trim(body))),
             }
@@ -338,7 +389,7 @@ mod tests {
     fn a_successful_login_is_read() {
         let r = parse(&http(
             "200 OK",
-            r#"{"status":"ok","account_id":2,"username":"tester","token":"abc","expires_in":900,"launch_id":"L1"}"#,
+            r#"{"status":"ok","account_id":2,"username":"tester","token":"abc","expires_in":900,"launch_id":"L1","client_token":"MFRGGZDFMZTWQ2LKNNWG23TP2A"}"#,
         ));
         assert_eq!(
             r,
@@ -346,8 +397,37 @@ mod tests {
                 account_id: 2,
                 username: "tester".into(),
                 launch_id: LaunchId::new("L1"),
+                client_token: ClientToken::new("MFRGGZDFMZTWQ2LKNNWG23TP2A"),
             }
         );
+    }
+
+    /// The client token is the one secret that leaves this machine again - it goes into a file
+    /// beside the client. It still must not ride out in a `{:?}`.
+    #[test]
+    fn the_client_token_is_readable_on_purpose_and_redacted_in_debug() {
+        let r = parse(&http(
+            "200 OK",
+            r#"{"status":"ok","account_id":2,"username":"t","token":"abc","expires_in":900,"launch_id":"L","client_token":"CLIENTSECRET"}"#,
+        ));
+        assert!(!format!("{r:?}").contains("CLIENTSECRET"), "{r:?}");
+        let AuthReply::Ok { client_token, .. } = &r else { panic!("{r:?}") };
+        assert_eq!(client_token.as_str(), "CLIENTSECRET");
+        assert!(!client_token.is_empty());
+    }
+
+    /// **A server that predates the client token must still sign people in.** The launcher
+    /// then writes no identity marker at all, which leaves the launch resolved by the weaker
+    /// rules - today's behaviour exactly.
+    #[test]
+    fn an_older_server_with_no_client_token_still_signs_in() {
+        let r = parse(&http(
+            "200 OK",
+            r#"{"status":"ok","account_id":2,"username":"t","token":"abc","expires_in":900,"launch_id":"L"}"#,
+        ));
+        let AuthReply::Ok { client_token, .. } = &r else { panic!("{r:?}") };
+        assert!(client_token.is_empty());
+        assert_eq!(format!("{client_token:?}"), "ClientToken(<none>)");
     }
 
     #[test]

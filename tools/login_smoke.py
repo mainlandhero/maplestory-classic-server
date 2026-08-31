@@ -489,6 +489,30 @@ def run(args):
     existing = names_in(replies[3][1])
     print("  characters already stored: %s" % (", ".join(existing) or "(none)"))
 
+    # 0x0073, EXACTLY as the stock client sends it.
+    #
+    # This is the compatibility check for the client-token credential added on 2026-08-29.
+    # The login server now reads the identity string out of this packet and resolves the
+    # account from it, and the identity is EMPTY in all 72 bodies this project has ever
+    # captured - so "empty means nothing was presented" is the property every existing
+    # client depends on. If it ever counted as a presentation, the server would refuse it,
+    # downgrade the connection to --account, and on screen that reads as "my characters
+    # vanished" rather than as a session bug.
+    #
+    # The body is the real one from previous-runs/login-20260829-094630.log.
+    # `tools/claims_smoke.py` section 6 is where a NON-empty token is exercised; it needs two
+    # accounts and the auth service, which this script does not run.
+    captured_0073 = bytes.fromhex("050000000000d843ae4c5617b6ae9cd200000000764d00000000")
+    peer.send(0x0073, captured_0073)
+    unanswered = peer.drain(wait=0.4)
+    check("0x0073 is not answered - the client does not block on it and never has",
+          not unanswered,
+          "got " + (", ".join("0x%04X" % op for op, _ in unanswered) or "nothing"))
+    after_identity = names_in(login(peer)[3][1])
+    check("an EMPTY 0x0073 identity leaves the account exactly as it was",
+          after_identity == existing,
+          "before: %s; after: %s" % (existing or ["(none)"], after_identity or ["(none)"]))
+
     if args.list_only:
         peer.close()
         return report()

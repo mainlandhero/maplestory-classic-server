@@ -43,6 +43,39 @@ files open:
       must fall back to its --account rather than pick the newest. A failure here means the
       guess is back, and the headline check above would then pass *by luck* on whichever
       player happened to sign in last.
+
+# The client token (section 6) - a credential instead of an inference
+
+Everything above resolves a connection by asking the operating system which process owns the
+socket. The owner, 2026-08-29: *"if the client itself has a way to carry an identity, I would like
+to use that way more ... using the client to pass a session should be what we aim for instead
+of inference."*
+
+Section 6 is that. The sign-in mints a one-time token, and the connection carries it in
+`0x0073` - a packet the client already builds and already sends, so nothing is forged and the
+cipher is never touched. Every connection in that section comes from THIS process, which
+section 5 has just proved is unattributable and served the fallback: that is the control, and
+it is what makes those checks about the token rather than about the pid.
+
+  "a client token in 0x0073 serves that account, with NOTHING else to go on"
+      The headline. A connection the server cannot attribute to any process is served the
+      right account because the client told it who it is and the server checked.
+
+  "an EMPTY 0x0073 identity changes nothing (every capture to date)"
+      The compatibility hinge. All 72 captured bodies carry a zero-length identity. If empty
+      counted as a presentation, every existing client would be downgraded to the fallback by
+      the first packet it sends, and on screen that reads as "my characters vanished".
+
+  "the SAME process may present its token again (the log-out reconnect)"
+      The client opens a second login connection per launch. A token that refused the
+      reconnect would produce exactly the failure `store::claims` was rewritten to avoid.
+
+  "another process REPLAYING a spent client token is refused"
+      One-time use, where it means something.
+
+  "a WRONG client token is refused rather than falling through"
+      The anti-downgrade rule. A wrong credential must buy strictly less than no credential,
+      or an attacker gets past it by guessing - which is easier than staying silent.
 """
 import json
 import os
@@ -235,11 +268,37 @@ def names_in(body):
     return found
 
 
-def characters_seen(host, port):
-    """Open a login connection, log in, and report the character names it was shown."""
+def identity_body(identity):
+    """A `0x0073` body in the layout the client sends.
+
+    `u32` launch mode, a `u16`-prefixed identity string, then the machine tail. The tail is
+    the real one from `previous-runs/login-20260829-094630.log` - a MAC address and a machine
+    id - so the only thing that differs from a captured body is the field under test.
+    """
+    return (
+        struct.pack("<I", 5)
+        + struct.pack("<H", len(identity))
+        + identity.encode("ascii")
+        + bytes.fromhex("d843ae4c5617b6ae9cd200000000764d00000000")
+    )
+
+
+def characters_seen(host, port, client_token=None):
+    """Open a login connection, log in, and report the character names it was shown.
+
+    `client_token` is what the client would carry in `0x0073` - the credential the hook is
+    meant to write into `session+0x1b8`. Pass `""` to send the packet with an EMPTY identity,
+    which is what every capture before 2026-08-29 contains and what a stock client sends;
+    pass `None` to send no `0x0073` at all.
+
+    `0x0073` is deliberately unanswered - the client does not block on it and never has, so
+    nothing is read between sending it and sending the login request.
+    """
     peer = Peer(host, port)
     try:
         peer.recv(1)                       # the unprompted startup gate, 0x0032
+        if client_token is not None:
+            peer.send(0x0073, identity_body(client_token))
         peer.send(CLIENT_LOGIN_REQUEST)
         replies = peer.recv(4)
         opcodes = [op for op, _ in replies]
@@ -263,8 +322,13 @@ def characters_seen(host, port):
 
 if len(sys.argv) > 1 and sys.argv[1] == "--connect":
     host, port = sys.argv[2], int(sys.argv[3])
+    # An optional client token to carry in 0x0073. A child process is the only way to present
+    # a token from a DIFFERENT pid than the one that spent it, which is the whole of the
+    # one-time-use property: the same process may re-present, another may not, and the pid
+    # comes from the operating system rather than from anything the connection says.
+    token = sys.argv[4] if len(sys.argv) > 4 else None
     sys.stdin.readline()
-    print(json.dumps(characters_seen(host, port)), flush=True)
+    print(json.dumps(characters_seen(host, port, token)), flush=True)
     raise SystemExit(0)
 
 
@@ -390,7 +454,14 @@ class Servers:
         # directory goes.
         try:
             with open(os.path.join(self.dir, "login.log"), encoding="utf-8", errors="replace") as f:
-                served = [l.rstrip() for l in f if "served as" in l or "claim" in l.lower()]
+                # "IDENTITY" is in the filter because the 0x0073 decision lines are the only
+                # record of what the credential did, and an ACCEPTED one says neither
+                # "served as" nor "claim" - so without this the interesting half of a
+                # section-6 failure would be invisible in exactly the run that failed.
+                served = [
+                    l.rstrip() for l in f
+                    if "served as" in l or "claim" in l.lower() or "0x0073" in l
+                ]
             if served:
                 print("\nthe login server said:")
                 for line in served:
@@ -406,6 +477,7 @@ def main():
     try:
         # 1. Both players sign in, over real HTTP, from the same address.
         handles = {}
+        tokens = {}
         for who in ("otter", "owl"):
             status, body = http_post(
                 s.auth_port, "/login",
@@ -414,6 +486,7 @@ def main():
             ok = "200" in status and body.get("status") == "ok"
             check("%s signs in through the auth service" % who, ok, status.strip())
             handles[who] = body.get("launch_id", "")
+            tokens[who] = body.get("client_token", "")
         check(
             "each sign-in hands back its own launch handle",
             bool(handles["otter"]) and bool(handles["owl"])
@@ -500,6 +573,89 @@ def main():
             "OtterOne" not in mine and "OwlTwo" not in mine,
             "an unattributable connection saw %s (the fallback account has none)"
             % (mine or ["(none)"]),
+        )
+
+        # ------------------------------------------------------------------------------
+        # 6. THE CLIENT TOKEN. Everything above resolves a connection by INFERENCE - the
+        #    operating system's view of which process owns a socket. The owner, 2026-08-29:
+        #    "using the client to pass a session should be what we aim for instead of
+        #    inference." These checks are that: the credential travels in 0x0073, which is
+        #    a packet the client already builds and already sends.
+        #
+        #    Every connection below comes from THIS process, which check 5 has just proved
+        #    is unattributable and served the fallback. That is the control, and it is what
+        #    makes these checks about the token rather than about the pid.
+        # ------------------------------------------------------------------------------
+        check(
+            "the sign-in hands back a client token for the launcher to give the client",
+            bool(tokens["otter"]) and bool(tokens["owl"])
+            and tokens["otter"] != tokens["owl"],
+            "otter %r, owl %r" % (tokens["otter"] or "MISSING", tokens["owl"] or "MISSING"),
+        )
+        check(
+            "the client token is 26 characters of uppercase base32",
+            all(len(t) == 26 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" for c in t)
+                for t in tokens.values() if t),
+            "otter %r" % (tokens["otter"],),
+        )
+
+        # An EMPTY identity - what all 72 captured 0x0073 bodies carry, and what a stock
+        # client sends. It must change nothing. If this ever fails, every existing client
+        # has just been downgraded to the fallback by the first packet it sends.
+        stock = characters_seen("127.0.0.1", s.login_port, "").get("names", [])
+        check(
+            "an EMPTY 0x0073 identity changes nothing (every capture to date)",
+            stock == mine,
+            "with no 0x0073: %s; with an empty one: %s"
+            % (mine or ["(none)"], stock or ["(none)"]),
+        )
+
+        # THE HEADLINE. Nothing about this connection is attributable - it is the same
+        # process that was refused in check 5 - and the credential alone resolves it.
+        by_token = characters_seen("127.0.0.1", s.login_port, tokens["otter"]).get("names", [])
+        check(
+            "a client token in 0x0073 serves that account, with NOTHING else to go on",
+            "OtterOne" in by_token and "OwlTwo" not in by_token,
+            "the same process that was refused above saw %s" % (by_token or ["(none)"]),
+        )
+
+        # The reconnect: the same client process presenting a spent token is NOT refused.
+        # `store::claims` exists because a consumed claim reads on screen as "my characters
+        # vanished when I logged out", and a consumed TOKEN would do the same thing.
+        again = characters_seen("127.0.0.1", s.login_port, tokens["otter"]).get("names", [])
+        check(
+            "the SAME process may present its token again (the log-out reconnect)",
+            "OtterOne" in again,
+            "the second connection saw %s" % (again or ["(none)"]),
+        )
+
+        # One-time use, where it means something: a DIFFERENT process replaying the token
+        # otter already spent. It must be refused down to the fallback, not served otter.
+        thief = subprocess.Popen(
+            [sys.executable, "-u", os.path.join("tools", "claims_smoke.py"),
+             "--connect", "127.0.0.1", str(s.login_port), tokens["otter"]],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        )
+        children.append(("thief", thief))
+        thief.stdin.write("go\n")
+        thief.stdin.flush()
+        line = thief.stdout.readline()
+        stolen = (json.loads(line) if line.strip() else {}).get("names", [])
+        check(
+            "another process REPLAYING a spent client token is refused",
+            "OtterOne" not in stolen and "OwlTwo" not in stolen,
+            "the replaying process saw %s" % (stolen or ["(none)"]),
+        )
+
+        # The anti-downgrade rule: a wrong credential must buy strictly LESS than no
+        # credential. Presenting junk must not leave a connection where silence leaves it.
+        junk = characters_seen(
+            "127.0.0.1", s.login_port, "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ).get("names", [])
+        check(
+            "a WRONG client token is refused rather than falling through",
+            "OtterOne" not in junk and "OwlTwo" not in junk,
+            "a junk token saw %s" % (junk or ["(none)"]),
         )
     finally:
         for _, child in children:

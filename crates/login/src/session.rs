@@ -135,6 +135,28 @@ pub struct Session {
     /// people did and it could not be told apart - and the migration is minted **unbound**,
     /// which is the pre-existing behaviour and is logged as such.
     claim_token_hash: Option<String>,
+    /// **The account to fall back to if the client presents a credential and it is refused.**
+    ///
+    /// The `--account` account, the same one [`crate::server::resolve_account`] falls back to.
+    /// It has to be carried here because the refusal happens *mid-connection*: the account was
+    /// already chosen at accept time by the weaker rules, and a refused credential has to be
+    /// able to take it away again. Without this, presenting a wrong token would leave the
+    /// connection exactly where presenting nothing leaves it, and the credential would be
+    /// advisory - see the anti-downgrade rule in `store::claims`.
+    ///
+    /// `None` in the unit tests below, which never present a credential.
+    fallback: Option<Account>,
+    /// The process the operating system attributes this socket to, as
+    /// `store::peerowner::owning_pid_of` reported it at accept time. Never asserted by the
+    /// client. Used only to let the **same** client process re-present a spent token.
+    launch_pid: Option<u32>,
+    /// Lines for the server's log that are not attached to a reply.
+    ///
+    /// `Reply::what` is the only thing that reaches the log today, so a packet that produces
+    /// no reply produces no line - and `0x0073` deliberately produces no reply. Drained by
+    /// [`Session::take_notes`] after every `handle`. A `Vec` rather than a callback so this
+    /// module stays pure and every sentence below is unit-testable without a socket.
+    notes: Vec<String>,
 }
 
 impl Session {
@@ -146,6 +168,9 @@ impl Session {
             seen_login_request: false,
             peer: None,
             claim_token_hash: None,
+            fallback: None,
+            launch_pid: None,
+            notes: Vec::new(),
         }
     }
 
@@ -169,8 +194,31 @@ impl Session {
         self
     }
 
+    /// The `--account` account, so a **refused** client token can take this connection back
+    /// down to it. See [`Session::fallback`].
+    pub fn with_fallback(mut self, fallback: Account) -> Self {
+        self.fallback = Some(fallback);
+        self
+    }
+
+    /// The OS-attributed owning process of this socket, from the accept path.
+    pub fn with_launch_pid(mut self, pid: Option<u32>) -> Self {
+        self.launch_pid = pid;
+        self
+    }
+
     pub fn account_name(&self) -> &str {
         &self.account.name
+    }
+
+    /// Take the log lines produced since the last call. The server drains these after every
+    /// `handle`; nothing here writes to a log itself.
+    pub fn take_notes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notes)
+    }
+
+    fn note(&mut self, line: impl Into<String>) {
+        self.notes.push(line.into());
     }
 
     /// The client has gone quiet without asking to log in. Send the startup gate again.
@@ -255,6 +303,13 @@ impl Session {
                 enter_creation_permitted(),
                 "creation screen permitted",
             )],
+            // **The identity the client carries.** Answered with nothing, deliberately - see
+            // `Session::on_session_identity`. It is handled BEFORE the login request that
+            // follows it, and the ordering is not luck: across 57 archived runs `0x0073` is
+            // followed by `0x0080` three log lines later, every time, minimum equal to maximum.
+            // The two arrive in the same read and are framed in order, so the account this
+            // handler chooses is the account the character list is built from.
+            CLIENT_SESSION_IDENTITY => self.on_session_identity(payload),
             CLIENT_CHECK_NAME_REQUEST => self.check_name(payload),
             CLIENT_CREATE_CHARACTER_REQUEST => self.create_character(payload),
             CLIENT_DELETE_CHARACTER_REQUEST => self.delete_character(payload),
@@ -357,6 +412,162 @@ impl Session {
             ),
         ));
         out
+    }
+
+    /// **The client's session identity, `0x0073` - the credential the client carries itself.**
+    ///
+    /// The owner, 2026-08-29: *"using the client to pass a session should be what we aim for instead
+    /// of inference."* This is the server half of that. The launcher mints a one-time token at
+    /// sign-in, writes it where the hook can read it, the hook writes it into the client's own
+    /// session object (`session+0x1b8`, whose setter `FUN_142c503c0` exists and has no
+    /// callers), and the client builds, encrypts and sends `0x0073` itself. Nothing is forged.
+    ///
+    /// # Why this returns no reply, and why that is not a violation of "always answer"
+    ///
+    /// `CLAUDE.md`'s rule is that a packet the client **blocks on** must be answered, because
+    /// an unanswered one freezes its entire UI. `0x0073` is not one: in 57 archived runs the
+    /// client sends `0x0073` and then `0x0080` in the same millisecond, having received nothing
+    /// in between. It has never been answered and has never blocked.
+    ///
+    /// Starting to answer it would be the *other* expensive mistake this project has recorded -
+    /// answering with a packet the client did not expect leaves a latch set and kills the
+    /// feature for the whole session. So the refusal is not expressed as a reply to `0x0073`;
+    /// it is expressed in **which account's character list goes back in the answer to `0x0080`
+    /// one millisecond later**, which the client does block on and which is always sent.
+    ///
+    /// # What each outcome does
+    ///
+    /// | identity | account served |
+    /// |---|---|
+    /// | empty (every capture to date, and every reconnect) | unchanged - whatever the weaker rules chose at accept time |
+    /// | a valid unspent token | **the claim that minted it**, and the token is spent |
+    /// | a token this same client process already spent | the same claim, nothing spent again |
+    /// | a spent token from another process, or one nobody issued | **the `--account` fallback** - a presented credential gets its claim or none |
+    fn on_session_identity(&mut self, payload: &[u8]) -> Vec<Reply> {
+        let Some(parsed) = SessionIdentity::parse(payload) else {
+            // A body that does not parse is not a presentation - it buys exactly what silence
+            // buys, which is the weaker rules. Truncating deliberately therefore gains an
+            // attacker nothing over sending nothing at all.
+            self.note(format!(
+                "0x0073 IDENTITY: the {} byte body did not parse as (u32 mode, u16-prefixed \
+                 string, tail). Treated as NO credential - the account stands as the weaker \
+                 rules chose it. Nothing is refused on a malformed body",
+                payload.len()
+            ));
+            return Vec::new();
+        };
+
+        // E1: the length, unconditionally, whatever happens next. Without this line a failed
+        // E2 is indistinguishable from "the server ignored the field".
+        //
+        // `identity_bytes` is the WIRE byte count, which is the number the hook's own log line
+        // tells the reader to compare against ("login.log should now show ... identity
+        // length=N"). See the field's doc block for why the decoded length is a different
+        // number. They differ only when what arrived is not UTF-8, and then the mismatch is
+        // itself the finding, so it is printed rather than hidden.
+        let decoded_note = if parsed.identity.len() == parsed.identity_bytes {
+            String::new()
+        } else {
+            format!(
+                " (those {} wire bytes are NOT valid UTF-8 and decoded to {} - so whatever \
+                 reached the field is not a MapleCW token)",
+                parsed.identity_bytes,
+                parsed.identity.len()
+            )
+        };
+        self.note(format!(
+            "0x0073 IDENTITY: mode={} identity length={}{decoded_note} (expected {} for a \
+             MapleCW client token; every capture before 2026-08-29 was 0) tail={} bytes",
+            parsed.mode,
+            parsed.identity_bytes,
+            store::claims::CLIENT_TOKEN_CHARS,
+            parsed.tail.len()
+        ));
+
+        let outcome = match self.store.present_client_token(&parsed.identity, self.launch_pid) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                // A database failure must not become a refusal: that would drop a legitimate
+                // player to the fallback because a table would not read. Leave the account
+                // alone and say so - the same trade `resolve_account` makes on its own Err.
+                self.note(format!(
+                    "0x0073 IDENTITY: the client token lookup FAILED: {e}. The account is left \
+                     as the weaker rules chose it - a database error must not be a refusal"
+                ));
+                return Vec::new();
+            }
+        };
+        self.note(format!("0x0073 IDENTITY: {}", outcome.why()));
+
+        match outcome {
+            store::claims::ClientTokenOutcome::NotPresented => {}
+            store::claims::ClientTokenOutcome::Accepted { claim, .. } => {
+                // Re-resolve to the account the credential names. `get_account` rather than
+                // trusting the claim's copy, so a renamed or since-disabled account cannot be
+                // served off a stale string.
+                match self.store.get_account(&claim.claim.account_name) {
+                    Ok(Some(account)) if account.enabled => {
+                        if account.id != self.account.id {
+                            self.note(format!(
+                                "0x0073 IDENTITY: account CHANGED {:?} -> {:?} by the client's \
+                                 own credential. The character list about to be sent is {:?}'s",
+                                self.account.name, account.name, account.name
+                            ));
+                        }
+                        self.account = account;
+                        // The migration this connection later mints binds to THIS claim.
+                        self.claim_token_hash = claim.token_hash.clone();
+                    }
+                    _ => self.note(format!(
+                        "0x0073 IDENTITY: the token named account {:?}, which is gone or \
+                         disabled. Serving {:?} unchanged",
+                        claim.claim.account_name, self.account.name
+                    )),
+                }
+            }
+            refused => {
+                debug_assert!(refused.is_refusal());
+                // THE ANTI-DOWNGRADE RULE, at the one place it can be broken. A wrong
+                // credential must not leave this connection where a missing one would - if it
+                // did, presenting junk would be as good as presenting nothing and the
+                // credential would be worth nothing. `store::migration`'s invariant, mirrored.
+                match self.fallback.clone() {
+                    Some(fallback) => {
+                        // The wording branches, the assignment does not. Saying "DOWNGRADING
+                        // from X to X" when the weaker rules had already landed on the
+                        // fallback reads as a bug in the log rather than as a refusal, and
+                        // this line is the one the owner reads off a run.
+                        let same = fallback.id == self.account.id;
+                        self.note(if same {
+                            format!(
+                                "0x0073 IDENTITY: DOWNGRADING to the --account fallback {:?} - \
+                                 which is what this connection was ALREADY being served as, so \
+                                 nothing on screen changes. The refusal still happened",
+                                fallback.name
+                            )
+                        } else {
+                            format!(
+                                "0x0073 IDENTITY: DOWNGRADING this connection from {:?} to the \
+                                 --account fallback {:?}. A connection that presents a \
+                                 credential gets THAT claim or none; it must not keep what the \
+                                 weaker rules gave it, or a wrong token would be as good as no \
+                                 token",
+                                self.account.name, fallback.name
+                            )
+                        });
+                        self.account = fallback;
+                        self.claim_token_hash = None;
+                    }
+                    None => self.note(
+                        "0x0073 IDENTITY: refused, but this session was never given a fallback \
+                         account, so there is nothing to downgrade to. The account is UNCHANGED \
+                         - wire Session::with_fallback in crates/login/src/server.rs"
+                            .to_string(),
+                    ),
+                }
+            }
+        }
+        Vec::new()
     }
 
     /// Answer the name check truthfully. This is the first thing a real server does that
@@ -623,9 +834,64 @@ fn read_str(payload: &[u8]) -> Option<String> {
 }
 
 /// The client's session identity, `0x0073`. Built by `FUN_141b21ea0` alongside the login
-/// request. Nothing here answers it - it is decoded only so the log can show what the
-/// client thinks its identity is, which is the open question for multi-account support.
+/// request.
+///
+/// **This is now the credential path**, not just a curiosity in the log. See
+/// [`Session::on_session_identity`]. It is still never *answered* - the client does not block
+/// on it and never has.
 const CLIENT_SESSION_IDENTITY: u16 = 0x0073;
+
+/// A decoded `0x0073` body.
+///
+/// The field sequence is from `research/msexe-packet-fields.txt`, which lists a builder's
+/// encoder calls in order - `u32` launch mode, then `w_str` (a `u16` length prefix and that
+/// many bytes) for the identity, then a raw tail that is a MAC address, a machine id and a
+/// tick. Only the middle field is a credential; the tail is per-machine and is recorded, never
+/// authorised on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionIdentity {
+    /// The launch mode. `5` in all 72 captured bodies - `-NXLDEBUG`, the only mode this
+    /// project has ever launched.
+    pub mode: u32,
+    /// The identity string, exactly as it came off the wire. **Not normalised** - the caller
+    /// hands it to `store::claims::normalise_client_token`, which is the one place that
+    /// decides what counts as "presented nothing".
+    pub identity: String,
+    /// **The `u16` length prefix as it arrived: the number of BYTES on the wire.**
+    ///
+    /// Not the same number as `identity.len()`, and the difference is the unit trap this
+    /// project keeps paying for. `identity` is decoded with `from_utf8_lossy`, so a byte
+    /// sequence that is not UTF-8 becomes replacement characters at **three bytes each** - and
+    /// the decoded length would then be larger than what the client actually sent.
+    ///
+    /// This is the number the log prints, because the hook's own line
+    /// (`IDENTITY wrote N bytes ... login.log should now show ... identity length=N`) is
+    /// counting the marker file's bytes, and the whole point of that sentence is that the two
+    /// can be compared. Comparing a wire byte count against a decoded string length would be
+    /// right for every ASCII token and wrong exactly when something has gone wrong.
+    pub identity_bytes: usize,
+    /// Everything after the string: the 16-byte machine GUID and a tick, per the field list.
+    pub tail: Vec<u8>,
+}
+
+impl SessionIdentity {
+    /// `None` when the body is too short to hold the fields, or the length prefix runs past
+    /// the end. Both are "no credential", never a refusal - see the caller.
+    pub fn parse(payload: &[u8]) -> Option<Self> {
+        let mode = payload.get(..4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))?;
+        let rest = &payload[4..];
+        let len = rest.get(..2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)?;
+        let bytes = rest.get(2..2 + len)?;
+        Some(SessionIdentity {
+            mode,
+            // Lossy on purpose: a byte sequence that is not UTF-8 is not our token, and it must
+            // still produce a value that can be logged and refused rather than an error.
+            identity: String::from_utf8_lossy(bytes).into_owned(),
+            identity_bytes: len,
+            tail: rest[2 + len..].to_vec(),
+        })
+    }
+}
 
 /// **The hand-off the migration packet is supposed to produce**, built by `FUN_1415d10e0`.
 ///
@@ -646,17 +912,16 @@ const CLIENT_MIGRATION_HELLO: u16 = 0x007D;
 ///
 /// # Why `0x0073` in particular
 ///
-/// It is the only thing the client sends that could carry an account identity, and
-/// **whether it can is unmeasured**. `-NXLDEBUG` routes launch arguments 3 onward into the
-/// client config's six-slot session array at `+0x90`; if those arrive here, a launcher can
-/// pass a single-use token and the server can stop serving every connection as one
-/// configured account. If they do not, multi-account needs a different route entirely.
+/// It is the packet the client already builds that has a place for a session identity, and
+/// **the identity has been empty in every one of the 72 bodies ever captured** - not because
+/// the field does not exist, but because its setter `FUN_142c503c0` has zero callers
+/// (`research/client-session-args.md` section 3). The hook fills it; this decodes it.
 ///
-/// Decoding it costs nothing and makes any launch answer the question, rather than
-/// spending a launch on it later. Measured so far: a first `u32` of `5` (the launch mode),
-/// then a **zero-length** identity string, then a constant 20-byte tail that is a MAC
-/// address and a machine id - recorded, never authorised on, since the client machine is
-/// not fixed.
+/// This function is the **raw** decode and stays raw on purpose: it says what arrived, in
+/// bytes, before anything decides what it means. The decision and its consequences are
+/// [`Session::on_session_identity`], and both lines go to the log. When E2 is run, this is the
+/// line that says whether the client carried anything at all, and that one says what the
+/// server did about it - two separate claims, either of which can come back false.
 pub fn describe(opcode: u16, payload: &[u8]) -> Option<String> {
     if opcode == CLIENT_MIGRATION_HELLO {
         return Some(format!(
@@ -667,17 +932,47 @@ pub fn describe(opcode: u16, payload: &[u8]) -> Option<String> {
     if opcode != CLIENT_SESSION_IDENTITY {
         return None;
     }
-    let mode = payload
-        .get(..4)
-        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))?;
-    let identity = read_str(&payload[4..]).unwrap_or_default();
-    let tail_at = 4 + 2 + identity.len();
-    let tail = payload.get(tail_at..).unwrap_or(&[]);
+    let Some(parsed) = SessionIdentity::parse(payload) else {
+        return Some(format!(
+            "0x0073 session identity: MALFORMED - {} byte body is too short for (u32 mode, \
+             u16-prefixed string, tail), or its length prefix runs past the end. Full body is \
+             above",
+            payload.len()
+        ));
+    };
+    let shape = if parsed.identity.is_empty() {
+        "EMPTY - this is what all 72 captures before 2026-08-29 carried, and what the stock \
+         client sends. The hook has NOT written the field"
+            .to_string()
+    } else if parsed.identity.len() == store::claims::CLIENT_TOKEN_CHARS
+        && parsed
+            .identity
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || (b'2'..=b'7').contains(&b))
+    {
+        format!(
+            "{} characters of uppercase base32 - THE SHAPE OF A MAPLECW CLIENT TOKEN. Whether \
+             it MATCHES a live claim is the next log line",
+            parsed.identity.len()
+        )
+    } else {
+        format!(
+            "{} characters, but NOT the shape of a MapleCW client token ({} characters of \
+             A-Z2-7). Either the hook wrote something else, or the client transformed it in \
+             transit - compare it against what the launcher wrote",
+            parsed.identity.len(),
+            store::claims::CLIENT_TOKEN_CHARS
+        )
+    };
     Some(format!(
-        "session identity: mode={mode} identity={identity:?} ({} bytes) tail={} \
-         - NOT used to pick the account; see docs/login-server.md",
-        identity.len(),
-        tail.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        // The opcode is IN the line, not just above it. `login.log` interleaves connections,
+        // and the one thing anybody will do with this feature is `grep 0x0073 login.log` -
+        // which silently missed the EMPTY case while this line began with "session".
+        "0x0073 session identity: mode={} identity={:?} ({} bytes) tail={} - {shape}",
+        parsed.mode,
+        parsed.identity,
+        parsed.identity_bytes,
+        parsed.tail.iter().map(|b| format!("{b:02x}")).collect::<String>()
     ))
 }
 
@@ -1128,6 +1423,351 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------------------------
+    // 0x0073, THE CLIENT'S OWN CREDENTIAL. The owner, 2026-08-29: "using the client to pass a
+    // session should be what we aim for instead of inference."
+    //
+    // Every test here is about the LOGIN socket. `0x0073` has never appeared on a channel
+    // connection - 103 archived files, every one port 8484 - so none of this touches
+    // CLAUDE.md's standing constraint that the game socket carries no credentials.
+    // ------------------------------------------------------------------------------------
+
+    /// A `0x0073` body in the layout measured off the wire: `u32` mode, `u16`-prefixed
+    /// identity, then the machine tail. The tail bytes are the real ones from
+    /// `previous-runs/login-20260829-094630.log`.
+    fn identity_request(mode: u32, identity: &str) -> Vec<u8> {
+        let mut p = mode.to_le_bytes().to_vec();
+        p.extend_from_slice(&(identity.len() as u16).to_le_bytes());
+        p.extend_from_slice(identity.as_bytes());
+        p.extend_from_slice(&hex_body("d843ae4c5617b6ae9cd200000000764d00000000"));
+        request(CLIENT_SESSION_IDENTITY, &p)
+    }
+
+    /// Two accounts, a character on each, and a live claim for `claimed`. The session starts
+    /// out serving `served_as` - which is what the weaker rules would have chosen at accept
+    /// time - with the other account as the `--account` fallback.
+    ///
+    /// Returns the session and the client token the claim minted.
+    fn session_with_claim(served_as: &str, claimed: &str) -> (Session, String) {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        for name in ["maplecw", "second_one"] {
+            store.create_account(name, "correct horse battery").unwrap();
+        }
+        let claimed_id = store.get_account(claimed).unwrap().unwrap().id;
+        let session_token = match store.authenticate(claimed, "correct horse battery").unwrap() {
+            store::AuthOutcome::Ok { token, .. } => token,
+            other => panic!("the test account must authenticate: {other:?}"),
+        };
+        let staked = store
+            .stake_login_claim_with(
+                claimed_id,
+                &session_token,
+                store::LOGIN_CLAIM_TTL_SECS,
+                Some("127.0.0.1"),
+            )
+            .unwrap();
+
+        // One character per account, differently named, so "which list came back" is legible.
+        let config = Arc::new(Config::default());
+        for (name, character) in [("maplecw", "AlphaChar"), ("second_one", "BetaChar")] {
+            let account = store.get_account(name).unwrap().unwrap();
+            let mut s = Session::new(store.clone(), config.clone(), account);
+            s.handle(&create_request(character, 30030, &STYLE));
+        }
+
+        let start = store.get_account(served_as).unwrap().unwrap();
+        let fallback = store.get_account("maplecw").unwrap().unwrap();
+        let session = Session::new(store, config, start)
+            .with_fallback(fallback)
+            .with_launch_pid(Some(4242));
+        (session, staked.client_token)
+    }
+
+    /// The names in the character list the login request would produce.
+    fn character_list(s: &mut Session) -> String {
+        let replies = s.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        replies
+            .iter()
+            .find(|r| r.opcode == LOGIN_RESULT)
+            .expect("a login result is always sent")
+            .what
+            .clone()
+    }
+
+    /// **The headline, end to end through the state machine.**
+    ///
+    /// The connection starts being served as the wrong account - which is what an unattributed
+    /// connection gets today - then the client carries its one-time token in `0x0073`, and the
+    /// character list that goes out one packet later is the RIGHT account's.
+    ///
+    /// This is the whole of E1: the server's half of the transaction, proved without a client.
+    #[test]
+    fn a_client_token_in_0x0073_changes_the_account_before_the_character_list_goes_out() {
+        let (mut s, client_token) = session_with_claim("maplecw", "second_one");
+
+        // The control: without the token this connection is serving the WRONG account, so the
+        // assertion below is about the credential and not about the fixture.
+        let before = character_list(&mut s);
+        assert!(before.contains("AlphaChar"), "{before}");
+        assert!(!before.contains("BetaChar"), "{before}");
+
+        let replies = s.handle(&identity_request(5, &client_token));
+        assert!(replies.is_empty(), "0x0073 must not be answered - the client does not block");
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("ACCEPTED and SPENT"), "{notes}");
+        assert!(notes.contains("account CHANGED"), "{notes}");
+
+        let after = character_list(&mut s);
+        assert!(after.contains("BetaChar"), "the credential did not change the list: {after}");
+        assert!(!after.contains("AlphaChar"), "{after}");
+        assert_eq!(s.account_name(), "second_one");
+        // And the migration this connection mints now binds to THAT claim rather than to none.
+        assert!(s.claim_token_hash.is_some(), "an accepted credential must carry its binding");
+    }
+
+    /// **The anti-downgrade rule at the place it can be broken.** A wrong token must take the
+    /// connection down to the `--account` fallback - not leave it where presenting nothing
+    /// would leave it, or a wrong token would be as good as no token.
+    #[test]
+    fn a_wrong_client_token_downgrades_the_connection_to_the_fallback() {
+        let (mut s, _) = session_with_claim("second_one", "second_one");
+        assert!(character_list(&mut s).contains("BetaChar"), "the control");
+
+        let replies = s.handle(&identity_request(5, "AAAAAAAAAAAAAAAAAAAAAAAAAA"));
+        assert!(replies.is_empty());
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("REFUSED"), "{notes}");
+        assert!(notes.contains("DOWNGRADING"), "{notes}");
+
+        assert_eq!(s.account_name(), "maplecw", "a refused credential must not keep the account");
+        assert!(character_list(&mut s).contains("AlphaChar"));
+        assert!(s.claim_token_hash.is_none(), "and it must not keep the binding either");
+    }
+
+    /// **The compatibility hinge, on the login server's own path.** Every `0x0073` captured
+    /// before today carries a zero-length identity. If empty counted as a presentation, every
+    /// stock client would be downgraded to the fallback the moment it sent this packet - and
+    /// on screen that is "my characters vanished", not "the credential is missing".
+    #[test]
+    fn an_empty_identity_leaves_the_account_exactly_where_it_was() {
+        let (mut s, _) = session_with_claim("second_one", "second_one");
+        let replies = s.handle(&identity_request(5, ""));
+        assert!(replies.is_empty());
+
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("identity length=0"), "E1 must log the length: {notes}");
+        assert!(notes.contains("no client token was carried"), "{notes}");
+        assert!(!notes.contains("DOWNGRADING"), "an empty identity is NOT a refusal: {notes}");
+
+        assert_eq!(s.account_name(), "second_one");
+        assert!(character_list(&mut s).contains("BetaChar"));
+    }
+
+    /// **The real captured body**, byte for byte, from `login-20260829-094630.log`. A handler
+    /// tested only against bodies this file builds proves nothing about the one the client
+    /// actually sends - and this is the exact shape 57 archived runs carry.
+    #[test]
+    fn the_captured_0x0073_body_is_handled_as_no_credential() {
+        let (mut s, _) = session_with_claim("second_one", "second_one");
+        let body = hex_body("050000000000d843ae4c5617b6ae9cd200000000764d00000000");
+        assert_eq!(body.len(), 26, "the captured body is 26 bytes");
+
+        let note = describe(CLIENT_SESSION_IDENTITY, &body).expect("0x0073 is described");
+        assert!(note.contains("mode=5"), "{note}");
+        assert!(note.contains("EMPTY"), "{note}");
+        assert!(note.contains("d843ae4c5617b6ae"), "the machine tail must still be logged: {note}");
+
+        assert!(s.handle(&request(CLIENT_SESSION_IDENTITY, &body)).is_empty());
+        assert_eq!(s.account_name(), "second_one", "the stock client must be unaffected");
+        assert!(!s.take_notes().join("\n").contains("DOWNGRADING"));
+    }
+
+    /// A body that does not parse is "no credential", never a refusal: truncating deliberately
+    /// must gain an attacker nothing over sending nothing. And it must not panic - it comes
+    /// off a socket.
+    ///
+    /// **The predicate is `SessionIdentity::parse`, not the byte count**, and that distinction
+    /// is what the first version of this test got wrong. Chopping the machine tail off leaves a
+    /// body that parses perfectly and carries a COMPLETE identity string - so it is a
+    /// presentation, and a wrong one, and it is *supposed* to be refused. Only a body that
+    /// cannot be read as (mode, string, tail) is "nothing was presented". Asserting on the
+    /// length instead of on the parse made a correct refusal look like a bug.
+    #[test]
+    fn a_malformed_identity_body_is_not_a_refusal_and_does_not_panic() {
+        let full = identity_request(5, "AAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let mut unparsed = 0;
+        let mut parsed = 0;
+        // From 2, because a packet shorter than its own opcode never reaches a handler at all -
+        // `handle` returns before dispatch, which `a_truncated_packet_does_not_panic` covers.
+        for n in 2..full.len() {
+            let (mut s, _) = session_with_claim("second_one", "second_one");
+            assert!(s.handle(&full[..n]).is_empty(), "truncated to {n} bytes");
+            let notes = s.take_notes().join("\n");
+            // `full` carries the two opcode bytes; the payload the handler sees starts at 2.
+            if SessionIdentity::parse(&full[2..n]).is_none() {
+                unparsed += 1;
+                assert!(
+                    !notes.contains("DOWNGRADING"),
+                    "a body that does not parse must not be a refusal ({n} bytes): {notes}"
+                );
+                assert!(notes.contains("did not parse"), "{n} bytes: {notes}");
+                assert_eq!(s.account_name(), "second_one", "{n} bytes");
+            } else {
+                parsed += 1;
+                // It parsed and carried a complete wrong token: a presentation, and refused.
+                assert!(notes.contains("DOWNGRADING"), "{n} bytes: {notes}");
+            }
+        }
+        // Both branches have to be exercised, or this test is only checking one of them and
+        // saying nothing about the other.
+        assert!(unparsed > 0 && parsed > 0, "{unparsed} unparsed, {parsed} parsed");
+        // A length prefix that runs past the end of the body.
+        let (mut s, _) = session_with_claim("second_one", "second_one");
+        let mut lying = 5u32.to_le_bytes().to_vec();
+        lying.extend_from_slice(&999u16.to_le_bytes());
+        lying.extend_from_slice(b"short");
+        assert!(s.handle(&request(CLIENT_SESSION_IDENTITY, &lying)).is_empty());
+        assert!(s.take_notes().join("\n").contains("did not parse"));
+        assert_eq!(s.account_name(), "second_one");
+    }
+
+    /// **One-time use, seen from the login server.** Presenting the token spends it; the same
+    /// session presenting it again is the same client process and is accepted as a replay.
+    #[test]
+    fn the_same_connection_may_present_its_token_twice() {
+        let (mut s, client_token) = session_with_claim("maplecw", "second_one");
+        s.handle(&identity_request(5, &client_token));
+        assert_eq!(s.account_name(), "second_one");
+        s.take_notes();
+
+        s.handle(&identity_request(5, &client_token));
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("REPLAY BY THE SAME CLIENT PROCESS"), "{notes}");
+        assert_eq!(s.account_name(), "second_one", "the same client must not be downgraded");
+    }
+
+    /// A different client process replaying a spent token is downgraded. This is the
+    /// one-time-use property where it matters - and the pid it turns on comes from the
+    /// operating system, never from the connection.
+    #[test]
+    fn another_process_replaying_a_spent_token_is_downgraded() {
+        let (mut first, client_token) = session_with_claim("maplecw", "second_one");
+        first.handle(&identity_request(5, &client_token));
+        assert_eq!(first.account_name(), "second_one", "the control: it worked once");
+
+        // A second connection, same store, a DIFFERENT owning process.
+        let mut thief = Session::new(
+            first.store.clone(),
+            first.config.clone(),
+            first.store.get_account("maplecw").unwrap().unwrap(),
+        )
+        .with_fallback(first.store.get_account("maplecw").unwrap().unwrap())
+        .with_launch_pid(Some(9999));
+        thief.handle(&identity_request(5, &client_token));
+        let notes = thief.take_notes().join("\n");
+        assert!(notes.contains("SPENT"), "{notes}");
+        assert!(notes.contains("DOWNGRADING"), "{notes}");
+        // The thief was ALREADY being served the fallback, so nothing on screen changes -
+        // and the line has to say that rather than "DOWNGRADING from maplecw to maplecw",
+        // which reads as a bug in the log instead of as a refusal.
+        assert!(notes.contains("ALREADY being served as"), "{notes}");
+        assert_eq!(thief.account_name(), "maplecw");
+    }
+
+    /// **E1's own requirement**: every `0x0073`, whatever it carries, produces a log line that
+    /// names the length. Without it a failed E2 is indistinguishable from "the server ignored
+    /// the field", and the owner would have spent a launch to learn nothing.
+    #[test]
+    fn every_identity_produces_a_log_line_naming_the_length() {
+        for (label, identity) in [
+            ("empty", ""),
+            ("short", "AB"),
+            ("token shaped", "AAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            ("long", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            ("lower case hex", "0123456789abcdef0123456789abcdef"),
+        ] {
+            let (mut s, _) = session_with_claim("second_one", "second_one");
+            s.handle(&identity_request(5, identity));
+            let notes = s.take_notes().join("\n");
+            assert!(
+                notes.contains(&format!("identity length={}", identity.len())),
+                "{label}: {notes}"
+            );
+            // And the raw decode says the SHAPE, so a hook that writes the wrong thing is
+            // legible without a second launch.
+            let raw = describe(CLIENT_SESSION_IDENTITY, &identity_request(5, identity)[2..])
+                .expect("described");
+            assert!(raw.contains("session identity:"), "{label}: {raw}");
+            // Grepping login.log for `0x0073` has to find EVERY line about it. This one
+            // began with "session" and was silently missed for the empty-identity case,
+            // which is the case the whole feature has to be readable in.
+            assert!(raw.contains("0x0073"), "{label}: not greppable by opcode: {raw}");
+        }
+    }
+
+    /// **The unit.** The hook logs `IDENTITY wrote N bytes` and tells the reader in the same
+    /// sentence that `login.log should now show ... identity length=N`. That comparison is the
+    /// whole readout of the one-launch experiment, so the two numbers have to be the same
+    /// unit - **wire bytes**, not decoded characters.
+    ///
+    /// They agree for anything ASCII, which is why this needs a non-UTF-8 body to mean
+    /// anything: `from_utf8_lossy` turns each bad byte into a three-byte replacement
+    /// character, so a decoded length would report 6 where the client sent 2 - and the owner would
+    /// read that as the hook having written something it did not.
+    #[test]
+    fn the_logged_length_is_wire_bytes_and_not_decoded_characters() {
+        let mut payload = 5u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&2u16.to_le_bytes());
+        payload.extend_from_slice(&[0xFF, 0xFE]); // not valid UTF-8
+        payload.extend_from_slice(&hex_body("d843ae4c5617b6ae9cd200000000764d00000000"));
+
+        let parsed = SessionIdentity::parse(&payload).expect("it still parses");
+        assert_eq!(parsed.identity_bytes, 2, "the client sent two bytes");
+        assert_eq!(parsed.identity.len(), 6, "and they decode to two replacement characters");
+
+        let (mut s, _) = session_with_claim("second_one", "second_one");
+        s.handle(&request(CLIENT_SESSION_IDENTITY, &payload));
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("identity length=2"), "must report WIRE bytes: {notes}");
+        assert!(!notes.contains("identity length=6"), "must not report decoded bytes: {notes}");
+        // And the divergence is itself reported, because it means what arrived is not a token.
+        assert!(notes.contains("NOT valid UTF-8"), "{notes}");
+
+        // The raw decode uses the same unit.
+        let raw = describe(CLIENT_SESSION_IDENTITY, &payload).unwrap();
+        assert!(raw.contains("(2 bytes)"), "{raw}");
+    }
+
+    /// The shape check has to discriminate, or it is decoration. A real token is recognised;
+    /// something the right length that is not base32 is not.
+    #[test]
+    fn the_raw_decode_tells_a_client_token_from_something_else_the_same_length() {
+        let good = describe(CLIENT_SESSION_IDENTITY, &identity_request(5, "MZXW6YTBOIMZXW6YTBOIMZXW6Y")[2..])
+            .unwrap();
+        assert!(good.contains("THE SHAPE OF A MAPLECW CLIENT TOKEN"), "{good}");
+
+        // 26 characters, but lower case - which is what a hex token would look like, and what
+        // an upper-casing transform would NOT produce.
+        let bad = describe(CLIENT_SESSION_IDENTITY, &identity_request(5, "mzxw6ytboimzxw6ytboimzxw6y")[2..])
+            .unwrap();
+        assert!(bad.contains("NOT the shape"), "{bad}");
+    }
+
+    /// A session that was never given a fallback must say so rather than silently keeping the
+    /// account. `CLAUDE.md`: built is not wired, and an unwired refusal looks identical to no
+    /// refusal at all.
+    #[test]
+    fn a_refusal_with_no_fallback_configured_says_so_loudly() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let mut s = Session::new(store, Arc::new(Config::default()), account);
+        s.handle(&identity_request(5, "AAAAAAAAAAAAAAAAAAAAAAAAAA"));
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("never given a fallback"), "{notes}");
+        assert!(notes.contains("with_fallback"), "the fix has to be in the line: {notes}");
+    }
+
     #[test]
     fn a_truncated_packet_does_not_panic() {
         let mut s = session();
@@ -1256,11 +1896,27 @@ mod tests {
         assert!(note.contains(r#"identity="abc123""#), "{note}");
     }
 
+    /// **This assertion changed on 2026-08-29 and the change is the point.**
+    ///
+    /// A truncated `0x0073` used to return `None` - the same answer as a packet this function
+    /// does not decode at all. That was fine while the identity was a curiosity. It is not fine
+    /// now: `0x0073` carries a credential, and "the client sent a malformed identity" and "the
+    /// client sent a packet we do not decode" are different events with different fixes, which
+    /// a shared `None` cannot tell apart. Silence on a malformed credential is exactly the
+    /// shape `CLAUDE.md` warns about - an instrument that answers the same way for two
+    /// different causes.
+    ///
+    /// So a malformed identity now says MALFORMED, and the "does not panic" half - which is
+    /// what this test was really for - is asserted directly.
     #[test]
     fn describe_says_nothing_about_packets_it_does_not_decode() {
         assert!(describe(CLIENT_LOGIN_REQUEST, &[]).is_none());
-        // And a truncated identity must not panic.
-        assert!(describe(CLIENT_SESSION_IDENTITY, &[1, 2]).is_none());
+        // A truncated identity must not panic, and must not be silent either.
+        for n in 0..8 {
+            let note = describe(CLIENT_SESSION_IDENTITY, &vec![1u8; n])
+                .unwrap_or_else(|| panic!("a {n}-byte 0x0073 must still produce a line"));
+            assert!(note.contains("MALFORMED"), "{n} bytes: {note}");
+        }
     }
 
     /// The select-character body, as the client sends it: a leading `u32`, the PIC as a
