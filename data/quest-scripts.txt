@@ -138,12 +138,19 @@
 # sends action 1) and a **scripted close** (`Check.1.endscript = q<id>e`, so the client sends
 # action 5). Only the `Say."1"` half is missing, which is why they are cheap.
 #
-# **No job change is attached to them, deliberately.** `Act."1"` for all four carries
-# `exp 3150` and nothing else [L], there is no `Act.<n>.job` key in the schema to hang one
-# on, and the second-job table (110/111/112, 120/121/122, ...) does not exist in this server.
-# Adding a line of dialogue is honest; making these rows silently promote a character would
-# be a job change with no table behind it. So on completing one of these today the player
-# gets the line, the EXP and the journal row, and stays whatever job they were.
+# **No job change is attached to them, and that is STILL true - but the reason changed.**
+# `Act."1"` for all four carries `exp 3150` and nothing else [L], and there is no
+# `Act.<n>.job` key in the schema to hang a promotion on. What has changed since this
+# paragraph was written is the second half of it: the second-job table **now exists**, as
+# `crates/world/src/secondjob.rs`, and it is wired.
+#
+# The advancement is not done by these rows. It is done by the NPC, which is where the
+# client's own data puts it: `20003`'s `Check.1.npc` is **511**, and completing it at 511 is
+# what opens the choice box. So on completing one of these the player gets the EXP, the
+# journal row, and then a menu asking which of the branch's two or three second jobs they
+# want. `Say 1.0` below is the **fallback** - it renders only when the menu cannot be
+# offered, because two `0x055B` boxes in one exchange means the player only ever sees the
+# second one. The menu's own header carries the closing sentence.
 #
 # ## Provenance: all four lines are OURS
 #
@@ -169,3 +176,93 @@
 
 # `Say 1.0` x4 = **OURS**, unsourced. The NPC has no words for this in the client.
 # NOT added: any `Act` row. See the header - there is no second-job table to promote into.
+
+# ---------------------------------------------------------------------------------------
+# 20002 / 20102 / 20202 / 20302  "Test of Qualification"  -  startscript q<id>s,
+#                                 endscript q<id>e, failscript q<id>f
+#
+#   *** THE HIDDEN FIELD. This is the one quest in the game that MOVES THE PLAYER. ***
+#
+# ---------------------------------------------------------------------------------------
+# These four are the reason `research/second-job.md` said the chain was not walkable: it
+# recorded that *"the Test of Qualification hidden field and its q20002s script do not
+# exist"*. Half of that was right and half was wrong, and the wrong half had been sitting in
+# the client the whole time.
+#
+# **The script does not exist** - `research/quest-scripts.md` enumerated all 205 archives and
+# all 10 021 images and found `q20002s` exactly twice in the whole tree, as the two *names*
+# inside `20002.img`. That still holds. **The field does exist**, and so do the monsters in
+# it. `research/second-job-fields.md` is the working; the short version is that the four maps
+# are 80001300 / 80001100 / 80001000 / 80001200 and each has **exactly one portal**, the
+# spawn point - so there is no door in and no door out, and a server putting the player there
+# is the only way anybody has ever been in one.
+#
+# ## What the rows below are
+#
+# The WZ ships **no `Say` node at all** for these four - not `Say."0"`, not `Say."1"` [L] -
+# because all three of their conversations lived in the scripts. So every line here is OURS.
+# What is not ours is the number: `Check.1.item.0.count` is **30** [L], for all four, and it
+# is asserted against the generated dump by `secondjob::tests`.
+#
+# `Act 1.item.0.count -30` is **AUTHORED**, and it is the `q<id>e` endscript's job. The WZ's
+# `Act."1"` for these four is `exp` and `nextQuest` and nothing else [L], so without this row
+# the examiner checks for 30 marbles, pays out, and leaves all 30 in the bag - which is a
+# second character's test kit sitting in the first one's Etc tab.
+#
+# ## One naming quirk of the client's, left alone on purpose
+#
+# `QuestInfo.1` says *"collect Black Marbles"*. `String.wz/Item.img/4031017/name` says
+# **"Dark Marble"**. Both are the client's, they disagree, and the bag is what the player
+# actually reads - so these lines say Dark Marble and the journal will keep saying Black.
+# Recorded rather than tidied: renaming the item to match the journal would be editing
+# shipped data to hide a discrepancy that is Nexon's, not ours.
+#
+# `#b`/`#k` are the client's blue-text markers and `#t<id>#` expands to an item name; both
+# are used by the shipped quest text throughout `questlines.txt`.
+
+20002	Say	0.0	So Dances with Balrog sent you. Good. Strength is not a thing you tell me about -- it is a thing you show me.
+20002	Say	0.1	There is a place near here that most people never see. I will put you inside it. The monsters in there are not the ones you have been fighting, and they carry #b#t4031017##k.
+20002	Say	0.2	Bring me #b30#k of them. Talk to the instructor standing inside whenever you want to come out -- there is no other door.
+20002	Act	1.item.0.id	4031017
+20002	Act	1.item.0.count	-30
+20002	Say	1.0	Thirty. I counted them. You went in as a Warrior and you have come out as something more.
+20002	Say	1.1	Take #b#t4031018##k and go back to Dances with Balrog in Perion. The advancement is theirs to give, not mine -- I only ever ran the test.
+
+20102	Say	0.0	So Grendel the Really Old sent you. Good. Strength is not a thing you tell me about -- it is a thing you show me.
+20102	Say	0.1	There is a place near here that most people never see. I will put you inside it. The monsters in there are not the ones you have been fighting, and they carry #b#t4031019##k.
+20102	Say	0.2	Bring me #b30#k of them. Talk to the instructor standing inside whenever you want to come out -- there is no other door.
+20102	Act	1.item.0.id	4031019
+20102	Act	1.item.0.count	-30
+20102	Say	1.0	Thirty. I counted them. You went in as a Magician and you have come out as something more.
+20102	Say	1.1	Take #b#t4031020##k and go back to Grendel the Really Old in Ellinia. The advancement is theirs to give, not mine -- I only ever ran the test.
+
+20202	Say	0.0	So Athena Pierce sent you. Good. Strength is not a thing you tell me about -- it is a thing you show me.
+20202	Say	0.1	There is a place near here that most people never see. I will put you inside it. The monsters in there are not the ones you have been fighting, and they carry #b#t4031021##k.
+20202	Say	0.2	Bring me #b30#k of them. Talk to the instructor standing inside whenever you want to come out -- there is no other door.
+20202	Act	1.item.0.id	4031021
+20202	Act	1.item.0.count	-30
+20202	Say	1.0	Thirty. I counted them. You went in as a Bowman and you have come out as something more.
+20202	Say	1.1	Take #b#t4031022##k and go back to Athena Pierce in Henesys. The advancement is theirs to give, not mine -- I only ever ran the test.
+
+20302	Say	0.0	So The Dark Lord sent you. Good. Strength is not a thing you tell me about -- it is a thing you show me.
+20302	Say	0.1	There is a place near here that most people never see. I will put you inside it. The monsters in there are not the ones you have been fighting, and they carry #b#t4031023##k.
+20302	Say	0.2	Bring me #b30#k of them. Talk to the instructor standing inside whenever you want to come out -- there is no other door.
+20302	Act	1.item.0.id	4031023
+20302	Act	1.item.0.count	-30
+20302	Say	1.0	Thirty. I counted them. You went in as a Thief and you have come out as something more.
+20302	Say	1.1	Take #b#t4031024##k and go back to The Dark Lord in Kerning City. The advancement is theirs to give, not mine -- I only ever ran the test.
+
+# `Say 0.*`  = OURS. The client ships no Say node for these four at all.
+# `Say 1.*`  = OURS. Same.
+# `Act 1.item.0` = OURS, and it is the endscript's take-back. The count is NEGATIVE, which is
+#              the WZ's own convention for a quest reclaiming an item (quest 1001's
+#              `Act.1.item.0.count` is `-1`) and is what `apply_quest_completion_rewards`
+#              already reads. `take_quest_item` walks as many slots as it takes.
+# `Say 1.1`'s `#t<id>#` is the PROOF, which is the marble id + 1 in all four branches -
+#              4031017/4031018, 4031019/4031020, 4031021/4031022, 4031023/4031024. That
+#              adjacency is the client's [L]; it is written out per branch above rather than
+#              computed, because a table that is only true by coincidence should not be a
+#              formula.
+# NOT added: any `Act 0.item` row. The proof is handed over by quest 2000**3**'s own
+#              `Act.0.item.0`, which the client DOES ship [L], and the chain auto-starts
+#              20003 the moment 20002 completes. Adding one here would hand out two.

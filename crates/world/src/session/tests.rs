@@ -7090,3 +7090,236 @@ fn an_unreadable_storage_request_is_answered_rather_than_dropped() {
         );
     }
 }
+
+/// The `0x00F3` body the client sends when a **type-6 menu** line is clicked.
+///
+/// `net::script::parse_menu_reply` owns the shape: `u32 0, u8 6, u8 1, u32 selection` for a
+/// pick and `u32 0, u8 6, u8 0` for a Close. Written out here rather than built through the
+/// decoder, so a decoder that changed shape would fail this test instead of agreeing with it.
+fn menu_reply(selection: Option<u32>) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(&0u32.to_le_bytes()); // handle
+    b.push(net::script::SCRIPT_TYPE_MENU);
+    match selection {
+        Some(n) => {
+            b.push(1);
+            b.extend_from_slice(&n.to_le_bytes());
+        }
+        None => b.push(0),
+    }
+    b
+}
+
+/// **The whole second advancement, walked the way a player walks it.**
+///
+/// The owner, 2026-08-31: *"the user goes to their job instructor, receive a letter from their
+/// instructor, then go to the 2nd job trainer to talk, then get teleported to the special mob
+/// map ... get 20 marbles for proof, receive the recommendation letter, go back to the job
+/// instructor to receive their 2nd job advancement"*. That is this client's chain exactly,
+/// with one correction: **it is 30 marbles, not 20** - `Check.1.item.0.count` of quest 20002
+/// is `30` and the same on all four branches. **[L]**
+///
+/// The test walks the four legs that involve a map or an item, and asserts an effect at each
+/// one rather than just the last: a chain where the middle silently does nothing still ends
+/// with the right job, and that is precisely the failure this project keeps finding.
+#[test]
+fn the_second_advancement_walks_the_client_s_own_chain() {
+    let b = &crate::secondjob::BRANCHES[0]; // Warrior
+    let field = b.test_field;
+
+    let mut npcs = std::collections::HashMap::new();
+    let npc = |template: u32| net::opcode::FieldNpc {
+        object_id: 1000, template_id: template, x: 0, cy: 0, fh: 1, rx0: 0, rx1: 0, f: 0,
+    };
+    npcs.insert(b.examiner_map_id, vec![npc(b.examiner_npc)]);
+    npcs.insert(field.map_id, vec![npc(field.warden_npc)]);
+    npcs.insert(b.instructor_map_id, vec![npc(b.instructor_npc)]);
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Thirty".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.level = crate::secondjob::LEVEL_MINIMUM;
+    made.job = b.from_job; // already a Swordsman - the chain's own Check.0.job.0
+    made.map_id = b.examiner_map_id;
+    store.save_character_progress(&made).unwrap();
+    store.set_character_map(made.id, b.examiner_map_id).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config { set_field_probe: true, npcs, ..Config::default() };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    let map_of = |store: &Arc<Store>, id: u32| {
+        store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().map_id
+    };
+    let job_of = |store: &Arc<Store>, id: u32| {
+        store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().job
+    };
+    let held = |s: &Session, item: u32| s.held_count(made.id, item);
+
+    // ---- leg 1: the examiner puts you inside the hidden field ----------------------------
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(
+        map_of(&store, made.id),
+        field.map_id,
+        "the examiner's whole job is to warp you in - that map has no portal to walk through"
+    );
+    assert!(
+        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE),
+        "and says so first: a script box sent with a SetField is torn down by field entry"
+    );
+
+    // ---- leg 2: the warden is the only door out ------------------------------------------
+    s.handle(&npc_click(1000)); // now the warden, because the map changed
+    assert_eq!(
+        map_of(&store, made.id),
+        b.examiner_map_id,
+        "and it is the client's OWN returnMap for the field, not a number we chose"
+    );
+
+    // ---- leg 3: thirty marbles buy the proof ---------------------------------------------
+    // Short of thirty, the examiner sends you back in and takes nothing.
+    let etc = store::InventoryType::Etc;
+    store
+        .add_item(made.id, etc, &store::Item::bundle(b.chain.marble_item, 29), 200)
+        .unwrap();
+    s.handle(&npc_click(1000));
+    assert_eq!(map_of(&store, made.id), field.map_id, "29 is not 30");
+    assert_eq!(held(&s, b.chain.marble_item), 29, "and nothing was taken for a failed test");
+    assert_eq!(held(&s, b.chain.proof_item), 0, "and nothing was given");
+
+    // Back out, and top up to exactly thirty.
+    s.handle(&npc_click(1000)); // the warden again
+    store.add_item(made.id, etc, &store::Item::bundle(b.chain.marble_item, 1), 200).unwrap();
+    assert_eq!(held(&s, b.chain.marble_item), 30);
+
+    let out = s.handle(&npc_click(1000));
+    assert_eq!(
+        map_of(&store, made.id),
+        b.examiner_map_id,
+        "a PASS does not warp - re-entering a test that is finished would strand the player"
+    );
+    assert_eq!(held(&s, b.chain.marble_item), 0, "the thirty are handed over");
+    assert_eq!(held(&s, b.chain.proof_item), 1, "and the proof comes back");
+    assert!(
+        out.iter().any(|r| r.opcode == net::script::SCRIPT_MESSAGE),
+        "and the examiner says so"
+    );
+
+    // ---- leg 4: the instructor, and only the instructor, advances -------------------------
+    store.set_character_map(made.id, b.instructor_map_id).unwrap();
+    s.claim_for_character(made.id); // re-read the character at its new map
+    let out = s.handle(&npc_click(1000));
+    let menu = out
+        .iter()
+        .find(|r| r.opcode == net::script::SCRIPT_MESSAGE)
+        .expect("the instructor offers the choice");
+    assert!(menu.what.contains("MENU"), "and it is a type-6 list, not a Say: {}", menu.what);
+    assert_eq!(job_of(&store, made.id), b.from_job, "nothing has changed YET");
+
+    // Picking position 0 is this branch's first choice, and the job that comes out is that
+    // one rather than "the first job id in the file" - the two are only the same if the menu
+    // and the decoder agree, which is the bug this asserts against.
+    let want = b.choices[0].job;
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    assert_eq!(job_of(&store, made.id), want, "the job must PERSIST, not just be announced");
+    let stat = out
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("the client must be told, or it draws the old job forever");
+    assert!(stat.what.contains(&format!("job {} -> {want}", b.from_job)), "{}", stat.what);
+    assert_eq!(held(&s, b.chain.proof_item), 0, "and the proof is spent, not left in the bag");
+}
+
+/// **Without the proof the instructor refuses, and refusing changes nothing.**
+///
+/// The mirror of the walk above, and the reason it is a separate test: a chain that can be
+/// skipped is not a chain. `secondjob::REQUIRE_PROOF_ITEM` is the gate and this is the check
+/// that its answer is actually used - `CLAUDE.md`'s Heena section is exactly this shape.
+#[test]
+fn a_level_thirty_character_cannot_skip_the_test() {
+    let b = &crate::secondjob::BRANCHES[0];
+    let mut npcs = std::collections::HashMap::new();
+    npcs.insert(
+        net::opcode::START_MAP_ID,
+        vec![net::opcode::FieldNpc {
+            object_id: 1000, template_id: b.instructor_npc, x: 0, cy: 0, fh: 1,
+            rx0: 0, rx1: 0, f: 0,
+        }],
+    );
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Impatient".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.level = 60; // well past the minimum: it is the proof that is missing, not the level
+    made.job = b.from_job;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config { set_field_probe: true, npcs, ..Config::default() };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    let out = s.handle(&npc_click(1000));
+    let said = out
+        .iter()
+        .find(|r| r.opcode == net::script::SCRIPT_MESSAGE)
+        .expect("ALWAYS ANSWER - a silent click is the frozen-UI failure");
+    assert!(
+        said.what.contains("Say") || !said.what.contains("MENU"),
+        "and it is a sentence, not the choice box: {}",
+        said.what
+    );
+    assert!(
+        !out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "a refusal must not send a job packet"
+    );
+    let job = store.characters_for(1, 0).unwrap().into_iter()
+        .find(|c| c.id == made.id).unwrap().job;
+    assert_eq!(job, b.from_job, "and must not change the row");
+
+    // And a reply arriving anyway - the socket carries no credentials, so it can - is refused
+    // by the same gate rather than granted on the strength of the packet.
+    let out = s.on_script_reply(&menu_reply(Some(0)));
+    let job = store.characters_for(1, 0).unwrap().into_iter()
+        .find(|c| c.id == made.id).unwrap().job;
+    assert_eq!(job, b.from_job, "an unsolicited menu answer grants nothing: {out:?}");
+}
+
+/// **The Dark Marble drops in its own field and nowhere else.**
+///
+/// Three of the eight test mobs also spawn on ordinary maps, so the map half of the rule is
+/// not decoration - `800011` shares *Precipice of Darkness* with the mobs an ordinary player
+/// grinds at that level.
+#[test]
+fn a_dark_marble_drops_in_the_test_field_and_nowhere_else() {
+    let b = &crate::secondjob::BRANCHES[2]; // Bowman: the branch with the real leak
+    let (mut s, _, _) = gm_session();
+    s.last_position = Some((520, 395));
+
+    // In its own field: the marble is there, once, without any drop table saying so.
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2000, None, 204, b.test_field.map_id);
+    assert_eq!(out.len(), 1, "exactly the marble, and exactly one of it: {out:?}");
+    assert!(
+        out[0].what.contains(&b.chain.marble_item.to_string()),
+        "and it is THIS branch's marble: {}",
+        out[0].what
+    );
+
+    // The same mob on Precipice of Darkness, which is where it also lives. **[L]**
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2001, None, 204, 10006160);
+    assert!(out.is_empty(), "an ordinary field must not pay a test's proof: {out:?}");
+
+    // And a scraped 6% row cannot smuggle one out either: the filter runs on the ROLL, so a
+    // hit on the wrong map is removed however it got there.
+    let drops = crate::droptables::DropTables::parse(&format!(
+        "{} | {} | 100 | 1 | 1 | 1 | Dark Marble at a certain rate\n",
+        b.test_field.mobs[1], b.chain.marble_item
+    ));
+    s.config = Arc::new(Config { drops, ..(*s.config).clone() });
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2002, None, 204, 10006160);
+    assert!(out.is_empty(), "a 100% table row is still refused off the field: {out:?}");
+    // On the field, the table row and the guarantee do not stack.
+    let out = s.drops_from_kill(b.test_field.mobs[1], 2003, None, 204, b.test_field.map_id);
+    assert_eq!(out.len(), 1, "one marble, not two: {out:?}");
+}
+

@@ -153,7 +153,6 @@
 use std::collections::HashSet;
 
 use net::opcode::Character;
-use net::packet::PacketWriter;
 use store::Store;
 
 use crate::config::Config;
@@ -422,85 +421,29 @@ fn no_such_stop(taxi: &Taxi, count: usize) -> String {
 // The packet out
 // ---------------------------------------------------------------------------------------
 
-/// `0x055B` message type **6**: the list box.
+/// `0x055B` message type **6**: the list box. Re-exported from its home in `net::script`.
 ///
-/// **[L]**, re-read here at `141f73740` rather than taken from another module - see the
-/// module doc for why this file carries its own copy.
-pub const SCRIPT_TYPE_MENU: u8 = 6;
+/// # This used to be a second copy, and the file said so
+///
+/// The encoder, the decoder, `MenuReply` and this constant were all written out again here
+/// because `crates/net/` was another agent's to edit at the time, and the module doc above
+/// says *"the right home for both is `net::script::npc_menu`"*. They now live there, and
+/// these four names are re-exports so nothing that used them had to change.
+///
+/// The reason to collapse it rather than leave the note: `crate::secondjob` needed a menu
+/// too, and a **third** copy of a packet head is how three features drift apart one bug at a
+/// time.
+pub use net::script::{MenuReply, MENU_FIXED_LEN, SCRIPT_TYPE_MENU};
 
-/// The fixed part of a type-6 body: [`net::script::SCRIPT_HEAD_LEN`] plus the `u16` string
-/// length. No `echo`, no `prev`/`next`, no trailing `u32` - `FUN_141f73740` makes **two**
-/// reads and no others (`141f73789`, `141f73799`). **[L]**
-pub const MENU_FIXED_LEN: usize = net::script::SCRIPT_HEAD_LEN + 2;
-
-/// What the player did with the menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MenuReply {
-    /// The `#L` number of the line clicked, or `None` when the box was closed.
-    pub selection: Option<u32>,
-}
-
-/// Decode a `0x00F3` that is answering a [`SCRIPT_TYPE_MENU`] box.
-///
-/// **`net::script::parse_script_reply` cannot do this, and it fails silently.** That function
-/// branches on the message type and its fall-through arm reads a Say-shaped
-/// `u32 echo, str text, u8 action`; against a 10-byte type-6 body the string's `u16` length
-/// needs two bytes that do not exist, `PacketReader` errors, and the whole packet is dropped.
-/// That is exactly the shape of the bug that cost Roger's quest, recorded in that same file.
-/// So this is a separate decoder and the wiring patch calls it **first**.
-///
-/// `None` means "not a type-6 answer" - the caller must fall through to the ordinary script
-/// path rather than treat it as a cancel.
-///
-/// ```text
-/// accepted   u32 0, u8 6, u8 1, u32 selection    10 bytes   141f7398e / 141f73995
-/// cancelled  u32 0, u8 6, u8 0                    6 bytes   141f7397c
-/// ```
+/// Decode a `0x00F3` that is answering a [`SCRIPT_TYPE_MENU`] box. See
+/// [`net::script::parse_menu_reply`], which owns the working.
 pub fn parse_menu_reply(body: &[u8]) -> Option<MenuReply> {
-    let mut r = net::packet::PacketReader::new(body);
-    let _handle = r.u32().ok()?;
-    if r.u8().ok()? != SCRIPT_TYPE_MENU {
-        return None;
-    }
-    // The accept byte is written as a literal 1 or a literal 0 and nothing else. Anything
-    // other than 1 is treated as "closed", which is the safe direction: it routes nobody.
-    if r.u8().ok()? != 1 {
-        return Some(MenuReply { selection: None });
-    }
-    // An accepted box **must** carry the selection. A truncated one is not a cancel - it is a
-    // body this server does not understand, and inventing a `None` here would silently turn a
-    // malformed packet into "the player pressed Close", which is a free ride away from being
-    // a bug that matters.
-    let selection = r.u32().ok()?;
-    Some(MenuReply { selection: Some(selection) })
+    net::script::parse_menu_reply(body)
 }
 
-/// The `0x055B` **body** for a menu - no opcode; the caller prepends
-/// [`net::script::SCRIPT_MESSAGE`].
-///
-/// # This is a duplicate of [`crate::jobguide::menu_body`] and that is a defect, not a design
-///
-/// The two are byte-identical for the same speaker and text, and
-/// `the_menu_encoder_agrees_with_phils_byte_for_byte` proves it rather than asserting it in
-/// prose. **The right home is `net::script::npc_menu(speaker, text)`**, next to `npc_say` and
-/// `npc_ask`; `crates/net/` is not this agent's to edit, so the duplication is flagged loudly
-/// for the coordinator to collapse at integration. Two copies of a packet head is how two
-/// features drift, and the test is the only thing holding them together until then.
-///
-/// `flags = 0` deliberately: bit `0x04` would add a speaker `u32` to the body and **there is
-/// no resynchronisation point** if the bit and the value disagree, and bit `0x01` would
-/// remove the Close button - the player's only way out if the list does not render.
+/// The `0x055B` **body** for a menu. See [`net::script::npc_menu`], which owns the working.
 pub fn menu_body(speaker_template: u32, text: &str) -> Vec<u8> {
-    let mut w = PacketWriter::new();
-    w.u32(0); //                     141f6f382  handle - type 6 writes a literal 0 back
-    w.u8(0); //                      141f6f38d  head field 2, unread on this path
-    w.u32(speaker_template); //      141f6f398
-    w.u8(0); //                      141f6f3a2  hasOverride - 0 means no u32 follows
-    w.u8(SCRIPT_TYPE_MENU); //       141f6f3e6  message type
-    w.u16(0); //                     141f6f3f2  flags
-    w.u8(0); //                      141f6f3fe  head field 8
-    w.str(text); //                  141f73799  u16 BYTE count, then bytes
-    w.into_vec()
+    net::script::npc_menu(speaker_template, text)
 }
 
 // ---------------------------------------------------------------------------------------

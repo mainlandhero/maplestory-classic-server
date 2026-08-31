@@ -152,11 +152,41 @@ impl Session {
         // The lesson is the one CLAUDE.md keeps making: the branch we were watching was
         // the one we had built, not the one the client uses.
         let mut out = Vec::new();
+        // **Where the character was before any of this ran.** A quest that starts the
+        // second-job test warps them, and a script box sent after a `SetField` is torn down
+        // by field entry - so the closing `say_line` has to be skipped in exactly that case.
+        // Comparing the map is deliberate rather than setting a flag: it is true for any
+        // future quest that moves somebody, including ones nobody has written yet.
+        let map_before = self.claimed_character().map(|c| c.map_id);
         if accepted {
             out.extend(self.record_quest_start(req.quest_id, req.npc_template_id));
         }
         if completing {
             out.extend(self.record_quest_complete(req.quest_id, speaking_quest));
+        }
+        let map_after = self.claimed_character().map(|c| c.map_id);
+        if map_before != map_after {
+            self.conversation = None;
+            return out;
+        }
+        // **The chain's last quest ends in a choice, not a line.** Turning in `The Proof of a
+        // Hero` at the instructor is the moment the second advancement is earned; putting the
+        // menu here means the player does not have to click the same NPC a second time to be
+        // asked which path they want.
+        //
+        // **It is the LAST quest of the chain and no other.** `20000` is turned in at the
+        // same NPC and ships its own `Say.1` - *"Whoa, you've definitely grown up!"* - and an
+        // instructor test rather than a quest-id test would replace that line with a refusal
+        // saying the player has no proof, which is true and is the wrong thing to say to
+        // somebody who has just started the chain. Three of the four chain quests end
+        // somewhere this must not fire.
+        let ends_the_chain = crate::secondjob::branch_at(req.npc_template_id)
+            .is_some_and(|b| b.chain.quests[3] == req.quest_id);
+        if completing && ends_the_chain {
+            if let Some(menu) = self.second_advancement_for(req.npc_template_id) {
+                out.extend(menu);
+                return out;
+            }
         }
         out.extend(self.say_line(0));
         out
@@ -490,6 +520,10 @@ impl Session {
         if before.is_none() {
             out.extend(self.grant_quest_start_items(quest_id));
             out.extend(self.apply_quest_hp(quest_id, 0));
+            // **Last, because it changes the field.** A `SetField` tears down whatever
+            // dialogue is on screen, so anything with something to say has to have said it
+            // by now. Only the four *Test of Qualification* quests produce anything here.
+            out.extend(self.enter_test_field_on_quest_start(quest_id));
         }
         out
     }
@@ -661,6 +695,28 @@ impl Session {
             return replies;
         }
 
+        // **And at level 30 the same four instructors offer the SECOND advancement.** They
+        // now answer two different questions and the order is the one above: `jobs` first,
+        // because a beginner at 511 is asking about the first one, and this second because a
+        // Swordsman is asking about the next.
+        if let Some(replies) = self.second_advancement_for(template) {
+            return replies;
+        }
+
+        // **And the examiner runs the test**, which is what the four `<Job> Job Instructor`
+        // NPCs outside the towns exist for. They advance nobody - their own idle line says
+        // so - they warp the player into the hidden field and take the marbles afterwards.
+        if let Some(replies) = self.job_test_for(template) {
+            return replies;
+        }
+
+        // **And the warden inside the hidden field is the only door out of it.** Those four
+        // maps have exactly one portal each and it is the spawn point, so a click on this NPC
+        // is not a convenience - without it a character in there is stuck.
+        if let Some(replies) = self.job_test_exit_for(template) {
+            return replies;
+        }
+
         // A quest-less NPC is a one-line conversation: its own `d0`. Going through the
         // same state machine means its OK is handled the way a quest's is, rather than
         // leaving a stale conversation behind for the next 0x00F3 to walk into.
@@ -719,6 +775,18 @@ impl Session {
         match crate::jobs::advancement_for(&chr, template) {
             // Not an instructor at all - fall through to whatever this NPC normally does.
             crate::jobs::Advancement::NotAnInstructor => None,
+            // **A character who already has a job is the SECOND advancement's business now,
+            // and this must fall through rather than refuse.** It used to answer *"You have
+            // already taken that step"*, which is true of the first advancement and is the
+            // wrong sentence for a level-30 Swordsman standing in front of Dances with Balrog
+            // asking for the next one. `research/second-job.md` section 9.1 asked for exactly
+            // this, and the reason it is safe is narrow and worth stating: `jobs::
+            // advancement_for` produces `AlreadyAdvanced` **only** when `first_job_at`
+            // matched, i.e. only at 511 / 313 / 221 / 411 - and `secondjob::branch_at`
+            // matches that same set of four exactly. So nothing is left unanswered by
+            // falling through here; the next handler in the chain covers precisely the NPCs
+            // this arm can name. `CLAUDE.md`'s "always answer" holds.
+            crate::jobs::Advancement::AlreadyAdvanced { .. } => None,
             crate::jobs::Advancement::Eligible { job, job_name } => {
                 let was = chr.job;
                 chr.job = job;
@@ -754,11 +822,19 @@ impl Session {
     /// **Phil has no `d0` line**, so falling through here prints the "no dialogue for NPC
     /// template 101" placeholder, which is what they do today.
     ///
-    /// **A chain of yes/no boxes, not one list.** `crate::taxi` sends the type-6 menu form;
-    /// this sends the mechanism already proven on the owner's screen, because the fill site of
-    /// `[ui+0x3e0]` was never isolated and "a server-sent type 6 draws its `#L` lines" is
-    /// **[D]**. One launch measures both, with this as the control. `jobguide.rs` section 6
-    /// carries the addresses so it never has to be re-derived.
+    /// **A chain of yes/no boxes, not one list - and that is now a leftover rather than a
+    /// design.** This was built as the *control* beside the taxis' type-6 menu, back when
+    /// "a server-sent type 6 draws its `#L` lines" was **[D]** with the fill site of
+    /// `[ui+0x3e0]` un-isolated.
+    ///
+    /// **The experiment ran and type 6 won.** `research/fixtures/type6-menu-renders-and-taxi-
+    /// rides-world.log`, 2026-08-29: Lyn and the Regular Cab each sent one box, each was
+    /// answered by a 10-byte `0x00F3` ending `06 01` carrying a real selection - line 2, then
+    /// line 0 - and each was followed by the fare and the `SetField`. **[L]**
+    ///
+    /// So Phil could collapse from four boxes to one, the way `crate::taxi` and
+    /// `crate::secondjob` both do. **Not done**, and named here rather than left implicit:
+    /// it is a change to a path that works, and it buys tidiness rather than behaviour.
     fn phil_job_guide(&mut self) -> Option<Vec<Reply>> {
         let chr = self.claimed_character()?;
         let step = crate::jobguide::opening(&chr);
@@ -893,7 +969,323 @@ impl Session {
             out.extend(self.go_to_map(&mut chr, map_id, 0, why));
         }
         Some(out)
-    }    /// One `0x055B` from an instructor, with no conversation state behind it.
+    }    /// How many of `item_id` this character is carrying, across every slot of its own tab.
+    ///
+    /// **Zero on any error**, deliberately: the callers are gates, and a database hiccup must
+    /// read as "you are not carrying the proof" rather than as "you are". The failure
+    /// direction is the one that refuses, not the one that grants.
+    pub(super) fn held_count(&self, character_id: u32, item_id: u32) -> u32 {
+        let Some(inv) = store::InventoryType::for_item(item_id) else { return 0 };
+        self.store
+            .bag_items(character_id, inv)
+            .map(|rows| {
+                rows.iter()
+                    .filter(|r| r.item.item_id == item_id)
+                    .map(|r| u32::from(r.item.kind.quantity()))
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    /// **The second advancement's choice box**, or the sentence saying why not. `None` for
+    /// any NPC that is not one of the four first-job instructors.
+    ///
+    /// # Why the choice is a menu and the first advancement is not
+    ///
+    /// A first advancement has exactly one outcome per instructor, so there is nothing to
+    /// pick. A second has two or three, and `secondjob::BRANCHES` carries them. The type-6
+    /// list box is the client's own widget for that and it is now proven on screen by the
+    /// taxis.
+    ///
+    /// # `StillABeginner` returns `None`, and that is not laziness
+    ///
+    /// `jobs::advancement_for` has already had its turn in [`Session::advance_job_for`]. A
+    /// beginner standing here is entitled to a *first* advancement, and answering "you are
+    /// not a Swordsman" would refuse someone who is one click away from becoming one.
+    /// `secondjob::refusal_for` returns `None` for that arm for the same reason.
+    pub(super) fn second_advancement_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let chr = self.claimed_character()?;
+        let branch = crate::secondjob::branch_at(template)?;
+        let holds_proof = self.held_count(chr.id, branch.chain.proof_item) > 0;
+        match crate::secondjob::advancement_for_holding(&chr, template, holds_proof) {
+            crate::secondjob::Advancement::NotAnInstructor
+            | crate::secondjob::Advancement::StillABeginner => None,
+            crate::secondjob::Advancement::Choose { branch } => {
+                self.conversation = Some(Conversation {
+                    npc_template: template,
+                    quest_id: None,
+                    path: crate::secondjob::MENU_PATH.to_string(),
+                    sent: 0,
+                    // A menu is not a yes/no box. If this branch were ever skipped, a stray
+                    // reply must not be mistaken for a quest Accept.
+                    awaiting_yes_no: false,
+                    sent_with_next: false,
+                });
+                Some(vec![Reply {
+                    opcode: net::script::SCRIPT_MESSAGE,
+                    body: net::script::npc_menu(template, &crate::secondjob::menu_text(branch)),
+                    what: format!(
+                        "ScriptMessage type 6 MENU: {} offers character {} the second advancement - {} choices. Three of the ten job names are OURS, not the client's; see secondjob::NameSource",
+                        branch.instructor_name,
+                        chr.id,
+                        branch.choices.len()
+                    ),
+                }])
+            }
+            // Every other arm is a refusal with a sentence already written for it, and the
+            // sentence comes from `secondjob` so that this file and that one cannot drift.
+            other => Some(self.instructor_says(template, &crate::secondjob::refusal_for(&other)?)),
+        }
+    }
+
+    /// The player picked a second job off the menu. `None` means "not mine" - fall through.
+    ///
+    /// **The path is the only thing that says who asked**: a type-6 body carries no speaker,
+    /// so this checks `secondjob::is_menu_path` before it decodes anything, exactly as the
+    /// taxi's does. The two prefixes are disjoint.
+    fn second_job_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        if !crate::secondjob::is_menu_path(&convo.path) {
+            return None; // a taxi's, Phil's, or a quest's
+        }
+        let reply = net::script::parse_menu_reply(body)?;
+        let template = convo.npc_template;
+        let branch = crate::secondjob::branch_at(template)?;
+        // The box is gone from the screen either way; a stale conversation is what the next
+        // reply walks into.
+        self.conversation = None;
+        // Closed rather than chosen. Nothing was decided, so nothing happens and nothing is
+        // said - `0x00F3` does not hold the one-request latch, so silence here is safe.
+        let selection = reply.selection?;
+        let Some(choice) = crate::secondjob::choice_at(branch, selection) else {
+            return Some(self.instructor_says(
+                template,
+                "That is not one of the paths I can offer you.",
+            ));
+        };
+        Some(self.grant_second_job(template, choice.job))
+    }
+
+    /// Apply a second advancement. **Every effect hangs off the save.**
+    ///
+    /// The whole decision is re-run here rather than trusted from the menu: the selection
+    /// arrives off a socket and nothing upstream had to have validated it, so a job from
+    /// another branch comes back as a refusal instead of being granted. `CLAUDE.md`'s Heena
+    /// section is about exactly this - the guard that was asked and then ignored.
+    fn grant_second_job(&mut self, template: u32, chosen_job: u16) -> Vec<Reply> {
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let Some(branch) = crate::secondjob::branch_at(template) else { return Vec::new() };
+        let holds_proof = self.held_count(chr.id, branch.chain.proof_item) > 0;
+        // Re-checked at the point of granting, not only at the point of offering. Between the
+        // two the player could have dropped, traded or stored the proof.
+        if crate::secondjob::REQUIRE_PROOF_ITEM && !holds_proof {
+            let outcome = crate::secondjob::Advancement::NeedsProof { branch };
+            let Some(text) = crate::secondjob::refusal_for(&outcome) else { return Vec::new() };
+            return self.instructor_says(template, &text);
+        }
+        let grant = match crate::secondjob::advancement_to(&chr, template, chosen_job) {
+            Ok(g) => g,
+            Err(refused) => {
+                let Some(text) = crate::secondjob::refusal_for(&refused) else { return Vec::new() };
+                return self.instructor_says(template, &text);
+            }
+        };
+        let was = chr.job;
+        chr.job = grant.job;
+        if let Err(e) = self.store.save_character_progress(&chr) {
+            // The save is the transition. Nothing follows a failed one - the character must
+            // not get a job packet for a job the database does not have.
+            return self.instructor_says(
+                template,
+                &format!("Something went wrong and your job was not changed: {e}"),
+            );
+        }
+        let mut out = self.instructor_says(
+            template,
+            &format!(
+                "Congratulations. You are now a {}. Open your skill window - there is a second \
+                 page on it now, and points to spend.",
+                grant.job_name
+            ),
+        );
+        // `grant.sp_encoding_changes` is false for all ten second jobs, so the combined
+        // `0x007C` `job_change_reply` already builds stays correct. Asserted rather than
+        // assumed: the wrong SP shape desynchronises the whole packet rather than merely
+        // losing the points.
+        debug_assert!(!grant.sp_encoding_changes);
+        out.push(self.job_change_reply(was, grant.job));
+        // **The proof is spent.** It is the receipt for a test that happens once, and leaving
+        // it in the bag would leave a second advancement's worth of evidence lying around for
+        // a character who has already had one.
+        if let Some(inv) = store::InventoryType::for_item(branch.chain.proof_item) {
+            match self.take_quest_item(chr.id, inv, branch.chain.proof_item, 1) {
+                Ok(replies) => out.extend(replies),
+                Err(e) => out.extend(self.notice(format!(
+                    "Your {} could not be taken back: {e}",
+                    crate::secondjob::PROOF_ITEM_NAME
+                ))),
+            }
+        }
+        out
+    }
+
+    /// **The examiner runs the test.** `None` for any NPC that is not one of the four.
+    ///
+    /// Three outcomes carry an effect and each carries exactly one: `Enter` a map id, `Pass`
+    /// the items to move, and nothing else carries either. A refusal cannot warp anybody and
+    /// cannot pay anybody, because there is no field on those arms to read it from.
+    pub(super) fn job_test_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let mut chr = self.claimed_character()?;
+        let branch = crate::secondjob::branch_examined_by(template)?;
+        let marbles = self.held_count(chr.id, branch.chain.marble_item);
+        let holds_proof = self.held_count(chr.id, branch.chain.proof_item) > 0;
+        match crate::secondjob::test_step(&chr, template, marbles, holds_proof)? {
+            crate::secondjob::TestStep::Refused(line) => {
+                Some(self.instructor_says(template, &line))
+            }
+            crate::secondjob::TestStep::AlreadyPassed { line, .. } => {
+                Some(self.instructor_says(template, &line))
+            }
+            crate::secondjob::TestStep::Pass {
+                marble_item, take_marbles, proof_item, line, ..
+            } => {
+                let mut out = Vec::new();
+                // The marbles go first: the proof is what they are exchanged FOR, and a
+                // failure to take them must not leave a proof behind as well.
+                let Some(marble_inv) = store::InventoryType::for_item(marble_item) else {
+                    return Some(self.notice(format!(
+                        "Item {marble_item} names no bag, so the test cannot be settled."
+                    )));
+                };
+                match self.take_quest_item(chr.id, marble_inv, marble_item, take_marbles as u16) {
+                    Ok(replies) => out.extend(replies),
+                    Err(e) => {
+                        return Some(self.notice(format!(
+                            "Your {}s could not be handed over: {e}",
+                            crate::secondjob::MARBLE_ITEM_NAME
+                        )))
+                    }
+                }
+                let Some(proof_inv) = store::InventoryType::for_item(proof_item) else {
+                    return Some(out);
+                };
+                let max_stack = self.config.shops.max_stack(proof_item);
+                match self.store.add_item(
+                    chr.id,
+                    proof_inv,
+                    &store::Item::bundle(proof_item, 1),
+                    max_stack,
+                ) {
+                    Ok(placed) => out.extend(self.inventory_added_replies(
+                        proof_inv,
+                        &placed,
+                        "the examiner's proof of a hero",
+                    )),
+                    Err(e) => out.extend(self.notice(format!(
+                        "Your {} could not be handed over: {e}",
+                        crate::secondjob::PROOF_ITEM_NAME
+                    ))),
+                }
+                out.extend(self.instructor_says(template, &line));
+                Some(out)
+            }
+            crate::secondjob::TestStep::Enter { field, line, .. } => {
+                // A script box sent with or just before a `SetField` is torn down silently by
+                // field entry, so the words go out as a notice and the conversation is ended
+                // rather than left behind for the next reply to walk into. Same ordering as
+                // `jobguide::Step::Ride`, which is the one observed working.
+                self.conversation = None;
+                let who = chr.name.clone();
+                let mut out = self.notice(line);
+                out.extend(self.go_to_map(
+                    &mut chr,
+                    field.map_id,
+                    0,
+                    format!(
+                        "second-job test: {who} enters {} ({}) - {} spawns {} and {}, and it is the ONLY place their {} drops. The map has one portal and it is the spawn point, so NPC {} inside is the only way out",
+                        field.map_id,
+                        field.map_name,
+                        field.map_name,
+                        field.mobs[0],
+                        field.mobs[1],
+                        crate::secondjob::MARBLE_ITEM_NAME,
+                        field.warden_npc
+                    ),
+                ));
+                Some(out)
+            }
+        }
+    }
+
+    /// **The warden opens the door.** `None` for any NPC that is not one of the four.
+    ///
+    /// It never refuses. Those four maps carry exactly one portal each - the spawn point -
+    /// so a warden that could say no is a warden that strands somebody.
+    pub(super) fn job_test_exit_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        let mut chr = self.claimed_character()?;
+        let branch = crate::secondjob::branch_warded_by(template)?;
+        let marbles = self.held_count(chr.id, branch.chain.marble_item);
+        let step = crate::secondjob::warden_step(template, marbles)?;
+        self.conversation = None;
+        let who = chr.name.clone();
+        let mut out = self.notice(step.line);
+        out.extend(self.go_to_map(
+            &mut chr,
+            step.to_map_id,
+            0,
+            format!(
+                "second-job test: {who} leaves {} for {} ({}), where {} is waiting. That map id is the client's OWN returnMap and forcedReturn for the field, not a choice this server made",
+                branch.test_field.map_name,
+                step.to_map_id,
+                branch.examiner_map_name,
+                branch.examiner_name
+            ),
+        ));
+        Some(out)
+    }
+
+    /// **`startscript q20002s` and its three siblings**: starting the *Test of Qualification*
+    /// puts the character in the hidden field.
+    ///
+    /// The client names four scripts it does not ship - `q20002s`, `q20102s`, `q20202s`,
+    /// `q20302s` - and `research/quest-scripts.md` proved by enumeration that no body for any
+    /// of them exists anywhere under `client-patched/`. This is that body: the quest's own
+    /// `QuestInfo.1` says *"enter a hidden area, defeat the monsters there, and collect Black
+    /// Marbles"*, and there is no other way in, so starting the quest and entering the field
+    /// are the same event.
+    ///
+    /// Returns nothing for every other quest in the game.
+    fn enter_test_field_on_quest_start(&mut self, quest_id: u32) -> Vec<Reply> {
+        let Some(branch) = crate::secondjob::BRANCHES
+            .iter()
+            .find(|b| b.chain.quests[2] == quest_id)
+        else {
+            return Vec::new();
+        };
+        let Some(mut chr) = self.claimed_character() else { return Vec::new() };
+        let field = branch.test_field;
+        let who = chr.name.clone();
+        let mut out = self.notice(format!(
+            "Into {} with you. Bring the {} back {} {}s - talk to the instructor inside when \
+             you want to come out.",
+            field.map_name,
+            branch.examiner_name,
+            branch.chain.marble_count_items,
+            crate::secondjob::MARBLE_ITEM_NAME
+        ));
+        out.extend(self.go_to_map(
+            &mut chr,
+            field.map_id,
+            0,
+            format!(
+                "quest {quest_id} startscript (q{quest_id}s, which this client does NOT ship): {who} enters {} ({})",
+                field.map_id, field.map_name
+            ),
+        ));
+        out
+    }
+
+    /// One `0x055B` from an instructor, with no conversation state behind it.
     ///
     /// Deliberately **not** routed through [`Session::say_line`]: that walks a WZ line list and
     /// leaves a `Conversation` for the next `0x00F3` to step through. This is a single
@@ -991,6 +1383,12 @@ impl Session {
         // This comes FIRST, before the Say-shaped decoder, and it is the branch with a
         // precondition: it answers only when this session has a taxi conversation parked.
         if let Some(replies) = self.taxi_menu_answer(body) {
+            return replies;
+        }
+        // **And so is the second advancement's choice box.** Same precondition, disjoint
+        // path prefix: each answers only when this session has *its* conversation parked, so
+        // the order between the two does not matter and a test in each module says so.
+        if let Some(replies) = self.second_job_menu_answer(body) {
             return replies;
         }
         let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };

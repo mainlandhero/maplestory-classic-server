@@ -264,6 +264,57 @@ pub struct QuestChain {
     pub exp_per_quest: u32,
 }
 
+/// **The hidden field the examiner sends you into**, and the two mob templates in it.
+///
+/// This is the piece `research/second-job.md` said did not exist - *"the Test of Qualification
+/// hidden field and its `q20002s` script do not exist, so the client's own route to the
+/// advancement is not walkable"*. The field was in the client the whole time. It is named,
+/// it has footholds, it has mobs, and **three independent nodes of the archive agree on which
+/// branch owns it**. `research/second-job-fields.md` is the working.
+///
+/// # Why it cannot be reached on foot, and why that is the point
+///
+/// Each of these four maps has **exactly one portal**, `sp`, the spawn point - against 31 for
+/// Perion and 8 for the examiner's own map. **[L]** So there is no door in and no door out.
+/// A player only ever arrives here because a server put them here, which is what makes it a
+/// test rather than a place, and it is why [`Branch::test_field`] has to carry an exit: a
+/// character standing in one with no way to leave is stuck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TestField {
+    /// The hidden map. **[L]** `gm-handbook/fields.txt` and `footholds.txt` both have it, so
+    /// this server can load it like any other field.
+    pub map_id: u32,
+    /// `String.wz/Map.img`. **[L]**
+    pub map_name: &'static str,
+    /// **The NPC standing inside, and the only way out.** 800003 / 800004 / 800005 / 800006,
+    /// each literally named `"<Branch> Job Instructor"` - the same name as the examiner and a
+    /// different template. **[L]** `gm-handbook/npcs.txt` places each exactly once, in its own
+    /// dungeon.
+    ///
+    /// `crate::jobs::first_job_at` already refuses all four, and so does [`branch_at`]. They
+    /// advance nobody; they open the door.
+    pub warden_npc: u32,
+    /// The two mob templates that spawn here, in template order. **[L]**
+    ///
+    /// These are **dedicated clones**, not the ordinary mobs they are named after: the Fire
+    /// Boar in Perion is template 30 at level 32, and the one in here is **800016 at level
+    /// 30** - the same level as the advancement itself, and the same for all eight. That
+    /// uniformity is what says these were built for this test rather than borrowed for it.
+    pub mobs: [u32; 2],
+    /// Where a player is put when they leave, and it is **the client's own answer**:
+    /// `Map.wz/<map>/info/returnMap` and `forcedReturn` are both the examiner's map, on all
+    /// four. **[L]** An ordinary map's `forcedReturn` is `999999999`; these four name a real
+    /// map, which is the archive saying out loud that this is somewhere you get ejected from.
+    pub exit_map_id: u32,
+}
+
+impl TestField {
+    /// Whether this mob template is one of the two that spawn in this field.
+    pub fn has_mob(&self, template: u32) -> bool {
+        self.mobs.contains(&template)
+    }
+}
+
 /// One branch's whole second advancement: who to click, who tests, and what may be chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Branch {
@@ -303,6 +354,9 @@ pub struct Branch {
     pub examiner_map_id: u32,
     /// [`Branch::examiner_map_id`]'s name from `gm-handbook/maps.txt`. **[L]**
     pub examiner_map_name: &'static str,
+
+    /// **The hidden field the examiner warps into.** See [`TestField`].
+    pub test_field: TestField,
 
     /// The client's own four-quest route. Data, not a gate - see [`REQUIRE_QUEST_CHAIN`].
     pub chain: QuestChain,
@@ -459,6 +513,13 @@ pub const BRANCHES: [Branch; 4] = [
         examiner_name: "Warrior Job Instructor",
         examiner_map_id: 10004023,
         examiner_map_name: "West Rocky Mountain IV",
+        test_field: TestField {
+            map_id: 80001300,
+            map_name: "Warrior's Rocky Mountain",
+            warden_npc: 800006,
+            mobs: [800016, 800017],   // Fire Boar, Lupin
+            exit_map_id: 10004023,
+        },
         chain: QuestChain {
             quests: [20000, 20001, 20002, 20003],
             letter_item: 4031013,
@@ -481,6 +542,13 @@ pub const BRANCHES: [Branch; 4] = [
         examiner_name: "Magician Job Instructor",
         examiner_map_id: 10002070,
         examiner_map_name: "The Forest North of Ellinia",
+        test_field: TestField {
+            map_id: 80001100,
+            map_name: "Magician's Tree Dungeon",
+            warden_npc: 800004,
+            mobs: [800012, 800013],   // Curse Eye, Horny Mushroom
+            exit_map_id: 10002070,
+        },
         chain: QuestChain {
             quests: [20100, 20101, 20102, 20103],
             letter_item: 4031014,
@@ -503,6 +571,13 @@ pub const BRANCHES: [Branch; 4] = [
         examiner_name: "Bowman Job Instructor",
         examiner_map_id: 10001090,
         examiner_map_name: "The Road to the Dungeon",
+        test_field: TestField {
+            map_id: 80001000,
+            map_name: "Ant Tunnel For Bowman",
+            warden_npc: 800003,
+            mobs: [800010, 800011],   // Evil Eye, Zombie Mushroom
+            exit_map_id: 10001090,
+        },
         chain: QuestChain {
             quests: [20200, 20201, 20202, 20203],
             letter_item: 4031015,
@@ -525,6 +600,13 @@ pub const BRANCHES: [Branch; 4] = [
         examiner_name: "Thief Job Instructor",
         examiner_map_id: 10003080,
         examiner_map_name: "Construction Site North of Kerning City",
+        test_field: TestField {
+            map_id: 80001200,
+            map_name: "Thief's Construction Site",
+            warden_npc: 800005,
+            mobs: [800014, 800015],   // Cold Eye, Blue Mushroom
+            exit_map_id: 10003080,
+        },
         chain: QuestChain {
             quests: [20300, 20301, 20302, 20303],
             letter_item: 4031016,
@@ -556,6 +638,73 @@ pub fn branch_at(npc_template: u32) -> Option<&'static Branch> {
 pub fn branch_examined_by(npc_template: u32) -> Option<&'static Branch> {
     BRANCHES.iter().find(|b| b.examiner_npc == npc_template)
 }
+
+/// The branch whose **test field** this map is, or `None` for any ordinary map.
+///
+/// Four maps in the whole client answer `Some` here. The pairing is not a guess: three
+/// independent nodes of the archive agree on it, and they were read separately -
+/// `research/second-job-fields.md` section 2.
+pub fn branch_of_test_field(map_id: u32) -> Option<&'static Branch> {
+    BRANCHES.iter().find(|b| b.test_field.map_id == map_id)
+}
+
+/// The branch whose **warden** this NPC is - the one standing inside the test field.
+///
+/// 800003 / 800004 / 800005 / 800006. They share their `name` string with the four examiners
+/// and are a different template, which is exactly the trap `crate::jobs` documents: a name is
+/// not an id. [`branch_at`] and [`branch_examined_by`] both refuse all four.
+pub fn branch_warded_by(npc_template: u32) -> Option<&'static Branch> {
+    BRANCHES.iter().find(|b| b.test_field.warden_npc == npc_template)
+}
+
+/// Whether this item is one of the four Dark Marbles.
+///
+/// All four are literally named `Dark Marble` in `String.wz/Item.img`; only the id says which
+/// branch's test it counts for. **[L]**
+pub fn is_marble(item_id: u32) -> bool {
+    BRANCHES.iter().any(|b| b.chain.marble_item == item_id)
+}
+
+/// Whether this item is one of the four `The Proof of a Hero`.
+pub fn is_proof(item_id: u32) -> bool {
+    BRANCHES.iter().any(|b| b.chain.proof_item == item_id)
+}
+
+/// **The Dark Marble a kill should drop**, given the mob and the map it died on - or `None`.
+///
+/// Both halves of the question matter, and the second one is not decoration:
+///
+/// * `800012`, `800013`, `800014`, `800016` and `800017` spawn **only** in their own test
+///   field, so for those the map is redundant.
+/// * `800010` (Evil Eye) and `800015` (Blue Mushroom) also spawn on **80003500**, and
+///   `800011` (Zombie Mushroom) also spawns on **10006160, Precipice of Darkness**. **[L]**
+///   Without the map test, an ordinary player grinding Precipice of Darkness would collect
+///   the Bowman's test marbles by accident, and three of the eight templates would leak.
+///
+/// So the rule is *this mob, in its own field*, and the leak is closed by construction rather
+/// than by a list of exceptions that someone has to remember to extend.
+pub fn marble_for_kill(mob_template: u32, map_id: u32) -> Option<u32> {
+    let branch = branch_of_test_field(map_id)?;
+    branch
+        .test_field
+        .has_mob(mob_template)
+        .then_some(branch.chain.marble_item)
+}
+
+/// **Whether a test mob drops its marble every time.**
+///
+/// `true`, and it is **[I]** - a policy, written down here rather than chosen quietly in a
+/// data file. Nothing in this client carries a drop rate for anything: `data/drops.txt` says
+/// so in its own header (*"THE CHANCES ARE OURS"*), and the rates in it for these eight mobs
+/// came from a fan site at **6%**, which is 30 marbles in roughly 500 kills.
+///
+/// Two reasons to make it certain instead. The test asks for 30 and the field holds 26-30
+/// mobs, so at 100% the test is a full clear and a bit - which is a test. And a feature that
+/// takes hours to reach its first observation is a feature this project cannot check, which
+/// `CLAUDE.md` calls the one thing a feature here may not be.
+///
+/// If the owner wants it rarer this is the single place to change it.
+pub const MARBLE_DROP_IS_CERTAIN: bool = true;
 
 /// The branch a first job belongs to, or `None` if `job` is not one of the four.
 pub fn branch_from_job(job: u16) -> Option<&'static Branch> {
@@ -605,6 +754,12 @@ pub enum Advancement {
     AlreadyAdvanced { job: u16 },
     /// Below [`LEVEL_MINIMUM`].
     TooLowLevel { level: u32, needed: u32 },
+    /// Level and job pass, but the character is not carrying `The Proof of a Hero`.
+    ///
+    /// **This is the client's own gate**, not one this server invented: quest `20003`'s
+    /// `Check.1.item.0` is one `proof_item` handed in at the instructor. See
+    /// [`REQUIRE_PROOF_ITEM`], which is what decides whether this arm can ever be produced.
+    NeedsProof { branch: &'static Branch },
     /// Everything passes. The player must now **pick one of** `branch.choices`; feed the
     /// choice back through [`advancement_to`].
     Choose { branch: &'static Branch },
@@ -678,10 +833,55 @@ pub fn advancement_to(
 /// hand-off to [`crate::jobs::refusal`], and a caller that printed something here would say no
 /// to a level-10 beginner who is entitled to a first advancement.
 pub fn refusal(chr: &Character, npc_template: u32) -> Option<String> {
+    refusal_for(&advancement_for(chr, npc_template))
+}
+
+/// **Whether the advancement requires `The Proof of a Hero` in the bag.**
+///
+/// `true`. This is the client's own `Check.1.item.0` on quest `20003` - **[L]** - and it is
+/// the gate that makes the whole chain mean something: without it a level-30 Swordsman could
+/// walk past the examiner, the test field and the marbles and take the advancement anyway.
+///
+/// It is a **narrower** requirement than [`REQUIRE_QUEST_CHAIN`] and deliberately so. The
+/// quest rows can be missing, refused or out of order for reasons that have nothing to do
+/// with the player; the item is a fact about the bag, it is granted by exactly one place
+/// ([`TestStep::Pass`]), and `!item` can put one there for a test run without pretending a
+/// quest happened. `CLAUDE.md` asks for a gate whose answer is actually consulted, and this
+/// one is - see [`advancement_for_holding`].
+pub const REQUIRE_PROOF_ITEM: bool = true;
+
+/// [`advancement_for`], plus the proof-of-a-hero check the client's own quest carries.
+///
+/// Split from [`advancement_for`] rather than folded into it, because the pure decision has
+/// no business knowing about a bag and every other caller of it wants the version that does
+/// not. When [`REQUIRE_PROOF_ITEM`] is `false` this is exactly [`advancement_for`].
+pub fn advancement_for_holding(
+    chr: &Character,
+    npc_template: u32,
+    holds_proof: bool,
+) -> Advancement {
     match advancement_for(chr, npc_template) {
+        Advancement::Choose { branch } if REQUIRE_PROOF_ITEM && !holds_proof => {
+            Advancement::NeedsProof { branch }
+        }
+        other => other,
+    }
+}
+
+/// The sentence for an [`Advancement`] that has already been decided.
+///
+/// Exists so [`refusal`] and [`advancement_for_holding`]'s caller cannot end up with two
+/// different wordings for the same arm - which is how the first-job and second-job refusals
+/// would have drifted, since each would have written its own.
+pub fn refusal_for(outcome: &Advancement) -> Option<String> {
+    match *outcome {
         Advancement::NotAnInstructor
         | Advancement::StillABeginner
         | Advancement::Choose { .. } => None,
+        Advancement::NeedsProof { branch } => Some(format!(
+            "You carry no proof. Take {}'s test in {} and bring me {}.",
+            branch.examiner_name, branch.examiner_map_name, PROOF_ITEM_NAME
+        )),
         Advancement::Examines { branch } => Some(format!(
             "I only administer the test. Go and see {} in {} first.",
             branch.instructor_name, branch.instructor_map_name
@@ -696,6 +896,196 @@ pub fn refusal(chr: &Character, npc_template: u32) -> Option<String> {
             "Come back when you have reached Level {needed}. You are only Level {level}."
         )),
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// The test: the examiner, the hidden field, and the warden at the door
+// ---------------------------------------------------------------------------------------
+
+/// What `String.wz/Item.img` calls all four marbles. **[L]**
+pub const MARBLE_ITEM_NAME: &str = "Dark Marble";
+
+/// What `String.wz/Item.img` calls all four proofs. **[L]**
+pub const PROOF_ITEM_NAME: &str = "The Proof of a Hero";
+
+/// What clicking one of the four **examiners** should do.
+///
+/// Pure, like everything else here: it is told how many marbles and whether the proof is held,
+/// and it decides. The caller does the bag arithmetic and the warp.
+///
+/// **Every effect hangs off one arm.** Only [`TestStep::Enter`] carries a map and only
+/// [`TestStep::Pass`] carries items to move, so a refusal cannot warp anybody and cannot pay
+/// anybody - there is nothing on the other arms to read. That is `CLAUDE.md`'s Heena rule
+/// applied in the type rather than in the caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestStep {
+    /// The examiner will not test this character. The sentence is the whole answer, and there
+    /// **is** one - an unanswered click freezes the client's UI.
+    Refused(String),
+    /// Send them in. The line goes out as a notice **before** the field change, because a
+    /// script box sent with or just before a `SetField` is torn down silently by field entry -
+    /// the same ordering `jobguide::Step::Ride` uses and the same one observed working.
+    Enter { branch: &'static Branch, field: TestField, line: String },
+    /// The marbles are in the bag. Take `take_marbles` of `marble_item`, hand over
+    /// `proof_item`, and send them back to the instructor.
+    Pass {
+        branch: &'static Branch,
+        marble_item: u32,
+        take_marbles: u32,
+        proof_item: u32,
+        line: String,
+    },
+    /// The proof is already held. Nothing to take, nothing to give, and **nothing to warp** -
+    /// re-entering the field for a test that is already passed would only strand them.
+    AlreadyPassed { branch: &'static Branch, line: String },
+}
+
+/// Whether this character may take this branch's test at all, or the sentence saying why not.
+///
+/// Reuses [`advancement_for`] against the branch's **instructor** rather than restating the
+/// rules, because the test and the advancement are gated on exactly the same two facts -
+/// `Check.0.lvmin` and `Check.0.job.0`, identical on all sixteen chain quests. **[L]** Two
+/// copies of one predicate is how one of them gets missed.
+fn may_take_the_test(chr: &Character, branch: &'static Branch) -> Result<(), String> {
+    match advancement_for(chr, branch.instructor_npc) {
+        Advancement::Choose { .. } => Ok(()),
+        // Not a refusal in `refusal_for`'s eyes - it is a hand-off to `crate::jobs`. Here it
+        // is a real answer, because the examiner is not where a beginner's story starts.
+        Advancement::StillABeginner => Err(format!(
+            "You have no job to advance from. See {} in {} first.",
+            branch.instructor_name, branch.instructor_map_name
+        )),
+        other => {
+            Err(refusal_for(&other).unwrap_or_else(|| String::from("I cannot test you.")))
+        }
+    }
+}
+
+/// The examiner's whole decision. `None` for any NPC that is not one of the four.
+pub fn test_step(
+    chr: &Character,
+    npc_template: u32,
+    marbles_held: u32,
+    holds_proof: bool,
+) -> Option<TestStep> {
+    let branch = branch_examined_by(npc_template)?;
+    if let Err(why) = may_take_the_test(chr, branch) {
+        return Some(TestStep::Refused(why));
+    }
+    if holds_proof {
+        return Some(TestStep::AlreadyPassed {
+            branch,
+            line: format!(
+                "You already carry {PROOF_ITEM_NAME}. Take it to {} in {} - the advancement is                  theirs to give, not mine.",
+                branch.instructor_name, branch.instructor_map_name
+            ),
+        });
+    }
+    let wanted = branch.chain.marble_count_items;
+    if marbles_held >= wanted {
+        return Some(TestStep::Pass {
+            branch,
+            marble_item: branch.chain.marble_item,
+            take_marbles: wanted,
+            proof_item: branch.chain.proof_item,
+            line: format!(
+                "{wanted} {MARBLE_ITEM_NAME}s. You have passed. Take {PROOF_ITEM_NAME} to {} in                  {} and your new path is yours.",
+                branch.instructor_name, branch.instructor_map_name
+            ),
+        });
+    }
+    Some(TestStep::Enter {
+        branch,
+        field: branch.test_field,
+        line: format!(
+            "Into {} with you. Bring me {wanted} {MARBLE_ITEM_NAME}s - you have {marbles_held}.              Talk to the instructor inside when you want to come out.",
+            branch.test_field.map_name
+        ),
+    })
+}
+
+/// What clicking the **warden** - the NPC inside the test field - should do.
+///
+/// There is only one arm, and that is the point: these four maps have exactly one portal each
+/// and it is the spawn point, so the warden is the only door. A branch here that could refuse
+/// would be a branch that strands a player in a map with no exit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WardenStep {
+    pub branch: &'static Branch,
+    /// The examiner's map - the client's own `returnMap` and `forcedReturn` for this field.
+    pub to_map_id: u32,
+    pub line: String,
+}
+
+/// The warden's decision. `None` for any NPC that is not one of the four.
+///
+/// **It never refuses**, and `marbles_held` only changes the wording. See [`WardenStep`].
+pub fn warden_step(npc_template: u32, marbles_held: u32) -> Option<WardenStep> {
+    let branch = branch_warded_by(npc_template)?;
+    let wanted = branch.chain.marble_count_items;
+    let line = if marbles_held >= wanted {
+        format!(
+            "{marbles_held} {MARBLE_ITEM_NAME}s - that is enough. I will send you back to {};              the {} is waiting there.",
+            branch.examiner_map_name, branch.examiner_name
+        )
+    } else {
+        format!(
+            "You have {marbles_held} of {wanted} {MARBLE_ITEM_NAME}s. Leave whenever you like -              I will put you back in {}.",
+            branch.examiner_map_name
+        )
+    };
+    Some(WardenStep { branch, to_map_id: branch.test_field.exit_map_id, line })
+}
+
+// ---------------------------------------------------------------------------------------
+// The choice, on screen
+// ---------------------------------------------------------------------------------------
+
+/// The client's markup for a line break inside a script box.
+///
+/// Two characters, a backslash and an `n` - **not** an escape. `crate::taxi::LINE_BREAK` is
+/// the same two characters for the same reason, and all 33 authored menus in
+/// `gm-handbook/questlines.txt` are written this way. **[L]**
+pub const LINE_BREAK: &str = "\\n";
+
+/// Where [`Conversation::path`](crate::session) parks while the choice box is on screen.
+///
+/// Namespaced so that `crate::taxi::is_taxi_path` and this cannot both claim the same reply.
+/// A type-6 body carries no speaker, so **the path is the only thing that says who asked** -
+/// that is `crate::taxi::MENU_PATH`'s argument and it applies here word for word.
+pub const MENU_PATH: &str = "secondjob.menu";
+
+/// Whether a conversation path is this module's menu.
+pub fn is_menu_path(path: &str) -> bool {
+    path == MENU_PATH
+}
+
+/// The whole choice box: what the instructor asks, then one line per second job.
+///
+/// **The names are not all the client's.** Seven of the ten are the leading word of the
+/// skill book's own `bookName` and three are ours - see [`NameSource`] - so a Magician's box
+/// says `Wizard (Fire/Poison)` on a line this project wrote. The box says so rather than
+/// pretending: an unnamed job printed as a bare id would be worse, and a made-up name printed
+/// as though it came from Nexon would be worse still.
+pub fn menu_text(branch: &Branch) -> String {
+    let mut out = format!(
+        "You have earned this. Which path will you walk as a {}?",
+        branch.from_job_name
+    );
+    out.push_str(LINE_BREAK);
+    for (selection, choice) in branch.choices.iter().enumerate() {
+        out.push_str(LINE_BREAK);
+        out.push_str(&format!("#d#L{selection}# {}#l#k", choice.job_name));
+    }
+    out
+}
+
+/// The second job at menu position `selection`, or `None` if the number is not on the list.
+///
+/// The selection arrives off a socket, so an out-of-range one is an ordinary answer to give
+/// rather than something to panic about - and [`advancement_to`] re-checks the branch anyway.
+pub fn choice_at(branch: &Branch, selection: u32) -> Option<&'static SecondJob> {
+    branch.choices.get(usize::try_from(selection).ok()?)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1434,4 +1824,448 @@ mod tests {
             assert_eq!(b.chain.exp_per_quest, 3150);
         }
     }
+
+    // -----------------------------------------------------------------------------------
+    // The hidden test fields
+    // -----------------------------------------------------------------------------------
+
+    /// Every comma-separated row of a `gm-handbook/` dump, or `None` on a clean checkout.
+    fn real_rows(name: &str) -> Option<Vec<Vec<String>>> {
+        let path = Path::new("../../gm-handbook/").join(name);
+        if !path.exists() {
+            return None;
+        }
+        let text = std::fs::read_to_string(path).ok()?;
+        Some(
+            text.lines()
+                .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+                .map(|l| l.split(',').map(|c| c.trim().to_string()).collect())
+                .collect(),
+        )
+    }
+
+    /// **The four test fields are the client's own, and three separate nodes say so.**
+    ///
+    /// This is the check the whole feature rests on, and it is deliberately built out of
+    /// *different* parts of the archive rather than one:
+    ///
+    /// * `fields.txt` and `footholds.txt` come from `Map.wz`'s field images - the map exists
+    ///   and can be stood on.
+    /// * `mobs.txt` and `npcs.txt` come from `Map.wz`'s `life` nodes - who is in it.
+    /// * `returnmaps.txt` comes from `Map.wz`'s `info` node - where you go when you leave.
+    /// * `maps.txt` comes from **`String.wz`**, a different archive entirely - what it is
+    ///   called.
+    ///
+    /// If the pairing of branch to dungeon were wrong, these would disagree with each other.
+    /// They do not, four times over. `CLAUDE.md`: *two scans agreeing is not corroboration
+    /// when they share a blind spot* - so this uses five nodes across two archives, and each
+    /// one is asked a question the others cannot answer.
+    #[test]
+    fn the_four_test_fields_are_exactly_what_this_client_ships() {
+        let (Some(fields), Some(portals), Some(mobs), Some(npcs), Some(names)) = (
+            real_rows("fields.txt"),
+            real_rows("portals.txt"),
+            real_rows("mobs.txt"),
+            real_rows("npcs.txt"),
+            real_rows("maps.txt"),
+        ) else {
+            return; // clean checkout; gm-handbook/ is generated and gitignored
+        };
+        // **Positive controls first.** A file that failed to parse must not read as a set of
+        // clean negatives, which is the exact failure this project keeps re-learning.
+        assert!(fields.len() > 400, "fields.txt holds the whole archive, got {}", fields.len());
+        assert!(portals.len() > 3000, "portals.txt loaded, got {}", portals.len());
+        assert!(mobs.len() > 9000, "mobs.txt loaded, got {}", mobs.len());
+        assert!(
+            portals.iter().filter(|r| r[0] == "10004000").count() > 20,
+            "control: Perion has many portals, so 'one portal' below means something"
+        );
+
+        for b in BRANCHES {
+            let f = b.test_field;
+            let map = f.map_id.to_string();
+
+            // 1. It is a real field.
+            assert!(
+                fields.iter().any(|r| r[0] == map),
+                "{} ({}) has a field image",
+                f.map_id,
+                f.map_name
+            );
+
+            // 2. **Exactly one portal, and it is the spawn point.** This is the fact that
+            //    makes the warp the only way in and the warden the only way out.
+            let mine: Vec<&Vec<String>> = portals.iter().filter(|r| r[0] == map).collect();
+            assert_eq!(mine.len(), 1, "{} has exactly one portal, got {:?}", f.map_id, mine);
+            assert_eq!(mine[0][2], "sp", "{}'s only portal is the spawn point", f.map_id);
+
+            // 3. Its mobs are the two this branch claims, and nothing else.
+            let mut here: BTreeSet<u32> = BTreeSet::new();
+            for row in mobs.iter().filter(|r| r[0] == map) {
+                here.insert(row[1].parse().unwrap());
+            }
+            let want: BTreeSet<u32> = f.mobs.iter().copied().collect();
+            assert_eq!(here, want, "the mobs in {} ({})", f.map_id, f.map_name);
+
+            // 4. The warden stands in it, and it is their only placement in the archive.
+            let warden = f.warden_npc.to_string();
+            let placements: Vec<&Vec<String>> =
+                npcs.iter().filter(|r| r[1] == warden).collect();
+            assert_eq!(placements.len(), 1, "NPC {warden} is placed once");
+            assert_eq!(placements[0][0], map, "NPC {warden} stands in {}", f.map_id);
+
+            // 5. String.wz agrees about the name - a different archive from all of the above.
+            let named = names.iter().find(|r| r[0] == map).map(|r| r[1..].join(", "));
+            assert_eq!(named.as_deref(), Some(f.map_name), "String.wz name for {}", f.map_id);
+        }
+    }
+
+    /// **The exit is the client's own `returnMap`, not a choice this server made.**
+    ///
+    /// Split from the test above because it reads a different file with a different separator
+    /// and, more importantly, because it is the strongest single piece of evidence for the
+    /// branch-to-dungeon pairing: an ordinary map's `forcedReturn` is `999999999`, and these
+    /// four name a real map - their own examiner's.
+    #[test]
+    fn each_test_field_is_ejected_into_its_own_examiner_s_map() {
+        let path = Path::new("../../gm-handbook/returnmaps.txt");
+        if !path.exists() {
+            return;
+        }
+        let text = std::fs::read_to_string(path).expect("returnmaps.txt");
+        let mut rows: BTreeMap<u32, (u32, u32)> = BTreeMap::new();
+        for line in text.lines() {
+            if line.starts_with('#') {
+                continue;
+            }
+            let f: Vec<&str> = line.split('\t').collect();
+            if f.len() < 3 {
+                continue;
+            }
+            let (Ok(map), Ok(ret), Ok(forced)) =
+                (f[0].parse::<u32>(), f[1].parse::<u32>(), f[2].parse::<u32>())
+            else {
+                continue;
+            };
+            rows.insert(map, (ret, forced));
+        }
+        assert!(rows.len() > 400, "positive control: the file loaded, got {}", rows.len());
+        // Control: an ordinary map has NO forced return, so "these four do" is a statement.
+        assert_eq!(
+            rows.get(&10004000).map(|r| r.1),
+            Some(999_999_999),
+            "control: Perion is not a map you get ejected from"
+        );
+
+        for b in BRANCHES {
+            let (ret, forced) = rows[&b.test_field.map_id];
+            assert_eq!(ret, b.examiner_map_id, "{} returnMap", b.test_field.map_name);
+            assert_eq!(forced, b.examiner_map_id, "{} forcedReturn", b.test_field.map_name);
+            assert_eq!(
+                b.test_field.exit_map_id, b.examiner_map_id,
+                "and this table says the same thing"
+            );
+        }
+    }
+
+    /// **A marble drops for its own mob in its own field, and nowhere else.**
+    ///
+    /// The three leaks are named individually rather than tested as a class, because they are
+    /// what the map half of the rule exists for: `800010` and `800015` also spawn on 80003500
+    /// and `800011` also spawns on 10006160, *Precipice of Darkness* - an ordinary field.
+    #[test]
+    fn a_dark_marble_drops_only_in_its_own_test_field() {
+        for b in BRANCHES {
+            for mob in b.test_field.mobs {
+                assert_eq!(
+                    marble_for_kill(mob, b.test_field.map_id),
+                    Some(b.chain.marble_item),
+                    "mob {mob} in {}",
+                    b.test_field.map_name
+                );
+            }
+        }
+        // The three real leaks, by name.
+        assert_eq!(marble_for_kill(800010, 80003500), None, "Evil Eye outside its field");
+        assert_eq!(marble_for_kill(800015, 80003500), None, "Blue Mushroom outside its field");
+        assert_eq!(
+            marble_for_kill(800011, 10006160),
+            None,
+            "Zombie Mushroom on Precipice of Darkness, an ORDINARY field"
+        );
+        // A test mob in the wrong branch's field: the map matches a branch, the mob does not.
+        assert_eq!(marble_for_kill(800016, 80001000), None, "Fire Boar in the Bowman's tunnel");
+        // And an ordinary mob in a test field earns nothing.
+        assert_eq!(marble_for_kill(30, 80001300), None, "the ordinary Fire Boar, template 30");
+        // The four marbles are recognised, and an ordinary item is not.
+        for b in BRANCHES {
+            assert!(is_marble(b.chain.marble_item));
+            assert!(is_proof(b.chain.proof_item));
+            assert!(!is_marble(b.chain.proof_item), "a proof is not a marble");
+        }
+        assert!(!is_marble(2000000), "a Red Potion is not a marble");
+    }
+
+    /// **The examiner's four outcomes, and the one that must not carry an effect.**
+    #[test]
+    fn the_examiner_tests_and_advances_nobody() {
+        let b = &BRANCHES[0]; // Warrior
+        let ready = character(30, 100);
+
+        // Not enough marbles -> in you go, and the arm carries the field.
+        match test_step(&ready, b.examiner_npc, 0, false) {
+            Some(TestStep::Enter { field, .. }) => {
+                assert_eq!(field.map_id, 80001300);
+                assert_eq!(field.warden_npc, 800006);
+            }
+            other => panic!("expected Enter, got {other:?}"),
+        }
+        // One short is still short.
+        assert!(matches!(
+            test_step(&ready, b.examiner_npc, 29, false),
+            Some(TestStep::Enter { .. })
+        ));
+        // Thirty passes, and the arm carries exactly what moves.
+        match test_step(&ready, b.examiner_npc, 30, false) {
+            Some(TestStep::Pass { marble_item, take_marbles, proof_item, .. }) => {
+                assert_eq!(marble_item, 4031017);
+                assert_eq!(take_marbles, 30);
+                assert_eq!(proof_item, 4031018);
+            }
+            other => panic!("expected Pass, got {other:?}"),
+        }
+        // Holding the proof already: nothing to take, nothing to give, and NO field to
+        // re-enter. That last one matters - a second Enter would strand a finished player.
+        match test_step(&ready, b.examiner_npc, 99, true) {
+            Some(TestStep::AlreadyPassed { .. }) => {}
+            other => panic!("expected AlreadyPassed, got {other:?}"),
+        }
+        // A beginner is refused with a sentence rather than warped, and the sentence names
+        // where to actually go.
+        match test_step(&character(30, 0), b.examiner_npc, 99, false) {
+            Some(TestStep::Refused(line)) => assert!(
+                line.contains("Dances with Balrog"),
+                "a beginner is sent to the instructor, got {line:?}"
+            ),
+            other => panic!("expected Refused, got {other:?}"),
+        }
+        // Level 29 with 30 marbles is still refused - the marbles do not buy the level.
+        assert!(matches!(
+            test_step(&character(29, 100), b.examiner_npc, 30, false),
+            Some(TestStep::Refused(_))
+        ));
+        // Wrong branch.
+        assert!(matches!(
+            test_step(&character(30, 200), b.examiner_npc, 30, false),
+            Some(TestStep::Refused(_))
+        ));
+        // And the examiner is not an NPC that advances: every other template is None.
+        assert!(test_step(&ready, b.instructor_npc, 30, false).is_none());
+        assert!(test_step(&ready, 9_999_999, 30, false).is_none());
+    }
+
+    /// **The warden never refuses**, because refusing would strand somebody.
+    #[test]
+    fn the_warden_always_opens_the_door() {
+        for b in BRANCHES {
+            for held in [0, 1, 29, 30, 100] {
+                let step = warden_step(b.test_field.warden_npc, held)
+                    .expect("the warden always answers");
+                assert_eq!(step.to_map_id, b.examiner_map_id);
+                assert!(!step.line.is_empty(), "and it always says something");
+            }
+        }
+        // Only those four templates. The examiner is NOT a warden even though the client
+        // gives them the same `name` string, which is the trap this pairing exists to avoid.
+        for b in BRANCHES {
+            assert!(warden_step(b.examiner_npc, 0).is_none());
+            assert!(warden_step(b.instructor_npc, 0).is_none());
+        }
+    }
+
+    /// **The proof gate is asked, and its answer is used.**
+    ///
+    /// `CLAUDE.md`'s Heena section: a guard whose answer is ignored is not a guard. This
+    /// asserts both directions, because a gate that always says no is as broken as one that
+    /// always says yes.
+    #[test]
+    fn the_advancement_needs_the_proof_in_hand() {
+        assert!(REQUIRE_PROOF_ITEM, "if this is turned off, the test below means nothing");
+        let ready = character(30, 100);
+        assert!(matches!(
+            advancement_for_holding(&ready, 511, false),
+            Advancement::NeedsProof { .. }
+        ));
+        assert!(matches!(
+            advancement_for_holding(&ready, 511, true),
+            Advancement::Choose { .. }
+        ));
+        // The refusal names the examiner and the item, so the player knows what to do next.
+        let text = refusal_for(&advancement_for_holding(&ready, 511, false)).expect("a sentence");
+        assert!(text.contains("Warrior Job Instructor"), "got {text:?}");
+        assert!(text.contains(PROOF_ITEM_NAME), "got {text:?}");
+        // Holding the proof does not buy the level or the branch.
+        assert!(matches!(
+            advancement_for_holding(&character(29, 100), 511, true),
+            Advancement::TooLowLevel { .. }
+        ));
+        assert!(matches!(
+            advancement_for_holding(&character(30, 200), 511, true),
+            Advancement::WrongBranch { .. }
+        ));
+        // And a beginner is still handed back to `crate::jobs` rather than refused.
+        assert!(matches!(
+            advancement_for_holding(&character(30, 0), 511, true),
+            Advancement::StillABeginner
+        ));
+        assert_eq!(refusal_for(&Advancement::StillABeginner), None);
+    }
+
+    /// **The menu lists every choice, and `choice_at` is its inverse.**
+    ///
+    /// Written as a round trip rather than as two separate assertions because the failure
+    /// that matters is the two disagreeing: a menu that draws three lines and a decoder that
+    /// only knows two grants the wrong job to whoever picks the third.
+    #[test]
+    fn the_choice_menu_and_its_decoder_agree() {
+        for b in BRANCHES {
+            let text = menu_text(&b);
+            for (i, choice) in b.choices.iter().enumerate() {
+                let line = format!("#L{i}# {}", choice.job_name);
+                assert!(text.contains(&line), "{} is missing {line:?}", b.from_job_name);
+                assert_eq!(
+                    choice_at(&b, i as u32).map(|c| c.job),
+                    Some(choice.job),
+                    "position {i} decodes back to the job it drew"
+                );
+            }
+            // One past the end is not a job, it is an answer off a socket.
+            assert!(choice_at(&b, b.choices.len() as u32).is_none());
+            assert!(choice_at(&b, u32::MAX).is_none());
+            // The line break is the client's two-character markup, not an escape.
+            assert!(text.contains("\\n"), "the menu uses the client's own break");
+            assert_eq!(LINE_BREAK.len(), 2, "backslash and n, not a newline");
+        }
+        assert!(is_menu_path(MENU_PATH));
+        assert!(!is_menu_path(crate::taxi::MENU_PATH), "the two must not claim each other");
+        assert!(!crate::taxi::is_taxi_path(MENU_PATH));
+    }
+
+
+    /// **The chain, as the server will actually have it: WZ plus the authored overlay.**
+    ///
+    /// Everything else in this file checks the generated dump. This one checks the two files
+    /// *joined the way `world_server` joins them*, because the second-job chain is the first
+    /// feature that depends on both halves at once - the client ships the proof grant, and
+    /// `data/quest-scripts.txt` supplies the marble take-back that the missing `q<id>e`
+    /// endscript used to do.
+    ///
+    /// The control is the part that comes from the **client**: if `20003`'s `Act.0` did not
+    /// hand over the proof, the whole design would be resting on a row that is not there.
+    #[test]
+    fn the_authored_overlay_and_the_client_s_own_rows_join_up() {
+        let wz = Path::new("../../gm-handbook/questlines.txt");
+        let overlay = Path::new("../../data/quest-scripts.txt");
+        if !wz.exists() || !overlay.exists() {
+            return; // gm-handbook/ is generated and gitignored
+        }
+        let mut quests = crate::config::load_quests(wz);
+        assert!(quests.len() > 300, "positive control: {} quests loaded", quests.len());
+        let touched = crate::config::overlay_quests(&mut quests, overlay);
+        assert!(touched > 0, "positive control: the overlay was applied, not skipped");
+
+        for b in BRANCHES {
+            let [_first, finding, test_of, proof_of] = b.chain.quests;
+
+            // --- from the CLIENT: the letter and the proof are its own Act.0 rows ---
+            let finding_q = &quests[&finding];
+            assert!(
+                finding_q.start_items.contains(&(b.chain.letter_item, 1)),
+                "quest {finding} hands over the letter - that row is the client's"
+            );
+            let proof_q = &quests[&proof_of];
+            assert!(
+                proof_q.start_items.contains(&(b.chain.proof_item, 1)),
+                "quest {proof_of} hands over the proof - THE CONTROL. If this ever fails, the \
+                 advancement's gate has nothing to open it"
+            );
+
+            // --- from the OVERLAY: the endscript's take-back, and words where there were none
+            let test_q = &quests[&test_of];
+            let want = i32::try_from(b.chain.marble_count_items).unwrap();
+            assert_eq!(
+                test_q.complete_items,
+                vec![(b.chain.marble_item, -want)],
+                "quest {test_of} takes the {want} marbles back - the WZ's Act.1 is exp and \
+                 nextQuest only, so without the overlay they stay in the bag"
+            );
+            assert!(test_q.say.contains_key("0"), "quest {test_of} has an opening now");
+            assert!(test_q.say.contains_key("1"), "quest {test_of} has a closing now");
+
+            // --- and the chain still links the way the client wrote it ---
+            assert_eq!(quests[&finding].next_quest, Some(test_of));
+            assert_eq!(test_q.next_quest, Some(proof_of));
+            assert_eq!(proof_q.next_quest, None, "and it ends at the instructor");
+            assert_eq!(quests[&test_of].end_npc, Some(b.examiner_npc));
+            assert_eq!(proof_q.end_npc, Some(b.instructor_npc), "the LAST one ends at 511-ish");
+        }
+    }
+
+
+    /// **The server's own loaders populate the four fields**, not just this file's parser.
+    ///
+    /// Separate from `the_four_test_fields_are_exactly_what_this_client_ships` on purpose.
+    /// That test reads the dumps with a parser written next to it, which proves the *data* is
+    /// right and proves nothing about whether `world_server` can see it. This one goes through
+    /// `Config::load_mobs` and `Config::load_npcs` - the exact calls the binary makes - so a
+    /// loader that silently drops eight-digit map ids, or a column count that moved, fails
+    /// here instead of on the owner's screen as an empty room with no way out.
+    #[test]
+    fn the_server_s_own_loaders_fill_the_four_fields() {
+        let mobs_path = Path::new("../../gm-handbook/mobs.txt");
+        let npcs_path = Path::new("../../gm-handbook/npcs.txt");
+        let templates_path = Path::new("../../gm-handbook/mobtemplates.txt");
+        if !mobs_path.exists() || !npcs_path.exists() || !templates_path.exists() {
+            return;
+        }
+        let templates = crate::config::load_mob_templates(templates_path);
+        assert!(templates.len() > 150, "positive control: {} templates", templates.len());
+        let (fields, _respawn) = crate::config::Config::load_mobs(mobs_path, &templates);
+        let npcs = crate::config::Config::load_npcs(npcs_path);
+        assert!(fields.len() > 200, "positive control: {} maps have mobs", fields.len());
+        assert!(npcs.len() > 100, "positive control: {} maps have npcs", npcs.len());
+
+        for b in BRANCHES {
+            let f = b.test_field;
+            let here = fields.get(&f.map_id).unwrap_or_else(|| {
+                panic!("{} ({}) has no mobs after loading", f.map_id, f.map_name)
+            });
+            // 26 or 30 spawn points, and every one of them is one of this branch's two.
+            assert!(here.len() >= 26, "{} spawns {} mobs", f.map_id, here.len());
+            for m in here {
+                assert!(
+                    f.has_mob(m.template_id),
+                    "{} spawned template {} which is not one of {:?}",
+                    f.map_id,
+                    m.template_id,
+                    f.mobs
+                );
+                // A mob loaded with no template would come up at DEFAULT_MOB_HP, which is a
+                // different fight from the one the test is meant to be.
+                assert!(
+                    templates.contains_key(&m.template_id),
+                    "template {} has no Mob.wz row, so its HP would be a default",
+                    m.template_id
+                );
+            }
+            // The warden is there, and they are the only NPC - so a click in that map cannot
+            // land on anything else.
+            let who = npcs.get(&f.map_id).unwrap_or_else(|| {
+                panic!("{} has no NPCs after loading - THE MAP HAS NO DOOR", f.map_id)
+            });
+            assert_eq!(who.len(), 1, "{} holds only the warden, got {:?}", f.map_id, who);
+            assert_eq!(who[0].template_id, f.warden_npc);
+        }
+    }
+
 }

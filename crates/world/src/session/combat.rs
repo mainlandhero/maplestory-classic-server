@@ -366,6 +366,38 @@ impl Session {
                 });
             }
         }
+
+        // **The Dark Marble: the only item in the game whose drop depends on WHERE it died.**
+        //
+        // The four second-job test fields spawn dedicated mob templates - 800010..800017 -
+        // and the marble is the proof the examiner asks 30 of. Two things have to be true at
+        // once and neither is enough on its own:
+        //
+        // * **The mob must be a test mob.** `data/drops.txt` already carries scraped marble
+        //   rows for six of the eight at 6%, which is 30 marbles in roughly 500 kills, and it
+        //   is **missing 800014 and 800017 entirely** - so the Thief's Cold Eye and the
+        //   Warrior's Lupin drop nothing towards a test they are half of. Doing it here fixes
+        //   both without depending on what the next scrape decides to write.
+        // * **The map must be that mob's own field.** `800010` and `800015` also spawn on
+        //   80003500 and `800011` also spawns on **10006160, Precipice of Darkness** - an
+        //   ordinary field an ordinary player grinds. **[L]** Without the map test three of
+        //   the eight leak the test's proof into normal play.
+        //
+        // So the filter runs first and is unconditional: any marble that is not this map's
+        // marble is removed however it got into the roll. Then the right one is put in
+        // exactly once, so a 6% row that happened to hit cannot stack with the guarantee.
+        // `secondjob::MARBLE_DROP_IS_CERTAIN` is the [I] policy and the single place to
+        // change it.
+        let marble_here = crate::secondjob::marble_for_kill(template, map);
+        rolled.retain(|r| {
+            !crate::secondjob::is_marble(r.item_id) || Some(r.item_id) == marble_here
+        });
+        if let Some(marble) = marble_here {
+            let already = rolled.iter().any(|r| r.item_id == marble);
+            if !already && crate::secondjob::MARBLE_DROP_IS_CERTAIN {
+                rolled.push(crate::droptables::Rolled { item_id: marble, quantity: 1 });
+            }
+        }
         let mut out = Vec::new();
         // Read the meso rate ONCE, not once per drop: it is a database query, and it cannot
         // change between two items falling off the same mob.

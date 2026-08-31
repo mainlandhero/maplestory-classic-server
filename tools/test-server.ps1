@@ -13,7 +13,7 @@
     wrong, the server is the only thing that changed.
 
 .NOTES
-    ====== THE TEST PLAN, 2026-08-29b: DOES THE MENU BOX DRAW? ======
+    ====== THE TEST PLAN, 2026-08-31: THE SECOND JOB ADVANCEMENT ======
 
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
@@ -30,6 +30,13 @@
     second prompt. A SECOND ACCOUNT WORKS and signs in BY EMAIL. THE MASKED EMAIL FOLLOWS
     THE ACCOUNT. ONE DAMAGE NUMBER. MP COST ACCURATE, selling works, no Buy Back tab,
     warrior skills cast, the classic shop draws.
+
+    AND **THE TYPE-6 MENU RENDERS FROM THE SERVER** - the old T3 and T4, now answered and
+    struck off. `research/fixtures/type6-menu-renders-and-taxi-rides-world.log` has Lyn and
+    the Regular Cab each sending one box, each answered by a 10-byte 0x00F3 ending
+    `06 01` with a real selection - line 2 then line 0 - and each followed by the fare and
+    the SetField. Two NPCs, two different lines picked, one session. Nothing about menus
+    needs re-testing, and T10 below rests on it rather than gambling on it.
 
     WHAT CHANGED IN THE SERVER SINCE THE LAST RUN
     ---------------------------------------------
@@ -48,16 +55,16 @@
 
     ============ WHAT THIS RUN IS FOR ============
 
-    T3 IS THE MEASUREMENT. Everything else is either a gate for it or a control beside it.
+    T10 IS THE MEASUREMENT. It is a walk, not a click, and every leg of it is new code.
 
-    The client has a list box - message type 6 - that draws clickable lines from ONE string
-    carrying #L<n># markup. The client uses it for its own NPC menus. Whether it draws when
-    the SERVER sends it has never been observed. Two agents disagreed about whether it even
-    existed; the enumeration that said no was searching for the wrong shape.
+    The second job advancement now exists end to end, and FOUR MAPS THAT NOBODY HAS EVER
+    STOOD IN are part of it. 80001300 / 80001100 / 80001000 / 80001200 have exactly one
+    portal each - the spawn point - so there is no way in or out on foot and the server is
+    the only thing that has ever put anybody there. If a SetField into one of them goes
+    wrong, the symptom is a character stuck in a map with no door.
 
-    So the taxis send type 6 and Phil sends a chain of yes/no boxes, which IS proven on
-    screen. That is deliberate: T4 is the control for T3. If Phil works and Lyn does not,
-    the fault is type 6 and nothing else.
+    Everything else below is either cheap (T0, T6), already built and waiting for its first
+    look (T7, T8, T9), or unrelated and worth doing while you are in there (T1, T2, T5).
 
      T1. TWO CLIENTS, SAME MAP. Do this first; T2 waits on it.
           a) the other character appears -> the whole thing works
@@ -72,24 +79,57 @@
             only the killer is paid -> the fact never crossed the bus
             both lines white -> the majority flag is wrong
             the helper is paid the FULL amount -> the split is not being applied
-     T3. CLICK LYN, the tour guide on the Lith Harbor dock. THE MEASUREMENT.
-          They should show ONE box listing five towns, each a clickable line.
-            five clickable lines -> type 6 renders from the server. Say so loudly; it
-                       means Phil collapses from four boxes to one, and every future menu
-                       is one packet instead of a chain
-            a box with text but nothing clickable -> the markup is wrong and ONLY the
-                       markup. Fallback is written down in taxi.rs
-            no box at all -> the packet or the message type is wrong
-          If the screen is ambiguous, world.log settles it with no description needed:
-          a 10-byte 0x00F3 ending 06 01 and a u32 = it worked; 6 bytes ending 06 00 = the
-          box drew but nothing was clickable; no 0x00F3 = it never came up.
-          Picking a town costs 500 mesos and warps you.
-     T4. CLICK PHIL in Lith Harbor, as a Beginner at LEVEL 10. THE CONTROL FOR T3.
-          Four yes/no boxes, one per job path; Yes warps you to that instructor.
-            T4 works and T3 does not -> type 6 is the problem, and only type 6
-            NEITHER works -> something common to both, which is the script packet itself
-          Then talk to the instructor you land on. advance_job_for has NEVER been observed
-          to run - zero occurrences in 675 014 archived events - so this is its first test.
+     T10. THE SECOND JOB ADVANCEMENT. THE MEASUREMENT. Set yourself up first:
+              !job 100   !kit   !exp 548637   !map 10004023
+          548 637 is the exp curve summed from level 1 to 30 and one !exp crosses as many
+          levels as it is worth, so that is a single command. THERE IS NO !level - it was
+          in an earlier draft of this plan and it does not exist.
+          **Then put your ability points into STR in the stat window.** !job does not move
+          them, so a fresh level-30 Swordsman still has beginner stats, and the mobs in
+          there hit for ~204 with 718-789 HP.
+          That puts a level-30 Swordsman on West Rocky Mountain IV, where the Warrior Job
+          Instructor (the EXAMINER, template 514) stands. Then, in order:
+
+          a) CLICK THE EXAMINER. You should get a line and then find yourself somewhere
+             else - Warrior's Rocky Mountain, map 80001300, full of Fire Boars and Lupins.
+               you arrive -> the warp works and the map loads. THIS IS THE STEP THAT
+                          MATTERS; no character has ever been on one of these four maps
+               the screen goes black / the client dies -> say WHICH, and world.log's
+                          SetField line names the map. That map has 132 footholds and 30
+                          mobs, so a load failure is a real finding
+               nothing happens -> the click never reached job_test_for. Say so; the
+                          examiner also carries quests and the client may have sent
+                          0x0151 instead of 0x00F2, which is a routing question
+
+          b) KILL ANYTHING IN THERE. Every mob drops one Dark Marble, guaranteed.
+               a marble per kill -> the drop rule works
+               no marble -> the map gate. world.log's drop line names the map it used
+               marbles from OTHER mobs elsewhere later -> the leak the gate exists to
+                          stop; say where you were
+
+          c) CLICK THE NPC INSIDE (it is called Warrior Job Instructor too - a different
+             NPC from the one outside, template 800006). It is the ONLY way out.
+               you land back on West Rocky Mountain IV -> the door works
+               nothing happens -> YOU ARE STUCK. Use a return scroll or !map to get out
+                          and say so loudly; that is the worst failure in this run
+
+          d) COLLECT 30 MARBLES and click the examiner outside again. Faster: !item
+             4031017 30. They should take all 30 and hand back The Proof of a Hero.
+               30 leave the bag and the proof arrives -> the exchange works
+               they warp you back in instead -> they counted fewer than 30. Say how many
+                          the Etc tab showed
+
+          e) !map 10004003 and CLICK DANCES WITH BALROG holding the proof.
+               a box listing Fighter / Page / Spearman -> pick one
+               "You carry no proof" -> the proof did not survive the trip. Check the bag
+             Then, after picking:
+               the job name changes and the skill window has a SECOND page -> DONE
+               job changes but the skill page is empty -> the SP pool key is wrong
+               nothing happens -> the menu answer never routed
+
+          FOR THE RECORD: without the proof, Dances with Balrog must REFUSE. If a level-30
+          Swordsman can advance without ever entering the map, the whole chain is optional
+          and that is a bug worth reporting even though it looks like a feature working.
      T0. BEFORE ANY OF THIS, and it costs no server: double-click
          client-patched\MapleStory.exe TWICE with no server running and watch for 10
          seconds. It dies at ~37 s on its own (the firewalled reachability check), so
@@ -1138,7 +1178,7 @@ function Show-TestPlan {
     Write-Host ''
     Write-Host 'On screen:'
     if ($SetFieldProbe) {
-        Write-Host '  T1-T6 FIRST, then the carried-over steps 1-7.' -ForegroundColor Yellow
+        Write-Host '  T10 FIRST. Then T0-T9, then the carried-over steps 1-7.' -ForegroundColor Yellow
         Write-Host '  Full text: Get-Help on this script.'
         Write-Host ''
         Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
@@ -1161,12 +1201,13 @@ function Show-TestPlan {
         Write-Host '  the second refuses to start, SAY SO - that is a finding, and the'
         Write-Host '  answer is two machines.'
         Write-Host ''
-        Write-Host '  T3 IS WHAT THIS RUN IS FOR. The rest gates it or controls it.' -ForegroundColor Magenta
-        Write-Host '  The client has a list box - message type 6 - that draws clickable'
-        Write-Host '  lines from ONE string. The client uses it for its own menus. Whether'
-        Write-Host '  it draws when the SERVER sends one has never been observed. So the'
-        Write-Host '  taxis send type 6 and Phil sends yes/no boxes, which ARE proven.'
-        Write-Host '  T4 is the control for T3.'
+        Write-Host '  T10 IS WHAT THIS RUN IS FOR. It is a WALK, not a click.' -ForegroundColor Magenta
+        Write-Host '  The second job advancement now exists end to end, and it goes'
+        Write-Host '  through FOUR MAPS NOBODY HAS EVER STOOD IN. Each has exactly one'
+        Write-Host '  portal - the spawn point - so there is no way in or out on foot.'
+        Write-Host '  If a warp into one goes wrong, the symptom is being STUCK.'
+        Write-Host '  (The old T3/T4 are answered and gone: the type-6 menu renders from'
+        Write-Host '   the server. Lyn and the Cab both drew one and both were clicked.)'
         Write-Host ''
         Write-Host '  T1. TWO CLIENTS, SAME MAP. First, and T2 waits on it.' -ForegroundColor White
         Write-Host '        a) the other character appears -> it all works'
@@ -1179,20 +1220,32 @@ function Show-TestPlan {
         Write-Host '          only the killer paid -> the fact never crossed the bus'
         Write-Host '          both white -> the majority flag is wrong'
         Write-Host '          helper paid in FULL -> the split is not applied'
-        Write-Host '  T3. CLICK LYN, tour guide on the Lith Harbor dock. THE ONE.' -ForegroundColor Yellow
-        Write-Host '        ONE box, five towns, each a clickable line.'
-        Write-Host '          five clickable lines -> type 6 renders. Say so loudly'
-        Write-Host '          text but nothing clickable -> the markup, and only that'
-        Write-Host '          no box at all -> the packet or the message type'
-        Write-Host '        world.log settles it if the screen is unclear: a 10-byte'
-        Write-Host '        0x00F3 ending 06 01 = worked; 6 bytes 06 00 = drew but dead;'
-        Write-Host '        no 0x00F3 = never came up. A town costs 500 mesos and warps.'
-        Write-Host '  T4. CLICK PHIL in Lith Harbor, Beginner at LEVEL 10. CONTROL.' -ForegroundColor White
-        Write-Host '        Four yes/no boxes, one per job path. Yes warps you.'
-        Write-Host '          T4 works, T3 does not -> type 6 is the problem, only it'
-        Write-Host '          NEITHER works -> something common to both'
-        Write-Host '        Then talk to the instructor you land on. Job advancement has'
-        Write-Host '        NEVER been observed to run - this is its first test.'
+        Write-Host '  T10. THE SECOND JOB ADVANCEMENT. THE ONE. Set up with:' -ForegroundColor Yellow
+        Write-Host '         !job 100   !kit   !exp 548637   !map 10004023'
+        Write-Host '       (548637 is the curve summed 1->30; one !exp crosses all of'
+        Write-Host '        them. THERE IS NO !level.) Then PUT YOUR AP INTO STR - !job'
+        Write-Host '        does not move it, and those mobs hit for ~204.'
+        Write-Host '       a) CLICK THE EXAMINER there (Warrior Job Instructor).'
+        Write-Host '            you end up somewhere else -> the warp works. NOBODY HAS'
+        Write-Host '                       EVER BEEN ON THAT MAP. This is the step'
+        Write-Host '            black screen / client dies -> say which; world.log names'
+        Write-Host '                       the map in its SetField line'
+        Write-Host '            nothing happens -> the click never routed'
+        Write-Host '       b) KILL ANYTHING IN THERE. Every mob drops one Dark Marble.'
+        Write-Host '            no marble -> the map gate; world.log names the map used'
+        Write-Host '       c) CLICK THE NPC INSIDE. It is the ONLY way out.'
+        Write-Host '            nothing happens -> YOU ARE STUCK. Return scroll or !map,'
+        Write-Host '                       and say so - worst failure in this run'
+        Write-Host '       d) !item 4031017 30, then click the examiner OUTSIDE again.'
+        Write-Host '            30 leave the bag, The Proof of a Hero arrives -> good'
+        Write-Host '            they warp you back in -> they counted fewer than 30'
+        Write-Host '       e) !map 10004003, CLICK DANCES WITH BALROG holding the proof.'
+        Write-Host '            a box listing Fighter / Page / Spearman -> pick one'
+        Write-Host '            job changes AND the skill window has a 2nd page -> DONE'
+        Write-Host '            job changes, page empty -> the SP pool key is wrong'
+        Write-Host '       WITHOUT the proof they must REFUSE. If they advance you anyway,'
+        Write-Host '       the whole chain is optional - report it even though it looks'
+        Write-Host '       like the feature working.' -ForegroundColor Yellow
         Write-Host '  T0. FIRST, and it needs no server: double-click' -ForegroundColor Cyan
     Write-Host '      client-patched\MapleStory.exe TWICE, no server, watch 10s.'
     Write-Host '      It self-kills at ~37s, so 10s is safely inside that.'

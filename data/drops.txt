@@ -1016,6 +1016,23 @@
 800002 | 4001001 | 6 | 1 | 1 | 1 | Coupon
 800003 | 1072128 | 1 | 1 | 1 | 2 | Squishy Shoes
 800003 | 4001001 | 6 | 1 | 1 | 1 | Coupon
+# ---- THE SIX DARK MARBLE ROWS BELOW NO LONGER DECIDE ANYTHING ------------------
+# They are left in place because the next scrape would put them back, and because
+# they are honest about what the source said. But the marble is decided in code -
+# `secondjob::marble_for_kill`, called from `session/combat.rs` - for two reasons
+# these rows cannot express:
+#
+#   * THE MAP MATTERS. 800010 and 800015 also spawn on 80003500, and 800011 also
+#     spawns on 10006160 (Precipice of Darkness), an ordinary field. A row keyed
+#     on the template alone hands the second-job test's own proof to anybody
+#     grinding there. Every marble is filtered OUT of the roll unless the kill
+#     happened in that branch's own test field.
+#   * TWO OF THE EIGHT ARE MISSING. 800014 (the Thief's Cold Eye) and 800017 (the
+#     Warrior's Lupin) have no marble row at all, so half of two branches' fields
+#     dropped nothing towards a test they are half of.
+#
+# On the right map the marble is guaranteed and deduplicated against these rows,
+# so a 6% hit here cannot stack with it. `research/second-job-fields.md` section 5.3.
 800010 | 4031021 | 6 | 1 | 1 | 1 | Dark Marble (Bowman)
 800011 | 4031021 | 6 | 1 | 1 | 1 | Dark Marble (Bowman)
 800012 | 4031019 | 6 | 1 | 1 | 1 | Dark Marble (Magician)

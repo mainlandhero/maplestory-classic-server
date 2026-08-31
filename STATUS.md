@@ -1,4 +1,4 @@
-# Where things stand — 2026-08-29b: **three ways to travel, and a menu box nobody has watched draw**
+# Where things stand — 2026-08-31: **the second job advancement, and four maps nobody has stood in**
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -25,10 +25,87 @@ answers at all". Without it `Session::handle` returns nothing for *every* packet
 migration hello goes unanswered, and the client sits on "Connecting..." looking exactly
 like a server that is not running. It cost one of the owner's manual launches on 2026-08-20.
 
+### LANDED 2026-08-31 — the second advancement, end to end
+
+**The four "hidden fields" the second-job chain needs are in this client, and they always
+were.** `research/second-job.md` recorded that *"the Test of Qualification hidden field and
+its `q20002s` script do not exist, so the client's own route to the advancement is not
+walkable"*. **The script half is right and still holds** — all 205 archives and all 10 021
+images were enumerated and `q20002s` occurs twice in the whole tree, both times as a *name*.
+**The field half was wrong**, and it was wrong in a shape this project has paid for before:
+an absence established for one thing (`Script.wz`) was carried across to a neighbouring thing
+(`Map.wz`) without being re-asked. One `grep` of `gm-handbook/maps.txt` would have broken it.
+
+| branch | test field | mobs (dedicated templates) | warden | ejects to |
+|---|---:|---|---:|---:|
+| Warrior | **80001300** Warrior's Rocky Mountain | 800016 Fire Boar, 800017 Lupin | 800006 | 10004023 |
+| Magician | **80001100** Magician's Tree Dungeon | 800012 Curse Eye, 800013 Horny Mushroom | 800004 | 10002070 |
+| Bowman | **80001000** Ant Tunnel For Bowman | 800010 Evil Eye, 800011 Zombie Mushroom | 800003 | 10001090 |
+| Thief | **80001200** Thief's Construction Site | 800014 Cold Eye, 800015 Blue Mushroom | 800005 | 10003080 |
+
+**[L]** throughout, and the branch-to-dungeon pairing is corroborated by **five nodes across
+two archives** — `info/returnMap`, `life` type `n`, `life` type `m`, `String.wz/Map.img`, and
+the `Quest.wz` chain. `research/second-job-fields.md` is the working.
+
+**Each of those maps has exactly one portal — the spawn point — against 31 for Perion.**
+There is no way in and no way out on foot, which is the client saying the entry is
+server-side. The consequence is the thing to watch on the next run: **a character in one of
+them with no working warden click is stuck**, not inconvenienced.
+
+| what | state |
+|---|---|
+| `secondjob.rs` — the decision, 1400 lines | **was BUILT AND UNWIRED since 08-28. Now wired** |
+| The four test fields, their mobs and their exits | data + tests, **never on a screen** |
+| Examiner warps in / takes 30 marbles / gives the proof | wired, **never on a screen** |
+| Warden warps out — the only door | wired, **never on a screen** |
+| Instructor offers a type-6 menu of 2–3 second jobs | wired, **never on a screen** |
+| The advancement itself: `0x007C` job + SP tier 2, proof consumed | wired, **never on a screen** |
+| Dark Marble drops, gated on **mob AND map** | wired, **never on a screen** |
+| `startscript q20002s` and its three siblings | authored in `data/quest-scripts.txt` |
+| Type-6 menu renders from the server | **MEASURED — see below. No longer an open question** |
+
+**The gate that is enforced is the proof item, not the quest chain.** `REQUIRE_QUEST_CHAIN`
+is still `false`; `REQUIRE_PROOF_ITEM` is `true`. Quest `20003`'s `Check.1.item.0` is the
+client's own rule, it is a fact about the bag rather than about quest rows, and `!item` can
+put one there for a test run without pretending a quest happened.
+
+**The count is 30, not 20.** The owner's brief said 20 marbles; `Check.1.item.0.count` is `30` on
+all four branches and `questreq.txt` says the same from a second pass. Worth naming because
+the number is the whole length of the test.
+
+#### The old T3 is answered: **a server-sent type-6 menu renders and its lines are clickable**
+
+`research/fixtures/type6-menu-renders-and-taxi-rides-world.log`, 2026-08-29: Lyn and the
+Regular Cab each sent one type-6 box, each was answered by a 10-byte `0x00F3` ending `06 01`
+with a real selection — **line 2** then **line 0** — and each was followed by the fare and the
+`SetField`. Two NPCs, two different lines picked, one session. The section below still
+describes it as the open question of that run; it is kept for the instrument lesson it
+carries, and **its conclusion is superseded here**. The second-job choice box therefore rests
+on a measurement rather than a gamble, and **Phil could now be collapsed from four yes/no
+boxes to one menu** — not done, and named rather than left implicit.
+
+#### Still open in this area
+
+* **Skill points are not persisted when spent**, so a second pool doubles the surface of
+  that. A player who spends and sees them return will file it as a bug.
+* **`skilltable::book()` will offer the thirteen `invisible = 1` skills** to a second-job
+  character. `secondjob::HIDDEN_SKILLS` holds them; `!learn` does not go through the filter.
+* **No second-job skill has a cast handler.** Nothing equivalent to `firstjob.rs` exists for
+  the 66.
+* **The MP-recovery passive still does nothing.** Skill `2000000` carries `y = 20` (the item
+  recovery bonus) and `session/consume.rs` has no skill lookup on the recovery path.
+  Diagnosed, not fixed.
+
+---
+
 ### LANDED 2026-08-29b — what is wired, what is OFF, what is unobserved
 
-**The one measurement the next run is for:** does a **server-sent message type 6** draw its
-`#L<n>#` lines? The client uses that box for its own NPC menus (`research/npc-click.md:196`,
+> **SUPERSEDED 2026-08-31 — it draws.** Two boxes, two selections, one archived session;
+> see the 08-31 section above. Everything from here to the end of this subsection is kept for
+> the instrument lesson, which still stands. Do not act on its open question.
+
+**The one measurement the [2026-08-29b] run was for:** does a **server-sent message type 6**
+draw its `#L<n>#` lines? The client uses that box for its own NPC menus (`research/npc-click.md:196`,
 `FUN_142a61900(ui, 6, ...)`, **[L]**), and the client's own WZ carries 33 such menus — but no
 server has ever sent one. So **the taxis send type 6 and Phil sends a chain of yes/no boxes,
 which is proven on screen.** That is deliberate: Phil is the control beside the experiment.
