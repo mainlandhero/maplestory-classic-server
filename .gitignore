@@ -84,3 +84,8 @@ MapleClient.zip
 # stale copy answers instead of raising. It must never be committed, and a common
 # filename in there is a collision between concurrent agents, not just clutter.
 scratchpad/
+
+# Stray minidumps in the SOURCE tree. `minidump.rs`'s self-test writes to a fixed
+# scratch directory and flakes under concurrent `cargo test`; a killed run leaves a
+# dump beside the crate. They are up to 1.3 GB and none of them belongs in git.
+crates/**/*.dmp
