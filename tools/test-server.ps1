@@ -101,6 +101,26 @@
          ZERO overlapping pairs, and no archived instrument could have seen a second
          process that dies before it connects.
 
+     T9. THE COLLECTION TOOLTIP, and it carries its own control. Walk one portal with
+         "Vicious in Need of an Apprentice" accepted, then OPEN THE INVENTORY.
+         Only the **Etc** tab is restored with the quiet mode 5; Use, Set Up and Cash
+         still use the ordinary ADD, so they are the control in the same run.
+          no tooltip, and the Etc tab still has everything
+                     -> mode 5 works. Roll it out to the other three tabs
+          no tooltip, but the Etc tab is EMPTY while the others are full
+                     -> mode 5 stores nothing the UI can see. THIS IS THE FAILURE THAT
+                        MATTERS. Say so and it is reverted; the fallback is carrying the
+                        Etc bag in the character record instead, which is silent by
+                        construction rather than by experiment
+          the tooltip still pops
+                     -> the chain is wrong somewhere. world.log will show the mode-5
+                        bodies went out, so the next question is whether the store call
+                        alone still trips the quest check
+          ALL FOUR tabs empty
+                     -> not mode 5; something else broke. Revert and say so
+         Nobody has ever sent a mode 5 on this wire, which is why the other three tabs
+         were deliberately left alone.
+
      T8. THE POOL SENTRY, if you pass -PoolSentry. It prevents nothing; it WATCHES.
          Play normally for 8-10 minutes - the expected first catch is ~300 s of in-field
          time, and the archive has ZERO heap deaths under 192 s. Then read the hook log:
@@ -1182,6 +1202,17 @@ function Show-TestPlan {
     Write-Host '      Nobody has ever tried this. 211 connections across 188 logs'
     Write-Host '      show ZERO overlapping pairs, and nothing archived could have'
     Write-Host '      seen a second process that dies before it connects.'
+    Write-Host '  T9. COLLECTION TOOLTIP - carries its own control.' -ForegroundColor Cyan
+    Write-Host '      Walk one portal with the Vicious quest accepted, then OPEN'
+    Write-Host '      THE INVENTORY. Only the Etc tab uses the new quiet mode 5;'
+    Write-Host '      Use / Set Up / Cash still use the old ADD and are the control.'
+    Write-Host '        no tooltip + Etc still full -> it works, roll it out'
+    Write-Host '        no tooltip + Etc EMPTY, others full -> THE FAILURE THAT'
+    Write-Host '                   MATTERS. Say so; it gets reverted'
+    Write-Host '        tooltip still pops -> the chain is wrong; world.log shows'
+    Write-Host '                   the mode-5 bodies went out'
+    Write-Host '        ALL FOUR tabs empty -> not mode 5, something else broke'
+    Write-Host '      No server has ever sent a mode 5. That is why only one tab.' -ForegroundColor Yellow
     Write-Host '  T8. POOL SENTRY (only with -PoolSentry). It WATCHES, it does' -ForegroundColor Cyan
     Write-Host '      not fix. Play 8-10 min; first catch expected ~300s in-field.'
     Write-Host '        FINDING #1 at 250-400s -> the catch. Contents <=106ms old:'

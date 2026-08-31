@@ -256,6 +256,89 @@ pub fn inventory_added(inv_type: i8, pos: i16, blob: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Entry mode 5: **put a new item in a slot, without waking the quest system.**
+///
+/// Same wire shape as [`MODE_ADD`] - `u8 mode; u8 invType; i16 pos;` then the item blob,
+/// read by the same `FUN_140303530` - and the same store, `FUN_1402e4c20(charData, invType,
+/// pos, &item)`. What it does **not** do is the two calls mode 0 makes right after that
+/// store.
+///
+/// # Read from the jump table, not from a name
+///
+/// `142d51bb6 cmp ebx,0xc / 142d51bc6 mov ecx,[rdx + rbx*4 + 0x2d546bc]` is the mode switch.
+/// The table at `0x142d546bc`, dumped out of the image (`tools/dump_va.py`), is 13 RVAs:
+///
+/// ```text
+/// [ 0] 0x02d51bd2      [ 5] 0x02d531e4   <- this mode
+/// [ 3] 0x02d52f64      [12] 0x02d53bef
+/// ```
+///
+/// So mode 5's body is `0x142d531e4 .. 0x142d532c7`:
+///
+/// ```asm
+/// 142d531eb  call 0x140303530        ; the item blob - the SAME reader mode 0 uses
+/// 142d5320d  call 0x140255650        ; is `pos` a sub-bag slot (10101..)?  no, for 1..96
+/// 142d532b7  call 0x1402e4c20        ; charData, invType, pos, &item  - mode 0's store
+/// 142d532c7  jmp  0x142d52168        ; back to the entry loop. That is the whole case.
+/// ```
+///
+/// # Why it exists here: the field-entry bag restore pops a quest tooltip
+///
+/// `CWvsContext::OnInventoryOperation` calls **`FUN_142d9b200(this, itemId, countBefore)`**
+/// after modes 0, 1, 3, 8, 9 and 11 - six call sites, `142d51f67 142d52506 142d53136
+/// 142d535bb 142d537fc 142d53bbb`, **none of them in mode 5's range**. That function looks
+/// the item up in the quest manager's item->quest map (`questMan+0x238`), intersects it with
+/// the character's *started* quest map (`charData+0x1273`), and for a matching item
+/// requirement draws the collection hint - but only if the count actually moved:
+///
+/// ```asm
+/// 142d9b6fa  cmp   r15d, r14d      ; count BEFORE this packet  vs  count now
+/// 142d9b6fd  je    142d9b922       ; equal -> the whole hint block is skipped
+/// 142d9b71c  cmp   r15d, [rsi]     ; before vs the quest's required count
+/// 142d9b71f  jge   142d9b922
+/// 142d9b7f1  call  0x142d93610     ; "n / N <item>"   (quest is in the tracker)
+/// 142d9b916  call  0x142d934f0     ; the same, untracked
+/// ```
+///
+/// A `SetField` leaves the Use / Set Up / Etc / Cash bags empty - which is the entire reason
+/// `session::field::restore_bag_and_mesos` exists - so every restored stack is a 0 -> n
+/// change and every quest item in the bag fires that hint on **every map change**. The owner,
+/// 2026-08-30: *"whenever I change the map, I see the popup for my collection quest as a
+/// tooltip every time."*
+///
+/// Mode 5 puts the item in the slot and says nothing.
+///
+/// # It has never been on a wire
+///
+/// **[L]** for the jump-table entry, the reads and the store; **[I]** for everything about
+/// how it looks on screen. Mode 0 additionally calls `FUN_142ce53e0` (a second quest hook)
+/// and records the slot in the before/after map the handler diffs for the quick slot; mode 5
+/// does neither. The unconditional `FUN_142cbefd0(this,1,0,0)` after the entry loop runs for
+/// every `0x0070` whatever the mode, so the generic "inventory changed" refresh is not lost.
+///
+/// **The failure to watch for is the bag looking empty**, which is far worse than the
+/// tooltip. Test it on one item before using it for the whole restore.
+pub const MODE_SET_QUIET: u8 = 5;
+
+/// Put an item into a bag slot **without** the quest-progress hint - `0x0070` mode 5.
+///
+/// Byte-for-byte [`inventory_added`] with a `5` where the mode byte is. See
+/// [`MODE_SET_QUIET`] for the listing, and for the reason not to trust it until a client has
+/// drawn it.
+pub fn inventory_set_quiet(inv_type: i8, pos: i16, blob: &[u8]) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(1); // bExclRequestSent - clears the +0x2330 latch, same as every other reply here
+    w.u8(0);
+    w.u32(1); // nCount, i32
+    w.u8(0); // notRemoveAddInfo
+    w.u8(MODE_SET_QUIET);
+    w.u8(inv_type as u8);
+    w.i16(pos);
+    let mut out = w.into_vec();
+    out.extend_from_slice(blob);
+    out
+}
+
 /// Take an item out of a **bag** slot. Mode 3, and it carries no tail at all.
 ///
 /// # `pos` must be positive, and that is a safety property rather than a convention
@@ -421,6 +504,62 @@ mod tests {
         assert_eq!(b[8] as i8, INV_EQUIP);
         assert_eq!(i16::from_le_bytes([b[9], b[10]]), 7, "the 1-based slot");
         assert_eq!(&b[INVENTORY_ADD_HEAD_LEN..], &blob, "the blob, ending the body");
+    }
+
+    /// Mode 5 is mode 0 with one byte changed, and that byte is the mode.
+    ///
+    /// This is the test that matters: the *only* thing this builder may do differently is
+    /// the mode byte. If it ever grows a field of its own, the client reads mode 5's body
+    /// with mode 0's reader - one blob and nothing else - and the frame goes out of step.
+    #[test]
+    fn the_quiet_set_differs_from_an_add_in_exactly_the_mode_byte() {
+        let blob = [2u8, 5, 9, 61, 0, 0, 0, 1];
+        for (inv, pos) in [(INV_EQUIP, 1i16), (2, 7), (4, 29), (5, 96)] {
+            let loud = inventory_added(inv, pos, &blob);
+            let quiet = inventory_set_quiet(inv, pos, &blob);
+            assert_eq!(loud.len(), quiet.len(), "same length or the reader desynchronises");
+            let differing: Vec<usize> =
+                (0..loud.len()).filter(|&i| loud[i] != quiet[i]).collect();
+            assert_eq!(
+                differing,
+                vec![7],
+                "index 7 is the mode byte and nothing else may move"
+            );
+            assert_eq!(loud[7], MODE_ADD);
+            assert_eq!(quiet[7], MODE_SET_QUIET);
+        }
+    }
+
+    /// The whole point of the packet: a `5` there, because a `0` is what pops the tooltip.
+    ///
+    /// The constant is checked against the literal rather than against itself - the jump
+    /// table at `0x142d546bc` has thirteen entries and only index 5 is `0x02d531e4`.
+    #[test]
+    fn the_quiet_mode_is_five_and_the_head_is_unchanged() {
+        let b = inventory_set_quiet(4, 29, &[2u8, 5, 9, 61]);
+        assert_eq!(MODE_SET_QUIET, 5, "jump table index, dumped from the image");
+        assert_eq!(b.len(), INVENTORY_ADD_HEAD_LEN + 4);
+        assert_eq!(b[0], 1, "bExclRequestSent - a 0 here leaves the UI latched");
+        assert_eq!(b[1], 0);
+        assert_eq!(u32::from_le_bytes([b[2], b[3], b[4], b[5]]), 1, "nCount is i32");
+        assert_eq!(b[6], 0, "notRemoveAddInfo");
+        assert_eq!(b[7], 5);
+        assert_eq!(b[8] as i8, 4, "the Etc tab");
+        assert_eq!(i16::from_le_bytes([b[9], b[10]]), 29, "the 1-based slot");
+        assert_eq!(&b[INVENTORY_ADD_HEAD_LEN..], &[2u8, 5, 9, 61], "the blob ends the body");
+    }
+
+    /// Mode 5 sets `avatarChanged` nowhere either - its body is four calls and a `jmp`.
+    #[test]
+    fn a_quiet_set_never_earns_the_trailing_byte() {
+        for inv in [INV_EQUIP, INV_DECO, 2, 4] {
+            let b = inventory_set_quiet(inv, 1, &[1u8]);
+            assert_eq!(
+                b.len(),
+                INVENTORY_ADD_HEAD_LEN + 1,
+                "0x142d531e4..0x142d532c7 reads the blob and nothing after it"
+            );
+        }
     }
 
     /// An Add never sets avatarChanged, so it never earns the trailing byte - whatever the

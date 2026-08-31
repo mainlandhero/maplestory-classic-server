@@ -90,6 +90,65 @@ impl Session {
     }
 
 
+    /// Field-entry restore only: `0x0070` **mode 5**, which stores the item without the
+    /// quest re-check that pops a collection tooltip on every map change.
+    ///
+    /// The owner, 2026-08-30: *"whenever I change the map, I see the popup for my collection quest
+    /// as a tooltip every time ... This should only pop up when the amount in my inventory
+    /// changes."*
+    ///
+    /// # Why the restore cannot simply be skipped
+    ///
+    /// `142d9b6fd cmp r15d, r14d / je` skips the whole hint block when the count before the
+    /// packet equals the count after. The hint fires, so **before is 0** - the client's Etc
+    /// bag is genuinely EMPTY when the restore arrives, on every SetField. "Send the bag only
+    /// on the first field entry" would therefore leave the tab blank after every map change.
+    /// That alternative is dead, and it died without spending a client run. **[L]**
+    ///
+    /// # Why mode 5 rather than a flag
+    ///
+    /// There is no suppressing flag. The unnamed header byte is read in exactly one place in
+    /// the 11 648-byte handler, gating a single fixed UI message id. What exists instead is
+    /// the mode: the jump table at `0x142d546bc` puts mode 5 at
+    /// `0x142d531e4..0x142d532c7`, and that case reads the same item blob and calls
+    /// `FUN_1402e4c20` - mode 0's exact store - and nothing else. `FUN_142d9b200`, the quest
+    /// hook that draws the hint, has six call sites and **none of them is inside that
+    /// range**. The unconditional refresh after the entry loop still runs. **[L]**
+    ///
+    /// # Nothing has ever sent a mode 5 on this wire
+    ///
+    /// So the failure to watch for is **the Etc tab looking empty**, which is worse than the
+    /// tooltip. That is why this is wired for Etc alone at first: Use, Set Up and Cash stay
+    /// on mode 0 and are the control inside the same run.
+    pub(super) fn inventory_restored_replies(
+        &self,
+        inv: store::InventoryType,
+        changed: &[store::InvItem],
+        why: &str,
+    ) -> Vec<Reply> {
+        changed
+            .iter()
+            .map(|row| {
+                let blob = self.item_blob(&row.item);
+                Reply {
+                    opcode: net::inventory::INVENTORY_OPERATION,
+                    body: net::inventory::inventory_set_quiet(
+                        inv.as_u8() as i8,
+                        row.slot as i16,
+                        &blob,
+                    ),
+                    what: format!(
+                        "InventoryOperation mode 5 SET (quiet): item {} into {inv:?} slot {} - {} byte blob. {why}. NOBODY HAS SENT A MODE 5 ON THIS WIRE - if the tab is empty on screen, this is why.",
+                        row.item.item_id,
+                        row.slot,
+                        blob.len()
+                    ),
+                }
+            })
+            .collect()
+    }
+
+
     /// Move an item, and **write it down**.
     ///
     /// **Answering this is not optional.** `FUN_142cc5b00` sets `player->[0x2330]` to 1 the

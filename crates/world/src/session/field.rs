@@ -228,7 +228,22 @@ impl Session {
                 }
             };
             for item in items {
-                out.extend(self.inventory_added_replies(inv, &[item], "restored on field entry"));
+                // **Etc alone goes out quiet, and that is the experiment.** The collection
+                // tooltip the owner sees comes from the quest hook the ordinary ADD runs; mode 5
+                // performs the same store without it. No server has ever sent a mode 5, so
+                // Use, Set Up and Cash deliberately stay on mode 0 - they are the control
+                // inside the same run, and if the Etc tab comes up EMPTY while the other
+                // three are full, that names the cause with no second launch.
+                let replies = if inv == store::InventoryType::Etc {
+                    self.inventory_restored_replies(
+                        inv,
+                        &[item],
+                        "restored on field entry (mode 5, quiet)",
+                    )
+                } else {
+                    self.inventory_added_replies(inv, &[item], "restored on field entry")
+                };
+                out.extend(replies);
             }
         }
         match self.store.mesos(chr.id) {
