@@ -101,6 +101,35 @@
          ZERO overlapping pairs, and no archived instrument could have seen a second
          process that dies before it connects.
 
+     T8. THE POOL SENTRY, if you pass -PoolSentry. It prevents nothing; it WATCHES.
+         Play normally for 8-10 minutes - the expected first catch is ~300 s of in-field
+         time, and the archive has ZERO heap deaths under 192 s. Then read the hook log:
+
+           FINDING #1 at 250-400 s      the catch. The slot's contents are <=106 ms old,
+                      which is the whole point: a freshly-written body supports the
+                      refcount/flag reading, a long-lived body or a live predecessor
+                      supports the +0x24 overrun, and the damaged slot being ON THE FREE
+                      LIST kills "the occupant underruns its own buffer" live
+           FINDING [EARLY - SUSPECT] under 120 s
+                      suspect the instrument first. The rate predicts ~0.34 damaged slots
+                      by 100 s. Check the confirm re-reads and the carve identity in the
+                      same block before it goes anywhere
+           heartbeats, 0 findings past ~600 s in-field
+                      a RESULT, not a failure. It contradicts the ~298 s/slot rate, and it
+                      is the first UNBIASED sample this project has had - every rate point
+                      so far is a death, and a death needs a damaged slot to have been freed
+           NOVEL in a finding
+                      the biggest result available. 14-of-14-identical is the whole basis
+                      for "the writer is selective"; one novel value breaks it
+           any `carve FAIL` in a heartbeat
+                      the walk is short and every count that run is a lower bound
+           no POOL SENTRY line at all
+                      the marker did not arrive or the hook did not install - look for
+                      `install: hook active` above it
+
+         **Leave -HeapFix off.** It voids the free-list argument the sentry exists to
+         exploit, and it patches one of three entry points anyway.
+
      T7. THE CLIENT CARRIES A CREDENTIAL. Launch through maplecw-launcher, sign in, and
          get as far as the CHARACTER LIST - `0x0073` goes out before it, so nothing
          in-game is needed. Read THREE lines, in this order, because they discriminate:
@@ -510,6 +539,11 @@ param(
     # writing, reads them back after, and logs both. If the client still dies with
     # 0xC0000374 with this on, research/heap-wild-write.md is wrong somewhere - which is
     # exactly what makes it worth running.
+    # Arm the pool sentry: a read-only 100 ms watch on the client's own allocator that
+    # snapshots a slot the moment its header goes bad, ~106 ms after the write instead of
+    # tens of thousands of allocations later. Off by default because it is an instrument,
+    # not a fix - it prevents nothing. See crates/grap-stub/src/poolsentry.rs.
+    [switch]$PoolSentry,
     [switch]$HeapFix,
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
@@ -852,6 +886,7 @@ if ($Stop) {
     # than ignored, so leaving it costs the NEXT run its account - and that failure looks
     # like nothing at all on a one-player machine.
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
     Write-Host 'stopped client and login server'
     exit 0
 }
@@ -1147,6 +1182,19 @@ function Show-TestPlan {
     Write-Host '      Nobody has ever tried this. 211 connections across 188 logs'
     Write-Host '      show ZERO overlapping pairs, and nothing archived could have'
     Write-Host '      seen a second process that dies before it connects.'
+    Write-Host '  T8. POOL SENTRY (only with -PoolSentry). It WATCHES, it does' -ForegroundColor Cyan
+    Write-Host '      not fix. Play 8-10 min; first catch expected ~300s in-field.'
+    Write-Host '        FINDING #1 at 250-400s -> the catch. Contents <=106ms old:'
+    Write-Host '                   fresh body = refcount/flag; long-lived body or a'
+    Write-Host '                   live predecessor = the +0x24 overrun; damaged slot'
+    Write-Host '                   ON THE FREE LIST kills the underrun reading, live'
+    Write-Host '        FINDING [EARLY - SUSPECT] under 120s -> suspect the tool.'
+    Write-Host '                   Zero heap deaths under 192s in the whole archive'
+    Write-Host '        0 findings past ~600s in-field -> a RESULT. First unbiased'
+    Write-Host '                   sample ever; every rate point so far is a death'
+    Write-Host '        NOVEL -> the biggest result available. Breaks 14-of-14'
+    Write-Host '        no POOL SENTRY line -> marker or hook, not the allocator'
+    Write-Host '      Leave -HeapFix OFF - it voids the free-list argument.' -ForegroundColor Yellow
     Write-Host '  T7. THE CLIENT CARRIES A CREDENTIAL. Launch via the launcher,' -ForegroundColor Cyan
     Write-Host '      sign in, reach the CHARACTER LIST. Nothing in-game needed.'
     Write-Host '      Read three lines - they discriminate:'
@@ -1421,6 +1469,16 @@ Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session 
 # path is a direct run, so clear any leftover: presenting a stale token is refused, and a
 # refusal downgrades the connection to the --account fallback silently.
 Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
+
+# **The else is not optional.** A stale sentry marker silently arms a 100 ms allocator walk
+# on an unrelated run - a confound that would be invisible in the logs of whatever that run
+# was actually measuring.
+if ($PoolSentry) {
+    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value 'on' -Encoding ascii
+    Write-Host 'POOL SENTRY ARMED - expect a heartbeat every 60s in the hook log' -ForegroundColor Cyan
+} else {
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
+}
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {

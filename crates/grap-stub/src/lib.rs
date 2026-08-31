@@ -24,8 +24,10 @@
 pub mod heapfix;
 pub mod hitnumber;
 pub mod hook;
+pub mod identity;
 pub mod minidump;
 pub mod netwatch;
+pub mod poolsentry;
 pub mod probe;
 pub mod session;
 

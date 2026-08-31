@@ -518,6 +518,19 @@ pub unsafe fn install() {
     // Same window, same reason: Themida has unpacked .text by now. Gated on
     // `hitnumber=off` in the marker; see crates/grap-stub/src/hitnumber.rs.
     crate::hitnumber::install();
+    // The session credential the client will carry itself. Gated on
+    // `maplecw-hook.identity` holding a usable token; absent, it does not touch a byte.
+    //
+    // Here rather than later because `0x0073` is built about 8 s after this point in the one
+    // correlated capture - but the ordering this actually rests on is structural, not that
+    // margin: the detour sits on the entry of the only function that reads the field.
+    // See crates/grap-stub/src/identity.rs.
+    crate::identity::install();
+    // A read-only watch on the pool allocator's slot headers, so the 0x0000000100000020
+    // write is caught ~100 ms after it lands instead of tens of thousands of allocations
+    // later. Gated on `maplecw-hook.sentry`; absent, it does not start a thread or read a
+    // byte. See crates/grap-stub/src/poolsentry.rs.
+    crate::poolsentry::install();
 
     log("install: hook active");
 }

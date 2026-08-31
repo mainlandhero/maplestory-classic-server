@@ -4,11 +4,22 @@ Not a scan. `FUN_14019b4e0` (free) hardcodes its pool context with
 `lea rbp,[rip+0x393b366]` at 0x14019b533 -> 0x143AD68A0, and `FUN_14019b780` (alloc)
 keeps, per bucket index i:
 
-    ctx + i*4 + 0x04   bytes carved
-    ctx + i*4 + 0x14   allocations served
-    ctx + i*8 + 0x28   lock owner TID  (16 bytes per bucket, +0x30 is the recursion count)
-    ctx + i*8 + 0x68   free-list head
-    ctx + i*8 + 0x88   chunk-list head, a body0 pointer; [body0-0x10] links to the previous
+    ctx + i*4  + 0x04  slots carved
+    ctx + i*4  + 0x14  allocations served / objects live
+    ctx + i*16 + 0x28  lock owner TEB  (16 bytes per bucket, +0x30 is the recursion count)
+    ctx + i*8  + 0x68  free-list head
+    ctx + i*8  + 0x88  chunk-list head, a body0 pointer; [body0-0x10] links to the previous
+
+The lock stride is **16, not 8**, and that was wrong here until 2026-08-30. The listing says
+so directly - research/heapfix-did-not-hold.md section 1 quotes `rbx = ctx + i*16` before
+`take [rbx+0x28] spinlock` - and the surrounding layout settles it without the listing: the
+counters end at ctx+0x24 (i*4 + 0x14 for i=3, plus 4) and the free-list heads begin at
+ctx+0x68, so the lock array is exactly 0x68-0x28 = 0x40 bytes for four buckets. With i*8 the
+range 0x48..0x68 is unaccounted for and bucket 1's "lock" is bucket 0's recursion count.
+
+Nothing already measured changes: every lock word read zero in every dump examined, so the
+bug could only ever have misreported a HELD lock, and none was held. It matters for anything
+reading a LIVE pool, where they are not zero - see crates/grap-stub/src/poolsentry.rs.
 
 and the bucket table, read off the switch at 0x14019b7f0, is
 
@@ -49,8 +60,9 @@ def main():
         want = count * stride + 8
         carved = dump.u32(CTX + i * 4 + 0x04)
         served = dump.u32(CTX + i * 4 + 0x14)
-        owner = dump.u64(CTX + i * 8 + 0x28)
-        depth = dump.u32(CTX + i * 8 + 0x30)
+        # 16 bytes per bucket, not 8 - see the module docstring.
+        owner = dump.u64(CTX + i * 16 + 0x28)
+        depth = dump.u32(CTX + i * 16 + 0x30)
         freehead = dump.u64(CTX + i * 8 + 0x68)
         head = dump.u64(CTX + i * 8 + 0x88)
         print("   bucket %d: slot %#x, %d slots/chunk, chunk %#x bytes" %

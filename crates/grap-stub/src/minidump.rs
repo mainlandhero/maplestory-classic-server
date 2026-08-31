@@ -271,6 +271,13 @@ pub unsafe fn write_crash_dump(info: *mut c_void, code: u32) {
          *****"
     ));
 
+    // **dbghelp is not reentrant, and this crate has two callers now.** The pool sentry can
+    // be mid-dump when the client faults; without this, both enter `MiniDumpWriteDump` and
+    // the measured outcome is a hang - 1 run in 4 with both self-tests among 51 tests, and 0
+    // in 12 with either alone. A hung client with NEITHER dump is strictly worse than a
+    // slightly delayed one, so the crash path waits for the sentry rather than racing it.
+    let _serialised = crate::poolsentry::dump_lock();
+
     let ok = write_dump(
         GetCurrentProcess(),
         pid,
@@ -384,7 +391,13 @@ mod tests {
             fn RtlCaptureContext(ctx: *mut c_void);
         }
 
-        let dir = std::env::temp_dir().join("maplecw-minidump-selftest");
+        // **Per-pid, because this test asserts "exactly one dump in here".** A fixed
+        // directory makes that assertion a statement about every OTHER cargo process on
+        // the machine: two concurrent runs leave two dumps and the test fails on a dump
+        // writer that worked perfectly. That is not hypothetical - it happened twice
+        // while agents shared this tree, and once it wedged a test binary mid-write.
+        let dir = std::env::temp_dir()
+            .join(format!("maplecw-minidump-selftest-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
