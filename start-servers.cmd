@@ -36,7 +36,18 @@ rem
 rem -ServersOnly starts the servers ATTACHED to this console and waits. That is
 rem what makes closing this window stop them: every process attached to a
 rem console gets CTRL_CLOSE_EVENT when it closes.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO%tools\test-server.ps1" -SetFieldProbe -ServersOnly
+rem -PoolSentry is a DIAGNOSTIC and it is here on purpose while the heap crash is open.
+rem It fixes NOTHING. It watches the client's own allocator every 100 ms and snapshots a
+rem slot the moment its header goes bad - about 106 ms after the write instead of tens of
+rem thousands of allocations later, which is the whole reason it can settle what a dump
+rem cannot. It costs 0.08% of one core and writes a heartbeat every 60 s.
+rem
+rem DELETE the -PoolSentry below once the crash is understood. Leaving an instrument armed
+rem after it has answered its question is how a measurement turns into background noise.
+rem
+rem Do NOT add -HeapFix. It voids the free-list argument the sentry exists to exploit, and
+rem it patches one of three entry points anyway - research/heapfix-did-not-hold.md.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO%tools\test-server.ps1" -SetFieldProbe -ServersOnly -PoolSentry
 
 rem Reached only if the script returned on its own - a server exiting early, or
 rem Ctrl+C. On a window close nothing here runs, and nothing here needs to.
