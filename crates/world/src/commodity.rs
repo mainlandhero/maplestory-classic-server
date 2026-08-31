@@ -228,10 +228,21 @@ mod tests {
     /// **one** process - so two tests raced on the same file and one of them read the other's
     /// rows. It failed as "2 rows expected, 1 found", which reads exactly like a parser bug
     /// and is not one. Each case gets its own file.
+    /// A scratch table on disk.
+    ///
+    /// **The name is not enough to make the path unique, and that made this suite flaky.**
+    /// `two-rows` was used by two different tests; cargo runs them on parallel threads in one
+    /// process, so both wrote the same file and whichever lost read it half-written - an empty
+    /// table, surfacing as `SerialMatch::None` where a row was expected. It passed in isolation
+    /// and failed about one full-suite run in ten, which is the worst way for a test to be
+    /// wrong. The counter makes collision impossible rather than merely unlikely.
     fn table(who: &str, rows: &str) -> CommodityTable {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("maplecw-commodity-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(format!("{who}.txt"));
+        let path = dir.join(format!("{who}-{unique}.txt"));
         std::fs::write(&path, rows).unwrap();
         CommodityTable::load(&path)
     }
