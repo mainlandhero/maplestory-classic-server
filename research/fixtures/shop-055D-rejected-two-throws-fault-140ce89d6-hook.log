@@ -1,0 +1,82 @@
+23:14:53.341 install_once: our code IS running. env=false marker=true -> installing
+23:14:53.448 install: .text settled after 83 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+23:14:53.448 install: base=0x140000000 target=0x1415d60e0
+23:14:53.448 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+23:14:53.449 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:14:53.449 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+23:14:53.449 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:14:53.449 probe: watching 0x141b36f60 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:14:53.449 probe: watch on 0x142ef3e44 will log up to 8 hits
+23:14:53.449 probe: watching 0x142ef3e44 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+23:14:53.450 install: hook active
+23:14:53.474 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+23:14:53.702 session: object at 0x5e5d0b8 is now readable
+23:14:53.702 ***** SESSION obj=0x5e5d0b8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:14:55.554     0 opcode=0x0032 elapsed_us=59.3 ret=109313600 flag=0->1 state=0->2
+23:14:55.554 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+23:14:55.623 ***** SOCKET conn=0x61ec108 +0x20=0x684 - the client holds a socket *****
+23:14:56.118 ***** C++ THROW #1 at 0x7ffd1e635369 in KERNELBASE.dll on tid 650468 at +2672ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x14090e8d4<-TEXT 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x1403b180b<-TEXT 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1432abe30(?) 0x1403da5d3<-TEXT 0x143d87000(vm) *****
+23:14:56.200     1 opcode=0x0032 elapsed_us=58.2 ret=1 flag=1->1 state=2->2
+23:14:56.279 ***** C++ THROW #2 at 0x7ffd1e635369 in KERNELBASE.dll on tid 651228 at +2829ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x1433d3650(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1417810d0<-TEXT 0x141c46266<-TEXT 0x143ae12f0(?) 0x142ed3513<-TEXT *****
+23:14:56.690 ***** SOCKET 0x684 is now VALID (client still holds it) *****
+23:14:56.690 ***** SESSION obj=0x5e5d0b8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:14:58.685 ***** WATCH #1: 0x141b2a280 ENTERED on tid 650468 while dispatching opcode 0x0032 rcx=0x37548148 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe (as i32 14) called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+23:14:58.685       forced rdx -> 0x0
+23:14:58.820     2 opcode=0x0000 elapsed_us=558.2 ret=1 flag=1->1 state=2->2
+23:14:58.820 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+23:14:58.820     3 opcode=0x000B elapsed_us=284.6 ret=1 flag=1->1 state=2->2
+23:14:58.821     4 opcode=0x000B elapsed_us=166.0 ret=1 flag=1->1 state=2->2
+23:14:58.821 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+23:14:58.821     5 opcode=0x0010 elapsed_us=447.6 ret=1 flag=1->1 state=2->2
+23:15:00.074 ***** SESSION obj=0x5e5d0b8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:15:01.033 ***** WATCH #1: 0x141b36f60 ENTERED on tid 650468 while dispatching opcode 0x0011 rcx=0x37548148 [0x433fd668] rdx=0x14d3d0 (as i32 1364944) [0x00000002] r8=0x140000000 r9=0x60 (as i32 96) called-from=0x141b26064
+      stack: 0x141b26064<-TEXT 0x143d143b4(?) 0x143d143b4(?) *****
+23:15:01.034     6 opcode=0x0011 elapsed_us=1960.9 ret=1 flag=1->1 state=2->2
+23:15:01.558     7 opcode=0x00AC elapsed_us=786.7 ret=1 flag=1->1 state=2->2
+23:15:02.160 ***** C++ THROW #3 at 0x7ffd1e635369 in KERNELBASE.dll on tid 650468 at +8719ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+23:15:02.205 ***** WATCH #1: 0x1415db360 ENTERED on tid 650468 while dispatching opcode 0x01A0 rcx=0x5e5fc10 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x2e9dfda8 (as i32 782106024) called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+23:15:02.210     8 opcode=0x01A0 elapsed_us=616437.1 ret=928285000 flag=1->1 state=2->2
+23:15:02.211     9 opcode=0x044F elapsed_us=1118.9 ret=1 flag=1->1 state=2->2
+23:15:02.212    10 opcode=0x0070 elapsed_us=327.0 ret=1 flag=1->1 state=2->2
+23:15:02.212    11 opcode=0x0070 elapsed_us=127.9 ret=1 flag=1->1 state=2->2
+23:15:02.212    12 opcode=0x0070 elapsed_us=139.3 ret=1 flag=1->1 state=2->2
+23:15:02.213    13 opcode=0x0070 elapsed_us=121.7 ret=1 flag=1->1 state=2->2
+23:15:02.213    14 opcode=0x0070 elapsed_us=104.1 ret=1 flag=1->1 state=2->2
+23:15:02.214    15 opcode=0x0070 elapsed_us=92.1 ret=1 flag=1->1 state=2->2
+23:15:02.214    16 opcode=0x0070 elapsed_us=106.9 ret=1 flag=1->1 state=2->2
+23:15:02.214    17 opcode=0x0070 elapsed_us=88.1 ret=1 flag=1->1 state=2->2
+23:15:02.215    18 opcode=0x0070 elapsed_us=101.6 ret=1 flag=1->1 state=2->2
+23:15:02.215    19 opcode=0x0070 elapsed_us=86.1 ret=1 flag=1->1 state=2->2
+23:15:02.215    20 opcode=0x0070 elapsed_us=86.2 ret=1 flag=1->1 state=2->2
+23:15:02.215    21 opcode=0x0070 elapsed_us=85.1 ret=1 flag=1->1 state=2->2
+23:15:02.216    22 opcode=0x0070 elapsed_us=86.2 ret=1 flag=1->1 state=2->2
+23:15:02.216    23 opcode=0x0070 elapsed_us=85.4 ret=1 flag=1->1 state=2->2
+23:15:02.216    24 opcode=0x0070 elapsed_us=86.2 ret=1 flag=1->1 state=2->2
+23:15:02.217    25 opcode=0x0070 elapsed_us=87.6 ret=1 flag=1->1 state=2->2
+23:15:02.217    26 opcode=0x0070 elapsed_us=88.2 ret=1 flag=1->1 state=2->2
+23:15:02.217    27 opcode=0x0070 elapsed_us=86.3 ret=1 flag=1->1 state=2->2
+23:15:02.218    28 opcode=0x0070 elapsed_us=86.2 ret=1 flag=1->1 state=2->2
+23:15:02.218    29 opcode=0x0070 elapsed_us=94.4 ret=1 flag=1->1 state=2->2
+23:15:02.218    30 opcode=0x0070 elapsed_us=140.4 ret=1 flag=1->1 state=2->2
+23:15:02.219    31 opcode=0x0070 elapsed_us=89.1 ret=1 flag=1->1 state=2->2
+23:15:02.219    32 opcode=0x0070 elapsed_us=87.2 ret=1 flag=1->1 state=2->2
+23:15:02.219    33 opcode=0x0070 elapsed_us=87.6 ret=1 flag=1->1 state=2->2
+23:15:02.220    34 opcode=0x0070 elapsed_us=87.5 ret=1 flag=1->1 state=2->2
+23:15:02.220    35 opcode=0x0070 elapsed_us=116.3 ret=1 flag=1->1 state=2->2
+23:15:02.220    36 opcode=0x007C elapsed_us=83.7 ret=1 flag=1->1 state=2->2
+23:15:03.299 ***** SESSION obj=0x5e5d0b8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:15:06.265 ***** C++ THROW #4 at 0x7ffd1e635369 in KERNELBASE.dll on tid 650468 at +12829ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x1401d67aa<-TEXT 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x1406e8c12<-TEXT 0x1404ba5a4<-TEXT 0x1401abc58<-TEXT 0x141f9f81c<-TEXT 0x1434b3648(?) 0x1434b3648(?) 0x141f90000<-TEXT *****
+23:15:06.286 ***** C++ THROW #5 at 0x7ffd1e635369 in KERNELBASE.dll on tid 650468 at +12844ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x142fa811d<-TEXT 0x142f04370<-TEXT 0x142fa80d7<-TEXT 0x142efb305<-TEXT 0x142fa80d7<-TEXT 0x142fa80d7<-TEXT 0x1406e8c12<-TEXT 0x1406e8c12<-TEXT *****
+23:15:06.286 ***** CLIENT FAULT #1: code=0xc0000005 at 0x140ce89d6 in MapleStory.exe - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 5 C++ throw(s) seen before this, 5 logged. *****
+      stack: 0x142efbede<-TEXT 0x14308e3ed<-TEXT 0x143ae2d20(?) 0x142f04320<-TEXT 0x14308e3db<-TEXT 0x14374e6fc(?) 0x142efba4e<-TEXT 0x14308e3db<-TEXT 0x1437949ba(?) 0x14374e6fc(?) 0x14374e6fc(?) 0x14374e6fd(?) 0x14374e6fd(?) 0x14374e6fd(?) 0x142ef70d1<-TEXT 0x142efadb5<-TEXT
+23:15:06.287 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-647420-c0000005-1.dmp ... (full memory, this can take a few seconds) *****
+23:15:09.954 ***** SESSION obj=0x5e5d0b8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:15:09.954 ***** CRASH DUMP: wrote C:\MapleCW\dumps\maplecw-crash-647420-c0000005-1.dmp, 1313073192 bytes. Open it with WinDbg; `!analyze -v` and `!heap -p -a <addr>` are the two that matter here *****
+23:15:13.045 ***** SESSION obj=0x5e5d0b8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****

@@ -105,6 +105,23 @@ pub const SALE_START_ZERO_TIME: u64 = 94_354_848_000_000_000;
 /// A buy-back row is **158**: it carries one further `u8`, the item-slot type.
 pub const CLASSIC_ROW_LEN: usize = 157;
 
+/// The extra bytes a **rechargeable** row carries, and the reason the client killed itself
+/// on every shop that stocked one.
+///
+/// At `0x1404ba57f` the row decoder branches **on the item id**: `2070000..2079999` and
+/// `2330000..2339999` read **8 raw bytes** into `row+0x40`; everything else reads an `i16`
+/// into `row+0x1c`. This builder wrote the `i16` unconditionally, so every star row was
+/// **6 bytes short** and the client read off the end of the packet.
+///
+/// What that produced: `0x009E` with exception class 1 and reason `0x26` - a literal
+/// `MOV EDX,0x26` inside the read primitives at `0x1406e8bf2`/`0x1406e8c91`, meaning **"not
+/// enough bytes left"** - then an escaped exception and `0xC0000005` in a destructor during
+/// unwind. Size was never involved: Serabi's 138-row, 21 687-byte shop was accepted because
+/// they stock no star, and Mina's 5 673 bytes was refused because they stock Subi.
+///
+/// **13 of the 39 shops in `data/shops.txt` stock one.**
+const RECHARGEABLE_ROW_EXTRA: usize = 6;
+
 /// The extra byte a buy-back row carries. See [`CLASSIC_ROW_LEN`].
 pub const BUY_BACK_ROW_EXTRA: usize = 1;
 
@@ -194,7 +211,9 @@ impl ClassicShopRow {
 
     /// This row's width on the wire. See [`CLASSIC_ROW_LEN`].
     pub fn wire_len(&self) -> usize {
-        CLASSIC_ROW_LEN + if self.buy_back { BUY_BACK_ROW_EXTRA } else { 0 }
+        CLASSIC_ROW_LEN
+            + if self.buy_back { BUY_BACK_ROW_EXTRA } else { 0 }
+            + if crate::bag::bundle_has_serial(self.item_id) { RECHARGEABLE_ROW_EXTRA } else { 0 }
     }
 
     /// Write it. Field order is `research/classic-shop-rows.md` §3, which two instruments agree
@@ -241,7 +260,20 @@ impl ClassicShopRow {
         w.u32(0); // +0x100
         w.u32(0); // +0x104  required citizenship type
         w.u32(0); // +0x108  required citizenship grade
-        w.i16(self.bundle_quantity); // +0x1c
+        // **The client picks the width of this field from the item id, so we must too.**
+        // `0x1404ba57f`: a rechargeable id takes 8 raw bytes into `row+0x40`; anything else
+        // takes this `i16` into `row+0x1c`. Writing the `i16` for a star left the client 6
+        // bytes short and it read past the end - reason `0x26`, "not enough bytes left".
+        //
+        // Zero is not a filler: `0x1404ba579` pre-zeroes that slot, so sending zero keeps the
+        // Recharge arm unreachable, which is what `session/shop.rs` has always claimed and
+        // until now could not deliver. The same two ranges are already read off a different
+        // site in `crate::bag`, so they are shared rather than restated.
+        if crate::bag::bundle_has_serial(self.item_id) {
+            w.u64(0); // +0x40  raw[8], the rechargeable slot
+        } else {
+            w.i16(self.bundle_quantity); // +0x1c
+        }
         w.i16(self.max_per_purchase); // +0x10c  *** NEVER 0 ***
         w.u8(u8::from(self.sell));
         w.u8(u8::from(self.buy_back));
@@ -540,6 +572,38 @@ mod tests {
 
     /// Every request arm parses, and a short body is `None` rather than a panic - it still has
     /// to be answered.
+    /// **A rechargeable row is six bytes wider, and that is what killed the client.**
+    ///
+    /// `0x1404ba57f` branches on the item id: `2070000..2079999` and `2330000..2339999` read
+    /// **8 raw bytes** into `row+0x40`, everything else reads an `i16` into `row+0x1c`. This
+    /// builder wrote the `i16` for every row, so a star row went out 6 bytes short, the client
+    /// read past the end, and answered `0x009E` class 1 reason `0x26` - "not enough bytes
+    /// left" - then died in a destructor during unwind.
+    ///
+    /// The census that settled it: Lucy x3, Flora, Karl and Serabi were all ACCEPTED, Serabi
+    /// at 138 rows and 21 687 bytes. Mina and Luna were REFUSED at 5 673 and 7 243. **The only
+    /// thing that separates the two groups is a Subi Throwing Star.** Size never mattered.
+    #[test]
+    fn a_rechargeable_row_is_six_bytes_wider_than_an_ordinary_one() {
+        let ordinary = ClassicShopRow::buy(2_000_000, 50, 100); // Red Potion
+        let subi = ClassicShopRow::buy(2_070_000, 500, 100); // Subi Throwing Stars
+        let dart = ClassicShopRow::buy(2_330_000, 500, 100); // the other range
+
+        assert_eq!(ordinary.wire_len(), CLASSIC_ROW_LEN);
+        assert_eq!(subi.wire_len(), CLASSIC_ROW_LEN + 6);
+        assert_eq!(dart.wire_len(), CLASSIC_ROW_LEN + 6);
+
+        // The ranges are half-open at the top; the id one past the end is an ordinary row.
+        assert_eq!(ClassicShopRow::buy(2_080_000, 1, 1).wire_len(), CLASSIC_ROW_LEN);
+        assert_eq!(ClassicShopRow::buy(2_069_999, 1, 1).wire_len(), CLASSIC_ROW_LEN);
+
+        // And the built packet agrees with the declared width - the bug was that these two
+        // agreed with each other while disagreeing with the client.
+        let body = classic_open_shop(9_000_000, &[ordinary.clone(), subi.clone()]);
+        assert_eq!(body.len(), CLASSIC_HEAD_LEN + ordinary.wire_len() + subi.wire_len());
+        assert_eq!(body.len(), CLASSIC_HEAD_LEN + 2 * CLASSIC_ROW_LEN + 6);
+    }
+
     #[test]
     fn every_request_arm_parses_and_a_short_body_does_not_panic() {
         let mut buy = vec![0u8];

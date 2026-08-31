@@ -1928,18 +1928,24 @@ fn every_authored_shop_builds_a_length_correct_packet() {
         );
         // Every row's price must have survived as a non-zero u64, and every cap must be
         // non-zero - the two silent killers.
+        // **Walk by each row's own width, not by a fixed stride.** The stride version is why
+        // the rechargeable-row bug survived this test: it asserted our packet against our own
+        // constant, so a row the CLIENT reads as 6 bytes wider than we wrote it looked
+        // perfectly self-consistent. `wire_len()` is the same function the builder uses, so
+        // this still cannot catch a wrong constant - but it does catch the offsets sliding,
+        // which is what actually killed the client.
+        let mut at = net::classicshop::CLASSIC_HEAD_LEN;
         for (i, row) in rows.iter().enumerate() {
-            let at = net::classicshop::CLASSIC_HEAD_LEN + i * net::classicshop::CLASSIC_ROW_LEN;
             let price = u64::from_le_bytes(body[at + 36..at + 44].try_into().unwrap());
             assert_eq!(price, row.price, "{}: row {i} price", shop.npc);
             assert_ne!(price, 0, "{}: row {i} is free, which files it in the Sell tab", shop.npc);
+            // The cap sits four bytes from the END of the row, so it is measured against
+            // THIS row's width - a rechargeable row is longer than the constant.
             let cap = i16::from_le_bytes(
-                body[at + net::classicshop::CLASSIC_ROW_LEN - 4
-                    ..at + net::classicshop::CLASSIC_ROW_LEN - 2]
-                    .try_into()
-                    .unwrap(),
+                body[at + row.wire_len() - 4..at + row.wire_len() - 2].try_into().unwrap(),
             );
             assert!(cap > 0, "{}: row {i} cap is 0 - every purchase would fail silently", shop.npc);
+            at += row.wire_len();
         }
         if shop.npc.contains("Flora") {
             flora = true;

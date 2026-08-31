@@ -1,0 +1,86 @@
+22:01:52.405 install_once: our code IS running. env=false marker=true -> installing
+22:01:52.456 install: .text settled after 51 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+22:01:52.456 install: base=0x140000000 target=0x1415d60e0
+22:01:52.457 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+22:01:52.457 22:01:52.457probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32) 
+session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+22:01:52.457 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+22:01:52.457 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+22:01:52.457 probe: watching 0x141b36f60 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+22:01:52.458 probe: watch on 0x142ef3e44 will log up to 8 hits
+22:01:52.458 probe: watching 0x142ef3e44 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+22:01:52.458 install: hook active
+22:01:52.658 session: object at 0x600e388 is now readable
+22:01:52.658 ***** SESSION obj=0x600e388 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+22:01:53.876     0 opcode=0x0032 elapsed_us=58.8 ret=110227920 flag=0->1 state=0->2
+22:01:53.876 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+22:01:54.061 ***** SOCKET conn=0x62c49d8 +0x20=0x6a0 - the client holds a socket *****
+22:01:54.383 ***** C++ THROW #1 at 0x7ffd1e635369 in KERNELBASE.dll on tid 665348 at +1922ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x14090e8d4<-TEXT 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x1403b180b<-TEXT 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1432abe30(?) 0x1403da5d3<-TEXT 0x143d87000(vm) *****
+22:01:54.435     1 opcode=0x0032 elapsed_us=57.6 ret=1 flag=1->1 state=2->2
+22:01:54.463 ***** SOCKET 0x6a0 is now VALID (client still holds it) *****
+22:01:54.465 ***** POOL SENTRY ARMED: pool ctx 0x143ad68a0, every 100 ms (all four buckets every 10), heartbeat 60 s, up to 1 dump(s). It READS ONLY - no lock is taken and no client byte is written. Expected catch rate is about ONE per 300 s of in-field play (research/heap-crash-pattern.md), so silence is normal and the heartbeat is what says the walk is alive.
+      bucket 0 slot 0x10: 120 chunks, 7680 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 7680 vs carved 7680 [PASS]
+      bucket 1 slot 0x20: 1212 chunks, 38784 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 38784 vs carved 38784 [PASS]
+      bucket 2 slot 0x40: 575 chunks, 9200 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 9200 vs carved 9200 [PASS]
+      bucket 3 slot 0x80: 766 chunks, 6128 slots, 0 not equal to the slot size; walk ended ListEnd; carve identity 6128 vs carved 6128 [PASS] *****
+22:01:54.548 ***** C++ THROW #2 at 0x7ffd1e635369 in KERNELBASE.dll on tid 703800 at +2078ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x1433d3650(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1417810d0<-TEXT 0x141c46266<-TEXT 0x143ae12f0(?) 0x142ed3513<-TEXT *****
+22:01:55.466 ***** SESSION obj=0x600e388 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+22:01:58.143 ***** WATCH #1: 0x141b2a280 ENTERED on tid 665348 while dispatching opcode 0x0032 rcx=0x2f9b7cf8 [0x433fd668] rdx=0xc (as i32 12) r8=0x1 r9=0xe (as i32 14) called-from=0x144c05eb2
+      stack: 0x144c05eb2(vm) *****
+22:01:58.143       forced rdx -> 0x0
+22:01:58.271     2 opcode=0x0000 elapsed_us=389.8 ret=1 flag=1->1 state=2->2
+22:01:58.271 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+22:01:58.271     3 opcode=0x000B elapsed_us=287.2 ret=1 flag=1->1 state=2->2
+22:01:58.272     4 opcode=0x000B elapsed_us=162.8 ret=1 flag=1->1 state=2->2
+22:01:58.272 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+22:01:58.272     5 opcode=0x0010 elapsed_us=415.8 ret=1 flag=1->1 state=2->2
+22:01:58.474 ***** SESSION obj=0x600e388 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+22:02:01.483 ***** SESSION obj=0x600e388 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+22:02:04.164 ***** WATCH #1: 0x141b36f60 ENTERED on tid 665348 while dispatching opcode 0x0011 rcx=0x2f9b7cf8 [0x433fd668] rdx=0x14d3c0 (as i32 1364928) [0x00000002] r8=0x140000000 r9=0x60 (as i32 96) called-from=0x141b26064
+      stack: 0x141b26064<-TEXT 0x143d143b4(?) 0x143d143b4(?) *****
+22:02:04.166     6 opcode=0x0011 elapsed_us=1811.6 ret=1 flag=1->1 state=2->2
+22:02:04.490 ***** SESSION obj=0x600e388 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+22:02:04.669 ***** C++ THROW #3 at 0x7ffd1e635369 in KERNELBASE.dll on tid 665348 at +12203ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+22:02:04.713 ***** WATCH #1: 0x1415db360 ENTERED on tid 665348 while dispatching opcode 0x01A0 rcx=0x6010ee0 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x2ea75f38 (as i32 782720824) called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+22:02:04.716     7 opcode=0x01A0 elapsed_us=541970.0 ret=798719224 flag=1->1 state=2->2
+22:02:04.717     8 opcode=0x044F elapsed_us=905.9 ret=1 flag=1->1 state=2->2
+22:02:04.718     9 opcode=0x0070 elapsed_us=286.9 ret=1 flag=1->1 state=2->2
+22:02:04.718    10 opcode=0x0070 elapsed_us=137.3 ret=1 flag=1->1 state=2->2
+22:02:04.719    11 opcode=0x0070 elapsed_us=133.2 ret=1 flag=1->1 state=2->2
+22:02:04.719    12 opcode=0x0070 elapsed_us=86.6 ret=1 flag=1->1 state=2->2
+22:02:04.719    13 opcode=0x0070 elapsed_us=96.0 ret=1 flag=1->1 state=2->2
+22:02:04.720    14 opcode=0x0070 elapsed_us=89.4 ret=1 flag=1->1 state=2->2
+22:02:04.720    15 opcode=0x0070 elapsed_us=99.7 ret=1 flag=1->1 state=2->2
+22:02:04.720    16 opcode=0x0070 elapsed_us=81.7 ret=1 flag=1->1 state=2->2
+22:02:04.721    17 opcode=0x0070 elapsed_us=137.8 ret=1 flag=1->1 state=2->2
+22:02:04.721    18 opcode=0x0070 elapsed_us=80.0 ret=1 flag=1->1 state=2->2
+22:02:04.721    19 opcode=0x0070 elapsed_us=81.5 ret=1 flag=1->1 state=2->2
+22:02:04.721    20 opcode=0x0070 elapsed_us=79.4 ret=1 flag=1->1 state=2->2
+22:02:04.722    21 opcode=0x0070 elapsed_us=79.4 ret=1 flag=1->1 state=2->2
+22:02:04.722    22 opcode=0x0070 elapsed_us=79.5 ret=1 flag=1->1 state=2->2
+22:02:04.722    23 opcode=0x0070 elapsed_us=82.0 ret=1 flag=1->1 state=2->2
+22:02:04.723    24 opcode=0x0070 elapsed_us=89.0 ret=1 flag=1->1 state=2->2
+22:02:04.723    25 opcode=0x0070 elapsed_us=80.4 ret=1 flag=1->1 state=2->2
+22:02:04.723    26 opcode=0x0070 elapsed_us=79.8 ret=1 flag=1->1 state=2->2
+22:02:04.724    27 opcode=0x0070 elapsed_us=79.7 ret=1 flag=1->1 state=2->2
+22:02:04.724    28 opcode=0x0070 elapsed_us=80.0 ret=1 flag=1->1 state=2->2
+22:02:04.724    29 opcode=0x0070 elapsed_us=79.1 ret=1 flag=1->1 state=2->2
+22:02:04.724    30 opcode=0x0070 elapsed_us=81.3 ret=1 flag=1->1 state=2->2
+22:02:04.725    31 opcode=0x0070 elapsed_us=80.1 ret=1 flag=1->1 state=2->2
+22:02:04.725    32 opcode=0x0070 elapsed_us=80.0 ret=1 flag=1->1 state=2->2
+22:02:04.725    33 opcode=0x0070 elapsed_us=81.7 ret=1 flag=1->1 state=2->2
+22:02:04.726    34 opcode=0x0070 elapsed_us=92.6 ret=1 flag=1->1 state=2->2
+22:02:04.726    35 opcode=0x007C elapsed_us=73.3 ret=1 flag=1->1 state=2->2
+22:02:07.497 ***** SESSION obj=0x600e388 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+22:02:08.598 ***** C++ THROW #4 at 0x7ffd1e635369 in KERNELBASE.dll on tid 665348 at +16140ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x1401d67aa<-TEXT 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x1406e8c12<-TEXT 0x1404ba5a4<-TEXT 0x1401abc58<-TEXT 0x141f9f81c<-TEXT 0x1434b3648(?) 0x1434b3648(?) 0x141f90000<-TEXT *****
+22:02:08.600 ***** C++ THROW #5 at 0x7ffd1e635369 in KERNELBASE.dll on tid 665348 at +16140ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x142fa811d<-TEXT 0x142f04370<-TEXT 0x142fa80d7<-TEXT 0x142efb305<-TEXT 0x142fa80d7<-TEXT 0x142fa80d7<-TEXT 0x1406e8c12<-TEXT 0x1406e8c12<-TEXT *****
+22:02:08.603 ***** C++ THROW #6 at 0x7ffd1e635369 in KERNELBASE.dll on tid 665348 at +16140ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x143271f04(?) 0x1433d5e98(?) 0x144fe3010(vm) 0x141804bfe<-TEXT 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x1433d5e98(?) 0x143a3b118(?) 0x1418049e8<-TEXT 0x1433d5e74(?) 0x143271f04(?) 0x142c87a0b<-TEXT 0x143271f04(?) 0x143acedf0(?) *****
+22:02:10.544 ***** SESSION obj=0x600e388 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+22:02:11.747 ***** SOCKET conn=0x62c49d8 +0x20=0xffffffffffffffff - closed and cleared by the client (FUN_1415e3b60 ran) *****
