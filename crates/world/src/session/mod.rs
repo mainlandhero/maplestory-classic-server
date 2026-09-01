@@ -420,6 +420,7 @@ mod ground;
 mod inventory;
 mod multiplayer;
 mod npc;
+mod party;
 mod rates;
 mod recovery;
 mod regen;
@@ -772,6 +773,13 @@ impl Session {
                     self.publish_user_move(&m, payload);
                 }
                 return Vec::new();
+            }
+            // **Party requests are answered, even though there is no party system.** One
+            // archived `0x0182` exists - the owner pressing Create - and the log line beside it
+            // says "is not answered yet". That is the frozen-UI failure `CLAUDE.md` opens
+            // with, so both party opcodes get a specific refusal. `session::party`.
+            net::party::CLIENT_PARTY_REQUEST | net::party::CLIENT_PARTY_INVITE_ANSWER => {
+                return self.on_party_request(opcode, body.get(2..).unwrap_or(&[]))
             }
             net::notice::CLIENT_LOG_OUT => return self.on_log_out(),
             net::script::CLIENT_SCRIPT_REPLY => {
