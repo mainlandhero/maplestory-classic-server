@@ -696,14 +696,17 @@ pub const SPAWN_PERCENT_CROWDED: usize = 100;
 /// Robin and Sam - and a real server keeps **30** alive on it for a solo player. Sending one
 /// mob per spawn point over-populates every map.
 ///
-/// **The cap is not in the WZ, and that is measured rather than assumed.** Map 40's whole
-/// `info` node is `AmbientBGM(v)`, `MR*`/`VR*` bounds, `bgm`, `cloud`, `fieldLimit`,
-/// `fieldLimit2`, `fieldLimit_tw`, `fieldScript`, `fieldType`, `fly`, `forcedReturn`,
-/// `hideMinimap`, `mapDesc`, `mapMark`, **`mobRate`**, `moveLimit`, `noMapCmd`,
-/// `onFirstUserEnter`, `onUserEnter`, `partyStandAlone`, `personalShop`, `quarterView`,
-/// `returnMap`, `standAlone`, `swim`, `town` and `version`. There is **no** capacity field
-/// of any name. `mobRate` is there (`1.0` for map 40) but that is a respawn *rate*, not a
-/// cap. So the cap is **server policy**, and it has to come from us.
+/// **The cap is not in the WZ, and that is measured rather than assumed - across every map,
+/// not just this one.** Map 40's own `info` node has no capacity field, but that alone is a
+/// filter and not an enumeration: map 40 could simply be a map carrying no override. So the
+/// question was widened rather than re-asked. All **426** field images were read and the
+/// whole key space of their `info` nodes collected - **57 distinct keys**, 426/426 readable,
+/// none lacking an `info` node - and there is **no** capacity, cap, quota or share field of
+/// any name on any map. `mobRate` is present 426/426 (`1.0000002` on map 40) but that is a
+/// respawn *rate*, not a cap, and a byte scan of the client image finds it **0 times** in
+/// either encoding, so the client does not even read it. So the cap is **server policy**, and
+/// it has to come from us. The full enumeration, with its controls, is in
+/// [`choose_spawns`] and `research/mob-spawn-selection.md`.
 ///
 /// **The rule is [I] and adopted deliberately.** The owner took it from an unofficial fan site,
 /// flagged it as such, and then chose to accept it blanket: 75% below six players, 100% at
@@ -730,29 +733,6 @@ pub fn spawn_capacity(spawn_points: usize, players: usize) -> usize {
     (spawn_points * percent / 100).max(1)
 }
 
-/// Choose which spawn points hold a live mob, keeping each type's **share** of the map.
-///
-/// The owner, 2026-08-19: *"on maps with multiple mobs, there's a concept of shares, the map will
-/// try to maintain the balance ratio between the mobs under the cap."*
-///
-/// **Taking the first N spawn points is wrong**, and that is what this replaces. The
-/// generated table is in WZ `life` index order, so on a mixed map the first N can be almost
-/// all one type. The Field South of Ellinia has 45 spawns across five types - Snail 10,
-/// Blue Snail 16, Shroom 7, Red Snail 6, Orange Mushroom 6 - and a cap of 33 has to keep
-/// roughly 22 / 36 / 16 / 13 / 13 percent, not whatever the first 33 rows happen to be.
-///
-/// The apportionment is **largest-remainder** (Hamilton): each type gets
-/// `floor(count * cap / total)` slots, then the leftover slots go to the types with the
-/// largest remainders, ties broken by template id so the result is deterministic. That is
-/// the standard way to hand out whole seats in proportion and it cannot overshoot the cap.
-///
-/// **[I], and only the shape of it.** That the engine balances by share is the owner's, from the
-/// same unofficial fan site as the capacity scalar; nothing in this client corroborates it,
-/// and the *exact* rounding the real engine uses is unknown. What this does guarantee is
-/// that the result is capped, proportional and stable between runs.
-///
-/// Returns the chosen mobs in spawn order, so the wire order does not depend on the
-/// grouping.
 /// A tiny splitmix64, so the spawn choice can be random without a dependency and still be
 /// reproducible from a seed.
 ///
@@ -768,7 +748,93 @@ fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-pub fn share_balanced(
+/// Choose which spawn points hold a live mob: a **uniform random sample** of the whole set.
+///
+/// The owner, 2026-09-01: *"I'm starting to doubt myself that the mob cap is not split by ratio,
+/// but rather randomly picked out across all of the mob spawns. The ratio of the mobs on the
+/// map is less important than what we previously thought."*
+///
+/// This replaces a largest-remainder (Hamilton) apportionment that **enforced** each type's
+/// share of the map. What it does not replace is the older fix underneath it: taking the
+/// first N points in WZ order is still wrong, and still ruled out by a test, because `life`
+/// entries run left to right and the generated table is grouped by type - so the first N are
+/// both bunched at the low-x end and often missing whole types.
+///
+/// # Nothing in this client can decide which spawn points hold a mob
+///
+/// That sentence is the result, and it means this is a design decision rather than a
+/// discoverable fact. Three independent measurements, none of which cost a client run:
+///
+/// **[L]** Enumerated rather than searched for: all **426** of this client's field images
+/// were read and the *whole key space* of their `info` nodes collected - **57 distinct
+/// keys**, 426/426 readable, none without an `info` node. The only spawn-related one is
+/// `mobRate` (426/426, a float, `1.0000002` on map 40), and a rate is not a cap. There is no
+/// capacity, quota, cap or share field of any name on any map. The same pass collected every
+/// key on all **9928** `life` entries of `type == "m"`: `id`, `type`, `x`, `y`, `cy`, `fh`,
+/// `rx0`, `rx1` on all of them, then `f`, `mobTime`, `hide`, `forcedZMass`, `forcedZPage`,
+/// `limitedname`, `useDay`, `useNight`. No weight, no priority, no group.
+///
+/// **[L]** A second instrument, structurally different - a byte scan of
+/// `client-patched\MapleStory.exe` for each key name. `mobRate` is **0 ASCII, 0 UTF-16LE**:
+/// the client never looks up the one rate key its own data carries. `mobTime` is 0/0 too.
+/// Positive controls hit (`fieldType` 2/2, `foothold` 4/4, `returnMap` 1/3, `town` 9/5) and
+/// negative controls do not (`notAKeyAtAll`, `capacityZZ`, `returnMapZZ` all 0/0), so the
+/// scan discriminates. *Stated blind spot, so it can be quoted: a name assembled at runtime
+/// or stored compressed would not appear - this scan proves presence, never absence, which
+/// is why the WZ enumeration above and not the scan is what carries the negative.*
+///
+/// **[L]** And underneath both, the client cannot spawn a mob at all: its field loader walks
+/// `life` only to preload `Mob/%07d.img` art, and a populated mob is only ever built from a
+/// packet. `research/npc-spawn.md` §2, `research/mob-spawn.md`.
+///
+/// The capacity-shaped names that *do* appear in the image - `maxMobCount`, `mobCount` - are
+/// accounted for and are not this: they sit inside the skill-attack property tables beside
+/// `hitLimitEveryMob`, `minAttackableCount` and `mobCountDamR`, which is how many mobs one
+/// swing may hit. Reported rather than passed over, because a candidate that comes back
+/// non-zero and is waved away is how a clean confident zero gets written down.
+///
+/// # The ratio is preserved in expectation, not enforced
+///
+/// Uniform sampling does **not** throw the ratio away, and that is arithmetic rather than
+/// opinion. Drawing `cap` of `total` points uniformly without replacement makes each type's
+/// count **hypergeometric**, so its expectation is *exactly* its share of the map:
+/// `E = cap * points_of_type / total`. [D], from the sampling scheme, and asserted against
+/// this code rather than merely asserted - see `each_types_expected_share_is_its_share`.
+///
+/// Map 1006, "Hunting Ground Middle of the Forest II" - 45 points, five types, cap 33 - is
+/// the worked example the
+/// old doc used, kept so the two can be read side by side:
+///
+/// | type | points | share | E\[count\] | SD | middle 90% | old rule |
+/// |---|---|---|---|---|---|---|
+/// | Snail | 10 | 22.2% | 7.33 | 1.25 | 5..9 | 7 |
+/// | Blue Snail | 16 | 35.6% | 11.73 | 1.44 | 9..14 | 12 |
+/// | Shroom | 7 | 15.6% | 5.13 | 1.09 | 3..7 | 5 |
+/// | Red Snail | 6 | 13.3% | 4.40 | 1.02 | 3..6 | **5** |
+/// | Orange Mushroom | 6 | 13.3% | 4.40 | 1.02 | 3..6 | **4** |
+///
+/// So a type drifts about **one slot** either side of its share, and `P(any type missing
+/// entirely) <= 2.4e-4` - about one draw in 4092. The spread is small *because* the cap is
+/// 75%: only 12 of 45 points are left out, and the finite-population correction
+/// `(total - cap) / (total - 1) = 3/11` divides the variance by 3.7. A looser cap would
+/// drift further.
+///
+/// The last column is the argument the other way, and it is the reason enforcing was never
+/// free. Red Snail and Orange Mushroom hold the **same** 6 points of 45 - the same share -
+/// and largest-remainder handed them 5 and 4, on every spawn, for the life of the process,
+/// because the tie was broken by template id. Enforcing the ratio is what made two equal
+/// types permanently unequal. Sampling gives both 4.40.
+///
+/// # The draw happens once per map, per channel
+///
+/// `Fields::seed` books every chosen point once and `Fields::hurt` re-books *the point that
+/// died*, so a respawn returns to its own point and the chosen set is frozen until the
+/// process restarts. That is deliberate rather than incidental - `research/mob-spawn-selection.md`
+/// §4 - and it means the spread above is the spread of **one draw that lasts a whole
+/// session**, not something that averages out over an evening.
+///
+/// Returns the chosen mobs in spawn order, so the wire order does not depend on the draw.
+pub fn choose_spawns(
     mobs: &[net::mob::FieldMob],
     cap: usize,
     seed: u64,
@@ -781,69 +847,41 @@ pub fn share_balanced(
         return mobs.iter().collect();
     }
 
-    // Group spawn points by template, keeping WZ order inside each group.
-    let mut groups: Vec<(u32, Vec<usize>)> = Vec::new();
-    for (i, mob) in mobs.iter().enumerate() {
-        match groups.iter_mut().find(|(t, _)| *t == mob.template_id) {
-            Some((_, idx)) => idx.push(i),
-            None => groups.push((mob.template_id, vec![i])),
-        }
-    }
-
-    // floor(count * cap / total) each, then hand out what is left by largest remainder.
-    let mut quota: Vec<(u32, usize, usize)> = groups
-        .iter()
-        .map(|(t, idx)| {
-            let numerator = idx.len() * cap;
-            (*t, numerator / total, numerator % total)
-        })
-        .collect();
-    let mut leftover = cap - quota.iter().map(|(_, base, _)| base).sum::<usize>();
-    let mut order: Vec<usize> = (0..quota.len()).collect();
-    order.sort_by(|&a, &b| {
-        quota[b].2.cmp(&quota[a].2).then(quota[a].0.cmp(&quota[b].0))
-    });
-    for &g in &order {
-        if leftover == 0 {
-            break;
-        }
-        quota[g].1 += 1;
-        leftover -= 1;
-    }
-
-    // **Which points, not just how many of each.** The owner, 2026-08-22, on Right Around Lith
-    // Harbor: *"the mobs that spawn are completely concentrated on the left side of the map
-    // on fresh spawn. The spawn points that gets activated should be randomly chosen even on
-    // fresh spawn."*
+    // Partial Fisher-Yates across **all** the points, with no grouping by template: only the
+    // first `cap` positions have to be settled, and drawing `j` uniformly from `i..total`
+    // makes every `cap`-subset equally likely.
     //
-    // The quota arithmetic above was written to fix a *different* half of this, and its test
-    // says so: taking the first N in WZ order returned almost all of one TYPE. That is fixed
-    // and stays fixed. But inside each group this still did `idx.iter().take(n)` - the first
-    // n in WZ order - and `life` entries are laid out left to right, so every fresh spawn put
-    // its mobs at the low-x end of the map. Balanced by type, bunched by position.
+    // That uniformity is the whole property. Nothing here knows what a template is, and that
+    // is exactly why each type's expected count comes out at its share of the map - the draw
+    // cannot favour or disfavour a type it cannot see.
     //
-    // Shuffled per group rather than globally, so the per-template quota is untouched: this
-    // decides *which* of a template's points are used, never how many.
+    // `% (total - i)` is modulo-biased by about `total / 2^64`, which is 2e-18 at total = 45,
+    // against the 1e-4 probabilities in the table above. Named rather than ignored, and far
+    // too small to be worth rejection sampling.
     let mut rng = seed;
-    let mut keep: Vec<usize> = Vec::with_capacity(cap);
-    for (g, (_, idx)) in groups.iter().enumerate() {
-        let take = quota[g].1;
-        if take >= idx.len() {
-            keep.extend(idx.iter().copied());
-            continue;
-        }
-        // Partial Fisher-Yates: only the first `take` positions have to be settled.
-        let mut pool: Vec<usize> = idx.clone();
-        for i in 0..take {
-            let j = i + (splitmix64(&mut rng) % (pool.len() - i) as u64) as usize;
-            pool.swap(i, j);
-        }
-        keep.extend(pool.into_iter().take(take));
+    let mut pool: Vec<usize> = (0..total).collect();
+    for i in 0..cap {
+        let j = i + (splitmix64(&mut rng) % (total - i) as u64) as usize;
+        pool.swap(i, j);
     }
+    pool.truncate(cap);
     // Sorted so the packets still go out in map order, which is what the client expects and
     // what makes two logs of the same field comparable.
-    keep.sort_unstable();
-    keep.into_iter().map(|i| &mobs[i]).collect()
+    pool.sort_unstable();
+    pool.into_iter().map(|i| &mobs[i]).collect()
+}
+
+/// **A compatibility shim - delete this.** The name from when this enforced each type's
+/// share of the map, kept only because `crates/world/src/fields.rs` still calls it and that
+/// file belongs to another agent in this session. Point `Fields::seed` at [`choose_spawns`]
+/// and remove this function; it adds nothing but a second name for one behaviour, and a
+/// second name is how a stale one survives.
+pub fn share_balanced(
+    mobs: &[net::mob::FieldMob],
+    cap: usize,
+    seed: u64,
+) -> Vec<&net::mob::FieldMob> {
+    choose_spawns(mobs, cap, seed)
 }
 
 /// One equip's template values, as `Character.wz` has them.
@@ -1860,10 +1898,10 @@ mod spawn_tests {
     /// concentrated on the left side of the map on fresh spawn. The spawn points that gets
     /// activated should be randomly chosen even on fresh spawn."*
     ///
-    /// The per-type quota below was written for a *different* half of this - it stopped one
-    /// TYPE taking every slot - and inside each group the code still did `take(n)` on WZ
-    /// order. `life` entries run left to right, so a fresh field put every mob at the low-x
-    /// end. Balanced by type, bunched by position.
+    /// `life` entries run left to right, so any rule that takes a prefix of WZ order puts
+    /// every mob at the low-x end of the map. That was true of the original `take(n)` and it
+    /// stayed true inside each group of the type-quota version; the uniform draw that
+    /// replaced both is the first form where it is structurally impossible.
     ///
     /// This is a distribution test, so it is written not to be flaky: with 20 of 60 points
     /// taken, it asserts only that **both halves of the list are represented** and that the
@@ -1876,7 +1914,7 @@ mod spawn_tests {
         let cap = 20;
 
         for seed in [1u64, 2, 3, 99, 0x5EED, u64::MAX] {
-            let chosen = share_balanced(&mobs, cap, seed);
+            let chosen = choose_spawns(&mobs, cap, seed);
             assert_eq!(chosen.len(), cap, "seed {seed}: the cap is still filled exactly");
 
             let idx: Vec<usize> = chosen
@@ -1905,25 +1943,56 @@ mod spawn_tests {
     fn different_seeds_choose_different_spawn_points() {
         let mobs = field(&[(2, 40)]);
         let ids = |seed| -> Vec<u32> {
-            share_balanced(&mobs, 30, seed).iter().map(|m| m.object_id).collect()
+            choose_spawns(&mobs, 30, seed).iter().map(|m| m.object_id).collect()
         };
         assert_ne!(ids(1), ids(2));
         assert_eq!(ids(7), ids(7), "and the same seed reproduces exactly, or nothing is testable");
     }
 
-    /// The quota is decided before the shuffle and the shuffle must not disturb it.
+    /// **The per-type count is no longer fixed, and that is the rule change.**
     ///
-    /// This is the control for the two tests above: randomising *which* points are used must
-    /// never change *how many* of each type, which is the property the earlier fix bought.
+    /// This replaces `shuffling_positions_does_not_disturb_the_per_type_quota`, which pinned
+    /// the counts to exactly 7/12/5/5/4 for every seed. That assertion was the largest-
+    /// remainder rule written down, so it had to go when the rule did - but it is replaced by
+    /// a *stronger* claim rather than dropped: the counts must actually vary, and the old
+    /// fixed split must not be what every seed returns.
+    ///
+    /// It fails on the old implementation immediately and non-probabilistically: that one
+    /// returns the identical BTreeMap for every seed, so `distinct == 1` on all five types.
     #[test]
-    fn shuffling_positions_does_not_disturb_the_per_type_quota() {
+    fn the_per_type_count_is_no_longer_pinned() {
         let mobs = field(&[(1, 10), (2, 16), (3, 7), (4, 6), (5, 6)]);
         let cap = spawn_capacity(45, 1);
-        let want: std::collections::BTreeMap<u32, usize> =
+        let old_fixed: std::collections::BTreeMap<u32, usize> =
             [(1, 7), (2, 12), (3, 5), (4, 5), (5, 4)].into_iter().collect();
-        for seed in [0u64, 1, 12345, u64::MAX / 3] {
-            assert_eq!(counts(&share_balanced(&mobs, cap, seed)), want, "seed {seed}");
+
+        let mut distinct: std::collections::BTreeMap<u32, std::collections::BTreeSet<usize>> =
+            std::collections::BTreeMap::new();
+        let mut matched_old = 0usize;
+        let seeds = 200u64;
+        for seed in 0..seeds {
+            let c = counts(&choose_spawns(&mobs, cap, seed));
+            if c == old_fixed {
+                matched_old += 1;
+            }
+            for (template, n) in c {
+                distinct.entry(template).or_default().insert(n);
+            }
         }
+
+        for (template, seen) in &distinct {
+            assert!(
+                seen.len() > 1,
+                "template {template} took the same count {seen:?} on all {seeds} seeds - \
+                 the draw is still enforcing a quota"
+            );
+        }
+        // The old split is still a *possible* draw - it is close to the expectation, so it
+        // had better be - but it must not be the only one. Measured at 1.2% of 4000 seeds.
+        assert!(
+            matched_old < seeds as usize / 2,
+            "the old fixed 7/12/5/5/4 came back on {matched_old} of {seeds} seeds"
+        );
     }
 
     /// Map 40, "Snail Hunting Ground I": 40 spawn points, one type, 30 alive for a solo
@@ -1932,44 +2001,68 @@ mod spawn_tests {
     fn map_40_keeps_thirty_of_its_forty_spawn_points() {
         assert_eq!(spawn_capacity(40, 1), 30);
         let mobs = field(&[(2, 40)]);
-        let chosen = share_balanced(&mobs, spawn_capacity(mobs.len(), 1), TEST_SEED);
+        let chosen = choose_spawns(&mobs, spawn_capacity(mobs.len(), 1), TEST_SEED);
         assert_eq!(chosen.len(), 30);
         assert_eq!(counts(&chosen), [(2, 30)].into_iter().collect());
     }
 
-    /// The Field South of Ellinia: 45 spawns across five types. Taking the first N in WZ
-    /// order would return almost all of one type, which is the bug this replaces - the
-    /// generated table is grouped, so the first 33 rows here are Snail and Blue Snail only.
+    /// Map 1006, "Hunting Ground Middle of the Forest II": 45 spawns across five types,
+    /// cap 33. Blue Snail 16, Snail 10, Shroom 7, Orange Mushroom 6, Red Snail 6.
+    ///
+    /// **The ratio is preserved in expectation, not enforced per draw.** This replaces
+    /// `a_mixed_map_keeps_each_types_share_rather_than_the_first_n`, which asserted the exact
+    /// largest-remainder split 7/12/5/5/4 and then that every type was `< 1.0` slot from its
+    /// exact proportion. Both assertions state the deleted rule: a single uniform draw is
+    /// routinely more than one slot out - Blue Snail's SD alone is 1.44 - so the second one
+    /// is false now, not merely unenforced.
+    ///
+    /// What replaces them is a claim the old code **fails**, which is the point of writing it
+    /// this way rather than loosening the tolerance. Averaged over 4000 draws each type's
+    /// count must land within 0.15 of `cap * points / total`. That band is 6 standard errors
+    /// (`SD/sqrt(4000) <= 0.0227`), so it is a real bound and not a wide one; the
+    /// implementation's worst observed error is **0.029**. The old fixed split misses it on
+    /// three of the five types - Red Snail is 5 against an exact 4.4, out by **0.60**.
     #[test]
-    fn a_mixed_map_keeps_each_types_share_rather_than_the_first_n() {
+    fn each_types_expected_share_is_its_share_of_the_map() {
         let mobs = field(&[(1, 10), (2, 16), (3, 7), (4, 6), (5, 6)]);
         assert_eq!(mobs.len(), 45);
         let cap = spawn_capacity(45, 1);
         assert_eq!(cap, 33);
 
-        let chosen = share_balanced(&mobs, cap, TEST_SEED);
-        assert_eq!(chosen.len(), cap, "the cap must be filled exactly");
+        const DRAWS: u64 = 4000;
+        // Six standard errors, from SD <= 1.44 over DRAWS draws. Derived, not tuned.
+        const TOLERANCE: f64 = 0.15;
 
-        // Largest remainder from 10/16/7/6/6 at cap 33: bases 7/11/5/4/4 = 31, and the two
-        // leftover slots go to the largest remainders (Blue Snail 33, then Red Snail and
-        // Orange Mushroom tie at 18 - broken by template id).
-        assert_eq!(
-            counts(&chosen),
-            [(1, 7), (2, 12), (3, 5), (4, 5), (5, 4)].into_iter().collect()
-        );
+        let mut total: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+        for seed in 0..DRAWS {
+            let chosen = choose_spawns(&mobs, cap, seed);
+            assert_eq!(chosen.len(), cap, "seed {seed}: the cap must be filled exactly");
+            for (template, n) in counts(&chosen) {
+                *total.entry(template).or_default() += n;
+            }
+        }
 
-        // Every type survives, and none is over-represented: each share is within one slot
-        // of its exact proportion. That is the property, the exact split is the arithmetic.
-        for (template, count) in [(1usize, 10usize), (2, 16), (3, 7), (4, 6), (5, 6)] {
-            let exact = count as f64 * cap as f64 / 45.0;
-            let got = counts(&chosen)[&(template as u32)] as f64;
+        for (template, points) in [(1u32, 10usize), (2, 16), (3, 7), (4, 6), (5, 6)] {
+            let exact = points as f64 * cap as f64 / 45.0;
+            let mean = total[&template] as f64 / DRAWS as f64;
             assert!(
-                (got - exact).abs() < 1.0,
-                "template {template}: {got} against an exact {exact}"
+                (mean - exact).abs() < TOLERANCE,
+                "template {template}: mean {mean:.4} against an exact share of {exact:.4}"
             );
         }
 
-        // What the naive version did, kept as the thing being ruled out.
+        // Two types with the SAME share must get the same treatment. This is the assertion
+        // the old rule could never pass: templates 4 and 5 both hold 6 of 45 points, and
+        // largest-remainder gave them 5 and 4 on every single draw, forever, because the tie
+        // broke on template id.
+        let four = total[&4] as f64 / DRAWS as f64;
+        let five = total[&5] as f64 / DRAWS as f64;
+        assert!(
+            (four - five).abs() < TOLERANCE,
+            "equal shares drew unequally: template 4 {four:.4}, template 5 {five:.4}"
+        );
+
+        // What the naive prefix does, kept as the thing still being ruled out.
         let naive: Vec<u32> = mobs.iter().take(cap).map(|m| m.template_id).collect();
         assert!(
             !naive.contains(&5),
@@ -1977,11 +2070,57 @@ mod spawn_tests {
         );
     }
 
+    /// **The drift the owner is told to expect is the drift the code produces.**
+    ///
+    /// The doc table on [`choose_spawns`] quotes a standard deviation per type, and those
+    /// numbers came from a closed form - `Var = cap * p * (1-p) * (total-cap)/(total-1)`,
+    /// the hypergeometric with its finite-population correction. A number that came from
+    /// doing algebra is a claim, exactly like one read off a header, so it is asserted here
+    /// against something that can disagree with it.
+    ///
+    /// This is also the test that would catch the draw not being uniform. A grouped or
+    /// weighted selection can still hit the right *mean* while collapsing the variance -
+    /// the old rule had SD exactly 0 - so the mean test above is not sufficient on its own.
+    #[test]
+    fn the_spread_around_that_share_matches_the_hypergeometric() {
+        let mobs = field(&[(1, 10), (2, 16), (3, 7), (4, 6), (5, 6)]);
+        let total_points = 45.0f64;
+        let cap = spawn_capacity(45, 1);
+
+        const DRAWS: u64 = 4000;
+        let mut samples: std::collections::BTreeMap<u32, Vec<f64>> =
+            std::collections::BTreeMap::new();
+        for seed in 0..DRAWS {
+            for (template, n) in counts(&choose_spawns(&mobs, cap, seed)) {
+                samples.entry(template).or_default().push(n as f64);
+            }
+        }
+
+        for (template, points) in [(1u32, 10usize), (2, 16), (3, 7), (4, 6), (5, 6)] {
+            let p = points as f64 / total_points;
+            let want = (cap as f64 * p * (1.0 - p) * (total_points - cap as f64)
+                / (total_points - 1.0))
+                .sqrt();
+
+            let xs = &samples[&template];
+            let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+            let got = (xs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>()
+                / xs.len() as f64)
+                .sqrt();
+
+            // 10% of the predicted SD. The measured worst case is 1.4%.
+            assert!(
+                (got / want - 1.0).abs() < 0.10,
+                "template {template}: SD {got:.3} against a predicted {want:.3}"
+            );
+        }
+    }
+
     /// Spawn order is preserved, so the wire order does not depend on how the grouping ran.
     #[test]
     fn the_chosen_mobs_come_back_in_spawn_order() {
         let mobs = field(&[(1, 4), (2, 4)]);
-        let chosen = share_balanced(&mobs, 6, TEST_SEED);
+        let chosen = choose_spawns(&mobs, 6, TEST_SEED);
         let ids: Vec<u32> = chosen.iter().map(|m| m.object_id).collect();
         let mut sorted = ids.clone();
         sorted.sort_unstable();
@@ -1992,23 +2131,53 @@ mod spawn_tests {
     /// down on a field entry.
     #[test]
     fn the_edges_do_not_panic_or_overshoot() {
-        assert!(share_balanced(&[], 10, TEST_SEED).is_empty());
-        assert!(share_balanced(&field(&[(1, 5)]), 0, TEST_SEED).is_empty());
+        assert!(choose_spawns(&[], 10, TEST_SEED).is_empty());
+        assert!(choose_spawns(&field(&[(1, 5)]), 0, TEST_SEED).is_empty());
 
         // A cap at or above the total keeps everything, and never more.
         let mobs = field(&[(1, 3), (2, 2)]);
-        assert_eq!(share_balanced(&mobs, 5, TEST_SEED).len(), 5);
-        assert_eq!(share_balanced(&mobs, 99, TEST_SEED).len(), 5);
-
-        // And a cap of one still returns exactly one, from the largest type.
-        let one = share_balanced(&mobs, 1, TEST_SEED);
-        assert_eq!(one.len(), 1);
-        assert_eq!(one[0].template_id, 1, "the largest share takes the only slot");
+        assert_eq!(choose_spawns(&mobs, 5, TEST_SEED).len(), 5);
+        assert_eq!(choose_spawns(&mobs, 99, TEST_SEED).len(), 5);
 
         // Every cap from 0 to total is filled exactly, on a ragged mix.
         let ragged = field(&[(7, 1), (3, 13), (9, 4), (1, 2)]);
         for cap in 0..=ragged.len() {
-            assert_eq!(share_balanced(&ragged, cap, TEST_SEED).len(), cap, "cap {cap}");
+            assert_eq!(choose_spawns(&ragged, cap, TEST_SEED).len(), cap, "cap {cap}");
+        }
+    }
+
+    /// **A cap of one goes to whichever point was drawn, not to the largest type.**
+    ///
+    /// Split out of `the_edges_do_not_panic_or_overshoot`, which asserted
+    /// `one[0].template_id == 1, "the largest share takes the only slot"`. That was the
+    /// apportionment showing through at the smallest possible cap: with 3 points of template
+    /// 1 and 2 of template 2, largest-remainder always handed the single slot to template 1.
+    ///
+    /// Under a uniform draw the slot goes to a point, and the point's type follows from where
+    /// it landed - so template 2 must sometimes win, at about its 2/5 share. Asserting only
+    /// "one of the two" would have been the weaker rewrite; this pins the frequency, which is
+    /// what actually distinguishes a uniform draw from a biased one. Measured 1210/790 over
+    /// 2000 seeds against an expected 1200/800.
+    #[test]
+    fn a_cap_of_one_goes_to_a_random_point_not_the_largest_type() {
+        let mobs = field(&[(1, 3), (2, 2)]);
+        const DRAWS: u64 = 2000;
+
+        let mut wins: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+        for seed in 0..DRAWS {
+            let one = choose_spawns(&mobs, 1, seed);
+            assert_eq!(one.len(), 1, "seed {seed}");
+            *wins.entry(one[0].template_id).or_default() += 1;
+        }
+
+        assert_eq!(wins.len(), 2, "one type took every single slot: {wins:?}");
+        // 3/5 and 2/5 of the draws, within 5 points. The old rule gives 2000 / 0.
+        for (template, share) in [(1u32, 0.6f64), (2, 0.4)] {
+            let got = wins[&template] as f64 / DRAWS as f64;
+            assert!(
+                (got - share).abs() < 0.05,
+                "template {template} took {got:.3} of the slots, expected {share:.3}"
+            );
         }
     }
 

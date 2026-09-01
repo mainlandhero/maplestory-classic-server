@@ -80,15 +80,27 @@
 //!   in this client's data - the tooltip does not state one either. Only the `y` half is
 //!   symmetric, and this module implements only the `y` half.
 //!
-//! # What this module deliberately does NOT do
+//! # The second bonus on the same skill, and why its TABLE lives here
 //!
-//! **`2000000`'s `x` - "Regenerates 1% of Max MP every 10 seconds" - is a second unwired
-//! bonus on a second server-computed number**, and it is not this module's. It belongs to
-//! `crates/world/src/session/regen.rs`, whose `REGEN_AMOUNT` is a flat `10` for both pools
-//! and consults no skill. That is a separate finding with a separate owner; see
-//! `research/item-recovery.md` §6. Implementing half of it here and calling the skill "done"
-//! is exactly the failure `CLAUDE.md`'s Heena-quest section describes - *a test that checks
-//! one of several effects gives false confidence about the rest*.
+//! **`2000000`'s `x` - "Regenerates 1% of Max MP every 10 seconds" - is a second bonus on a
+//! second server-computed number.** It was unwired for a day after the `y` half landed; it is
+//! wired now, and the split of ownership is worth stating because it is not the obvious one:
+//!
+//! * **The column lives here** - [`MP_REGEN_PERCENT_OF_MAX`] and [`mp_regen_percent`]. Skill
+//!   `2000000`'s WZ row is transcribed in exactly **one** file and checked by exactly **one**
+//!   file-backed harness ([`tests::real_skills`]). Two transcriptions of one row is how one of
+//!   them goes stale, and this module already owned the other half of that same row.
+//! * **The composition lives in `crates/world/src/session/regen.rs`** - whether the percentage
+//!   adds to the flat base, replaces it, or floors it, and on which clock. That is a question
+//!   about idle regeneration rather than about this skill, and the working is in
+//!   `research/mp-regen.md`.
+//!
+//! Nothing here knows what the base regeneration is, deliberately: this module answers *"what
+//! does the skill say"*, and `regen.rs` answers *"what does the player get"*.
+//!
+//! Implementing one half and calling the skill "done" is exactly the failure `CLAUDE.md`'s
+//! Heena-quest section describes - *a test that checks one of several effects gives false
+//! confidence about the rest*.
 //!
 //! # Which restores it applies to, and which half of that is measured
 //!
@@ -191,6 +203,35 @@ pub const MAX_LEVEL: u32 = 15;
 pub const ITEM_BONUS_PERCENT: [u32; MAX_LEVEL as usize] =
     [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20];
 
+/// The `x` column of [`IMPROVED_MP_RECOVERY`], indexed by `level - 1`. **PERCENT OF MAX MP**,
+/// per idle tick. `1` at every level - it is a table only so that the shape matches its `y`
+/// sibling and a future WZ that varies it cannot be missed.
+///
+/// # The unit is the client's own word, and it is NOT the same unit as the twin's
+///
+/// The tooltip, verbatim from `String.wz`, identical on all fifteen levels: *"Regenerates 1%
+/// of Max MP every 10 seconds; increases MP recovery from items by N%"*. **[L]** It names the
+/// pool (Max MP), the proportion (`%`) and the clock (10 seconds) in one clause.
+///
+/// That the `1` is **this column** rather than a literal baked into the string is **[D]**, and
+/// it has to be, because `x` never varies here so no correlation can be observed. The control
+/// is the second-job twin, which is the same skill name on the same clock with a *varying*
+/// `x`:
+///
+/// ```text
+///   1110000 / 1210000  Improved MP Recovery   x = 3..22 over 20 levels
+///     level  1  "Recover 3 additional MP every 10 sec."
+///     level 20  "Recover 22 additional MP every 10 sec."     <- the number IS x, 20 for 20
+/// ```
+///
+/// **And the two are different units on the same column.** `1110000`'s slot has no `%` and
+/// says *"additional MP"*; `2000000`'s has a `%` and says *"of Max MP"*. Reading `2000000`'s
+/// `x` as flat gives a 237-MP Magician **1** MP per tick where the client promises **2**, and
+/// reading `1110000`'s as a percentage would give a Fighter 22% of their pool. This is
+/// `CLAUDE.md`'s *"the unit, not the arithmetic"* with both readings live in one column of one
+/// book - see `research/mp-regen.md` §2.
+pub const MP_REGEN_PERCENT_OF_MAX: [u32; MAX_LEVEL as usize] = [1; MAX_LEVEL as usize];
+
 // ---------------------------------------------------------------------------------------
 // What the character has learned
 // ---------------------------------------------------------------------------------------
@@ -257,6 +298,67 @@ pub fn bonus_percent_from_wz(skill_id: u32, row: &SkillLevel) -> Option<u32> {
         return None;
     }
     Some(u32::try_from(row.y?).unwrap_or(0))
+}
+
+/// The percent of **max MP** that [`IMPROVED_MP_RECOVERY`] regenerates per idle tick, or `0`.
+///
+/// `0` for level `0` (not learned) and for **any other skill id**, including
+/// [`IMPROVED_HP_RECOVERY`] - which is the guard that matters most in this whole module.
+///
+/// # `1000000` must return 0 here, and that is a finding rather than an omission
+///
+/// The Warrior twin carries **no `x` column at any of its fifteen levels** and its tooltip
+/// states no HP number either - just *"Regenerates HP every 10 seconds"*. **[L]**, enumerated
+/// over the generated file by [`tests::only_the_magician_half_carries_an_x_column`]. So there
+/// is **no HP regeneration amount in this client's data at all**, and a server that answers
+/// one here is inventing it. The symmetry with `y` is a trap: `y` is identical on both skills,
+/// `x` exists on only one of them.
+///
+/// Saturates at the top row for an impossible level, for the same reason
+/// [`bonus_percent`] does: returning `0` would make over-levelling switch the skill off, which
+/// is the silent nothing this module exists to remove.
+pub fn mp_regen_percent(skill_id: u32, level: u32) -> u32 {
+    if skill_id != IMPROVED_MP_RECOVERY {
+        return 0;
+    }
+    if level == 0 {
+        return 0;
+    }
+    MP_REGEN_PERCENT_OF_MAX[(level.min(MAX_LEVEL) - 1) as usize]
+}
+
+/// The same answer read out of a loaded [`SkillLevel`] instead of the table above.
+///
+/// **Not the runtime path** - it exists only so a test can prove [`MP_REGEN_PERCENT_OF_MAX`]
+/// is the generated file's own `x` column. See the module header for why the runtime path must
+/// not depend on a gitignored generated file.
+///
+/// `None` means the id is not [`IMPROVED_MP_RECOVERY`], or the row carries no `x` - which is
+/// every row of [`IMPROVED_HP_RECOVERY`]. A **negative** `x` yields `Some(0)`: no tooltip in
+/// this client describes a negative regeneration, and draining a player who learned a recovery
+/// passive would read on screen as poison.
+pub fn mp_regen_percent_from_wz(skill_id: u32, row: &SkillLevel) -> Option<u32> {
+    if skill_id != IMPROVED_MP_RECOVERY {
+        return None;
+    }
+    Some(u32::try_from(row.x?).unwrap_or(0))
+}
+
+/// `percent` percent of `max_mp`, **rounded down** - what the skill adds to one idle tick.
+///
+/// Floors, like every other percentage in this repo ([`boosted`], `Restores::mp_for`,
+/// `session::combat::on_user_hit`'s Magic Guard split). The floor is load-bearing at the
+/// bottom of the range and it is why `regen.rs` **adds** this to the flat base rather than
+/// replacing it: a Magician whose max MP is under 100 gets `floor(< 1) = 0` from the skill, so
+/// a replacement reading would regenerate them **nothing at all**. See `research/mp-regen.md`
+/// §3.
+///
+/// `u64` throughout so a large pool cannot wrap; saturates at `u32::MAX`.
+pub fn regen_of_max(max_mp: u32, percent: u32) -> u32 {
+    if percent == 0 {
+        return 0;
+    }
+    u32::try_from(u64::from(max_mp) * u64::from(percent) / 100).unwrap_or(u32::MAX)
 }
 
 /// `amount` increased by `percent` percent, **rounded down**.
@@ -463,6 +565,77 @@ mod tests {
                 "Improved MP Recovery level {level} regenerates 1% of Max MP"
             );
         }
+    }
+
+    /// **[`MP_REGEN_PERCENT_OF_MAX`] is the generated file's own `x` column**, checked through
+    /// [`mp_regen_percent_from_wz`] - a different code path from the one under test, exactly
+    /// as its `y` sibling above is.
+    ///
+    /// Verified by mutation, not merely by passing: changing the table to `[2; 15]` fails with
+    /// *"level 1: the hard-coded x disagrees with the WZ"*.
+    #[test]
+    fn the_x_table_is_the_generated_files_own_x_column() {
+        let Some(t) = real_skills() else { return };
+        let s = t.get(IMPROVED_MP_RECOVERY).expect("the control above already proved it");
+        for level in 1..=MAX_LEVEL {
+            let row = s.level(level).unwrap_or_else(|| panic!("level {level}"));
+            assert_eq!(
+                mp_regen_percent_from_wz(IMPROVED_MP_RECOVERY, row),
+                Some(mp_regen_percent(IMPROVED_MP_RECOVERY, level)),
+                "level {level}: the hard-coded x disagrees with the WZ"
+            );
+        }
+    }
+
+    /// **The Warrior twin yields no regeneration percentage, by either route.**
+    ///
+    /// This is the assertion that stops an HP regen number being invented. `1000000` has no
+    /// `x` at any level (the test above pins that against the file); both entry points must
+    /// therefore answer "nothing" rather than falling through to the MP table because the two
+    /// skills share a `y`.
+    #[test]
+    fn the_warrior_twin_yields_no_regen_percentage_by_either_route() {
+        for level in 0..=30 {
+            assert_eq!(
+                mp_regen_percent(IMPROVED_HP_RECOVERY, level),
+                0,
+                "Improved HP Recovery level {level} must not produce a regen percent"
+            );
+        }
+        // And no other id can either - including the second-job skills of the same NAME
+        // (1110000 / 1210000), whose `x` is a FLAT MP amount and would be a unit error here.
+        for id in [0, 1, 1_000_001, 2_000_001, 1_110_000, 1_210_000, 2_100_000] {
+            for level in 0..=30 {
+                assert_eq!(mp_regen_percent(id, level), 0, "skill {id} level {level}");
+            }
+        }
+
+        let Some(t) = real_skills() else { return };
+        for level in 1..=MAX_LEVEL {
+            let row = t.get(IMPROVED_HP_RECOVERY).unwrap().level(level).unwrap();
+            assert_eq!(
+                mp_regen_percent_from_wz(IMPROVED_HP_RECOVERY, row),
+                None,
+                "level {level}: the HP skill must not answer a regen percent from the WZ either"
+            );
+        }
+    }
+
+    /// **The floor bites at the bottom of the range, and that is why `regen.rs` adds.**
+    ///
+    /// 1% of a pool under 100 is zero. A fresh Magician's max MP is far below that, so a
+    /// "replace the base" reading would regenerate them *nothing*; adding to the flat base
+    /// cannot. The numbers are pinned here rather than left to integer division to decide
+    /// quietly.
+    #[test]
+    fn one_percent_of_a_small_pool_floors_to_nothing() {
+        assert_eq!(regen_of_max(5, 1), 0, "a fresh Magician's 5 max MP");
+        assert_eq!(regen_of_max(99, 1), 0, "still nothing at 99");
+        assert_eq!(regen_of_max(100, 1), 1, "and one point at exactly 100");
+        assert_eq!(regen_of_max(237, 1), 2, "floor(2.37) - Cobalt's actual pool");
+        assert_eq!(regen_of_max(1000, 1), 10, "at 1000 max MP it finally equals the flat base");
+        assert_eq!(regen_of_max(237, 0), 0, "unlearned is nothing, not a rounding");
+        assert_eq!(regen_of_max(u32::MAX, 1), u32::MAX / 100, "no wrap at the top");
     }
 
     // -----------------------------------------------------------------------------------
