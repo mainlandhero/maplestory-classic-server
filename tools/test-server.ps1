@@ -233,11 +233,30 @@
              powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -ServersOnly
              C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as maplecw
              C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as tester
-          two clients reach the character list -> T1 and T2 are possible. Say so
-          the second client never appears -> the client refuses to run twice on one
-                     machine. That is a FINDING, not a failed test, and the next
-                     question is whether it is a single-instance guard we can patch -
-                     the launcher already patches this client for other reasons
+          THE STUB IS NOW INSTRUMENTED FOR THIS. The launcher writes
+          maplecw-hook.multiclient, and grap64.dll - which MapleStory.exe imports
+          STATICALLY, so our DllMain runs before the client's own startup - hooks
+          FindWindowW/A and CreateMutexW/A. Every call is logged to
+          client-patched\maplecw-hook.log. The FIRST client only LOGS: it works out
+          its own ordinal from its own mutex, so a single-client run behaves exactly
+          as it did before. A SECOND client gets the guard suppressed - FindWindow
+          returns NULL and CreateMutex's ERROR_ALREADY_EXISTS is cleared.
+
+          So read the hook log afterwards. It answers this even when the screen cannot:
+          two clients reach the character list -> T1 and T2 are possible. Say so, and
+                     say WHICH instance: line fired - that names the guard
+          two clients, and NO instance: line logged a call at all -> there was no
+                     guard; the launcher was the only thing stopping it
+          no second client, but the log HAS instance: lines from a SECOND pid ->
+                     the guard is one of these and suppressing it was not enough.
+                     The log says what it asked for, which is what the next attempt
+                     needs
+          no second client and NO second pid in the log -> our DllMain never ran
+                     there, nothing in-process can help, and the answer really is a
+                     second machine
+          a line saying a prologue "will not steal" -> that API was NOT hooked and
+                     nothing was written. Its first 16 bytes are in the log; paste
+                     them and the next build can hook it
           the second LAUNCHER fails or hangs -> not the client's fault. Two launchers
                      patch the same files in client-patched\; say which one failed and
                      whether the first client was still running
@@ -1408,10 +1427,21 @@ function Show-TestPlan {
     Write-Host '      and with no arguments it exits. There is no no-server version.'
     Write-Host '      Start the servers ONCE (-ServersOnly), then run the launcher'
     Write-Host '      TWICE - sign in as maplecw, then as tester.'
-    Write-Host '        two clients reach the character list -> T1/T2 possible'
-    Write-Host '        the second CLIENT never appears -> it refuses to run twice.'
-    Write-Host '                   A finding. Next question is a single-instance'
-    Write-Host '                   guard, which the launcher could patch'
+    Write-Host '      THE STUB IS INSTRUMENTED FOR THIS NOW. grap64.dll is a STATIC' -ForegroundColor Cyan
+    Write-Host '      import, so our DllMain runs before the client starts. It hooks'
+    Write-Host '      FindWindowW/A + CreateMutexW/A, logs every call, and suppresses'
+    Write-Host '      the guard ONLY in a second client. Read the hook log after.'
+    Write-Host '        two clients reach the character list -> T1/T2 possible.'
+    Write-Host '                   Say WHICH instance: line fired - it names the guard'
+    Write-Host '        two clients and NO instance: line -> there was no guard;'
+    Write-Host '                   the launcher was the only thing stopping it'
+    Write-Host '        no second client, but instance: lines from a 2nd pid ->'
+    Write-Host '                   the guard is one of these and suppressing it was'
+    Write-Host '                   not enough. The log says what it asked for'
+    Write-Host '        no second client and NO 2nd pid in the log -> our DllMain'
+    Write-Host '                   never ran there; the answer is a second machine'
+    Write-Host '        a "will not steal" line -> that API was NOT hooked and'
+    Write-Host '                   nothing was written. Paste its 16 bytes'
     Write-Host '        the second LAUNCHER fails -> not the client. Two launchers'
     Write-Host '                   patch the same files in client-patched\'
     Write-Host '        both show the SAME account -> the per-launch claim broke,'

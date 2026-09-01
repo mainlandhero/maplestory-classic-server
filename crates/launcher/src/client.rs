@@ -29,6 +29,14 @@ pub const HOOK_ENABLE_MARKER: &str = "maplecw-hook.enable";
 pub const HOOK_PROBE_MARKER: &str = "maplecw-hook.probe";
 pub const HOOK_SESSION_MARKER: &str = "maplecw-hook.session";
 pub const HOOK_DUMPDIR_MARKER: &str = "maplecw-hook.dumpdir";
+
+/// Lets the stub hook the client's single-instance guard. `grap_stub::instance`.
+///
+/// **Always written, and safe to write always**, because the marker only turns the *hooks*
+/// on - the stub works out for itself whether it is the first client on this desktop and
+/// suppresses nothing in that one. So a single-client run behaves exactly as it did before
+/// and still produces the log that names the guard.
+pub const HOOK_MULTICLIENT_MARKER: &str = "maplecw-hook.multiclient";
 /// **The one-time credential the client will carry**, in plain text, beside the client.
 ///
 /// Read by `grap_stub::identity`, which writes it into the client's own session object so the
@@ -255,6 +263,7 @@ pub fn write_markers(
     write(HOOK_ENABLE_MARKER, "")?;
     write(HOOK_PROBE_MARKER, probe)?;
     write(HOOK_SESSION_MARKER, session)?;
+    write(HOOK_MULTICLIENT_MARKER, "")?;
 
     let dump_text = dump_dir.to_string_lossy().to_string();
     write(HOOK_DUMPDIR_MARKER, &dump_text)?;
@@ -275,6 +284,9 @@ pub fn write_markers(
     steps.push(format!("client patches: {probe}"));
     steps.push(format!("session patches: {session}"));
     steps.push(format!("crash dumps -> {dump_text}"));
+    steps.push(format!(
+        "instance-guard hooks armed ({HOOK_MULTICLIENT_MARKER}) - the FIRST client only logs; a \n         second one gets the guard suppressed"
+    ));
     Ok(steps)
 }
 
@@ -529,6 +541,52 @@ mod tests {
     /// The check cannot be "does the file exist" - a stale stub from an older build has to be
     /// replaced. It is a **content** comparison, and this test asserts both directions,
     /// because a skip that always skips is the same bug wearing the opposite sign.
+    /// **The four marker names, spelled the way the stub reads them.**
+    ///
+    /// The launcher does not depend on `grap-stub` - they are two separate binaries that meet
+    /// only through files in the client directory - so nothing but this test connects the two
+    /// spellings. A typo here does not fail to compile; it produces a marker nobody reads and
+    /// a feature that is silently off, which is the failure mode `CLAUDE.md` calls
+    /// indistinguishable from the code not existing.
+    #[test]
+    fn the_marker_names_are_the_ones_the_stub_looks_for() {
+        assert_eq!(HOOK_ENABLE_MARKER, "maplecw-hook.enable");
+        assert_eq!(HOOK_DUMPDIR_MARKER, "maplecw-hook.dumpdir");
+        assert_eq!(HOOK_MULTICLIENT_MARKER, "maplecw-hook.multiclient");
+        // All of them are bare file names resolved against the client's working directory,
+        // never paths - the stub joins nothing.
+        for m in [HOOK_ENABLE_MARKER, HOOK_DUMPDIR_MARKER, HOOK_MULTICLIENT_MARKER] {
+            // Byte 92 is the backslash, written as a number so this line cannot be
+            // mangled by a heredoc on the way into the file - which is exactly what
+            // happened on the first attempt, and CLAUDE.md warns about.
+            assert!(
+                !m.as_bytes().contains(&b'/') && !m.as_bytes().contains(&92),
+                "{m} is a bare file name"
+            );
+        }
+    }
+
+    /// **A launch writes the multiclient marker**, or the second client is never treated.
+    #[test]
+    fn write_markers_arms_the_instance_guard_hooks() {
+        let t = TempDir::new("markers-mc");
+        let client = fake_client(&t);
+        let dumps = t.path().join("dumps");
+        let steps = write_markers(&client, "probe", "session", &dumps).expect("markers");
+        assert!(
+            client.join(HOOK_MULTICLIENT_MARKER).is_file(),
+            "the marker file must exist beside the client"
+        );
+        assert!(
+            steps.iter().any(|s| s.contains("instance-guard")),
+            "and the launcher must say so on screen: {steps:?}"
+        );
+        // The control: the markers that were already there still are, so this did not
+        // displace them.
+        assert!(client.join(HOOK_ENABLE_MARKER).is_file());
+        assert!(client.join(HOOK_DUMPDIR_MARKER).is_file());
+    }
+
     #[test]
     fn an_identical_stub_is_not_rewritten_so_a_running_client_cannot_block_a_second_launch() {
         let t = TempDir::new("stubidem");

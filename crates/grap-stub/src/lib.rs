@@ -25,6 +25,7 @@ pub mod heapfix;
 pub mod hitnumber;
 pub mod hook;
 pub mod identity;
+pub mod instance;
 pub mod minidump;
 pub mod netwatch;
 pub mod poolsentry;
@@ -105,6 +106,20 @@ pub unsafe extern "system" fn DllMain(
     const DLL_PROCESS_ATTACH: u32 = 1;
     if reason == DLL_PROCESS_ATTACH {
         log("DllMain: PROCESS_ATTACH (GameGuard stub loaded; no service, no driver)");
+
+        // **The single-instance guard, armed INLINE and armed first.**
+        //
+        // Not from a thread, unlike the dispatcher hook below: the guard runs during the
+        // client's own startup, so a hook installed five seconds later would arrive after the
+        // process it was meant to save had already exited. It patches `user32` and
+        // `kernel32`, which are mapped and final before any of our code runs - the loader-lock
+        // caution that applies to the client's own Themida-packed `.text` does not apply here.
+        //
+        // Marker-gated: with `maplecw-hook.multiclient` absent this reads one directory entry
+        // and returns.
+        if crate::instance::enabled() {
+            unsafe { crate::instance::arm() };
+        }
 
         // Opt-in dispatcher hook. Installed from a spawned thread rather than inline:
         // DllMain runs under the loader lock, and patching another module's code from
