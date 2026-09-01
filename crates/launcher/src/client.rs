@@ -171,9 +171,38 @@ pub fn stub_gameguard(client_dir: &Path, stub: &Path) -> Result<Steps, String> {
         steps.push(format!("backed up the real {GRAP_DLL} -> {GRAP_BACKUP}"));
     }
 
-    std::fs::copy(stub, &dll)
-        .map_err(|e| format!("could not install the stub over {GRAP_DLL}: {e}"))?;
-    steps.push(format!("installed the stub as {GRAP_DLL} ({stub_len} bytes)"));
+    // **Skip the copy when the stub is already installed**, and that is what makes a SECOND
+    // client possible on one machine.
+    //
+    // The owner, 2026-09-01: *"when I tried to start a second client, the grap.dll stub failed
+    // because it was being used by another process"*. A running client has this DLL mapped,
+    // and Windows refuses to write a mapped image - so the copy raised a sharing violation,
+    // `prepare` returned `Err`, and the second launcher gave up **before it ever started a
+    // client**. On screen that is indistinguishable from "the client refuses to run twice",
+    // which is the conclusion it nearly bought.
+    //
+    // The backup step above has been idempotent since it was written, for the same class of
+    // reason - "back up only when there is no backup". This is that rule applied to the
+    // install: if the bytes on disk are already the bytes we would write, there is nothing to
+    // do and a locked file is not an error. If they DIFFER we still try, and still fail
+    // loudly, because then the client genuinely is running the wrong DLL.
+    //
+    // Compared by content rather than by length: a stale stub from an older build is exactly
+    // the case that must NOT be skipped, and it is the case a length check would miss.
+    let already_installed = match (std::fs::read(&dll), std::fs::read(stub)) {
+        (Ok(on_disk), Ok(want)) => on_disk == want,
+        _ => false,
+    };
+    if already_installed {
+        steps.push(format!(
+            "{GRAP_DLL} is already this exact stub ({stub_len} bytes) - left alone, so a \
+             client already running does not block a second launch"
+        ));
+    } else {
+        std::fs::copy(stub, &dll)
+            .map_err(|e| format!("could not install the stub over {GRAP_DLL}: {e}"))?;
+        steps.push(format!("installed the stub as {GRAP_DLL} ({stub_len} bytes)"));
+    }
 
     let grap = client_dir.join(GRAP_DIR);
     let disabled = client_dir.join(GRAP_DIR_DISABLED);
@@ -358,8 +387,22 @@ pub fn archive_previous_log(log_path: &Path, into: &Path) -> Result<Option<PathB
     if std::fs::rename(log_path, &target).is_err() {
         std::fs::copy(log_path, &target)
             .map_err(|e| format!("could not archive {}: {e}", log_path.display()))?;
-        std::fs::remove_file(log_path)
-            .map_err(|e| format!("archived {} but could not remove the original: {e}", log_path.display()))?;
+        if std::fs::remove_file(log_path).is_err() {
+            // **Another client is still writing this log.** Take the copy back out and leave
+            // the original alone.
+            //
+            // Two reasons, and the second is the one that matters. A second launcher must not
+            // fail here - that would block a second client for a reason that has nothing to
+            // do with the client. And archiving a log that is still being appended to
+            // produces exactly the near-duplicate `CLAUDE.md` describes under "a fixture is
+            // copied while the run is still being written": eleven such pairs already exist
+            // in this repo, they hash differently from their own run, and file-level
+            // deduplication counted them as two observations.
+            //
+            // So: no half-archive, no error, and the running client keeps its log.
+            let _ = std::fs::remove_file(&target);
+            return Ok(None);
+        }
     }
     Ok(Some(target))
 }
@@ -472,6 +515,58 @@ mod tests {
         assert_eq!(std::fs::read_to_string(client.join(GRAP_DLL)).unwrap().len(), 4096);
         assert!(client.join(GRAP_DIR_DISABLED).is_dir());
         assert!(!client.join(GRAP_DIR).exists());
+    }
+
+    /// **A second launcher must not try to write a DLL the first client has open.**
+    ///
+    /// The owner, 2026-09-01: *"when I tried to start a second client, the grap.dll stub failed
+    /// because it was being used by another process"*. A running client has `grap64.dll`
+    /// mapped and Windows refuses to write a mapped image, so the copy raised a sharing
+    /// violation, `prepare` returned `Err`, and the second launcher stopped **before it ever
+    /// started a client**. That reads on screen as "the client will not run twice", which is
+    /// a completely different and much more expensive conclusion.
+    ///
+    /// The check cannot be "does the file exist" - a stale stub from an older build has to be
+    /// replaced. It is a **content** comparison, and this test asserts both directions,
+    /// because a skip that always skips is the same bug wearing the opposite sign.
+    #[test]
+    fn an_identical_stub_is_not_rewritten_so_a_running_client_cannot_block_a_second_launch() {
+        let t = TempDir::new("stubidem");
+        let client = fake_client(&t);
+        let stub = fake_stub(&t);
+
+        let first = stub_gameguard(&client, &stub).expect("first");
+        assert!(first.iter().any(|s| s.contains("installed the stub")), "{first:?}");
+
+        // Second launch, nothing changed on disk: the copy must be SKIPPED.
+        let second = stub_gameguard(&client, &stub).expect("second");
+        assert!(
+            second.iter().any(|s| s.contains("left alone")),
+            "the second run must not rewrite an identical stub: {second:?}"
+        );
+        assert!(
+            !second.iter().any(|s| s.contains("installed the stub")),
+            "and must not claim it installed one: {second:?}"
+        );
+        assert_eq!(std::fs::read(client.join(GRAP_DLL)).unwrap().len(), 4096);
+
+        // **The other direction.** A DIFFERENT stub - a rebuild - must still be installed,
+        // or this "fix" would quietly pin every client to whatever was there first.
+        let newer = t.file("target/release/grap64.dll", &"N".repeat(5000));
+        let third = stub_gameguard(&client, &newer).expect("third");
+        assert!(
+            third.iter().any(|s| s.contains("installed the stub")),
+            "a rebuilt stub must still replace the old one: {third:?}"
+        );
+        let on_disk = std::fs::read(client.join(GRAP_DLL)).unwrap();
+        assert_eq!(on_disk.len(), 5000);
+        assert!(on_disk.iter().all(|&b| b == b'N'), "the new bytes, not the old ones");
+
+        // And through all of that the real DLL is still backed up, untouched.
+        assert_eq!(
+            std::fs::read_to_string(client.join(GRAP_BACKUP)).unwrap(),
+            "THE REAL GAMEGUARD DLL"
+        );
     }
 
     #[test]

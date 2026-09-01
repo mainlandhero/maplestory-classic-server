@@ -102,7 +102,13 @@ pub fn prepare(
             Level::Good,
             format!("previous hook log archived -> {}", archived.display()),
         ),
-        None => log(Level::Info, "no previous hook log to archive".into()),
+        // `None` is also what comes back when another client still has the log open, which
+        // is the ordinary case for a second launch rather than a fault - see
+        // `client::archive_previous_log`.
+        None => log(
+            Level::Info,
+            "no previous hook log to archive (or a running client still has it)".into(),
+        ),
     }
 
     // 6. The markers.
