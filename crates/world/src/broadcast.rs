@@ -385,6 +385,45 @@ impl Bus {
     /// session that loops over every contributor and calls this for each one will send
     /// itself its own share** - and if it also awards itself directly, it pays twice.
     /// Skip your own character at the call site; the bus cannot do it for you.
+    /// **A finished packet to one character, on one map.** Returns whether anybody got it.
+    ///
+    /// The third channel, and it exists because the other two cannot express this: [`publish`]
+    /// goes to a whole map, and [`send_to_character`] carries an [`Event`] - a *fact* - and
+    /// deliberately not bytes, so that the bus keeps knowing no packet layouts.
+    ///
+    /// # What needed it
+    ///
+    /// Drops. The owner, 2026-09-01: *"the drops can remain per client. If multiple clients hit the
+    /// mob, the one who dealt the most damage (without counting over-damage) will see the
+    /// drops."* **The top damager is very often not the connection that landed the killing
+    /// blow**, and the killer's session is the one holding the finished `0x046E`. Without this
+    /// the choice is to send the drop to the wrong player or not at all.
+    ///
+    /// # `map` is not optional, and that is the point of taking it
+    ///
+    /// A drop packet names an object id in a *field's* drop pool. Delivering one to a
+    /// character who has walked through a portal since the mob died would put an item on a map
+    /// it was never dropped on - and the client would draw it, because a drop's enter packet
+    /// carries its own coordinates and asks the pool no questions. So the map is matched as
+    /// well as the character, and a recipient who has left is simply not a recipient. That is
+    /// the same reasoning `enter_field` uses when it clears `queue` on a field change and the
+    /// reason it deliberately does *not* clear `events`.
+    ///
+    /// **Not supersedable.** Two drops are two items; coalescing them would silently lose one.
+    pub fn publish_to_character(&self, character: u32, map: u32, reply: Reply) -> bool {
+        let mut inner = self.lock();
+        let Some(id) = inner.boxes.iter().find_map(|(id, m)| {
+            let p = m.presence.as_ref()?;
+            (p.character == character && p.map == map).then_some(*id)
+        }) else {
+            return false;
+        };
+        // `post` is the same path `publish` uses, so a packet addressed to one person and one
+        // addressed to a map cannot get out of order with each other in a mailbox.
+        inner.post_to(id, reply);
+        true
+    }
+
     pub fn send_to_character(&self, character: u32, event: Event) -> bool {
         let mut inner = self.lock();
         let mut delivered = false;
@@ -466,6 +505,18 @@ impl Bus {
 
 impl Inner {
     /// The fan-out itself. Called with the lock already held.
+    /// [`post`], to one mailbox that has already been chosen.
+    ///
+    /// Never supersedes: the only caller is [`Bus::publish_to_character`], whose packets are
+    /// drops, and two drops are two items. It shares `Queued` with the map-wide path so a
+    /// packet addressed to a person and one addressed to a place cannot get out of order in
+    /// the same mailbox.
+    fn post_to(&mut self, id: SubscriberId, reply: Reply) {
+        if let Some(mailbox) = self.boxes.get_mut(&id) {
+            mailbox.queue.push(Queued { reply, supersedes: None });
+        }
+    }
+
     fn post(&mut self, from: SubscriberId, map: u32, reply: Reply, supersedes: Option<u32>) {
         for (id, mailbox) in self.boxes.iter_mut() {
             if *id == from {
@@ -1091,4 +1142,95 @@ mod tests {
             vec![Event::Experience { amount: 7, why: "party share".to_string(), white: false }]
         );
     }
+
+    /// **A finished packet to one character, and to nobody else.**
+    ///
+    /// The channel drops needed: the top damager is often not the connection that landed the
+    /// killing blow, and the killer's session is the one holding the built `0x046E`.
+    #[test]
+    fn a_packet_addressed_to_a_character_reaches_only_them() {
+        let bus = Bus::new();
+        let killer = bus.join();
+        let winner = bus.join();
+        let bystander = bus.join();
+        bus.enter_field(killer, presence(200, 7));
+        bus.enter_field(winner, presence(201, 7));
+        bus.enter_field(bystander, presence(202, 7));
+        // Clear the arrival mail so what follows is only what this test posted.
+        bus.drain(killer);
+        bus.drain(winner);
+        bus.drain(bystander);
+
+        let drop = Reply { opcode: 0x046E, body: vec![9], what: "a drop for 201".into() };
+        assert!(bus.publish_to_character(201, 7, drop.clone()), "201 is on map 7");
+
+        assert_eq!(bus.drain(winner).len(), 1, "the top damager gets it");
+        assert!(bus.drain(bystander).is_empty(), "and nobody else on the map does");
+        assert!(bus.drain(killer).is_empty(), "including the one who built it");
+    }
+
+    /// **A recipient who has walked away is not a recipient**, and the map argument is what
+    /// makes that true.
+    ///
+    /// A drop names an object id in a *field's* pool, and its enter packet carries its own
+    /// coordinates - the client draws it without asking the pool anything. Delivering one to
+    /// somebody who took a portal between the killing blow and the drop would put an item on a
+    /// map it was never dropped on.
+    #[test]
+    fn a_character_who_left_the_map_is_not_sent_its_drops() {
+        let bus = Bus::new();
+        let a = bus.join();
+        let b = bus.join();
+        bus.enter_field(a, presence(200, 7));
+        bus.enter_field(b, presence(201, 7));
+        bus.drain(a);
+        bus.drain(b);
+
+        // 201 walks through a portal to map 9 before the mob finishes dying.
+        bus.enter_field(b, presence(201, 9));
+        bus.drain(a);
+        bus.drain(b);
+
+        let drop = Reply { opcode: 0x046E, body: vec![9], what: "a drop on map 7".into() };
+        assert!(
+            !bus.publish_to_character(201, 7, drop.clone()),
+            "the character is not on map 7 any more, so this must report undelivered"
+        );
+        assert!(bus.drain(b).is_empty(), "and must post nothing");
+
+        // The control: addressed to where they actually are, it arrives. Without this the
+        // test above would pass on a function that never delivers anything.
+        assert!(bus.publish_to_character(201, 9, drop), "on their real map it lands");
+        assert_eq!(bus.drain(b).len(), 1);
+    }
+
+    /// **Two drops are two items.** `publish` may supersede; this must never.
+    #[test]
+    fn drops_addressed_to_one_character_are_never_coalesced() {
+        let bus = Bus::new();
+        let a = bus.join();
+        bus.enter_field(a, presence(200, 7));
+        bus.drain(a);
+
+        for n in 0..3u8 {
+            let r = Reply { opcode: 0x046E, body: vec![n], what: format!("drop {n}") };
+            assert!(bus.publish_to_character(200, 7, r));
+        }
+        let out = bus.drain(a);
+        assert_eq!(out.len(), 3, "three drops, not one: {out:?}");
+        assert_eq!(out[0].what, "drop 0", "and in the order they were posted");
+        assert_eq!(out[2].what, "drop 2");
+    }
+
+    /// An unknown character is reported undelivered rather than silently swallowed - the
+    /// caller has a real packet in hand and needs to know it went nowhere.
+    #[test]
+    fn a_character_nobody_is_playing_reports_undelivered() {
+        let bus = Bus::new();
+        let a = bus.join();
+        bus.enter_field(a, presence(200, 7));
+        let r = Reply { opcode: 0x046E, body: vec![1], what: "nobody".into() };
+        assert!(!bus.publish_to_character(999, 7, r));
+    }
+
 }

@@ -77,8 +77,38 @@ impl Session {
         // **Cap at what is actually missing.** The owner asked for this in the same sentence, and
         // it is also the only reading that cannot put a number above the maximum into the HP
         // field - which the client would then draw as a bar past its own end.
-        let hp_gain = restores.hp_for(chr.max_hp).min(chr.max_hp.saturating_sub(chr.hp));
-        let mp_gain = restores.mp_for(chr.max_mp).min(chr.max_mp.saturating_sub(chr.mp));
+        // **Improved HP/MP Recovery, at last.** The owner, 2026-08-30: *"one of the passive for
+        // 'Improved MP Recovery' says it will increase MP recovery item recovery amount by
+        // 20%, it currently does not do that."*
+        //
+        // It did not because nothing on this path had ever asked what skills the character
+        // had. The bug is measured rather than reasoned: character 213 holds `2000000` at
+        // level 15 in `maplecw.db`, and `previous-runs/world-20260830-221224.log` - the same
+        // day as the report - shows `used item 2000003 ... +200 mp` eleven times. 2000003 is
+        // 200 flat MP; 20% of it is the 40 that never arrived.
+        //
+        // **The bonus goes in BEFORE the cap**, which is the whole reason this is one call
+        // and not two: bonusing a value that has already been clamped to what is missing
+        // would let a near-full drink overshoot the maximum, and the client draws a bar past
+        // its own end. `restored` folds each skill's `y` into its own pool; `capped` then does
+        // what the two lines here used to do.
+        //
+        // `Store::skill_level` returns `Ok(0)` for a skill the character never raised, so
+        // `unwrap_or(0)` is reached only on a real database failure - and there it degrades to
+        // the old behaviour rather than refusing the item. This path is latched: a refusal
+        // costs not one potion but every later use in the session.
+        let learned = crate::itemrecovery::Learned {
+            improved_hp_recovery: self
+                .store
+                .skill_level(chr.id, crate::itemrecovery::IMPROVED_HP_RECOVERY)
+                .unwrap_or(0),
+            improved_mp_recovery: self
+                .store
+                .skill_level(chr.id, crate::itemrecovery::IMPROVED_MP_RECOVERY)
+                .unwrap_or(0),
+        };
+        let gained = crate::itemrecovery::restored(&restores, chr.max_hp, chr.max_mp, learned);
+        let (hp_gain, mp_gain) = gained.capped(chr.hp, chr.max_hp, chr.mp, chr.max_mp);
         chr.hp = chr.hp.saturating_add(hp_gain).min(chr.max_hp);
         chr.mp = chr.mp.saturating_add(mp_gain).min(chr.max_mp);
 
@@ -118,8 +148,24 @@ impl Session {
             }
             .build(),
             what: format!(
-                "StatChanged: used item {} from Use slot {slot} - +{hp_gain} hp (now {}/{}), +{mp_gain} mp (now {}/{}). No recovery trailer: that number is for idle regeneration and chairs, not for items. Byte 0 also clears the client's request latch",
-                req.item_id, chr.hp, chr.max_hp, chr.mp, chr.max_mp
+                "StatChanged: used item {} from Use slot {slot} - +{hp_gain} hp (now {}/{}), +{mp_gain} mp (now {}/{}){}. No recovery trailer: that number is for idle regeneration and chairs, not for items. Byte 0 also clears the client's request latch",
+                req.item_id, chr.hp, chr.max_hp, chr.mp, chr.max_mp,
+                // **The only place a run can show the bonus fired.** Without it a capture
+                // cannot tell "the skill applied 0%" from "the wiring is absent", which is
+                // exactly the confusion that left this open for a week.
+                if gained.any_bonus_applied() {
+                    format!(
+                        " [Improved Recovery: hp {} -> {} (+{}%), mp {} -> {} (+{}%), applied BEFORE the missing-health cap]",
+                        gained.hp_base,
+                        gained.hp,
+                        gained.hp_bonus_percent,
+                        gained.mp_base,
+                        gained.mp,
+                        gained.mp_bonus_percent
+                    )
+                } else {
+                    String::new()
+                }
             ),
         }];
         out.extend(self.stack_change_replies(inv, slot, left));

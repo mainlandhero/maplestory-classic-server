@@ -7450,3 +7450,92 @@ fn clicking_a_third_job_instructor_advances_at_seventy() {
     }
 }
 
+/// **Improved MP Recovery finally does what its own tooltip says.**
+///
+/// The owner, 2026-08-30: *"one of the passive for 'Improved MP Recovery' says it will increase MP
+/// recovery item recovery amount by 20%, it currently does not do that."*
+///
+/// This reproduces the exact case out of the archive rather than a made-up one. Character 213
+/// holds `2000000` at level 15 in `maplecw.db`, and `previous-runs/world-20260830-221224.log`
+/// - the same day as the report - shows `used item 2000003 ... +200 mp` eleven times. `2000003`
+/// is 200 flat MP and `y` at level 15 is **20**, so the 40 that never arrived is what this
+/// asserts.
+///
+/// **The level-15 value is 20, not 19.** `y` runs 5, 6, 7 ... 18 and then jumps: `level + 4`
+/// is right for fourteen levels and wrong for the only one `!learn` grants. That is why the
+/// module carries a table rather than a formula, and why this test uses the top level.
+#[test]
+fn improved_mp_recovery_adds_its_percent_to_a_potion() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Wizard".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 200;
+    made.max_mp = 5_000;
+    made.mp = 0;
+    made.max_hp = 5_000;
+    made.hp = 5_000;
+    store.save_character_progress(&made).unwrap();
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    store
+        .set_inventory_slot(
+            made.id,
+            store::InventoryType::Use,
+            1,
+            &store::Item::bundle(2_000_003, 10),
+        )
+        .unwrap();
+    // 2000003 is 200 flat MP - the item from the archived log.
+    let config = Config {
+        consumables: crate::consumables::Consumables::parse("2000003, 0, 200, 0, 0\n"),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+
+    let mp_now = |s: &Session| s.claimed_character().unwrap().mp;
+
+    // ---- THE CONTROL: no skill, so the plain 200 -------------------------------------
+    s.on_use_item(&net::useitem::use_item(1, 1, 2_000_003, 1));
+    assert_eq!(mp_now(&s), 200, "without the skill it is the item's own number");
+
+    // ---- level 15: 200 + 20% = 240 ---------------------------------------------------
+    store.set_skill_level(made.id, crate::itemrecovery::IMPROVED_MP_RECOVERY, 15).unwrap();
+    s.claim_for_character(made.id);
+    let before = mp_now(&s);
+    let out = s.on_use_item(&net::useitem::use_item(2, 1, 2_000_003, 1));
+    assert_eq!(
+        mp_now(&s) - before,
+        240,
+        "level 15 is +20%, so 200 becomes 240 - this is the 40 the owner never got"
+    );
+
+    // The run has to be able to SEE that the bonus fired, or a capture cannot tell
+    // "applied 0%" from "not wired at all".
+    let stat = out
+        .iter()
+        .find(|r| r.opcode == net::stats::STAT_CHANGED)
+        .expect("a potion sends a StatChanged");
+    assert!(stat.what.contains("Improved Recovery"), "{}", stat.what);
+    assert!(stat.what.contains("+20%"), "and it names the percent: {}", stat.what);
+
+    // ---- level 1 is +5%, so the table is being read rather than a constant applied ----
+    store.set_skill_level(made.id, crate::itemrecovery::IMPROVED_MP_RECOVERY, 1).unwrap();
+    s.claim_for_character(made.id);
+    let before = mp_now(&s);
+    s.on_use_item(&net::useitem::use_item(3, 1, 2_000_003, 1));
+    assert_eq!(mp_now(&s) - before, 210, "level 1 is +5%");
+
+    // ---- and the HP twin must NOT touch MP -------------------------------------------
+    store.set_skill_level(made.id, crate::itemrecovery::IMPROVED_MP_RECOVERY, 0).unwrap();
+    store.set_skill_level(made.id, crate::itemrecovery::IMPROVED_HP_RECOVERY, 15).unwrap();
+    s.claim_for_character(made.id);
+    let before = mp_now(&s);
+    s.on_use_item(&net::useitem::use_item(4, 1, 2_000_003, 1));
+    assert_eq!(
+        mp_now(&s) - before,
+        200,
+        "Improved HP Recovery bonuses HP, and an MP potion is not its business"
+    );
+}
+
