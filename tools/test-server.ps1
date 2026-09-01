@@ -219,13 +219,32 @@
           FOR THE RECORD: without the proof, Dances with Balrog must REFUSE. If a level-30
           Swordsman can advance without ever entering the map, the whole chain is optional
           and that is a bug worth reporting even though it looks like a feature working.
-     T0. BEFORE ANY OF THIS, and it costs no server: double-click
-         client-patched\MapleStory.exe TWICE with no server running and watch for 10
-         seconds. It dies at ~37 s on its own (the firewalled reachability check), so
-         10 s is inside the window and tells you what you need.
-          two windows -> the client runs twice on one machine, and T1/T2 are possible
-          the second exits at once -> it does NOT, and every two-client step needs a
-                     second machine. That is a finding, not a failed test
+     T0. CAN THIS MACHINE RUN TWO CLIENTS AT ONCE? T1 and T2 are impossible until it
+         can, so do it first.
+
+         **THE OLD VERSION OF THIS STEP WAS WRONG AND COST WISP A TRY.** It said to
+         double-click client-patched\MapleStory.exe with no server running. The client
+         does not start that way: `crates/launcher/src/prepare.rs` launches it as
+         `-NXLDEBUG <ip> <port>`, and with no arguments at all it exits immediately.
+         So there is no no-server version of this test - the only argument the client
+         takes is the address of a server.
+
+         Do this instead. Start the servers ONCE, then run the launcher TWICE:
+             powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -ServersOnly
+             C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as maplecw
+             C:\MapleCW\target\release\maplecw-launcher.exe      <- sign in as tester
+          two clients reach the character list -> T1 and T2 are possible. Say so
+          the second client never appears -> the client refuses to run twice on one
+                     machine. That is a FINDING, not a failed test, and the next
+                     question is whether it is a single-instance guard we can patch -
+                     the launcher already patches this client for other reasons
+          the second LAUNCHER fails or hangs -> not the client's fault. Two launchers
+                     patch the same files in client-patched\; say which one failed and
+                     whether the first client was still running
+          both clients show the SAME account -> the per-launch claim broke. That was
+                     fixed and proved over sockets (tools/claims_smoke.py, two accounts
+                     on 127.0.0.1), so it would be a regression worth stopping for
+
          Nobody has ever tried this. 211 connections across 188 archived logs contain
          ZERO overlapping pairs, and no archived instrument could have seen a second
          process that dies before it connects.
@@ -1382,12 +1401,21 @@ function Show-TestPlan {
         Write-Host '       WITHOUT the proof they must REFUSE. If they advance you anyway,'
         Write-Host '       the whole chain is optional - report it even though it looks'
         Write-Host '       like the feature working.' -ForegroundColor Yellow
-        Write-Host '  T0. FIRST, and it needs no server: double-click' -ForegroundColor Cyan
-    Write-Host '      client-patched\MapleStory.exe TWICE, no server, watch 10s.'
-    Write-Host '      It self-kills at ~37s, so 10s is safely inside that.'
-    Write-Host '        two windows -> it runs twice here, T1/T2 are possible'
-    Write-Host '        second exits at once -> it does NOT, and every two-client'
-    Write-Host '                   step needs a second machine. That is a finding'
+        Write-Host '  T0. TWO CLIENTS AT ONCE? T1/T2 are impossible until this' -ForegroundColor Cyan
+    Write-Host '      is answered, so do it first.'
+    Write-Host '      THE OLD VERSION OF THIS STEP WAS WRONG. Double-clicking the' -ForegroundColor Yellow
+    Write-Host '      exe does nothing: the client is launched -NXLDEBUG <ip> <port>'
+    Write-Host '      and with no arguments it exits. There is no no-server version.'
+    Write-Host '      Start the servers ONCE (-ServersOnly), then run the launcher'
+    Write-Host '      TWICE - sign in as maplecw, then as tester.'
+    Write-Host '        two clients reach the character list -> T1/T2 possible'
+    Write-Host '        the second CLIENT never appears -> it refuses to run twice.'
+    Write-Host '                   A finding. Next question is a single-instance'
+    Write-Host '                   guard, which the launcher could patch'
+    Write-Host '        the second LAUNCHER fails -> not the client. Two launchers'
+    Write-Host '                   patch the same files in client-patched\'
+    Write-Host '        both show the SAME account -> the per-launch claim broke,'
+    Write-Host '                   and that was proved over sockets. Stop and say so'
     Write-Host '      Nobody has ever tried this. 211 connections across 188 logs'
     Write-Host '      show ZERO overlapping pairs, and nothing archived could have'
     Write-Host '      seen a second process that dies before it connects.'
