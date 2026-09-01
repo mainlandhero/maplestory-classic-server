@@ -6,8 +6,17 @@ inferred - policy nothing on this machine can confirm.
 
 > **Nothing here has ever been on a wire between two players.** Two clients have never been
 > connected to this server at once. Every claim about what a second player *sees* is [I] on
-> that point, however well-read the packet is. The module is the decision; §9 is the wiring
-> and it is not applied - `CLAUDE.md`'s *built is not wired*.
+> that point, however well-read the packet is.
+>
+> **WIRED 2026-09-01.** This banner used to end *"§9 is the wiring and it is not applied"*.
+> It is applied: `crates/world/src/mobshare.rs`'s own header lists the call sites, and §9 is
+> now a record of where each piece went plus the three places this document's recipe turned
+> out to be wrong when someone tried to follow it. **§1's four bugs are fixed** and are left
+> in the present tense below only as a description of what was found - each now names the
+> test that pins it.
+>
+> What has NOT changed is the first sentence of this banner. Wiring it does not put it on a
+> wire, and no second client has ever seen any of it.
 
 ---
 

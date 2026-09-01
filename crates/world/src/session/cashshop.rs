@@ -79,6 +79,10 @@ impl Session {
         // announces the arrival again. `Bus::leave_field` is idempotent, so the `Drop` path
         // and the log-out path can both still run.
         self.leave_the_field();
+        // And the mobs it was driving go back to the field, for the same reason: a shopper is
+        // not on the map, and a mob whose controller is looking at the Cash Shop is a mob
+        // nobody is moving. Field entry re-claims on the way back.
+        self.fields.controllers().release_map(chr.map_id, self.subscriber.get());
         let (quests, _) = self.quest_book(chr.id);
         let skills = self.store.skills(chr.id).unwrap_or_default();
         let mut out = vec![Reply {

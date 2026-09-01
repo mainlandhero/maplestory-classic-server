@@ -5,24 +5,33 @@
 //! derived from two or more [L] facts, **[I]** inferred - policy nothing on this machine can
 //! confirm.
 //!
-//! # Nothing here is wired, and nothing here has ever been on a wire between two players
+//! # WIRED 2026-09-01. This header used to say the opposite.
 //!
-//! This module is the **decision**, the same shape as [`crate::taxi`] and
-//! [`crate::secondjob`]: it sends no packets, touches no database, and knows nothing about
-//! `Session`, so every branch below is a unit test rather than a client run. §"WIRE IT LIKE
-//! THIS" at the bottom is the patch, and `research/mob-share.md` is the working.
+//! It read *"Nothing here is wired"*, and that was true on the day it was written.
+//! `crate::fields::Fields` now owns a [`Controllers`], `session/field.rs` claims on field
+//! entry and releases on the way out, `session/combat.rs` gates every `0x02FF` on the
+//! registry and publishes `0x03C6`, `0x03D9`, `0x03F0` and `0x03D1` to the map, and the
+//! drops go to [`drop_audience`]'s winner over `Bus::publish_to_character`.
 //!
-//! `CLAUDE.md`'s *built is not wired*: until `session/field.rs`, `session/combat.rs` and
-//! `session/mod.rs` call into this, two players on one map still run two independent
-//! simulations of every monster and it looks on screen exactly as it does today.
+//! **Left as a correction rather than deleted**, for the reason `crate::drops`'s own header
+//! gives: a stale "not wired" banner is its own hazard, because it invites the next reader to
+//! wire something twice. §"WHERE IT IS WIRED" at the bottom is the map, and
+//! `research/mob-share.md` is the working.
+//!
+//! This module itself is still the **decision** and nothing else, the same shape as
+//! [`crate::taxi`] and [`crate::secondjob`]: it sends no packets, touches no database, and
+//! knows nothing about `Session`, so every branch below is a unit test rather than a client
+//! run.
 //!
 //! **Two clients have never been connected to this server at once.** Every claim below about
-//! what a second player *sees* is [I] on that point, however well-read the packet is.
+//! what a second player *sees* is [I] on that point, however well-read the packet is - and
+//! that has not changed by wiring it. What the tests prove is that the server does what it
+//! was told to do.
 //!
-//! # The problem, measured rather than suspected
+//! # The problem, measured rather than suspected - all four of these are now fixed
 //!
-//! `crates/world/src/session/field.rs` grants `MOB_CHANGE_CONTROLLER` for **every** mob to
-//! **every** arriving session, and `crates/world/src/fields.rs` has no controller registry at
+//! `crates/world/src/session/field.rs` granted `MOB_CHANGE_CONTROLLER` for **every** mob to
+//! **every** arriving session, and `crates/world/src/fields.rs` had no controller registry at
 //! all. `research/mob-behaviour.md` §5.1 reads the wander out of the client: mob vtable slot
 //! 19 `FUN_141c8d1b0` builds a list of 12-byte path elements out of the random source
 //! `FUN_142f04924`, **once per path element, in the controlling client**, and hands it to the
@@ -30,18 +39,25 @@
 //! first step and never reconverge.
 //!
 //! Three further consequences of the same missing registry, all read out of this repo's own
-//! code rather than guessed:
+//! code rather than guessed, and each with the line that fixed it:
 //!
 //! * `Fields::due_respawns` **drains** `field.pending`. With two sessions ticking, whichever
-//!   ticks first takes the new mobs and the other session is never told they exist. A
-//!   respawn is therefore unicast today. **[L]** from `fields.rs`.
-//! * `Fields::note_position` is written by every `0x02FF` from every session. Two controllers
-//!   are two writers of one field, last write wins, and the position a drop lands on is
+//!   ticks first took the new mobs and the other session was never told they exist - a
+//!   respawn was **unicast**. **[L]** from `fields.rs`. Fixed by publishing the `0x03C6` in
+//!   `session/combat.rs::spawn_due_mobs`; the drain itself is untouched and does not need to
+//!   change, because the mob is in the shared field either way.
+//! * `Fields::note_position` was written by every `0x02FF` from every session. Two controllers
+//!   are two writers of one field, last write wins, and the position a drop lands on was
 //!   whichever client reported most recently. **[L]** from `fields.rs` and
-//!   `session/combat.rs`.
-//! * `DropTable::sweep` removes an expired drop from the shared table and returns the
-//!   `0x046F` to the **calling** session only, so a second player keeps drawing an item that
-//!   no longer exists. **[L]** from `drops.rs`.
+//!   `session/combat.rs`. Fixed by `Fields::note_position_from`, which asks
+//!   [`may_report_movement`] **at the row** rather than at the call site.
+//! * `DropTable::sweep` removed an expired drop from the shared table and returned the
+//!   `0x046F` to the **calling** session only, so a second player kept drawing an item that no
+//!   longer existed. **[L]** from `drops.rs`. Fixed by `drops::Addressed`: the fade names its
+//!   owner and `Fields::with_drops` posts it.
+//! * And a fourth, found while wiring: `DropTable::field_entry` re-sent the **whole floor** to
+//!   whoever walked in, which is a leak the moment drops are owner-scoped. Fixed by
+//!   [`may_see_drop`] inside `field_entry`.
 //!
 //! # The model, in one sentence
 //!
@@ -104,7 +120,7 @@
 //!
 //! A published `0x03F0`, `0x03D9` or `0x03D1` can reach a client whose mob pool has never
 //! held that object - a player who joined mid-fight, or a duplicate from the narrow race in
-//! §"WIRE IT LIKE THIS". All three were read today with `tools/listing.py`, whose documented
+//! §"WHERE IT IS WIRED". All three were read today with `tools/listing.py`, whose documented
 //! positive control (`0x140304100` -> `raw`, `u8`, `u8`, then a run of `u16`) was run first
 //! and passed:
 //!
@@ -185,7 +201,7 @@ pub type SessionId = u64;
 /// `&Fields`, and a registry reached through it must be usable from `&self`. Its lock is its
 /// own and is a **leaf** - nothing in here calls back into `Fields`, `Bus` or a session - so
 /// it cannot deadlock against either. The wiring must still never take it while holding
-/// `Fields`'s own map lock; see §"WIRE IT LIKE THIS".
+/// `Fields`'s own map lock; see §"WHERE IT IS WIRED".
 ///
 /// # The invariant, and where it is actually enforced
 ///
@@ -581,229 +597,76 @@ pub fn own_type_for(party: &Party) -> u8 {
 }
 
 // ---------------------------------------------------------------------------------------
-// WIRE IT LIKE THIS
+// WHERE IT IS WIRED
 //
-// Everything below is in files this agent does not own. Nothing in this module is called by
-// anything yet, and until it is, two players on one map still run two simulations of every
-// mob - `CLAUDE.md`'s "built is not wired".
+// This section used to be called WIRE IT LIKE THIS and was a plan. It is now a map, kept so
+// that the next person reading `mobshare.rs` can find every call site without grepping, and
+// so that the three places the plan turned out to be wrong are written down rather than
+// rediscovered.
 //
-// ---------------------------------------------------------------------------------------
-// 0. `crates/world/src/fields.rs` - two lines, so the registry reaches a session
-//
-//    Beside the `bus` field, which is there for exactly the same reason ("this `Arc` is
-//    already handed to every `Session`"):
-//
-//        /// Who controls each mob. See `crate::mobshare`.  Its lock is a leaf, like the
-//        /// bus's: nothing in `mobshare` calls back into `Fields`.
-//        controllers: crate::mobshare::Controllers,
-//
-//        pub fn controllers(&self) -> &crate::mobshare::Controllers { &self.controllers }
-//
-//    `Controllers: Default`, so `#[derive(Default)] struct Fields` is unchanged.
-//
-//    **Lock order.** Never call `fields.controllers()` from inside a `Fields::with_drops`
-//    closure or between a `mobs_on` and its result being used - take the `Fields` answer
-//    first, drop it, then claim. The two locks are independent and neither calls the other,
-//    so this is a rule about not inventing a cycle rather than about breaking one.
+// | what | where |
+// |---|---|
+// | the registry | `fields.rs` - a `controllers` field and a `controllers()` accessor |
+// | claim on arrival | `session/field.rs::on_field_entered` |
+// | release on departure | `session/field.rs`: `go_to_map`, `on_change_channel`, `on_log_out` |
+// | respawn | `session/combat.rs::spawn_due_mobs` - publish the `0x03C6`, `claim_one` the grant |
+// | movement | `session/combat.rs::on_mob_move` - `note_position_from`, then publish `0x03D9` |
+// | damage and death | `session/combat.rs::on_attack` - publish the same bytes, `forget` the dead |
+// | drops | `session/combat.rs::drops_from_kill_for` - walk `drop_audience`, `Bus::publish_to_character` |
+// | the floor | `drops.rs::field_entry` filters by `may_see_drop`; `drops.rs::sweep` addresses its fades |
 //
 // ---------------------------------------------------------------------------------------
-// 1. `session/field.rs::on_field_entered` - the grant becomes a claim
+// Three things the plan got wrong, which is the part worth keeping
 //
-//    Today the loop sends `0x03C6` + `0x03D2` for every mob to every arriving session. Split
-//    it:
+// 1. **A field entry has to RELEASE this connection's own claims before it re-claims.** The
+//    plan said `reconcile` then `claim_uncontrolled`, and both are purely additive with
+//    respect to a session that already holds a mob - so a player returning to a map it
+//    already controlled got `0x03C6` for every mob and `0x03D2` for none of them, and every
+//    monster on that screen stood still for the rest of the session. The client destroys its
+//    mob pool on every `SetField`, so every grant it held is void and has to be re-sent.
+//    `release_map` on the way in is what makes field entry self-sufficient, and it covers the
+//    paths a departure hook cannot - the Cash Shop return in particular, whose
+//    `leave_the_field()` lives in a file this change did not own.
+//    Pinned by `coming_back_to_a_map_this_connection_controls_re_sends_every_grant`.
 //
-//        let live = self.fields.mobs_on(chr.map_id);
-//        let alive: Vec<u32> = live.iter().map(|m| m.spawn.object_id).collect();
-//        // `alive` is the WHOLE map here, which is `reconcile`'s precondition. A non-zero
-//        // return means a `forget` was missed on some death path - log it, do not discard it.
-//        let ghosts = self.fields.controllers().reconcile(chr.map_id, &alive);
-//        let mine = self.fields.controllers().claim_uncontrolled(
-//            chr.map_id, self.subscriber.get(), &alive);
-//        for live in live {
-//            ... push the MOB_ENTER_FIELD exactly as today ...
-//            if mine.contains(&mob.object_id) {
-//                ... push the MOB_CHANGE_CONTROLLER exactly as today ...
-//            }
-//        }
-//        crate::server::log(&format!(
-//            "   map {} has {} mob(s); this connection now controls {}{}",
-//            chr.map_id, alive.len(), mine.len(),
-//            if ghosts > 0 { format!(" ({ghosts} STALE entries dropped - a forget was missed)") }
-//            else { String::new() }));
+// 2. **`DropTable` cannot deliver a fade, and the plan put the fix in `session/mod.rs::tick`,
+//    which is the coordinator's file.** So the routing went one layer up instead:
+//    [`crate::drops::Addressed`] names the recipient and `Fields::with_drops` posts it,
+//    because that is the only function holding both the table and the bus. The consequence is
+//    that `DropTable::sweep` now returns an **always-empty** `Vec<Reply>` - the signature is
+//    kept only so the existing `out.extend(...)` call site still compiles. The tidier form is
+//    in the report.
 //
-//    The first player on a map claims all of them; the second claims none and is a spectator.
-//    The log line is the check that the split went where it was meant to.
-//
-// 2. `session/field.rs::go_to_map` and `session/mod.rs`'s `leave_the_field` callers -
-//    release
-//
-//    Beside every existing `self.leave_the_field()` (a portal walk, Log Out, Change Channel,
-//    the Cash Shop) and in `Drop for Session` beside `Bus::part`:
-//
-//        self.fields.controllers().release_all(self.subscriber.get());
-//
-//    `release_map(map, id)` is available where the map is known and is tidier; `release_all`
-//    is the one `Drop` must use, because `Drop` has no character to read a map from. Both are
-//    idempotent.
-//
-//    **`Drop` is the single point of failure for this registry.** A session that vanishes
-//    without it leaves mobs claimed by a dead id and nobody will ever claim them again -
-//    monsters that have stopped moving for no visible reason. `Bus::part` is already in
-//    `Drop`; put this on the line beside it, not in a different function.
-//
-// 3. `session/combat.rs::spawn_due_mobs` - claim the new mobs, publish the spawn
-//
-//        let arrived = self.fields.due_respawns(map, &self.config, now_ms);
-//        for live in arrived {
-//            let mut mob = live.as_seen();
-//            mob.appear_type = net::mob::APPEAR_SPAWNING;
-//            mob.forced_stat = self.forced_stat_for(mob.template_id);
-//            let spawn = Reply { opcode: net::mob::MOB_ENTER_FIELD, ... };   // as today
-//            // Everyone else on the map, or they never learn this mob exists: due_respawns
-//            // DRAINS the pending list, so only the session that ticked first sees it.
-//            if crate::mobshare::audience_for(spawn.opcode, mob.object_id).is_map_wide() {
-//                self.bus().publish(self.subscriber, map, spawn.clone(), None);
-//            }
-//            out.push(spawn);
-//            // ...and the grant is ours alone.
-//            if self.fields.controllers().claim_one(map, mob.object_id, self.subscriber.get()) {
-//                out.push(Reply { opcode: net::mobmove::MOB_CHANGE_CONTROLLER, ... });
-//            }
-//        }
-//
-//    This also spreads control across connections over time, because whichever session ticks
-//    first takes each new mob - which is worth having: with one session holding everything, a
-//    single stalled client freezes every monster on the map.
-//
-//    **A narrow race, and it is benign.** A player entering the map at the instant another
-//    session's tick publishes a spawn can be handed the same `0x03C6` twice - once from
-//    `mobs_on`, once from the publish. `FUN_141d33630` looks the object id up in the pool at
-//    `141d33711 call 0x141d2efc0` and, when it is found, takes the branch at `141d33725`
-//    that re-initialises the existing mob instead of creating a second one (`je 0x141d33788`
-//    is the create path). **[L]** for the fork; **[I]** that the visible effect is a
-//    re-initialisation rather than a duplicate.
-//
-// 4. `session/combat.rs::on_mob_move` - only the controller is believed
-//
-//        let Some(map) = self.claimed_character().map(|c| c.map_id) else { return Vec::new() };
-//        if !crate::mobshare::may_report_movement(
-//            self.fields.controllers().controller_of(map, req.object_id),
-//            self.subscriber.get(),
-//        ) {
-//            crate::server::log(&format!(
-//                "   0x02FF for mob {} IGNORED: this connection does not control it (controller {:?})",
-//                req.object_id, self.fields.controllers().controller_of(map, req.object_id)));
-//            return Vec::new();
-//        }
-//        self.fields.note_position(map, req.object_id, (req.x, req.y));
-//        // ...the 0x03E4 exactly as today...
-//        // ...and now the other screens:
-//        let a = crate::mobshare::audience_for(net::mobmove::MOB_MOVE, req.object_id);
-//        if a.is_map_wide() {
-//            self.bus().publish(self.subscriber, map, Reply {
-//                opcode: net::mobmove::MOB_MOVE,
-//                body: net::mobmove::mob_move_broadcast(&req),
-//                what: format!("MobMove: mob {} to ({}, {}), {} path bytes copied verbatim",
-//                              req.object_id, req.x, req.y, req.path.len()),
-//            }, a.supersedes());
-//        }
-//
-//    `Bus::publish` excludes the sender, and the sender is the controller, so the rule
-//    *"never send `0x03D9` to the client that sent the `0x02FF`"* (`research/mob-behaviour.md`
-//    §12.1 - the handler overwrites position, animation and `mob+0xcd0`, state the controller
-//    owns) is satisfied by construction rather than by a second check.
-//
-// 5. `session/combat.rs::on_attack` - the damage and the death, to everyone
-//
-//    In the target loop, at the bottom where `mob_hit_replies` is turned into `Reply`s:
-//
-//        for (opcode, body) in net::combat::mob_hit_replies(target.object_id, &hit, max_hp) {
-//            let reply = Reply { opcode, body, what: ...same as today... };
-//            let a = crate::mobshare::audience_for(opcode, target.object_id);
-//            if a.is_map_wide() {
-//                self.bus().publish(self.subscriber, map, reply.clone(), a.supersedes());
-//            }
-//            out.push(reply);
-//        }
-//
-//    **Publish the SAME `(opcode, body)` the attacker gets. Do not recompute.** `0x03F0`
-//    carries a percentage, not an absolute (`net::combat::hp_percent`,
-//    `research/mob-hp-bar.md`), and a second call site that looked up `max_hp` its own way is
-//    exactly how that unit error would come back. One body, two destinations.
-//
-//    And on the death branch, beside the `Hurt::Died` arm:
-//
-//        self.fields.controllers().forget(map, target.object_id);
-//
-// 6. `session/combat.rs::drops_from_kill` - the top damager owns them
-//
-//    `on_attack` currently passes `chr_id` as the drop owner. Pass the audience instead:
-//
-//        if let crate::fields::Hurt::Died(shares) = left {
-//            let ranked = crate::mobshare::drop_audience(&shares, chr_id);
-//            out.extend(self.drops_from_kill(template, target.object_id, died_at, &ranked, map));
-//            ...
-//        }
-//
-//    and inside `drops_from_kill`, walk `ranked` and stop at the first candidate that is on
-//    **this** map. `chr_id` is always in the list and always on the map, so the walk
-//    terminates. The `DropFromMob.owner_id` becomes that character, which is what
-//    `LiveDrop::may_be_taken_by` then enforces.
-//
-//    **This needs one bus method that does not exist**, because the winner may be a different
-//    connection:
-//
-//        /// Queue a finished packet for whichever connection is playing `character` **on
-//        /// `map`**. Returns whether anyone was listening.
-//        ///
-//        /// Unlike `send_to_character`, this carries bytes - which is only legitimate for a
-//        /// packet whose content does not depend on who receives it. A `0x046E` is identical
-//        /// for every viewer; a `0x007C` is not, and that is why `Event` exists.
-//        ///
-//        /// The `map` is not optional: a `0x046E` names a position in the field the
-//        /// recipient is standing in, so delivering one to a character who has walked away
-//        /// would put a phantom item on a map it was never dropped on.
-//        pub fn publish_to_character(&self, character: u32, map: u32, reply: Reply) -> bool
-//
-//    Ten lines beside `send_to_character`: the same loop over `boxes`, matching
-//    `p.character == character && p.map == map`, pushing `Queued { reply, supersedes: None }`
-//    into `queue` rather than into `events`. It belongs to the coordinator because
-//    `broadcast.rs` is a shared file.
-//
-//    *If the coordinator would rather not add it*, the fallback needs no shared-file change
-//    at all: give the drop to the highest-ranked candidate **who is this session**, else to
-//    `chr_id`. That is "the top damager sees the drops unless the killing blow came from
-//    somebody else", which is not what the owner asked for, and it should be said out loud rather
-//    than shipped quietly.
-//
-// 7. `session/field.rs::on_field_entered` and `session/mod.rs::tick` - the floor is private
-//
-//    Field entry currently re-sends the whole floor to whoever walks in. Filter it:
-//
-//        let party = crate::mobshare::Party::solo(chr.id);
-//        out.extend(self.fields.with_drops(map, |d| {
-//            let _ = d.field_entry(map, now);   // purges expired; its replies are rebuilt below
-//            d.on_field(map)
-//                .filter(|dr| crate::mobshare::may_see_drop(dr.owner_id, chr.id, &party))
-//                .map(|dr| dr.enter_reply(net::drops::ENTER_INSTANT))
-//                .collect::<Vec<_>>()
-//        }));
-//
-//    The sweep in `tick` is the same problem from the other end: it removes an expired drop
-//    from the shared table and returns the `0x046F` to whichever session ticked, which may
-//    not be the one that can see it. Read the owners first, then route with
-//    `publish_to_character` (item 6) by the object id in the reply's first four bytes -
-//    `net::drops::drop_leave_field` writes it there.
+// 3. **`drop_from_mob` has to hand back the object id.** The plan's audience walk picks a
+//    winner and then builds the packet, but there is no way to ask the bus *"is this
+//    character on this map"* without attempting a delivery - `publish_to_character` answers by
+//    doing it. So the drop is minted for the top candidate, and
+//    [`crate::drops::DropTable::readdress`] moves it down the ranking until one lands. Nothing
+//    has been sent about the drop while that happens, so no client can tell.
 //
 // ---------------------------------------------------------------------------------------
-// What is NOT in this plan, deliberately
+// Still NOT wired, and it is one line in a file this change did not own
+//
+// **`Drop for Session` does not call `release_all`.** `session/mod.rs` belongs to the
+// coordinator. A connection that dies without logging out - a killed client, a dead socket -
+// therefore leaves its mobs claimed by an id nobody will ever be, and they stop moving for
+// everyone with no visible cause. `Bus::part` is already on that line; this goes beside it:
+//
+//     self.fields.controllers().release_all(self.subscriber.get());
+//
+// The same line belongs beside `session/cashshop.rs`'s `leave_the_field()`, though item 1
+// above means the Cash Shop already heals itself on the way back in.
+//
+// ---------------------------------------------------------------------------------------
+// What is NOT here, deliberately
 //
 // * **No `CONTROL_RELEASE`, ever.** It despawns. See the module docs.
 // * **No proximity rotation.** Same reason.
 // * **No timer.** `research/mob-behaviour.md` §13: both new packets are reactive - one
 //   `0x03E4` per inbound `0x02FF`, one `0x03D9` per inbound `0x02FF` per other client on the
 //   field. Nothing here needs a periodic send and none should be added speculatively.
-// * **No party.** `Party::solo` is the whole rule until the party agent lands.
+// * **No party.** [`Party::solo`] is the whole rule until the party agent lands, and
+//   `Fields::parties()` is where its registry now sits.
 // ---------------------------------------------------------------------------------------
 
 #[cfg(test)]

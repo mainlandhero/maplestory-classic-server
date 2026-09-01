@@ -7539,3 +7539,531 @@ fn improved_mp_recovery_adds_its_percent_to_a_potion() {
     );
 }
 
+// =========================================================================================
+// One mob, one simulation, two screens - `crate::mobshare`, wired 2026-09-01
+//
+// The owner: *"All clients need to see other clients damages to mobs, but the drops can remain per
+// client. If multiple clients hit the mob, the one who dealt the most damage (without counting
+// over-damage) will see the drops."*
+//
+// **Nothing below has ever been on a wire between two players.** Two clients have never been
+// connected to this server at once, so each of these proves the server does what it was told
+// to do and none of them proves the client likes it.
+// =========================================================================================
+
+/// An opcode nothing dispatches, so `handle` returns the mailbox and nothing else.
+const NO_PACKET: [u8; 2] = [0xFF, 0xFE];
+
+/// The map these tests share.
+const SHARED_MAP: u32 = 104_040_000;
+
+/// A channel whose one map has `points` spawn points, all of them already alive.
+///
+/// The mobs are brought up **before** anybody walks in, because that is the case the claim
+/// split is about: a field that already has monsters on it when a second player arrives.
+fn shared_channel(
+    points: u32,
+    hp: u64,
+) -> (Arc<Store>, Arc<Config>, Arc<crate::fields::Fields>, i64) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let mut mobs = std::collections::HashMap::new();
+    mobs.insert(
+        SHARED_MAP,
+        (0..points)
+            .map(|i| net::mob::FieldMob::new(2000 + i, 2, 100 + 100 * i as i16, 395, 1, hp))
+            .collect::<Vec<_>>(),
+    );
+    let config =
+        Arc::new(Config { set_field_probe: true, send_mobs: true, mobs, ..Config::default() });
+    let fields = Arc::new(crate::fields::Fields::new());
+    fields.seed(SHARED_MAP, &config, 0);
+    fields.due_respawns(SHARED_MAP, &config, 999_999);
+    (store, config, fields, account)
+}
+
+/// Another connection on the same channel, playing a new character on [`SHARED_MAP`].
+fn join_channel(
+    store: &Arc<Store>,
+    config: &Arc<Config>,
+    fields: &Arc<crate::fields::Fields>,
+    account: i64,
+    name: &str,
+) -> (Session, u32) {
+    let chr =
+        net::opcode::Character { name: name.to_string(), map_id: SHARED_MAP, ..Default::default() };
+    let id = store.create_character(account, 0, &chr).unwrap().id;
+    store.create_migration(account, id, 0, 0).unwrap();
+    let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+    s.claim_for_character(id);
+    (s, id)
+}
+
+fn count_of(out: &[Reply], opcode: u16) -> usize {
+    out.iter().filter(|r| r.opcode == opcode).count()
+}
+
+fn unhex_body(s: &str) -> Vec<u8> {
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("fixture hex"))
+        .collect()
+}
+
+/// **The bug this whole module exists to remove.** `on_field_entered` used to push a
+/// `MOB_CHANGE_CONTROLLER` for every mob to every arriving session, so two players on one map
+/// were two clients each rolling their own wander for the same monster - the client builds the
+/// path out of its own random source, one call per element (`research/mob-behaviour.md` §5.1),
+/// so the two screens diverge on the first step and never reconverge.
+///
+/// **Both halves are asserted**, because a claim that returned nothing to anybody would pass
+/// the second half on its own - and that is a different bug: monsters that never move at all.
+#[test]
+fn only_the_first_arrival_is_granted_control_and_the_second_is_a_spectator() {
+    let (store, config, fields, account) = shared_channel(4, 30);
+    let alive = fields.mob_count(SHARED_MAP);
+    assert!(alive >= 2, "the fixture needs several mobs, not {alive}");
+
+    let (mut first, _) = join_channel(&store, &config, &fields, account, "Wanderer");
+    let (mut second, _) = join_channel(&store, &config, &fields, account, "Stranger");
+
+    let a = first.on_field_entered();
+    assert_eq!(count_of(&a, net::mob::MOB_ENTER_FIELD), alive, "every mob is drawn for the first");
+    assert_eq!(
+        count_of(&a, net::mobmove::MOB_CHANGE_CONTROLLER),
+        alive,
+        "and an empty map's mobs are all claimed by whoever arrives first"
+    );
+
+    let b = second.on_field_entered();
+    assert_eq!(
+        count_of(&b, net::mob::MOB_ENTER_FIELD),
+        alive,
+        "the second player must SEE every mob - only the simulation is exclusive"
+    );
+    assert_eq!(
+        count_of(&b, net::mobmove::MOB_CHANGE_CONTROLLER),
+        0,
+        "and must be granted NONE of them: two grants are two independent wanders"
+    );
+
+    assert_eq!(fields.controllers().held_by(first.subscriber.get()), alive);
+    assert_eq!(fields.controllers().held_by(second.subscriber.get()), 0);
+    assert_eq!(fields.controllers().len(), alive, "one controller per mob, not two");
+}
+
+/// **A respawn used to be unicast.** `Fields::due_respawns` drains `field.pending`, so
+/// whichever session ticked first took the new mobs and the other player was never told they
+/// exist - and no later packet would have healed it.
+///
+/// Four effects, not one: the ticking session gets the spawn *and* the grant; the other
+/// session gets the spawn *and not* the grant.
+#[test]
+fn a_respawned_mob_reaches_the_other_player_but_its_grant_does_not() {
+    let (store, config, fields, account) = shared_channel(1, 30);
+    // Kill the one mob so its point is booked to refill while both players stand there.
+    let victim = fields.mobs_on(SHARED_MAP)[0].spawn.object_id;
+    fields.hurt(SHARED_MAP, victim, 999, 200, &config, 0);
+    assert_eq!(fields.mob_count(SHARED_MAP), 0);
+
+    let (mut ticker, _) = join_channel(&store, &config, &fields, account, "Ticker");
+    let (mut watcher, _) = join_channel(&store, &config, &fields, account, "Watcher");
+    ticker.on_field_entered();
+    watcher.on_field_entered();
+    let _ = ticker.tick(1_000);
+    let _ = watcher.tick(1_000);
+
+    let spawned = ticker.tick(1_000 + crate::config::DEFAULT_RESPAWN_MS);
+    assert_eq!(count_of(&spawned, net::mob::MOB_ENTER_FIELD), 1, "the refill: {spawned:?}");
+    assert_eq!(
+        count_of(&spawned, net::mobmove::MOB_CHANGE_CONTROLLER),
+        1,
+        "claimed by whichever session ticked first"
+    );
+
+    let seen = watcher.tick(2_000 + crate::config::DEFAULT_RESPAWN_MS);
+    assert_eq!(
+        count_of(&seen, net::mob::MOB_ENTER_FIELD),
+        1,
+        "the other player has to learn the mob exists: {seen:?}"
+    );
+    assert_eq!(
+        count_of(&seen, net::mobmove::MOB_CHANGE_CONTROLLER),
+        0,
+        "but must not be granted it as well - claim_one is a test-and-set"
+    );
+    assert_eq!(fields.controllers().held_by(ticker.subscriber.get()), 1);
+    assert_eq!(fields.controllers().held_by(watcher.subscriber.get()), 0);
+}
+
+/// Object 2000, four path elements, 174 bytes - a **real captured `0x02FF`**, byte-identical
+/// to `net::mobmove::tests::CAPTURED_FOUR_ELEMENTS`, and the mob a second decoder
+/// independently placed at `(424, 395)`.
+const CAPTURED_MOB_MOVE_2000: &str = "d0070000010000ff0000000000000000000000000000000000010000\
+00ccddff00ccddff005087d93c000000000100000000a8018b0100000000040000a6018b01d5ff000023000000000\
+00000035a000000a3018b01000000002300000000000000025a000000c2018b012b00000023000000000000000\
+2f1020000c8018b012b00000025000000000000000293000000000faa8ebe57f5c299250000000000000000000000\
+0300000000010000";
+
+/// **Only the controller may move a mob, and its report reaches the other screen.**
+///
+/// Two claims in one test, and the second is the positive control for the first: an identical
+/// body sent by the controller must be believed, or "the non-controller was refused" would be
+/// indistinguishable from "this handler stopped working".
+///
+/// Five effects, because `CLAUDE.md` says a test that checks one of several gives false
+/// confidence about the rest: the refusal, the position that must not move, the `0x03E4` ack,
+/// the `0x03D9` rebroadcast, and that the mover never receives its own rebroadcast.
+#[test]
+fn a_non_controllers_mob_move_is_refused_and_the_controllers_is_rebroadcast() {
+    let (store, config, fields, account) = shared_channel(1, 30);
+    assert_eq!(fields.mobs_on(SHARED_MAP)[0].spawn.object_id, 2000, "the fixture's mob");
+
+    let (mut controller, _) = join_channel(&store, &config, &fields, account, "Controller");
+    let (mut spectator, _) = join_channel(&store, &config, &fields, account, "Spectator");
+    controller.on_field_entered();
+    spectator.on_field_entered();
+    let _ = controller.handle(&NO_PACKET);
+    let _ = spectator.handle(&NO_PACKET);
+
+    let mut packet = net::mobmove::MOB_MOVE_REQUEST.to_le_bytes().to_vec();
+    packet.extend_from_slice(&unhex_body(CAPTURED_MOB_MOVE_2000));
+
+    // (1) The spectator does not own this simulation.
+    let refused = spectator.handle(&packet);
+    assert!(refused.is_empty(), "no ack for a mob this connection does not control: {refused:?}");
+    assert_eq!(
+        fields.mob_position(SHARED_MAP, 2000),
+        None,
+        "and the position a drop lands on must not have been written"
+    );
+    assert!(
+        controller.handle(&NO_PACKET).is_empty(),
+        "nor may a refused report be rebroadcast to anybody"
+    );
+
+    // (2) The controller's identical report is believed - the control.
+    let ack = controller.handle(&packet);
+    assert_eq!(count_of(&ack, net::mobmove::MOB_CTRL_ACK), 1, "the ack: {ack:?}");
+    assert_eq!(
+        fields.mob_position(SHARED_MAP, 2000),
+        Some((424, 395)),
+        "the same pixel two independent decoders read out of this capture"
+    );
+    assert_eq!(
+        count_of(&ack, net::mobmove::MOB_MOVE),
+        0,
+        "the mover must never be sent 0x03D9 - it overwrites the state the controller owns"
+    );
+
+    // (3) ...and it is what makes the mob walk on the other screen at all.
+    let mail = spectator.handle(&NO_PACKET);
+    let moves: Vec<&Reply> = mail.iter().filter(|r| r.opcode == net::mobmove::MOB_MOVE).collect();
+    assert_eq!(moves.len(), 1, "one rebroadcast: {mail:?}");
+    assert_eq!(
+        u32::from_le_bytes(moves[0].body[0..4].try_into().unwrap()),
+        2000,
+        "addressed to the mob that moved"
+    );
+}
+
+/// `previous-runs/world-20260820-121055.log` 16:10:28.598, `0x00DF`, 229 bytes: a plain swing
+/// that connected - mob **2002**, one hit of 19, not critical. The same body `net::attack`,
+/// `crate::remoteattack` and `session::multiplayer`'s tests all use.
+const MELEE_2002_FOR_19: &str = "0001000000000000000000000000000001050000009fae340801040000003b80680a70028b010000000070028b0100000000000000000000000000000000000000000000000000000100000001000000000a0055736572204d656c65658901000000000000000000000000000000010000000000000000000000d20700000200000001000013000000000000000000000736028b0136028b0135027b01890100000000000001000002000000000001012302710148028b01000000007e6c3c6600000000030000000000d5c057820100000092e9bc2707000000bc6509e5000080e8da8f00";
+
+fn melee_packet() -> Vec<u8> {
+    let mut p = net::combat::USER_MELEE_ATTACK.to_le_bytes().to_vec();
+    p.extend_from_slice(&unhex_body(MELEE_2002_FOR_19));
+    p
+}
+
+/// A channel whose single mob is object **2002**, which is what the captured swing targets.
+fn channel_with_mob_2002(hp: u64) -> (Arc<Store>, Arc<Config>, Arc<crate::fields::Fields>, i64) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account = store.create_account("maplecw", "correct horse battery").unwrap();
+    let mut mobs = std::collections::HashMap::new();
+    mobs.insert(SHARED_MAP, vec![net::mob::FieldMob::new(2002, 2, 400, 395, 1, hp)]);
+    let config = Arc::new(Config {
+        set_field_probe: true,
+        send_mobs: true,
+        mobs,
+        drops: crate::droptables::DropTables::parse("2 | 4000001 | 100 | 1 | 1 | 9 | Shell\n"),
+        ..Config::default()
+    });
+    let fields = Arc::new(crate::fields::Fields::new());
+    fields.seed(SHARED_MAP, &config, 0);
+    fields.due_respawns(SHARED_MAP, &config, 999_999);
+    (store, config, fields, account)
+}
+
+/// **The owner's first sentence, end to end**: *"All clients need to see other clients damages to
+/// mobs."*
+///
+/// The health bar and the death, on a screen that did not swing - and **byte-identical to what
+/// the attacker got**, which is the property that matters most here. `0x03F0`'s hp field is a
+/// **percentage**, not an absolute (`net::combat::hp_percent`, `research/mob-hp-bar.md`); the
+/// absolute went out once and drew a 45-HP snail at 27%. A second call site that looked
+/// `max_hp` up its own way is exactly how that comes back, so this compares the bodies rather
+/// than re-deriving the number beside them.
+#[test]
+fn a_mobs_damage_and_death_reach_the_other_players_screen_unchanged() {
+    let (store, config, fields, account) = channel_with_mob_2002(30);
+    let (mut attacker, _) = join_channel(&store, &config, &fields, account, "Attacker");
+    let (mut watcher, _) = join_channel(&store, &config, &fields, account, "Watcher");
+    attacker.on_field_entered();
+    watcher.on_field_entered();
+    let _ = attacker.handle(&NO_PACKET);
+    let _ = watcher.handle(&NO_PACKET);
+
+    // (1) A hit that wounds: 30 - 19 = 11, so a bar update and no death.
+    let swing = attacker.handle(&melee_packet());
+    let hp: Vec<&Reply> = swing.iter().filter(|r| r.opcode == net::combat::MOB_HP_CHANGE).collect();
+    assert_eq!(hp.len(), 1, "the attacker's own bar update: {swing:?}");
+
+    let mail = watcher.handle(&NO_PACKET);
+    let seen: Vec<&Reply> =
+        mail.iter().filter(|r| r.opcode == net::combat::MOB_HP_CHANGE).collect();
+    assert_eq!(seen.len(), 1, "the watcher's bar must move too: {mail:?}");
+    assert_eq!(seen[0].body, hp[0].body, "the SAME body, not a second computation of it");
+    assert_eq!(
+        u32::from_le_bytes(seen[0].body[4..8].try_into().unwrap()),
+        net::combat::hp_percent(11, 30),
+        "a PERCENTAGE - 11 of 30 - read out of net::combat rather than restated here"
+    );
+
+    // (2) A hit that kills: the death, and no bar update for an object being torn down.
+    let kill = attacker.handle(&melee_packet());
+    let died: Vec<&Reply> =
+        kill.iter().filter(|r| r.opcode == net::combat::MOB_LEAVE_FIELD).collect();
+    assert_eq!(died.len(), 1, "the attacker sees it die: {kill:?}");
+
+    let mail = watcher.handle(&NO_PACKET);
+    let seen: Vec<&Reply> =
+        mail.iter().filter(|r| r.opcode == net::combat::MOB_LEAVE_FIELD).collect();
+    assert_eq!(seen.len(), 1, "and so does everybody else on the map: {mail:?}");
+    assert_eq!(seen[0].body, died[0].body);
+    assert_eq!(
+        count_of(&mail, net::mobmove::MOB_CHANGE_CONTROLLER),
+        0,
+        "a grant must never ride along with a broadcast"
+    );
+    assert_eq!(
+        fields.controllers().controller_of(SHARED_MAP, 2002),
+        None,
+        "and the dead mob's entry is forgotten at the death, not left for the next reconcile"
+    );
+}
+
+/// **The case the owner named.** *"If multiple clients hit the mob, the one who dealt the most
+/// damage (without counting over-damage) will see the drops."*
+///
+/// The helper does 90 of 100; the attacker lands the killing 10. The loot is the helper's, on
+/// the helper's own connection, and the killer gets none of it.
+///
+/// Both directions are asserted. "The killer got no drop" alone would pass against a version
+/// that dropped nothing at all, which is the failure that looks identical on screen -
+/// `session/combat.rs`'s own sentence about an item nobody can see.
+#[test]
+fn the_drops_go_to_the_top_damager_and_not_to_whoever_landed_the_last_hit() {
+    let (store, config, fields, account) = channel_with_mob_2002(100);
+    let (mut killer, killer_id) = join_channel(&store, &config, &fields, account, "Finisher");
+    let (mut helper, helper_id) = join_channel(&store, &config, &fields, account, "Helper");
+    killer.on_field_entered();
+    helper.on_field_entered();
+    let _ = killer.handle(&NO_PACKET);
+    let _ = helper.handle(&NO_PACKET);
+
+    // 90 of the 100, credited to the helper. `LiveMob::credit` caps at what landed, so this is
+    // the same ranking the EXP split and its white/yellow line already pay out on.
+    fields.hurt(SHARED_MAP, 2002, 90, helper_id, &config, 0);
+    assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(10));
+
+    let kill = killer.handle(&melee_packet());
+    assert!(
+        kill.iter().any(|r| r.opcode == net::combat::MOB_LEAVE_FIELD),
+        "the swing has to actually kill it: {kill:?}"
+    );
+    assert_eq!(
+        count_of(&kill, net::drops::DROP_ENTER_FIELD),
+        0,
+        "the killer did 10 of 100 and must not see the loot: {kill:?}"
+    );
+
+    let mail = helper.handle(&NO_PACKET);
+    let loot: Vec<&Reply> =
+        mail.iter().filter(|r| r.opcode == net::drops::DROP_ENTER_FIELD).collect();
+    assert_eq!(loot.len(), 1, "the top damager sees it, on their own connection: {mail:?}");
+    assert_eq!(
+        u32::from_le_bytes(loot[0].body[23..27].try_into().unwrap()),
+        helper_id,
+        "and the packet names them as the owner"
+    );
+
+    // The floor agrees with the packet, which is what `LiveDrop::may_be_taken_by` enforces - a
+    // drop the helper can see and the killer can take would be the same bug wearing a hat.
+    let owners: Vec<u32> =
+        fields.with_drops(SHARED_MAP, |d| d.on_field(SHARED_MAP).map(|x| x.owner_id).collect());
+    assert_eq!(owners, vec![helper_id], "killer {killer_id} owns nothing here");
+}
+
+/// **An expired drop fades on the OWNER's screen, not on whichever session happened to tick.**
+///
+/// The drop table is shared by every connection on the channel and every one of them sweeps,
+/// so before this the first to tick removed the drop and took the `0x046F` - the owner went on
+/// drawing an item that no longer existed, and a bystander was handed a leave packet for an
+/// object its pool never held. Neither is visible from one screen.
+#[test]
+fn an_expired_drop_fades_for_its_owner_and_not_for_the_session_that_swept_it() {
+    let (store, config, fields, account) = shared_channel(1, 30);
+    let (mut sweeper, _) = join_channel(&store, &config, &fields, account, "Sweeper");
+    let (mut owner, owner_id) = join_channel(&store, &config, &fields, account, "Owner");
+    sweeper.on_field_entered();
+    owner.on_field_entered();
+    let _ = sweeper.handle(&NO_PACKET);
+    let _ = owner.handle(&NO_PACKET);
+
+    let (drop_id, _) = fields.with_drops(SHARED_MAP, |d| {
+        d.drop_from_mob(crate::drops::DropFromMob {
+            map_id: SHARED_MAP,
+            owner_id,
+            item: store::Item::bundle(4_000_001, 1),
+            inv_type: store::InventoryType::Etc,
+            meso: 0,
+            x: 400,
+            y: 395,
+            source_x: 400,
+            source_y: 395,
+            now_ms: 0,
+        })
+    });
+
+    // Well past `DROP_LIFETIME_MS`, and it is the *other* connection that gets there first.
+    let swept = sweeper.tick(crate::drops::DROP_LIFETIME_MS + 1_000);
+    assert_eq!(
+        count_of(&swept, net::drops::DROP_LEAVE_FIELD),
+        0,
+        "the sweeping session was never shown this drop and must not be told it faded: {swept:?}"
+    );
+    assert_eq!(fields.with_drops(SHARED_MAP, |d| d.len()), 0, "but it IS gone from the floor");
+
+    let mail = owner.tick(crate::drops::DROP_LIFETIME_MS + 2_000);
+    let fades: Vec<&Reply> =
+        mail.iter().filter(|r| r.opcode == net::drops::DROP_LEAVE_FIELD).collect();
+    assert_eq!(fades.len(), 1, "the owner's screen is the one holding the icon: {mail:?}");
+    assert_eq!(
+        u32::from_le_bytes(fades[0].body[0..4].try_into().unwrap()),
+        drop_id,
+        "and it names the drop that expired"
+    );
+    assert_eq!(fades[0].body[4], net::drops::leave_type::FADE);
+}
+
+/// **Walking in must not show somebody else's loot.** The floor is re-sent on every field
+/// entry because the client's drop pool is destroyed and rebuilt empty by each `SetField` -
+/// and that re-send used to be unfiltered, which is a leak the moment drops are owner-scoped.
+/// The client reads `ownType` into `drop+0x70` and never tests it again (**[L]**), so who is
+/// sent the `0x046E` is the only thing that decides who can pick the item up.
+#[test]
+fn walking_into_a_field_does_not_re_send_another_players_drops() {
+    let (store, config, fields, account) = shared_channel(1, 30);
+    let (mut owner, owner_id) = join_channel(&store, &config, &fields, account, "Owner");
+    let (mut passer_by, _) = join_channel(&store, &config, &fields, account, "PasserBy");
+    owner.on_field_entered();
+    passer_by.on_field_entered();
+
+    fields.with_drops(SHARED_MAP, |d| {
+        d.drop_from_mob(crate::drops::DropFromMob {
+            map_id: SHARED_MAP,
+            owner_id,
+            item: store::Item::bundle(4_000_001, 1),
+            inv_type: store::InventoryType::Etc,
+            meso: 0,
+            x: 400,
+            y: 395,
+            source_x: 400,
+            source_y: 395,
+            now_ms: 0,
+        })
+    });
+
+    let theirs = passer_by.on_field_entered();
+    assert_eq!(
+        count_of(&theirs, net::drops::DROP_ENTER_FIELD),
+        0,
+        "a bystander sees none of it: {theirs:?}"
+    );
+
+    // The control, and it is the half that matters: the owner must still get it back, or this
+    // would pass against a field entry that had simply stopped re-sending the floor at all.
+    let mine = owner.on_field_entered();
+    let back: Vec<&Reply> =
+        mine.iter().filter(|r| r.opcode == net::drops::DROP_ENTER_FIELD).collect();
+    assert_eq!(back.len(), 1, "the owner's own: {mine:?}");
+    assert_eq!(back[0].body[1], net::drops::ENTER_INSTANT, "already lying there, no second arc");
+}
+
+/// **A controller loses its mobs by leaving, and nothing is sent to take them away.**
+///
+/// The client's only revoke is `CONTROL_RELEASE`, and level 0 **despawns** the mob rather than
+/// releasing it (`net::mobmove::mob_release_controller` says so in its own doc), so there is no
+/// "you are no longer the controller, keep drawing it" packet in this client. Leaving costs
+/// zero packets on this side because the departing client has already torn its own mob pool
+/// down in the `SetField`.
+#[test]
+fn a_departing_controller_hands_its_mobs_to_whoever_is_left() {
+    let (store, config, fields, account) = shared_channel(4, 30);
+    let alive = fields.mob_count(SHARED_MAP);
+    let (mut leaver, _) = join_channel(&store, &config, &fields, account, "Leaver");
+    let (mut stayer, _) = join_channel(&store, &config, &fields, account, "Stayer");
+    leaver.on_field_entered();
+    let spectating = stayer.on_field_entered();
+    assert_eq!(count_of(&spectating, net::mobmove::MOB_CHANGE_CONTROLLER), 0);
+
+    let out = leaver.on_log_out();
+    assert!(!out.is_empty(), "log out is answered, and that is not optional");
+    assert_eq!(
+        count_of(&out, net::mobmove::MOB_CHANGE_CONTROLLER),
+        0,
+        "no packet takes control away - level 0 would DESPAWN the mob on the old screen"
+    );
+    assert_eq!(fields.controllers().held_by(leaver.subscriber.get()), 0, "the claims are freed");
+    assert_eq!(fields.mob_count(SHARED_MAP), alive, "and the mobs themselves are untouched");
+
+    // The next session to ask picks them up. A field entry is the cheapest way to ask.
+    let now_mine = stayer.on_field_entered();
+    assert_eq!(
+        count_of(&now_mine, net::mobmove::MOB_CHANGE_CONTROLLER),
+        alive,
+        "an orphaned field's mobs go to the next session that claims: {now_mine:?}"
+    );
+    assert_eq!(fields.controllers().held_by(stayer.subscriber.get()), alive);
+}
+
+/// **Re-entering a field re-grants what this connection already controls.**
+///
+/// The `SetField` destroys the client's mob pool, so every grant it was holding is void. A
+/// registry that was only additive would answer "you already control these" and send nothing,
+/// and every monster on that screen would stand still for the rest of the session - which is
+/// the bug the registry was added to fix, arriving from the other direction.
+#[test]
+fn coming_back_to_a_map_this_connection_controls_re_sends_every_grant() {
+    let (store, config, fields, account) = shared_channel(4, 30);
+    let alive = fields.mob_count(SHARED_MAP);
+    let (mut only, _) = join_channel(&store, &config, &fields, account, "Solo");
+
+    let first = only.on_field_entered();
+    assert_eq!(count_of(&first, net::mobmove::MOB_CHANGE_CONTROLLER), alive);
+
+    let again = only.on_field_entered();
+    assert_eq!(
+        count_of(&again, net::mobmove::MOB_CHANGE_CONTROLLER),
+        alive,
+        "a second SetField needs the grants again, not a registry saying 'already yours'"
+    );
+    assert_eq!(
+        fields.controllers().held_by(only.subscriber.get()),
+        alive,
+        "and still exactly one holder"
+    );
+}
+

@@ -31,18 +31,31 @@ impl Session {
     /// re-runs slot 8 `FUN_141c54200`. That slot no-ops when the animation is already running
     /// (`141c54248 JNE ret`), which is what makes it a pump rather than an initialiser.
     ///
-    /// # The broadcast half, which has no recipient yet
+    /// # The broadcast half, WIRED 2026-09-01
     ///
     /// `0x03D9` is the *rebroadcast to every other client on the field* - the owner's point that a
-    /// second player must see the same movement. `net::mobmove::mob_move_broadcast` builds it
-    /// and is tested, but this server has no field-occupancy registry: a `Session` is one
-    /// connection and knows of no other. **It is deliberately not sent to the mover** - that
-    /// would be a different packet than the one they are owed. Wiring it needs the player
-    /// list that `config::spawn_capacity`'s `players_here = 1` is also waiting on.
+    /// second player must see the same movement. `net::mobmove::mob_move_broadcast` had been
+    /// built and tested against two real captured `0x02FF` bodies and had **no production
+    /// caller** since the day it was written. It has one now.
+    ///
+    /// **It is never sent to the mover, and that is by construction rather than by a second
+    /// check.** `research/mob-behaviour.md` §12.1: `FUN_141c813b0` overwrites the mob's
+    /// position, animation and `mob+0xcd0` from the packet - state the controlling client
+    /// owns. `Bus::publish` excludes the sender, and the sender **is** the controller,
+    /// because the gate below runs first and refuses everyone else.
+    ///
+    /// # The gate, and why a refusal is silent
+    ///
+    /// Exactly one connection controls each mob (`crate::mobshare`). A report from any other
+    /// must not move the mob and must not be acknowledged - acknowledging it would pump a
+    /// second simulation, which is the divergence the registry exists to remove. `CLAUDE.md`'s
+    /// always-answer rule is about a request that latches the UI; `0x02FF` is volunteered,
+    /// and this handler has always returned nothing for a body that does not parse.
     pub(super) fn on_mob_move(&mut self, payload: &[u8]) -> Vec<Reply> {
         let Some(req) = net::mobmove::parse_mob_move(payload) else {
             return Vec::new();
         };
+        let Some(map) = self.claimed_character().map(|c| c.map_id) else { return Vec::new() };
         // Remember where it says the mob is. This is the only source of a live mob position
         // - the client runs the movement and we only acknowledge it - and it is what lets a
         // drop fall where the mob died instead of at the player's feet.
@@ -51,8 +64,46 @@ impl Session {
         // second, which is a few pixels for a snail. The path's END would be exact and needs
         // the element walk; this is the cheap 95% and it is the difference between a drop at
         // the mob and a drop across the platform.
-        if let Some(map) = self.claimed_character().map(|c| c.map_id) {
-            self.fields.note_position(map, req.object_id, (req.x, req.y));
+        //
+        // **`note_position_from` is the guard, not this call site.** It asks the registry and
+        // refuses a writer that does not control the mob; the answer is used here rather than
+        // logged and ignored, which is the mistake `CLAUDE.md` records under "a guard whose
+        // answer is ignored is not a guard".
+        if !self.fields.note_position_from(map, req.object_id, (req.x, req.y), self.subscriber.get())
+        {
+            crate::server::log(&format!(
+                "   0x02FF for mob {} IGNORED: this connection ({}) does not control it \
+                 (controller {:?}). Two controllers would be two independent wanders - the \
+                 client rolls the path itself, research/mob-behaviour.md 5.1",
+                req.object_id,
+                self.subscriber.get(),
+                self.fields.controllers().controller_of(map, req.object_id),
+            ));
+            return Vec::new();
+        }
+        // **And now the other screens.** One controller means exactly one client is
+        // simulating; without this the mob walks on the controller's screen and stands still
+        // on everyone else's, which is the same divergence in a quieter form.
+        let audience = crate::mobshare::audience_for(net::mobmove::MOB_MOVE, req.object_id);
+        if audience.is_map_wide() {
+            self.bus().publish(
+                self.subscriber,
+                map,
+                Reply {
+                    opcode: net::mobmove::MOB_MOVE,
+                    body: net::mobmove::mob_move_broadcast(&req),
+                    what: format!(
+                        "MobMove: mob {} to ({}, {}), {} path bytes copied verbatim. Superseded \
+                         per mob - a mob wanders for as long as it is alive, so an observer \
+                         who stops reading would otherwise accumulate these without bound.",
+                        req.object_id,
+                        req.x,
+                        req.y,
+                        req.path.len()
+                    ),
+                },
+                audience.supersedes(),
+            );
         }
         vec![Reply {
             opcode: net::mobmove::MOB_CTRL_ACK,
@@ -259,10 +310,28 @@ impl Session {
             let left =
                 self.fields.hurt(map, target.object_id, damage, chr_id, &self.config, self.clock_ms);
             if let crate::fields::Hurt::Died(shares) = left {
-                out.extend(self.drops_from_kill(template, target.object_id, died_at, chr_id, map));
+                // **The drops go to the top damager, not to whoever landed the last hit.**
+                // The owner, 2026-09-01: *"If multiple clients hit the mob, the one who dealt the
+                // most damage (without counting over-damage) will see the drops."*
+                // `LiveMob::credit` already caps at what landed and `shares()` already ranks;
+                // `drop_audience` adds no arithmetic to either, and `chr_id` terminates the
+                // walk because the killer is on this map by definition, having just swung.
+                let ranked = crate::mobshare::drop_audience(&shares, chr_id);
+                out.extend(self.drops_from_kill_for(
+                    template,
+                    target.object_id,
+                    died_at,
+                    &ranked,
+                    map,
+                    Some(chr_id),
+                ));
                 let (worth, why) = self.exp_for_kill(template);
                 out.extend(self.award_kill_experience(worth, &why, chr_id, &shares));
                 out.extend(self.credit_kill_to_quests(template, chr_id));
+                // The registry's entry for a mob that no longer exists. `reconcile` on the
+                // next field entry would catch it anyway - this is so the count in a log line
+                // means what it says between now and then.
+                self.fields.controllers().forget(map, target.object_id);
             }
             // The template's real maxHP, because 0x03F0 carries a PERCENTAGE.
             let max_hp = self
@@ -273,7 +342,7 @@ impl Session {
                 .map(|m| m.hp)
                 .unwrap_or(hp_before);
             for (opcode, body) in net::combat::mob_hit_replies(target.object_id, &hit, max_hp) {
-                out.push(Reply {
+                let reply = Reply {
                     opcode,
                     body,
                     what: format!(
@@ -284,14 +353,63 @@ impl Session {
                         hit.hp_after,
                         if hit.died { " - DEAD, leaving the field" } else { "" }
                     ),
-                });
+                };
+                // **The damage half of the owner's 2026-09-01 sentence**: *"All clients need to see
+                // other clients damages to mobs."* `0x03F0` is the health bar and `0x03D1` is
+                // the death, and both say exactly the same thing to every viewer.
+                //
+                // **Publish the SAME `(opcode, body)` the attacker gets. Do not recompute.**
+                // `0x03F0`'s hp field is a **percentage**, 0..100 - `net::combat::hp_percent`,
+                // `research/mob-hp-bar.md` - and the absolute went out once and drew a 45-HP
+                // snail at 27%. A second call site that looked `max_hp` up its own way is
+                // exactly how that unit error comes back. One body, two destinations.
+                //
+                // An observer whose pool has never held this object id is safe: the second
+                // dispatcher looks the id up and returns (`141d32b62 je 0x141d33432`), and
+                // `0x03D1` reads its whole body first and then does the same. **[L]**
+                let audience = crate::mobshare::audience_for(opcode, target.object_id);
+                if audience.is_map_wide() {
+                    self.bus().publish(
+                        self.subscriber,
+                        map,
+                        reply.clone(),
+                        audience.supersedes(),
+                    );
+                }
+                out.push(reply);
             }
         }
         out
     }
 
 
-    /// Roll what a dead mob leaves on the floor, and put it there.
+    /// Roll a kill's drops for **one** owner, and hand them back to the caller.
+    ///
+    /// The one-candidate case of [`Session::drops_from_kill_for`], which is what the attack
+    /// path calls and where all the working is.
+    ///
+    /// **Tests only, and that is not an oversight.** Production went to the ranked form the
+    /// day the drops became the top damager's, and three tests that predate it - the drop
+    /// roll, the stagger and the mob-position fallback - drive this shared body through the
+    /// simplest possible caller. Leaving it compiled into the server would be a second entry
+    /// point into drop placement that always gives the loot to the killer.
+    #[cfg(test)]
+    pub(super) fn drops_from_kill(
+        &mut self,
+        template: u32,
+        object_id: u32,
+        died_at: Option<(i16, i16)>,
+        killer: u32,
+        map: u32,
+    ) -> Vec<Reply> {
+        // `Some(killer)` says "the one candidate is this connection's own character", which is
+        // what makes the packets come back in the return value rather than going over the bus.
+        // That is this form's whole contract and it is what every existing caller relies on.
+        self.drops_from_kill_for(template, object_id, died_at, &[killer], map, Some(killer))
+    }
+
+    /// **Roll what a dead mob leaves on the floor, put it there, and give it to the first
+    /// candidate in `ranked` who can actually be handed it.**
     ///
     /// **Two tables, in order: this mob's own, then the global one.** The owner asked for the
     /// global table so an event item can drop from anything without touching code; it is
@@ -300,30 +418,53 @@ impl Session {
     ///
     /// # Where it lands, and why it can decline
     ///
-    /// At the **player's** last known position, not the mob's. The server does not track
-    /// where a mob is - the client controls it and reports movement we only acknowledge - so
-    /// the mob's own coordinates are not available at the moment it dies. The player is
-    /// adjacent to whatever they just killed, and adjacent is what the client's pick-up
-    /// sweep tests, so this is right in practice and wrong in principle; when mob positions
-    /// are tracked, this should use them.
-    ///
-    /// With no known position it drops **nothing** and says so in the log rather than
-    /// guessing. An item placed where the player cannot reach looks identical to no drop at
-    /// all, and would make the next run unreadable.
+    /// Where the **mob** was, from `died_at`, falling back to the player's last known
+    /// position for a mob that never moved and so never reported one. With neither it drops
+    /// **nothing** and says so in the log rather than guessing: an item placed where the
+    /// player cannot reach looks identical to no drop at all, and would make the next run
+    /// unreadable.
     ///
     /// # Nothing can be picked up yet
     ///
-    /// The player's pick-up request opcode is still unknown - see `crate::drops`. Items land
-    /// and are visible; collecting them needs one run to name the opcode.
-    pub(super) fn drops_from_kill(
+    /// The player's pick-up request opcode is `0x032C`, measured 2026-08-20 - `crate::drops`.
+    ///
+    /// # Who gets to see it
+    ///
+    /// `ranked` is `crate::mobshare::drop_audience` - the damage ranking highest first, with
+    /// the killer appended as the terminator. The walk stops at the first candidate the bus
+    /// will deliver to **on this map**, because an item nobody can see is indistinguishable
+    /// from no item at all, which is this function's own sentence about a drop placed out of
+    /// reach.
+    ///
+    /// # Why the walk mints first and re-addresses after
+    ///
+    /// `Bus::publish_to_character` is the **only** presence query the bus exposes, and it
+    /// answers by attempting the delivery. A candidate who is not on this map is refused and
+    /// **nothing is posted**, so trying them in order is free; the drop is minted once and
+    /// [`crate::drops::DropTable::readdress`] moves it down the ranking until one lands. No
+    /// client has heard about the drop while that is going on, so the re-address is invisible.
+    ///
+    /// The killer's own copy goes into the returned `Vec` rather than over the bus, for the
+    /// same reason `award_kill_experience` pays itself directly: it is this connection's own
+    /// reply and the bus deliberately never delivers to the publisher.
+    ///
+    /// `mine` is the character **this connection is playing**, and it is a parameter rather
+    /// than a `claimed_character()` read so that [`Session::drops_from_kill`] can keep its
+    /// old contract exactly: one candidate, always ours, always returned.
+    pub(super) fn drops_from_kill_for(
         &mut self,
         template: u32,
         object_id: u32,
         // Where the mob was when it died, read BEFORE it was removed from the field.
         died_at: Option<(i16, i16)>,
-        killer: u32,
+        ranked: &[u32],
         map: u32,
+        mine: Option<u32>,
     ) -> Vec<Reply> {
+        // The provisional owner, replaced by the walk below the moment a drop exists. Never
+        // empty in practice - `drop_audience` always appends the killer - but a caller that
+        // passed an empty list must not silently mint drops owned by character 0.
+        let Some(&first_choice) = ranked.first() else { return Vec::new() };
         if template == 0 {
             return Vec::new(); // an object id we never spawned; nothing to look up
         }
@@ -399,6 +540,7 @@ impl Session {
             }
         }
         let mut out = Vec::new();
+        let me = mine;
         // Read the meso rate ONCE, not once per drop: it is a database query, and it cannot
         // change between two items falling off the same mob.
         let meso_rate = self.rate(store::rates::RateKind::Meso);
@@ -454,10 +596,10 @@ impl Session {
                 (item, inv, 0u32)
             };
             let now = self.clock_ms;
-            let reply = self.fields.with_drops(map, |d| {
+            let (drop_id, first_reply) = self.fields.with_drops(map, |d| {
                 d.drop_from_mob(crate::drops::DropFromMob {
                     map_id: map,
-                    owner_id: killer,
+                    owner_id: first_choice,
                     item,
                     inv_type,
                     meso,
@@ -473,11 +615,47 @@ impl Session {
             // `world.log` grep instead of a second manual launch. Only when it actually
             // moved the item - an unmoved drop on flat ground is the common case and would
             // bury the interesting ones.
-            let mut reply = reply;
-            if let Some(l) = placed.filter(|l| l.moved != 0) {
-                reply.what.push_str(&format!(" [{}]", l.what()));
+            let note = placed
+                .filter(|l| l.moved != 0)
+                .map(|l| format!(" [{}]", l.what()))
+                .unwrap_or_default();
+
+            // **The walk.** Stop at the first candidate this drop can actually be given to on
+            // this map. `ranked[0]` already owns it, so the first iteration never re-addresses.
+            let mut winner = None;
+            for (rank, candidate) in ranked.iter().enumerate() {
+                let mut reply = if rank == 0 {
+                    first_reply.clone()
+                } else {
+                    match self.fields.with_drops(map, |d| d.readdress(drop_id, *candidate)) {
+                        Some(r) => r,
+                        None => break, // swept between the mint and now; nothing to give away
+                    }
+                };
+                reply.what.push_str(&note);
+                if Some(*candidate) == me {
+                    // Our own reply. The bus never delivers to its publisher, so this is the
+                    // only way this connection can be the recipient.
+                    out.push(reply);
+                    winner = Some(*candidate);
+                    break;
+                }
+                if self.bus().publish_to_character(*candidate, map, reply) {
+                    winner = Some(*candidate);
+                    break;
+                }
             }
-            out.push(reply);
+            match winner {
+                Some(w) => crate::server::log(&format!(
+                    "   drop {drop_id} on map {map} goes to character {w} - the top damager \
+                     still on this field, out of {ranked:?}"
+                )),
+                None => crate::server::log(&format!(
+                    "   drop {drop_id} on map {map} reached NOBODY: none of {ranked:?} is \
+                     playing on this field. An item nobody can see is the same as no item, so \
+                     this is a finding, not routine"
+                )),
+            }
         }
         out
     }
@@ -492,6 +670,23 @@ impl Session {
     ///
     /// Sends the same pair a field entry does, in the same order: a mob the client has not
     /// been given control of is a picture that never moves.
+    ///
+    /// # The spawn is PUBLISHED and the grant is not, and that split is the whole fix
+    ///
+    /// `Fields::due_respawns` **drains** `field.pending`. Every session on the map ticks, so
+    /// whichever ticked first took the new mobs and every other player on that field was
+    /// never told they exist - a respawn was **unicast**, and there is no second packet later
+    /// that would have healed it. So the `0x03C6` goes to the map.
+    ///
+    /// The `0x03D2` does **not**, and must not: two `MOB_CHANGE_CONTROLLER`s for one mob are
+    /// two clients each rolling their own wander (`research/mob-behaviour.md` §5.1 - the
+    /// client builds the path out of its own random source), and the two screens then diverge
+    /// on the first step and never reconverge. `Controllers::claim_one` is a test-and-set, so
+    /// the grant follows the claim rather than the tick.
+    ///
+    /// A side effect worth having: whichever session ticks first takes each new mob, so
+    /// control spreads across the connections on a map over time instead of one client
+    /// holding everything and freezing every monster on the field if it stalls.
     pub(super) fn spawn_due_mobs(&mut self, map: u32, now_ms: u64) -> Vec<Reply> {
         let arrived = self.fields.due_respawns(map, &self.config, now_ms);
         let mut out = Vec::new();
@@ -504,19 +699,35 @@ impl Session {
             // Same as on field entry: without this the client has no attack power for the mob
             // and its own contact-damage formula floors at 1. See `forced_stat_for`.
             mob.forced_stat = self.forced_stat_for(mob.template_id);
-            out.push(Reply {
+            let spawn = Reply {
                 opcode: net::mob::MOB_ENTER_FIELD,
                 body: net::mob::mob_enter_field(&mob),
                 what: format!(
                     "MobEnterField: SPAWN of template {} at ({}, {}), object id {}, hp {}.",
                     mob.template_id, mob.x, mob.y, mob.object_id, mob.hp
                 ),
-            });
-            out.push(Reply {
-                opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
-                body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
-                what: format!("MobChangeController: object id {} to this client.", mob.object_id),
-            });
+            };
+            let audience = crate::mobshare::audience_for(spawn.opcode, mob.object_id);
+            if audience.is_map_wide() {
+                self.bus().publish(self.subscriber, map, spawn.clone(), audience.supersedes());
+            }
+            out.push(spawn);
+            // **A narrow race, and it is benign.** A player entering the map at the instant
+            // this publishes can be handed the same `0x03C6` twice - once from `mobs_on`, once
+            // from here. `FUN_141d33630` looks the object id up at `141d33711` and, when it is
+            // found, takes the branch at `141d33725` that re-initialises the existing mob
+            // instead of creating a second one. **[L]** for the fork.
+            if self.fields.controllers().claim_one(map, mob.object_id, self.subscriber.get()) {
+                out.push(Reply {
+                    opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                    body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
+                    what: format!(
+                        "MobChangeController: object id {} to this client, which claimed it. \
+                         Exactly one connection controls each mob - crate::mobshare.",
+                        mob.object_id
+                    ),
+                });
+            }
         }
         out
     }

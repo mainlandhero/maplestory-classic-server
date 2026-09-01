@@ -1213,4 +1213,76 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         assert_eq!(out[0].opcode, net::userpool::USER_LEAVE_FIELD);
     }
 
+
+    /// **A connection that dies without logging out gives its mobs back.**
+    ///
+    /// This is the exit nobody takes deliberately: the socket drops, the client crashes, the
+    /// process is killed. `go_to_map`, the channel change and the log out all release on the
+    /// way past; a crash goes through none of them, and `Drop` is the only thing left.
+    ///
+    /// Without it the claims stay held by a `SessionId` that will never exist again. The mobs
+    /// are permanently uncontrolled, no later client is ever granted them, and on screen they
+    /// stand still forever - **with no error, no log line and nothing to grep for.** That
+    /// silence is why this is worth a test rather than a comment.
+    #[test]
+    fn a_connection_that_dies_without_logging_out_releases_its_mobs() {
+        let (store, config, fields) = channel();
+        let held = |s: u64| fields.controllers().held_by(s);
+
+        let ghost_id = {
+            let ghost = Session::joining(store.clone(), config.clone(), fields.clone());
+            let id = ghost.subscriber.get();
+            // Claim three of map 7's mobs the way field entry does.
+            let claimed = fields.controllers().claim_uncontrolled(7, id, &[2000, 2001, 2002]);
+            assert_eq!(claimed.len(), 3, "the control: this session really holds them");
+            assert_eq!(held(id), 3);
+            id
+            // `ghost` is dropped here - no log out, no channel change, no portal walk.
+        };
+
+        assert_eq!(
+            held(ghost_id),
+            0,
+            "a dropped connection must not keep its mobs claimed by an id that is gone"
+        );
+
+        // And the mobs are genuinely free: the next connection can claim them, which is the
+        // property that actually matters on screen.
+        let next = Session::joining(store, config, fields.clone());
+        let got = fields.controllers().claim_uncontrolled(7, next.subscriber.get(), &[2000, 2001, 2002]);
+        assert_eq!(got.len(), 3, "the next player takes over all three: {got:?}");
+    }
+
+    /// **A shopper's mobs go back to the field too.**
+    ///
+    /// The Cash Shop is a different stage - the client tears the field down - so a controller
+    /// sitting in it is a controller that is not driving anything. Field entry re-claims on
+    /// the way back, so this costs the shopper nothing.
+    #[test]
+    fn entering_the_cash_shop_releases_the_mobs_it_was_driving() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Shopper".to_string(),
+            map_id: 1,
+            ..Default::default()
+        };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store, config, fields.clone());
+        s.claim_for_character(id);
+        s.on_field_entered();
+
+        let sub = s.subscriber.get();
+        fields.controllers().claim_uncontrolled(1, sub, &[3000, 3001]);
+        assert_eq!(fields.controllers().held_by(sub), 2, "the control: two claimed");
+
+        s.on_cash_shop_request(&[]);
+        assert_eq!(
+            fields.controllers().held_by(sub),
+            0,
+            "a shopper is not on the map, so the mobs it was driving must be free"
+        );
+    }
+
 }

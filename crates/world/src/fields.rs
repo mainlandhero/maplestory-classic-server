@@ -173,7 +173,7 @@ struct FieldState {
 }
 
 /// Every map on this channel.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Fields {
     maps: Mutex<HashMap<u32, FieldState>>,
     /// Who is connected, and what each of them is owed.
@@ -188,16 +188,62 @@ pub struct Fields {
     /// Its lock is its own and is a **leaf**: nothing in `crate::broadcast` calls
     /// back into `Fields`, so the two are never held at once and cannot deadlock.
     bus: crate::broadcast::Bus,
+    /// **Who controls each mob.** See [`crate::mobshare`], and hung here for exactly the
+    /// reason `bus` is: this `Arc` already reaches every `Session`.
+    ///
+    /// Its lock is a **leaf** too - nothing in `mobshare` calls back into `Fields` or into
+    /// the bus - so the rule is only "do not take it while holding `maps`", which is a rule
+    /// about not inventing a cycle rather than about breaking one. Every caller in this file
+    /// takes the `Controllers` answer *first* and then the map lock.
+    controllers: crate::mobshare::Controllers,
+    /// **Every party on this channel.** `crate::party`.
+    ///
+    /// Held here and **not used by anything in this file**: it is the seam the party agent
+    /// wires, put here because `fields.rs` has one owner and two agents must not both edit
+    /// it. `Parties` is plain data with no interior mutability, so unlike [`Fields::bus`]
+    /// the accessor has to hand out a guard - see [`Fields::parties`].
+    ///
+    /// `Parties::new()` rather than `Parties::default()`: the default leaves `next_id` at 0
+    /// and party ids are meant to start at `party::FIRST_PARTY_ID`, which is the same
+    /// "never renumber from a small number" rule `store::FIRST_CHARACTER_ID` carries. That
+    /// is why `Fields` implements `Default` by hand.
+    parties: Mutex<crate::party::Parties>,
+}
+
+impl Default for Fields {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Fields {
     pub fn new() -> Self {
-        Self::default()
+        Fields {
+            maps: Mutex::new(HashMap::new()),
+            bus: crate::broadcast::Bus::new(),
+            controllers: crate::mobshare::Controllers::new(),
+            parties: Mutex::new(crate::party::Parties::new()),
+        }
     }
 
     /// This channel's message bus. See [`crate::broadcast`].
     pub fn bus(&self) -> &crate::broadcast::Bus {
         &self.bus
+    }
+
+    /// Who controls each mob on this channel. See [`crate::mobshare`].
+    pub fn controllers(&self) -> &crate::mobshare::Controllers {
+        &self.controllers
+    }
+
+    /// This channel's parties. See [`crate::party`].
+    ///
+    /// A guard rather than a reference, because `Parties` is plain data. **Nothing in this
+    /// crate calls this yet** - it is here so the party agent has somewhere to put the
+    /// registry without a second agent editing this file. Do not hold it across a call into
+    /// `Fields`, `Bus` or a session.
+    pub fn parties(&self) -> std::sync::MutexGuard<'_, crate::party::Parties> {
+        self.parties.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Register a map's spawn points the first time anyone sets foot on it.
@@ -239,12 +285,53 @@ impl Fields {
         maps.get(&map).map(|f| f.mobs.values().cloned().collect()).unwrap_or_default()
     }
 
-    /// The client reported where a mob it controls has moved to.
+    /// Move a mob, **without asking who said so**.
+    ///
+    /// The raw write. Used by tests and by anything server-authoritative; the wire path is
+    /// [`Fields::note_position_from`] and it is the one that enforces the controller rule.
     pub fn note_position(&self, map: u32, object_id: u32, at: (i16, i16)) {
         let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(m) = maps.entry(map).or_default().mobs.get_mut(&object_id) {
             m.at = Some(at);
         }
+    }
+
+    /// **A client reported where a mob has moved to. Believe it only if it controls it.**
+    ///
+    /// Returns whether the report was believed, which is what the caller gates its `0x03E4`
+    /// and its `0x03D9` on.
+    ///
+    /// # Why the check is here rather than only at the call site
+    ///
+    /// Because this is the row. Every session used to be granted every mob
+    /// (`session/field.rs`), so two clients ran two independent wanders of the same monster
+    /// and both wrote here - last write wins, and the position a drop lands on was whichever
+    /// client reported most recently. Fixing the *grant* removes the second writer today;
+    /// putting the predicate where the write happens is what keeps it removed. `CLAUDE.md`:
+    /// a comment describing a guarantee is not the guarantee.
+    ///
+    /// A mob with **no** controller is refused too. It cannot legitimately be reporting - a
+    /// mob's move sender is only reached once slot 8 has been switched on by a `0x03D2`
+    /// (`research/mob-behaviour.md` §4) - so a report for one is either a grant left over
+    /// from before this existed or an invented packet. Nothing on this socket authenticates
+    /// anybody.
+    ///
+    /// **Lock order.** The registry is asked first and its guard dropped before the map lock
+    /// is taken. The two locks are independent and neither calls the other; this is a rule
+    /// about not inventing a cycle.
+    pub fn note_position_from(
+        &self,
+        map: u32,
+        object_id: u32,
+        at: (i16, i16),
+        reporting: crate::mobshare::SessionId,
+    ) -> bool {
+        let controller = self.controllers.controller_of(map, object_id);
+        if !crate::mobshare::may_report_movement(controller, reporting) {
+            return false;
+        }
+        self.note_position(map, object_id, at);
+        true
     }
 
     /// A mob's remaining HP, or `None` if it is not alive on that map.
@@ -324,14 +411,46 @@ impl Fields {
         out
     }
 
-    /// Run something against a map's drop table.
+    /// Run something against a map's drop table, **and post whatever it addressed to an
+    /// owner**.
     ///
     /// The table is per map and per channel for the same reason the mobs are: an item on the
     /// floor is a property of the field, not of whoever is looking at it. This is a closure
     /// rather than an accessor because the table lives behind the same lock.
+    ///
+    /// # It also delivers, and that is not decoration
+    ///
+    /// A drop is **private to its owner** now (`crate::mobshare`), so a packet about one has
+    /// exactly one legitimate recipient and it is very often not the connection that called
+    /// this. [`crate::drops::DropTable::sweep`] is the case that forced it: every session on
+    /// a map ticks, the first one to tick removes the expired drop from the shared table, and
+    /// before this the `0x046F` went back to *that* session - so the owner kept drawing an
+    /// item that no longer existed and a bystander was told about an object its pool never
+    /// held.
+    ///
+    /// `DropTable` cannot deliver: it holds no bus, and it must not, because it is the file
+    /// with no session and no socket in it. `Fields` holds both, so the outbox is drained
+    /// here. [`crate::drops::Addressed`] is the whole channel and
+    /// `crate::broadcast::Bus::publish_to_character` matches the map as well as the
+    /// character, so a fade cannot land on a field the drop was never on.
+    ///
+    /// **The map lock is released before anything is posted.** The bus lock is a leaf, so
+    /// nesting them would not deadlock today - it would merely make a cycle possible for the
+    /// next person, which is the same rule the `controllers` field carries.
     pub fn with_drops<T>(&self, map: u32, f: impl FnOnce(&mut crate::drops::DropTable) -> T) -> T {
-        let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
-        f(&mut maps.entry(map).or_default().drops)
+        let (out, mail) = {
+            let mut maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+            let table = &mut maps.entry(map).or_default().drops;
+            let out = f(table);
+            (out, table.take_addressed())
+        };
+        for a in mail {
+            // The miss is ordinary: the owner logged out, or walked through a portal, and
+            // their pool was rebuilt empty either way. Nothing to retry and nothing to log
+            // as an error - the same contract `Bus::send_to_character` documents.
+            let _ = self.bus.publish_to_character(a.character, a.map_id, a.reply);
+        }
+        out
     }
 
     /// How many mobs are alive on a map. For tests and the log.
@@ -518,5 +637,116 @@ mod tests {
         f.with_drops(7, |d| assert_eq!(d.len(), 0));
         assert_eq!(f.with_drops(7, |d| d.len()), 0);
         assert_eq!(f.with_drops(8, |d| d.len()), 0);
+    }
+
+    /// **Only the controller may move a mob, enforced at the row.**
+    ///
+    /// Both halves in one test and in this order, because "the stranger was refused" is
+    /// worthless without "the controller was believed" beside it: a `note_position_from` that
+    /// refused everybody would pass the first assertion and freeze every monster in the game.
+    #[test]
+    fn a_position_report_from_a_connection_that_does_not_control_the_mob_is_refused() {
+        const CONTROLLER: crate::mobshare::SessionId = 1;
+        const STRANGER: crate::mobshare::SessionId = 2;
+        let f = Fields::new();
+        let c = config_with_one_map();
+        f.seed(7, &c, 0);
+        f.due_respawns(7, &c, 999_999);
+        let id = f.mobs_on(7)[0].spawn.object_id;
+
+        // Nobody controls it yet. A mob with no controller cannot legitimately be reporting -
+        // the client's move sender is only reached once a 0x03D2 has switched slot 8 on.
+        assert!(!f.note_position_from(7, id, (500, 395), CONTROLLER), "orphaned, so refused");
+        assert_eq!(f.mob_position(7, id), None);
+
+        f.controllers().claim_uncontrolled(7, CONTROLLER, &[id]);
+        assert!(
+            !f.note_position_from(7, id, (900, 395), STRANGER),
+            "a second connection's report must not move the mob a third one is simulating"
+        );
+        assert_eq!(f.mob_position(7, id), None, "and must not have written the position");
+
+        assert!(f.note_position_from(7, id, (500, 395), CONTROLLER), "the holder is believed");
+        assert_eq!(f.mob_position(7, id), Some((500, 395)));
+    }
+
+    /// **`with_drops` delivers what the table addressed to an owner.**
+    ///
+    /// The sweep is the case: any connection on the channel may be the one that ticks, and the
+    /// `0x046F` is owed to whoever was sent the `0x046E`. `DropTable` holds no bus, so this is
+    /// the only place that can post it - and if this ever stopped draining the outbox, every
+    /// expiry would go silent with no error anywhere.
+    #[test]
+    fn a_fade_addressed_to_an_owner_is_posted_to_that_owners_mailbox() {
+        use crate::broadcast::Presence;
+        let f = Fields::new();
+        let owner = f.bus().join();
+        let bystander = f.bus().join();
+        let reply = |what: &str| crate::Reply {
+            opcode: 0,
+            body: Vec::new(),
+            what: what.to_string(),
+        };
+        for (id, chr) in [(owner, 200u32), (bystander, 201)] {
+            f.bus().enter_field(
+                id,
+                Presence {
+                    character: chr,
+                    map: 7,
+                    spawn: reply("spawn"),
+                    farewell: reply("farewell"),
+                },
+            );
+        }
+        let _ = f.bus().drain(owner);
+        let _ = f.bus().drain(bystander);
+
+        f.with_drops(7, |d| {
+            d.drop_from_mob(crate::drops::DropFromMob {
+                map_id: 7,
+                owner_id: 200,
+                item: store::Item::bundle(4_000_001, 1),
+                inv_type: store::InventoryType::Etc,
+                meso: 0,
+                x: 1,
+                y: 1,
+                source_x: 1,
+                source_y: 1,
+                now_ms: 0,
+            })
+        });
+
+        // The bystander sweeps, which is exactly the case that used to steal the fade.
+        let handed_back = f.with_drops(7, |d| d.sweep(7, crate::drops::DROP_LIFETIME_MS + 1));
+        assert!(handed_back.is_empty(), "the sweeper is handed nothing: {handed_back:?}");
+        assert_eq!(f.with_drops(7, |d| d.len()), 0, "and the drop really is gone");
+
+        assert_eq!(f.bus().drain(owner).len(), 1, "the owner is told their item faded");
+        assert!(f.bus().drain(bystander).is_empty(), "and nobody else is");
+    }
+
+    /// The two registries `Fields` now carries reach every session through the one `Arc`, and
+    /// the party one starts at `party::FIRST_PARTY_ID` rather than at 0 - which is why
+    /// `Fields` implements `Default` by hand instead of deriving it.
+    #[test]
+    fn the_controller_and_party_registries_are_shared_and_start_empty() {
+        let f = Fields::default();
+        assert!(f.controllers().is_empty());
+        assert!(f.parties().is_empty());
+        // `Parties::new()` and `Parties::default()` differ only in `next_id` - 1 against 0 -
+        // and neither is reachable through a getter, so the check is the `Debug` form. A
+        // derived `Default` on `Fields` would silently pick the wrong one and the first party
+        // ever created would be id 0, which is the small-number failure `FIRST_PARTY_ID`
+        // exists to avoid.
+        assert_eq!(
+            format!("{:?}", *f.parties()),
+            format!("{:?}", crate::party::Parties::new()),
+            "Fields must build its registry with Parties::new(), not Parties::default()"
+        );
+        assert_ne!(
+            format!("{:?}", crate::party::Parties::new()),
+            format!("{:?}", crate::party::Parties::default()),
+            "positive control: the two really are distinguishable this way"
+        );
     }
 }

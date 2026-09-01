@@ -670,6 +670,32 @@ pub struct DropTable {
     lifetime_ms: u64,
     owner_lock_ms: u64,
     live: BTreeMap<u32, LiveDrop>,
+    /// Packets this table has produced that are addressed to a **character**, not to
+    /// whoever called. See [`Addressed`] and [`DropTable::take_addressed`].
+    outbox: Vec<Addressed>,
+}
+
+/// **A finished packet with a name on it.**
+///
+/// A drop is private to its owner (`crate::mobshare`), so a packet about one has exactly one
+/// legitimate recipient - and the connection that produces it is often not that recipient.
+/// The clearest case is expiry: every session on a map ticks, whichever ticks first removes
+/// the drop from the shared table, and the fade is owed to whoever was sent the `0x046E`.
+///
+/// This module holds no bus and no session, deliberately - that is what makes every branch in
+/// it a unit test. So it names the recipient and `crate::fields::Fields::with_drops` posts it,
+/// which is the only place that holds both the table and the bus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Addressed {
+    /// The character who should receive this. Not a connection: the table has no idea which
+    /// connection is playing whom, and `Bus::publish_to_character` is addressed the same way.
+    pub character: u32,
+    /// The map the packet is about. **Not optional**, and `Bus::publish_to_character` matches
+    /// on it: a `0x046E`/`0x046F` names a position in a field's own drop pool, so delivering
+    /// one to a character who has walked away would put a phantom item on a map it was never
+    /// dropped on.
+    pub map_id: u32,
+    pub reply: Reply,
 }
 
 impl Default for DropTable {
@@ -691,7 +717,23 @@ impl DropTable {
             lifetime_ms,
             owner_lock_ms,
             live: BTreeMap::new(),
+            outbox: Vec::new(),
         }
+    }
+
+    /// **Take everything this table has addressed to a character**, leaving it empty.
+    ///
+    /// Called by `crate::fields::Fields::with_drops` after every closure, because that is the
+    /// only place holding both this table and the bus. A caller that forgets loses the
+    /// packets - which is why there is exactly one caller and it is in a function every path
+    /// already goes through, rather than a step each call site has to remember.
+    pub fn take_addressed(&mut self) -> Vec<Addressed> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// How many packets are waiting for an owner. For tests and for a log line.
+    pub fn addressed_len(&self) -> usize {
+        self.outbox.len()
     }
 
     /// How long a drop lives here.
@@ -784,7 +826,12 @@ impl DropTable {
     ///
     /// `owner_id` is the character who landed the killing blow: it is who the drop belongs to
     /// for [`OWNER_LOCK_MS`], which is the only reason a mob drop needs an owner at all.
-    pub fn drop_from_mob(&mut self, d: DropFromMob) -> Reply {
+    ///
+    /// Returns the object id as well as the packet, because the caller may have to
+    /// **re-address** it: the drop belongs to the top damager, who is often not the killer
+    /// and may not be on this map at all. See [`DropTable::readdress`] and
+    /// `crate::mobshare::drop_audience`.
+    pub fn drop_from_mob(&mut self, d: DropFromMob) -> (u32, Reply) {
         let object_id = self.mint_object_id();
         let drop = LiveDrop {
             object_id,
@@ -805,7 +852,30 @@ impl DropTable {
         };
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
         self.live.insert(object_id, drop);
-        enter
+        (object_id, enter)
+    }
+
+    /// **Give an already-minted drop to somebody else**, and rebuild its enter packet.
+    ///
+    /// `None` if there is no such drop.
+    ///
+    /// Exists because "who owns this" is decided by a walk the table cannot do: the owner's rule
+    /// is *"the one who dealt the most damage (without counting over-damage) will see the
+    /// drops"*, the ranking comes from `LiveMob::shares()`, and whether a given candidate is
+    /// still on this map is a question only `crate::broadcast::Bus` can answer - by
+    /// attempting the delivery. So the caller mints the drop, then walks the ranking,
+    /// re-addressing until one lands. `crate::mobshare::drop_audience` is the ranking and
+    /// `session/combat.rs::drops_from_kill_for` is the walk.
+    ///
+    /// The **object id does not change**, so a re-address before the first delivery is
+    /// invisible to every client: nothing has been sent about this drop yet.
+    ///
+    /// `owner_id` is also what [`LiveDrop::may_be_taken_by`] enforces, so this moves the
+    /// pick-up right along with the visibility rather than leaving the two disagreeing.
+    pub fn readdress(&mut self, object_id: u32, owner_id: u32) -> Option<Reply> {
+        let drop = self.live.get_mut(&object_id)?;
+        drop.owner_id = owner_id;
+        Some(drop.enter_reply(net::drops::ENTER_FLOATING))
     }
 
     pub fn drop_item(&mut self, d: DropFromBag) -> Vec<Reply> {
@@ -911,21 +981,46 @@ impl DropTable {
     ///
     /// Nothing in the client does this by itself on any path that was read. See
     /// [`DROP_LIFETIME_MS`].
+    ///
+    /// # The return value is **always empty**, and the fades go to the owners
+    ///
+    /// It used to hand the `0x046F` straight back to the caller, and that was wrong the
+    /// moment drops became private to their owner. The table is shared by every session on
+    /// the channel and **every one of them ticks**, so whichever ticked first removed the
+    /// drop and took the fade: the owner went on drawing an item that no longer existed, and
+    /// a bystander was handed a leave packet for an object its pool never held. Neither is
+    /// visible from one screen, which is why it survived.
+    ///
+    /// So every fade is now an [`Addressed`], and `crate::fields::Fields::with_drops` posts
+    /// it to the owner through `Bus::publish_to_character` - which matches the map too, so a
+    /// fade cannot land on a field the drop was never on. The owner reads it out of its own
+    /// mailbox on its next `collect_mail`, which is at most one 100 ms tick later.
+    ///
+    /// **The signature keeps its `Vec<Reply>` so that `session/mod.rs::tick` still
+    /// compiles** - that file belongs to the coordinator. The tidier form is
+    /// `self.fields.sweep_drops(here, now_ms);` with no `out.extend` at all, and it is in the
+    /// report rather than done here.
+    ///
+    /// A drop on a map **nobody is standing on** is still removed silently: this client's
+    /// pool holds nothing for a field it is not in, and `publish_to_character` refuses a
+    /// recipient who has walked away, so the two rules agree without a second test.
     pub fn sweep(&mut self, watching_map_id: u32, now_ms: u64) -> Vec<Reply> {
+        let _ = watching_map_id;
         let expired: Vec<LiveDrop> = self
             .live
             .values()
             .filter(|d| now_ms >= d.expires_at_ms(self.lifetime_ms))
             .copied()
             .collect();
-        let mut out = Vec::new();
         for drop in expired {
             self.live.remove(&drop.object_id);
-            if drop.map_id == watching_map_id {
-                out.push(fade_reply(&drop, "it reached the end of its lifetime"));
-            }
+            self.outbox.push(Addressed {
+                character: drop.owner_id,
+                map_id: drop.map_id,
+                reply: fade_reply(&drop, "it reached the end of its lifetime"),
+            });
         }
-        out
+        Vec::new()
     }
 
     /// **What to send a character who has just entered a field.**
@@ -942,7 +1037,26 @@ impl DropTable {
     ///
     /// Drops on this map that have already expired are removed here without a leave packet:
     /// the pool being entered is empty, so there is nothing to tell the client about.
-    pub fn field_entry(&mut self, map_id: u32, now_ms: u64) -> Vec<Reply> {
+    ///
+    /// # It is filtered, because the floor is not public
+    ///
+    /// The owner, 2026-09-01: *"the drops can remain per client."* This used to re-send **every**
+    /// drop on the field to whoever walked in, which was right while one character could be
+    /// on a map at a time and is a leak the moment drops are owner-scoped: walk in, see
+    /// somebody else's loot, and - because the client stores `ownType` at `drop+0x70` and
+    /// never tests it again (`net::drops`, **[L]**) - be able to take it, since visibility is
+    /// the *only* thing the server controls here.
+    ///
+    /// `viewer` is the arriving character and `party` is
+    /// `crate::mobshare::Party::solo(viewer)` until parties land; `crate::mobshare::may_see_drop`
+    /// is the whole predicate and this adds nothing to it.
+    pub fn field_entry(
+        &mut self,
+        map_id: u32,
+        now_ms: u64,
+        viewer: u32,
+        party: &crate::mobshare::Party,
+    ) -> Vec<Reply> {
         let stale: Vec<u32> = self
             .live
             .values()
@@ -952,7 +1066,10 @@ impl DropTable {
         for id in stale {
             self.live.remove(&id);
         }
-        self.on_field(map_id).map(|d| d.enter_reply(net::drops::ENTER_INSTANT)).collect()
+        self.on_field(map_id)
+            .filter(|d| crate::mobshare::may_see_drop(d.owner_id, viewer, party))
+            .map(|d| d.enter_reply(net::drops::ENTER_INSTANT))
+            .collect()
     }
 }
 
@@ -1267,6 +1384,12 @@ mod tests {
     // Expiry
     // ------------------------------------------------------------------------------
 
+    /// **The fade is addressed to the OWNER, not handed to whoever ticked.**
+    ///
+    /// Every session on the channel sweeps this table, so before this the first one to tick
+    /// took the `0x046F` and the owner went on drawing an item that no longer existed. The
+    /// two halves are asserted together, because a version that simply stopped emitting a
+    /// fade at all would pass the first half on its own.
     #[test]
     fn a_drop_expires_and_the_sweep_says_so_exactly_once() {
         let mut t = DropTable::with_lifetime(10_000, 1_000);
@@ -1274,29 +1397,43 @@ mod tests {
         let id = t.on_field(MAP).next().unwrap().object_id;
 
         assert!(t.sweep(MAP, 10_999).is_empty(), "still inside its lifetime");
+        assert_eq!(t.addressed_len(), 0, "and nothing addressed to anybody yet");
         assert_eq!(t.len(), 1);
 
-        let out = t.sweep(MAP, 11_000);
+        assert!(
+            t.sweep(MAP, 11_000).is_empty(),
+            "the caller is never handed somebody else's fade - it goes to the owner"
+        );
+        let out = t.take_addressed();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].opcode, net::drops::DROP_LEAVE_FIELD);
-        let b = &out[0].body;
+        assert_eq!(out[0].character, WISP, "the owner, whoever happened to tick");
+        assert_eq!(out[0].map_id, MAP, "and the map, so it cannot land on another field");
+        assert_eq!(out[0].reply.opcode, net::drops::DROP_LEAVE_FIELD);
+        let b = &out[0].reply.body;
         assert_eq!(b.len(), net::drops::DROP_LEAVE_FIELD_LEN);
         assert_eq!(u32::from_le_bytes([b[0], b[1], b[2], b[3]]), id);
         assert_eq!(b[4], net::drops::leave_type::FADE);
         assert!(t.is_empty());
 
         assert!(t.sweep(MAP, 99_999).is_empty(), "and it is not announced twice");
+        assert_eq!(t.addressed_len(), 0, "not on either channel");
     }
 
-    /// A field the client is not standing on has no pool at all, so it gets no packet.
+    /// A field nobody is standing on: the drop still goes, and the fade is still addressed to
+    /// its owner. `Bus::publish_to_character` matches the map, so a recipient who is not
+    /// there is simply not a recipient - which is the same rule the old `watching_map_id`
+    /// filter was reaching for, enforced one layer up instead of guessed at here.
     #[test]
-    fn expiring_on_another_map_is_silent_but_still_removes_the_drop() {
+    fn expiring_on_another_map_is_still_addressed_to_the_owner_and_still_removed() {
         let mut t = DropTable::with_lifetime(10_000, 1_000);
         t.drop_item(DropFromBag { map_id: 40, ..dropping(Item::equip(SWORD), 0) });
         assert_eq!(t.len(), 1);
-        let out = t.sweep(MAP, 20_000);
-        assert!(out.is_empty(), "the client's pool for map 40 does not exist");
-        assert!(t.is_empty(), "but the server must not keep believing in it");
+        assert!(t.sweep(MAP, 20_000).is_empty());
+        let out = t.take_addressed();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].map_id, 40, "map 40's pool, not the ticking session's map");
+        assert_eq!(out[0].character, WISP);
+        assert!(t.is_empty(), "and the server must not keep believing in it");
     }
 
     #[test]
@@ -1317,6 +1454,8 @@ mod tests {
     // Field entry
     // ------------------------------------------------------------------------------
 
+    /// The owner's own drops, on their own map. See `only_the_owner_is_shown_the_floor` for the
+    /// half this one deliberately does not exercise.
     #[test]
     fn field_entry_re_sends_only_this_maps_drops_and_does_not_re_animate_them() {
         let mut t = DropTable::with_lifetime(100_000, 1_000);
@@ -1324,7 +1463,7 @@ mod tests {
         t.drop_item(dropping(Item::bundle(2_000_000, 3), 0));
         t.drop_item(DropFromBag { map_id: 40, ..dropping(Item::equip(SWORD), 0) });
 
-        let out = t.field_entry(MAP, 5_000);
+        let out = t.field_entry(MAP, 5_000, WISP, &crate::mobshare::Party::solo(WISP));
         assert_eq!(out.len(), 2, "the map 40 drop is somebody else's field");
         for r in &out {
             assert_eq!(r.opcode, net::drops::DROP_ENTER_FIELD);
@@ -1344,16 +1483,71 @@ mod tests {
     fn field_entry_forgets_a_drop_that_expired_while_nobody_was_looking() {
         let mut t = DropTable::with_lifetime(10_000, 1_000);
         t.drop_item(dropping(Item::equip(SWORD), 0));
-        let out = t.field_entry(MAP, 30_000);
+        let out = t.field_entry(MAP, 30_000, WISP, &crate::mobshare::Party::solo(WISP));
         assert!(out.is_empty(), "an expired drop must not be re-sent to a fresh pool");
         assert!(t.is_empty());
+        assert_eq!(
+            t.addressed_len(),
+            0,
+            "and no fade for it either - the pool being entered is empty, so there is nothing \
+             to tell anybody about"
+        );
+    }
+
+    /// **The floor is private.** Walking in must not show - and therefore must not hand over,
+    /// since visibility is the only thing the server controls - somebody else's loot.
+    ///
+    /// Both directions are asserted in one test. A `field_entry` that returned nothing to
+    /// anybody would pass "the bystander sees none of the owner's", and that is a different bug:
+    /// an item the owner cannot see either.
+    #[test]
+    fn only_the_owner_is_shown_the_floor() {
+        let mut t = DropTable::with_lifetime(100_000, 1_000);
+        t.drop_item(dropping(Item::equip(SWORD), 0));
+        t.drop_item(DropFromBag {
+            character_id: SOMEBODY_ELSE,
+            ..dropping(Item::bundle(2_000_000, 3), 0)
+        });
+
+        let wisp = t.field_entry(MAP, 5_000, WISP, &crate::mobshare::Party::solo(WISP));
+        assert_eq!(wisp.len(), 1, "the owner sees their own and only their own");
+        assert_eq!(
+            u32::from_le_bytes([
+                wisp[0].body[23],
+                wisp[0].body[24],
+                wisp[0].body[25],
+                wisp[0].body[26]
+            ]),
+            WISP,
+            "ownerId - the same offset a_drop_answers_with_the_remove_first pins"
+        );
+
+        let other =
+            t.field_entry(MAP, 5_000, SOMEBODY_ELSE, &crate::mobshare::Party::solo(SOMEBODY_ELSE));
+        assert_eq!(other.len(), 1, "and the other player sees theirs");
+        assert_eq!(
+            u32::from_le_bytes([
+                other[0].body[23],
+                other[0].body[24],
+                other[0].body[25],
+                other[0].body[26]
+            ]),
+            SOMEBODY_ELSE
+        );
+
+        assert_eq!(t.len(), 2, "listing the floor still does not change it");
+
+        // A party sees both, which is the seam and the reason the predicate takes one.
+        let together = crate::mobshare::Party::of(WISP, [SOMEBODY_ELSE]);
+        assert_eq!(t.field_entry(MAP, 5_000, WISP, &together).len(), 2);
     }
 
     #[test]
     fn an_empty_field_sends_nothing_at_all() {
         let mut t = DropTable::new();
-        assert!(t.field_entry(MAP, 0).is_empty());
+        assert!(t.field_entry(MAP, 0, WISP, &crate::mobshare::Party::solo(WISP)).is_empty());
         assert!(t.sweep(MAP, 0).is_empty());
+        assert_eq!(t.addressed_len(), 0);
     }
 
     // ------------------------------------------------------------------------------
@@ -1439,8 +1633,9 @@ mod tests {
         let id = t.on_field(MAP).next().unwrap().object_id;
 
         // `!map 40` and back. The pool is rebuilt empty both times.
-        assert!(t.field_entry(40, 2_000).is_empty());
-        let back = t.field_entry(MAP, 3_000);
+        let solo = crate::mobshare::Party::solo(WISP);
+        assert!(t.field_entry(40, 2_000, WISP, &solo).is_empty());
+        let back = t.field_entry(MAP, 3_000, WISP, &solo);
         assert_eq!(back.len(), 1, "the sword must still be lying there");
         assert_eq!(back[0].body[1], net::drops::ENTER_INSTANT);
 
@@ -1448,5 +1643,47 @@ mod tests {
         let taken = *t.take(id, WISP, 4_000).taken().unwrap();
         assert_eq!(taken.item, sword);
         assert!(t.is_empty());
+    }
+
+    /// **A mob drop can change hands before anyone has seen it**, which is what lets the
+    /// caller walk the damage ranking and stop at the first candidate still on the map.
+    ///
+    /// Three effects, because the packet is not the only one: the `0x046E`'s `ownerId`, the
+    /// table's own record, and the pick-up rule that hangs off it. Asserting only the first
+    /// would pass against a version that showed the drop to the top damager and still let the
+    /// killer take it.
+    #[test]
+    fn a_mob_drop_can_be_re_addressed_before_anybody_has_been_told() {
+        let mut t = DropTable::with_lifetime(100_000, 15_000);
+        let (id, first) = t.drop_from_mob(DropFromMob {
+            map_id: MAP,
+            owner_id: WISP,
+            item: Item::equip(SWORD),
+            inv_type: InventoryType::Equip,
+            meso: 0,
+            x: 100,
+            y: 395,
+            source_x: 100,
+            source_y: 395,
+            now_ms: 0,
+        });
+        assert_eq!(id, FIRST_DROP_OBJECT_ID, "the id comes back so it can be re-addressed");
+        let owner_at = |r: &Reply| u32::from_le_bytes([r.body[23], r.body[24], r.body[25], r.body[26]]);
+        assert_eq!(owner_at(&first), WISP);
+
+        let second = t.readdress(id, SOMEBODY_ELSE).expect("the drop is on the floor");
+        assert_eq!(owner_at(&second), SOMEBODY_ELSE, "the packet names the new owner");
+        assert_eq!(
+            u32::from_le_bytes([second.body[2], second.body[3], second.body[4], second.body[5]]),
+            id,
+            "and it is the SAME object - nothing has been sent about it yet, so no client can \
+             tell this happened"
+        );
+        assert_eq!(t.get(id).unwrap().owner_id, SOMEBODY_ELSE, "the table agrees");
+        // ...and so does the pick-up, which is the effect a packet-only assertion would miss.
+        assert!(t.get(id).unwrap().may_be_taken_by(SOMEBODY_ELSE, 1, t.owner_lock_ms()));
+        assert!(!t.get(id).unwrap().may_be_taken_by(WISP, 1, t.owner_lock_ms()));
+
+        assert!(t.readdress(999_999, WISP).is_none(), "a drop that is not there is None");
     }
 }

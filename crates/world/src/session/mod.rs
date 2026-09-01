@@ -406,6 +406,22 @@ struct Conversation {
 impl Drop for Session {
     fn drop(&mut self) {
         self.fields.bus().part(self.subscriber);
+        // **And its mobs go back, or they stop moving for everybody.**
+        //
+        // A connection that dies without logging out - the socket drops, the client crashes,
+        // the process is killed - has already left through `Bus::part` above. Its *mob
+        // claims* are separate state, and without this they stay held by a `SessionId` that
+        // will never exist again: every mob it controlled is permanently uncontrolled, no
+        // other client is ever granted it, and on screen they simply stand still forever.
+        //
+        // That failure has no error and no log line of its own, which is what makes it worth
+        // a line here rather than at the three orderly exits (`go_to_map`, channel change,
+        // log out) that already release. Those are the paths a player takes; this is the one
+        // a crash takes, and it is the one nobody would think to test.
+        //
+        // Idempotent, like `Bus::part` beside it: the orderly paths have usually released
+        // already and this finds nothing left to free.
+        self.fields.controllers().release_all(self.subscriber.get());
     }
 }
 
