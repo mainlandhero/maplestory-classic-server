@@ -45,6 +45,7 @@ pub mod loadout;
 pub mod magic;
 pub mod mobattack;
 pub mod mobshare;
+pub mod party;
 pub mod remoteattack;
 pub mod returnscroll;
 pub mod secondjob;

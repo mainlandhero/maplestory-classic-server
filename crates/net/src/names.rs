@@ -122,7 +122,15 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00BB => "CHAT_NOTICE",
         0x0106 => "LOG_OUT_RESULT",
         0x0151 => "CLIENT_QUEST_REQUEST (u8 action, u32 questId, u32 npcTemplateId, shape-dependent tail)",
-        0x0182 => "CLIENT_PARTY_CREATE",
+        // **Not "create".** Create is action 0 of SEVEN in a FlatBuffers table - create,
+        // leave, pickup-rights, invite, join-request, expel, change-leader - read off the
+        // party window's own button dispatcher `FUN_1411c9540`, which compares the UTF-16
+        // literals `create`/`invite`/`expel`/`leave`/`pickup`/`leader`. The old name came
+        // from one capture of one button press and was committed in a change about NPC
+        // dialogue. `research/party.md`.
+        0x0182 => "CLIENT_PARTY_REQUEST",
+        0x0183 => "CLIENT_PARTY_INVITE_ANSWER",
+        0x00A5 => "PARTY_RESULT",
         0x0238 => "CLIENT_FIRST_FIELD_ENTRY (empty; only on the very first entry, not per SetField)",
         0x024D => "CLIENT_FIRST_FIELD_ENTRY_2 (empty; built by FUN_142caa4e0 alongside 0x0238)",
 
