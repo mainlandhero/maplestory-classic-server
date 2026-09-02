@@ -1,0 +1,51 @@
+00:16:52.189 instance: ARMING in pid 924536 - marker maplecw-hook.multiclient present, this is the SECOND-OR-LATER client on this desktop, so the guard will be SUPPRESSED
+00:16:52.190 instance: hooked user32.dll!FindWindowW at 0x7ffd1f1f3bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+00:16:52.190 instance: hooked user32.dll!FindWindowA at 0x7ffd1f24ab90, stole 12 bytes (48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75)
+00:16:52.190 instance: kernel32.dll!CreateMutexW at 0x7ffd20414ce0 is an ff-25 forwarder -> 0x7ffd1e637230, following it
+00:16:52.190 instance: kernel32.dll!CreateMutexW at 0x7ffd1e637230 has a prologue this module will not steal - NOT hooked, nothing written. first 16 bytes: 49 8b c0 41 b9 01 00 1f 00 45 33 c0 85 d2 48 8b
+00:16:52.190 instance: kernel32.dll!CreateMutexA at 0x7ffd20414cb0 is an ff-25 forwarder -> 0x7ffd1e687460, following it
+00:16:52.190 instance: kernel32.dll!CreateMutexA at 0x7ffd1e687460 has a prologue this module will not steal - NOT hooked, nothing written. first 16 bytes: 49 8b c0 41 b9 01 00 1f 00 45 33 c0 85 d2 48 8b
+00:16:52.358 instance: FindWindowA(class="MapleStoryClass", title="MapleStory") -> forced NULL
+00:16:53.145    50 opcode=0x0453 elapsed_us=332.7 ret=1 flag=1->1 state=2->2
+00:16:53.768 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:16:55.815 ***** WATCH #2: 0x1415db360 ENTERED on tid 923592 while dispatching opcode 0x0453 rcx=0x3447ee3b rdx=0x7530 (as i32 30000) r8=0x7577 r9=0xeff988f5 (as i32 -268859147) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+00:16:56.773 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:16:57.776    51 opcode=0x0453 elapsed_us=306.3 ret=1 flag=1->1 state=2->2
+00:16:59.779 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:01.156    52 opcode=0x0453 elapsed_us=417.1 ret=1 flag=1->1 state=2->2
+00:17:02.784 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:05.792 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:08.801 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:09.847    53 opcode=0x0453 elapsed_us=290.2 ret=1 flag=1->1 state=2->2
+00:17:11.806 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:14.815 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:17.809    54 opcode=0x0453 elapsed_us=330.1 ret=1 flag=1->1 state=2->2
+00:17:17.822 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:20.829 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:23.834 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:24.560    55 opcode=0x0453 elapsed_us=313.6 ret=1 flag=1->1 state=2->2
+00:17:25.731 ***** WATCH #3: 0x1415db360 ENTERED on tid 923592 while dispatching opcode 0x0453 rcx=0x34486327 rdx=0xea60 (as i32 60000) r8=0xea63 r9=0xdeb8 (as i32 57016) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+00:17:25.920 ***** WATCH #4: 0x1415db360 ENTERED on tid 923592 while dispatching opcode 0x0453 rcx=0x344863e5 rdx=0x7530 (as i32 30000) r8=0x75aa r9=0xb511940d (as i32 -1257139187) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+00:17:26.840 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:29.849 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:32.432    56 opcode=0x0453 elapsed_us=275.6 ret=1 flag=1->1 state=2->2
+00:17:32.853 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:35.860 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:38.868 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:41.043    57 opcode=0x0453 elapsed_us=346.1 ret=1 flag=1->1 state=2->2
+00:17:41.874 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:44.898 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:46.684    58 opcode=0x0453 elapsed_us=296.0 ret=1 flag=1->1 state=2->2
+00:17:47.905 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:50.911 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:53.919 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:53.976    59 opcode=0x0453 elapsed_us=410.7 ret=1 flag=1->1 state=2->2
+00:17:55.946 ***** WATCH #5: 0x1415db360 ENTERED on tid 923592 while dispatching opcode 0x0453 rcx=0x3448d91e rdx=0x7530 (as i32 30000) r8=0x7539 r9=0xb7ada758 (as i32 -1213356200) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+00:17:56.926 ***** SESSION obj=0x5f3abd8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:17:59.132 ***** SOCKET conn=0x597d5d8 +0x20=0xffffffffffffffff - closed and cleared by the client (FUN_1415e3b60 ran) *****
+00:17:59.734 session: object at 0x0 is now UNREADABLE - values below are stale
+00:18:00.482 instance: FindWindowA(class=NULL, title="MapleStory - Microsoft Internet Explorer") -> 0x0 (passed through)

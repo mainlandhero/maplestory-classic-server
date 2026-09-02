@@ -180,9 +180,36 @@ fn insn_len(b: &[u8]) -> Option<usize> {
                 0x8D => 2 + modrm_len(b.get(2..)?)?,
                 // 31 /r and 33 /r with REX - `xor rax, rax` and friends.
                 0x31 | 0x33 => 2 + modrm_len(b.get(2..)?)?,
+                // 85 /r with REX - `test rdx, rdx`.
+                0x85 => 2 + modrm_len(b.get(2..)?)?,
+                // B8+r with REX. **The width depends on REX.W and getting it wrong splits an
+                // instruction**: without W it is still a 4-byte immediate (`mov r9d, imm32`,
+                // 6 bytes total), with W it is a full 8-byte one (`movabs r64, imm64`, 10).
+                // The real prologue this was added for is the first form.
+                0xB8..=0xBF => {
+                    if first & 0x08 != 0 {
+                        10
+                    } else {
+                        6
+                    }
+                }
                 _ => return None,
             }
         }
+        // B8+r id  mov r32, imm32   /   with REX.W, movabs r64, imm64
+        //
+        // Added 2026-09-02, again from a measurement. `kernelbase!CreateMutexW` - which is
+        // where kernel32 forwards to - begins `49 8b c0 / 41 b9 01 00 1f 00 / 45 33 c0`, and
+        // the middle one is `mov r9d, 0x1F0001`. Without it the measurer stopped after three
+        // bytes and BOTH mutex exports came back "NOT hooked, nothing written", which is the
+        // reason the second client's exit could not be observed.
+        //
+        // The immediate is data, not an address, so it relocates freely - unlike the `ff 25`
+        // form, which `modrm_len` still refuses because its displacement is RIP-relative.
+        0xB8..=0xBF => 5,
+        // 85 /r  test r/m, r - the instruction after the xor in that same prologue. Opcode
+        // plus ModRM, exactly like 0x89 / 0x8B.
+        0x85 => 1 + modrm_len(b.get(1..)?)?,
         // 31 /r  xor r/m, r   and   33 /r  xor r, r/m
         //
         // Added 2026-09-02 from a measurement, not from reading a list. `user32!FindWindowA`
@@ -396,20 +423,30 @@ unsafe extern "system" fn create_mutex_w(
     let err = GetLastError();
     let existed = err == ERROR_ALREADY_EXISTS;
     let suppress = SUPPRESS.load(Ordering::SeqCst);
-    if existed && suppress {
-        // The handle is still the right one - a second opener gets the same object. All the
-        // caller must not see is the *error code* that tells it somebody was here first.
-        SetLastError(0);
-    } else {
-        // Restore whatever the real call set, since GetLastError() above does not disturb it
-        // but the logging between here and the return could.
-        SetLastError(err);
-    }
+    // **The log goes FIRST and `SetLastError` goes LAST**, and the order is the whole
+    // point of this function.
+    //
+    // The pattern being defeated is `CreateMutex(...); if (GetLastError() ==
+    // ERROR_ALREADY_EXISTS) exit;` - so the value the caller reads on the very next
+    // instruction is the only thing that matters. `log` opens and writes a file. Every one of
+    // those calls sets the thread's last error, so setting it before logging and then
+    // returning hands the caller whatever the file write happened to leave behind.
+    //
+    // The comment that used to sit here said the logging "could" disturb it and then put the
+    // `SetLastError` above the log anyway. It would have suppressed nothing, and it would
+    // have looked exactly like the guard not being a mutex.
     log(&format!(
         "instance: CreateMutexW(name={}) already_existed={existed}{}",
         show(wide(name)),
         if existed && suppress { " -> last error CLEARED" } else if existed { " -> left alone (first instance)" } else { "" }
     ));
+    if existed && suppress {
+        // The handle is still the right one - a second opener gets the same object. All the
+        // caller must not see is the *error code* that tells it somebody was here first.
+        SetLastError(0);
+    } else {
+        SetLastError(err);
+    }
     h
 }
 
@@ -424,20 +461,17 @@ unsafe extern "system" fn create_mutex_a(
     let err = GetLastError();
     let existed = err == ERROR_ALREADY_EXISTS;
     let suppress = SUPPRESS.load(Ordering::SeqCst);
-    if existed && suppress {
-        // The handle is still the right one - a second opener gets the same object. All the
-        // caller must not see is the *error code* that tells it somebody was here first.
-        SetLastError(0);
-    } else {
-        // Restore whatever the real call set, since GetLastError() above does not disturb it
-        // but the logging between here and the return could.
-        SetLastError(err);
-    }
+    // Log first, set the error last. See `create_mutex_w` for why the order is the function.
     log(&format!(
         "instance: CreateMutexA(name={}) already_existed={existed}{}",
         show(ansi(name)),
         if existed && suppress { " -> last error CLEARED" } else if existed { " -> left alone (first instance)" } else { "" }
     ));
+    if existed && suppress {
+        SetLastError(0);
+    } else {
+        SetLastError(err);
+    }
     h
 }
 
@@ -589,6 +623,61 @@ mod tests {
         // which is SHORT of the 12 an absolute jump needs - which is exactly why the real
         // FindWindowA came back "NOT hooked, nothing written".
         assert!(10 < ABS_JMP_LEN, "10 bytes is not enough to write the jump");
+    }
+
+    /// **The kernelbase mutex prologue, from the hook log of 2026-09-02.**
+    ///
+    /// This is the export the second client's fate turns on. `kernel32!CreateMutexW` is an
+    /// `ff 25` forwarder; following it lands here, and these are the bytes that were refused:
+    ///
+    /// ```text
+    ///   49 8b c0            mov rax, r8            3
+    ///   41 b9 01 00 1f 00   mov r9d, 0x1F0001      6   <- the one that was missing
+    ///   45 33 c0            xor r8d, r8d           3   = 12, exactly ABS_JMP_LEN
+    /// ```
+    ///
+    /// Both mutex exports have the identical prologue, which is itself worth noticing: they
+    /// are two thin wrappers over the same `CreateMutexEx`.
+    #[test]
+    fn the_real_kernelbase_mutex_prologue_measures_to_exactly_the_jump_length() {
+        let create_mutex = [
+            0x49, 0x8B, 0xC0, // mov rax, r8          3
+            0x41, 0xB9, 0x01, 0x00, 0x1F, 0x00, // mov r9d, 0x1F0001   6
+            0x45, 0x33, 0xC0, // xor r8d, r8d         3   = 12
+            0x85, 0xD2, //       test edx, edx
+            0x48, 0x8B, //       (mov ..)
+        ];
+        assert_eq!(
+            safe_prologue_len(&create_mutex, ABS_JMP_LEN),
+            Some(12),
+            "without the B8..BF entry this stops at 3 and the export is refused"
+        );
+        // Every boundary is real. 9 is the one that matters: a measurer that returned it
+        // would cut `mov r9d, imm32` in half, in kernelbase, for every thread in the process.
+        for (want, expect) in [(1, 3), (3, 3), (4, 9), (9, 9), (10, 12), (13, 14)] {
+            assert_eq!(safe_prologue_len(&create_mutex, want), Some(expect), "want {want}");
+        }
+    }
+
+    /// **REX.W changes how many bytes `B8+r` carries, and guessing costs a split
+    /// instruction.**
+    ///
+    /// `41 b9 imm32` is six bytes; `48 b8 imm64` is ten. The real prologue above is the first
+    /// form, so the second is untested by it - which is exactly why it is asserted here
+    /// rather than left to be discovered on a different Windows build.
+    #[test]
+    fn a_rex_w_immediate_is_eight_bytes_wide_and_a_plain_one_is_four() {
+        // 48 b8 = movabs rax, imm64
+        let wide = [0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8, 0x90, 0x90, 0x90, 0x90];
+        assert_eq!(safe_prologue_len(&wide, 1), Some(10));
+        // 41 b9 = mov r9d, imm32
+        let narrow = [0x41, 0xB9, 1, 2, 3, 4, 0x41, 0xB9, 5, 6, 7, 8, 0x90, 0x90];
+        assert_eq!(safe_prologue_len(&narrow, 1), Some(6));
+        assert_eq!(safe_prologue_len(&narrow, 7), Some(12));
+        // No REX at all: b8 = mov eax, imm32, five bytes.
+        let bare = [0xB8, 1, 2, 3, 4, 0xB8, 5, 6, 7, 8, 0x90, 0x90];
+        assert_eq!(safe_prologue_len(&bare, 1), Some(5));
+        assert_eq!(safe_prologue_len(&bare, 6), Some(10));
     }
 
     /// **An `ff 25` forwarder is still refused by the measurer** - following it is the only
