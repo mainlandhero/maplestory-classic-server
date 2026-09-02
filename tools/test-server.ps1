@@ -877,6 +877,15 @@ param(
     # state machine in one ordinary session - rdx carries the value.
     [switch]$UserState,
     [switch]$MobTargets,
+    # **Turn the single-instance work OFF for one run, as a control.**
+    #
+    # grap-stub patches two user32 functions and redirects kernel32's mutex forwarder so a
+    # SECOND client can start. This switch stops all of it, so the client runs exactly as it
+    # did before that module existed. Use it whenever something looks wrong and you need to
+    # know whether those hooks are why: one launch with, one without, change nothing else.
+    #
+    # A second client will not start with this on. That is the switch working, not a finding.
+    [switch]$NoInstanceHooks,
     [string]$ClientDir
 )
 
@@ -1143,7 +1152,30 @@ if ($Stop) {
     # deletes it ~1.5s in, on purpose). A STALE one is REFUSED by the login server rather
     # than ignored, so leaving it costs the NEXT run its account - and that failure looks
     # like nothing at all on a one-player machine.
-    Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
+    # **The instance hooks are ON unless this run says otherwise.**
+#
+# `-NoInstanceHooks` is the control for "did OUR hooks do this?" - it stops grap-stub patching
+# user32 or redirecting kernel32's mutex forwarder, so the client runs exactly as it did before
+# that module existed. A second client will then be stopped by its own guard, which is the
+# point: it isolates the guard work from everything else in one launch.
+#
+# Deleted on EVERY other run rather than merely not written, because a control that can be left
+# switched on by accident silently un-tests the thing it was made to test.
+$vetoPath = Join-Path $ClientDir 'maplecw-hook.nomulticlient'
+if ($NoInstanceHooks) {
+    New-Item -ItemType File -Path $vetoPath -Force | Out-Null
+    Write-Host ''
+    Write-Host 'INSTANCE HOOKS ARE OFF THIS RUN (-NoInstanceHooks).' -ForegroundColor Yellow
+    Write-Host '  Nothing is patched in user32 and kernel32 is not redirected.'
+    Write-Host '  A SECOND CLIENT WILL NOT START - that is expected, not the finding.'
+    Write-Host '  The finding is whatever you were comparing: if it looks RIGHT now and'
+    Write-Host '  wrong without this switch, the hooks did it. If it looks the same both'
+    Write-Host '  ways, they did not and the cause is somewhere else entirely.'
+    Write-Host ''
+} else {
+    Remove-Item $vetoPath -ErrorAction SilentlyContinue
+}
+Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
     Write-Host 'stopped client and login server'
     exit 0

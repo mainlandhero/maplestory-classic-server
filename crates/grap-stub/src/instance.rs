@@ -80,8 +80,29 @@ use crate::hook::log;
 /// the environment into the child.
 pub const MULTICLIENT_MARKER: &str = "maplecw-hook.multiclient";
 
-/// Whether the marker is present. Checked once, at `DllMain`.
+/// **A veto that outranks the marker**, so this whole module can be taken out of a run
+/// without rebuilding anything.
+///
+/// The launcher writes [`MULTICLIENT_MARKER`] on every Start Game, so deleting it by hand
+/// does not survive to the next launch - there was no way to ask "does the client behave
+/// differently without these hooks?" without editing code. That question came up the moment
+/// a rendering fault appeared in a run that also had two `user32` functions code-patched, and
+/// it is exactly the A/B this file's own rules demand before calling anything a regression.
+///
+/// `tools/test-server.ps1 -NoInstanceHooks` writes it, and every other launch of that script
+/// deletes it - so it cannot be left switched on by accident, which a hand-made file could.
+pub const VETO_MARKER: &str = "maplecw-hook.nomulticlient";
+
+/// Whether the marker is present, and the veto is not. Checked once, at `DllMain`.
 pub fn enabled() -> bool {
+    if std::path::Path::new(VETO_MARKER).exists() {
+        log(&format!(
+            "instance: {VETO_MARKER} is present - NOTHING is hooked and no code is patched \
+             this run. This is the control: the client behaves as it did before this module \
+             existed, and a second one will be stopped by its own guard"
+        ));
+        return false;
+    }
     std::path::Path::new(MULTICLIENT_MARKER).exists()
 }
 
