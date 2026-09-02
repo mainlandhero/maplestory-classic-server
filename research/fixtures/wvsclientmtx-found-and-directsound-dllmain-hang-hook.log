@@ -1,0 +1,109 @@
+00:24:56.375 instance: ARMING in pid 927728 - marker maplecw-hook.multiclient present, this is the FIRST client on this desktop, so the guard will be LOGGED ONLY (first client behaves exactly as before)
+00:24:56.376 instance: hooked user32.dll!FindWindowW at 0x7ffd1f1f3bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+00:24:56.376 instance: hooked user32.dll!FindWindowA at 0x7ffd1f24ab90, stole 12 bytes (48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75)
+00:24:56.376 instance: kernel32.dll!CreateMutexW at 0x7ffd20414ce0 is an ff-25 forwarder -> 0x7ffd1e637230, following it
+00:24:56.376 instance: hooked kernel32.dll!CreateMutexW at 0x7ffd1e637230, stole 12 bytes (49 8b c0 41 b9 01 00 1f 00 45 33 c0 85 d2 48 8b)
+00:24:56.376 instance: kernel32.dll!CreateMutexA at 0x7ffd20414cb0 is an ff-25 forwarder -> 0x7ffd1e687460, following it
+00:24:56.377 instance: hooked kernel32.dll!CreateMutexA at 0x7ffd1e687460, stole 12 bytes (49 8b c0 41 b9 01 00 1f 00 45 33 c0 85 d2 48 8b)
+00:24:56.377 instance: CreateMutexW(name=NULL) already_existed=false
+00:24:56.377 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:24:56.547 instance: CreateMutexA(name="Global\\WvsClientMtx") already_existed=false
+00:24:56.552 instance: CreateMutexA(name=NULL) already_existed=true -> left alone (first instance)
+00:24:56.554 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:24:57.685 instance: CreateMutexA(name="Local\\ZonesCacheCounterMutex") already_existed=true -> left alone (first instance)
+00:24:57.685 instance: CreateMutexA(name="Local\\ZonesLockedCacheCounterMutex") already_existed=true -> left alone (first instance)
+00:24:58.197 install_once: our code IS running. env=false marker=true -> installing
+00:24:58.248 install: .text settled after 50 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+00:24:58.248 install: base=0x140000000 target=0x1415d60e0
+00:24:58.248 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+00:24:58.249 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+00:24:58.24900:24:58.249  probe: will FORCE rdx=0x0 on every entry to 0x141b2a280session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+
+00:24:58.249 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+00:24:58.249 probe: watching 0x141b36f60 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+00:24:58.249 probe: watch on 0x142ef3e44 will log up to 8 hits
+00:24:58.249 probe: watching 0x142ef3e44 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+00:24:58.250 identity: maplecw-hook.identity read and DELETED - the token now exists only in this process, and cannot be picked up by a later run
+00:24:58.250 identity: armed on FUN_142c50400 at 0x142c50400 (trampoline 0xa5e0000), 26 byte token from maplecw-hook.identity. It was a PLAIN-TEXT LOCAL SECRET on disk until the line above deleted it: anything running as this user could have read it, which is the same power as being this launch. It is one-time, and the server keeps only its SHA-256
+00:24:58.250 install: hook active
+00:24:58.320 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:24:58.320 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:24:58.320 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:24:58.320 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:24:58.320 instance: CreateMutexA(name=NULL) already_existed=true -> left alone (first instance)
+00:24:58.320 instance: CreateMutexA(name=NULL) already_existed=true -> left alone (first instance)
+00:24:58.449 session: object at 0x5f74d98 is now readable
+00:24:58.449 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:24:58.980 instance: CreateMutexA(name="CDdf212806D6EmB31yE0c") already_existed=true -> left alone (first instance)
+00:24:59.186 instance: CreateMutexA(name="CDdf212806D6EmB31yE0c") already_existed=true -> left alone (first instance)
+00:24:59.300 instance: CreateMutexA(name="CDdf212806D6EmB31yE0c") already_existed=true -> left alone (first instance)
+00:25:00.180 instance: CreateMutexA(name="CDdf212806D6EmB31yE0c") already_existed=true -> left alone (first instance)
+00:25:00.195 instance: CreateMutexW(name="DirectInput.{89521361-AA8A-11CF-BFC7-444553540000}") already_existed=true -> left alone (first instance)
+00:25:00.195 instance: CreateMutexW(name="DirectInput.{5944E682-C92E-11CF-BFC7-444553540000}") already_existed=true -> left alone (first instance)
+00:25:00.195 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.195 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.196 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.196 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.196 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.196 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.197 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.197 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.259 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.259 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.259 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.260 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.260 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.260 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.260 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.260 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.261 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.261 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.261 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.261 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.262 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.262 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.262 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.262 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.262 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.263 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.263 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.263 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.263 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.263 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.264 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.264 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.264 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.264 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.264 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.264 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.265 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.265 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.265 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.265 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.267 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.267 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.267 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.267 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.267 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.268 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.268 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.268 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.271 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.271 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.852 instance: CreateMutexW(name="Local\\DirectSound DllMain mutex (0x000E27F0)") already_existed=true -> left alone (first instance)
+00:25:00.853 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:00.853 instance: CreateMutexW(name="DirectSound Administrator shared thread array (lock") already_existed=true -> left alone (first instance)
+00:25:00.853 instance: CreateMutexW(name=NULL) already_existed=true -> left alone (first instance)
+00:25:01.256 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:04.265 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:07.279 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:10.284 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:13.291 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:16.297 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:19.304 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:22.310 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:25.318 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:28.325 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:31.343 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:34.351 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:25:37.358 ***** SESSION obj=0x5f74d98 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****

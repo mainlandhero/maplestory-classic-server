@@ -197,9 +197,27 @@ fn utc_offset_secs() -> i32 {
     (tz.bias + daylight_bias) * 60
 }
 
+/// **One `write` per line, of a string built first.**
+///
+/// `writeln!` formats straight into the file handle, which issues a write per fragment - so
+/// two threads appending at once interleave *within* a line. That is not theoretical; the
+/// run of 2026-09-02 produced
+///
+/// ```text
+///   00:24:58.24900:24:58.249  probe: will FORCE rdx=0x0 ...session: watching DAT_143aa84a0
+/// ```
+///
+/// two timestamps and two messages spliced together, at the exact moment the client hung.
+/// It became visible then because hooking `CreateMutex` briefly put this function on every
+/// thread in the process at startup - but nothing about it was new, and any future hook that
+/// logs from more than one thread would have hit it.
+///
+/// A single append write of a small buffer does not interleave with another process's, which
+/// matters here for a second reason: two clients share this file.
 pub(crate) fn log(msg: &str) {
+    let line = format!("{} {msg}\r\n", stamp());
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
-        let _ = writeln!(f, "{} {msg}", stamp());
+        let _ = f.write_all(line.as_bytes());
     }
 }
 

@@ -347,6 +347,101 @@ unsafe fn hook(module: &str, name: &str, detour: usize) -> Option<usize> {
     Some(tramp as usize)
 }
 
+/// **A log line from inside a detour is written by ANOTHER thread, later.**
+///
+/// The regression of 2026-09-02, and the reason it is worth this much machinery. With
+/// `CreateMutex` hooked, the FIRST client opened its window and then stopped - never reaching
+/// character select. It was not dead: the session monitor kept writing its three-second
+/// heartbeat for as long as the owner left it up. **One thread was stuck and the rest of the
+/// process was fine**, which is what a lock held by a blocked thread looks like from outside.
+///
+/// The log named its own cause:
+///
+/// ```text
+///   instance: CreateMutexW(name="Local\DirectSound DllMain mutex (0x000E27F0)")
+/// ```
+///
+/// DirectSound creating a named mutex **from its `DllMain`** - so the loader lock is held -
+/// and our detour answering it by opening and writing a file. Anything on that path that
+/// needs the loader lock deadlocks against the thread already holding it, and file I/O has
+/// plenty of ways to need it.
+///
+/// The two rules that fall out are the ones this module now follows:
+///
+/// * **A detour on a system API must not do I/O.** It records into memory with `try_lock`,
+///   which cannot block, and a thread that owns nothing does the writing.
+/// * **Match the name before doing anything at all.** 77 `CreateMutex` calls went through
+///   here and exactly one of them mattered; the other 76 were DirectSound, DirectInput,
+///   Internet Explorer's zone cache, and 73 unnamed ones that cannot be an instance guard
+///   under any circumstances.
+fn note(msg: String) {
+    if let Ok(mut q) = PENDING.try_lock() {
+        // Bounded, because a detour that is called in a tight loop must not grow a queue
+        // faster than the flusher drains it. Losing a line is a cost this can pay; unbounded
+        // memory inside somebody else's process is not.
+        if q.len() < 256 {
+            q.push(msg);
+        }
+    }
+}
+
+static PENDING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Start the thread that empties [`PENDING`].
+///
+/// Spawned from `arm`, which runs in `DllMain` - the same thing `crate::lib` already does for
+/// the dispatcher hook. A thread created under the loader lock simply waits for it before its
+/// own `DLL_THREAD_ATTACH` runs, which is exactly the delay wanted here.
+fn start_flusher() {
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let drained: Vec<String> = match PENDING.try_lock() {
+            Ok(mut q) => q.drain(..).collect(),
+            Err(_) => continue,
+        };
+        for m in drained {
+            log(&m);
+        }
+    });
+}
+
+/// **Is this a name worth intervening on?**
+///
+/// `Global\WvsClientMtx` is the client's own single-instance mutex - `WvsClient` is Nexon's
+/// codename for it, and it appeared exactly once, in the first client, at 00:24:56.547.
+///
+/// A substring match rather than an equality test on the full string, because the prefix is
+/// a namespace (`Global\` here, `Local\` on some builds) and the point is to recognise the
+/// client's own mutex however it is scoped. Everything else - DirectSound, DirectInput,
+/// `ZonesCacheCounterMutex`, the obfuscated `CDdf212806D6EmB31yE0c` - is somebody else's
+/// business and is passed through untouched and unlogged.
+fn is_the_guard(name: &str) -> bool {
+    name.contains("WvsClient")
+}
+
+/// **Are we already inside one of our own detours on this thread?**
+///
+/// `log` opens and writes a file. If anything on that path creates a named mutex, the detour
+/// calls `log` again and the thread never returns. Nothing observed has done it - Windows file
+/// I/O does not appear to create named mutexes - but the cost of being wrong is a hung client
+/// with no error, which is exactly what this session spent two launches on already.
+///
+/// `try_with` rather than `with`: thread-local storage can be unavailable during thread
+/// teardown, and a panic inside a `kernelbase` detour would be far worse than a missed log
+/// line. Unavailable is treated as "assume re-entrant" and passes the call straight through.
+fn in_our_own_code() -> bool {
+    INSIDE.try_with(|c| c.replace(true)).unwrap_or(true)
+}
+
+/// Leave the detour, so the next call on this thread is logged again.
+fn leaving() {
+    let _ = INSIDE.try_with(|c| c.set(false));
+}
+
+thread_local! {
+    static INSIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Read a NUL-terminated UTF-16 string for the log. `None` for a null pointer, which is a
 /// perfectly ordinary argument to both of these APIs and must not be confused with a failure.
 unsafe fn wide(p: *const u16) -> Option<String> {
@@ -385,11 +480,15 @@ unsafe extern "system" fn find_window_w(class: *const u16, title: *const u16) ->
             std::mem::transmute(FIND_W.load(Ordering::SeqCst) as usize);
         real(class, title)
     };
-    log(&format!(
+    // `note`, not `log`: a detour must not do I/O. `crate::instance::note` records why -
+    // DirectSound calls a hooked API from its own DllMain, and a file write there deadlocks
+    // against the loader lock. FindWindow has only ever been seen on the client's own thread,
+    // but "only ever been seen" is not a property of the API.
+    note(format!(
         "instance: FindWindowW(class={}, title={}) -> {}",
         show(wide(class)),
         show(wide(title)),
-        if suppress { "forced NULL".into() } else { format!("{found:?} (passed through)") }
+        if suppress { "forced NULL".to_string() } else { format!("{found:?} (passed through)") }
     ));
     found
 }
@@ -403,15 +502,39 @@ unsafe extern "system" fn find_window_a(class: *const u8, title: *const u8) -> *
             std::mem::transmute(FIND_A.load(Ordering::SeqCst) as usize);
         real(class, title)
     };
-    log(&format!(
+    // `note`, not `log`: a detour must not do I/O. `crate::instance::note` records why -
+    // DirectSound calls a hooked API from its own DllMain, and a file write there deadlocks
+    // against the loader lock. FindWindow has only ever been seen on the client's own thread,
+    // but "only ever been seen" is not a property of the API.
+    note(format!(
         "instance: FindWindowA(class={}, title={}) -> {}",
         show(ansi(class)),
         show(ansi(title)),
-        if suppress { "forced NULL".into() } else { format!("{found:?} (passed through)") }
+        if suppress { "forced NULL".to_string() } else { format!("{found:?} (passed through)") }
     ));
     found
 }
 
+/// **An UNNAMED mutex is passed straight through, and that is not an optimisation.**
+///
+/// It is the fix for the regression of 2026-09-02: with these two exports hooked, the FIRST
+/// client stopped reaching character select and hung with its window open. 77 `CreateMutex`
+/// calls went through here, **73 of them unnamed**, the earliest one millisecond after
+/// `DllMain` - which is to say while the loader is still initialising other DLLs, on several
+/// threads, each one now opening and writing a file inside a `kernelbase` detour.
+///
+/// Two things are wrong with that and only one of them is speed:
+///
+/// * An unnamed mutex is process-local. It **cannot** tell anybody that another instance
+///   exists, so it can never be the guard, and there is nothing here to decide about it.
+/// * `already_existed` is meaningless for one. `CreateMutex` does not clear the last error on
+///   success, so `GetLastError()` returns whatever the thread was carrying - which is why the
+///   log has the impossible line `CreateMutexW(name=NULL) already_existed=true`. In a
+///   suppressing client that stale reading would have cleared an error the caller was about
+///   to act on.
+///
+/// So: named only. That is four calls instead of seventy-seven, and one of the four is the
+/// answer.
 unsafe extern "system" fn create_mutex_w(
     attrs: *mut c_void,
     owner: i32,
@@ -419,27 +542,27 @@ unsafe extern "system" fn create_mutex_w(
 ) -> *mut c_void {
     let real: unsafe extern "system" fn(*mut c_void, i32, *const u16) -> *mut c_void =
         std::mem::transmute(MUTEX_W.load(Ordering::SeqCst) as usize);
+    // Named, ours, and not re-entrant - three tests before anything happens, all of them
+    // cheap and none of them touching a file. See `note`.
+    let Some(text) = wide(name).filter(|n| is_the_guard(n)) else {
+        return real(attrs, owner, name);
+    };
+    if in_our_own_code() {
+        return real(attrs, owner, name);
+    }
     let h = real(attrs, owner, name);
     let err = GetLastError();
     let existed = err == ERROR_ALREADY_EXISTS;
     let suppress = SUPPRESS.load(Ordering::SeqCst);
-    // **The log goes FIRST and `SetLastError` goes LAST**, and the order is the whole
-    // point of this function.
-    //
-    // The pattern being defeated is `CreateMutex(...); if (GetLastError() ==
-    // ERROR_ALREADY_EXISTS) exit;` - so the value the caller reads on the very next
-    // instruction is the only thing that matters. `log` opens and writes a file. Every one of
-    // those calls sets the thread's last error, so setting it before logging and then
-    // returning hands the caller whatever the file write happened to leave behind.
-    //
-    // The comment that used to sit here said the logging "could" disturb it and then put the
-    // `SetLastError` above the log anyway. It would have suppressed nothing, and it would
-    // have looked exactly like the guard not being a mutex.
-    log(&format!(
-        "instance: CreateMutexW(name={}) already_existed={existed}{}",
-        show(wide(name)),
-        if existed && suppress { " -> last error CLEARED" } else if existed { " -> left alone (first instance)" } else { "" }
+    // **`note` records; it does not write.** The pattern being defeated is
+    // `CreateMutex(...); if (GetLastError() == ERROR_ALREADY_EXISTS) exit;`, so the value the
+    // caller reads on its very next instruction is the only thing that matters - and
+    // `SetLastError` is therefore the last thing this function does before returning.
+    note(format!(
+        "instance: CreateMutexW(name={text:?}) already_existed={existed}{}",
+        if existed && suppress { " -> last error CLEARED, this client is a later one" } else if existed { " -> left alone (first instance)" } else { " -> we are the first to create it" }
     ));
+    leaving();
     if existed && suppress {
         // The handle is still the right one - a second opener gets the same object. All the
         // caller must not see is the *error code* that tells it somebody was here first.
@@ -450,6 +573,7 @@ unsafe extern "system" fn create_mutex_w(
     h
 }
 
+/// Named only, and not re-entrant. See [`create_mutex_w`] for both reasons.
 unsafe extern "system" fn create_mutex_a(
     attrs: *mut c_void,
     owner: i32,
@@ -457,16 +581,22 @@ unsafe extern "system" fn create_mutex_a(
 ) -> *mut c_void {
     let real: unsafe extern "system" fn(*mut c_void, i32, *const u8) -> *mut c_void =
         std::mem::transmute(MUTEX_A.load(Ordering::SeqCst) as usize);
+    let Some(text) = ansi(name).filter(|n| is_the_guard(n)) else {
+        return real(attrs, owner, name);
+    };
+    if in_our_own_code() {
+        return real(attrs, owner, name);
+    }
     let h = real(attrs, owner, name);
     let err = GetLastError();
     let existed = err == ERROR_ALREADY_EXISTS;
     let suppress = SUPPRESS.load(Ordering::SeqCst);
-    // Log first, set the error last. See `create_mutex_w` for why the order is the function.
-    log(&format!(
-        "instance: CreateMutexA(name={}) already_existed={existed}{}",
-        show(ansi(name)),
-        if existed && suppress { " -> last error CLEARED" } else if existed { " -> left alone (first instance)" } else { "" }
+    // Record, then set the error last. See `create_mutex_w` for why the order is the function.
+    note(format!(
+        "instance: CreateMutexA(name={text:?}) already_existed={existed}{}",
+        if existed && suppress { " -> last error CLEARED, this client is a later one" } else if existed { " -> left alone (first instance)" } else { " -> we are the first to create it" }
     ));
+    leaving();
     if existed && suppress {
         SetLastError(0);
     } else {
@@ -515,6 +645,8 @@ pub unsafe fn arm() {
     // function *item* straight to an integer is a lint trap and can pick up the wrong
     // address. A detour installed at the wrong address is a jump into the middle of
     // something, in a DLL the whole process shares.
+    start_flusher();
+
     let fw: unsafe extern "system" fn(*const u16, *const u16) -> *mut c_void = find_window_w;
     let fa: unsafe extern "system" fn(*const u8, *const u8) -> *mut c_void = find_window_a;
     let mw: unsafe extern "system" fn(*mut c_void, i32, *const u16) -> *mut c_void = create_mutex_w;
@@ -623,6 +755,45 @@ mod tests {
         // which is SHORT of the 12 an absolute jump needs - which is exactly why the real
         // FindWindowA came back "NOT hooked, nothing written".
         assert!(10 < ABS_JMP_LEN, "10 bytes is not enough to write the jump");
+    }
+
+    /// **Only the client's own mutex is acted on**, and the list of what it must ignore is
+    /// not hypothetical - these are the eight named mutexes one client actually created.
+    ///
+    /// The bug this pins is a hang, not a wrong answer. Touching `DirectSound DllMain mutex`
+    /// meant doing work inside a detour while the loader lock was held, and the client stopped
+    /// with its window open and its session monitor still ticking.
+    #[test]
+    fn only_the_clients_own_mutex_is_recognised() {
+        assert!(is_the_guard(r"Global\WvsClientMtx"));
+        // The namespace is a prefix and builds differ on it, so the match is on the name.
+        assert!(is_the_guard(r"Local\WvsClientMtx"));
+        assert!(is_the_guard("WvsClientMtx"));
+
+        // Every other named mutex from the 00:24:56 capture. Acting on any of these is what
+        // hung the first client.
+        for other in [
+            r"Local\DirectSound DllMain mutex (0x000E27F0)",
+            "DirectSound Administrator shared thread array (lock",
+            "DirectInput.{89521361-AA8A-11CF-BFC7-444553540000}",
+            "DirectInput.{5944E682-C92E-11CF-BFC7-444553540000}",
+            r"Local\ZonesCacheCounterMutex",
+            r"Local\ZonesLockedCacheCounterMutex",
+            "CDdf212806D6EmB31yE0c",
+        ] {
+            assert!(!is_the_guard(other), "{other} must be passed through untouched");
+        }
+    }
+
+    /// The deferred log queue is bounded, drains, and never blocks its caller.
+    #[test]
+    fn notes_are_queued_and_bounded_rather_than_written() {
+        for i in 0..300 {
+            note(format!("line {i}"));
+        }
+        let q = PENDING.lock().unwrap();
+        assert_eq!(q.len(), 256, "a detour must not grow a queue without limit");
+        assert_eq!(q[0], "line 0", "and it keeps the EARLIEST, which is the interesting end");
     }
 
     /// **The kernelbase mutex prologue, from the hook log of 2026-09-02.**
