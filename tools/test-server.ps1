@@ -1188,11 +1188,23 @@ try {
     # `auth` is here for maplecw-useradd, which this script now calls to clear a stale login
     # claim. `launcher` only when it is going to be run - it pulls eframe, and a first build
     # of that is minutes nobody asked for on a run that is not about accounts.
-    if ($Launcher) {
-        & cargo build --release -p login -p world -p store -p auth -p grap-stub -p launcher
-    } else {
-        & cargo build --release -p login -p world -p store -p auth -p grap-stub
-    }
+    # **`launcher` is built on EVERY run, including -ServersOnly.** It used to be gated on
+    # -Launcher, on the reasoning that eframe is minutes nobody asked for on a run that is
+    # not about accounts. That reasoning was right once and produced the exact failure the
+    # comment above it warns against, one crate over:
+    #
+    #   2026-09-01. The instance-guard hooks were written, tested, committed and INSTALLED -
+    #   grap64.dll on disk contained them. `crates/launcher/src/client.rs` was edited at 02:17
+    #   to write `maplecw-hook.multiclient`, which is what ARMS them. The launcher binary was
+    #   from 01:53. The owner ran -ServersOnly and started the launcher by hand, which is how every
+    #   launch now happens, so `-p launcher` was never in the build line. The marker was never
+    #   written, `instance::enabled()` returned false, `arm()` never ran, and the hook log had
+    #   ZERO `instance:` lines. T0 came back "cannot run two clients" from a run in which the
+    #   instrument measuring it was switched off, and nothing said so.
+    #
+    # The first-build cost is real and is paid once. A stale binary costs a launch every time,
+    # and this one cost a launch that could not have answered its own question.
+    & cargo build --release -p login -p world -p store -p auth -p grap-stub -p launcher
     if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 }
 finally { Pop-Location }
@@ -1828,6 +1840,26 @@ if ($Launcher) {
     $launcherExe = Join-Path $root 'target\release\maplecw-launcher.exe'
     if (-not (Test-Path $launcherExe)) {
         throw "no launcher at $launcherExe - build it with: cargo build --release -p launcher"
+    }
+    # **Existing is not current, and the difference cost a run.** The build above should have
+    # made this impossible, but a build can FAIL TO REPLACE a running or elevated-owned exe
+    # with "Access is denied (os error 5)" - which is how the 01:53 launcher survived an 02:17
+    # source edit. So this is measured rather than assumed, from the file that is actually
+    # about to be started.
+    $launcherBuilt = (Get-Item $launcherExe).LastWriteTime
+    $newestSrc = Get-ChildItem (Join-Path $root 'crates\launcher\src') -Recurse -File |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($newestSrc -and $newestSrc.LastWriteTime -gt $launcherBuilt) {
+        Write-Host ''
+        Write-Host 'THE LAUNCHER BINARY IS OLDER THAN ITS SOURCE. STOP.' -ForegroundColor Red
+        Write-Host ("  built  {0}" -f $launcherBuilt) -ForegroundColor Red
+        Write-Host ("  source {0}  ({1})" -f $newestSrc.LastWriteTime, $newestSrc.Name) -ForegroundColor Red
+        Write-Host '  The build above did not replace it - almost always because a client or'
+        Write-Host '  launcher still holds it, or an elevated run owns the file. Close both,'
+        Write-Host '  delete it by hand, and re-run. A stale launcher writes stale markers,'
+        Write-Host '  and a hook feature it does not arm looks EXACTLY like a feature that'
+        Write-Host '  does not work.'
+        Write-Host ''
     }
     Write-Host ''
     Write-Host 'THE LAUNCHER IS DRIVING THIS RUN.' -ForegroundColor Cyan
