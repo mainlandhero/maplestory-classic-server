@@ -97,6 +97,8 @@ static MUTEX_W: AtomicU64 = AtomicU64::new(0);
 static MUTEX_A: AtomicU64 = AtomicU64::new(0);
 
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+/// For the forwarder-slot rewrite, which touches data and must not make it executable.
+const PAGE_READWRITE: u32 = 0x04;
 const MEM_COMMIT_RESERVE: u32 = 0x1000 | 0x2000;
 /// `ERROR_ALREADY_EXISTS`, the value a single-instance mutex guard tests for.
 const ERROR_ALREADY_EXISTS: u32 = 183;
@@ -665,10 +667,10 @@ pub unsafe fn arm() {
     // CreateMutex does: it must really create the mutex, and only the error code is changed.
     // The trampoline is stored BEFORE the patch goes in, or the first call through the detour
     // would read a zero and jump to nowhere.
-    if let Some(t) = hook_with_trampoline("kernel32.dll", "CreateMutexW", mw as usize) {
+    if let Some(t) = hook_forwarder_slot("kernel32.dll", "CreateMutexW", mw as usize) {
         MUTEX_W.store(t as u64, Ordering::SeqCst);
     }
-    if let Some(t) = hook_with_trampoline("kernel32.dll", "CreateMutexA", ma as usize) {
+    if let Some(t) = hook_forwarder_slot("kernel32.dll", "CreateMutexA", ma as usize) {
         MUTEX_A.store(t as u64, Ordering::SeqCst);
     }
 }
@@ -678,8 +680,93 @@ pub unsafe fn arm() {
 /// Split out only to make the ordering hazard explicit at the call site: the trampoline has to
 /// be published to its atomic before the target is patched, because the very next call from
 /// anywhere in the process goes through the detour.
-unsafe fn hook_with_trampoline(module: &str, name: &str, detour: usize) -> Option<usize> {
-    hook(module, name, detour)
+/// **Redirect a forwarder by rewriting the pointer it reads - eight bytes of data, and not
+/// one byte of code.**
+///
+/// Three runs of 2026-09-02, and the correlation is exact:
+///
+/// ```text
+///   run     kernelbase!CreateMutex patched     packets the client dispatched
+///   00:16              no                                10
+///   00:24              yes                                0
+///   00:34              yes                                0
+/// ```
+///
+/// The first client opened its window and stopped. It was not dead - the session monitor kept
+/// its three-second heartbeat going - and it never dispatched a single packet. The 00:34 run
+/// is what makes this a measurement rather than a guess: it had the logging moved out of the
+/// detours entirely, the name filter down to one mutex, and a clean uninterleaved log. **It
+/// hung identically.** So the cause is the presence of the patch in `kernelbase`, not
+/// anything our detour was doing.
+///
+/// Which is worth stating plainly: the previous fix was a real bug - a file write inside a
+/// detour that DirectSound calls from its `DllMain` is a deadlock waiting to happen - and it
+/// was not this bug. Fixing something real is not evidence of having fixed the thing you were
+/// chasing.
+///
+/// # Why the slot is a different and much smaller act
+///
+/// `kernel32!CreateMutexW` is not a function. It is six bytes:
+///
+/// ```text
+///   ff 25 0a 09 06 00     jmp qword ptr [rip+0x6090a]
+/// ```
+///
+/// and the pointer it reads holds `kernelbase!CreateMutexW`. Writing our own address into
+/// that pointer redirects **everyone who goes through `kernel32`** - which is the client,
+/// because that is the documented export anybody links against - and leaves everyone who
+/// calls `kernelbase` directly completely untouched. DirectSound's `DllMain` mutex, DirectInput,
+/// the zone cache: all of them keep running the real function through the real code.
+///
+/// It also removes the whole instruction-stealing question. There is no prologue to measure,
+/// nothing copied to a trampoline, and the "trampoline" is simply the address that was already
+/// in the slot.
+unsafe fn hook_forwarder_slot(module: &str, name: &str, detour: usize) -> Option<usize> {
+    let module_z = format!("{module}\0");
+    let name_z = format!("{name}\0");
+    let m = GetModuleHandleA(module_z.as_ptr());
+    if m.is_null() {
+        log(&format!("instance: {module} is not loaded - {name} NOT hooked"));
+        return None;
+    }
+    let thunk = GetProcAddress(m, name_z.as_ptr()) as usize;
+    if thunk == 0 {
+        log(&format!("instance: {module}!{name} not found - NOT hooked"));
+        return None;
+    }
+    let b = std::slice::from_raw_parts(thunk as *const u8, 6);
+    if b[0] != 0xFF || b[1] != 0x25 {
+        log(&format!(
+            "instance: {module}!{name} at {thunk:#x} is NOT an ff-25 forwarder, so there is no \
+             pointer to rewrite - NOT hooked, nothing written. Patching its code instead is \
+             what hung the client on 2026-09-02 and is deliberately not attempted. first 6 \
+             bytes: {}",
+            b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ")
+        ));
+        return None;
+    }
+    // The displacement is signed and measured from the END of the six-byte instruction.
+    let disp = i32::from_le_bytes([b[2], b[3], b[4], b[5]]) as isize;
+    let slot = (thunk as isize + 6 + disp) as usize;
+    let real = *(slot as *const usize);
+    if real == 0 {
+        log(&format!("instance: {module}!{name} forwarder slot is null - NOT hooked"));
+        return None;
+    }
+
+    let mut old = 0u32;
+    if VirtualProtect(slot as *mut c_void, 8, PAGE_READWRITE, &mut old) == 0 {
+        log(&format!("instance: VirtualProtect on the {name} slot failed - NOT hooked"));
+        return None;
+    }
+    *(slot as *mut usize) = detour;
+    VirtualProtect(slot as *mut c_void, 8, old, &mut old);
+    log(&format!(
+        "instance: redirected {module}!{name} by rewriting its forwarder slot at {slot:#x} \
+         ({real:#x} -> {detour:#x}). No code was modified; callers that reach kernelbase by \
+         another route are unaffected"
+    ));
+    Some(real)
 }
 
 #[cfg(test)]
@@ -755,6 +842,36 @@ mod tests {
         // which is SHORT of the 12 an absolute jump needs - which is exactly why the real
         // FindWindowA came back "NOT hooked, nothing written".
         assert!(10 < ABS_JMP_LEN, "10 bytes is not enough to write the jump");
+    }
+
+    /// **The forwarder slot is the pointer AFTER the six-byte instruction**, and an off-by-six
+    /// here rewrites whatever is next to it instead.
+    ///
+    /// Same arithmetic as `follow_thunk`, in the opposite direction: that one reads the slot,
+    /// this one writes it. Getting it wrong does not fail - it corrupts a neighbouring import.
+    #[test]
+    fn a_forwarder_slot_is_found_at_the_same_place_it_is_read_from() {
+        let mut landing = vec![0u8; 16];
+        landing[0] = 0x48;
+        let real = landing.as_ptr() as usize;
+
+        let mut image = vec![0u8; 64];
+        let base = image.as_ptr() as usize;
+        let slot = base + 40;
+        let disp = (slot as isize) - (base as isize + 6);
+        image[0] = 0xFF;
+        image[1] = 0x25;
+        image[2..6].copy_from_slice(&(disp as i32).to_le_bytes());
+        image[40..48].copy_from_slice(&real.to_le_bytes());
+
+        // `follow_thunk` reads the slot, so agreeing with it is the check: a writer that
+        // disagreed with the reader would patch an address nobody dispatches through.
+        assert_eq!(unsafe { follow_thunk(base, "test") }, real);
+        assert_eq!(
+            unsafe { *(slot as *const usize) },
+            real,
+            "and the slot is where the value actually lives"
+        );
     }
 
     /// **Only the client's own mutex is acted on**, and the list of what it must ignore is

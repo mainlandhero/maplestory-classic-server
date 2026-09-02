@@ -1,0 +1,30 @@
+00:34:21.421 instance: ARMING in pid 919872 - marker maplecw-hook.multiclient present, this is the FIRST client on this desktop, so the guard will be LOGGED ONLY (first client behaves exactly as before)
+00:34:21.422 instance: hooked user32.dll!FindWindowW at 0x7ffd1f1f3bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+00:34:21.422 instance: hooked user32.dll!FindWindowA at 0x7ffd1f24ab90, stole 12 bytes (48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75)
+00:34:21.422 instance: kernel32.dll!CreateMutexW at 0x7ffd20414ce0 is an ff-25 forwarder -> 0x7ffd1e637230, following it
+00:34:21.422 instance: hooked kernel32.dll!CreateMutexW at 0x7ffd1e637230, stole 12 bytes (49 8b c0 41 b9 01 00 1f 00 45 33 c0 85 d2 48 8b)
+00:34:21.422 instance: kernel32.dll!CreateMutexA at 0x7ffd20414cb0 is an ff-25 forwarder -> 0x7ffd1e687460, following it
+00:34:21.422 instance: hooked kernel32.dll!CreateMutexA at 0x7ffd1e687460, stole 12 bytes (49 8b c0 41 b9 01 00 1f 00 45 33 c0 85 d2 48 8b)
+00:34:21.623 instance: CreateMutexA(name="Global\\WvsClientMtx") already_existed=false -> we are the first to create it
+00:34:23.208 install_once: our code IS running. env=false marker=true -> installing
+00:34:23.260 install: .text settled after 51 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+00:34:23.260 install: base=0x140000000 target=0x1415d60e0
+00:34:23.260 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+00:34:23.260 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+00:34:23.260 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+00:34:23.260 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+00:34:23.261 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+00:34:23.261 probe: watching 0x141b36f60 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+00:34:23.261 probe: watch on 0x142ef3e44 will log up to 8 hits
+00:34:23.261 probe: watching 0x142ef3e44 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+00:34:23.261 identity: maplecw-hook.identity read and DELETED - the token now exists only in this process, and cannot be picked up by a later run
+00:34:23.261 identity: armed on FUN_142c50400 at 0x142c50400 (trampoline 0xa720000), 26 byte token from maplecw-hook.identity. It was a PLAIN-TEXT LOCAL SECRET on disk until the line above deleted it: anything running as this user could have read it, which is the same power as being this launch. It is one-time, and the server keeps only its SHA-256
+00:34:23.261 install: hook active
+00:34:23.461 session: object at 0x6188018 is now readable
+00:34:23.462 ***** SESSION obj=0x6188018 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:34:26.269 ***** SESSION obj=0x6188018 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:34:29.276 ***** SESSION obj=0x6188018 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:34:32.284 ***** SESSION obj=0x6188018 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:34:35.290 ***** SESSION obj=0x6188018 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:34:38.296 ***** SESSION obj=0x6188018 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:34:41.304 ***** SESSION obj=0x6188018 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
