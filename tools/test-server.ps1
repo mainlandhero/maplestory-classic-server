@@ -272,6 +272,27 @@
      T0. CAN THIS MACHINE RUN TWO CLIENTS AT ONCE? T1 and T2 are impossible until it
          can, so do it first.
 
+         **LAUNCH THEM ONE AT A TIME.** Wait for the first client to reach the CHARACTER
+         LIST before pressing Login in the second launcher. This is not politeness:
+         `client-patched\maplecw-hook.identity` is ONE shared file. Both launchers write
+         it, and the hook reads and deletes it several seconds into the client's life
+         (`crates/grap-stub/src/hook.rs` arms it well after start-up). Overlapping
+         launches mean the second launcher's token is on disk when the FIRST client's
+         hook goes looking - so client 1 carries client 2's credential, both connections
+         resolve to the same claim, and **both clients show the same account.** That is
+         indistinguishable on screen from the login-claim bug that was fixed on
+         2026-08-29, and it would be reported as a regression that is not there.
+
+         **TWO ACCOUNTS ARE NOT REQUIRED, and are still what to use.** The claim table is
+         keyed per LAUNCH - one row per sign-in, keyed by the SHA-256 of that sign-in's
+         session token, and `Store::authenticate` mints a fresh token every time - so two
+         sign-ins on `maplecw` make two rows and neither evicts the other. What separates
+         them is the owning PID (rule 2), which is per-process and knows nothing about
+         accounts. But with one account both clients legitimately show the SAME character
+         list, which deletes the only check that can catch the claim bug coming back; and
+         nothing in this server stops the same character being claimed twice. So: maplecw
+         and tester.
+
          **THE OLD VERSION OF THIS STEP WAS WRONG AND COST WISP A TRY.** It said to
          double-click client-patched\MapleStory.exe with no server running. The client
          does not start that way: `crates/launcher/src/prepare.rs` launches it as
@@ -1507,6 +1528,16 @@ function Show-TestPlan {
         Write-Host '       like the feature working.' -ForegroundColor Yellow
         Write-Host '  T0. TWO CLIENTS AT ONCE? T1/T2 are impossible until this' -ForegroundColor Cyan
     Write-Host '      is answered, so do it first.'
+    Write-Host '      LAUNCH THEM ONE AT A TIME. Wait for the FIRST client to reach'
+    Write-Host '      the character list before pressing Login in the second.'
+    Write-Host '      maplecw-hook.identity is ONE shared file: both launchers write'
+    Write-Host '      it and the hook reads it seconds in, so overlapping launches'
+    Write-Host '      give client 1 client 2''s credential and BOTH SHOW THE SAME'
+    Write-Host '      ACCOUNT - which looks exactly like the claim bug coming back.'
+    Write-Host '      Two accounts are NOT required (claims are keyed per LAUNCH, and'
+    Write-Host '      the owning PID is what separates them) but USE TWO ANYWAY: with'
+    Write-Host '      one, both clients legitimately show the same character list and'
+    Write-Host '      the check above stops being a check.'
     Write-Host '      THE OLD VERSION OF THIS STEP WAS WRONG. Double-clicking the' -ForegroundColor Yellow
     Write-Host '      exe does nothing: the client is launched -NXLDEBUG <ip> <port>'
     Write-Host '      and with no arguments it exits. There is no no-server version.'
