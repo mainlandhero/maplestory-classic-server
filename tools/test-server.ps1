@@ -13,10 +13,30 @@
     wrong, the server is the only thing that changed.
 
 .NOTES
-    ====== THE TEST PLAN, 2026-08-31b: A CONTINENT NOBODY HAS LOADED ======
+    ====== THE TEST PLAN, 2026-09-01: T0 DECIDES WHAT THE REST OF THIS RUN IS ======
 
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
+
+    ORDER: T0, then EITHER the multiplayer half OR the single-client half.
+    -----------------------------------------------------------------------------
+    T0 asks whether this machine runs two clients at once. It costs one -ServersOnly
+    and two launcher runs, and it is now INSTRUMENTED - the stub logs every guard the
+    client asks for. It decides the rest of the run:
+
+      T0 says YES  -> T1, T2, T2b. Two clients have NEVER been connected to this
+                      server at once, so everything in the last three commits - shared
+                      mob HP, shared deaths, the damage-ranked drop, and the controller
+                      handover - rests entirely on the test suite. T2b is the newest
+                      and the cheapest to read: one player leaves, and the MEASUREMENT
+                      is the screen of the one who stays.
+      T0 says NO   -> T11 then T10. Both are single-client and both walk through maps
+                      no character has ever stood on: El Nath and Orbis are 87 maps
+                      this server has never served, and the four second-job test
+                      fields have exactly one portal each.
+
+    Do not do both halves in one run. Changing two things at once has already produced
+    one unexplained crash.
 
     -SetFieldProbe is NOT optional: without it Session::handle returns nothing for EVERY
     packet and the client sits on "Connecting...". Run -Stop before relaunching.
@@ -1335,7 +1355,10 @@ function Show-TestPlan {
     Write-Host ''
     Write-Host 'On screen:'
     if ($SetFieldProbe) {
-        Write-Host '  T11 FIRST, then T10. Then T0-T9 and the carried-over 1-7.' -ForegroundColor Yellow
+        Write-Host '  T0 FIRST - IT DECIDES WHAT THE REST OF THIS RUN IS.' -ForegroundColor Yellow
+        Write-Host '    T0 says YES -> T1, T2, T2b (the multiplayer half)'
+        Write-Host '    T0 says NO  -> T11 then T10 (the single-client half)'
+        Write-Host '  Do NOT do both halves in one run.'
         Write-Host '  Full text: Get-Help on this script.'
         Write-Host ''
         Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
@@ -1358,7 +1381,12 @@ function Show-TestPlan {
         Write-Host '  the second refuses to start, SAY SO - that is a finding, and the'
         Write-Host '  answer is two machines.'
         Write-Host ''
-        Write-Host '  T11 IS WHAT THIS RUN IS FOR, and T10 is right behind it.' -ForegroundColor Magenta
+        Write-Host '  IF T0 SAYS YES, T2b IS THE ONE. It is the newest thing here' -ForegroundColor Magenta
+        Write-Host '  and the cheapest to read: one player leaves the map, and the'
+        Write-Host '  measurement is the screen of the one who STAYS. Nothing in the'
+        Write-Host '  last three commits has ever been on a wire between two clients.'
+        Write-Host ''
+        Write-Host '  IF T0 SAYS NO, T11 IS WHAT THIS RUN IS FOR, T10 behind it.' -ForegroundColor Magenta
         Write-Host '  T11 CROSSES TO ANOTHER CONTINENT. Orbis and El Nath are 87 maps'
         Write-Host '  this server has never served and no character has ever stood on.'
         Write-Host '  If a client dies loading one, THAT is the finding - worth more'
