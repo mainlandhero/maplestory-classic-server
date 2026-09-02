@@ -1,0 +1,14 @@
+00:02:31.916 instance: ARMING in pid 918232 - marker maplecw-hook.multiclient present, this is the FIRST client on this desktop, so the guard will be LOGGED ONLY (first client behaves exactly as before)
+00:02:31.916 instance: hooked user32.dll!FindWindowW at 0x7ffd1f1f3bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+00:02:31.917 instance: user32.dll!FindWindowA at 0x7ffd1f24ab90 has a prologue this module will not steal - NOT hooked, nothing written. first 16 bytes: 48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75
+00:02:31.917 instance: kernel32.dll!CreateMutexW at 0x7ffd20414ce0 has a prologue this module will not steal - NOT hooked, nothing written. first 16 bytes: ff 25 0a 09 06 00 cc cc cc cc cc cc cc cc cc cc
+00:02:31.917 instance: kernel32.dll!CreateMutexA at 0x7ffd20414cb0 has a prologue this module will not steal - NOT hooked, nothing written. first 16 bytes: ff 25 6a 08 06 00 cc cc cc cc cc cc cc cc cc cc
+00:02:32.744 ***** SESSION obj=0x6147c88 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:34.868   142 opcode=0x0453 elapsed_us=338.1 ret=1 flag=1->1 state=2->2
+00:02:35.752 ***** SESSION obj=0x6147c88 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:38.759 ***** SESSION obj=0x6147c88 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+00:02:39.559   143 opcode=0x0453 elapsed_us=318.6 ret=1 flag=1->1 state=2->2
+00:02:39.789 ***** CLIENT FAULT #1: code=0xc0000374 at 0x7ffd20dcf509 in ntdll.dll - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 3 C++ throw(s) seen before this, 3 logged. *****
+      stack: 0x14019b58e<-TEXT
+00:02:39.790 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-917060-c0000374-1.dmp ... (full memory, this can take a few seconds) *****
+00:02:41.535 ***** CRASH DUMP: wrote C:\MapleCW\dumps\maplecw-crash-917060-c0000374-1.dmp, 1252978561 bytes. Open it with WinDbg; `!analyze -v` and `!heap -p -a <addr>` are the two that matter here *****

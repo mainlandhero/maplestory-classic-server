@@ -178,9 +178,22 @@ fn insn_len(b: &[u8]) -> Option<usize> {
                 0x81 => 2 + modrm_len(b.get(2..)?)? + 4,
                 // 8D /r  lea
                 0x8D => 2 + modrm_len(b.get(2..)?)?,
+                // 31 /r and 33 /r with REX - `xor rax, rax` and friends.
+                0x31 | 0x33 => 2 + modrm_len(b.get(2..)?)?,
                 _ => return None,
             }
         }
+        // 31 /r  xor r/m, r   and   33 /r  xor r, r/m
+        //
+        // Added 2026-09-02 from a measurement, not from reading a list. `user32!FindWindowA`
+        // begins `48 83 ec 38 / 4c 8b ca / 4c 8b c1 / 33 d2 / 33 c9` - the two `xor` are the
+        // idiomatic zeroing of edx and ecx before a call, and without them this measurer
+        // stopped at 10 bytes and the export was refused. The first four instructions were
+        // already understood; the whole prologue is 14 bytes, one over what is needed.
+        //
+        // Safe for the same reason 0x89/0x8B are: opcode plus ModRM, and `modrm_len` refuses
+        // the RIP-relative form, so nothing position-dependent can be copied.
+        0x31 | 0x33 => 1 + modrm_len(b.get(1..)?)?,
         // 89 /r and 8B /r without REX.
         0x89 | 0x8B => 1 + modrm_len(b.get(1..)?)?,
         // 83 /digit ib without REX.
@@ -210,6 +223,48 @@ fn modrm_len(b: &[u8]) -> Option<usize> {
     Some(1 + sib + disp)
 }
 
+/// **Follow an `ff 25` indirect jump to the function it forwards to.**
+///
+/// Found by measurement on 2026-09-02, and it is the reason a mutex guard would have gone
+/// completely unhooked. Both mutex exports in `kernel32` are six-byte thunks:
+///
+/// ```text
+///   kernel32!CreateMutexW   ff 25 0a 09 06 00   jmp qword ptr [rip+0x6090a]
+///   kernel32!CreateMutexA   ff 25 6a 08 06 00   jmp qword ptr [rip+0x6086a]
+/// ```
+///
+/// That is the API-set forwarder: the implementation lives in `kernelbase.dll` and
+/// `kernel32` is a shim over it. [`safe_prologue_len`] refused them, correctly - `ff 25`
+/// carries a RIP-relative displacement and copying it elsewhere would jump into nowhere - so
+/// the log said "NOT hooked, nothing written" twice and the run could not have observed a
+/// mutex even if the client's guard were one.
+///
+/// Resolving is better than naming `kernelbase.dll` in the caller, because it does not depend
+/// on knowing which module any given export forwards to on any given Windows build: the
+/// pointer says. Bounded to a few hops so a cycle cannot spin, and every hop is logged -
+/// hooking an address in a module the caller did not name is exactly the kind of thing that
+/// must not happen quietly.
+unsafe fn follow_thunk(mut addr: usize, what: &str) -> usize {
+    for _ in 0..4 {
+        let b = std::slice::from_raw_parts(addr as *const u8, 6);
+        if b[0] != 0xFF || b[1] != 0x25 {
+            return addr;
+        }
+        let disp = i32::from_le_bytes([b[2], b[3], b[4], b[5]]) as isize;
+        // The displacement is from the END of the six-byte instruction.
+        let slot = (addr as isize + 6 + disp) as usize;
+        let next = *(slot as *const usize);
+        if next == 0 {
+            return addr;
+        }
+        log(&format!(
+            "instance: {what} at {addr:#x} is an ff-25 forwarder -> {next:#x}, following it"
+        ));
+        addr = next;
+    }
+    addr
+}
+
 /// Install one hook. Returns the trampoline address, or `None` with a reason already logged.
 unsafe fn hook(module: &str, name: &str, detour: usize) -> Option<usize> {
     let module_z = format!("{module}\0");
@@ -224,6 +279,8 @@ unsafe fn hook(module: &str, name: &str, detour: usize) -> Option<usize> {
         log(&format!("instance: {module}!{name} not found - NOT hooked"));
         return None;
     }
+    // Both `kernel32` mutex exports are forwarders into `kernelbase`. Hook what actually runs.
+    let target = follow_thunk(target, &format!("{module}!{name}"));
     let head = std::slice::from_raw_parts(target as *const u8, 16);
     let hex: Vec<String> = head.iter().map(|b| format!("{b:02x}")).collect();
     let Some(stolen) = safe_prologue_len(head, ABS_JMP_LEN) else {
@@ -484,6 +541,110 @@ mod tests {
         assert_eq!(safe_prologue_len(&p, 5), Some(5));
         assert_eq!(safe_prologue_len(&p, 6), Some(10));
         assert_eq!(safe_prologue_len(&p, 11), Some(11));
+    }
+
+    /// **The two real prologues this machine actually has**, copied out of a hook log rather
+    /// than invented.
+    ///
+    /// `FindWindowW` was hooked on the first try and `FindWindowA` was refused at 10 bytes,
+    /// because `33 d2` / `33 c9` - zeroing edx and ecx before a call - were not in the
+    /// whitelist. Synthetic prologues had passed for weeks; these two are the measurement.
+    #[test]
+    fn the_real_user32_prologues_from_this_machine_measure_correctly() {
+        // 00:02:31.916  instance: hooked user32.dll!FindWindowW ... stole 14 bytes
+        let find_w = [
+            0x48, 0x89, 0x5C, 0x24, 0x08, // mov [rsp+8], rbx       5
+            0x48, 0x89, 0x7C, 0x24, 0x10, // mov [rsp+0x10], rdi    5
+            0x55, //                          push rbp              1
+            0x48, 0x8B, 0xEC, //              mov rbp, rsp          3   = 14
+            0x48, 0x83, //                    (sub rsp, ..) - NOT included
+        ];
+        assert_eq!(safe_prologue_len(&find_w, ABS_JMP_LEN), Some(14));
+
+        // 00:02:31.917  instance: user32.dll!FindWindowA ... NOT hooked. This is the one the
+        // xor entries were added for; it comes to exactly 14, one byte over what is needed.
+        let find_a = [
+            0x48, 0x83, 0xEC, 0x38, // sub rsp, 0x38    4
+            0x4C, 0x8B, 0xCA, //       mov r9, rdx      3
+            0x4C, 0x8B, 0xC1, //       mov r8, rcx      3
+            0x33, 0xD2, //             xor edx, edx     2
+            0x33, 0xC9, //             xor ecx, ecx     2   = 14
+            0xE8, 0x75, //             (call ..) - NOT included
+        ];
+        // 12, not 14: `ABS_JMP_LEN` is 12 and the fourth instruction ENDS there, so nothing
+        // extra is stolen. `FindWindowW` above needs 14 only because 12 falls inside its
+        // `mov rbp, rsp`. Both are hookable; the difference is the point of measuring rather
+        // than assuming a fixed steal.
+        assert_eq!(
+            safe_prologue_len(&find_a, ABS_JMP_LEN),
+            Some(12),
+            "the xor entries are what make this reachable at all"
+        );
+        // Every boundary is a real one - a measurer that returned 13 here would split
+        // `xor ecx, ecx` and corrupt user32 for every thread in the process.
+        for (want, expect) in [(1, 4), (5, 7), (8, 10), (11, 12), (12, 12), (13, 14)] {
+            assert_eq!(safe_prologue_len(&find_a, want), Some(expect), "want {want}");
+        }
+        // And the control for the whole change: without the xor entries this stops at 10,
+        // which is SHORT of the 12 an absolute jump needs - which is exactly why the real
+        // FindWindowA came back "NOT hooked, nothing written".
+        assert!(10 < ABS_JMP_LEN, "10 bytes is not enough to write the jump");
+    }
+
+    /// **An `ff 25` forwarder is still refused by the measurer** - following it is the only
+    /// correct answer, and `hook` is what does that.
+    ///
+    /// This is the shape both `kernel32` mutex exports have. Copying six bytes carrying a
+    /// RIP-relative displacement to a trampoline would produce a jump to an address that
+    /// depends on where the trampoline happened to land.
+    #[test]
+    fn a_forwarder_thunk_is_never_stolen() {
+        let thunk = [
+            0xFF, 0x25, 0x0A, 0x09, 0x06, 0x00, // jmp qword ptr [rip+0x6090a]
+            0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+        ];
+        assert_eq!(safe_prologue_len(&thunk, ABS_JMP_LEN), None);
+    }
+
+    /// **`follow_thunk` lands on the function, not six bytes past the jump.**
+    ///
+    /// The displacement is measured from the END of the six-byte instruction, so the
+    /// arithmetic is `addr + 6 + disp`. An off-by-six here does not fail loudly - it hooks
+    /// whatever happens to sit at the wrong address, inside a DLL the whole process shares.
+    #[test]
+    fn following_a_forwarder_resolves_through_the_pointer_slot() {
+        // A little image: six bytes of thunk, padding, then a pointer slot holding the
+        // "real function" address. Boxed so it does not move.
+        //
+        // The destination is a REAL buffer rather than a made-up address, because
+        // `follow_thunk` dereferences what it lands on to ask whether that is a thunk too.
+        // A synthetic pointer makes this test crash the whole harness, which is how this was
+        // found - and it is also the honest shape: in the client, the slot holds the address
+        // of a mapped function in kernelbase.
+        let mut landing = vec![0u8; 16];
+        landing[0] = 0x48; // mov ... - anything that is not `ff 25`
+        landing[1] = 0x89;
+        let real = landing.as_ptr() as usize;
+
+        let mut image = vec![0u8; 64];
+        let base = image.as_ptr() as usize;
+        let slot = base + 32;
+
+        let disp = (slot as isize) - (base as isize + 6);
+        image[0] = 0xFF;
+        image[1] = 0x25;
+        image[2..6].copy_from_slice(&(disp as i32).to_le_bytes());
+        image[32..40].copy_from_slice(&real.to_le_bytes());
+
+        assert_eq!(unsafe { follow_thunk(base, "test") }, real);
+
+        // The control: an address that is NOT a thunk is returned untouched, or every
+        // ordinary export would be chased through whatever its first bytes happened to be.
+        let mut plain = vec![0u8; 16];
+        plain[0] = 0x48;
+        plain[1] = 0x89;
+        let p = plain.as_ptr() as usize;
+        assert_eq!(unsafe { follow_thunk(p, "test") }, p);
     }
 
     /// **An unrecognised prologue is refused, not guessed at.**
