@@ -8002,13 +8002,22 @@ fn walking_into_a_field_does_not_re_send_another_players_drops() {
     assert_eq!(back[0].body[1], net::drops::ENTER_INSTANT, "already lying there, no second arc");
 }
 
-/// **A controller loses its mobs by leaving, and nothing is sent to take them away.**
+/// **A controller that leaves hands its mobs to somebody still there, and that somebody is
+/// told without having to move.**
 ///
-/// The client's only revoke is `CONTROL_RELEASE`, and level 0 **despawns** the mob rather than
-/// releasing it (`net::mobmove::mob_release_controller` says so in its own doc), so there is no
-/// "you are no longer the controller, keep drawing it" packet in this client. Leaving costs
-/// zero packets on this side because the departing client has already torn its own mob pool
-/// down in the `SetField`.
+/// The owner, 2026-09-01: *"If the person who is controlling the movement of the mob leaves the map,
+/// then the mob should not disappear. That's a jarring experience. The control of the mob
+/// should be handed over to another client who is still present in the map."*
+///
+/// The mobs never did disappear - a release leaves the mob alive, and the assertion on
+/// `mob_count` below is what says so. The real symptom was worse and quieter: **nobody was
+/// told**, so every monster on that map stood perfectly still on the remaining screens with no
+/// error and no log line. This test's predecessor missed it by calling `on_field_entered` a
+/// second time to make the grants appear - and a player standing still never does that, which
+/// is the entire case.
+///
+/// So the grants are collected from `tick`, the idle path, with no field entry anywhere after
+/// the departure.
 #[test]
 fn a_departing_controller_hands_its_mobs_to_whoever_is_left() {
     let (store, config, fields, account) = shared_channel(4, 30);
@@ -8017,26 +8026,153 @@ fn a_departing_controller_hands_its_mobs_to_whoever_is_left() {
     let (mut stayer, _) = join_channel(&store, &config, &fields, account, "Stayer");
     leaver.on_field_entered();
     let spectating = stayer.on_field_entered();
-    assert_eq!(count_of(&spectating, net::mobmove::MOB_CHANGE_CONTROLLER), 0);
+    assert_eq!(
+        count_of(&spectating, net::mobmove::MOB_CHANGE_CONTROLLER),
+        0,
+        "the control: the leaver got there first, so the stayer drives nothing yet"
+    );
+    assert_eq!(fields.controllers().held_by(leaver.subscriber.get()), alive);
 
     let out = leaver.on_log_out();
     assert!(!out.is_empty(), "log out is answered, and that is not optional");
     assert_eq!(
         count_of(&out, net::mobmove::MOB_CHANGE_CONTROLLER),
         0,
-        "no packet takes control away - level 0 would DESPAWN the mob on the old screen"
+        "nothing goes to the LEAVER - level 0 is the only revoke and it DESPAWNS the mob"
     );
-    assert_eq!(fields.controllers().held_by(leaver.subscriber.get()), 0, "the claims are freed");
+    assert_eq!(fields.controllers().held_by(leaver.subscriber.get()), 0, "the claims are gone");
     assert_eq!(fields.mob_count(SHARED_MAP), alive, "and the mobs themselves are untouched");
-
-    // The next session to ask picks them up. A field entry is the cheapest way to ask.
-    let now_mine = stayer.on_field_entered();
     assert_eq!(
-        count_of(&now_mine, net::mobmove::MOB_CHANGE_CONTROLLER),
+        fields.controllers().held_by(stayer.subscriber.get()),
         alive,
-        "an orphaned field's mobs go to the next session that claims: {now_mine:?}"
+        "...because they were handed over rather than dropped on the floor"
     );
-    assert_eq!(fields.controllers().held_by(stayer.subscriber.get()), alive);
+
+    // The half that used to be missing. No `on_field_entered` - the stayer has not moved, has
+    // not walked a portal and has sent nothing. A tick is what an idle client's socket does.
+    let arrived = stayer.tick(1_000);
+    let grants: Vec<&Reply> =
+        arrived.iter().filter(|r| r.opcode == net::mobmove::MOB_CHANGE_CONTROLLER).collect();
+    assert_eq!(
+        grants.len(),
+        alive,
+        "a standing client must be told it now drives them, or they freeze: {arrived:?}"
+    );
+    assert!(
+        grants.iter().all(|g| g.body[2] != net::mobmove::CONTROL_RELEASE),
+        "and told with a level that MOVES the mob, not one that despawns it"
+    );
+}
+
+/// **The handover carries the mob's current position, not its spawn point.**
+///
+/// The heir's client resumes the wander from whatever coordinates the grant names. Send the
+/// spawn point and every handed-over monster teleports across the map on the remaining
+/// screens - which is precisely the jarring thing this whole path exists to avoid, arriving
+/// by a different door.
+#[test]
+fn a_handed_over_mob_is_granted_where_it_is_standing() {
+    let (store, config, fields, account) = shared_channel(1, 30);
+    let (mut leaver, _) = join_channel(&store, &config, &fields, account, "Leaver");
+    let (mut stayer, _) = join_channel(&store, &config, &fields, account, "Stayer");
+    leaver.on_field_entered();
+    stayer.on_field_entered();
+
+    let object_id = fields.mobs_on(SHARED_MAP)[0].spawn.object_id;
+    let spawn_x = fields.mobs_on(SHARED_MAP)[0].spawn.x;
+    let walked_to = (spawn_x + 300, 395);
+    fields.note_position(SHARED_MAP, object_id, walked_to);
+
+    leaver.on_log_out();
+    let grants: Vec<Reply> = stayer
+        .tick(1_000)
+        .into_iter()
+        .filter(|r| r.opcode == net::mobmove::MOB_CHANGE_CONTROLLER)
+        .collect();
+    assert_eq!(grants.len(), 1, "one mob, one grant: {grants:?}");
+
+    // The same builder the field-entry grant uses, fed the mob as it stands. Comparing whole
+    // bodies rather than picking an offset out: an offset would have to be re-derived here and
+    // that is a second claim about the packet layout to get wrong.
+    let expected_here = net::mobmove::mob_change_controller(
+        &fields.mobs_on(SHARED_MAP)[0].as_seen(),
+        net::mobmove::CONTROL_NORMAL,
+    );
+    assert_eq!(grants[0].body, expected_here, "granted where it is standing");
+
+    // The control that gives the assertion above its teeth: the spawn-point body is a
+    // DIFFERENT packet, so this test would fail if the handover sent that instead.
+    let spawn_body = net::mobmove::mob_change_controller(
+        &fields.mobs_on(SHARED_MAP)[0].spawn,
+        net::mobmove::CONTROL_NORMAL,
+    );
+    assert_ne!(expected_here, spawn_body, "the mob really has moved away from its spawn point");
+}
+
+/// **A client that crashes hands its mobs over too.**
+///
+/// The exit nobody takes deliberately: the socket drops, the process is killed. It goes
+/// through no log out and no portal, so `Drop` is the only thing left - and `Drop` used to
+/// call `release_all`, which is correct about ownership and says nothing to anybody.
+///
+/// This is the departure where a silent handover matters most, because the person who left is
+/// the one person who cannot see the result.
+#[test]
+fn a_crashed_connection_hands_its_mobs_over_rather_than_stranding_them() {
+    let (store, config, fields, account) = shared_channel(3, 30);
+    let alive = fields.mob_count(SHARED_MAP);
+    let (mut stayer, _) = join_channel(&store, &config, &fields, account, "Stayer");
+
+    {
+        let (mut doomed, _) = join_channel(&store, &config, &fields, account, "Doomed");
+        doomed.on_field_entered();
+        assert_eq!(
+            fields.controllers().held_by(doomed.subscriber.get()),
+            alive,
+            "the control: it really is driving them when the socket dies"
+        );
+        stayer.on_field_entered();
+        // and `doomed` is dropped here - no log out, no channel change, no portal walk.
+    }
+
+    assert_eq!(
+        fields.controllers().held_by(stayer.subscriber.get()),
+        alive,
+        "a crash must not strand the mobs on a session id that will never exist again"
+    );
+    let arrived = stayer.tick(1_000);
+    assert_eq!(
+        count_of(&arrived, net::mobmove::MOB_CHANGE_CONTROLLER),
+        alive,
+        "and the survivor is told, without moving: {arrived:?}"
+    );
+}
+
+/// **The last player out releases rather than handing over, and the field still works.**
+///
+/// The degenerate case, and the one that would break quietly: `successor_on` returns `None`,
+/// so there is nobody to send a grant to. If that path forgot to free the claims instead, the
+/// mobs would stay owned by a departed session and the next arrival would be granted nothing -
+/// an empty, motionless map that looks exactly like a spawn failure.
+#[test]
+fn the_last_player_out_frees_the_mobs_for_the_next_arrival() {
+    let (store, config, fields, account) = shared_channel(2, 30);
+    let alive = fields.mob_count(SHARED_MAP);
+    let (mut only, _) = join_channel(&store, &config, &fields, account, "Only");
+    only.on_field_entered();
+    assert_eq!(fields.controllers().held_by(only.subscriber.get()), alive);
+
+    only.on_log_out();
+    assert_eq!(fields.controllers().held_by(only.subscriber.get()), 0, "nobody to hand them to");
+    assert_eq!(fields.mob_count(SHARED_MAP), alive, "the mobs are still alive on the map");
+
+    let (mut next, _) = join_channel(&store, &config, &fields, account, "Next");
+    let welcome = next.on_field_entered();
+    assert_eq!(
+        count_of(&welcome, net::mobmove::MOB_CHANGE_CONTROLLER),
+        alive,
+        "the next arrival takes all of them: {welcome:?}"
+    );
 }
 
 /// **Re-entering a field re-grants what this connection already controls.**

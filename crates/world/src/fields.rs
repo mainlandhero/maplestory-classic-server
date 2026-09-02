@@ -102,8 +102,6 @@ pub struct LiveMob {
 }
 
 impl LiveMob {
-    /// The mob as it should be sent to a client arriving now: **at its current position**,
-    /// not its spawn point, so the animation carries on from where it is.
     /// Credit `damage` to `character`, capped at what is actually left to take.
     ///
     /// Returns what was really credited.
@@ -149,6 +147,9 @@ impl LiveMob {
         ranked
     }
 
+    /// The mob as it should be sent to a client arriving now, or to one being handed
+    /// control: **at its current position and current HP**, not its spawn point, so the
+    /// animation carries on from where it is.
     pub fn as_seen(&self) -> net::mob::FieldMob {
         let mut m = self.spawn;
         if let Some((x, y)) = self.at {

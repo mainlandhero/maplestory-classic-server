@@ -489,6 +489,41 @@ impl Bus {
             .count()
     }
 
+    /// **Somebody else still standing on this map**, or `None` if nobody is.
+    ///
+    /// Exists for one caller: a controller leaving a field has to give its mobs to a
+    /// connection that is still there, and the registry deals in session ids while the only
+    /// thing that knows who is *present* is this bus.
+    ///
+    /// The choice among several is arbitrary and deliberately so - it is the lowest id, which
+    /// is stable and reproducible in a test. Nothing about the mobs makes one observer a
+    /// better controller than another; what matters is that exactly one is picked.
+    pub fn successor_on(&self, map: u32, except: SubscriberId) -> Option<SubscriberId> {
+        self.lock()
+            .boxes
+            .iter()
+            .filter(|(other, _)| **other != except)
+            .filter(|(_, m)| m.presence.as_ref().is_some_and(|p| p.map == map))
+            .map(|(id, _)| *id)
+            .min()
+    }
+
+    /// A finished packet to one **connection**, chosen by the caller. Returns whether it
+    /// landed.
+    ///
+    /// [`publish_to_character`] addresses a person and checks their map; this addresses a
+    /// mailbox that has already been picked, which is what a handover needs - the successor
+    /// was chosen *because* of where it is, so re-deriving that would be asking the same
+    /// question twice and getting a different answer if it moved in between.
+    pub fn publish_to_subscriber(&self, id: SubscriberId, reply: Reply) -> bool {
+        let mut inner = self.lock();
+        if !inner.boxes.contains_key(&id) {
+            return false;
+        }
+        inner.post_to(id, reply);
+        true
+    }
+
     /// How many connections hold a mailbox. Logging and tests.
     pub fn subscribers(&self) -> usize {
         self.lock().boxes.len()
@@ -562,6 +597,62 @@ mod tests {
 
     fn whats(replies: &[Reply]) -> Vec<String> {
         replies.iter().map(|r| r.what.clone()).collect()
+    }
+
+    /// **A successor is somebody on THIS map**, and never the connection asking.
+    ///
+    /// Its one caller is a departing mob controller looking for someone to hand its monsters
+    /// to. Picking a connection on the wrong map would grant control of a mob that client
+    /// cannot see, and picking the leaver would grant it to a client whose mob pool is gone -
+    /// both silent, because a `0x03D2` naming an unknown object is dropped by the client
+    /// without complaint (`crate::mobshare`).
+    ///
+    /// Every session test for the handover runs on one map, which is why this one is here.
+    #[test]
+    fn a_successor_is_somebody_else_standing_on_the_same_map() {
+        let bus = Bus::new();
+        let (a, b, elsewhere, nowhere) = (bus.join(), bus.join(), bus.join(), bus.join());
+        bus.enter_field(a, presence(200, 104_040_000));
+        bus.enter_field(b, presence(201, 104_040_000));
+        bus.enter_field(elsewhere, presence(202, 100_000_000));
+        // `nowhere` has a mailbox and has never entered a field - a connection at character
+        // select. It must not be handed anything.
+
+        assert_eq!(bus.successor_on(104_040_000, a), Some(b), "the other one on this map");
+        assert_eq!(bus.successor_on(104_040_000, b), Some(a), "and it works both ways");
+        assert_eq!(
+            bus.successor_on(100_000_000, elsewhere),
+            None,
+            "alone on its own map, so there is nobody to hand to"
+        );
+        assert_eq!(bus.successor_on(999, a), None, "a map nobody is on has no successor");
+        assert_eq!(
+            bus.successor_on(104_040_000, nowhere),
+            Some(a),
+            "the control: this map DOES have candidates, so the None answers above are about \
+             the map and not about the bus being empty"
+        );
+
+        // A departure removes the candidate, which is the case the handover actually hits.
+        bus.leave_field(b);
+        assert_eq!(bus.successor_on(104_040_000, a), None, "b left, and a cannot pick itself");
+    }
+
+    /// A grant addressed to a mailbox that is gone says so rather than vanishing.
+    ///
+    /// The handover picks a successor and then sends to it, and the two are not atomic. If
+    /// that connection dropped in between, the caller has to know the grant did not land -
+    /// otherwise it logs a handover that never happened and the mobs are stranded silently.
+    #[test]
+    fn publishing_to_a_departed_subscriber_reports_that_it_did_not_land() {
+        let bus = Bus::new();
+        let a = bus.join();
+        bus.enter_field(a, presence(200, 104_040_000));
+        assert!(bus.publish_to_subscriber(a, reply(0x03D2, "grant")), "the control: it lands");
+        assert_eq!(whats(&bus.drain(a)), vec!["grant"]);
+
+        bus.part(a);
+        assert!(!bus.publish_to_subscriber(a, reply(0x03D2, "grant")), "the mailbox is gone");
     }
 
     /// The whole point, in one test: two connections on one map see each other, and

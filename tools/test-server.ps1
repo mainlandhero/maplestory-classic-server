@@ -106,21 +106,51 @@
 
      T2. KILL ONE MOB TOGETHER, both of you hitting it.
 
-          EXPECT THIS TO LOOK BROKEN, AND IT IS NOT THE EXP SPLIT. Only movement and
-          attacks are broadcast; every mob and drop packet is unicast to whoever caused
-          it. So when the OTHER player hits the mob you are both on:
-            its HP bar will not move on your screen, it will not die on your screen,
-            no drop will appear - AND YOU WILL STILL BE PAID THE EXP.
-          That is known, it is measured, and it is the next feature rather than a bug to
-          report. What IS worth reporting from this step:
-            the exp line's COLOUR and amount - white for the majority contributor,
-                       yellow and smaller for the other
-            only the killer is paid -> the fact never crossed the bus
-            both lines white -> the majority flag is wrong
-            the helper is paid the FULL amount -> the split is not being applied
-          Also expect the two screens to DISAGREE about where every mob is: each client
-          is granted control of every mob on entry, so two players run two independent
-          simulations. Also known, also next.
+          THIS USED TO SAY "EXPECT IT TO LOOK BROKEN". It should now look right, and
+          every line below is a claim that has only ever been proved by the test suite -
+          two clients have never been connected to this server at once.
+
+          a) BEFORE HITTING ANYTHING, just stand and watch the mobs on both screens.
+             They should be in THE SAME PLACES and walking THE SAME WAY. One client is
+             granted control of each mob and its moves are rebroadcast to the other.
+               the two screens agree           -> 0x03D9 is arriving
+               they disagree / mobs drift      -> the rebroadcast is not landing
+               ONE screen's mobs are frozen    -> that client was granted nothing
+          b) NOW BOTH HIT ONE MOB.
+               the HP bar moves on BOTH screens for EITHER player's hit  -> 0x03F0
+               it dies on both screens                                  -> 0x03D1
+               only your own hits move the bar -> the publish is not reaching the map
+          c) THE DROP IS DELIBERATELY NOT SHARED. Whoever dealt the most damage - not
+             the killer - is the only one who sees it. Over-damage does not count, so a
+             500-damage finisher on a snail with 3 HP left is credited 3.
+               only the top damager sees the item  -> correct, and intended
+               BOTH see it                         -> the drop went map-wide, a real bug
+               NEITHER sees it                      -> the ranking picked a departed client
+             (Parties would share drops. THERE IS NO PARTY SYSTEM YET - the window's
+              buttons are answered with a refusal so the UI cannot freeze, nothing more.)
+          d) THE EXP LINE. White for the majority contributor, yellow and smaller for
+             the other.
+               only the killer is paid  -> the fact never crossed the bus
+               both lines white         -> the majority flag is wrong
+               the helper is paid IN FULL -> the split is not being applied
+
+     T2b. NOW ONE OF YOU LEAVES THE MAP - a portal, or just close the client.
+          THE OTHER SCREEN IS THE MEASUREMENT. Watch the mobs on the player who STAYS.
+
+          Control of every mob the leaver was driving is handed to whoever is left, and
+          that client is told without having to move. Before 2026-09-01 nothing was sent
+          at all, and the monsters stood still until somebody walked through a portal
+          and back.
+            they carry on walking, no pause, no jump   -> the handover works
+            they all FREEZE and stay frozen            -> nothing was handed over
+            they freeze until you walk a portal        -> the old behaviour is back
+            they JUMP to their spawn points            -> the grant sent the spawn
+                       position instead of where the mob is standing
+          Closing the client is the better half of this test: it is the exit that goes
+          through no log out, and the one the leaving player cannot see.
+
+          world.log discriminates all of this without a second launch - grep it for
+          "mob control:", which names the count and the recipient on every handover.
      T11. THE THIRD JOB ADVANCEMENT, AND THE FERRY. Set yourself up first:
               !job 110   !exp 31545355   !map 10005000
           That is a level-70 Fighter in Sleepywood. 31 545 355 is the exp curve summed 1 to
@@ -1354,16 +1384,43 @@ function Show-TestPlan {
         Write-Host '        d) they stand at the map ORIGIN until they move -> expected'
         Write-Host '        e) origin AND they stay there while walking -> 0x0293'
         Write-Host '  T2. KILL ONE MOB TOGETHER, both hitting it.' -ForegroundColor White
-        Write-Host '      EXPECT THIS TO LOOK BROKEN. Only moves and attacks are'
-        Write-Host '      broadcast - every mob and drop packet is unicast. The other'
-        Write-Host '      player hitting it moves no HP bar on your screen, kills'
-        Write-Host '      nothing, drops nothing - AND YOU STILL GET THE EXP. Known.'
-        Write-Host '      The two screens will also disagree about where mobs are:'
-        Write-Host '      both clients are granted control of every mob. Also known.'
-        Write-Host '        Report the exp LINE: white for most damage, yellow for less'
-        Write-Host '          only the killer paid -> the fact never crossed the bus'
-        Write-Host '          both white -> the majority flag is wrong'
-        Write-Host '          helper paid in FULL -> the split is not applied'
+        Write-Host '      This used to say EXPECT IT TO LOOK BROKEN. It should now look'
+        Write-Host '      RIGHT - and only the test suite says so. Two clients have never'
+        Write-Host '      been connected to this server at once.'
+        Write-Host '       a) FIRST JUST WATCH, hit nothing. Both screens should show the'
+        Write-Host '          mobs in the SAME PLACES walking the SAME WAY.'
+        Write-Host '            they agree            -> 0x03D9 is arriving'
+        Write-Host '            they drift apart      -> the rebroadcast is not landing'
+        Write-Host '            ONE screen is frozen  -> that client was granted nothing'
+        Write-Host '       b) NOW BOTH HIT ONE MOB.'
+        Write-Host '            bar moves on BOTH screens for EITHER hit -> 0x03F0'
+        Write-Host '            it dies on both                          -> 0x03D1'
+        Write-Host '            only your own hits move it -> the publish never left'
+        Write-Host '       c) THE DROP IS NOT SHARED, on purpose. Only the TOP DAMAGER'
+        Write-Host '          sees it - not the killer. Over-damage does not count.'
+        Write-Host '            only the top damager sees it -> correct'
+        Write-Host '            BOTH see it    -> it went map-wide. A real bug'
+        Write-Host '            NEITHER sees it -> ranked to a client that had left'
+        Write-Host '          (Parties would share drops. THERE IS NO PARTY SYSTEM YET -'
+        Write-Host '           the buttons are refused so the UI cannot freeze.)'
+        Write-Host '       d) THE EXP LINE: white for most damage, yellow for less'
+        Write-Host '            only the killer paid -> the fact never crossed the bus'
+        Write-Host '            both white -> the majority flag is wrong'
+        Write-Host '            helper paid in FULL -> the split is not applied'
+        Write-Host '  T2b. NOW ONE OF YOU LEAVES - a portal, or CLOSE THE CLIENT.' -ForegroundColor White
+        Write-Host '       WATCH THE SCREEN OF THE ONE WHO STAYS. That is the whole test.'
+        Write-Host '       The leaver''s mobs are handed to whoever is left, and that'
+        Write-Host '       client is told without moving. Before 2026-09-01 nothing was'
+        Write-Host '       sent and they stood still until somebody walked a portal.'
+        Write-Host '            they carry on walking      -> the handover works'
+        Write-Host '            they FREEZE and stay frozen -> nothing was handed over'
+        Write-Host '            frozen until you walk a portal -> the old behaviour'
+        Write-Host '            they JUMP to spawn points  -> the grant sent the spawn'
+        Write-Host '                       position, not where the mob was standing'
+        Write-Host '       CLOSING THE CLIENT is the better half: no log out runs, and'
+        Write-Host '       it is the exit the leaving player cannot see.'
+        Write-Host '       grep world.log for "mob control:" - it names the count and'
+        Write-Host '       the recipient, so this needs no second launch to read.'
         Write-Host '  T11. THIRD JOB + THE FERRY. THE ONE. Set up with:' -ForegroundColor Yellow
         Write-Host '         !job 110   !exp 31545355   !map 10005000'
         Write-Host '       (a level-70 Fighter in Sleepywood. If the level comes out'

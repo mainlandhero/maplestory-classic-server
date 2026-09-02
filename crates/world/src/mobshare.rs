@@ -79,7 +79,7 @@
 //! by leaving the field, and a client that leaves a field has already torn its own mob pool
 //! down - the `SetField` does it - so the transfer costs zero packets on the losing side.
 //!
-//! ## Every transition is a session claiming for itself
+//! ## Almost every transition is a session claiming for itself
 //!
 //! [`Controllers::claim_uncontrolled`] is a compare-and-set under one lock. A session calls
 //! it for **itself**, on its own map, in its own thread:
@@ -89,16 +89,38 @@
 //! | field entry | every uncontrolled mob on the map | `0x03C6` for **all** mobs, `0x03D2` for the claimed ones |
 //! | respawn tick | the mobs its own `due_respawns` returned | `0x03C6` + `0x03D2` to itself, `0x03C6` published to the map |
 //! | any later tick | anything orphaned since | `0x03D2` for the newly claimed |
-//! | leaving | nothing - [`Controllers::release_all`] | **nothing.** The client's pool is already gone |
+//! | leaving, somebody left | gives them away - [`Controllers::hand_over`] | `0x03D2` **to the successor**, nothing to the leaver |
+//! | leaving, nobody left | nothing - [`Controllers::release_map`] | **nothing.** There is no one to tell |
 //!
-//! That is what makes this design cheap: **no control packet is ever addressed to a
-//! connection other than the one building it**, so no new bus channel is needed for control,
-//! and the "two controllers" bug cannot be reintroduced by a routing mistake.
+//! ### The departure row is the one exception, and it was added because the rule was wrong
 //!
-//! The cost is **one tick of latency** when a controller departs: the mobs it held are
-//! orphaned until some other session's next `tick` claims them, and an orphaned mob does not
-//! move. The tick is the 100 ms wakeup `crate::broadcast` describes, so the visible artefact
-//! is up to a tenth of a second of stillness. Nobody has watched it.
+//! This section used to end: *"no control packet is ever addressed to a connection other than
+//! the one building it, so no new bus channel is needed for control, and the two-controllers
+//! bug cannot be reintroduced by a routing mistake."* Cheap, and true of everything above the
+//! last two rows. The cost was written down honestly right beside it - *"one tick of latency
+//! when a controller departs ... nobody has watched it"* - and it was **not one tick.**
+//!
+//! Nothing in `tick` claims orphans. `claim_uncontrolled` runs on **field entry**, which a
+//! player standing still never performs. So the mobs a departing controller left behind stood
+//! motionless until somebody walked through a portal and came back, and the test that was
+//! supposed to cover it called `on_field_entered` a second time to make the grants appear -
+//! which is exactly the thing a standing player does not do.
+//!
+//! The owner, 2026-09-01: *"If the person who is controlling the movement of the mob leaves the map,
+//! then the mob should not disappear. That's a jarring experience. The control of the mob
+//! should be handed over to another client who is still present in the map."* They were describing
+//! a worse symptom than the one that was there - they never disappeared - and was right about
+//! the fix.
+//!
+//! So there is now exactly one control packet addressed to somebody else: the `0x03D2` a
+//! departure sends to its successor. The two-controllers bug it was protecting against is
+//! still impossible, and for a stronger reason than the routing rule: [`Controllers::hand_over`]
+//! is a re-assignment under **one lock**, so there is no instant at which two ids hold the mob
+//! and no instant at which none does.
+//!
+//! The general lesson is the cheaper one. **A cost written down as an estimate is a claim.**
+//! "One tick" was never measured, and the number was not out by a factor - it was the wrong
+//! quantity, because nothing was scheduled to pay it.
 //!
 //! ## What a mob with no controller is
 //!
@@ -321,6 +343,26 @@ impl Controllers {
         }
     }
 
+    /// **Every map on which `session` still controls something**, lowest first.
+    ///
+    /// [`Controllers::release_all`] takes no map because it does not need one. A *handover*
+    /// does: the successor has to be somebody standing on the same map, so the caller has to
+    /// ask this question one map at a time. A crashed connection is the case that makes it
+    /// more than one row - it can be holding a map it walked away from, if the walk itself is
+    /// what killed it.
+    ///
+    /// Sorted so a handover is reproducible and a test can name the order.
+    pub fn maps_held_by(&self, session: SessionId) -> Vec<u32> {
+        let inner = self.lock();
+        let mut maps: Vec<u32> = inner
+            .iter()
+            .filter(|(_, held)| held.values().any(|who| *who == session))
+            .map(|(map, _)| *map)
+            .collect();
+        maps.sort_unstable();
+        maps
+    }
+
     /// **This connection is gone.** Free everything it held; returns how many.
     ///
     /// Every map, not one, because the caller is often `Drop` and has no map to hand -
@@ -344,6 +386,47 @@ impl Controllers {
     ///
     /// [`Controllers::release_all`] would do as well and is what `Drop` uses; this exists so
     /// a walk between two maps cannot free mobs on a third one it was never on.
+    /// **Move every mob `from` controls on `map` to `to`**, and say which moved.
+    ///
+    /// The owner, 2026-09-01: *"If the person who is controlling the movement of the mob leaves the
+    /// map, then the mob should not disappear. That's a jarring experience. The control of the
+    /// mob should be handed over to another client who is still present in the map."*
+    ///
+    /// They are right, and the symptom was worse than the one they named. The mobs never
+    /// disappeared - [`release_map`] frees the claim and leaves the mob alive - but **nobody
+    /// was told**, so they stood perfectly still on every remaining screen until somebody
+    /// walked through a portal and came back. A frozen monster reads as a broken server more
+    /// readily than a missing one does.
+    ///
+    /// # This is a re-assignment, not a revoke followed by a claim
+    ///
+    /// One call under one lock, because the two-step version has a window in which the mob
+    /// belongs to nobody, and the whole point of the registry is that such a window does not
+    /// exist. The caller still has to send `to` its grants; that is [`Controllers`]'s boundary
+    /// - it knows who controls what and nothing about packets.
+    ///
+    /// **No packet goes to `from`.** Level 0 is the client's only revoke and it *despawns*, so
+    /// telling the departing client anything would delete the mob on the screen it is leaving.
+    /// It costs nothing to say nothing: that client has already torn its own mob pool down.
+    pub fn hand_over(&self, map: u32, from: SessionId, to: SessionId) -> Vec<u32> {
+        if from == to {
+            return Vec::new();
+        }
+        let mut inner = self.lock();
+        let Some(held) = inner.get_mut(&map) else { return Vec::new() };
+        let mut moved: Vec<u32> = held
+            .iter()
+            .filter(|(_, who)| **who == from)
+            .map(|(object_id, _)| *object_id)
+            .collect();
+        // Sorted so a handover is reproducible and a test can name the order of the grants.
+        moved.sort_unstable();
+        for object_id in &moved {
+            held.insert(*object_id, to);
+        }
+        moved
+    }
+
     pub fn release_map(&self, map: u32, session: SessionId) -> usize {
         let mut inner = self.lock();
         let Some(held) = inner.get_mut(&map) else { return 0 };
@@ -608,7 +691,8 @@ pub fn own_type_for(party: &Party) -> u8 {
 // |---|---|
 // | the registry | `fields.rs` - a `controllers` field and a `controllers()` accessor |
 // | claim on arrival | `session/field.rs::on_field_entered` |
-// | release on departure | `session/field.rs`: `go_to_map`, `on_change_channel`, `on_log_out` |
+// | handover on departure | `session/multiplayer.rs::hand_over_mobs` / `hand_over_all_mobs` |
+// | ...its callers | `session/field.rs`: `go_to_map`, `on_change_channel`, `on_log_out`; `session/cashshop.rs`; `Drop for Session` in `session/mod.rs` |
 // | respawn | `session/combat.rs::spawn_due_mobs` - publish the `0x03C6`, `claim_one` the grant |
 // | movement | `session/combat.rs::on_mob_move` - `note_position_from`, then publish `0x03D9` |
 // | damage and death | `session/combat.rs::on_attack` - publish the same bytes, `forget` the dead |
@@ -645,17 +729,18 @@ pub fn own_type_for(party: &Party) -> u8 {
 //    has been sent about the drop while that happens, so no client can tell.
 //
 // ---------------------------------------------------------------------------------------
-// Still NOT wired, and it is one line in a file this change did not own
+// 4. The departure hooks were the wrong half of the problem
 //
-// **`Drop for Session` does not call `release_all`.** `session/mod.rs` belongs to the
-// coordinator. A connection that dies without logging out - a killed client, a dead socket -
-// therefore leaves its mobs claimed by an id nobody will ever be, and they stop moving for
-// everyone with no visible cause. `Bus::part` is already on that line; this goes beside it:
+// The plan said "release on departure" and every hook did exactly that, correctly. What it
+// did not say is who claims them next, and the answer turned out to be **nobody until
+// somebody walks through a portal** - `claim_uncontrolled` runs on field entry and there is
+// no orphan sweep in `tick`. Releasing is silent, so a map full of motionless monsters was
+// the visible result and there was no error and no log line pointing at it.
 //
-//     self.fields.controllers().release_all(self.subscriber.get());
-//
-// The same line belongs beside `session/cashshop.rs`'s `leave_the_field()`, though item 1
-// above means the Cash Shop already heals itself on the way back in.
+// Every one of those hooks now calls `Session::hand_over_mobs`, which picks a successor and
+// tells it. `Drop for Session` is on the list - a killed client and a dead socket go through
+// no hook at all - and so is the Cash Shop, which item 1 above says heals itself on the way
+// back in but leaves everybody else's screen frozen while the shopper browses.
 //
 // ---------------------------------------------------------------------------------------
 // What is NOT here, deliberately
@@ -733,6 +818,57 @@ mod tests {
         assert_eq!(c.release_all(A), 0, "the second call frees nothing");
         assert_eq!(c.controller_of(MAP, 2001), Some(B), "and B is untouched");
         assert_eq!(c.len(), 1);
+    }
+
+    /// **A handover moves exactly this session's mobs on exactly this map**, and says which.
+    ///
+    /// The three things a caller depends on: the returned ids are what it must send grants
+    /// for, the mobs it did *not* control are untouched, and the map next door is untouched -
+    /// the last one because `Drop` hands over map by map and a crash can leave claims on more
+    /// than one.
+    #[test]
+    fn a_handover_moves_one_sessions_mobs_on_one_map() {
+        let c = Controllers::default();
+        c.claim_uncontrolled(MAP, A, &[2000, 2001, 2002]);
+        c.claim_uncontrolled(MAP, B, &[2003]);
+        c.claim_uncontrolled(999, A, &[9000]);
+
+        assert_eq!(c.hand_over(MAP, A, B), vec![2000, 2001, 2002], "sorted, so a test can name them");
+        assert_eq!(c.held_by(A), 1, "only the other map is left");
+        assert_eq!(c.controller_of(MAP, 2003), Some(B), "B's own mob was not disturbed");
+        assert_eq!(c.controller_of(999, 9000), Some(A), "and neither was the map next door");
+
+        assert!(c.hand_over(MAP, A, B).is_empty(), "a second call moves nothing");
+        assert!(c.hand_over(7777, A, B).is_empty(), "a map nobody is on moves nothing");
+    }
+
+    /// **Handing to yourself is a no-op**, and it has to return an empty list rather than the
+    /// ids it did not move.
+    ///
+    /// The caller sends one `0x03D2` per returned id. Returning them here would re-grant the
+    /// mob to the connection that is *leaving*, whose client has already destroyed its mob
+    /// pool - a packet naming an object that no longer exists on that screen.
+    #[test]
+    fn handing_over_to_yourself_moves_nothing() {
+        let c = Controllers::default();
+        c.claim_uncontrolled(MAP, A, &[2000, 2001]);
+        assert!(c.hand_over(MAP, A, A).is_empty());
+        assert_eq!(c.held_by(A), 2, "and it certainly does not drop them");
+    }
+
+    /// `maps_held_by` is what makes a mapless exit - a crash, a log out - able to hand over.
+    #[test]
+    fn maps_held_by_names_every_map_this_session_is_driving() {
+        let c = Controllers::default();
+        c.claim_uncontrolled(30, A, &[2000]);
+        c.claim_uncontrolled(10, A, &[2001]);
+        c.claim_uncontrolled(20, B, &[2002]);
+        assert_eq!(c.maps_held_by(A), vec![10, 30], "sorted, and B's map is not one of them");
+        assert_eq!(c.maps_held_by(B), vec![20]);
+        assert!(c.maps_held_by(99).is_empty(), "a session that drives nothing names no maps");
+
+        c.release_all(A);
+        assert!(c.maps_held_by(A).is_empty(), "and a map it no longer holds drops off the list");
     }
 
     /// A portal walk frees only the map being left. `release_all` would free both, which is

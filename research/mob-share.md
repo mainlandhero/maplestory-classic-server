@@ -38,7 +38,7 @@ damager, and the party rule is one predicate.
 | a hit that wounds | `0x03F0` | **`0x03F0`**, identical bytes |
 | a hit that kills | `0x03D1`, `0x046E` per drop, `0x007C` EXP | **`0x03D1`**. No drop, no EXP packet |
 | a controller's `0x02FF` | `0x03E4` | **`0x03D9`**, superseded per mob |
-| leaving the map | nothing | `0x0225` (already wired) |
+| leaving the map | nothing | `0x0225`, and **`0x03D2`** to the successor for each mob handed over (§3.3) |
 
 The four packets in bold are the whole of the mob half. Three of them already exist as bytes
 in `crates/net` and are already built by `session/combat.rs` for the attacker's own reply -
@@ -110,19 +110,70 @@ packets**.
 ```text
   A enters an empty map     claim_uncontrolled -> [2000, 2001, 2002]    3 x 0x03C6 + 3 x 0x03D2
   B enters the same map     claim_uncontrolled -> []                    3 x 0x03C6, no grant
-  A logs out                release_all(A)     -> 3 freed               nothing
-  B's next tick             claim_uncontrolled -> [2000, 2001, 2002]    3 x 0x03D2
+  A logs out                hand_over(A -> B)  -> [2000, 2001, 2002]  3 x 0x03D2 TO B
 ```
 
-**No control packet is ever addressed to a connection other than the one building it.** That
-is what makes this cheap: no new bus channel is needed for control, and "two controllers"
-cannot be reintroduced by a routing mistake, only by deleting the registry.
+**Every transition above the last line is a session claiming for itself.** The departure is the
+one exception, and §3.3 is why it had to become one.
 
-The cost is **one tick of latency** on a handover. The mobs a departing controller held are
-orphaned until some other session's `tick` claims them, and an orphaned mob does not move
-(nobody reports, so `note_position` is not written and `LiveMob::as_seen` keeps handing out
-the last known place). The tick is the 100 ms wakeup `crate::broadcast` describes. **[I]** as
-to what a tenth of a second of stillness looks like; nobody has watched it.
+### 3.0 The retraction: "one tick of latency" was the wrong quantity
+
+This section used to end with the two paragraphs below, and the first is still true of every
+row but the last:
+
+> **No control packet is ever addressed to a connection other than the one building it.** That
+> is what makes this cheap: no new bus channel is needed for control, and "two controllers"
+> cannot be reintroduced by a routing mistake, only by deleting the registry.
+>
+> The cost is **one tick of latency** on a handover. The mobs a departing controller held are
+> orphaned until some other session's `tick` claims them ... **[I]** as to what a tenth of a
+> second of stillness looks like; nobody has watched it.
+
+The cost was labelled **[I]** and hedged honestly, and it was still wrong - **not by a factor,
+but in its units.** There is no orphan sweep in `tick`. `claim_uncontrolled` runs on **field
+entry**, and a player standing still never performs one, so the stillness lasted until somebody
+walked through a portal and came back. Not 100 ms. Unbounded.
+
+Two things this is worth writing down for:
+
+* **A cost estimate is a claim, and gets the same labels as any other.** "One tick" reads as an
+  arithmetic result. It was a guess about *scheduling*, and the schedule it assumed did not
+  exist. `CLAUDE.md`'s unit rule, arriving from a new direction: the number was fine and the
+  quantity was imaginary.
+* **The test agreed with the code.** `a_departing_controller_hands_its_mobs_to_whoever_is_left`
+  passed by calling `on_field_entered` a second time, with the comment *"The next session to
+  ask picks them up. A field entry is the cheapest way to ask."* Cheapest for the test; not
+  something a standing player ever does. It now collects the grants from `tick`.
+
+### 3.3 The handover, and why it is the one addressed control packet
+
+The owner, 2026-09-01: *"If the person who is controlling the movement of the mob leaves the map,
+then the mob should not disappear. That's a jarring experience. The control of the mob should
+be handed over to another client who is still present in the map."*
+
+The mobs never did disappear - the `mob_count` assertion in the test says so - so they were
+describing a **worse** symptom than the one present, and was right about the fix anyway.
+
+`Controllers::hand_over(map, from, to)` re-assigns under **one lock** and returns the moved
+ids. The two-controllers bug stays impossible for a stronger reason than the routing rule it
+replaces: there is no instant at which two ids hold the mob, and none at which zero do.
+
+| piece | what it is for |
+|---|---|
+| `Bus::successor_on(map, except)` | somebody else *present* on that map. Lowest id - arbitrary, and deliberately reproducible |
+| `Bus::publish_to_subscriber(id, reply)` | a chosen mailbox, returning **whether it landed** - the pick and the send are not atomic |
+| `Session::hand_over_mobs(map)` | one `0x03D2` per moved mob, built from `LiveMob::as_seen` |
+| `Session::hand_over_all_mobs()` | for the exits with no map to hand: log out, channel change, `Drop` |
+
+**`as_seen`, not `spawn`.** The heir's client resumes the wander from the coordinates in the
+grant, so the spawn point would teleport every handed-over monster across the map - the jarring
+thing this path exists to remove, arriving by a different door.
+
+**Nothing is sent to the leaver.** `CONTROL_RELEASE` is this client's only revoke and it
+*despawns*; and that client has torn its own mob pool down already.
+
+**With nobody left it degrades to the old release**, so the next arrival claims everything -
+pinned by `the_last_player_out_frees_the_mobs_for_the_next_arrival`.
 
 ### 3.1 A mob with no controller
 
@@ -137,10 +188,15 @@ change or an invented packet. Nothing on this socket authenticates anybody.
 
 ### 3.2 `Drop` is the single point of failure
 
-A session that vanishes without `release_all` leaves mobs claimed by a dead id, and nobody
-will ever claim them again - monsters that have stopped moving for no visible reason.
-`Bus::part` is already in `Drop for Session`; `release_all` goes on the line beside it, not in
-a different function.
+A session that vanishes without releasing leaves mobs claimed by a dead id, and nobody will
+ever claim them again - monsters that have stopped moving for no visible reason. `Bus::part` is
+already in `Drop for Session`; the handover goes on the line beside it, not in a different
+function.
+
+It is `hand_over_all_mobs` rather than `release_all`, and this is the exit where that matters
+most: a crash is the one departure the leaving player cannot see, so the only screens left to
+get it wrong are other people's. `Bus::part` runs first, so the dying session cannot pick
+itself as the successor.
 
 `Controllers::reconcile` is the belt to that braces, and it is a **separate** call rather than
 part of `claim_uncontrolled`. That split came out of a failing unit test: folded together, a
@@ -386,7 +442,7 @@ The full patch with anchors is the `WIRE IT LIKE THIS` comment block at the bott
    accessor, beside `bus` and for the same reason. Its lock is a leaf.
 1. `session/field.rs::on_field_entered` - `reconcile`, then `claim_uncontrolled`, then send
    `0x03C6` for **all** mobs and `0x03D2` only for the claimed ones.
-2. Every `leave_the_field()` call site and `Drop for Session` - `release_all`.
+2. Every `leave_the_field()` call site and `Drop for Session` - `hand_over_all_mobs` (§3.3).
 3. `session/combat.rs::spawn_due_mobs` - publish the `0x03C6` to the map, `claim_one`, grant
    only if the claim won.
 4. `session/combat.rs::on_mob_move` - gate on `may_report_movement`, then publish `0x03D9`.
@@ -408,7 +464,7 @@ Two clients on one map, one map with mobs, one player attacking. **One variant a
 | B's screen while A kills a mob | the bar moves and the mob dies on both screens | count the event in **two** logs: `world.log` says the server published it, `client-patched\maplecw-hook.log` says the client dispatched it - and that line is written on **return**, so a missing one means the handler was entered and never came back |
 | the mob's position on both screens | one simulation. This is the whole feature | two grants leaked, or `0x03D9` is not going out. `grep 0x03D2` in the log and count: it must be **one per mob**, not two |
 | loot after a kill A did 90 % of and B finished | items on A's screen only | the audience walk fell through to the killer - the log line names which candidate won |
-| A walks out, B stays | B's mobs start moving within about a tick | `release_all` is not on the `Drop`/leave path. `held_by` in the log line says so without a second launch |
+| A walks out, B stays | B's mobs keep moving, with no gap and no jump in position | the handover is not on the leave path, or it sent `spawn` rather than `as_seen`. The `mob control:` log line names the count and the recipient, so `world.log` discriminates without a second launch |
 
 **What a run cannot settle:** whether `0x0224 UserEnterField` actually puts a `CUser` in the
 pool. `session/multiplayer.rs` records that as the one unverified hop, and everything here

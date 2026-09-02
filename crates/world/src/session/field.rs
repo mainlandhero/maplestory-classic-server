@@ -328,19 +328,23 @@ impl Session {
     pub(super) fn go_to_map(&mut self, chr: &mut net::opcode::Character, map: u32, portal: u8, why: String)
         -> Vec<Reply>
     {
-        // **The mobs this connection controls on the map it is leaving, freed now.**
+        // **The mobs this connection controls on the map it is leaving, given to somebody
+        // still standing there.**
         //
         // Read before `chr.map_id` is overwritten, because that is the field the claims are
         // on. Control never rotates while its holder is on the map - the client's only revoke
         // is `CONTROL_RELEASE`, and `net::mobmove` says in its own doc that level 0 **deletes
-        // the mob** rather than releasing it - so leaving is the only way a mob changes hands,
-        // and it costs zero packets on this side: the client tore its own mob pool down in the
-        // `SetField`. Somebody else's next tick or field entry picks them up.
+        // the mob** rather than releasing it - so leaving is the only way a mob changes hands.
+        // Zero packets go to this connection; one `0x03D2` per mob goes to the successor.
         //
-        // `release_map` rather than `release_all` so a walk between two maps cannot free mobs
-        // on a third one this connection was never on. `crate::mobshare`.
+        // This used to be a bare `release_map`, and the mobs then stood still on every
+        // remaining screen: nothing in `tick` claims orphans, and the field entry that does
+        // is something a standing player never performs. `crate::mobshare` §3.0.
+        //
+        // Named map, not `hand_over_all_mobs`, so a walk between two maps cannot touch a
+        // third one this connection was never on.
         let leaving = chr.map_id;
-        self.fields.controllers().release_map(leaving, self.subscriber.get());
+        self.hand_over_mobs(leaving);
         chr.map_id = map;
         chr.portal = portal;
         // **Where they were standing is a fact about the map they just left.**
@@ -528,9 +532,10 @@ impl Session {
         // `Drop` covers that case too, late, and a ghost on the field is
         // exactly the failure `crate::session::multiplayer` exists to avoid.
         self.leave_the_field();
-        // ...and the mobs it was simulating go back to the field, for whoever is left to
-        // claim. No packet: the only revoke this client has is a despawn. `crate::mobshare`.
-        self.fields.controllers().release_all(self.subscriber.get());
+        // ...and the mobs it was simulating are handed to somebody still on that map, who
+        // is told so. Releasing alone leaves them alive and motionless on every remaining
+        // screen. No packet to the leaver: its only revoke is a despawn. `crate::mobshare`.
+        self.hand_over_all_mobs();
         self.migrate_candidates(
             target,
             addr,
@@ -615,8 +620,10 @@ impl Session {
         // same connection - so this is a leave rather than a part; `Drop` still
         // runs later and `Bus::part` is idempotent. `crate::session::multiplayer`.
         self.leave_the_field();
-        // And its mobs stop being its mobs. Idempotent, like `Bus::leave_field`.
-        self.fields.controllers().release_all(self.subscriber.get());
+        // And its mobs become somebody else's mobs - handed to a connection still standing
+        // there, and that connection is told. Idempotent, like `Bus::leave_field`: a session
+        // that holds nothing finds no map to hand over.
+        self.hand_over_all_mobs();
         vec![Reply {
             opcode: net::notice::LOG_OUT_RESULT,
             body: net::notice::log_out_result("Returning to the login screen."),

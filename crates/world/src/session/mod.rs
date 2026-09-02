@@ -419,9 +419,14 @@ impl Drop for Session {
         // log out) that already release. Those are the paths a player takes; this is the one
         // a crash takes, and it is the one nobody would think to test.
         //
-        // Idempotent, like `Bus::part` beside it: the orderly paths have usually released
-        // already and this finds nothing left to free.
-        self.fields.controllers().release_all(self.subscriber.get());
+        // Idempotent, like `Bus::part` beside it: the orderly paths have usually handed
+        // over already and this finds no map still held.
+        //
+        // A handover rather than a bare release, and this is the exit where that matters
+        // most: a crash is the one departure the leaving player does not see, so the only
+        // screens left to get it wrong are other people's. `Bus::part` above has already
+        // removed this mailbox, so it cannot pick itself as the successor.
+        self.hand_over_all_mobs();
     }
 }
 

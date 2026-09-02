@@ -103,6 +103,93 @@ impl Session {
         out
     }
 
+    /// **Give this connection's mobs on `map` to somebody still standing there.**
+    ///
+    /// The owner, 2026-09-01: *"If the person who is controlling the movement of the mob leaves the
+    /// map, then the mob should not disappear ... The control of the mob should be handed over
+    /// to another client who is still present in the map."*
+    ///
+    /// The mobs never did disappear - releasing a claim leaves the mob alive - but until this,
+    /// **nobody was told**, so every monster on the map stood perfectly still on the remaining
+    /// screens until somebody walked through a portal and back. That is worse than theirs
+    /// worry: a frozen monster reads as a broken server, and there was no error and no log
+    /// line to find it by. The existing test only re-granted because it called
+    /// `on_field_entered` a second time, which a standing player never does.
+    ///
+    /// Replaces the bare `release_map` at every exit. When nobody is left it degrades to
+    /// exactly that.
+    ///
+    /// **Nothing is sent to the leaver.** `CONTROL_RELEASE` is the client's only revoke and it
+    /// *despawns*, so a farewell grant would delete the mob on the screen being left - and
+    /// that client has already torn its mob pool down anyway.
+    pub(super) fn hand_over_mobs(&mut self, map: u32) {
+        let me = self.subscriber.get();
+        let Some(heir) = self.fields.bus().successor_on(map, self.subscriber) else {
+            // Nobody left to drive them. Free the claims so the next arrival can take them;
+            // that is what `on_field_entered` already asks for.
+            let freed = self.fields.controllers().release_map(map, me);
+            if freed > 0 {
+                crate::server::log(&format!(
+                    "   mob control: {freed} mob(s) on map {map} released - nobody else is here \
+                     to hand them to. The next arrival claims them"
+                ));
+            }
+            return;
+        };
+        let moved = self.fields.controllers().hand_over(map, me, heir.get());
+        if moved.is_empty() {
+            return;
+        }
+        // The grants have to name the mob as it is NOW - position and hp - because the heir's
+        // client drives it from here. `mobs_on` is the live field, not a snapshot taken when
+        // this connection arrived.
+        let live = self.fields.mobs_on(map);
+        let mut sent = 0usize;
+        for object_id in &moved {
+            let Some(mob) = live.iter().find(|m| m.spawn.object_id == *object_id) else { continue };
+            // `as_seen`, not `spawn`: the heir has to be handed the mob where it is standing
+            // and with the HP it has left, or its client resumes the wander from the spawn
+            // point and the monster jumps across the map on every remaining screen.
+            let mob = mob.as_seen();
+            let landed = self.fields.bus().publish_to_subscriber(
+                heir,
+                Reply {
+                    opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                    body: net::mobmove::mob_change_controller(&mob, net::mobmove::CONTROL_NORMAL),
+                    what: format!(
+                        "MobChangeController: object id {} handed to the connection still on \
+                         map {map} - its previous controller left. Without this the mob stays \
+                         alive and stops moving on every remaining screen",
+                        mob.object_id
+                    ),
+                },
+            );
+            if landed {
+                sent += 1;
+            }
+        }
+        crate::server::log(&format!(
+            "   mob control: {} mob(s) on map {map} handed from connection {me} to              connection {}, {sent} grant(s) delivered",
+            moved.len(),
+            heir.get()
+        ));
+    }
+
+    /// **Hand over everything this connection controls, wherever it is.**
+    ///
+    /// The exits that have no map to hand: a log out, a channel change, and `Drop` - the
+    /// socket dropping, the client crashing, the process being killed. They used to call
+    /// [`crate::mobshare::Controllers::release_all`], which is correct about ownership and
+    /// silent about it, so the mobs kept standing still on every screen that was left.
+    ///
+    /// Normally one map. It is a loop because a crash can leave claims on a map this
+    /// connection already walked away from, if the walk is what killed it.
+    pub(super) fn hand_over_all_mobs(&mut self) {
+        for map in self.fields.controllers().maps_held_by(self.subscriber.get()) {
+            self.hand_over_mobs(map);
+        }
+    }
+
     /// Drop out of the field without ending the connection.
     ///
     /// A log out or a channel change: the character stops being on this map and
@@ -781,7 +868,7 @@ ffd7010000a401000000000000ffff06d200000043ffe50100000000000000000000ffff061e0000
             let fields = Arc::new(Fields::new());
             let account = store.create_account("maplecw", "correct horse battery").unwrap();
 
-            let mut make = |name: &str| {
+            let make = |name: &str| {
                 let chr = net::opcode::Character {
                     name: name.to_string(),
                     map_id: 104_040_000,

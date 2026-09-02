@@ -25,6 +25,52 @@ answers at all". Without it `Session::handle` returns nothing for *every* packet
 migration hello goes unanswered, and the client sits on "Connecting..." looking exactly
 like a server that is not running. It cost one of the owner's manual launches on 2026-08-20.
 
+### LANDED 2026-09-01 — two players share the mobs, and a departure hands them on
+
+`crates/world/src/mobshare.rs` has production callers. Exactly one connection controls each
+mob; a wounding hit is republished as the attacker's own `0x03F0` bytes; a mob's position is
+believed only from its controller; drops go to the top damager, uncapped over-damage excluded.
+**All 1839 workspace tests pass.** `research/mob-share.md` is the working.
+
+#### The departure hook was silent, and silence was the bug
+
+The owner: *"If the person who is controlling the movement of the mob leaves the map, then the mob
+should not disappear. That's a jarring experience. The control of the mob should be handed over
+to another client who is still present in the map."*
+
+They were describing a **worse symptom than the one that was there**, and was right about the fix.
+The mobs never disappeared - a release frees the claim and leaves the mob alive on the field -
+but nobody was told, so every monster on that map **stood perfectly still** on the remaining
+screens with no error and no log line.
+
+The design's own cost note said *"one tick of latency ... nobody has watched it"*, and it was
+not one tick: nothing in `tick` claims orphans. `claim_uncontrolled` runs on **field entry**,
+which a player standing still never performs, so the freeze lasted until somebody walked
+through a portal. **A cost written down as an estimate is a claim** - and this one was not out
+by a factor, it was the wrong quantity, because nothing was scheduled to pay it.
+
+The test that was supposed to cover this called `on_field_entered` a second time to make the
+grants appear, which is precisely what a standing player does not do. It is now collected from
+`tick`, the idle path, with no field entry after the departure.
+
+| | |
+|---|---|
+| `Controllers::hand_over` | re-assigns under **one lock** - no instant with two owners and none with zero |
+| `Bus::successor_on` | somebody else present on that map; lowest id, so a test can name it |
+| `Bus::publish_to_subscriber` | addresses a chosen mailbox and **returns whether it landed** |
+| `Session::hand_over_mobs` / `hand_over_all_mobs` | picks the heir, sends one `0x03D2` per mob **at its current position** |
+
+Wired at **all six** exits: `go_to_map`, `on_change_channel`, `on_log_out`, the Cash Shop, and
+`Drop for Session` - the last being a killed client or a dead socket, and the one that matters
+most, because the person who left is the one person who cannot see the result. With nobody left
+it degrades to the old release, so the next arrival still claims everything.
+
+Proved by injection: restoring the release-only behaviour fails three of the four new tests,
+and the fourth is the nobody-left case the injection is identical to.
+
+**Not observed on a screen.** Two clients on one machine is still blocked on the `grap-stub`
+instance work, so every claim here rests on the suite.
+
 ### LANDED 2026-08-31b — the third advancement, and the continent it is on
 
 **This client has a third job advancement, and it is half-shipped.** The ten jobs, their skill
