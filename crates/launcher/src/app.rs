@@ -358,6 +358,37 @@ impl eframe::App for LauncherApp {
                     self.start_sign_in(ctx);
                 }
 
+                // **Sign out, so a second account does not need a second launcher.**
+                //
+                // The owner, 2026-09-02, on the run where two clients first worked: *"I had to
+                // close and reopen the launcher to be able to login to another account since
+                // there's no logout button."* Two clients means two accounts, and the shape
+                // that was fine for one player is a restart for every swap.
+                //
+                // It clears the sign-in and the password, and **leaves the identity**, which
+                // is a deliberate asymmetry: the next sign-in is usually the OTHER account, so
+                // the field wants replacing rather than preserving - but retyping a name you
+                // can see is cheap, and losing what you typed is annoying.
+                //
+                // No server call. A claim is keyed per launch and expires on its own; nothing
+                // here can revoke one, and pretending otherwise in the UI would be a lie about
+                // what the button does.
+                if ui.add_enabled(self.signed_in.is_some() && !busy, egui::Button::new("Sign out")).clicked() {
+                    self.signed_in = None;
+                    wipe(&mut self.password);
+                    self.status = Some((
+                        Level::Info,
+                        "signed out - type another account and press Login".into(),
+                    ));
+                    self.push(
+                        Level::Info,
+                        "--- signed out. The login claim from that sign-in is NOT revoked: it \
+                         is keyed per launch and expires on its own. A client already running \
+                         keeps its own session ---"
+                            .into(),
+                    );
+                }
+
                 // Disabled until a sign-in has succeeded - the whole point of the two-button
                 // shape the owner asked for.
                 let ready = self.signed_in.is_some() && !busy;

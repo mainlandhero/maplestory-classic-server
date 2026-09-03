@@ -364,6 +364,46 @@ pub const REMOTE_STAT_TAIL_LEN: usize = 7;
 /// number is a total rather than a guess.
 pub const USER_ENTER_FIELD_MIN_LEN: usize = 508 + REMOTE_STAT_TAIL_LEN;
 
+/// **Zero bytes past the last field this builder knows about, because the client read past
+/// the end of the body and died doing it.**
+///
+/// 2026-09-02, the first time two clients were ever on one map. Both died within 120 ms of
+/// each other, and the evidence says WHERE rather than merely that:
+///
+/// * `world.log` sent **two** `0x0224`. The hook writes one dispatch line per packet **on
+///   handler return**, and there are **zero** for `0x0224`. Entered, never came back - the
+///   same two-log count that found the equip crash.
+/// * The C++ throws immediately before the fault come from `0x1406e8cb1` and `0x1406e90e8`,
+///   which are **packet read primitives** (`research/charrecord-decode.md` enumerates that
+///   family). The reader threw, which is what it does when it runs out of body.
+/// * The fault is `0xC0000005` at `0x140ce89d6`, inside `FUN_140ce89c0` - a **destructor**
+///   (`research/instrument-audit-2026-08-20.md` row 2). That is the unwind destroying a
+///   half-built `CUser`, not the decode itself.
+///
+/// Three [L] facts, one [D] conclusion: **the body is short of what this decoder reads.**
+/// The length model chains offsets 0..504 and is entirely self-consistent - the builder, the
+/// assertions and `user_enter_field_len` all agree with each other. They agree with each
+/// other and not with the client, which is the shape `CLAUDE.md` records for the
+/// `MINIDUMP_EXCEPTION_INFORMATION` size test: a constant that came from reading a listing
+/// is a claim, not a fact.
+///
+/// # Why padding rather than finding the field first
+///
+/// It is the experiment that discriminates, and it costs one launch. Trailing zeros are free
+/// to a reader that stops when its fields are consumed - the frame carries the length - and
+/// they turn "reads past the end" into "reads zeros".
+///
+/// ```text
+///   the clients survive  -> the body WAS short. The remaining work is by how much, and it
+///                           can then be done against a run that no longer crashes
+///   they still die       -> NOT a shortfall. Something we send is wrong rather than
+///                           absent, and padding cannot hide that
+/// ```
+///
+/// **This is scaffolding.** Deliberately larger than any plausible shortfall so the first
+/// reading is unambiguous. It is not a fix and should not outlive the measurement.
+pub const USER_ENTER_FIELD_PAD_LEN: usize = 128;
+
 /// Byte offset of the avatar look inside a [`USER_ENTER_FIELD`] body, for an empty name.
 ///
 /// `1429ce6a9  call 0x1402ee8d0` - the same compact-look reader `0x0107`, `0x0114` and
@@ -378,7 +418,7 @@ pub const USER_ENTER_FIELD_POS_AT: usize = 426 + REMOTE_STAT_TAIL_LEN;
 /// Two things move: the name (a `u16`-prefixed string, so its bytes are added on top of
 /// the 2-byte empty form) and the equipped list inside the avatar look (5 bytes each).
 pub fn user_enter_field_len(chr: &crate::opcode::Character) -> usize {
-    USER_ENTER_FIELD_MIN_LEN + chr.name.len() + 5 * chr.equips.len()
+    USER_ENTER_FIELD_MIN_LEN + USER_ENTER_FIELD_PAD_LEN + chr.name.len() + 5 * chr.equips.len()
 }
 
 /// Build a [`USER_ENTER_FIELD`] body: **put this character on someone else's screen.**
@@ -527,6 +567,20 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u32(0); //                  500  count
     w.u32(0); //                  504  count
 
+    // **The pad.** See `USER_ENTER_FIELD_PAD_LEN`: two clients on one map both died inside
+    // this packet's handler, having thrown out of a packet reader on the way. Zeros past the
+    // last field this builder knows about turn a read off the end into a read of zero.
+    //
+    // Asserted BEFORE the pad as well as after, because a pad that landed in the middle of
+    // the body would shift every field after it and produce a different crash for a new
+    // reason - and the length check below would still pass.
+    debug_assert_eq!(
+        w.len(),
+        USER_ENTER_FIELD_MIN_LEN + shift + equips,
+        "the pad must go after every field, not into the middle of the body"
+    );
+    w.zeros(USER_ENTER_FIELD_PAD_LEN);
+
     debug_assert_eq!(w.len(), user_enter_field_len(chr), "the body length is wrong");
     w.into_vec()
 }
@@ -613,7 +667,16 @@ mod tests {
     #[test]
     fn an_empty_name_and_no_equips_is_the_515_byte_minimum() {
         let body = user_enter_field(&someone("", &[]), RemoteAt::default());
-        assert_eq!(body.len(), USER_ENTER_FIELD_MIN_LEN);
+        // The FIELDS still end at the minimum; the pad is what comes after. Asserting on the
+        // prefix rather than on `body.len()` keeps this test about the layout, which is what
+        // it is for - `USER_ENTER_FIELD_PAD_LEN` is scaffolding and will be removed, and this
+        // test must not have to change when it is.
+        assert_eq!(body.len(), USER_ENTER_FIELD_MIN_LEN + USER_ENTER_FIELD_PAD_LEN);
+        assert!(
+            body[USER_ENTER_FIELD_MIN_LEN..].iter().all(|b| *b == 0),
+            "the pad is zeros and nothing else"
+        );
+        let body: Vec<u8> = body[..USER_ENTER_FIELD_MIN_LEN].to_vec();
         // **515, and it was 508 until 2026-08-31.** `FUN_140a46e50` reads seven bytes after
         // the 124-byte mask - `u8`, `u8`, `u32`, `u8` - so the remote temporary-stat block is
         // 131. See `REMOTE_STAT_TAIL_LEN` for why the fourth of those is unconditional when
@@ -636,20 +699,24 @@ mod tests {
     fn only_the_name_and_the_equips_change_the_length() {
         let equips = [(5u8, 1_040_002u32), (6, 1_060_002), (7, 1_072_001)];
 
+        // Measured against the pad rather than around it: the pad is a constant, so a
+        // length regression in the FIELDS still shows up here, which is the whole job of
+        // this test.
+        let pad = USER_ENTER_FIELD_PAD_LEN;
         assert_eq!(
             user_enter_field(&someone("Wanderer", &[]), RemoteAt::default()).len(),
-            515 + 8,
+            515 + pad + 8,
             "an 8-character name adds exactly its bytes"
         );
         assert_eq!(
             user_enter_field(&someone("", &equips), RemoteAt::default()).len(),
-            515 + 15,
+            515 + pad + 15,
             "three equips add five bytes each"
         );
 
         let chr = someone("Wanderer", &equips);
         let body = user_enter_field(&chr, RemoteAt::default());
-        assert_eq!(body.len(), 515 + 8 + 15);
+        assert_eq!(body.len(), 515 + pad + 8 + 15);
         assert_eq!(body.len(), user_enter_field_len(&chr), "the predictor agrees");
     }
 
