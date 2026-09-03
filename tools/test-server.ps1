@@ -1237,7 +1237,32 @@ try {
     # The first-build cost is real and is paid once. A stale binary costs a launch every time,
     # and this one cost a launch that could not have answered its own question.
     & cargo build --release -p login -p world -p store -p auth -p grap-stub -p launcher
-    if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+    if ($LASTEXITCODE -ne 0) {
+        # **"Access is denied" on a file you own means something has it open**, and cargo does
+        # not say what. It is almost always the launcher or a client still running from the
+        # previous attempt, and it has stopped a run three times now - once silently, before
+        # `-p launcher` was in this line at all.
+        #
+        # It matters more than an ordinary build failure: the launcher EMBEDS grap64.dll with
+        # `include_bytes!` (crates/launcher/build.rs), so a launcher that fails to relink
+        # installs the PREVIOUS stub. Carrying on from here would test the old hook and report
+        # the result as though it were the new one.
+        $holding = Get-Process -Name maplecw-launcher, MapleStory -ErrorAction SilentlyContinue
+        if ($holding) {
+            Write-Host ''
+            Write-Host 'THE BUILD COULD NOT REPLACE A BINARY THAT IS STILL RUNNING.' -ForegroundColor Red
+            foreach ($h in $holding) {
+                Write-Host ("  {0}  pid {1}  started {2}" -f $h.Name, $h.Id, $h.StartTime) -ForegroundColor Red
+            }
+            Write-Host '  Close them and run this again. The launcher window counts even'
+            Write-Host '  with no client open - it holds its own .exe.'
+            Write-Host '  The launcher EMBEDS grap64.dll, so a launcher that did not relink'
+            Write-Host '  would install the PREVIOUS hook and the run would measure that.'
+            Write-Host ''
+            throw 'build failed - close the processes listed above and re-run'
+        }
+        throw 'build failed'
+    }
 }
 finally { Pop-Location }
 
