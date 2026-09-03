@@ -354,7 +354,7 @@ pub const REMOTE_STAT_MASK_LEN: usize = 124;
 /// the only 124-byte wire writer is `FUN_142973160`, the client's outbound cancel, which
 /// writes no tail at all. That negative is bounded: the scan sees a mask move only with an
 /// immediate length in `r8d`.
-pub const REMOTE_STAT_TAIL_LEN: usize = 7;
+pub const REMOTE_STAT_TAIL_LEN: usize = 23;
 
 /// Length of a [`USER_ENTER_FIELD`] body with an **empty** name and **no** equipped
 /// items. See [`user_enter_field_len`] for the real one.
@@ -364,45 +364,6 @@ pub const REMOTE_STAT_TAIL_LEN: usize = 7;
 /// number is a total rather than a guess.
 pub const USER_ENTER_FIELD_MIN_LEN: usize = 508 + REMOTE_STAT_TAIL_LEN;
 
-/// **Zero bytes past the last field this builder knows about, because the client read past
-/// the end of the body and died doing it.**
-///
-/// 2026-09-02, the first time two clients were ever on one map. Both died within 120 ms of
-/// each other, and the evidence says WHERE rather than merely that:
-///
-/// * `world.log` sent **two** `0x0224`. The hook writes one dispatch line per packet **on
-///   handler return**, and there are **zero** for `0x0224`. Entered, never came back - the
-///   same two-log count that found the equip crash.
-/// * The C++ throws immediately before the fault come from `0x1406e8cb1` and `0x1406e90e8`,
-///   which are **packet read primitives** (`research/charrecord-decode.md` enumerates that
-///   family). The reader threw, which is what it does when it runs out of body.
-/// * The fault is `0xC0000005` at `0x140ce89d6`, inside `FUN_140ce89c0` - a **destructor**
-///   (`research/instrument-audit-2026-08-20.md` row 2). That is the unwind destroying a
-///   half-built `CUser`, not the decode itself.
-///
-/// Three [L] facts, one [D] conclusion: **the body is short of what this decoder reads.**
-/// The length model chains offsets 0..504 and is entirely self-consistent - the builder, the
-/// assertions and `user_enter_field_len` all agree with each other. They agree with each
-/// other and not with the client, which is the shape `CLAUDE.md` records for the
-/// `MINIDUMP_EXCEPTION_INFORMATION` size test: a constant that came from reading a listing
-/// is a claim, not a fact.
-///
-/// # Why padding rather than finding the field first
-///
-/// It is the experiment that discriminates, and it costs one launch. Trailing zeros are free
-/// to a reader that stops when its fields are consumed - the frame carries the length - and
-/// they turn "reads past the end" into "reads zeros".
-///
-/// ```text
-///   the clients survive  -> the body WAS short. The remaining work is by how much, and it
-///                           can then be done against a run that no longer crashes
-///   they still die       -> NOT a shortfall. Something we send is wrong rather than
-///                           absent, and padding cannot hide that
-/// ```
-///
-/// **This is scaffolding.** Deliberately larger than any plausible shortfall so the first
-/// reading is unambiguous. It is not a fix and should not outlive the measurement.
-pub const USER_ENTER_FIELD_PAD_LEN: usize = 128;
 
 /// Byte offset of the avatar look inside a [`USER_ENTER_FIELD`] body, for an empty name.
 ///
@@ -418,7 +379,7 @@ pub const USER_ENTER_FIELD_POS_AT: usize = 426 + REMOTE_STAT_TAIL_LEN;
 /// Two things move: the name (a `u16`-prefixed string, so its bytes are added on top of
 /// the 2-byte empty form) and the equipped list inside the avatar look (5 bytes each).
 pub fn user_enter_field_len(chr: &crate::opcode::Character) -> usize {
-    USER_ENTER_FIELD_MIN_LEN + USER_ENTER_FIELD_PAD_LEN + chr.name.len() + 5 * chr.equips.len()
+    USER_ENTER_FIELD_MIN_LEN + chr.name.len() + 5 * chr.equips.len()
 }
 
 /// Build a [`USER_ENTER_FIELD`] body: **put this character on someone else's screen.**
@@ -498,7 +459,45 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u8(0); //                   179  0x140a4a007
     w.u8(0); //                   180  0x140a4a024
     w.u32(0); //                  181  0x140a4a041
-    w.u8(0); //                   185  0x140a4a29e
+    // **The four this builder did not know about, and they killed two clients.**
+    //
+    // `0x140a4a10e call 0x140862470` sits between the `u32` above and the `u8` below, and it
+    // is unconditional. `FUN_140862470` reads **four `u32`** and then a `count`-driven loop of
+    // `u32` - the fourth of the four IS the count. **[L]**, from the listing:
+    //
+    // ```text
+    //   140862498  READ u32
+    //   1408624a2  READ u32
+    //   1408624ad  READ u32
+    //   1408624b8  READ u32      <- the count
+    //   1408624cb  READ u32      <- the loop body, `count` times
+    // ```
+    //
+    // Sixteen bytes. Without them the client took its `count` from body offset 203, which in
+    // a real character is **the low half of the avatar look's face id**:
+    //
+    // ```text
+    //   Cobalt   face 20002 = 0x4E22  ->  count 570 425 344  ->  2.28 GB demanded
+    //   Tester2  face 20001 = 0x4E21  ->  count 553 648 128  ->  2.21 GB demanded
+    // ```
+    //
+    // and the reader threw. That is why a 128-byte pad did nothing: zeros are not a
+    // terminator for a length-prefixed list.
+    //
+    // **The throw stack in the hook log is this call chain, frame for frame.** Every return
+    // address on it is a statically confirmed call site, which is what makes this [L] rather
+    // than a story that fits:
+    //
+    // ```text
+    //   0x1406e8cb1   the throw path inside FUN_1406e8c20, the u32 primitive
+    //   0x1408624d0 = 0x1408624cb + 5   the return of the LOOP read
+    //   0x140a4a113 = 0x140a4a10e + 5   the return of the call this comment is about
+    // ```
+    w.u32(0); //                  185  0x140862498
+    w.u32(0); //                  189  0x1408624a2
+    w.u32(0); //                  193  0x1408624ad
+    w.u32(0); //                  197  0x1408624b8  the COUNT - zero, so the loop does not run
+    w.u8(0); //                   201  0x140a4a29e
     debug_assert_eq!(
         w.len(),
         55 + REMOTE_STAT_MASK_LEN + REMOTE_STAT_TAIL_LEN + shift,
@@ -566,20 +565,6 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u32(0); //                  496  FUN_1428358a0
     w.u32(0); //                  500  count
     w.u32(0); //                  504  count
-
-    // **The pad.** See `USER_ENTER_FIELD_PAD_LEN`: two clients on one map both died inside
-    // this packet's handler, having thrown out of a packet reader on the way. Zeros past the
-    // last field this builder knows about turn a read off the end into a read of zero.
-    //
-    // Asserted BEFORE the pad as well as after, because a pad that landed in the middle of
-    // the body would shift every field after it and produce a different crash for a new
-    // reason - and the length check below would still pass.
-    debug_assert_eq!(
-        w.len(),
-        USER_ENTER_FIELD_MIN_LEN + shift + equips,
-        "the pad must go after every field, not into the middle of the body"
-    );
-    w.zeros(USER_ENTER_FIELD_PAD_LEN);
 
     debug_assert_eq!(w.len(), user_enter_field_len(chr), "the body length is wrong");
     w.into_vec()
@@ -665,30 +650,27 @@ mod tests {
     /// is the wrong width the total is not 508, and the client has no length prefix
     /// anywhere in this body to resynchronise on.
     #[test]
-    fn an_empty_name_and_no_equips_is_the_515_byte_minimum() {
+    fn an_empty_name_and_no_equips_is_the_531_byte_minimum() {
         let body = user_enter_field(&someone("", &[]), RemoteAt::default());
-        // The FIELDS still end at the minimum; the pad is what comes after. Asserting on the
-        // prefix rather than on `body.len()` keeps this test about the layout, which is what
-        // it is for - `USER_ENTER_FIELD_PAD_LEN` is scaffolding and will be removed, and this
-        // test must not have to change when it is.
-        assert_eq!(body.len(), USER_ENTER_FIELD_MIN_LEN + USER_ENTER_FIELD_PAD_LEN);
-        assert!(
-            body[USER_ENTER_FIELD_MIN_LEN..].iter().all(|b| *b == 0),
-            "the pad is zeros and nothing else"
-        );
-        let body: Vec<u8> = body[..USER_ENTER_FIELD_MIN_LEN].to_vec();
-        // **515, and it was 508 until 2026-08-31.** `FUN_140a46e50` reads seven bytes after
-        // the 124-byte mask - `u8`, `u8`, `u32`, `u8` - so the remote temporary-stat block is
-        // 131. See `REMOTE_STAT_TAIL_LEN` for why the fourth of those is unconditional when
-        // six of its neighbours are not, and for the truncated dump that hid all four.
+        assert_eq!(body.len(), USER_ENTER_FIELD_MIN_LEN);
+        // **531. It was 508, then 515 on 2026-08-31, and both were wrong.**
         //
-        // The literal is spelled out beside the constant on purpose: a test that only checks
-        // `body.len() == USER_ENTER_FIELD_MIN_LEN` agrees with the builder however wrong both
-        // are, which is exactly how this went unnoticed.
-        assert_eq!(body.len(), 515);
+        // The tail after the 124-byte mask is `u8`, `u8`, `u32`, then an unconditional
+        // `call 0x140862470` that reads FOUR more `u32` - the fourth being a count - and then
+        // a `u8`. Twenty-three bytes, not seven. The missing sixteen made the client take its
+        // count from the low half of the avatar look's face id and demand 2.28 GB; two clients
+        // died of it the first time they stood on one map.
+        //
+        // **This test is the reason the literal is spelled out beside the constant, and it
+        // still did not catch it.** `assert_eq!(body.len(), 515)` disagreed with the client
+        // and agreed with the builder, exactly like the `MINIDUMP_EXCEPTION_INFORMATION` size
+        // test in `CLAUDE.md`: a number that came from reading a listing, asserted against
+        // another number from the same reading. The listing was not re-read for the call that
+        // makes no read of its own.
+        assert_eq!(body.len(), 531);
         assert_eq!(
             REMOTE_STAT_MASK_LEN + REMOTE_STAT_TAIL_LEN,
-            131,
+            147,
             "the block is the mask plus the tail, and the mask was never the wrong number"
         );
     }
@@ -699,24 +681,20 @@ mod tests {
     fn only_the_name_and_the_equips_change_the_length() {
         let equips = [(5u8, 1_040_002u32), (6, 1_060_002), (7, 1_072_001)];
 
-        // Measured against the pad rather than around it: the pad is a constant, so a
-        // length regression in the FIELDS still shows up here, which is the whole job of
-        // this test.
-        let pad = USER_ENTER_FIELD_PAD_LEN;
         assert_eq!(
             user_enter_field(&someone("Wanderer", &[]), RemoteAt::default()).len(),
-            515 + pad + 8,
+            531 + 8,
             "an 8-character name adds exactly its bytes"
         );
         assert_eq!(
             user_enter_field(&someone("", &equips), RemoteAt::default()).len(),
-            515 + pad + 15,
+            531 + 15,
             "three equips add five bytes each"
         );
 
         let chr = someone("Wanderer", &equips);
         let body = user_enter_field(&chr, RemoteAt::default());
-        assert_eq!(body.len(), 515 + pad + 8 + 15);
+        assert_eq!(body.len(), 531 + 8 + 15);
         assert_eq!(body.len(), user_enter_field_len(&chr), "the predictor agrees");
     }
 
@@ -774,41 +752,92 @@ mod tests {
     /// anything but zero. Four zero bytes is not decoration.
     #[test]
     fn there_is_no_miniroom_and_no_chair() {
+        // **This test could not fail, and it was found by an agent rather than by running.**
+        //
+        // Every assertion in it reads a fixed offset and expects ZERO, out of a body that is
+        // zero almost everywhere. It passed for the 508-byte layout, it passed for the wrong
+        // 515-byte one, and it would have passed on the exact body that killed two clients.
+        // The offsets were literals from the original numbering and never moved when the
+        // stat tail did - twice.
+        //
+        // Two changes make it a check again:
+        //
+        // 1. the offsets are derived from `REMOTE_STAT_TAIL_LEN`, so they follow the layout
+        //    instead of being re-typed and forgotten;
+        // 2. it is **anchored** first. The job is the nearest field with a value we choose,
+        //    and if the anchor is wrong every offset below it is measured from nowhere - so
+        //    the anchor failing is what stops the zero checks reporting false comfort.
         let body = user_enter_field(&someone("", &[]), RemoteAt::default());
-        assert_eq!(&body[451..455], &[0, 0, 0, 0], "miniroom absent");
+
+        // The anchor. `100` is the beginner job id `someone()` builds with.
         assert_eq!(
-            u32::from_le_bytes(body[418..422].try_into().unwrap()),
+            u16::from_le_bytes([body[202], body[203]]),
+            100,
+            "the job anchors every offset below; if this moved, nothing else here means anything"
+        );
+
+        // The rest, in the zero-tail numbering `research/user-enter-field.md` uses, shifted by
+        // the tail exactly as every field after offset 179 is.
+        let at = |zero_tail_offset: usize| zero_tail_offset + REMOTE_STAT_TAIL_LEN;
+        assert_eq!(&body[at(451)..at(455)], &[0, 0, 0, 0], "miniroom absent");
+        assert_eq!(
+            u32::from_le_bytes(body[at(418)..at(422)].try_into().unwrap()),
             0,
             "chair item id"
         );
-        assert_eq!(body[435], 0, "no chair object to decode");
-        assert_eq!(body[436], 0, "no pets");
-        assert_eq!(body[437], 0, "no familiars");
+        assert_eq!(body[at(435)], 0, "no chair object to decode");
+        assert_eq!(body[at(436)], 0, "no pets");
+        assert_eq!(body[at(437)], 0, "no familiars");
+
+        // And the offsets are inside the body, which is the other thing a literal cannot
+        // promise: `at(455)` past the end would panic rather than pass, but only if something
+        // asks. This asks.
+        assert!(at(455) <= body.len(), "the miniroom dword must be inside the body");
     }
 
     /// The 124-byte stat mask, and the number that is easy to take from the wrong place.
     #[test]
 
-    fn the_remote_stat_block_is_the_124_byte_mask_plus_a_seven_byte_tail() {
+    fn the_remote_stat_block_is_the_124_byte_mask_plus_a_twenty_three_byte_tail() {
         // The mask length was never the wrong number - the v214 reference's 132 is a
         // different version, and taking it would put every later field eight places out.
         assert_eq!(REMOTE_STAT_MASK_LEN, 124, "124 here; the v214 reference has 132");
-        // What was wrong is that the mask is not the block. `FUN_140a46e50` reads
-        // `u8, u8, u32, u8` after it, unconditionally - `REMOTE_STAT_TAIL_LEN`.
-        assert_eq!(REMOTE_STAT_TAIL_LEN, 7);
+
+        // **The tail was 7 and it is 23, and the sixteen it was missing killed two clients.**
+        //
+        // `FUN_140a46e50` reads `u8, u8, u32` after the mask, then makes an unconditional
+        // `call 0x140862470` - which reads four more `u32`, the fourth a COUNT - and then a
+        // final `u8`. The call reads nothing itself, which is why a listing walk that looked
+        // for read primitives went straight past it.
+        assert_eq!(REMOTE_STAT_TAIL_LEN, 23);
 
         let body = user_enter_field(&someone("", &[]), RemoteAt::default());
         let block = 55..55 + REMOTE_STAT_MASK_LEN + REMOTE_STAT_TAIL_LEN;
-        assert_eq!(block, 55..186);
+        assert_eq!(block, 55..202);
         assert!(body[block].iter().all(|&b| b == 0), "all clear means no buffs");
+
         // **The job is what says the tail landed in the right place.** It is the first field
-        // after the block with a value we choose, so if the tail were six bytes or eight this
-        // reads as something else - which is the whole failure being fixed, one level up.
-        assert_eq!(u16::from_le_bytes([body[186], body[187]]), 100, "job right after");
-        assert_ne!(
-            u16::from_le_bytes([body[179], body[180]]),
-            100,
-            "and NOT at the old offset - that is what a seven-byte shift means"
+        // after the block with a value we choose, so a tail of any other length reads as
+        // something else.
+        assert_eq!(u16::from_le_bytes([body[202], body[203]]), 100, "job right after");
+
+        // Both previous positions, kept rather than replaced. A test that only checks the
+        // current offset passes for a builder that is wrong in a NEW direction.
+        for (was, why) in [(179usize, "the 508-byte layout"), (186, "the 515-byte one")] {
+            assert_ne!(
+                u16::from_le_bytes([body[was], body[was + 1]]),
+                100,
+                "the job must not still be at {was} - that was {why}"
+            );
+        }
+
+        // **The count is the byte that mattered.** It is the fourth `u32` the called function
+        // reads, and zero is what stops its loop running. Non-zero here demands four bytes
+        // per unit from a body that does not have them - at face value, 570 million of them.
+        assert_eq!(
+            u32::from_le_bytes([body[197], body[198], body[199], body[200]]),
+            0,
+            "the count at 197 must be zero or the client reads until it throws"
         );
     }
 
