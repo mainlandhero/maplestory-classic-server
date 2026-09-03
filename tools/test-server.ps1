@@ -1105,6 +1105,43 @@ if ($SetFieldProbe -and -not $PSBoundParameters.ContainsKey('Probe')) {
 $here = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $root = Split-Path -Parent $here
 if (-not $ClientDir) { $ClientDir = Join-Path $root 'client-patched' }
+
+# **The instance hooks are ON unless this run says otherwise.**
+#
+# `-NoInstanceHooks` writes the veto `grap-stub` checks at `DllMain`: nothing hooked in user32,
+# kernel32's mutex forwarder left alone, the client exactly as it was before that module. A
+# second client will then be stopped by its own guard - that is the switch working, not a
+# finding. Use it to answer "did OUR hooks do this?" in one launch.
+#
+# **HERE, and not next to the other marker writes**, which is where it was first put and where
+# it did nothing. Two separate reasons, and each alone is fatal:
+#
+#   * the first attempt landed inside the `if ($Stop)` branch, so the flag only had an effect
+#     on the run that stops the servers;
+#   * the other marker writes sit below the `-ServersOnly` wait loop, which never returns -
+#     and `-ServersOnly` plus the launcher by hand is how every launch now happens.
+#
+# The owner ran the control, reported the result, and the hook log had all four hooks in it. A
+# control that silently does not run returns the SAME answer as one that ran and found
+# nothing, which is the more dangerous of the two. This block is above every early exit.
+#
+# Deleted on every other run rather than merely not written: a control that can be left
+# switched on by accident silently un-tests whatever comes after it.
+$vetoPath = Join-Path $ClientDir 'maplecw-hook.nomulticlient'
+if ($NoInstanceHooks) {
+    New-Item -ItemType File -Path $vetoPath -Force | Out-Null
+    Write-Host ''
+    Write-Host 'INSTANCE HOOKS ARE OFF THIS RUN (-NoInstanceHooks).' -ForegroundColor Yellow
+    Write-Host ("  wrote {0}" -f $vetoPath)
+    Write-Host '  A SECOND CLIENT WILL NOT START - expected, not the finding.'
+    Write-Host '  CHECK IT ACTUALLY TOOK. The hook log must say:'
+    Write-Host '    instance: maplecw-hook.nomulticlient is present - NOTHING is hooked'
+    Write-Host '  If you see ARMING or "hooked user32" instead, the control did NOT run'
+    Write-Host '  and whatever you observe this launch means nothing.'
+    Write-Host ''
+} else {
+    Remove-Item $vetoPath -ErrorAction SilentlyContinue
+}
 if (-not $Database) { $Database = Join-Path $root 'maplecw.db' }
 $exe = Join-Path $ClientDir 'MapleStory.exe'
 $loginExe = Join-Path $root 'target\release\maplecw-login.exe'
@@ -1152,30 +1189,7 @@ if ($Stop) {
     # deletes it ~1.5s in, on purpose). A STALE one is REFUSED by the login server rather
     # than ignored, so leaving it costs the NEXT run its account - and that failure looks
     # like nothing at all on a one-player machine.
-    # **The instance hooks are ON unless this run says otherwise.**
-#
-# `-NoInstanceHooks` is the control for "did OUR hooks do this?" - it stops grap-stub patching
-# user32 or redirecting kernel32's mutex forwarder, so the client runs exactly as it did before
-# that module existed. A second client will then be stopped by its own guard, which is the
-# point: it isolates the guard work from everything else in one launch.
-#
-# Deleted on EVERY other run rather than merely not written, because a control that can be left
-# switched on by accident silently un-tests the thing it was made to test.
-$vetoPath = Join-Path $ClientDir 'maplecw-hook.nomulticlient'
-if ($NoInstanceHooks) {
-    New-Item -ItemType File -Path $vetoPath -Force | Out-Null
-    Write-Host ''
-    Write-Host 'INSTANCE HOOKS ARE OFF THIS RUN (-NoInstanceHooks).' -ForegroundColor Yellow
-    Write-Host '  Nothing is patched in user32 and kernel32 is not redirected.'
-    Write-Host '  A SECOND CLIENT WILL NOT START - that is expected, not the finding.'
-    Write-Host '  The finding is whatever you were comparing: if it looks RIGHT now and'
-    Write-Host '  wrong without this switch, the hooks did it. If it looks the same both'
-    Write-Host '  ways, they did not and the cause is somewhere else entirely.'
-    Write-Host ''
-} else {
-    Remove-Item $vetoPath -ErrorAction SilentlyContinue
-}
-Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
     Write-Host 'stopped client and login server'
     exit 0

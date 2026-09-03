@@ -1,0 +1,154 @@
+23:24:01.430 instance: ARMING in pid 957828 - marker maplecw-hook.multiclient present, this is the FIRST client on this desktop, so the guard will be LOGGED ONLY (first client behaves exactly as before)
+23:24:01.430 instance: hooked user32.dll!FindWindowW at 0x7ffd1f1f3bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+23:24:01.430 instance: hooked user32.dll!FindWindowA at 0x7ffd1f24ab90, stole 12 bytes (48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75)
+23:24:01.430 instance: redirected kernel32.dll!CreateMutexW by rewriting its forwarder slot at 0x7ffd204755f0 (0x7ffd1e637230 -> 0x7ffcdf0a22f0). No code was modified; callers that reach kernelbase by another route are unaffected
+23:24:01.431 instance: redirected kernel32.dll!CreateMutexA by rewriting its forwarder slot at 0x7ffd20475520 (0x7ffd1e687460 -> 0x7ffcdf0a1f90). No code was modified; callers that reach kernelbase by another route are unaffected
+23:24:01.632 instance: CreateMutexA(name="Global\\WvsClientMtx") already_existed=false -> we are the first to create it
+23:24:03.237 install_once: our code IS running. env=false marker=true -> installing
+23:24:03.289 install: .text settled after 52 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+23:24:03.289 install: base=0x140000000 target=0x1415d60e0
+23:24:03.290 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+23:24:03.290 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:24:03.290 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+23:24:03.290 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+23:24:03.290 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:24:03.290 probe: watching 0x141b36f60 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+23:24:03.290 probe: watch on 0x142ef3e44 will log up to 8 hits
+23:24:03.291 probe: watching 0x142ef3e44 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+23:24:03.291 identity: maplecw-hook.identity read and DELETED - the token now exists only in this process, and cannot be picked up by a later run
+23:24:03.291 identity: armed on FUN_142c50400 at 0x142c50400 (trampoline 0x36a0000), 26 byte token from maplecw-hook.identity. It was a PLAIN-TEXT LOCAL SECRET on disk until the line above deleted it: anything running as this user could have read it, which is the same power as being this launch. It is one-time, and the server keeps only its SHA-256
+23:24:03.291 install: hook active
+23:24:03.491 session: object at 0x62c7338 is now readable
+23:24:03.491 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:24:05.010     0 opcode=0x0032 elapsed_us=60.6 ret=113086768 flag=0->1 state=0->2
+23:24:05.010 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+23:24:05.096 ***** SOCKET conn=0x61ca148 +0x20=0x6c8 - the client holds a socket *****
+23:24:05.298 ***** SOCKET 0x6c8 is now VALID (client still holds it) *****
+23:24:05.419 ***** C++ THROW #1 at 0x7ffd1e635369 in KERNELBASE.dll on tid 957832 at +2125ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x14090e8d4<-TEXT 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x1403b180b<-TEXT 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1432abe30(?) 0x1403da5d3<-TEXT 0x143d87000(vm) *****
+23:24:05.470     1 opcode=0x0032 elapsed_us=51.8 ret=1 flag=1->1 state=2->2
+23:24:05.587 ***** C++ THROW #2 at 0x7ffd1e635369 in KERNELBASE.dll on tid 956476 at +2296ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x1433d3650(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1417810d0<-TEXT 0x141c46266<-TEXT 0x143ae12f0(?) 0x142ed3513<-TEXT *****
+23:24:06.300 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:24:09.307 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:24:09.479     2 opcode=0x0032 elapsed_us=59.1 ret=1 flag=1->1 state=2->2
+23:24:11.602 ***** IDENTITY wrote 26 bytes into 0x14f9f0+0x1b8 on getter entry #1 (block 0x377ad528, refcount held at 2 so the session destructor cannot free it). The token itself is NOT logged. login.log should now show `0x0073 IDENTITY: ... identity length=26` - if it shows 0, the client dropped it between here and w_str *****
+23:24:12.100     3 opcode=0x0000 elapsed_us=419.3 ret=1 flag=1->1 state=2->2
+23:24:12.101 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+23:24:12.101     4 opcode=0x000B elapsed_us=180.0 ret=1 flag=1->1 state=2->2
+23:24:12.101     5 opcode=0x000B elapsed_us=172.5 ret=1 flag=1->1 state=2->2
+23:24:12.102 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+23:24:12.102     6 opcode=0x0010 elapsed_us=359.2 ret=1 flag=1->1 state=2->2
+23:24:12.314 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:15.321 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:18.328 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:21.333 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:24.341 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:27.351 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:30.357 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:33.365 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:35.583 ***** WATCH #1: 0x1415db360 ENTERED on tid 957832 while dispatching opcode 0x0010 rcx=0x393e6480 rdx=0x7530 (as i32 30000) r8=0x7598 r9=0xcd035275 (as i32 -855420299) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143d87000(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:24:36.372 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:39.381 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:42.389 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:45.396 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:48.405 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:51.414 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:54.421 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:24:57.428 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:00.435 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:03.444 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:05.480 ***** WATCH #2: 0x1415db360 ENTERED on tid 957832 while dispatching opcode 0x0010 rcx=0x393ed94d rdx=0xea60 (as i32 60000) r8=0xea65 r9=0x7fbc (as i32 32700) called-from=0x144e6aecb
+      stack: 0x144e6aecb(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) 0x142f0fac3<-TEXT 0x1432717f8(?) 0x143a8bb60(?) *****
+23:25:05.729 ***** WATCH #3: 0x1415db360 ENTERED on tid 957832 while dispatching opcode 0x0010 rcx=0x393eda47 rdx=0x7530 (as i32 30000) r8=0x75c7 r9=0xd778266f (as i32 -679991697) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x143d87000(vm) 0x144e5ef38(vm) 0x143add050(?) 0x143dea15c(vm) 0x14336e254(?) 0x143dea15c(vm) 0x143dea15c(vm) 0x142c4336b<-TEXT 0x143dea15c(vm) *****
+23:25:06.452 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:09.469 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:12.476 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:15.496 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:18.505 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:21.511 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:24.519 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:27.524 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:30.484 ***** WATCH #1: 0x141b36f60 ENTERED on tid 957832 while dispatching opcode 0x0011 rcx=0x2f75b2b8 [0x433fd668] rdx=0x14d3d0 (as i32 1364944) [0x00000002] r8=0x140000000 r9=0x60 (as i32 96) called-from=0x141b26064
+      stack: 0x141b26064<-TEXT 0x143d143b4(?) 0x143d143b4(?) *****
+23:25:30.485     7 opcode=0x0011 elapsed_us=1787.9 ret=1 flag=1->1 state=2->2
+23:25:30.532 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:25:31.009 ***** C++ THROW #3 at 0x7ffd1e635369 in KERNELBASE.dll on tid 957832 at +87718ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+23:25:31.068 ***** WATCH #4: 0x1415db360 ENTERED on tid 957832 while dispatching opcode 0x01A0 rcx=0x62c9e90 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x2ec01cd8 (as i32 784342232) called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+23:25:31.071     8 opcode=0x01A0 elapsed_us=577849.0 ret=796242616 flag=1->1 state=2->2
+23:25:31.073     9 opcode=0x00AC elapsed_us=579.5 ret=1 flag=1->1 state=2->2
+23:25:31.074    10 opcode=0x044F elapsed_us=781.0 ret=1 flag=1->1 state=2->2
+23:25:31.074    11 opcode=0x0070 elapsed_us=314.4 ret=1 flag=1->1 state=2->2
+23:25:31.074    12 opcode=0x0070 elapsed_us=107.0 ret=1 flag=1->1 state=2->2
+23:25:31.075    13 opcode=0x0070 elapsed_us=128.8 ret=1 flag=1->1 state=2->2
+23:25:31.075    14 opcode=0x0070 elapsed_us=84.4 ret=1 flag=1->1 state=2->2
+23:25:31.075    15 opcode=0x0070 elapsed_us=94.1 ret=1 flag=1->1 state=2->2
+23:25:31.076    16 opcode=0x0070 elapsed_us=86.5 ret=1 flag=1->1 state=2->2
+23:25:31.076    17 opcode=0x0070 elapsed_us=68.1 ret=1 flag=1->1 state=2->2
+23:25:31.076    18 opcode=0x0070 elapsed_us=64.4 ret=1 flag=1->1 state=2->2
+23:25:31.076    19 opcode=0x0070 elapsed_us=65.3 ret=1 flag=1->1 state=2->2
+23:25:31.077    20 opcode=0x0070 elapsed_us=71.5 ret=1 flag=1->1 state=2->2
+23:25:31.077    21 opcode=0x0070 elapsed_us=67.1 ret=1 flag=1->1 state=2->2
+23:25:31.077    22 opcode=0x0070 elapsed_us=65.3 ret=1 flag=1->1 state=2->2
+23:25:31.078    23 opcode=0x0070 elapsed_us=66.8 ret=1 flag=1->1 state=2->2
+23:25:31.078    24 opcode=0x0070 elapsed_us=65.4 ret=1 flag=1->1 state=2->2
+23:25:31.078    25 opcode=0x0070 elapsed_us=65.0 ret=1 flag=1->1 state=2->2
+23:25:31.079    26 opcode=0x0070 elapsed_us=64.5 ret=1 flag=1->1 state=2->2
+23:25:31.079    27 opcode=0x0070 elapsed_us=67.2 ret=1 flag=1->1 state=2->2
+23:25:31.079    28 opcode=0x0070 elapsed_us=65.4 ret=1 flag=1->1 state=2->2
+23:25:31.079    29 opcode=0x0070 elapsed_us=65.2 ret=1 flag=1->1 state=2->2
+23:25:31.080    30 opcode=0x0070 elapsed_us=66.7 ret=1 flag=1->1 state=2->2
+23:25:31.080    31 opcode=0x0070 elapsed_us=65.3 ret=1 flag=1->1 state=2->2
+23:25:31.080    32 opcode=0x0070 elapsed_us=64.2 ret=1 flag=1->1 state=2->2
+23:25:31.080    33 opcode=0x0070 elapsed_us=64.4 ret=1 flag=1->1 state=2->2
+23:25:31.081    34 opcode=0x0070 elapsed_us=67.3 ret=1 flag=1->1 state=2->2
+23:25:31.081    35 opcode=0x0070 elapsed_us=64.8 ret=1 flag=1->1 state=2->2
+23:25:31.081    36 opcode=0x0070 elapsed_us=64.0 ret=1 flag=1->1 state=2->2
+23:25:31.081    37 opcode=0x0070 elapsed_us=65.3 ret=1 flag=1->1 state=2->2
+23:25:31.082    38 opcode=0x0070 elapsed_us=65.4 ret=1 flag=1->1 state=2->2
+23:25:31.082    39 opcode=0x0070 elapsed_us=110.9 ret=1 flag=1->1 state=2->2
+23:25:31.083    40 opcode=0x0070 elapsed_us=86.1 ret=1 flag=1->1 state=2->2
+23:25:31.083    41 opcode=0x0070 elapsed_us=92.7 ret=1 flag=1->1 state=2->2
+23:25:31.083    42 opcode=0x0070 elapsed_us=83.7 ret=1 flag=1->1 state=2->2
+23:25:31.084    43 opcode=0x0070 elapsed_us=82.8 ret=1 flag=1->1 state=2->2
+23:25:31.084    44 opcode=0x0070 elapsed_us=83.8 ret=1 flag=1->1 state=2->2
+23:25:31.084    45 opcode=0x0070 elapsed_us=65.9 ret=1 flag=1->1 state=2->2
+23:25:31.085    46 opcode=0x0070 elapsed_us=65.8 ret=1 flag=1->1 state=2->2
+23:25:31.085    47 opcode=0x0070 elapsed_us=107.9 ret=1 flag=1->1 state=2->2
+23:25:31.085    48 opcode=0x007C elapsed_us=76.9 ret=1 flag=1->1 state=2->2
+23:25:33.539 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:25:34.834    49 opcode=0x0453 elapsed_us=548.9 ret=1 flag=1->1 state=2->2
+23:25:36.356 ***** WATCH #5: 0x1415db360 ENTERED on tid 957832 while dispatching opcode 0x0453 rcx=0x393f4f90 rdx=0x7530 (as i32 30000) r8=0x7549 r9=0x3d60bffa (as i32 1029750778) called-from=0x144ee814f
+      stack: 0x144ee814f(vm) 0x143d14364(?) 0x144e5ef38(vm) 0x142e5c640<-TEXT 0x14329c470(?) 0x141d5da93<-TEXT 0x143add050(?) 0x142c0b692<-TEXT 0x14177f749<-TEXT *****
+23:25:36.547 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:25:39.556 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+23:25:39.678 ***** C++ THROW #4 at 0x7ffd1e635369 in KERNELBASE.dll on tid 957832 at +96390ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x1408e8db1<-TEXT 0x143ad68d8(?) 0x143272d78(?) 0x1415ddd91<-TEXT 0x143272c88(?) 0x1415ddeb1<-TEXT *****
+23:25:39.678 ***** C++ THROW #5 at 0x7ffd1e635369 in KERNELBASE.dll on tid 957832 at +96390ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x1408e8db1<-TEXT 0x143ad68d8(?) 0x143272d78(?) 0x1415ddd91<-TEXT 0x143272c88(?) 0x1415ddf91<-TEXT *****
+23:25:39.679 ***** C++ THROW #6 at 0x7ffd1e635369 in KERNELBASE.dll on tid 957832 at +96390ms
+      stack: 0x143a3b118(?) 0x143a3b118(?) 0x144fe3010(vm) 0x143a3b118(?) 0x142ef6ddc<-TEXT 0x143a3b118(?) 0x1408e8db1<-TEXT 0x143ad68d8(?) 0x143272d78(?) 0x1415ddd91<-TEXT 0x143272c88(?) 0x1415de071<-TEXT 0x143ade000(?) *****
+23:25:40.120    50 opcode=0x0106 elapsed_us=945137.1 ret=946360824 flag=1->1 state=2->2
+23:25:40.121    51 opcode=0x0032 elapsed_us=58.0 ret=1 flag=1->1 state=2->2
+23:25:40.121    52 opcode=0x0032 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+23:25:40.121    53 opcode=0x0000 elapsed_us=349.4 ret=1 flag=1->1 state=2->2
+23:25:40.122    54 opcode=0x000B elapsed_us=39.2 ret=1 flag=1->1 state=2->2
+23:25:40.122    55 opcode=0x000B elapsed_us=108.4 ret=1 flag=1->1 state=2->2
+23:25:40.123 ***** SESSION re-armed the create-character flag on a later login result - the handshake zeroes it on every success, so this has to run per login, not once per launch *****
+23:25:40.123    56 opcode=0x0010 elapsed_us=704.2 ret=1 flag=1->1 state=2->2
+23:25:42.565 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:45.571 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:48.576 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:51.583 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:54.592 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:25:57.600 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:26:00.607 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:26:03.614 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:26:06.220 ***** SOCKET conn=0x61ca148 +0x20=0xffffffffffffffff - closed and cleared by the client (FUN_1415e3b60 ran) *****
+23:26:06.621 ***** SESSION obj=0x62c7338 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+23:26:06.821 session: object at 0x0 is now UNREADABLE - values below are stale
+23:26:07.121 instance: FindWindowA(class=NULL, title="MapleStory - Microsoft Internet Explorer") -> 0x0 (passed through)

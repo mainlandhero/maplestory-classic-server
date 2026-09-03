@@ -1,0 +1,148 @@
+03:23:36.532 listening on 127.0.0.1:8484
+03:23:36.532 channel 0 advertised to the client at 127.0.0.1:8485
+03:23:36.533 channel 1 advertised to the client at 127.0.0.1:8486
+03:23:36.533 database C:\MapleCW\maplecw.db
+03:23:36.533 world Scania id 0 with 2 channel(s)
+03:23:36.534 fallback account "maplecw" (id 1), 3 character(s) stored
+03:23:36.534 no login claim is live - run maplecw-launcher and sign in
+03:23:36.534 NOT AUTHENTICATED: the game socket carries no credentials, so anyone who
+03:23:36.535   connects is served as whichever account the claim or the fallback names.
+03:23:36.535   The launcher checks a password before staking a claim; this socket does not.
+03:23:36.535   See docs/launcher.md.
+03:23:36.535 CLIENT TOKEN (0x0073): this server now READS the identity string the client carries
+03:23:36.535   and resolves the account from it - a credential on the wire instead of an
+03:23:36.535   inference about a socket. Every 0x0073 is logged with its length, so a run says
+03:23:36.535   whether the client carried anything at all.
+03:23:36.535   A MapleCW token is 26 characters of uppercase base32. An EMPTY identity is what
+03:23:36.535   every capture before 2026-08-29 carried and what every reconnect sends - it is not
+03:23:36.536   a refusal, and the weaker rules still decide. A WRONG or SPENT one downgrades the
+03:23:36.536   connection to the fallback account, because a credential that can be skipped by
+03:23:36.536   presenting a bad one is not a credential.
+03:23:36.536   This authenticates the LOGIN socket only. 0x0073 has never appeared on a channel
+03:23:36.536   connection, so the game socket is unchanged.
+03:23:36.536 MIGRATION BINDING IS OFF (--bind-migrations). A migration is claimed by the
+03:23:36.536   character id the connecting client ASSERTS, and nothing checks that the
+03:23:36.536   connection has any right to it - so any connection to a channel port can
+03:23:36.536   claim any character's pending migration by naming it. No race is needed.
+03:23:36.536   The mechanism to close this is built and tested; it needs the hook to send
+03:23:36.536   the session token on the channel socket before it can be switched on.
+03:24:01.382 connection from #1 127.0.0.1:61518
+03:24:01.383 #1 127.0.0.1:61518 127.0.0.1:61518 is owned by process 954568 on this machine
+03:24:01.383 #1 127.0.0.1:61518 served as account "maplecw" (id 1) from a login claim, matched by the only claim staked from this address
+03:24:01.383 #1 127.0.0.1:61518 that decision is PROVISIONAL: if this client carries a one-time token in 0x0073, it overrides the above - and if it carries a wrong one this connection is downgraded to the fallback "maplecw"
+03:24:01.383 -> greeting, 48 bytes
+03:24:01.383 #1 127.0.0.1:61518 ended: An established connection was aborted by the software in your host machine. (os error 10053)
+03:24:02.721 connection from #2 127.0.0.1:61532
+03:24:02.721 #2 127.0.0.1:61532 127.0.0.1:61532 is owned by process 957828 on this machine
+03:24:02.722 #2 127.0.0.1:61532 served as account "maplecw" (id 1) from a login claim, matched by the process the operating system says owns this connection (same machine)
+03:24:02.722 #2 127.0.0.1:61532 that decision is PROVISIONAL: if this client carries a one-time token in 0x0073, it overrides the above - and if it carries a wrong one this connection is downgraded to the fallback "maplecw"
+03:24:02.722 -> greeting, 48 bytes
+03:24:02.722 -> 0x0032 DATA_WZ_PATCH startup gate, unprompted
+03:24:02.722    body 00
+03:24:03.222 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 45 byte body 0264000000000000000000000002000000c57459608ec4f8df6629851df8edfef35bd51c1f0000000000000000
+03:24:03.231    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered by this server
+03:24:03.231 <- 0x0071 CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours), 49 byte body 0101000000640000000000000000011e00000028947d75402c352840462c2c32522899b5857d64704954524757544a5470
+03:24:03.231    0x0071 CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours) is not answered by this server
+03:24:03.236 <- 0x00A6 CLIENT_STATUS_CODE, 6 byte body 010000000000
+03:24:03.237    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.237 <- 0x00A6 CLIENT_STATUS_CODE, 8 byte body 0b00000000000000
+03:24:03.237    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.237 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 02000000
+03:24:03.237    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.237 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 05000000
+03:24:03.237    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.237 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 03000000
+03:24:03.237    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.237 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 04000000
+03:24:03.237    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.237 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0c000000
+03:24:03.237    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.322 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0d000000
+03:24:03.323    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.370 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0e000000
+03:24:03.370    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:03.370 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 0f000000
+03:24:03.370    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:04.317 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 11000000
+03:24:04.318    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:04.986 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 12000000
+03:24:04.993    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.009 <- 0x00A1 CLIENT_DATA_WZ_REQUEST, 4 byte body 00000000
+03:24:05.010 -> 0x0032 DATA_WZ_PATCH startup gate
+03:24:05.010    body 00
+03:24:05.010 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 46 byte body 016400000082fd8ee482fd8ee40200000000cabf2356810f82e969e2ff2bff38751e622093490000000000000000
+03:24:05.010    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered by this server
+03:24:05.010 <- 0x00BF CLIENT_TITLE_SCREEN_READY, 0 byte body 
+03:24:05.010    0x00BF CLIENT_TITLE_SCREEN_READY is not answered by this server
+03:24:05.111 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 13000000
+03:24:05.112    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.112 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 1b000000
+03:24:05.112    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.395 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 16000000
+03:24:05.396    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.403 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 14000000
+03:24:05.403    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.404 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 15000000
+03:24:05.404    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.404 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 17000000
+03:24:05.404    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.423 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 18000000
+03:24:05.423    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.423 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 19000000
+03:24:05.424    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.424 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 1a000000
+03:24:05.424    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:05.470 <- 0x00A6 CLIENT_STATUS_CODE, 4 byte body 1c000000
+03:24:05.470    0x00A6 CLIENT_STATUS_CODE is not answered by this server
+03:24:09.473 -> 0x0032 DATA_WZ_PATCH startup gate, repeated after quiet
+03:24:09.482    body 00
+03:24:11.730 <- 0x0073 CLIENT_SESSION_IDENTITY (never answered), 52 byte body 050000001a0059504e515033504f325845514955463349593734555732415851d843ae4c5617b6ae9cd200000000764d00000000
+03:24:11.738    0x0073 session identity: mode=5 identity="YPNQP3PO2XEQIUF3IY74UW2AXQ" (26 bytes) tail=d843ae4c5617b6ae9cd200000000764d00000000 - 26 characters of uppercase base32 - THE SHAPE OF A MAPLECW CLIENT TOKEN. Whether it MATCHES a live claim is the next log line
+03:24:11.739    0x0073 IDENTITY: mode=5 identity length=26 (expected 26 for a MapleCW client token; every capture before 2026-08-29 was 0) tail=20 bytes
+03:24:11.739    0x0073 IDENTITY: ACCEPTED and SPENT - the client carried a valid one-time token in 0x0073. Serving account "maplecw" (id 1). This connection is identified by a CREDENTIAL, not by inference. It authenticates the LOGIN socket only
+03:24:11.739    0x0073 CLIENT_SESSION_IDENTITY (never answered) is not answered by this server
+03:24:11.739 <- 0x0080 CLIENT_LOGIN_REQUEST, 0 byte body 
+03:24:11.739 -> 0x0000 ACCOUNT_INFO login request: account info
+03:24:11.739    body 000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a4067...(+8 bytes, known opcode so capped)
+03:24:11.739 -> 0x000B WORLD_LIST login request: world Scania
+03:24:11.739    body 0006005363616e6961000000000208005363616e69612d30000000000000000108005363616e69612d31000000000001000100000000000000
+03:24:11.739 -> 0x000B WORLD_LIST login request: end of worlds
+03:24:11.739    body ff0000
+03:24:11.739 -> 0x0010 LOGIN_RESULT login request: login result, 3 character(s): Tester, Idiot, Cobalt; channel 1 advertised instead of the true 0, so the client rebuilds its channel list - research/channel-select.md section 9
+03:24:11.739    body 000000000000000000000000000000000100000000000000000000000000000000000000000000000003000000ce000000d4000000d500000003ce000000ce0000000000000054657374657200000000000000000000000000214e0000557500...(+1219 bytes, known opcode so capped)
+03:24:12.077 <- 0x007A CLIENT_TASK_TIMING_REPORT (four task durations, then their sum), 22 byte body 0101530000000b0000000b000000230000008c000000
+03:24:12.077    0x007A CLIENT_TASK_TIMING_REPORT (four task durations, then their sum) is not answered by this server
+03:25:30.473 <- 0x00BC UNKNOWN, 12 byte body 090400000904000009040000
+03:25:30.481    0x00BC UNKNOWN is not answered by this server - and it is UNKNOWN, so the full body is above
+03:25:30.481 <- 0x0078 CLIENT_SELECT_CHARACTER_REQUEST, 73 byte body 0000000001002ed500000000240044382d34332d41452d34432d35362d31372c2030302d30302d30302d30302d30302d303015004438343341453443353631375f4236414539434432
+03:25:30.483 -> 0x0011 MIGRATE_COMMAND migrate "Cobalt" (id 213) to world 0 channel 0 at 127.0.0.1:8485, seed 0x3aadac7b - single use, NOT authentication. Migration UNBOUND - migration binding is off (--bind-migrations). Any channel connection that names this character id can claim it. Binding needs the hook to present the session token on the channel socket; without that, turning it on refuses every migration
+03:25:30.483    body 000000007f0000012521d5000000000000000000000000000000000000000000000000000000000000000000000000000000000400000073036859
+03:25:30.483 <- 0x0079 CLIENT_LOAD_TIMING_REPORT, 64 byte body d50000000600436f62616c74530000000b0000000b00000023000000190f0000ea070900030002001700180005009301ea07090003000200170018000c004d00
+03:25:30.483    0x0079 CLIENT_LOAD_TIMING_REPORT is not answered by this server
+03:25:30.484 #2 127.0.0.1:61532 closed
+03:25:39.176 connection from #3 127.0.0.1:53039
+03:25:39.176 #3 127.0.0.1:53039 127.0.0.1:53039 is owned by process 957828 on this machine
+03:25:39.177 #3 127.0.0.1:53039 served as account "maplecw" (id 1) from a login claim, matched by the process the operating system says owns this connection (same machine)
+03:25:39.177 #3 127.0.0.1:53039 that decision is PROVISIONAL: if this client carries a one-time token in 0x0073, it overrides the above - and if it carries a wrong one this connection is downgraded to the fallback "maplecw"
+03:25:39.177 -> greeting, 48 bytes
+03:25:39.177 -> 0x0032 DATA_WZ_PATCH startup gate, unprompted
+03:25:39.177    body 00
+03:25:39.678 <- 0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version), 45 byte body 0264000000000000000000000002000000d33c8f48988c2ef770615335e6b5d01c499dee470000000000000000
+03:25:39.685    0x0070 CLIENT_ENV_REPORT (subtype-multiplexed; the 100 is a literal, not our version) is not answered by this server
+03:25:39.685 <- 0x0071 CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours), 49 byte body 0101000000640000000000000000011e00000028947d75402c352840462c2c32522899b5857d64704954524757544a5470
+03:25:39.685    0x0071 CLIENT_ENV_DETAIL (its 1/100/0 are literals, not an echo of ours) is not answered by this server
+03:25:39.685 <- 0x00A1 CLIENT_DATA_WZ_REQUEST, 4 byte body 00000000
+03:25:39.685 -> 0x0032 DATA_WZ_PATCH startup gate
+03:25:39.685    body 00
+03:25:40.016 <- 0x02EB UNKNOWN, 4 byte body 02000000
+03:25:40.024    0x02EB UNKNOWN is not answered by this server - and it is UNKNOWN, so the full body is above
+03:25:40.120 <- 0x0080 CLIENT_LOGIN_REQUEST, 0 byte body 
+03:25:40.120 -> 0x0000 ACCOUNT_INFO login request: account info
+03:25:40.120    body 000000000000000007006d61706c656377000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001200776973702a2a2a2a4067...(+8 bytes, known opcode so capped)
+03:25:40.120 -> 0x000B WORLD_LIST login request: world Scania
+03:25:40.120    body 0006005363616e6961000000000208005363616e69612d30000000000000000108005363616e69612d31000000000001000100000000000000
+03:25:40.120 -> 0x000B WORLD_LIST login request: end of worlds
+03:25:40.121    body ff0000
+03:25:40.121 -> 0x0010 LOGIN_RESULT login request: login result, 3 character(s): Tester, Idiot, Cobalt; channel 1 advertised instead of the true 0, so the client rebuilds its channel list - research/channel-select.md section 9
+03:25:40.121    body 000000000000000000000000000000000100000000000000000000000000000000000000000000000003000000ce000000d4000000d500000003ce000000ce0000000000000054657374657200000000000000000000000000214e0000557500...(+1219 bytes, known opcode so capped)
+03:26:06.061 #3 127.0.0.1:53039 closed
