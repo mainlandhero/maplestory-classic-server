@@ -477,12 +477,21 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     // a real character is **the low half of the avatar look's face id**:
     //
     // ```text
-    //   Cobalt   face 20002 = 0x4E22  ->  count 570 425 344  ->  2.28 GB demanded
-    //   Tester2  face 20001 = 0x4E21  ->  count 553 648 128  ->  2.21 GB demanded
+    //   Cobalt   count at body offset 203 = 0x22000000 = 570 425 344 entries
+    //   Tester2  count at body offset 204 = 0x21000000 = 553 648 128 entries
     // ```
     //
-    // and the reader threw. That is why a 128-byte pad did nothing: zeros are not a
-    // terminator for a length-prefixed list.
+    // the `0x22`/`0x21` being the low byte of `face` three bytes on.
+    //
+    // **It does not ask for 2.3 GB, and saying so would send the next reader looking for an
+    // allocation that never happens.** There is no bulk read and no `reserve`: the loop walks
+    // four bytes at a time. Both processes completed **116 iterations** and threw on the
+    // 117th, with three bytes left - `467 = 4 x 116 + 3`, and 467 is exactly what follows the
+    // count field in both bodies. Measured out of the reader object in two crash dumps
+    // (`research/0x0224-dump-read-position.md`), not derived from this listing.
+    //
+    // That is also why a 128-byte pad did nothing: it buys 32 more iterations out of 570
+    // million. Zeros are not a terminator for a length-prefixed list.
     //
     // **The throw stack in the hook log is this call chain, frame for frame.** Every return
     // address on it is a statically confirmed call site, which is what makes this [L] rather
