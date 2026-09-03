@@ -468,6 +468,20 @@ fn connection(
                 ));
             }
             for reply in replies {
+                // **A reply that asks to be late is late.** Only the character list does, and
+                // `session::CHARACTER_LIST_PAUSE_MS` is the whole argument for why.
+                //
+                // Blocking this thread is correct rather than lazy: one thread serves one
+                // login connection, and the point is that THIS client sees a gap between the
+                // world list and its character list. Nobody else is waiting on it.
+                if reply.pause_ms > 0 {
+                    log(&format!(
+                        "   waiting {} ms before {} - see login::session::CHARACTER_LIST_PAUSE_MS",
+                        reply.pause_ms,
+                        label(reply.opcode)
+                    ));
+                    std::thread::sleep(std::time::Duration::from_millis(reply.pause_ms));
+                }
                 send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
             }
         }

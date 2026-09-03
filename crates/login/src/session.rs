@@ -85,11 +85,60 @@ pub struct Reply {
     pub opcode: u16,
     pub body: Vec<u8>,
     pub what: String,
+    /// **Wait this long before putting it on the wire.**
+    ///
+    /// Zero for every reply but one. See [`CHARACTER_LIST_PAUSE_MS`].
+    pub pause_ms: u64,
 }
+
+/// **How long to wait before the character list, and why there is a wait at all.**
+///
+/// 2026-09-02. The character-select avatars are not drawn on the first visit of a client
+/// process. Go into the world, log out, come back, and the same three characters draw
+/// correctly. Two things were eliminated before this:
+///
+/// * **not the client patches** - `RETURN IMMEDIATELY`, `FORCE rdx=0x0` and
+///   `mode=2,create=on` are byte-identical to archived runs of 2026-08-21;
+/// * **not the bytes.** The two `0x0010` bodies, one that drew and one that did not, are
+///   identical - same 1219-byte length, same prefix. Whatever differs is client state.
+///
+/// What this server does that no real one could is answer instantly:
+///
+/// ```text
+///   03:24:11.730  <- 0x0080  CLIENT_LOGIN_REQUEST
+///   03:24:11.739  -> 0x0000  ACCOUNT_INFO
+///   03:24:11.739  -> 0x000B  WORLD_LIST
+///   03:24:11.739  -> 0x000B  WORLD_LIST end
+///   03:24:11.739  -> 0x0010  LOGIN_RESULT, 3 characters
+/// ```
+///
+/// Four packets in the same millisecond, on loopback. In the service this client shipped
+/// against those are **three round trips** with a player picking a world in between, and the
+/// character list arrives tens to hundreds of milliseconds after the world list. Here the
+/// client can receive all four in one read and build the character-select stage inside the
+/// same dispatch that built the world list.
+///
+/// # This is an experiment, and it is labelled one
+///
+/// **[I]**, not [L]. Nothing has been read out of the client that says the avatar build is
+/// asynchronous or that it depends on the world-list stage being finished. What is [L] is
+/// that the bytes are identical and the timing is not, so the difference has to be timing or
+/// something downstream of it.
+///
+/// It fails honestly: if the avatars are still missing with this in, the race is not here and
+/// the next step is the client, not the server. 400 ms is comfortably more than a frame at
+/// any refresh rate and far less than a player would notice.
+pub const CHARACTER_LIST_PAUSE_MS: u64 = 400;
 
 impl Reply {
     fn new(opcode: u16, body: Vec<u8>, what: impl Into<String>) -> Self {
-        Reply { opcode, body, what: what.into() }
+        Reply { opcode, body, what: what.into(), pause_ms: 0 }
+    }
+
+    /// The same reply, sent after a wait. See [`CHARACTER_LIST_PAUSE_MS`].
+    fn after(mut self, pause_ms: u64) -> Self {
+        self.pause_ms = pause_ms;
+        self
     }
 
     /// Opcode then body - the packet as the framer wants it.
@@ -402,15 +451,22 @@ impl Session {
         };
 
         let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
-        out.push(Reply::new(
-            LOGIN_RESULT,
-            login_result(world.id, channel, &characters),
-            format!(
-                "{cause}: login result, {} character(s): {}; {channel_note}",
-                characters.len(),
-                names.join(", ")
-            ),
-        ));
+        out.push(
+            Reply::new(
+                LOGIN_RESULT,
+                login_result(world.id, channel, &characters),
+                format!(
+                    "{cause}: login result, {} character(s): {}; {channel_note}",
+                    characters.len(),
+                    names.join(", ")
+                ),
+            )
+            // The only paused reply in this server. See `CHARACTER_LIST_PAUSE_MS`: the
+            // avatars are not drawn on a client's first visit to character select, the bytes
+            // are identical to a visit that DOES draw them, and this is the one thing this
+            // server does that no real one could - answer four packets in one millisecond.
+            .after(CHARACTER_LIST_PAUSE_MS),
+        );
         out
     }
 
@@ -1131,6 +1187,64 @@ mod tests {
             "the priming channel, not the true 0 - research/channel-select.md section 9"
         );
         assert!(result.what.contains("instead of the true 0"), "{}", result.what);
+    }
+
+    /// **The character list is the only reply that waits, and it really does wait.**
+    ///
+    /// Two halves, and the second is the one worth having. Pinning that `LOGIN_RESULT` has a
+    /// pause is easy; pinning that **nothing else does** is what stops a later change from
+    /// putting latency on the whole login path while this test still passed.
+    ///
+    /// The three replies ahead of it must stay instant: the client is blocked on its `recv`
+    /// for the account info and the world list, and delaying those would be a real cost for
+    /// an experiment that is about the gap between them and the list.
+    #[test]
+    fn only_the_character_list_is_delayed_and_nothing_ahead_of_it_is() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let mut s = Session::new(store, Arc::new(Config::default()), account);
+
+        let replies = s.world_and_characters("test");
+        let paused: Vec<&Reply> = replies.iter().filter(|r| r.pause_ms > 0).collect();
+        assert_eq!(paused.len(), 1, "exactly one reply waits: {:?}", replies);
+        assert_eq!(paused[0].opcode, LOGIN_RESULT, "and it is the character list");
+        assert_eq!(paused[0].pause_ms, CHARACTER_LIST_PAUSE_MS);
+
+        // The control that gives that its meaning: the replies AHEAD of it are instant, and
+        // there are three of them.
+        let instant: Vec<&Reply> = replies.iter().filter(|r| r.pause_ms == 0).collect();
+        assert_eq!(instant.len(), 3, "account info and both world-list rows stay instant");
+        assert!(
+            instant.iter().all(|r| r.opcode != LOGIN_RESULT),
+            "no unpaused character list slipped through: {instant:?}"
+        );
+
+        // And the pause is long enough to be a gap rather than jitter. Loopback delivered all
+        // four of these in the SAME MILLISECOND in the capture this exists to explain, so a
+        // value that could be lost in scheduling noise would test nothing.
+        assert!(
+            CHARACTER_LIST_PAUSE_MS >= 100,
+            "a pause smaller than scheduling noise is not an experiment"
+        );
+    }
+
+    /// An empty list is still answered, and **it waits too**.
+    ///
+    /// The error path builds its own `LOGIN_RESULT` rather than falling through to the one
+    /// below it, so it is a second place to forget. A character select that draws nothing is
+    /// exactly the screen this pause exists for.
+    #[test]
+    fn the_empty_character_list_is_delayed_the_same_way() {
+        // `characters_for` failing is hard to force, so this asserts the shape instead: every
+        // LOGIN_RESULT this function can emit carries the pause.
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let mut s = Session::new(store, Arc::new(Config::default()), account);
+        for r in s.world_and_characters("test").iter().filter(|r| r.opcode == LOGIN_RESULT) {
+            assert_eq!(r.pause_ms, CHARACTER_LIST_PAUSE_MS, "{}", r.what);
+        }
     }
 
     /// The name-check body: a length-prefixed name.
