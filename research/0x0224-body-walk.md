@@ -165,8 +165,16 @@ tree scores 1 of 8 — it is not needed to fix this and none is offered.
 * **`0x140a4a1c3 → FUN_14087ae30(stat, mask, packet, 1)`** is also unconditional, and it reads
   **zero bytes from an all-zero mask**. Its own listing is a per-bit loop over the mask:
   `mov edx,[r14+rax*4] / shr edx,cl / and edx,1 / je skip`, with `r14 = rdx =` the 124-byte
-  mask, bounded by `cmp ebx, 0x3e0` = 992 = 124·8. Every bit clear means every iteration skips.
-  **[L]** — and `0x3e0` is an independent confirmation that the mask is 124 bytes.
+  mask. Every bit clear means every iteration skips. **[L]**
+
+  > **Corrected 2026-09-03 by `research/remote-stat-mask-gating.md`.** This paragraph said the
+  > loop was "bounded by `cmp ebx, 0x3e0` = 992 = 124·8" and offered that as an independent
+  > confirmation of the mask length. It is not the bound: the loop ends on
+  > `i >= *(u32*)([stat+0x43d8]-8)`, a client-side array length, and `0x3e0` is an index guard
+  > whose `jae` goes to `inc ebx` rather than to the exit. **The conclusion survives - zero
+  > bytes either way - but the reason given for it was wrong, and it was being cited as
+  > corroboration for a number it cannot speak to.** The mask length has six other independent
+  > confirmations and never needed this one.
 * **`0x140a4a124 → FUN_140822790`** takes `rcx = stat+0x2530` and no packet. `tools/reads.py`
   at depth 4 finds no reads under it, nor under `FUN_1402c23d0`, `FUN_1404a3180`,
   `FUN_14080fb80`, `FUN_14080fa00` or `FUN_1402bf6d0`. **[L]**

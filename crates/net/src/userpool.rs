@@ -308,11 +308,41 @@ pub struct RemoteAt {
 /// body to resynchronise on.
 pub const REMOTE_STAT_MASK_LEN: usize = 124;
 
-/// **The seven bytes `FUN_140a46e50` reads AFTER the mask, unconditionally.**
+/// **The twenty-three bytes `FUN_140a46e50` reads AFTER the mask, unconditionally.**
 ///
-/// `u8`, `u8`, `u32`, `u8`, at `0x140a4a007`, `0x140a4a024`, `0x140a4a041` and
-/// `0x140a4a29e`. So the remote temporary-stat **block is 131 bytes**, of which 124 are the
-/// mask. [`REMOTE_STAT_MASK_LEN`] was never wrong; the block is not the mask.
+/// ```text
+///   0x140a4a007  u8
+///   0x140a4a024  u8
+///   0x140a4a041  u32
+///   0x140a4a10e  call 0x140862470   -> u32, u32, u32, u32 COUNT, then COUNT x u32
+///   0x140a4a29e  u8
+/// ```
+///
+/// So the remote temporary-stat **block is 147 bytes**, of which 124 are the mask.
+/// [`REMOTE_STAT_MASK_LEN`] was never wrong; the block is not the mask.
+///
+/// # This sentence said SEVEN for a day, and the number below it was 7, and both were wrong
+///
+/// The four `u32` behind the `call` are the sixteen bytes that killed two clients the first
+/// time they stood on one map - the count was read out of the avatar look's face id. The
+/// prose is called out here because it is the third value this constant has had (0, then 7,
+/// then 23) and each time the doc block agreed with the constant. **A comment that agrees
+/// with the code it sits on is not a check on it**; what settled it was the client's own
+/// throw stack, frame for frame.
+///
+/// # The mask gate is [L] now, and it is why the tail ends here
+///
+/// An 8-iteration loop at `0x140a4a1a5` dispatches `vtable[+0x30](obj, packet)` and could
+/// read any amount. Two passes left it **[I]** "presumed mask-gated" and named it as their
+/// blind spot. Opened: the gate is `if ((received_mask & CONST[i]) != 0)`, and **we send 124
+/// zero bytes**, so `0 & x == 0` whatever `CONST[i]` holds - the answer rests on no unknown
+/// at all. All eight iterations skip and the vtable call is never reached. `[L]`,
+/// `research/remote-stat-mask-gating.md`.
+///
+/// It is not vacuously false, either: the eight constants at `0x143abd320` have popcounts
+/// 324-388 and 736 of the 992 mask bits reach at least one. **The first remote buff this
+/// server sends will walk into that call**, and its callees cannot be sized without a
+/// runtime watch.
 ///
 /// # Why this was missed, and it is a lesson about dumps rather than about decoders
 ///
@@ -323,6 +353,9 @@ pub const REMOTE_STAT_MASK_LEN: usize = 124;
 /// the truncation was invisible, including all four of these reads.
 ///
 /// # Why the fourth byte is not conditional, when six of its neighbours are
+///
+/// (Read "the fourth byte" as the `u8` at `0x140a4a29e`; the `call` at `0x140a4a10e` is
+/// unconditional for the same reason and by the same argument.)
 ///
 /// `reads.py` finds reads at `0x140a4a218`, `24a`, `266`, `282`, `2d3` and `2ef` in the same
 /// neighbourhood, and those *are* mask-gated. The discriminator needs no control-flow graph:
