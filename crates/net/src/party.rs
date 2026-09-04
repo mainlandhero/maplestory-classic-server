@@ -332,7 +332,9 @@ pub struct Member {
     /// Deliberately not moved yet: the framing fix is going out on its own, because changing
     /// two things in one launch has already produced one unexplained crash here.
     pub level: u32,
-    pub unknown_c: u32,
+    /// `member+0x18` - the job-name lookup's second argument. Meaning unestablished; sent
+    /// as zero, and the party row rendered correctly with it zero.
+    pub unknown_b: u32,
     pub unknown_d: u32,
 }
 
@@ -347,10 +349,17 @@ pub fn write_member(w: &mut crate::PacketWriter, seat: Option<&Member>) {
     };
     w.u32(m.char_id); //     1406f2843
     w.str(&m.name); //       1406f285a  copied to 13 bytes
-    w.u32(m.job); //         1406f2889
-    w.u32(m.level); //       1406f2894
-    w.u32(m.unknown_c); //   1406f289f
-    w.u32(m.unknown_d); //   1406f28aa
+    w.u32(m.job); //         1406f2889  +0x14
+    // **The level is the THIRD u32, not the second, and the screen said so.**
+    //
+    // Predicted [D] from `FUN_1402b0250` - `+0x18` is the second argument to the job-name
+    // lookup rather than a field of its own - and then measured: we sent level 18 in the
+    // second slot and zero in the third, and the party window showed **"Magician" beside a
+    // level of 0**. Job right, level zero, which is exactly what reading the third slot
+    // produces. **[L]**, 2026-09-04, first party ever drawn by this server.
+    w.u32(m.unknown_b); //   1406f2894  +0x18  the job lookup's second argument
+    w.u32(m.level); //       1406f289f  +0x1c
+    w.u32(m.unknown_d); //   1406f28aa  +0x20
     w.u8(0); //              1406f28b5
     w.u32(0); //             1406f28c3
     w.u64(0); //             1406f28ce

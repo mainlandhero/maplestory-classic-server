@@ -360,9 +360,20 @@ pub struct RemoteAt {
     pub move_action: u8,
     /// Body offset 431, through `FUN_142df6c50([0x143AC18D8], v)`. **[D]**
     ///
-    /// `0` is legal and means "not standing on a foothold" - the client resolves it
-    /// itself. Sending a foothold id from a *different* map is not legal and is the
-    /// mistake to watch for when this is wired to a stale position.
+    /// **`0` means "not standing on a foothold", and the client draws that as FLOATING.**
+    ///
+    /// This said `0` was legal and that "the client resolves it itself". The first half is
+    /// true and the second was a guess: on 2026-09-04 every existing player on a map appeared
+    /// to a joining client in a mid-air pose rather than standing, because every `0x0224`
+    /// this server sent carried `0` here. **[L]**, from the screen.
+    ///
+    /// `crate::world::session::remote_at` now looks the foothold up under the position with
+    /// `Footholds::landing` - the same function drops use, so a player and an item at their
+    /// feet cannot disagree about where the floor is - and falls back to `0` only when the
+    /// table has nothing to say.
+    ///
+    /// Sending a foothold id from a *different* map is still not legal and is the mistake to
+    /// watch for when this is wired to a stale position.
     pub foothold: i16,
 }
 

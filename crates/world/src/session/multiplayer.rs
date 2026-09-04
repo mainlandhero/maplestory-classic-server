@@ -210,7 +210,38 @@ impl Session {
     /// just left would be worse than sending none.
     pub(super) fn remote_at(&self) -> net::userpool::RemoteAt {
         let (x, y) = self.last_position.unwrap_or((0, 0));
-        net::userpool::RemoteAt { x, y, move_action: 0, foothold: 0 }
+
+        // **A foothold of `0` means "in the air", and that is why an existing player looked
+        // like they were floating.**
+        //
+        // The owner, 2026-09-04: *"clients see those original players already present in the map
+        // as 'floating' instead of the desired 'idle' position."*
+        //
+        // The doc that used to sit here said `0` was legal and meant "resolve it yourself",
+        // and reasoned that *"sending a foothold id from the map we just left would be worse
+        // than sending none"*. The first half was a guess and the second was answering a
+        // question that no longer applies: this is called for a character standing on a map
+        // we know, at a position we now keep up to date (`note_own_position`), so the
+        // foothold under them is a lookup rather than a leftover.
+        //
+        // `Footholds::landing` is the same function drops use to find the floor - one table,
+        // one answer, so a player and an item dropped at their feet cannot disagree about
+        // where the ground is.
+        //
+        // Still `0` when the table has nothing to say: a map with no foothold data, or a
+        // position genuinely in mid-air. That is the honest answer there, and it is the
+        // behaviour every remote player had until now.
+        let foothold = self
+            .config
+            .footholds
+            .landing(self.claimed_character().map(|c| c.map_id).unwrap_or(0), x, y)
+            // The wire field is an `i16`; a foothold id that does not fit is one this client
+            // could not have meant, so it falls back to "in the air" rather than truncating
+            // into a real id belonging to some other platform.
+            .and_then(|l| i16::try_from(l.foothold).ok())
+            .unwrap_or(0);
+
+        net::userpool::RemoteAt { x, y, move_action: 0, foothold }
     }
 
     /// **Remember where this character is, and tell the bus, so a LATER joiner is not sent
@@ -1405,6 +1436,57 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         assert_eq!(out[0].opcode, net::userpool::USER_LEAVE_FIELD);
     }
 
+
+    /// **A standing player is sent the foothold under them, not `0`.**
+    ///
+    /// `0` means "not on a foothold" and the client draws it as a mid-air pose. Every
+    /// `0x0224` this server sent carried `0`, so on 2026-09-04 every existing player on a map
+    /// appeared to a joining client to be **floating**. The owner saw it; the field's own doc had
+    /// said `0` was fine because "the client resolves it itself", which was a guess.
+    ///
+    /// Both halves are asserted, because only the pair is a check: the lookup finds ground
+    /// where there IS ground, and still answers `0` where there is not. A test that only
+    /// covered the first would pass for a builder that returned a constant.
+    #[test]
+    fn a_player_standing_on_ground_is_sent_its_foothold() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        // map, id, x1, y1, x2, y2 - one flat platform from x=0 to x=800 at y=400.
+        let footholds = crate::footholds::Footholds::parse("7, 42, 0, 400, 800, 400\n");
+        let config = Arc::new(Config {
+            set_field_probe: true,
+            footholds,
+            ..Config::default()
+        });
+        let fields = Arc::new(Fields::new());
+
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character {
+            name: "Stander".to_string(),
+            map_id: 7,
+            ..Default::default()
+        };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store, config, fields);
+        s.claim_for_character(id);
+
+        // Standing on the platform.
+        s.last_position = Some((400, 400));
+        assert_eq!(
+            s.remote_at().foothold,
+            42,
+            "the id of the platform under them, not 0 - 0 is the floating pose"
+        );
+
+        // **The control.** Off the end of the only platform there is, `0` is the honest
+        // answer and the one every remote player used to get.
+        s.last_position = Some((5_000, 400));
+        assert_eq!(
+            s.remote_at().foothold,
+            0,
+            "no ground under them means no foothold, and that must still be sayable"
+        );
+    }
 
     /// **A connection that dies without logging out gives its mobs back.**
     ///

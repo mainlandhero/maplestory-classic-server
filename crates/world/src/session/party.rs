@@ -184,7 +184,7 @@ impl super::Session {
             name: chr.name.clone(),
             job: u32::from(chr.job),
             level: u32::from(chr.level),
-            unknown_c: 0,
+            unknown_b: 0,
             unknown_d: 0,
         }
     }
