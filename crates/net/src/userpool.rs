@@ -201,6 +201,76 @@ pub const USER_CHAT: u16 = crate::userchat::USER_CHAT_TWO_STRINGS;
 ///   and that is still true.
 pub const USER_HIT_REMOTE: u16 = 0x02A5;
 
+/// The HITINFO the client sends and the server passes on: **147 bytes, no optional fields.**
+///
+/// `FUN_14025da80` decodes it with **zero branches of any kind** - 44 direct primitive calls
+/// and a `ret`. So there is no gated field and no legal short form; a body of any other
+/// length is a different packet. **[L]**
+pub const USER_HIT_REMOTE_HITINFO_LEN: usize = 147;
+
+/// **Where the damage number lives, and it is the server's to fill in.**
+///
+/// HITINFO `+0xa8`, read at `0x14025dcd0`. The handler draws the remote damage from this
+/// field and gates the 1500 ms flinch on it being `> 0`.
+///
+/// **The client sends `0` here - in 331 of 331 event-deduplicated captured bodies** - and its
+/// own builder `FUN_1428aa0a0` has no write to that slot at all. So it is a server-fill
+/// field, and this is what makes a plain echo of the client's bytes wrong: it calls the
+/// damage renderer with `0`, which is the MISS path, and plays no animation. Nothing errors
+/// and nothing appears. **[L]**
+///
+/// This module used to say of `0x02A5`: *"There is no builder because there is nothing to
+/// build: the 147 bytes are the client's, and the server's job is to pass them on."* That was
+/// wrong in the direction that fails silently.
+pub const USER_HIT_REMOTE_DAMAGE_AT: usize = 143;
+
+/// **`0x02A5` - what every OTHER client draws when somebody is hit by a mob.**
+///
+/// The owner, 2026-09-03: *"when one client is getting hurt by mobs, the other clients should also
+/// be displaying the damage that the client is taking and the blinking expression."*
+///
+/// The body is the client's own 147-byte HITINFO with [`USER_HIT_REMOTE_DAMAGE_AT`]
+/// overwritten, behind a `u32 charId` the router reads at `0x1429bb745`. **A charId absent
+/// from the receiver's pool jumps straight to the epilogue** - a clean no-op - which is what
+/// makes broadcasting this safe. **[L]**
+///
+/// # `damage` is what was APPLIED, not what the client claimed
+///
+/// The inbound `+8` is the client's own figure. Sending that would put a number on everyone
+/// else's screen that disagrees with the HP bar the hurt player is watching, because the
+/// server caps and applies its own. Pass the applied amount.
+///
+/// # The sign, and the colour it picks
+///
+/// Positive. The client negates it at `0x1429d4ecb` before handing it to the renderer
+/// `0x142771360`, and a negative amount there selects digit set 3 - the damage colour
+/// (`research/damage-number-draw.md` §2). Passing a negative would draw a **blue recovery**
+/// number instead. `0` is not "no damage": it is the MISS path, and it is what the client's
+/// own bytes already carry.
+///
+/// # Not yet on a screen
+///
+/// Every field above is read off the client's listing, and the tail makes the **same four
+/// calls in the same order** as the client's own hit path - the action latch, the 1500 ms
+/// flinch, the 5000 ms avatar effect, then the number. That is a structural mirror, so the
+/// claim that this draws is **[D]**. One two-client run falsifies it: a violet number and a
+/// flinch over the hurt player on the other screen, or nothing.
+///
+/// Returns `None` rather than truncating or padding a body of the wrong length: a short
+/// HITINFO is a decoder disagreement, and guessing at one is how three crashes started.
+pub fn user_hit_remote(char_id: u32, hit_info: &[u8], damage: i32) -> Option<Vec<u8>> {
+    let src = hit_info.get(..USER_HIT_REMOTE_HITINFO_LEN)?;
+    let mut info = [0u8; USER_HIT_REMOTE_HITINFO_LEN];
+    info.copy_from_slice(src);
+    info[USER_HIT_REMOTE_DAMAGE_AT..USER_HIT_REMOTE_DAMAGE_AT + 4]
+        .copy_from_slice(&damage.to_le_bytes());
+
+    let mut w = crate::PacketWriter::new();
+    w.u32(char_id);
+    w.bytes(&info);
+    Some(w.into_vec())
+}
+
 /// **`0x02AF` `UserEffectRemote` - `u32 charId, u8 effect`.** What every *other* client on
 /// the field sees.
 ///
@@ -1113,6 +1183,45 @@ mod tests {
             4,
             "[I]: nobody has counted FUN_1429b9300's inline 0x225 reads"
         );
+    }
+
+    /// **The damage field is overwritten, and everything else is passed through untouched.**
+    ///
+    /// The whole packet is the client's own bytes with four of them replaced, so the test
+    /// that matters is that exactly those four move. A builder that rebuilt the HITINFO from
+    /// parsed fields would be a second decoder to get wrong.
+    #[test]
+    fn only_the_damage_dword_differs_from_the_clients_own_bytes() {
+        // A recognisable HITINFO: every byte distinct-ish, so a shifted copy shows up.
+        let info: Vec<u8> = (0..USER_HIT_REMOTE_HITINFO_LEN).map(|i| (i % 251) as u8).collect();
+        let out = user_hit_remote(0x1234_5678, &info, 1234).expect("147 bytes is the right length");
+
+        assert_eq!(out.len(), 4 + USER_HIT_REMOTE_HITINFO_LEN, "charId then the HITINFO");
+        assert_eq!(&out[..4], &0x1234_5678u32.to_le_bytes(), "the router reads this first");
+
+        let sent = &out[4..];
+        let at = USER_HIT_REMOTE_DAMAGE_AT;
+        assert_eq!(
+            i32::from_le_bytes(sent[at..at + 4].try_into().unwrap()),
+            1234,
+            "the server's number, not the client's"
+        );
+        // Everything either side is byte-identical.
+        assert_eq!(&sent[..at], &info[..at], "nothing before the damage moved");
+        assert_eq!(&sent[at + 4..], &info[at + 4..], "and nothing after it");
+    }
+
+    /// **A body of the wrong length is refused, not padded.**
+    ///
+    /// The decoder has zero branches, so 147 is the only legal length; anything else means
+    /// this server and that client disagree about the packet, and padding would hide it.
+    #[test]
+    fn a_hitinfo_of_the_wrong_length_is_refused() {
+        assert!(user_hit_remote(200, &[0u8; USER_HIT_REMOTE_HITINFO_LEN - 1], 1).is_none());
+        assert!(user_hit_remote(200, &[], 1).is_none());
+        // Longer IS accepted - the inbound body carries a trailer past the HITINFO and the
+        // first 147 bytes are the part the remote decoder reads.
+        assert!(user_hit_remote(200, &[0u8; 200], 1).is_some());
     }
 
     /// The gap this module opened on 2026-08-29 is closed, and this is the tripwire that

@@ -410,6 +410,72 @@ impl Session {
     /// path and the caller's reply to the attacker is untouched, so a body this
     /// server cannot re-encode costs the *observers* a swing and costs the
     /// attacker nothing at all.
+    /// **Show everyone else the damage this player just took, and the flinch.**
+    ///
+    /// The owner, 2026-09-03: *"when one client is getting hurt by mobs, the other clients should
+    /// also be displaying the damage that the client is taking and the blinking expression
+    /// when they are taking damage."*
+    ///
+    /// `payload` is the client's own `0x00E5` body with its opcode already stripped - the
+    /// same 147-byte HITINFO the client sent, passed on with one field replaced.
+    ///
+    /// # `applied`, never the client's claim
+    ///
+    /// The inbound body's `+8` is what the client says it took. This server computes and caps
+    /// its own, and sends the capped figure in `0x007C`. Broadcasting the claim instead would
+    /// put a number on everyone else's screen that disagrees with the HP bar the hurt player
+    /// is watching.
+    ///
+    /// # Only touch damage
+    ///
+    /// The attack index at HITINFO `+4` is `-1` in every one of 331 captured bodies, and the
+    /// handler short-circuits on it at `0x1429d494f`. **The `>= 0` and `<= -2` arms have not
+    /// been traced**, so a numbered mob skill is not rebroadcast rather than rebroadcast on a
+    /// guess - `crates/net/src/userpool.rs` records why a wrong body on this wire is the
+    /// expensive kind of wrong.
+    pub(super) fn publish_user_hit(&mut self, hit: &net::userhit::UserHit, payload: &[u8], applied: u32) {
+        if !hit.is_touch() {
+            crate::server::log(&format!(
+                "   hit NOT rebroadcast: attack index {} is a numbered mob skill, and only the \
+                 touch arm of 0x02A5 has been traced. The hurt player's own 0x007C is \
+                 unaffected",
+                hit.attack_index
+            ));
+            return;
+        }
+        let Some(chr) = self.claimed_character() else { return };
+        let Some(map) = self.bus().map_of(self.subscriber) else { return };
+        let Ok(damage) = i32::try_from(applied) else { return };
+
+        let Some(body) = net::userpool::user_hit_remote(chr.id, payload, damage) else {
+            crate::server::log(&format!(
+                "   hit NOT rebroadcast: the body is {} bytes and the HITINFO is {}. A short \
+                 one is a decoder disagreement, not something to pad",
+                payload.len(),
+                net::userpool::USER_HIT_REMOTE_HITINFO_LEN
+            ));
+            return;
+        };
+
+        // `supersedes: None` - being hit is an EVENT, not a state. Two hits in one tick are
+        // two numbers on the screen, and coalescing them would drop one.
+        self.bus().publish(
+            self.subscriber,
+            map,
+            Reply {
+                opcode: net::userpool::USER_HIT_REMOTE,
+                body,
+                what: format!(
+                    "UserHitRemote: {} ({}) took {applied} from mob template {}. The number and \
+                     the 1500 ms flinch on every OTHER screen. The client sends 0 in this field \
+                     and the server fills it - an echo would draw a MISS",
+                    chr.name, chr.id, hit.mob_template_id
+                ),
+            },
+            None,
+        );
+    }
+
     pub(super) fn publish_user_attack(&mut self, opcode: u16, payload: &[u8]) {
         let Some(out_opcode) = crate::remoteattack::remote_attack_opcode(opcode) else {
             return; // 0x00E2 body attack - an undecoded layout, nothing to re-encode

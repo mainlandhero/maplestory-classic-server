@@ -1039,6 +1039,11 @@ impl Session {
         // **HP and MP in ONE packet.** `hp_only` was right until Magic Guard existed; sending
         // two packets would let the client draw the HP bar against a stale MP value, and the
         // revive dialog below gates on the HP this packet sets.
+        // **Everyone else sees it too.** Before this the hurt player flinched only on their
+        // own screen: 0x007C goes to them alone and nothing went to the field.
+        self.publish_user_hit(&hit, payload, applied);
+
+
         let mut out = vec![Reply {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange {
