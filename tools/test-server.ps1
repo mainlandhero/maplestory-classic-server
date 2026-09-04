@@ -18,25 +18,21 @@
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
 
-    ORDER: T0, then EITHER the multiplayer half OR the single-client half.
+    ORDER: THE SINGLE-CLIENT HALF. The multiplayer half is BLOCKED, not untested.
     -----------------------------------------------------------------------------
-    T0 asks whether this machine runs two clients at once. It costs one -ServersOnly
-    and two launcher runs, and it is now INSTRUMENTED - the stub logs every guard the
-    client asks for. It decides the rest of the run:
+    T0 is ANSWERED: this machine runs two clients. It took six launches and the
+    answer is yes - grap-stub suppresses FindWindowA("MapleStoryClass") and redirects
+    kernel32's CreateMutex forwarder slot so the second client survives
+    Global\WvsClientMtx.
 
-      T0 says YES  -> T1, T2, T2b. Two clients have NEVER been connected to this
-                      server at once, so everything in the last three commits - shared
-                      mob HP, shared deaths, the damage-ranked drop, and the controller
-                      handover - rests entirely on the test suite. T2b is the newest
-                      and the cheapest to read: one player leaves, and the MEASUREMENT
-                      is the screen of the one who stays.
-      T0 says NO   -> T11 then T10. Both are single-client and both walk through maps
-                      no character has ever stood on: El Nath and Orbis are 87 maps
-                      this server has never served, and the four second-job test
-                      fields have exactly one portal each.
+    T1/T2/T2b are BLOCKED on a client crash that is being debugged from crash dumps,
+    not from launches. 0x0224 UserEnterField used to kill both clients inside its
+    handler; that is fixed and confirmed on the wire. What remains is a fault at
+    0x140f9295e on the update tick 158 ms later. DO NOT spend a launch putting two
+    clients on one map until this file says the fault is fixed - the answer is already
+    known (they die) and the next reading has to come from a change, not a repeat.
 
-    Do not do both halves in one run. Changing two things at once has already produced
-    one unexplained crash.
+    So this run is T11, T10 and the rest, all single-client, in that order.
 
     -SetFieldProbe is NOT optional: without it Session::handle returns nothing for EVERY
     packet and the client sits on "Connecting...". Run -Stop before relaunching.
@@ -1459,10 +1455,14 @@ function Show-TestPlan {
     Write-Host ''
     Write-Host 'On screen:'
     if ($SetFieldProbe) {
-        Write-Host '  T0 FIRST - IT DECIDES WHAT THE REST OF THIS RUN IS.' -ForegroundColor Yellow
-        Write-Host '    T0 says YES -> T1, T2, T2b (the multiplayer half)'
-        Write-Host '    T0 says NO  -> T11 then T10 (the single-client half)'
-        Write-Host '  Do NOT do both halves in one run.'
+        Write-Host '  THIS RUN IS SINGLE-CLIENT: T11, then T10, then the rest.' -ForegroundColor Yellow
+        Write-Host '  T0 IS ANSWERED - two clients DO run on this machine.' -ForegroundColor Green
+        Write-Host '  T1/T2/T2b are BLOCKED, not untested: 0x0224 no longer kills'
+        Write-Host '  the clients but a fault at 0x140f9295e still does, and it is'
+        Write-Host '  being read out of crash dumps rather than out of launches.'
+        Write-Host '  DO NOT spend a launch putting two clients on one map - the'
+        Write-Host '  answer is known (they die) and the next reading needs a change,'
+        Write-Host '  not a repeat.'
         Write-Host '  Full text: Get-Help on this script.'
         Write-Host ''
         Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
@@ -1481,9 +1481,10 @@ function Show-TestPlan {
         Write-Host '  one claim per launch, matched by asking the OS which process owns'
         Write-Host '  the socket. Two accounts on 127.0.0.1 now each get their own.'
         Write-Host '  If both clients STILL show the same account, that is a new finding.'
-        Write-Host '  UNKNOWN: whether this client runs twice on one machine at all. If'
-        Write-Host '  the second refuses to start, SAY SO - that is a finding, and the'
-        Write-Host '  answer is two machines.'
+        Write-Host '  AND TWO CLIENTS RUN NOW - that used to be UNKNOWN here.'
+        Write-Host '  Launch them ONE AT A TIME: wait for the first to reach the'
+        Write-Host '  character list before pressing Login in the second, because'
+        Write-Host '  maplecw-hook.identity is one shared file.'
         Write-Host ''
         Write-Host '  IF T0 SAYS YES, T2b IS THE ONE. It is the newest thing here' -ForegroundColor Magenta
         Write-Host '  and the cheapest to read: one player leaves the map, and the'
@@ -1609,45 +1610,12 @@ function Show-TestPlan {
         Write-Host '       WITHOUT the proof they must REFUSE. If they advance you anyway,'
         Write-Host '       the whole chain is optional - report it even though it looks'
         Write-Host '       like the feature working.' -ForegroundColor Yellow
-        Write-Host '  T0. TWO CLIENTS AT ONCE? T1/T2 are impossible until this' -ForegroundColor Cyan
-    Write-Host '      is answered, so do it first.'
-    Write-Host '      LAUNCH THEM ONE AT A TIME. Wait for the FIRST client to reach'
-    Write-Host '      the character list before pressing Login in the second.'
-    Write-Host '      maplecw-hook.identity is ONE shared file: both launchers write'
-    Write-Host '      it and the hook reads it seconds in, so overlapping launches'
-    Write-Host '      give client 1 client 2''s credential and BOTH SHOW THE SAME'
-    Write-Host '      ACCOUNT - which looks exactly like the claim bug coming back.'
-    Write-Host '      Two accounts are NOT required (claims are keyed per LAUNCH, and'
-    Write-Host '      the owning PID is what separates them) but USE TWO ANYWAY: with'
-    Write-Host '      one, both clients legitimately show the same character list and'
-    Write-Host '      the check above stops being a check.'
-    Write-Host '      THE OLD VERSION OF THIS STEP WAS WRONG. Double-clicking the' -ForegroundColor Yellow
-    Write-Host '      exe does nothing: the client is launched -NXLDEBUG <ip> <port>'
-    Write-Host '      and with no arguments it exits. There is no no-server version.'
-    Write-Host '      Start the servers ONCE (-ServersOnly), then run the launcher'
-    Write-Host '      TWICE - sign in as maplecw, then as tester.'
-    Write-Host '      THE STUB IS INSTRUMENTED FOR THIS NOW. grap64.dll is a STATIC' -ForegroundColor Cyan
-    Write-Host '      import, so our DllMain runs before the client starts. It hooks'
-    Write-Host '      FindWindowW/A + CreateMutexW/A, logs every call, and suppresses'
-    Write-Host '      the guard ONLY in a second client. Read the hook log after.'
-    Write-Host '        two clients reach the character list -> T1/T2 possible.'
-    Write-Host '                   Say WHICH instance: line fired - it names the guard'
-    Write-Host '        two clients and NO instance: line -> there was no guard;'
-    Write-Host '                   the launcher was the only thing stopping it'
-    Write-Host '        no second client, but instance: lines from a 2nd pid ->'
-    Write-Host '                   the guard is one of these and suppressing it was'
-    Write-Host '                   not enough. The log says what it asked for'
-    Write-Host '        no second client and NO 2nd pid in the log -> our DllMain'
-    Write-Host '                   never ran there; the answer is a second machine'
-    Write-Host '        a "will not steal" line -> that API was NOT hooked and'
-    Write-Host '                   nothing was written. Paste its 16 bytes'
-    Write-Host '        the second LAUNCHER fails -> not the client. Two launchers'
-    Write-Host '                   patch the same files in client-patched\'
-    Write-Host '        both show the SAME account -> the per-launch claim broke,'
-    Write-Host '                   and that was proved over sockets. Stop and say so'
-    Write-Host '      Nobody has ever tried this. 211 connections across 188 logs'
-    Write-Host '      show ZERO overlapping pairs, and nothing archived could have'
-    Write-Host '      seen a second process that dies before it connects.'
+        Write-Host '  T0. ANSWERED - two clients run. Nothing to do.' -ForegroundColor Green
+        Write-Host '      grap-stub suppresses FindWindowA("MapleStoryClass") and'
+        Write-Host '      redirects kernel32 CreateMutex through its forwarder SLOT'
+        Write-Host '      (patching kernelbase code hung the client - three launches).'
+        Write-Host '      The second client survives Global\WvsClientMtx.'
+        Write-Host '      Sign out in the launcher to swap accounts - no restart.'
     Write-Host '  T9. COLLECTION TOOLTIP - carries its own control.' -ForegroundColor Cyan
     Write-Host '      Walk one portal with the Vicious quest accepted, then OPEN'
     Write-Host '      THE INVENTORY. Only the Etc tab uses the new quiet mode 5;'
@@ -1672,22 +1640,11 @@ function Show-TestPlan {
     Write-Host '        NOVEL -> the biggest result available. Breaks 14-of-14'
     Write-Host '        no POOL SENTRY line -> marker or hook, not the allocator'
     Write-Host '      Leave -HeapFix OFF - it voids the free-list argument.' -ForegroundColor Yellow
-    Write-Host '  T7. THE CLIENT CARRIES A CREDENTIAL. Launch via the launcher,' -ForegroundColor Cyan
-    Write-Host '      sign in, reach the CHARACTER LIST. Nothing in-game needed.'
-    Write-Host '      Read three lines - they discriminate:'
-    Write-Host '        launcher     client credential written (26 characters)'
-    Write-Host '        hook log     IDENTITY wrote 26 bytes ... getter entry #1'
-    Write-Host '        login.log    0x0073 IDENTITY: ... length=26 ... ACCEPTED'
-    Write-Host '        all 26 + ACCEPTED -> the client carried a session. First'
-    Write-Host '                   non-zero identity in 73 captures. LOGIN socket only'
-    Write-Host '        26/26 but REFUSED -> client half works, the MATCH failed.'
-    Write-Host '                   Nothing transforms the bytes; look at the server'
-    Write-Host '        hook 26, login.log 0 -> dropped after the write. Watch the'
-    Write-Host '                   ctor store at 0x142c440ce for a re-zero'
-    Write-Host '        armed, no "IDENTITY wrote" -> the getter never ran. That'
-    Write-Host '                   contradicts 73 captures; re-check the archive'
-    Write-Host '        no identity: lines -> the marker never reached the hook.'
-    Write-Host '                   NOT a protocol result. It is deleted ~1.5s in'
+    Write-Host '  T7. ANSWERED - the client carried a real credential.' -ForegroundColor Green
+    Write-Host '      login.log, twice in one run: 0x0073 IDENTITY: ACCEPTED and'
+    Write-Host '      SPENT, length 26. Every capture before 2026-08-29 was 0.'
+    Write-Host '      The LOGIN socket is identified by a credential now, not by'
+    Write-Host '      inference. Nothing in game authenticates; that is unchanged.'
     Write-Host '  T5. RETURN SCROLLS. RUN AS maplecw, NOT AS tester.' -ForegroundColor White
     Write-Host '      tester has is_gm = 0, so !item comes back as a CHAT BALLOON'
     Write-Host '      and grants nothing - which reads exactly like "the client'
