@@ -408,6 +408,54 @@ impl Controllers {
     /// **No packet goes to `from`.** Level 0 is the client's only revoke and it *despawns*, so
     /// telling the departing client anything would delete the mob on the screen it is leaving.
     /// It costs nothing to say nothing: that client has already torn its own mob pool down.
+    /// **Give ONE mob to `to`, whoever held it.** Returns whether it changed hands.
+    ///
+    /// The single-mob twin of [`Controllers::hand_over`], and it exists because of what a
+    /// flinch turns out to be.
+    ///
+    /// # Why an attacker has to own what it hits
+    ///
+    /// The owner, 2026-09-04: *"If the client that does not have mob control attacks a mob, the
+    /// mob does not flinch and get pushed back."*
+    ///
+    /// **The flinch and the knockback are not a packet.** They are produced locally by the
+    /// client that both swings *and* holds the mob's `0x03D2`, and they reach every other
+    /// screen as that client's own `0x02FF` with the hit action - which this server already
+    /// rebroadcasts as `0x03D9`. There is no `MobDamaged` opcode in this client, and none of
+    /// the six mob opcodes that can set an action takes a damage value.
+    ///
+    /// Two archived runs measure it, same build and same map, differing only in who walked in
+    /// first and therefore owns the mobs:
+    ///
+    /// ```text
+    ///   controller swings      10 wounding hits -> 10 hit-action reports
+    ///   non-controller swings  15 wounding hits ->  0
+    /// ```
+    ///
+    /// `research/fixtures/controller-attacks-mob-flinches-10-of-10-world.log` and its
+    /// `non-controller-...-0-of-15` sibling. It also follows from this module's own rule:
+    /// [`Controllers::controls`] gates `0x02FF`, so a client that was never granted the mob
+    /// cannot move it even if it wanted to.
+    ///
+    /// So the fix is ownership, not a new packet - and the packet that follows is the
+    /// `0x03D2` this module already sends on field entry.
+    ///
+    /// # One lock, like its sibling
+    ///
+    /// There is no instant at which the mob belongs to nobody. Returns `false` when `to`
+    /// already holds it, which is the common case in a fight and must cost no packet.
+    pub fn hand_over_one(&self, map: u32, object_id: u32, to: SessionId) -> bool {
+        let mut inner = self.lock();
+        let held = inner.entry(map).or_default();
+        match held.get(&object_id) {
+            Some(who) if *who == to => false,
+            _ => {
+                held.insert(object_id, to);
+                true
+            }
+        }
+    }
+
     pub fn hand_over(&self, map: u32, from: SessionId, to: SessionId) -> Vec<u32> {
         if from == to {
             return Vec::new();

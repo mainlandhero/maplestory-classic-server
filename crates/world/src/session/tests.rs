@@ -7796,6 +7796,76 @@ fn channel_with_mob_2002(hp: u64) -> (Arc<Store>, Arc<Config>, Arc<crate::fields
     (store, config, fields, account)
 }
 
+/// **Hitting a mob you do not control hands it to you, so your own client can flinch it.**
+///
+/// The owner, 2026-09-04: *"If the client that does not have mob control attacks a mob, the mob
+/// does not flinch and get pushed back."*
+///
+/// The flinch and the knockback are not a packet - they are produced locally by the client
+/// that both swings and holds the `0x03D2`, and reach everyone else as that client's own
+/// `0x02FF`. Two archived runs measure it: 10 hit-action reports for 10 wounding hits when
+/// the controller swings, **0 for 15** when a non-controller does
+/// (`research/fixtures/controller-attacks-mob-flinches-10-of-10-world.log` and its sibling).
+///
+/// So the attacker takes ownership of what it hits, and the grant rides out with the reply to
+/// that swing.
+#[test]
+fn hitting_a_mob_you_do_not_control_hands_it_to_you() {
+    let (store, config, fields, account) = channel_with_mob_2002(500);
+    let (mut owner, _) = join_channel(&store, &config, &fields, account, "Owner");
+    let (mut other, other_id) = join_channel(&store, &config, &fields, account, "Other");
+    owner.on_field_entered();
+    other.on_field_entered();
+
+    // The owner walked in first, so it holds 2002 and `Other` holds nothing.
+    assert_eq!(fields.controllers().controller_of(SHARED_MAP, 2002), Some(owner.subscriber.get()));
+
+    let out = other.handle(&melee_packet());
+    let grants: Vec<&Reply> =
+        out.iter().filter(|r| r.opcode == net::mobmove::MOB_CHANGE_CONTROLLER).collect();
+
+    assert_eq!(grants.len(), 1, "the attacker is handed the mob it hit: {out:?}");
+    assert_eq!(
+        fields.controllers().controller_of(SHARED_MAP, 2002),
+        Some(other.subscriber.get()),
+        "and the registry agrees - one owner, no window with none"
+    );
+    assert_ne!(
+        grants[0].body[2], net::mobmove::CONTROL_RELEASE,
+        "granted with a level that DRIVES the mob; level 0 would despawn it"
+    );
+    let _ = other_id;
+
+    // **The second swing costs nothing.** A grant per hit would be a packet per swing for the
+    // whole fight, and the client is already driving it.
+    let again = other.handle(&melee_packet());
+    assert_eq!(
+        count_of(&again, net::mobmove::MOB_CHANGE_CONTROLLER),
+        0,
+        "already ours - no second grant: {again:?}"
+    );
+
+    // **Control follows the most recent attacker, and the first draft of this test got that
+    // wrong.** It asserted the owner would need no grant - but by now `Other` holds the mob,
+    // so the owner IS the non-controller, and handing it back is exactly right. The test was
+    // wrong, not the code.
+    //
+    // Two players trading blows therefore trade control, one `0x03D2` each time the attacker
+    // changes. That is the price of the flinch: it is local to whoever holds the grant, so
+    // whoever is hitting has to hold it.
+    let owners_swing = owner.handle(&melee_packet());
+    assert_eq!(
+        count_of(&owners_swing, net::mobmove::MOB_CHANGE_CONTROLLER),
+        1,
+        "the owner hits it back and takes it back: {owners_swing:?}"
+    );
+    assert_eq!(
+        fields.controllers().controller_of(SHARED_MAP, 2002),
+        Some(owner.subscriber.get()),
+        "one owner at every instant, and it is the one that swung last"
+    );
+}
+
 /// **The owner's first sentence, end to end**: *"All clients need to see other clients damages to
 /// mobs."*
 ///
