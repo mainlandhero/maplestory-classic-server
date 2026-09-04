@@ -1,0 +1,440 @@
+21:35:25.529 instance: ARMING in pid 1003900 - marker maplecw-hook.multiclient present, this is the SECOND-OR-LATER client on this desktop, so the guard will be SUPPRESSED
+21:35:25.530 instance: hooked user32.dll!FindWindowW at 0x7ffd1f1f3bc0, stole 14 bytes (48 89 5c 24 08 48 89 7c 24 10 55 48 8b ec 48 83)
+21:35:25.530 instance: hooked user32.dll!FindWindowA at 0x7ffd1f24ab90, stole 12 bytes (48 83 ec 38 4c 8b ca 4c 8b c1 33 d2 33 c9 e8 75)
+21:35:25.530 instance: redirected kernel32.dll!CreateMutexW by rewriting its forwarder slot at 0x7ffd204755f0 (0x7ffd1e637230 -> 0x7ffcdeda22f0). No code was modified; callers that reach kernelbase by another route are unaffected
+21:35:25.530 instance: redirected kernel32.dll!CreateMutexA by rewriting its forwarder slot at 0x7ffd20475520 (0x7ffd1e687460 -> 0x7ffcdeda1f90). No code was modified; callers that reach kernelbase by another route are unaffected
+21:35:25.731 instance: CreateMutexA(name="Global\\WvsClientMtx") already_existed=true -> last error CLEARED, this client is a later one
+21:35:26.062   233 opcode=0x03E4 elapsed_us=107.8 ret=1 flag=1->1 state=2->2
+21:35:26.062   234 opcode=0x03E4 elapsed_us=56.8 ret=1 flag=1->1 state=2->2
+21:35:26.063   235 opcode=0x03E4 elapsed_us=45.1 ret=1 flag=1->1 state=2->2
+21:35:26.063   236 opcode=0x03E4 elapsed_us=36.4 ret=1 flag=1->1 state=2->2
+21:35:26.063   237 opcode=0x03E4 elapsed_us=35.1 ret=1 flag=1->1 state=2->2
+21:35:26.063   238 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+21:35:26.064   239 opcode=0x03E4 elapsed_us=33.7 ret=1 flag=1->1 state=2->2
+21:35:26.064   240 opcode=0x03E4 elapsed_us=41.1 ret=1 flag=1->1 state=2->2
+21:35:26.064   241 opcode=0x03E4 elapsed_us=35.8 ret=1 flag=1->1 state=2->2
+21:35:26.064   242 opcode=0x03E4 elapsed_us=35.2 ret=1 flag=1->1 state=2->2
+21:35:26.065   243 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+21:35:26.065   244 opcode=0x03E4 elapsed_us=74.3 ret=1 flag=1->1 state=2->2
+21:35:26.065   245 opcode=0x03E4 elapsed_us=37.8 ret=1 flag=1->1 state=2->2
+21:35:26.065   246 opcode=0x03E4 elapsed_us=35.9 ret=1 flag=1->1 state=2->2
+21:35:26.066   247 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:26.066   248 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:26.066   249 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+21:35:26.066   250 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+21:35:26.067   251 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:26.067   252 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+21:35:26.067   253 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+21:35:26.067   254 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:26.067   255 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:26.068   256 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+21:35:26.068   257 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:26.068   258 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+21:35:26.068   259 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+21:35:26.069   260 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:26.069   261 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:26.069   262 opcode=0x03E4 elapsed_us=33.7 ret=1 flag=1->1 state=2->2
+21:35:26.942   263 opcode=0x0453 elapsed_us=342.1 ret=1 flag=1->1 state=2->2
+21:35:27.142   264 opcode=0x03E4 elapsed_us=87.9 ret=1 flag=1->1 state=2->2
+21:35:27.143   265 opcode=0x03E4 elapsed_us=43.7 ret=1 flag=1->1 state=2->2
+21:35:27.143   266 opcode=0x03E4 elapsed_us=39.8 ret=1 flag=1->1 state=2->2
+21:35:27.143   267 opcode=0x03E4 elapsed_us=37.8 ret=1 flag=1->1 state=2->2
+21:35:27.143   268 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+21:35:27.144   269 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:27.144   270 opcode=0x03E4 elapsed_us=30.3 ret=1 flag=1->1 state=2->2
+21:35:27.144   271 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:27.144   272 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+21:35:27.145   273 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+21:35:27.145   274 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+21:35:27.145   275 opcode=0x03E4 elapsed_us=30.4 ret=1 flag=1->1 state=2->2
+21:35:27.145   276 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:27.145   277 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:27.146   278 opcode=0x03E4 elapsed_us=30.4 ret=1 flag=1->1 state=2->2
+21:35:27.146   279 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:27.146   280 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+21:35:27.146   281 opcode=0x03E4 elapsed_us=30.3 ret=1 flag=1->1 state=2->2
+21:35:27.147   282 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:27.147   283 opcode=0x03E4 elapsed_us=30.1 ret=1 flag=1->1 state=2->2
+21:35:27.147   284 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:27.147   285 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+21:35:27.147   286 opcode=0x03E4 elapsed_us=33.7 ret=1 flag=1->1 state=2->2
+21:35:27.148   287 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+21:35:27.148   288 opcode=0x03E4 elapsed_us=30.5 ret=1 flag=1->1 state=2->2
+21:35:27.148   289 opcode=0x03E4 elapsed_us=30.5 ret=1 flag=1->1 state=2->2
+21:35:27.148   290 opcode=0x03E4 elapsed_us=30.5 ret=1 flag=1->1 state=2->2
+21:35:27.149   291 opcode=0x03E4 elapsed_us=30.2 ret=1 flag=1->1 state=2->2
+21:35:27.149   292 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+21:35:27.149   293 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+21:35:27.493 install_once: our code IS running. env=false marker=true -> installing
+21:35:27.544 install: .text settled after 51 ms (deadline 5000 ms) - the client's login dialog fires around 4.5 s after connect, so this margin is what decides whether the suppression lands
+21:35:27.544 install: base=0x140000000 target=0x1415d60e0
+21:35:27.544 probe: entries to 0x1415db360 will RETURN IMMEDIATELY - THIS IS A CLIENT PATCH
+21:35:27.545 probe: watching 0x1415db360 (slot 0), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+21:35:27.545 session: watching DAT_143aa84a0 at 0x143aa84a0 (+0x2270 flags, +0x227c status), mode="mode=2,create=on"
+21:35:27.545 probe: will FORCE rdx=0x0 on every entry to 0x141b2a280
+21:35:27.545 probe: watching 0x141b2a280 (slot 1), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+21:35:27.545 probe: watching 0x141b36f60 (slot 2), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 32)
+21:35:27.545 probe: watch on 0x142ef3e44 will log up to 8 hits
+21:35:27.545 probe: watching 0x142ef3e44 (slot 3), int3 verified - will report every entry with tid and rcx/rdx/r8/r9 (first 8)
+21:35:27.545 identity: maplecw-hook.identity read and DELETED - the token now exists only in this process, and cannot be picked up by a later run
+21:35:27.546 identity: armed on FUN_142c50400 at 0x142c50400 (trampoline 0xa960000), 26 byte token from maplecw-hook.identity. It was a PLAIN-TEXT LOCAL SECRET on disk until the line above deleted it: anything running as this user could have read it, which is the same power as being this launch. It is one-time, and the server keeps only its SHA-256
+21:35:27.546 install: hook active
+21:35:27.745 session: object at 0x6190ea8 is now readable
+21:35:27.745 ***** SESSION obj=0x6190ea8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:28.222   294 opcode=0x03E4 elapsed_us=93.8 ret=1 flag=1->1 state=2->2
+21:35:28.223   295 opcode=0x03E4 elapsed_us=61.4 ret=1 flag=1->1 state=2->2
+21:35:28.223   296 opcode=0x03E4 elapsed_us=81.4 ret=1 flag=1->1 state=2->2
+21:35:28.223   297 opcode=0x03E4 elapsed_us=40.0 ret=1 flag=1->1 state=2->2
+21:35:28.224   298 opcode=0x03E4 elapsed_us=35.2 ret=1 flag=1->1 state=2->2
+21:35:28.224   299 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+21:35:28.224   300 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:28.224   301 opcode=0x03E4 elapsed_us=35.6 ret=1 flag=1->1 state=2->2
+21:35:28.225   302 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+21:35:28.225   303 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:28.225   304 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+21:35:28.225   305 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:28.225   306 opcode=0x03E4 elapsed_us=30.7 ret=1 flag=1->1 state=2->2
+21:35:28.226   307 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+21:35:28.226   308 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:28.226   309 opcode=0x03E4 elapsed_us=30.5 ret=1 flag=1->1 state=2->2
+21:35:28.226   310 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+21:35:28.227   311 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+21:35:28.227   312 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:28.227   313 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+21:35:28.227   314 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:28.227   315 opcode=0x03E4 elapsed_us=30.7 ret=1 flag=1->1 state=2->2
+21:35:28.228   316 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:28.228   317 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:28.228   318 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:28.228   319 opcode=0x03E4 elapsed_us=63.3 ret=1 flag=1->1 state=2->2
+21:35:28.229   320 opcode=0x03E4 elapsed_us=56.6 ret=1 flag=1->1 state=2->2
+21:35:28.229   321 opcode=0x03E4 elapsed_us=41.1 ret=1 flag=1->1 state=2->2
+21:35:28.229   322 opcode=0x03E4 elapsed_us=41.7 ret=1 flag=1->1 state=2->2
+21:35:28.230   323 opcode=0x03E4 elapsed_us=40.5 ret=1 flag=1->1 state=2->2
+21:35:28.274 ***** SESSION obj=0x6148988 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:28.776     0 opcode=0x0032 elapsed_us=49.6 ret=112347520 flag=0->1 state=0->2
+21:35:28.776 ***** OPCODE 0x0032 RELEASED THE STARTUP LOOP (conn+0x150 0->1, Data.wz hash now 0x00000000) *****
+21:35:28.947 ***** SOCKET conn=0x648da48 +0x20=0x6d4 - the client holds a socket *****
+21:35:28.966 ***** C++ THROW #1 at 0x7ffd1e635369 in KERNELBASE.dll on tid 1004276 at +1422ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x14090e8d4<-TEXT 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x1403b180b<-TEXT 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1432abe30(?) 0x1403da5d3<-TEXT 0x143d87000(vm) *****
+21:35:29.021     1 opcode=0x0032 elapsed_us=57.5 ret=1 flag=1->1 state=2->2
+21:35:29.130 ***** C++ THROW #2 at 0x7ffd1e635369 in KERNELBASE.dll on tid 1004184 at +1594ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x1433d3650(?) 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x1417810d0<-TEXT 0x141c46266<-TEXT 0x143ae12f0(?) 0x142ed3513<-TEXT *****
+21:35:29.302   324 opcode=0x03E4 elapsed_us=97.9 ret=1 flag=1->1 state=2->2
+21:35:29.303   325 opcode=0x03E4 elapsed_us=61.9 ret=1 flag=1->1 state=2->2
+21:35:29.303   326 opcode=0x03E4 elapsed_us=47.2 ret=1 flag=1->1 state=2->2
+21:35:29.303   327 opcode=0x03E4 elapsed_us=42.1 ret=1 flag=1->1 state=2->2
+21:35:29.303   328 opcode=0x03E4 elapsed_us=40.1 ret=1 flag=1->1 state=2->2
+21:35:29.304   329 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+21:35:29.304   330 opcode=0x03E4 elapsed_us=40.6 ret=1 flag=1->1 state=2->2
+21:35:29.304   331 opcode=0x03E4 elapsed_us=47.3 ret=1 flag=1->1 state=2->2
+21:35:29.305   332 opcode=0x03E4 elapsed_us=42.1 ret=1 flag=1->1 state=2->2
+21:35:29.305   333 opcode=0x03E4 elapsed_us=39.4 ret=1 flag=1->1 state=2->2
+21:35:29.305   334 opcode=0x03E4 elapsed_us=38.6 ret=1 flag=1->1 state=2->2
+21:35:29.305   335 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:29.306   336 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:29.306   337 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:29.306   338 opcode=0x03E4 elapsed_us=39.6 ret=1 flag=1->1 state=2->2
+21:35:29.306   339 opcode=0x03E4 elapsed_us=34.4 ret=1 flag=1->1 state=2->2
+21:35:29.307   340 opcode=0x03E4 elapsed_us=33.4 ret=1 flag=1->1 state=2->2
+21:35:29.307   341 opcode=0x03E4 elapsed_us=32.7 ret=1 flag=1->1 state=2->2
+21:35:29.307   342 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:29.307   343 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:29.308   344 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:29.308   345 opcode=0x03E4 elapsed_us=30.7 ret=1 flag=1->1 state=2->2
+21:35:29.308   346 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+21:35:29.308   347 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:29.308   348 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+21:35:29.309   349 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:29.309   350 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:29.309   351 opcode=0x03E4 elapsed_us=38.5 ret=1 flag=1->1 state=2->2
+21:35:29.309   352 opcode=0x03E4 elapsed_us=36.3 ret=1 flag=1->1 state=2->2
+21:35:29.310   353 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+21:35:29.549 ***** SOCKET 0x6d4 is now VALID (client still holds it) *****
+21:35:30.383   354 opcode=0x03E4 elapsed_us=99.1 ret=1 flag=1->1 state=2->2
+21:35:30.383   355 opcode=0x03E4 elapsed_us=63.5 ret=1 flag=1->1 state=2->2
+21:35:30.383   356 opcode=0x03E4 elapsed_us=46.9 ret=1 flag=1->1 state=2->2
+21:35:30.384   357 opcode=0x03E4 elapsed_us=43.7 ret=1 flag=1->1 state=2->2
+21:35:30.384   358 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+21:35:30.384   359 opcode=0x03E4 elapsed_us=39.3 ret=1 flag=1->1 state=2->2
+21:35:30.384   360 opcode=0x03E4 elapsed_us=45.7 ret=1 flag=1->1 state=2->2
+21:35:30.385   361 opcode=0x03E4 elapsed_us=38.6 ret=1 flag=1->1 state=2->2
+21:35:30.385   362 opcode=0x03E4 elapsed_us=35.0 ret=1 flag=1->1 state=2->2
+21:35:30.385   363 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:30.385   364 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+21:35:30.386   365 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:30.386   366 opcode=0x03E4 elapsed_us=32.4 ret=1 flag=1->1 state=2->2
+21:35:30.386   367 opcode=0x03E4 elapsed_us=38.8 ret=1 flag=1->1 state=2->2
+21:35:30.386   368 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+21:35:30.387   369 opcode=0x03E4 elapsed_us=35.8 ret=1 flag=1->1 state=2->2
+21:35:30.387   370 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+21:35:30.387   371 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+21:35:30.387   372 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+21:35:30.387   373 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+21:35:30.388   374 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+21:35:30.388   375 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+21:35:30.388   376 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:30.388   377 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+21:35:30.389   378 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+21:35:30.389   379 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+21:35:30.389   380 opcode=0x03E4 elapsed_us=35.8 ret=1 flag=1->1 state=2->2
+21:35:30.389   381 opcode=0x03E4 elapsed_us=34.7 ret=1 flag=1->1 state=2->2
+21:35:30.390   382 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+21:35:30.390   383 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+21:35:30.552 ***** SESSION obj=0x6190ea8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:31.158 ***** IDENTITY wrote 26 bytes into 0x14f9f0+0x1b8 on getter entry #1 (block 0x377ecdc8, refcount held at 2 so the session destructor cannot free it). The token itself is NOT logged. login.log should now show `0x0073 IDENTITY: ... identity length=26` - if it shows 0, the client dropped it between here and w_str *****
+21:35:31.280 ***** SESSION obj=0x6148988 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:31.463   384 opcode=0x03E4 elapsed_us=87.0 ret=1 flag=1->1 state=2->2
+21:35:31.463   385 opcode=0x03E4 elapsed_us=49.4 ret=1 flag=1->1 state=2->2
+21:35:31.463   386 opcode=0x03E4 elapsed_us=37.8 ret=1 flag=1->1 state=2->2
+21:35:31.463   387 opcode=0x03E4 elapsed_us=39.6 ret=1 flag=1->1 state=2->2
+21:35:31.464   388 opcode=0x03E4 elapsed_us=34.0 ret=1 flag=1->1 state=2->2
+21:35:31.464   389 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+21:35:31.464   390 opcode=0x03E4 elapsed_us=33.1 ret=1 flag=1->1 state=2->2
+21:35:31.464   391 opcode=0x03E4 elapsed_us=39.0 ret=1 flag=1->1 state=2->2
+21:35:31.465   392 opcode=0x03E4 elapsed_us=35.7 ret=1 flag=1->1 state=2->2
+21:35:31.465   393 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+21:35:31.465   394 opcode=0x03E4 elapsed_us=38.9 ret=1 flag=1->1 state=2->2
+21:35:31.465   395 opcode=0x03E4 elapsed_us=35.2 ret=1 flag=1->1 state=2->2
+21:35:31.466   396 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+21:35:31.466   397 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:31.466   398 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+21:35:31.467   399 opcode=0x03E4 elapsed_us=37.0 ret=1 flag=1->1 state=2->2
+21:35:31.467   400 opcode=0x03E4 elapsed_us=89.4 ret=1 flag=1->1 state=2->2
+21:35:31.467   401 opcode=0x03E4 elapsed_us=43.2 ret=1 flag=1->1 state=2->2
+21:35:31.468   402 opcode=0x03E4 elapsed_us=38.9 ret=1 flag=1->1 state=2->2
+21:35:31.468   403 opcode=0x03E4 elapsed_us=34.9 ret=1 flag=1->1 state=2->2
+21:35:31.468   404 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+21:35:31.468   405 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+21:35:31.468   406 opcode=0x03E4 elapsed_us=45.0 ret=1 flag=1->1 state=2->2
+21:35:31.469   407 opcode=0x03E4 elapsed_us=35.8 ret=1 flag=1->1 state=2->2
+21:35:31.469   408 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+21:35:31.469   409 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:31.469   410 opcode=0x03E4 elapsed_us=38.4 ret=1 flag=1->1 state=2->2
+21:35:31.470   411 opcode=0x03E4 elapsed_us=38.8 ret=1 flag=1->1 state=2->2
+21:35:31.470   412 opcode=0x03E4 elapsed_us=35.1 ret=1 flag=1->1 state=2->2
+21:35:31.470   413 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+21:35:31.660     2 opcode=0x0000 elapsed_us=403.9 ret=1 flag=1->1 state=2->2
+21:35:31.660 ***** SESSION mode patched at 0x14f9f0+0x68: 5 -> 2 - the tick should no longer auto-login, and Login should transition to CharSelect *****
+21:35:31.661     3 opcode=0x000B elapsed_us=205.1 ret=1 flag=1->1 state=2->2
+21:35:31.661     4 opcode=0x000B elapsed_us=148.4 ret=1 flag=1->1 state=2->2
+21:35:31.838 ***** SESSION called FUN_140c9e230 at 0x140c9e230 - the create-character flag should now read 1. THIS IS A CLIENT PATCH: the real service sets it from virtualised code, so this proves the button's gate, not the protocol *****
+21:35:31.838     5 opcode=0x0010 elapsed_us=494.0 ret=1 flag=1->1 state=2->2
+21:35:32.543   414 opcode=0x03E4 elapsed_us=98.6 ret=1 flag=1->1 state=2->2
+21:35:32.543   415 opcode=0x03E4 elapsed_us=61.7 ret=1 flag=1->1 state=2->2
+21:35:32.543   416 opcode=0x03E4 elapsed_us=48.2 ret=1 flag=1->1 state=2->2
+21:35:32.544   417 opcode=0x03E4 elapsed_us=51.8 ret=1 flag=1->1 state=2->2
+21:35:32.544   418 opcode=0x03E4 elapsed_us=44.1 ret=1 flag=1->1 state=2->2
+21:35:32.544   419 opcode=0x03E4 elapsed_us=44.1 ret=1 flag=1->1 state=2->2
+21:35:32.544   420 opcode=0x03E4 elapsed_us=39.5 ret=1 flag=1->1 state=2->2
+21:35:32.545   421 opcode=0x03E4 elapsed_us=34.9 ret=1 flag=1->1 state=2->2
+21:35:32.545   422 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:32.545   423 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+21:35:32.545   424 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+21:35:32.546   425 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:32.546   426 opcode=0x03E4 elapsed_us=30.5 ret=1 flag=1->1 state=2->2
+21:35:32.546   427 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:32.546   428 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:32.547   429 opcode=0x03E4 elapsed_us=46.8 ret=1 flag=1->1 state=2->2
+21:35:32.547   430 opcode=0x03E4 elapsed_us=38.4 ret=1 flag=1->1 state=2->2
+21:35:32.547   431 opcode=0x03E4 elapsed_us=34.3 ret=1 flag=1->1 state=2->2
+21:35:32.547   432 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:32.548   433 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+21:35:32.548   434 opcode=0x03E4 elapsed_us=30.3 ret=1 flag=1->1 state=2->2
+21:35:32.548   435 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:32.548   436 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+21:35:32.548   437 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+21:35:32.549   438 opcode=0x03E4 elapsed_us=30.7 ret=1 flag=1->1 state=2->2
+21:35:32.549   439 opcode=0x03E4 elapsed_us=33.9 ret=1 flag=1->1 state=2->2
+21:35:32.549   440 opcode=0x03E4 elapsed_us=31.5 ret=1 flag=1->1 state=2->2
+21:35:32.549   441 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:32.550   442 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:32.550   443 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:33.558 ***** SESSION obj=0x6190ea8 +0x2270=0x00 +0x227c=0x00 world=0 channel=1 -> no dialog (flag bit 2 clear) *****
+21:35:33.624   444 opcode=0x03E4 elapsed_us=107.6 ret=1 flag=1->1 state=2->2
+21:35:33.624   445 opcode=0x03E4 elapsed_us=65.8 ret=1 flag=1->1 state=2->2
+21:35:33.624   446 opcode=0x03E4 elapsed_us=52.4 ret=1 flag=1->1 state=2->2
+21:35:33.624   447 opcode=0x03E4 elapsed_us=42.4 ret=1 flag=1->1 state=2->2
+21:35:33.625   448 opcode=0x03E4 elapsed_us=39.2 ret=1 flag=1->1 state=2->2
+21:35:33.625   449 opcode=0x03E4 elapsed_us=36.0 ret=1 flag=1->1 state=2->2
+21:35:33.625   450 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+21:35:33.625   451 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:33.626   452 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:33.626   453 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:33.626   454 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+21:35:33.626   455 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+21:35:33.626   456 opcode=0x03E4 elapsed_us=32.8 ret=1 flag=1->1 state=2->2
+21:35:33.627   457 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+21:35:33.627   458 opcode=0x03E4 elapsed_us=32.2 ret=1 flag=1->1 state=2->2
+21:35:33.627   459 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:33.627   460 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:33.628   461 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+21:35:33.628   462 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:33.628   463 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+21:35:33.628   464 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:33.628   465 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+21:35:33.629   466 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+21:35:33.629   467 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+21:35:33.629   468 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:33.629   469 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:33.630   470 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+21:35:33.630   471 opcode=0x03E4 elapsed_us=31.1 ret=1 flag=1->1 state=2->2
+21:35:33.630   472 opcode=0x03E4 elapsed_us=30.5 ret=1 flag=1->1 state=2->2
+21:35:33.630   473 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:33.743   474 opcode=0x0453 elapsed_us=112.1 ret=1 flag=1->1 state=2->2
+21:35:34.286 ***** SESSION obj=0x6148988 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:34.694   475 opcode=0x03E4 elapsed_us=92.7 ret=1 flag=1->1 state=2->2
+21:35:34.694   476 opcode=0x03E4 elapsed_us=66.1 ret=1 flag=1->1 state=2->2
+21:35:34.695   477 opcode=0x03E4 elapsed_us=49.2 ret=1 flag=1->1 state=2->2
+21:35:34.695   478 opcode=0x03E4 elapsed_us=44.1 ret=1 flag=1->1 state=2->2
+21:35:34.695   479 opcode=0x03E4 elapsed_us=40.8 ret=1 flag=1->1 state=2->2
+21:35:34.695   480 opcode=0x03E4 elapsed_us=40.7 ret=1 flag=1->1 state=2->2
+21:35:34.696   481 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+21:35:34.696   482 opcode=0x03E4 elapsed_us=35.4 ret=1 flag=1->1 state=2->2
+21:35:34.696   483 opcode=0x03E4 elapsed_us=33.8 ret=1 flag=1->1 state=2->2
+21:35:34.696   484 opcode=0x03E4 elapsed_us=32.5 ret=1 flag=1->1 state=2->2
+21:35:34.697   485 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+21:35:34.697   486 opcode=0x03E4 elapsed_us=38.9 ret=1 flag=1->1 state=2->2
+21:35:34.697   487 opcode=0x03E4 elapsed_us=35.8 ret=1 flag=1->1 state=2->2
+21:35:34.697   488 opcode=0x03E4 elapsed_us=34.2 ret=1 flag=1->1 state=2->2
+21:35:34.698   489 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:34.698   490 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:34.698   491 opcode=0x03E4 elapsed_us=39.6 ret=1 flag=1->1 state=2->2
+21:35:34.698   492 opcode=0x03E4 elapsed_us=35.2 ret=1 flag=1->1 state=2->2
+21:35:34.699   493 opcode=0x03E4 elapsed_us=34.6 ret=1 flag=1->1 state=2->2
+21:35:34.699   494 opcode=0x03E4 elapsed_us=33.2 ret=1 flag=1->1 state=2->2
+21:35:34.699   495 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:34.699   496 opcode=0x03E4 elapsed_us=31.9 ret=1 flag=1->1 state=2->2
+21:35:34.700   497 opcode=0x03E4 elapsed_us=31.6 ret=1 flag=1->1 state=2->2
+21:35:34.700   498 opcode=0x03E4 elapsed_us=38.1 ret=1 flag=1->1 state=2->2
+21:35:34.700   499 opcode=0x03E4 elapsed_us=35.3 ret=1 flag=1->1 state=2->2
+21:35:34.700   500 opcode=0x03E4 elapsed_us=47.0 ret=1 flag=1->1 state=2->2
+21:35:34.701   501 opcode=0x03E4 elapsed_us=47.6 ret=1 flag=1->1 state=2->2
+21:35:34.701   502 opcode=0x03E4 elapsed_us=36.7 ret=1 flag=1->1 state=2->2
+21:35:34.701   503 opcode=0x03E4 elapsed_us=33.3 ret=1 flag=1->1 state=2->2
+21:35:34.701   504 opcode=0x03E4 elapsed_us=32.9 ret=1 flag=1->1 state=2->2
+21:35:35.204   505 opcode=0x0453 elapsed_us=304.7 ret=1 flag=1->1 state=2->2
+21:35:35.574 ***** WATCH #1: 0x141b36f60 ENTERED on tid 1004276 while dispatching opcode 0x0011 rcx=0x2ff8de28 [0x433fd668] rdx=0x14d3d0 (as i32 1364944) [0x00000002] r8=0x140000000 r9=0x60 (as i32 96) called-from=0x141b26064
+      stack: 0x141b26064<-TEXT 0x143d143b4(?) 0x143d143b4(?) *****
+21:35:35.575     6 opcode=0x0011 elapsed_us=1726.2 ret=1 flag=1->1 state=2->2
+21:35:35.774   506 opcode=0x03E4 elapsed_us=89.6 ret=1 flag=1->1 state=2->2
+21:35:35.774   507 opcode=0x03E4 elapsed_us=54.0 ret=1 flag=1->1 state=2->2
+21:35:35.774   508 opcode=0x03E4 elapsed_us=43.0 ret=1 flag=1->1 state=2->2
+21:35:35.775   509 opcode=0x03E4 elapsed_us=39.1 ret=1 flag=1->1 state=2->2
+21:35:35.775   510 opcode=0x03E4 elapsed_us=37.6 ret=1 flag=1->1 state=2->2
+21:35:35.775   511 opcode=0x03E4 elapsed_us=37.9 ret=1 flag=1->1 state=2->2
+21:35:35.775   512 opcode=0x03E4 elapsed_us=37.9 ret=1 flag=1->1 state=2->2
+21:35:35.776   513 opcode=0x03E4 elapsed_us=36.8 ret=1 flag=1->1 state=2->2
+21:35:35.776   514 opcode=0x03E4 elapsed_us=30.4 ret=1 flag=1->1 state=2->2
+21:35:35.776   515 opcode=0x03E4 elapsed_us=30.2 ret=1 flag=1->1 state=2->2
+21:35:35.776   516 opcode=0x03E4 elapsed_us=30.3 ret=1 flag=1->1 state=2->2
+21:35:35.776   517 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:35.777   518 opcode=0x03E4 elapsed_us=30.1 ret=1 flag=1->1 state=2->2
+21:35:35.777   519 opcode=0x03E4 elapsed_us=29.9 ret=1 flag=1->1 state=2->2
+21:35:35.777   520 opcode=0x03E4 elapsed_us=29.9 ret=1 flag=1->1 state=2->2
+21:35:35.777   521 opcode=0x03E4 elapsed_us=30.3 ret=1 flag=1->1 state=2->2
+21:35:35.777   522 opcode=0x03E4 elapsed_us=29.9 ret=1 flag=1->1 state=2->2
+21:35:35.778   523 opcode=0x03E4 elapsed_us=29.9 ret=1 flag=1->1 state=2->2
+21:35:35.778   524 opcode=0x03E4 elapsed_us=30.0 ret=1 flag=1->1 state=2->2
+21:35:35.778   525 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:35.778   526 opcode=0x03E4 elapsed_us=31.7 ret=1 flag=1->1 state=2->2
+21:35:35.779   527 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:35.779   528 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:35.779   529 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:35.779   530 opcode=0x03E4 elapsed_us=30.4 ret=1 flag=1->1 state=2->2
+21:35:35.779   531 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:35.780   532 opcode=0x03E4 elapsed_us=30.1 ret=1 flag=1->1 state=2->2
+21:35:35.780   533 opcode=0x03E4 elapsed_us=30.4 ret=1 flag=1->1 state=2->2
+21:35:35.780   534 opcode=0x03E4 elapsed_us=30.4 ret=1 flag=1->1 state=2->2
+21:35:35.780   535 opcode=0x03E4 elapsed_us=30.5 ret=1 flag=1->1 state=2->2
+21:35:36.104 ***** C++ THROW #3 at 0x7ffd1e635369 in KERNELBASE.dll on tid 1004276 at +8563ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+21:35:36.105 ***** C++ THROW #4 at 0x7ffd1e635369 in KERNELBASE.dll on tid 1004276 at +8563ms
+      stack: 0x143a3b0c0(?) 0x143a3b0c0(?) 0x144fe3010(vm) 0x143a3b0c0(?) 0x142ef6ddc<-TEXT 0x143a3b0c0(?) 0x142ef3bb7<-TEXT 0x1432743e8(?) 0x143272460(?) 0x142ef3b78<-TEXT 0x1432743e8(?) 0x140403f6c<-TEXT 0x14023c567<-TEXT 0x1401a5934<-TEXT 0x141e80dae<-TEXT *****
+21:35:36.158 ***** WATCH #1: 0x1415db360 ENTERED on tid 1004276 while dispatching opcode 0x01A0 rcx=0x6193a00 [0x00000000] rdx=0x0 (as i32 0) r8=0x0 r9=0x14341a294 (as i32 1128374932) called-from=0x144ec8f72
+      stack: 0x144ec8f72(vm) 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1415d0266<-TEXT 0x1406ed625<-TEXT 0x141601433<-TEXT *****
+21:35:36.161     7 opcode=0x01A0 elapsed_us=576923.7 ret=804838952 flag=1->1 state=2->2
+21:35:36.161     8 opcode=0x00AC elapsed_us=444.0 ret=1 flag=1->1 state=2->2
+21:35:36.164     9 opcode=0x0224 elapsed_us=2742.8 ret=1 flag=1->1 state=2->2
+21:35:36.165    10 opcode=0x044F elapsed_us=279.7 ret=1 flag=1->1 state=2->2
+21:35:36.165    11 opcode=0x044F elapsed_us=298.9 ret=1 flag=1->1 state=2->2
+21:35:36.166    12 opcode=0x03C6 elapsed_us=275.5 ret=1 flag=1->1 state=2->2
+21:35:36.166    13 opcode=0x03C6 elapsed_us=107.2 ret=1 flag=1->1 state=2->2
+21:35:36.167    14 opcode=0x03C6 elapsed_us=104.6 ret=1 flag=1->1 state=2->2
+21:35:36.167    15 opcode=0x03C6 elapsed_us=109.0 ret=1 flag=1->1 state=2->2
+21:35:36.167    16 opcode=0x03C6 elapsed_us=111.8 ret=1 flag=1->1 state=2->2
+21:35:36.168    17 opcode=0x03C6 elapsed_us=102.0 ret=1 flag=1->1 state=2->2
+21:35:36.168    18 opcode=0x03C6 elapsed_us=107.0 ret=1 flag=1->1 state=2->2
+21:35:36.168    19 opcode=0x03C6 elapsed_us=103.3 ret=1 flag=1->1 state=2->2
+21:35:36.169    20 opcode=0x03C6 elapsed_us=105.0 ret=1 flag=1->1 state=2->2
+21:35:36.169    21 opcode=0x03C6 elapsed_us=102.2 ret=1 flag=1->1 state=2->2
+21:35:36.169    22 opcode=0x03C6 elapsed_us=101.3 ret=1 flag=1->1 state=2->2
+21:35:36.169    23 opcode=0x03C6 elapsed_us=102.5 ret=1 flag=1->1 state=2->2
+21:35:36.170    24 opcode=0x03C6 elapsed_us=141.1 ret=1 flag=1->1 state=2->2
+21:35:36.170    25 opcode=0x03C6 elapsed_us=95.8 ret=1 flag=1->1 state=2->2
+21:35:36.170    26 opcode=0x03C6 elapsed_us=105.1 ret=1 flag=1->1 state=2->2
+21:35:36.171    27 opcode=0x03C6 elapsed_us=96.3 ret=1 flag=1->1 state=2->2
+21:35:36.171    28 opcode=0x03C6 elapsed_us=107.0 ret=1 flag=1->1 state=2->2
+21:35:36.171    29 opcode=0x03C6 elapsed_us=99.9 ret=1 flag=1->1 state=2->2
+21:35:36.172    30 opcode=0x03C6 elapsed_us=120.1 ret=1 flag=1->1 state=2->2
+21:35:36.172    31 opcode=0x03C6 elapsed_us=95.9 ret=1 flag=1->1 state=2->2
+21:35:36.172    32 opcode=0x03C6 elapsed_us=102.6 ret=1 flag=1->1 state=2->2
+21:35:36.173    33 opcode=0x03C6 elapsed_us=94.0 ret=1 flag=1->1 state=2->2
+21:35:36.173    34 opcode=0x03C6 elapsed_us=94.3 ret=1 flag=1->1 state=2->2
+21:35:36.173    35 opcode=0x03C6 elapsed_us=96.1 ret=1 flag=1->1 state=2->2
+21:35:36.173    36 opcode=0x03C6 elapsed_us=94.7 ret=1 flag=1->1 state=2->2
+21:35:36.174    37 opcode=0x03C6 elapsed_us=95.1 ret=1 flag=1->1 state=2->2
+21:35:36.174    38 opcode=0x03C6 elapsed_us=96.4 ret=1 flag=1->1 state=2->2
+21:35:36.174    39 opcode=0x03C6 elapsed_us=112.2 ret=1 flag=1->1 state=2->2
+21:35:36.175    40 opcode=0x03C6 elapsed_us=95.4 ret=1 flag=1->1 state=2->2
+21:35:36.175    41 opcode=0x03C6 elapsed_us=94.2 ret=1 flag=1->1 state=2->2
+21:35:36.175    42 opcode=0x0070 elapsed_us=128.7 ret=1 flag=1->1 state=2->2
+21:35:36.176    43 opcode=0x0070 elapsed_us=121.2 ret=1 flag=1->1 state=2->2
+21:35:36.176    44 opcode=0x0070 elapsed_us=82.3 ret=1 flag=1->1 state=2->2
+21:35:36.176    45 opcode=0x0070 elapsed_us=64.6 ret=1 flag=1->1 state=2->2
+21:35:36.176    46 opcode=0x0070 elapsed_us=62.5 ret=1 flag=1->1 state=2->2
+21:35:36.177    47 opcode=0x0070 elapsed_us=65.0 ret=1 flag=1->1 state=2->2
+21:35:36.177    48 opcode=0x007C elapsed_us=65.7 ret=1 flag=1->1 state=2->2
+21:35:36.215   536 opcode=0x0224 elapsed_us=1891.2 ret=1 flag=1->1 state=2->2
+21:35:36.373 ***** CLIENT FAULT #1: code=0xc0000005 at 0x140f9295e in MapleStory.exe - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 4 C++ throw(s) seen before this, 4 logged. *****
+      stack: 0x142f0f0dd<-TEXT 0x142f0cf52<-TEXT 0x142f0aa5d<-TEXT 0x142f0fac3<-TEXT 0x143a80000(?) 0x1434a3c90(?)
+21:35:36.373 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-1003900-c0000005-1.dmp ... (full memory, this can take a few seconds) *****
+21:35:36.854   537 opcode=0x03E4 elapsed_us=90.5 ret=1 flag=1->1 state=2->2
+21:35:36.854   538 opcode=0x03E4 elapsed_us=50.7 ret=1 flag=1->1 state=2->2
+21:35:36.854   539 opcode=0x03E4 elapsed_us=39.0 ret=1 flag=1->1 state=2->2
+21:35:36.855   540 opcode=0x03E4 elapsed_us=33.9 ret=1 flag=1->1 state=2->2
+21:35:36.855   541 opcode=0x03E4 elapsed_us=33.5 ret=1 flag=1->1 state=2->2
+21:35:36.855   542 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+21:35:36.855   543 opcode=0x03E4 elapsed_us=31.8 ret=1 flag=1->1 state=2->2
+21:35:36.855   544 opcode=0x03E4 elapsed_us=31.3 ret=1 flag=1->1 state=2->2
+21:35:36.856   545 opcode=0x03E4 elapsed_us=31.0 ret=1 flag=1->1 state=2->2
+21:35:36.856   546 opcode=0x03E4 elapsed_us=32.0 ret=1 flag=1->1 state=2->2
+21:35:36.856   547 opcode=0x03E4 elapsed_us=32.3 ret=1 flag=1->1 state=2->2
+21:35:36.856   548 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:36.857   549 opcode=0x03E4 elapsed_us=32.6 ret=1 flag=1->1 state=2->2
+21:35:36.857   550 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:36.857   551 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:36.857   552 opcode=0x03E4 elapsed_us=32.1 ret=1 flag=1->1 state=2->2
+21:35:36.857   553 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:36.858   554 opcode=0x03E4 elapsed_us=30.8 ret=1 flag=1->1 state=2->2
+21:35:36.858   555 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:36.858   556 opcode=0x03E4 elapsed_us=30.6 ret=1 flag=1->1 state=2->2
+21:35:36.858   557 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:36.859   558 opcode=0x03E4 elapsed_us=31.2 ret=1 flag=1->1 state=2->2
+21:35:36.859   559 opcode=0x03E4 elapsed_us=31.4 ret=1 flag=1->1 state=2->2
+21:35:36.859   560 opcode=0x03E4 elapsed_us=30.9 ret=1 flag=1->1 state=2->2
+21:35:36.859   561 opcode=0x03E4 elapsed_us=46.9 ret=1 flag=1->1 state=2->2
+21:35:36.860   562 opcode=0x03E4 elapsed_us=47.3 ret=1 flag=1->1 state=2->2
+21:35:36.860   563 opcode=0x03E4 elapsed_us=42.1 ret=1 flag=1->1 state=2->2
+21:35:36.860   564 opcode=0x03E4 elapsed_us=40.4 ret=1 flag=1->1 state=2->2
+21:35:36.860   565 opcode=0x03E4 elapsed_us=38.7 ret=1 flag=1->1 state=2->2
+21:35:36.861   566 opcode=0x03E4 elapsed_us=38.0 ret=1 flag=1->1 state=2->2
+21:35:37.196 ***** SESSION obj=0x6190ea8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:37.196 ***** CRASH DUMP: wrote C:\MapleCW\dumps\maplecw-crash-1003900-c0000005-1.dmp, 1456278865 bytes. Open it with WinDbg; `!analyze -v` and `!heap -p -a <addr>` are the two that matter here *****
+21:35:37.267 ***** CLIENT FAULT #1: code=0xc0000005 at 0x140f9295e in MapleStory.exe - the client raised this, we did not. An unhandled one ends the process without any call to ExitProcess. 4 C++ throw(s) seen before this, 4 logged. *****
+      stack: 0x142f0f0dd<-TEXT 0x142f0cf52<-TEXT 0x142f0aa5d<-TEXT 0x142f0fac3<-TEXT 0x143a80000(?) 0x1434a3c90(?)
+21:35:37.267 ***** CRASH DUMP: writing C:\MapleCW\dumps\maplecw-crash-990836-c0000005-1.dmp ... (full memory, this can take a few seconds) *****
+21:35:37.305 ***** SESSION obj=0x6148988 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:37.958 ***** CRASH DUMP: wrote C:\MapleCW\dumps\maplecw-crash-990836-c0000005-1.dmp, 1262154267 bytes. Open it with WinDbg; `!analyze -v` and `!heap -p -a <addr>` are the two that matter here *****
+21:35:40.203 ***** SESSION obj=0x6190ea8 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
+21:35:40.766 ***** SESSION obj=0x6148988 +0x2270=0x00 +0x227c=0x00 world=0 channel=0 -> no dialog (flag bit 2 clear) *****
