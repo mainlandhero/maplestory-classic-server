@@ -177,6 +177,14 @@ pub mod result {
     /// the first seven fields and the string; the tail is unread.
     pub const CREATE_OK: u8 = 0x0E;
     /// **"Already have joined a party."** No fields. **[L]**
+    /// **`0x0E` - the party exists and you lead it.** The success answer to a create.
+    ///
+    /// Its arm reads a `PARTYBLOCK`-shaped body with no gate on any field;
+    /// [`super::party_created`] is the builder and `research/party-result-0x00A5.md` §7 is the
+    /// working. **[L]** on every width, and the three `u32` / two `i16` between the id and the
+    /// seat are of unestablished meaning.
+    pub const CREATED: u8 = 0x0E;
+
     pub const CREATE_REFUSED_ALREADY_IN_ONE: u8 = 0x0F;
     /// The leave / expel / disband family: `u32, u8, u8, str`, and the two `u8` select
     /// between *"You have been expelled from the party."*, *"You have left the party."*,
@@ -288,6 +296,107 @@ pub fn is_silent_code(code: u8) -> bool {
     !(0x03..=0x2F).contains(&code) || SILENT_CODES.contains(&code)
 }
 
+/// **How many seats a `PARTYBLOCK` always carries.** Six, and it is not count-driven.
+///
+/// `FUN_1406f2fd0` reads exactly six `MEMBER`s with `mov edi, 6` before it reads anything
+/// count-driven, so the loop bound is in the code rather than on the wire. **[L]**
+///
+/// It is also why [`party_seat_is_in_range`] exists: code `0x2F` warns about an index above
+/// five and then writes twenty bytes past the 120-byte array anyway (`0x1413bc488`), so the
+/// bound has to be enforced on this side.
+pub const PARTY_SEATS: usize = 6;
+
+/// **One seat. `None` is an empty one, and an empty one is FOUR BYTES.**
+///
+/// The single most important thing about this structure: `0x1406f2848 test eax,eax / je` -
+/// **if the leading `u32 charId` is zero the decoder returns having read four bytes** and
+/// nothing else. So an empty seat is a zero dword, *not* a zeroed 155-byte record. Writing
+/// the long form for an empty seat shifts every field after it and is the same class of
+/// failure as the seat index that killed both clients. **[L]**
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Member {
+    /// Nonzero. A zero here is what [`write_member`] treats as "empty seat".
+    pub char_id: u32,
+    /// Copied into thirteen bytes by the client, so longer names are its problem, not ours.
+    pub name: String,
+    /// Job id, level, and the two the decoder reads beside them. Widths are **[L]**; what
+    /// three of the four MEAN is not established and they are sent as given.
+    pub job: u32,
+    pub level: u32,
+    pub unknown_c: u32,
+    pub unknown_d: u32,
+}
+
+/// Write one seat, in whichever of its two shapes applies.
+///
+/// `None`, or a `char_id` of zero, writes the four-byte empty form and returns - see
+/// [`Member`] for why that is the whole record rather than a truncation.
+pub fn write_member(w: &mut crate::PacketWriter, seat: Option<&Member>) {
+    let Some(m) = seat.filter(|m| m.char_id != 0) else {
+        w.u32(0);
+        return;
+    };
+    w.u32(m.char_id); //     1406f2843
+    w.str(&m.name); //       1406f285a  copied to 13 bytes
+    w.u32(m.job); //         1406f2889
+    w.u32(m.level); //       1406f2894
+    w.u32(m.unknown_c); //   1406f289f
+    w.u32(m.unknown_d); //   1406f28aa
+    w.u8(0); //              1406f28b5
+    w.u32(0); //             1406f28c3
+    w.u64(0); //             1406f28ce
+    w.zeros(0x78); //        1406f28e4  raw
+}
+
+/// Is this seat index one the client can survive?
+///
+/// **Code `0x2F` does not stop at six.** It warns about an index above five and then writes
+/// twenty bytes past the end of a 120-byte array regardless (`0x1413bc488`), so nothing may
+/// hand it one. Kept as a named predicate rather than a comment because
+/// `CLAUDE.md`: *a comment describing a guarantee is not the guarantee*.
+pub fn party_seat_is_in_range(seat: usize) -> bool {
+    seat < PARTY_SEATS
+}
+
+/// **`0x0E` - a party now exists, and you lead it.** The reply to a successful create.
+///
+/// ```text
+///   u32 partyId          1413bbb95
+///   u8                   1413bbbaa
+///   u32, u32, u32        1413bbbb8 / bbbc3 / bbbce
+///   i16, i16             1413bbbd9 / bbbe1
+///   MEMBER               1413bbbef   the leader's own seat
+///   str                  1413bbbfa
+///   u8, u8               1413bbc00 / bbc04
+///   u32 leaderCharId     1413bbc08
+/// ```
+///
+/// Every field is unconditional - **[L]**, this arm has no gate. The three `u32` and two
+/// `i16` between the id and the seat are sent as zero: their widths are read off the listing
+/// and their meanings are **not established**, and zero is the value a party with nothing in
+/// it yet should carry. That is an assumption and it is written down as one.
+pub fn party_created(party_id: u32, name: &str, leader: &Member) -> Vec<u8> {
+    // **`with_opcode`, like every other builder in this file.** The opcode is part of the
+    // body here, and a builder that started at the code byte would put `0x0E` where the
+    // framer expects `0xA5 0x00`. Caught by the one test that compared a real packet against
+    // `request_failed` rather than against itself.
+    let mut w = PacketWriter::with_opcode(PARTY_RESULT);
+    w.u8(result::CREATED);
+    w.u32(party_id);
+    w.u8(0);
+    w.u32(0);
+    w.u32(0);
+    w.u32(0);
+    w.i16(0);
+    w.i16(0);
+    write_member(&mut w, Some(leader));
+    w.str(name);
+    w.u8(0);
+    w.u8(0);
+    w.u32(leader.char_id);
+    w.into_vec()
+}
+
 /// A [`PARTY_RESULT`] carrying only its code. **Refuses to build a code that reads fields.**
 ///
 /// This is [`is_silent_code`] enforced at the builder rather than described above it -
@@ -324,10 +433,28 @@ pub struct PartyRequest {
     /// leave, `2` for invite, `3` for join-request, `4` for expel and change-leader.
     /// **[L]** from the five builders' `struct+8`.
     pub payload_tag: u8,
-    /// The one payload field this decoder reads: a string at slot 0 of the payload table.
-    /// Present in the archived create; `None` for every other shape, which is a *limit of
-    /// this decoder*, not a statement about the packet.
+    /// Slot 0 of the payload table **when the tag says it is a string** - tags 2 (invite)
+    /// and 5 (create / pick-up rights). `None` otherwise.
+    ///
+    /// For invite this is **the target character's name**: `FUN_1413b9eb0` takes a `char*`,
+    /// `strlen`s it and the union emits a FlatBuffers string. The client does NOT resolve it.
+    /// **[L]**
     pub name: Option<String>,
+    /// Slot 0 of the payload table **when the tag says it is an id** - tag 4, expel and
+    /// change leader.
+    ///
+    /// **This is why the tag has to be looked at first.** Slot 0 of tag 4 is a `u64`
+    /// character id, and reading it as a string uoffset - which this decoder used to do for
+    /// every tag - returned `Some("")` for ids 1 and 4 instead of failing. That is
+    /// `CLAUDE.md`'s *"look at the discriminator before you read the union"*, the same shape
+    /// as the `_HEAP_FAILURE_INFORMATION.Address` decode, and it never errors: it prints
+    /// something.
+    ///
+    /// Both wrappers resolve the name against the client's OWN member list first
+    /// (`FUN_1413b8ec0` -> `FUN_1406f1ff0`) and send the id, so a server that re-resolved a
+    /// name here would be wrong twice - the client never sent one, and it already proved the
+    /// target is a member. **[L]**
+    pub target_id: Option<u32>,
 }
 
 /// Read a [`CLIENT_PARTY_REQUEST`] body. `None` for anything that does not decode.
@@ -380,15 +507,35 @@ pub fn parse_request(body: &[u8]) -> Option<PartyRequest> {
 
     // The payload is best-effort: a body whose action and tag read cleanly is still worth
     // acting on, and a payload this decoder cannot follow must not turn into "no request".
+    //
+    // **The tag decides how slot 0 is read**, and reading it the same way for every tag is
+    // what made an expel of character 4 decode as an empty name instead of failing.
     let mut name = None;
+    let mut target_id = None;
     if let Some(Some(off)) = table_uoffset(body, table, vtable, 2) {
         if let Some((ptable, pvtable)) = table_at(body, off) {
-            if let Some(Some(soff)) = table_uoffset(body, ptable, pvtable, 0) {
-                name = read_string(body, soff);
+            match payload_tag {
+                // 2 = invite, 5 = create / pick-up rights. Slot 0 is a string.
+                2 | 5 => {
+                    if let Some(Some(soff)) = table_uoffset(body, ptable, pvtable, 0) {
+                        name = read_string(body, soff);
+                    }
+                }
+                // 4 = expel / change leader. Slot 0 is a `u64` character id, zero-extended
+                // from the `u32` the client resolved locally.
+                4 => {
+                    if let Some(Some(id)) = table_u64(body, ptable, pvtable, 0) {
+                        target_id = u32::try_from(id).ok();
+                    }
+                }
+                // 1 = leave: the table is always empty. 3 = join request: its `i64` slot 0 is
+                // of unestablished meaning and its builder has zero callers by three separate
+                // scans, so nothing reads it here rather than inventing a meaning.
+                _ => {}
             }
         }
     }
-    Some(PartyRequest { action, payload_tag, name })
+    Some(PartyRequest { action, payload_tag, name, target_id })
 }
 
 // --- the smallest FlatBuffers reader that can answer the question above ------------------
@@ -450,6 +597,22 @@ fn table_u8(b: &[u8], table: usize, vtable: usize, slot: usize) -> Option<Option
     }
 }
 
+/// A field holding a `u64`, little-endian.
+///
+/// Tag 4's character id. The client zero-extends a `u32` into it (`mov eax, eax` before the
+/// store), so the high dword is always zero and the caller narrows it back - but the field on
+/// the wire is eight bytes and eight-aligned, and reading four would leave the rest of the
+/// table misaligned. **[L]**
+fn table_u64(b: &[u8], table: usize, vtable: usize, slot: usize) -> Option<Option<u64>> {
+    match field_offset(b, table, vtable, slot)? {
+        None => Some(None),
+        Some(at) => {
+            let bytes = slice(b, at, 8)?;
+            Some(Some(u64::from_le_bytes(bytes.try_into().ok()?)))
+        }
+    }
+}
+
 /// A field holding a uoffset, resolved to an absolute index.
 ///
 /// The outer `Option` is "the vtable could not be read"; the inner one is "this slot is
@@ -504,7 +667,32 @@ mod tests {
                 action: action::CREATE,
                 payload_tag: 5,
                 name: Some("TestCharD's Party".to_string()),
+                // Tag 5's slot 0 is a string, so no id is recovered - and asking for one
+                // would be the misread this field exists to prevent.
+                target_id: None,
             }
+        );
+    }
+
+    /// **The tag decides how slot 0 is read, and this pins the discriminator.**
+    ///
+    /// Tag 4 (expel / change leader) puts a `u64` character id there. Reading it as a string
+    /// uoffset - the way every tag used to be read - does not error: for ids 1 and 4 it
+    /// returned `Some("")`. `CLAUDE.md`: *look at the discriminator before you read the
+    /// union*, the same shape as decoding a heap failure's `Address` without its type byte.
+    ///
+    /// There is exactly ONE party packet in 530 archived logs, so this asserts the property
+    /// on the body we HAVE rather than on one assembled from a listing: a string payload
+    /// yields a name and no id, and the two fields are never both populated.
+    #[test]
+    fn the_payload_tag_decides_which_field_is_populated() {
+        let got = parse_request(&hex(ARCHIVED_CREATE)).expect("the archived create");
+        assert_eq!(got.payload_tag, 5, "the create's tag");
+        assert_eq!(got.target_id, None, "a string payload yields no id");
+        assert!(got.name.is_some(), "and it still yields its name");
+        assert!(
+            got.name.is_none() || got.target_id.is_none(),
+            "name and id are the two readings of one slot and cannot both apply"
         );
     }
 

@@ -109,37 +109,86 @@ impl super::Session {
                     ),
                 }]
             }
-            Ok(effects) => {
-                // **The state changed and the client is not told yet, and that is said out
-                // loud rather than papered over.** A successful party result carries the
-                // party's member list, and its body is not decoded - `net::party::refusal`
-                // will not build one, on purpose. Sending a guess here is exactly the shape
-                // that killed two clients three times this week.
-                //
-                // So the membership is real - drops and experience follow it from this
-                // moment - and the WINDOW will not populate until `0x00A5`'s success arms
-                // are read. `!party list` shows the truth in the meantime.
-                for effect in &effects {
-                    crate::server::log(&format!("   party: {effect:?}"));
-                }
-                crate::server::log(&format!(
-                    "   party: {described} by character {actor} CHANGED STATE and the client \
-                     was NOT told - the success body for 0x00A5 is not decoded. Drops and \
-                     experience follow the new membership from now; the party window does not"
-                ));
-                vec![Reply {
-                    opcode: net::party::PARTY_RESULT,
-                    body: net::party::request_failed(),
-                    what: format!(
-                        "PartyResult UNKNOWN_ERROR to character {actor} after a SUCCESSFUL \
-                         {described}. The state changed; this answer is a placeholder because \
-                         the success body is undecoded, and an unanswered request would freeze \
-                         the client's whole UI"
-                    ),
-                }]
-            }
+            Ok(effects) => self.party_effects(actor, &described, effects),
         }
     }
+
+    /// Turn the state machine's effects into packets.
+    ///
+    /// **Only the effects whose body is decoded produce one.** Everything else is logged in
+    /// the words "the client was NOT told" rather than reported as success, because a
+    /// `0x00A5` whose arm reads a field we did not send is the exact shape that killed two
+    /// clients three times this week.
+    fn party_effects(
+        &mut self,
+        actor: u32,
+        described: &str,
+        effects: Vec<crate::party::Effect>,
+    ) -> Vec<Reply> {
+        use crate::party::Effect;
+
+        let mut out = Vec::new();
+        let mut undecoded = Vec::new();
+        for effect in &effects {
+            crate::server::log(&format!("   party: {effect:?}"));
+            match effect {
+                Effect::Created { party, leader } => {
+                    let Some(chr) = self.claimed_character().filter(|c| c.id == *leader) else {
+                        undecoded.push(format!("{effect:?} (the leader is not this session)"));
+                        continue;
+                    };
+                    let name = self
+                        .fields
+                        .parties()
+                        .party(*party)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_default();
+                    out.push(Reply {
+                        opcode: net::party::PARTY_RESULT,
+                        body: net::party::party_created(*party, &name, &self.party_member(&chr)),
+                        what: format!(
+                            "PartyResult CREATED: party {party} exists and character {leader}                              leads it. research/party-result-0x00A5.md"
+                        ),
+                    });
+                }
+                other => undecoded.push(format!("{other:?}")),
+            }
+        }
+
+        if !undecoded.is_empty() {
+            // **Said out loud, not implied.** These transitions are real - drops and
+            // experience follow them from now - and the client is not being told, because
+            // their bodies are not decoded yet.
+            crate::server::log(&format!(
+                "   party: {described} by character {actor} changed state and these effects                  were NOT sent, their 0x00A5 bodies being undecoded: {undecoded:?}"
+            ));
+        }
+        if out.is_empty() {
+            // An unanswered request freezes the client's whole UI, so something goes back
+            // even when nothing we can build applies.
+            out.push(Reply {
+                opcode: net::party::PARTY_RESULT,
+                body: net::party::request_failed(),
+                what: format!(
+                    "PartyResult UNKNOWN_ERROR to character {actor} after a SUCCESSFUL                      {described}: the state changed and no decoded packet describes it"
+                ),
+            });
+        }
+        out
+    }
+
+    /// This character as a party seat.
+    fn party_member(&self, chr: &net::opcode::Character) -> net::party::Member {
+        net::party::Member {
+            char_id: chr.id,
+            name: chr.name.clone(),
+            job: u32::from(chr.job),
+            level: u32::from(chr.level),
+            unknown_c: 0,
+            unknown_d: 0,
+        }
+    }
+
 
     /// Answer `0x0182` `CLIENT_PARTY_REQUEST` and `0x0183` `CLIENT_PARTY_INVITE_ANSWER`.
     ///
@@ -153,10 +202,6 @@ impl super::Session {
             .map(|c| format!("character {} ({})", c.id, c.name))
             .unwrap_or_else(|| "an unclaimed connection".to_string());
 
-        // The decode is for the LOG, not for the answer: the answer is the same either way
-        // until there is a party system. It is worth logging because the archive contains
-        // exactly one party packet, and the first two-client run is where the other six
-        // actions get seen for the first time.
         // **What the request asks for, as a `crate::party::Request` where one can be built.**
         //
         // Only two of the seven actions can be built from what `parse_request` recovers.
@@ -179,12 +224,50 @@ impl super::Session {
                         })
                     }
                     net::party::action::LEAVE => Ok(crate::party::Request::Leave),
+                    // **Invite carries a NAME and the server resolves it.** The client does
+                    // not: `FUN_1413b9eb0` takes a `char*`, `strlen`s it, and the union emits
+                    // a FlatBuffers string. **[L]**
+                    net::party::action::INVITE => match req.name.as_deref() {
+                        Some(name) if !name.is_empty() => {
+                            match self.store.character_id_by_name(name) {
+                                Ok(Some(target)) => Ok(crate::party::Request::Invite { target }),
+                                _ => Err(format!("no character named {name:?}")),
+                            }
+                        }
+                        _ => Err("an invite with no name".to_string()),
+                    },
+                    // **Expel and change-leader carry an ID, already resolved.** Both wrappers
+                    // look the name up against the client's OWN member list
+                    // (`FUN_1413b8ec0` -> `FUN_1406f1ff0`) and send the `u32`. Re-resolving a
+                    // name here would be wrong twice: the client never sent one, and it has
+                    // already proved the target is a member. **[L]**
+                    a if a == net::party::action::EXPEL
+                        || a == net::party::action::CHANGE_LEADER =>
+                    {
+                        match req.target_id {
+                            // Id 0 is never a valid character here - a party slot is occupied
+                            // exactly when its id is non-zero. **[L]**
+                            Some(target) if target != 0 => {
+                                Ok(if a == net::party::action::EXPEL {
+                                    crate::party::Request::Expel { target }
+                                } else {
+                                    crate::party::Request::ChangeLeader { target }
+                                })
+                            }
+                            _ => Err(format!(
+                                "action {a} ({}) carried no usable character id: {:?}",
+                                action_name(a),
+                                req.target_id
+                            )),
+                        }
+                    }
                     other => Err(format!(
-                        "action {other} ({}) needs a target this decoder does not recover. \
-                         payload tag {}, name {:?}, {} bytes: {body:02x?}. Use !party",
+                        "action {other} ({}) is not routed. payload tag {}, name {:?}, id \
+                         {:?}, {} bytes: {body:02x?}",
                         action_name(other),
                         req.payload_tag,
                         req.name,
+                        req.target_id,
                         body.len()
                     )),
                 },
@@ -283,10 +366,18 @@ mod tests {
         );
         assert!(s.fields.parties().is_leader(200), "and its sender leads it");
 
-        // The reply is still the placeholder refusal, and that is deliberate rather than
-        // forgotten: 0x00A5's SUCCESS body is not decoded, and guessing at one is what killed
-        // two clients three times this week. The membership is real; the window is not told.
-        assert_eq!(out[0].body, net::party::request_failed());
+        // **And the client is TOLD.** `0x0E` CREATED, carrying the party id, the leader's
+        // own seat and the name they typed - not the placeholder refusal this used to send.
+        assert_eq!(out[0].body[0..2], net::party::PARTY_RESULT.to_le_bytes());
+        assert_eq!(out[0].body[2], net::party::result::CREATED);
+        assert!(
+            out[0].body.windows(6).any(|w| w == b"Leader"),
+            "the leader's seat is in the body"
+        );
+        assert!(
+            out[0].body.windows(17).any(|w| w == b"TestCharD's Party"),
+            "and the name they typed"
+        );
 
         // A body this decoder cannot read is still answered.
         let out = s.on_party_request(net::party::CLIENT_PARTY_REQUEST, &[0xff, 0x00]);
