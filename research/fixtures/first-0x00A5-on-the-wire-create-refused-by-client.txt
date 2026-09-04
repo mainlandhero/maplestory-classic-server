@@ -1,0 +1,8 @@
+# THE FIRST 0x00A5 EVER SENT BY THIS SERVER, and the client still said the request failed.
+# 2026-09-04. research/party-result-0x00A5.md decoded 0x0E as create-success from a jump
+# table walk with ZERO wire observations (0 of 530 logs). This is observation one.
+# The client's handler RAN AND RETURNED - hook log dispatch 3569, ret=1, 19828 us, no fault.
+# So the body was parsed and rejected, or 0x0E is not the create-success code.
+
+23:03:38.758 <- 0x0182 CLIENT_PARTY_REQUEST, 64 byte body 1000000000000a000e000000070008000a000000000000050c000000000006000800040006000000040000000f00000054657374657232277320506172747900
+23:03:38.766 -> 0x00A5 PARTY_RESULT PartyResult CREATED: party 1 exists and character 214                              leads it. research/party-result-0x00A5.md
