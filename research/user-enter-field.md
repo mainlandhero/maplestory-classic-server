@@ -164,7 +164,7 @@ of 31 (217, 248, …) is not a hazard. **[L]**, read out of raw bytes rather tha
 | 32 | `1429ce456` | u32 | 4 | `+0x1108` | **[I]** guild-block tail |
 | 36 | `1429ce465` | u32 | 4 | `+0x110c` | **[I]** guild-block tail |
 | 40 | `1429ce474` | u8 | 1 | `+0x10fc` | gender **[I]** |
-| 41 | `1429ce483` | u32 | 4 | `+0x3b28` | **a per-map array index. NOT fame** - see below **[L]** |
+| 41 | `1429ce483` | u32 | 4 | `param_1+0x3b28` | unnamed; the local user holds `0` here, so `0` is right **[L]** |
 | 45 | `1429ce492` | u32 | 4 | `+0x3770` | name-tag mark **[I]** |
 | 49 | `1429ce4a1` | u8 | 1 | `+0x3774` (zero-extended to dword) | **[I]** |
 | 50 | `1429ce4b3` | u32 | 4 | `+0x13b4` | **[I]** |
@@ -245,30 +245,57 @@ bit 2 of the chat flag byte. **Send `00 00 00 00` here and none of it is read.**
 
 ---
 
-### 2.4 Row 41 was called "fame" and it is an array index - corrected 2026-09-03
+### 2.4 THE BASE THIS TABLE IS INDEXED AGAINST, and a retraction of the retraction
 
-The name came from the v214 reference tree and was tagged **[I]** honestly. It was still
-written down as a name and read back as a fact, and `crates/net/src/userpool.rs` sent `0`.
+**Every struct offset in this table is relative to `param_1`. The faulting getter reads
+`[rcx+0x3b28]` with `rcx = r15`, and `r15 = param_1 + 0x100`.** Nothing in this file said
+which base it used, and that omission cost a client run all by itself.
 
-`0` is a **valid array index**. The field reaches `CUser+0x3b28`, vtable slot `+0x18` hands it
-to `0x14182a140`, and that accessor **reports** an out-of-range index and then honours it -
+On 2026-09-03 the seat crash was diagnosed here as **row 41**, and written into this table as
+`[L]`, and shipped. It was wrong, and the way it was wrong is the point: the enumeration that
+found it was structurally correct - right field, right accessor, right sentinel - and compared
+the local against the remote `CUser` at a consistently `r15`-based offset. The answer was then
+looked up in *this* table, which is `param_1`-based. **A right number in one frame of
+reference, read in another.**
+
+What caught it needed no argument: take the remote `CUser` of the same character from the run
+before the change and the run after, and keep only the dwords that went `0 -> 0xFFFFFFFF`.
+Exactly one offset comes back, and it is `0x100` below where this table said to look.
+
+So the real field is **row 416**, `param_1+0x3c28`, and row 41 goes back to unnamed. The `100`
+this file flagged as an unexplained loose end at row 416 was never row 416's value either - it
+is `r15+0x3c28`, i.e. `param_1+0x3d28`.
+
+**Rows 12, 41, 179, 181 and 416 have now been checked against a dump. The rest have not, and
+could be `0x100` out in either direction.**
+
+### 2.5 Row 416 is the seat index, and `0` is a valid seat
+
+`crates/net/src/userpool.rs` sent `0`, and `0` is a valid index.
+
+The field reaches `param_1+0x3c28` - read `movsx`, so the sign matters - and vtable slot
+`+0x18` hands it to `0x14182a140`, an accessor that **reports** an out-of-range index and then
+honours it -
 returning `base + 48*idx + 8`. With a null base and index 0 that is the address `8`, and
 `0x140f9295e mov rcx,[rax]` dereferences it. Both clients died there, both dumps identical
 register for register. **[L]**
 
-`-1` is the client's own "no entry": its local `CUser` carries `0xFFFFFFFF` here, and all three
-call sites are gated `cmp eax,-1 / je`. Diffing the local and remote `CUser` dword by dword
-over all `0x4400` bytes gives **exactly one** offset that is `-1` in the local and `0` in ours.
-**[L]** `research/0x0224-remote-user-first-use-fault.md`.
+`-1` is the client's own "no entry", and five things say so - two of them literals in the
+client's own code. `0x142769d49 mov dword ptr [rsi+0x3c28], 0xFFFFFFFF` is its own initialiser.
+`FUN_142834020` is `IsSitting`: `(m_0x3c18 && ...) || m_0x3c28 != -1` - and `bSit` appears in
+the faulting function's own format string, which is what finally named the field. All three
+accessor call sites gate on `cmp eax,-1`. The local `CUser` holds `-1` here in all four dumps
+while every packet-built remote held `0`. And a range scan for `0x3c28` across `.text` finds 27
+sites and exactly **two** that write it - this decoder and that initialiser, so nothing
+overwrites it after `Init`. **[L]** `research/0x0224-remote-user-first-use-fault.md`.
 
 The array is **not named** - **[I]** only, possibly the map's seat list (the enclosing error
 string carries `bSit`). The fix does not depend on knowing. But the symptom is map-dependent:
 on a map whose array is non-empty, index 0 resolves silently and pins every remote avatar to
 entry 0 rather than crashing.
 
-**A loose end, not on the fault path:** this table maps body 416 to `CUser+0x3c28`, and both
-dumps read **100** there for the local *and* the remote user while the builder writes 0. Either
-the row is wrong or something overwrites it after `Init`. Nobody has checked.
+**The `100` loose end is explained by the base shift** - it was `r15+0x3c28`, which is
+`param_1+0x3d28`, and never row 416's value at all.
 
 ---
 

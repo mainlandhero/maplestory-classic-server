@@ -479,39 +479,10 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u32(0); //                  32
     w.u32(0); //                  36
     w.u8(chr.gender); //          40
-    // **41 is not fame, it is an array index into the field, and `0` is a valid index.**
-    //
-    // `1429ce483 call 0x1406e8c20 (READ u32)` then `1429ce488 mov [r14+0x3b28], eax` - stored
-    // raw. Vtable slot `+0x18` hands it back, and it reaches `0x14182a140`, a bounds-checked
-    // accessor on an array hanging off the field:
-    //
-    // ```text
-    //   r8  = [field_info + 0x178]        the array base   -> NULL on this map (measured)
-    //   ecx = r8 ? [r8-8] : 0             the element count -> 0
-    //   if (idx >= 0 && idx < count) goto ok
-    //       call 0x142e54290(0xbc, idx, count)   a REPORTER - it does not throw
-    //   ok: return r8 + 48*idx + 8         ->  0 + 0 + 8  =  8
-    // ```
-    //
-    // **The out-of-range access is logged and then honoured**, so the caller gets `8` and
-    // `0x140f9295e mov rcx,[rax]` reads address 8. That is the fault that replaced the decode
-    // crash: both clients, both dumps, `RAX = 8` register for register.
-    //
-    // **`-1` is the client's own "no entry", and its own local `CUser` proves it.** In the
-    // same process at the same instant the local user holds `0xFFFFFFFF` here where ours held
-    // `0`, and all three call sites of `0x14182a140` are gated `cmp eax,-1 / je <skip>`.
-    // Diffing local against remote dword by dword across all `0x4400` bytes gives **exactly
-    // one** offset that is -1 in the local and 0 in ours: this one. `[L]`,
-    // `research/0x0224-remote-user-first-use-fault.md`.
-    //
-    // The old label came from the v214 reference tree, which `CLAUDE.md` scores 1 of 8 and
-    // calls a candidate generator. `research/user-enter-field.md` marked it **[I]** honestly;
-    // it was still written down as a name and read back as a fact.
-    //
-    // **The symptom is map-dependent, which is worth knowing before the next map.** On a map
-    // whose array is NOT empty, index 0 resolves silently and pins every remote avatar to
-    // entry 0 instead of crashing - a wrong screen rather than a dead client.
-    w.i32(-1); //                 41  a per-map array index; -1 = none
+    // 41 - **left at `0`, and that is now checked rather than assumed.** This was briefly
+    // sent as `-1` on the strength of a diagnosis that pointed one struct-base out; the
+    // local `CUser` holds `0` here, so `0` was right all along. See offset 416.
+    w.u32(0); //                  41
     w.u32(0); //                  45  name-tag mark
     w.u8(0); //                   49
     w.u32(0); //                  50
@@ -595,7 +566,55 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.str(""); //                 408
     w.str(""); //                 410
     w.u32(0); //                  412
-    w.i16(0); //                  416  field seat
+    // **416 is the seat index, and `0` is a valid seat.** This is what killed both clients
+    // on every two-client run.
+    //
+    // `movsx ecx, ax` - **sign-extended**, verified from raw bytes (`0f bf c8`) and from the
+    // live image, so `ff ff` becomes `0xFFFFFFFF`. A zero-extending read would have made this
+    // 65535 and failed a third time in exactly the same place.
+    //
+    // It reaches `CUser+0x3c28`, and from there an accessor on an array hanging off the
+    // field:
+    //
+    // ```text
+    //   r8  = [field_info + 0x178]        the array base    -> NULL on map 40
+    //   ecx = r8 ? [r8-8] : 0             the element count -> 0
+    //   if (idx >= 0 && idx < count) goto ok
+    //       call 0x142e54290(...)         a REPORTER. It does not throw
+    //   ok: return r8 + 48*idx + 8        ->  0 + 0 + 8  =  8
+    // ```
+    //
+    // and `0x140f9295e mov rcx,[rax]` dereferences 8. `RAX = 8` with `R8 = 0` admits only
+    // `idx == 0`; `-1` gives `0xFFFFFFFFFFFFFFD8` and never reaches the load.
+    //
+    // **Five facts fix `-1`, two of them literals in the client's own code:**
+    //
+    // * `0x142769d49 mov dword ptr [rsi+0x3c28], 0xFFFFFFFF` - the client's own initialiser;
+    // * `FUN_142834020` is `IsSitting`: `(m_0x3c18 && ...) || m_0x3c28 != -1` - and `bSit` is
+    //   a field in the faulting function's own format string, which is what finally named it;
+    // * all three call sites of the accessor gate on `cmp eax, -1`;
+    // * the local `CUser` holds `-1` here in **all four** dumps; every packet-built remote
+    //   held `0`;
+    // * a range scan for `0x3c28` across all of `.text` finds 27 sites and exactly **two**
+    //   that write it - this decoder and that initialiser. Nothing overwrites it after `Init`.
+    //
+    // # It was diagnosed at offset 41 first, and that is worth keeping
+    //
+    // The static enumeration was right about the field, the accessor and the sentinel, and
+    // wrong about **which byte feeds it** - because `[rcx+0x3b28]` is read with `this = r15`,
+    // and `r15 = param_1 + 0x100` is a base-subobject pointer. A right number in one frame of
+    // reference, looked up in a table indexed by another.
+    //
+    // What caught it was a diff nobody could have argued with: taking the remote `CUser` of
+    // the same character across the run before the `-1` and the run after, and keeping only
+    // dwords that went `0 -> 0xFFFFFFFF`, returns **exactly one offset** - and it is `0x100`
+    // below where the table said to look.
+    //
+    // **The general form, which costs nothing to remember and cost two runs to learn: an
+    // offset table is meaningless without the base it is indexed against, and neither file in
+    // `research/` states one.** Rows 12, 41, 179, 181 and 416 have now been checked against a
+    // dump. The rest of that table has not, and could be `0x100` out in either direction.
+    w.i16(-1); //                 416  the seat index; -1 = not seated
     w.u32(0); //                  418  chair item id
     w.u32(0); //                  422
 
@@ -822,31 +841,46 @@ mod tests {
         assert_eq!(u32::from_le_bytes(body[12..16].try_into().unwrap()), 8);
     }
 
-    /// **Offset 41 is `-1`, and `0` there killed both clients.**
+    /// **Offset 416 is `-1`, and `0` there killed both clients on every two-client run.**
     ///
-    /// It reaches `CUser+0x3b28` and from there an array index into the field. The accessor
-    /// is bounds-checked, **reports** an out-of-range index, and then honours it anyway -
-    /// returning `base + 48*idx + 8`, which for a null base and index 0 is the address `8`.
-    /// `-1` is the client's own "no entry": its local `CUser` carries `0xFFFFFFFF` here, and
-    /// every call site of that accessor is gated `cmp eax,-1 / je`.
+    /// It is the seat index. `0` is a valid seat, and the client's accessor **reports** an
+    /// out-of-range index and then honours it - returning `base + 48*idx + 8`, which for a
+    /// null base and index 0 is the address `8`. The client's own initialiser writes
+    /// `0xFFFFFFFF` here and `IsSitting` tests `!= -1`.
     ///
-    /// Anchored on the gender byte immediately before it, because an assertion at a fixed
-    /// offset in a mostly-zero body is worth nothing if the base has moved - which is exactly
-    /// how `there_is_no_miniroom_and_no_chair` passed through two wrong layouts.
+    /// **Read `movsx`, so the sign matters.** `i16(-1)` is `ff ff` and sign-extends to
+    /// `0xFFFFFFFF`. A `u16` of 65535 would be the same two bytes and the same value here -
+    /// but writing it as `-1` is what makes the intent survive the next edit.
+    ///
+    /// Anchored on the position dword at 426, which `RemoteAt::default()` puts at `(0, 0)` and
+    /// which the world log independently reports - so a moved base breaks the anchor rather
+    /// than letting a fixed offset assert into the wrong field. That is not hypothetical here:
+    /// this exact fault was first diagnosed at offset **41**, from a table indexed against a
+    /// struct base `0x100` away from the one the faulting getter uses.
     #[test]
-    fn the_field_index_at_41_is_minus_one_and_not_zero() {
-        for (name, gender) in [("", 0u8), ("Cobalt", 1)] {
-            let mut chr = someone(name, &[]);
-            chr.gender = gender;
+    fn the_seat_index_at_416_is_minus_one_and_not_zero() {
+        for (name, equips) in [("", &[][..]), ("Cobalt", &[(5u8, 1_040_002u32)][..])] {
+            let chr = someone(name, equips);
             let body = user_enter_field(&chr, RemoteAt::default());
-            let at = 41 + name.len();
+            let shift = name.len() + 5 * equips.len();
 
-            assert_eq!(body[at - 1], gender, "the gender byte anchors the offset below it");
+            // The seat is ten bytes ahead of the position, across the chair item id and one
+            // more dword. Derived from the two published constants rather than re-typed, so a
+            // tail change moves it instead of silently pointing somewhere else.
+            let seat = USER_ENTER_FIELD_POS_AT - 10 + shift;
             assert_eq!(
-                i32::from_le_bytes(body[at..at + 4].try_into().unwrap()),
+                i16::from_le_bytes(body[seat..seat + 2].try_into().unwrap()),
                 -1,
-                "0 here is a VALID array index and the client dereferences it"
+                "0 here is a VALID seat index and the client dereferences it"
             );
+
+            // The anchor. `RemoteAt::default()` is (0, 0) and the world log reports the same,
+            // so a moved base breaks this before the assertion above can pass into the wrong
+            // field. Not hypothetical: this fault was first diagnosed at offset 41, out of a
+            // table indexed against a struct base 0x100 from the one the getter uses.
+            let pos = USER_ENTER_FIELD_POS_AT + shift;
+            assert_eq!(&body[pos..pos + 4], &[0, 0, 0, 0], "the position anchors the seat");
+            assert!(seat + 2 <= body.len() && pos + 4 <= body.len());
         }
     }
 

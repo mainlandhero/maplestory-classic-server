@@ -432,3 +432,262 @@ whether the byte landed where we think it does.
    call passes is `0xbc` = 188.
 6. **Nothing here has been on the wire.** No `0x0224` carrying `-1` at offset 41 has ever
    been sent.
+
+---
+---
+
+# Part 2 — the `-1` shipped, the fault did not move, and Part 1 named the wrong field
+
+**2026-09-03, later the same day. Two more full-memory dumps, no client run of my own, no
+Ghidra.** `dumps\maplecw-crash-992840-c0000005-1.dmp` and
+`dumps\maplecw-crash-1010344-c0000005-1.dmp`; logs in
+`research/fixtures/offset41-minus-one-same-fault-0x140f9295e-hook.log` and its `-world.log`.
+
+`crates/` was not touched.
+
+## P2.0 The three questions, answered
+
+* **Is `RAX` still 8?** **Yes**, in both new dumps. **[L]**
+* **Is the index still 0?** **Yes** — and it is forced by arithmetic before any object is
+  read: the accessor returns `r8 + 48*idx + 8`, and `RAX = 8` with `R8 = 0` admits only
+  `idx = 0`. An index of `-1` would have produced `0xFFFFFFFFFFFFFFD8`. **[D]**
+* **Same instruction, or merely the same address?** **The same instruction with the same
+  register state.** Every register matches the two old dumps except the three that hold heap
+  objects:
+
+```text
+                 old 1003900 / 990836        new 992840 / 1010344
+  Rip            0x140f9295e                 0x140f9295e     same
+  Rax            0x8                         0x8             same
+  R8             0x0                         0x0             same
+  Rbx            0xffffffcefffffff8          same            same
+  Rsp / Rbp      0x14b6e0 / 0x14b830         same            same
+  R9,R11,R12,R13,R14                         all same
+  param[0]/[1]   0 (read) / 0x8              same            same
+  unwind         14 frames                   frame-for-frame identical
+  Rsi/Rdi/R15    heap pointers               different (different processes)
+```
+
+**[L]** So this is not a fourth call site, not a different register, and not a different
+address arriving at the same instruction. It is the *same* failure, unchanged.
+
+**And Part 1's static enumeration is not the thing that was wrong.** The three `cmp eax,-1`
+gates are real, the accessor is real, `-1` is the sentinel. **What was wrong is which byte of
+`0x0224` feeds the field.**
+
+## P2.1 The mistake: `r15` is not `param_1`. It is `param_1 + 0x100`.
+
+The instrument that found it is the one that did not exist last time — **the old dumps
+against the new ones.** Diffing the remote `CUser` of the *same character* across the two
+runs, over `0x4400` bytes, keeping only dwords that went `0 -> 0xFFFFFFFF`, which is exactly
+what changing body offset 41 from `0` to `-1` should do:
+
+```text
+  Cobalt  (face 20002/hair 30025)   309 of 4352 dwords differ    0 -> FFFFFFFF at: +0x3a28
+  Tester2 (face 20001/hair 30032)   742 of 4352 dwords differ    0 -> FFFFFFFF at: +0x3a28
+```
+
+**[L]** One offset each, the same one, and it is **`0x100` below `+0x3b28`**.
+
+`FUN_1429ce270`'s store was read correctly — raw bytes at `0x1429ce488` are
+`41 89 86 28 3b 00 00` = `mov [r14+0x3b28], eax`, and `0x1429ce2ab mov r14, rcx` makes `r14`
+the incoming `this`. **[L]** So `r14 + 0x3b28 == r15 + 0x3a28`, and therefore
+
+> **`r15 = param_1 + 0x100`.** `r15` is a **base-subobject pointer**, `0x100` bytes into the
+> `CUser`. `[param_1] = 0x143486b70` is the primary vtable; `[param_1+0x100] = 0x143486d88`
+> is the second one, and that is the one Part 1 read.
+
+Tested against fields whose values I can predict, at **both** candidate bases:
+
+| `research/user-enter-field.md` row | at `r15 + off` | at `param_1 + off` |
+|---|---|---|
+| body 12 → `+0x406c` level | 0, 0 | **18** (Cobalt), **8** (Tester2) |
+| body 179 → `+0x40c0` job | 0, 0 | **200** (Cobalt), **0** (Tester2) |
+| body 41 → `+0x3b28` | 0 in all four dumps | **`-1` in the NEW, `0` in the OLD** |
+| body 416 → `+0x3c28` | 100 in all four dumps | **`0` in all four** |
+
+**[L]** Level and job are character-specific, differ between the two characters, and are
+identical for the same character across runs — a table that could have come back all-zero and
+did not. The `+0x3b28` row tracks the one thing we changed. `param_1` is the right base and
+`r15` is not.
+
+**So the virtual `0x142834190 mov eax,[rcx+0x3b28]` — whose `this` is `r15` — reads
+`param_1 + 0x3c28`, which `research/user-enter-field.md` already names: row 416.**
+
+### What this failure actually was
+
+Not a wrong number. **A right number read in one frame of reference and looked up in a table
+indexed by another.** `+0x3b28` off `r15` and `+0x3b28` off `param_1` are different fields
+`0x100` apart, and nothing in either listing says which base its column is written against.
+
+This is `CLAUDE.md`'s *"the unit, not the arithmetic"* in a new costume, and it is worse than
+a wrong unit because **the cross-check I ran agreed with me.** Part 1 §4.4's enumeration —
+"one dword offset in 4 352, in two processes" — was **structurally correct and pointed at the
+right field the whole time**: it compared local against remote at a consistently `r15`-based
+offset, so its single hit *was* `param_1+0x3c28`. I then took that number to a
+`param_1`-indexed table and read off the wrong row. The measurement was right; the label was
+wrong; and the label is what shipped.
+
+It also explains, exactly, the loose end Part 1 flagged and could not account for: *"body 416
+maps to `+0x3c28` but both dumps read 100 there for local and remote."* `r15 + 0x3c28` is
+`param_1 + 0x3d28` — a different field, and `100` was never body 416's value.
+
+**Two corrections to Part 1, and nothing else in it moves:**
+
+* §0, §5 and §7: *"`CUser+0x3b28` ← body offset 41"* is wrong. The store is
+  `[param_1+0x3b28] ← body 41`, which is correct — but the **crashing** field is
+  `param_1+0x3c28` ← **body offset 416**.
+* §4.2's look measurements were `r15`-relative and stand as numbers; the look struct is at
+  `param_1+0x130`, not `+0x30`. (It is decoded into a stack buffer at
+  `1429ce6a2 lea rcx,[rbp+0x160]` and copied in afterwards, which is why no store names it.)
+
+Everything else — the faulting instruction, the accessor's arithmetic, `RAX=8` implying an
+empty array and index 0, the three `-1` gates, the enumeration method — survives unchanged.
+
+## P2.2 The field, and why `-1` is certain this time
+
+`param_1 + 0x3c28`, from **body offset 416**, read as a `u16` and **sign-extended**:
+
+```text
+  1429ce81e  call 0x1406e8ef0   READ u16 (the u16 thunk)
+  1429ce823  0f bf c8           movsx ecx, ax          <<< SIGN-extended, not zero-extended
+  1429ce826  41 89 8e 28 3c     mov [r14+0x3c28], ecx
+```
+
+**[L]**, from raw bytes *and* from disassembling the live image inside the dump. `movsx`
+matters: `w.i16(-1)` writes `FF FF`, which sign-extends to `0xFFFFFFFF`. A zero-extending read
+would have produced `65535` and this fix would have failed the same way twice.
+
+Five independent facts say `-1` is the absent value, and two of them are literals in the
+client's own code rather than inferences from a dump:
+
+1. **`0x142769d49  mov dword ptr [rsi+0x3c28], 0xFFFFFFFF`** — the client's own initialiser
+   writes the literal, between `mov [rsi+0x3c20], rax` and a `lea rdi,[rsi+0x3c30]` /
+   zero-fill of `0x30` bytes. **[L]**
+2. **`FUN_142834020`** is `bool IsSitting(CUser*)`:
+   `return (m_0x3c18 && FUN_141716a90(m_0x3c18)) || m_0x3c28 != -1;` —
+   `0x14283403e cmp dword ptr [rbx+0x3c28], -1`. **[L]** That is the `bSit` in the faulting
+   function's own `"Invalid Action( ... bSit : %d )"` format string, which is the first thing
+   in this whole investigation that ties the field to a name by something other than
+   resemblance.
+3. All **three** call sites of the accessor gate on `cmp eax,-1` (Part 1 §5). **[L]**
+4. The client's own **local** `CUser` holds `0xFFFFFFFF` at `param_1+0x3c28` in **all four
+   dumps**, while every one of our packet-built remotes holds `0`. **[L]**
+5. `tools/rangescan.py 0x3c28` over the whole of `.text` returns **27 sites**, and the only
+   two that are a CUser field write are `0x1429ce826` (the decoder) and `0x142769d49` (the
+   `-1` initialiser). **Nothing overwrites it after `Init`.** **[L]**
+
+### The enumeration, redone at the corrected base
+
+Local vs remote, `0x4400` bytes, **both new dumps**, offsets where the local holds `-1` and
+the remote holds `0`: **24**, of which **exactly one is written by `FUN_1429ce270` at all** —
+`+0x3c28`. The other 23 form a regular ~`0xB0`-stride run from `+0x0f6c` to `+0x21cc` and are
+never a destination in `research/msexe-userpool-userinit-1429ce270.txt`; they are
+`CUserLocal`-vs-`CUserRemote` state, not absent-form errors in our body. **[L]**
+*(The grep's positive control is that the same pattern **does** find `+0x3c28`, so the
+negative for the other 23 means something.)*
+
+### And the byte is where the arithmetic says, measured in the client's own memory
+
+Searching `1010344`'s memory for Cobalt's body (`u32 id, u32 id, u32 0, u32 level, u16 6,
+"Cobalt"` — a 24-byte needle) returns **one** copy, with `24 02` immediately before it:
+
+```text
+  body[ 47.. 51]  (builder comment 41,  u32) = ff ff ff ff   <- our new -1 DID reach the wire
+  body[470..472]  (builder comment 416, i16) = 00 00         <- the field that crashes
+  body[480..484]  (builder comment 426, x/y) = 00 00 00 00   <- anchor: world.log says (0,0)
+```
+
+**[L]** The `x,y` anchor is what makes the `470` arithmetic
+(`comment + REMOTE_STAT_TAIL_LEN + name + 5*equips`) a measurement rather than a hope — a
+wrong offset model puts the anchor somewhere that is not zero.
+*(`992840` holds **0** copies of Tester2's body: its receive buffer had been recycled by fault
+time. The search is not blind — it returns exactly one hit in the dump that still has the
+buffer and zero in the one that does not, and the needle was rejected once already when I had
+the two clients paired the wrong way round.)*
+
+## P2.3 The change
+
+**`crates/net/src/userpool.rs:598`**, one field, **no offset moves** (`i16` stays `i16`):
+
+```rust
+    // **416 is the map-seat index, and `0` is a live index.** Read as u16 at `1429ce81e`
+    // and SIGN-extended (`1429ce823 movsx ecx,ax`) into `param_1+0x3c28`, which is what
+    // `0x142834190` - vtable slot +0x18 on the base subobject at `param_1+0x100` - hands to
+    // the bounds-checked accessor `0x14182a140`. All three of its call sites gate on
+    // `cmp eax,-1`; the client's own initialiser writes the literal -1 here
+    // (`0x142769d49`); and `FUN_142834020` reads it as `IsSitting`. With `0`, on a map whose
+    // seat array is empty, the accessor returns `0 + 48*0 + 8` and `0x140f9295e
+    // mov rcx,[rax]` reads address 8.
+    // research/0x0224-remote-user-first-use-fault.md Part 2.
+    w.i16(-1); //                 416  field seat - NOT SITTING
+```
+
+**And revert `crates/net/src/userpool.rs:482` to `w.u32(0)`.** The client's own local `CUser`
+holds **`0`** at `param_1+0x3b28`, so `0` was right there all along, and the `-1` Part 1 asked
+for is an unjustified change to a field nothing here has characterised. Reverting it is what
+keeps this **one variant**: against the last-known baseline the next run then differs in
+exactly one field, offset 416. Leaving both would change two.
+
+### Test
+
+Anchored the way `there_is_no_miniroom_and_no_chair` now is — the `u32` at comment-offset 412
+is the nearest field the test controls, so a wrong anchor fails loudly instead of a zero check
+passing on nothing:
+
+```rust
+    let body = user_enter_field(&someone("Wanderer", &[]), RemoteAt::default());
+    let at = |zero_tail: usize| zero_tail + REMOTE_STAT_TAIL_LEN + "Wanderer".len();
+    assert_eq!(&body[at(412)..at(416)], &[0, 0, 0, 0], "the anchor above the seat index");
+    assert_eq!(
+        i16::from_le_bytes(body[at(416)..at(418)].try_into().unwrap()),
+        -1,
+        "map-seat index: sign-extended at 1429ce823, and 0 is a live index into an empty array"
+    );
+```
+
+### The watch worth arming, unchanged in purpose and now correctly aimed
+
+`0x14182a140` with `0x140304100:hits=200` as the positive control.
+
+* **Not entered** → the `-1` reached `param_1+0x3c28` and the gate at `0x140f92937` held.
+  That is the pass.
+* **Entered** → print `edx`. `0` means the byte still is not landing there and the offset
+  model is wrong somewhere I have not looked; anything else means a third reading.
+
+`FUN_142834020` is the cheaper alternative if only one watch can be armed: it is `IsSitting`,
+it is 55 bytes, and it returns `1` for a character nobody has seated.
+
+## P2.4 What would refute this
+
+* The next run dying at `0x140f9295e` with `RAX = 8` again. That would mean body 416 is not
+  `param_1+0x3c28` either, and the offset model — not the field — is what needs work. The
+  accessor watch says so without another dump.
+* `param_1 + 0x3c28` reading anything but `0xFFFFFFFF` in a dump taken after this ships. Five
+  independent facts point at `-1`; a sixth disagreeing would break all of them at once.
+* A dump in which the local `CUser`'s `param_1+0x3c28` is **not** `-1`. Four dumps agree.
+
+## P2.5 Blind spots, including the one that caused this
+
+1. **A struct-offset table is meaningless without the base pointer it is indexed against**,
+   and neither `research/user-enter-field.md` nor
+   `research/msexe-userpool-userinit-1429ce270.txt` states one. Its `→ CUser` column is `r14`
+   = `FUN_1429ce270`'s `rcx`. Any other listing in `research/` whose `this` is the `+0x100`
+   subobject is `0x100` out against it, in either direction, **and both will look plausible.**
+   Nothing in this pass audited the rest of that table; only rows 12, 41, 179, 181 and 416
+   have now been checked against a dump.
+2. **The `0x100` shift itself is [D], not [L]** — derived from `r14+0x3b28 == r15+0x3a28` plus
+   the level/job table. I did not find the `add rcx, 0x100` (or the vtable-thunk `sub`) that
+   produces `r15`. Finding it would make the shift [L] and would also say *which* base class
+   sits at `+0x100`.
+3. **The seat naming is still [I]**, though much better supported than in Part 1:
+   `FUN_142834020` is a two-term "is sitting" predicate over `m_0x3c18` and `m_0x3c28 != -1`,
+   and the faulting function prints `bSit`. What fills the per-map array is still unopened.
+4. **`0x1428341a0 mov [rcx+0x3c28], edx`** is a setter thunk whose `this` base I did not
+   establish. If its `rcx` is the `+0x100` subobject it writes `param_1+0x3d28` and is
+   irrelevant; if it is `param_1` it is a second writer of the seat index. `rangescan` shows
+   it is never reached with a literal `-1`, so it cannot be what puts `-1` in the local user,
+   but it is the one site of the 27 I cannot place.
+5. **Still one run per variant.** Two processes each time, byte-identical registers, and the
+   second run agreeing with the first — but no `0x0224` carrying `-1` at offset **416** has
+   ever been sent.
