@@ -63,6 +63,27 @@ impl Store {
         Ok(if taken == 0 { NameCheck::Available } else { NameCheck::AlreadyUsed })
     }
 
+    /// **The id behind a character name**, or `None` if nobody has it.
+    ///
+    /// `COLLATE NOCASE` for the same reason [`Store::check_character_name`] uses it: the
+    /// client shows one capitalisation and a player types another, and two characters cannot
+    /// differ by case anyway because the name check refuses it.
+    ///
+    /// Added for `!party invite <name>`, which is how a party is formed while `0x0182`'s
+    /// invite payload is still undecoded.
+    pub fn character_id_by_name(&self, name: &str) -> Result<Option<u32>> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT id FROM characters WHERE name = ?1 COLLATE NOCASE",
+                [name],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(|id| id as u32))
+    }
+
     /// Persist a new character and return it with the id the database assigned.
     ///
     /// The id is the one that goes on the wire, and it has to be distinct per character:

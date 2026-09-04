@@ -191,10 +191,12 @@ impl Session {
         // `ownType` into `drop+0x70` and never tests it again (`net::drops`, **[L]**), so who
         // is sent the `0x046E` is the only thing that decides who can take the item.
         //
-        // `Party::solo` is the whole of today's rule and the one line the party agent
-        // changes; `crate::mobshare::may_see_drop` is the predicate and `drops.rs` applies it.
+        // **This is the line the party seam was left open for**, and it is wired now.
+        // `crate::mobshare::may_see_drop` is the predicate and `drops.rs` applies it; the only
+        // question here is who counts as "us", and `Session::party_for` answers it from the
+        // channel's real membership instead of assuming everyone is alone.
         let (map, now) = (chr.map_id, self.clock_ms);
-        let party = crate::mobshare::Party::solo(chr.id);
+        let party = self.party_for(chr.id);
         let who = chr.id;
         out.extend(self.fields.with_drops(map, |d| d.field_entry(map, now, who, &party)));
         out.extend(self.restore_bag_and_mesos());
