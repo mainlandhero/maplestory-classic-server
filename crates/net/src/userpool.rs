@@ -479,7 +479,39 @@ pub fn user_enter_field(chr: &crate::opcode::Character, at: RemoteAt) -> Vec<u8>
     w.u32(0); //                  32
     w.u32(0); //                  36
     w.u8(chr.gender); //          40
-    w.u32(0); //                  41  fame
+    // **41 is not fame, it is an array index into the field, and `0` is a valid index.**
+    //
+    // `1429ce483 call 0x1406e8c20 (READ u32)` then `1429ce488 mov [r14+0x3b28], eax` - stored
+    // raw. Vtable slot `+0x18` hands it back, and it reaches `0x14182a140`, a bounds-checked
+    // accessor on an array hanging off the field:
+    //
+    // ```text
+    //   r8  = [field_info + 0x178]        the array base   -> NULL on this map (measured)
+    //   ecx = r8 ? [r8-8] : 0             the element count -> 0
+    //   if (idx >= 0 && idx < count) goto ok
+    //       call 0x142e54290(0xbc, idx, count)   a REPORTER - it does not throw
+    //   ok: return r8 + 48*idx + 8         ->  0 + 0 + 8  =  8
+    // ```
+    //
+    // **The out-of-range access is logged and then honoured**, so the caller gets `8` and
+    // `0x140f9295e mov rcx,[rax]` reads address 8. That is the fault that replaced the decode
+    // crash: both clients, both dumps, `RAX = 8` register for register.
+    //
+    // **`-1` is the client's own "no entry", and its own local `CUser` proves it.** In the
+    // same process at the same instant the local user holds `0xFFFFFFFF` here where ours held
+    // `0`, and all three call sites of `0x14182a140` are gated `cmp eax,-1 / je <skip>`.
+    // Diffing local against remote dword by dword across all `0x4400` bytes gives **exactly
+    // one** offset that is -1 in the local and 0 in ours: this one. `[L]`,
+    // `research/0x0224-remote-user-first-use-fault.md`.
+    //
+    // The old label came from the v214 reference tree, which `CLAUDE.md` scores 1 of 8 and
+    // calls a candidate generator. `research/user-enter-field.md` marked it **[I]** honestly;
+    // it was still written down as a name and read back as a fact.
+    //
+    // **The symptom is map-dependent, which is worth knowing before the next map.** On a map
+    // whose array is NOT empty, index 0 resolves silently and pins every remote avatar to
+    // entry 0 instead of crashing - a wrong screen rather than a dead client.
+    w.i32(-1); //                 41  a per-map array index; -1 = none
     w.u32(0); //                  45  name-tag mark
     w.u8(0); //                   49
     w.u32(0); //                  50
@@ -788,6 +820,34 @@ mod tests {
         // The field right after the header is the level, which is only true while the
         // header is three words long.
         assert_eq!(u32::from_le_bytes(body[12..16].try_into().unwrap()), 8);
+    }
+
+    /// **Offset 41 is `-1`, and `0` there killed both clients.**
+    ///
+    /// It reaches `CUser+0x3b28` and from there an array index into the field. The accessor
+    /// is bounds-checked, **reports** an out-of-range index, and then honours it anyway -
+    /// returning `base + 48*idx + 8`, which for a null base and index 0 is the address `8`.
+    /// `-1` is the client's own "no entry": its local `CUser` carries `0xFFFFFFFF` here, and
+    /// every call site of that accessor is gated `cmp eax,-1 / je`.
+    ///
+    /// Anchored on the gender byte immediately before it, because an assertion at a fixed
+    /// offset in a mostly-zero body is worth nothing if the base has moved - which is exactly
+    /// how `there_is_no_miniroom_and_no_chair` passed through two wrong layouts.
+    #[test]
+    fn the_field_index_at_41_is_minus_one_and_not_zero() {
+        for (name, gender) in [("", 0u8), ("Cobalt", 1)] {
+            let mut chr = someone(name, &[]);
+            chr.gender = gender;
+            let body = user_enter_field(&chr, RemoteAt::default());
+            let at = 41 + name.len();
+
+            assert_eq!(body[at - 1], gender, "the gender byte anchors the offset below it");
+            assert_eq!(
+                i32::from_le_bytes(body[at..at + 4].try_into().unwrap()),
+                -1,
+                "0 here is a VALID array index and the client dereferences it"
+            );
+        }
     }
 
     /// The miniroom dword at 451 opens a nine-field block ending in a chat post if it is

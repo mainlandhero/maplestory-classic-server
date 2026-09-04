@@ -164,7 +164,7 @@ of 31 (217, 248, …) is not a hazard. **[L]**, read out of raw bytes rather tha
 | 32 | `1429ce456` | u32 | 4 | `+0x1108` | **[I]** guild-block tail |
 | 36 | `1429ce465` | u32 | 4 | `+0x110c` | **[I]** guild-block tail |
 | 40 | `1429ce474` | u8 | 1 | `+0x10fc` | gender **[I]** |
-| 41 | `1429ce483` | u32 | 4 | `+0x3b28` | fame / pop **[I]** |
+| 41 | `1429ce483` | u32 | 4 | `+0x3b28` | **a per-map array index. NOT fame** - see below **[L]** |
 | 45 | `1429ce492` | u32 | 4 | `+0x3770` | name-tag mark **[I]** |
 | 49 | `1429ce4a1` | u8 | 1 | `+0x3774` (zero-extended to dword) | **[I]** |
 | 50 | `1429ce4b3` | u32 | 4 | `+0x13b4` | **[I]** |
@@ -242,6 +242,33 @@ That is a **miniroom/shop announcement plus its chat line** **[I]** — the v214
 exactly `miniRoom.encode(); chr.encodeChatInfo(...)` at the matching position, and
 `FUN_1415ed1c0(.., 0x1f)` is the same chat outlet `research/user-chat-round2.md` §2 found behind
 bit 2 of the chat flag byte. **Send `00 00 00 00` here and none of it is read.**
+
+---
+
+### 2.4 Row 41 was called "fame" and it is an array index - corrected 2026-09-03
+
+The name came from the v214 reference tree and was tagged **[I]** honestly. It was still
+written down as a name and read back as a fact, and `crates/net/src/userpool.rs` sent `0`.
+
+`0` is a **valid array index**. The field reaches `CUser+0x3b28`, vtable slot `+0x18` hands it
+to `0x14182a140`, and that accessor **reports** an out-of-range index and then honours it -
+returning `base + 48*idx + 8`. With a null base and index 0 that is the address `8`, and
+`0x140f9295e mov rcx,[rax]` dereferences it. Both clients died there, both dumps identical
+register for register. **[L]**
+
+`-1` is the client's own "no entry": its local `CUser` carries `0xFFFFFFFF` here, and all three
+call sites are gated `cmp eax,-1 / je`. Diffing the local and remote `CUser` dword by dword
+over all `0x4400` bytes gives **exactly one** offset that is `-1` in the local and `0` in ours.
+**[L]** `research/0x0224-remote-user-first-use-fault.md`.
+
+The array is **not named** - **[I]** only, possibly the map's seat list (the enclosing error
+string carries `bSit`). The fix does not depend on knowing. But the symptom is map-dependent:
+on a map whose array is non-empty, index 0 resolves silently and pins every remote avatar to
+entry 0 rather than crashing.
+
+**A loose end, not on the fault path:** this table maps body 416 to `CUser+0x3c28`, and both
+dumps read **100** there for the local *and* the remote user while the builder writes 0. Either
+the row is wrong or something overwrites it after `Init`. Nobody has checked.
 
 ---
 
