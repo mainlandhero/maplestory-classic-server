@@ -780,7 +780,7 @@ impl Session {
             net::usermove::CLIENT_USER_MOVE => {
                 let payload = body.get(2..).unwrap_or(&[]);
                 if let Some(m) = net::usermove::parse_user_move(payload) {
-                    self.last_position = Some((m.x, m.y));
+                    self.note_own_position(m.x, m.y);
                     self.note_activity();
                     // **The packet the whole bus exists for.** The owner, 2026-08-29:
                     // *"the client's own movement is completely disregarded ...

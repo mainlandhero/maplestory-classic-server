@@ -213,6 +213,45 @@ impl Session {
         net::userpool::RemoteAt { x, y, move_action: 0, foothold: 0 }
     }
 
+    /// **Remember where this character is, and tell the bus, so a LATER joiner is not sent
+    /// a position from minutes ago.**
+    ///
+    /// The owner, 2026-09-03, with two clients finally on one map: *"the positioning is off if
+    /// someone joins the map later since they don't know where existing clients are. When
+    /// someone new joins a map with existing clients, they should be aware of what existing
+    /// clients' positions are."*
+    ///
+    /// They are right, and the cause is not that the server has no position - it has one, fed by
+    /// `0x00D9` and by attack packets. The cause is that [`crate::broadcast::Presence`]'s
+    /// `spawn` packet is **built once, at field entry**, and the bus hands that same frozen
+    /// body to everyone who arrives afterwards. The existing player then appears wherever they
+    /// were standing when THEY entered - which, before their first step, is the map origin.
+    ///
+    /// [`crate::broadcast::Bus::refresh_spawn`] was written for exactly this and **had zero
+    /// callers**. `CLAUDE.md`'s "built is not wired": on screen an unwired subsystem is
+    /// indistinguishable from one that does not exist.
+    ///
+    /// # One function, because two call sites is how the refresh gets forgotten
+    ///
+    /// `last_position` is written from the move handler and from the attack path. Setting the
+    /// field and refreshing the bus are the same event, so they are the same function - the
+    /// quest-payout lesson in `CLAUDE.md`, where every effect had to hang off the transition
+    /// rather than be repeated beside it.
+    ///
+    /// Cheap by construction: it returns before touching the store when the position has not
+    /// actually changed, which is most `0x00D9`s in a stationary crowd.
+    pub(super) fn note_own_position(&mut self, x: i16, y: i16) {
+        if self.last_position == Some((x, y)) {
+            return;
+        }
+        self.last_position = Some((x, y));
+        // Only worth rebuilding while somebody could still arrive and be told. A connection
+        // with no presence is not on a field.
+        let Some(chr) = self.claimed_character() else { return };
+        let spawn = self.presence(&chr).spawn;
+        self.fields.bus().refresh_spawn(self.subscriber, spawn);
+    }
+
     /// This character as everyone else on the field needs to hear about it.
     ///
     /// Both packets are built **now**, including the farewell, because the

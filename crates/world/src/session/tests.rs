@@ -8002,6 +8002,49 @@ fn walking_into_a_field_does_not_re_send_another_players_drops() {
     assert_eq!(back[0].body[1], net::drops::ENTER_INSTANT, "already lying there, no second arc");
 }
 
+/// **A late joiner is told where people ARE, not where they were when they arrived.**
+///
+/// The owner, 2026-09-03: *"the positioning is off if someone joins the map later since they don't
+/// know where existing clients are."* The spawn packet is built once at field entry and the
+/// bus hands that same body to every later arrival, so a player who walked across the map
+/// still appears at the origin - which is where they were standing before their first step.
+///
+/// The assertion is on the POSITION BYTES of the packet the joiner actually receives, not on
+/// `last_position`: the session knowing where somebody is was never the problem.
+#[test]
+fn someone_joining_late_is_told_where_the_others_are_now() {
+    let (store, config, fields, account) = shared_channel(0, 30);
+    let (mut early, _) = join_channel(&store, &config, &fields, account, "Early");
+    early.on_field_entered();
+
+    // Early walks. This is the move packet's own path, not a test back door.
+    let walked = (1337i16, 395i16);
+    early.note_own_position(walked.0, walked.1);
+
+    let (mut late, _) = join_channel(&store, &config, &fields, account, "Late");
+    let seen = late.on_field_entered();
+    let spawn: Vec<&Reply> =
+        seen.iter().filter(|r| r.opcode == net::userpool::USER_ENTER_FIELD).collect();
+    assert_eq!(spawn.len(), 1, "the joiner is told about exactly one other player: {seen:?}");
+
+    // `Early` has an empty equip list here, so the only shift is the name.
+    let at = net::userpool::USER_ENTER_FIELD_POS_AT + "Early".len();
+    let body = &spawn[0].body;
+    assert_eq!(
+        (
+            i16::from_le_bytes(body[at..at + 2].try_into().unwrap()),
+            i16::from_le_bytes(body[at + 2..at + 4].try_into().unwrap()),
+        ),
+        walked,
+        "the joiner must be told where Early is NOW, not where it entered"
+    );
+
+    // The control, and it is what makes the assertion above mean something: the ORIGIN is
+    // what this used to send, so a test that happened to pass on a stale body would read
+    // (0, 0) here.
+    assert_ne!(walked, (0, 0), "the walked-to position must differ from the origin");
+}
+
 /// **A controller that leaves hands its mobs to somebody still there, and that somebody is
 /// told without having to move.**
 ///
