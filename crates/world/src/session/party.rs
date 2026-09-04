@@ -368,8 +368,19 @@ mod tests {
 
         // **And the client is TOLD.** `0x0E` CREATED, carrying the party id, the leader's
         // own seat and the name they typed - not the placeholder refusal this used to send.
-        assert_eq!(out[0].body[0..2], net::party::PARTY_RESULT.to_le_bytes());
-        assert_eq!(out[0].body[2], net::party::result::CREATED);
+        // **Asserted on `packet()`, which is what reaches the framer**, not on `body`.
+        // The version of this that read `body[0..2] == PARTY_RESULT` passed while the wire
+        // carried `a5 00 | a5 00 0e ...` - the opcode twice, because the builder wrote it and
+        // `Reply::packet()` wrote it again. The client read `0xA5` as the result code, fell
+        // through to the default arm, and printed "your party request failed".
+        //
+        // It hid because `UNKNOWN_ERROR` is ITSELF a default-arm code, so every refusal test
+        // passed on a doubled packet that produced the message it intended. Only a real arm
+        // could expose it.
+        let wire = out[0].packet();
+        assert_eq!(wire[0..2], net::party::PARTY_RESULT.to_le_bytes(), "the opcode, ONCE");
+        assert_eq!(wire[2], net::party::result::CREATED, "then the code");
+        assert_ne!(wire[3], 0xA5, "and not the opcode a second time");
         assert!(
             out[0].body.windows(6).any(|w| w == b"Leader"),
             "the leader's seat is in the body"
@@ -425,8 +436,8 @@ mod tests {
     #[test]
     fn the_refusal_is_a_read_free_code() {
         let body = net::party::request_failed();
-        assert_eq!(body.len(), 3, "the opcode's two bytes plus one code byte");
-        let code = body[2];
+        assert_eq!(body.len(), 1, "the code byte alone - Reply::packet adds the opcode");
+        let code = body[0];
         assert!(
             net::party::is_silent_code(code),
             "code {code} must be one whose handler arm reads nothing"

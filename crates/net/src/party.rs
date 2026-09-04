@@ -321,7 +321,16 @@ pub struct Member {
     pub name: String,
     /// Job id, level, and the two the decoder reads beside them. Widths are **[L]**; what
     /// three of the four MEAN is not established and they are sent as given.
+    /// `member+0x14`. **[D]** and reasonably firm: `FUN_1402b0250` builds a table keyed
+    /// `0` -> "Beginner", `0x64` -> "Swordsman", `0x6e` -> "Fighter", and this is what it is
+    /// looked up by.
     pub job: u32,
+    /// `member+0x18`. **WATCH THIS ONE ON THE NEXT RUN.** `+0x18` is the *second argument*
+    /// to that same lookup, so level may belong at `+0x1c` instead - in which case the party
+    /// row shows a level of **0** while the job name is right.
+    ///
+    /// Deliberately not moved yet: the framing fix is going out on its own, because changing
+    /// two things in one launch has already produced one unexplained crash here.
     pub level: u32,
     pub unknown_c: u32,
     pub unknown_d: u32,
@@ -376,11 +385,12 @@ pub fn party_seat_is_in_range(seat: usize) -> bool {
 /// and their meanings are **not established**, and zero is the value a party with nothing in
 /// it yet should carry. That is an assumption and it is written down as one.
 pub fn party_created(party_id: u32, name: &str, leader: &Member) -> Vec<u8> {
-    // **`with_opcode`, like every other builder in this file.** The opcode is part of the
-    // body here, and a builder that started at the code byte would put `0x0E` where the
-    // framer expects `0xA5 0x00`. Caught by the one test that compared a real packet against
-    // `request_failed` rather than against itself.
-    let mut w = PacketWriter::with_opcode(PARTY_RESULT);
+    // **`new`, not `with_opcode` - the opcode is prepended by `Reply::packet()`.**
+    //
+    // This said the opposite for a day, and the sentence it said it in was wrong in both
+    // halves: `with_opcode` is used by no other outbound builder in `crates/net`, and the
+    // test that "caught" it was pinning the doubled shape rather than the right one.
+    let mut w = PacketWriter::new();
     w.u8(result::CREATED);
     w.u32(party_id);
     w.u8(0);
@@ -407,7 +417,9 @@ pub fn refusal(code: u8) -> Option<Vec<u8>> {
     if !is_silent_code(code) {
         return None;
     }
-    let mut w = PacketWriter::with_opcode(PARTY_RESULT);
+    // `new`, not `with_opcode`. See `party_created`: `Reply::packet()` prepends the opcode,
+    // so putting it here sends it twice.
+    let mut w = PacketWriter::new();
     w.u8(code);
     Some(w.into_vec())
 }
@@ -764,12 +776,12 @@ mod tests {
     }
 
     #[test]
-    fn refusal_builds_the_two_byte_body_for_every_silent_code() {
+    fn refusal_builds_the_one_byte_body_for_every_silent_code() {
         for &code in SILENT_CODES {
             let pkt = refusal(code).unwrap_or_else(|| panic!("{code:#04x} must build"));
-            assert_eq!(pkt.len(), 3, "opcode u16 + one code byte");
-            assert_eq!(u16::from_le_bytes([pkt[0], pkt[1]]), PARTY_RESULT);
-            assert_eq!(pkt[2], code);
+            // **One byte. The opcode is `Reply::packet()`'s to add**, and this asserted
+            // three for a day - which is how `a5 00 | a5 00 04` reached the client.
+            assert_eq!(pkt, vec![code], "the body is the code and nothing else");
         }
     }
 
@@ -807,10 +819,26 @@ mod tests {
         }
     }
 
+    /// **The body starts at the CODE. `Reply::packet()` puts the opcode in front of it.**
+    ///
+    /// This asserted `[0xA5, 0x00, UNKNOWN_ERROR]` for a day, and passed, and the wire
+    /// carried `a5 00 | a5 00 04`. It could not fail on the packet it was written for:
+    /// `UNKNOWN_ERROR` is itself a default-arm code, so the client read `0xA5`, fell to the
+    /// default arm, and printed **the message the packet intended**. The refusal worked by
+    /// accident and hid the defect from every refusal test there is.
+    ///
+    /// `party_created` is what exposed it - `0x0E` is a real arm, and it was never entered.
     #[test]
-    fn request_failed_is_the_default_arm() {
-        let pkt = request_failed();
-        assert_eq!(pkt, vec![0xA5, 0x00, result::UNKNOWN_ERROR]);
+    fn a_result_body_starts_at_the_code_byte_and_not_at_the_opcode() {
+        assert_eq!(request_failed(), vec![result::UNKNOWN_ERROR]);
+        assert_eq!(refusal(result::JOIN_REFUSED_FULL), Some(vec![result::JOIN_REFUSED_FULL]));
+
+        // And the one that has a body: it starts with the code, and `0xA5` appears nowhere
+        // in the first two bytes.
+        let m = Member { char_id: 214, name: "Tester2".into(), ..Member::default() };
+        let created = party_created(1, "Tester2's Party", &m);
+        assert_eq!(created[0], result::CREATED, "the code is the first byte");
+        assert_ne!(created[0], 0xA5, "not the opcode - that is Reply::packet's job");
     }
 
     #[test]

@@ -805,3 +805,43 @@ than `0x0D`, which does the same job unconditionally.
 7. **`MAX_MEMBERS`.** `research/party.md` had it as [I]. This pass makes it **[L] = 6** for
    the wire, three independent ways: `mov edi,6`, `cmp r8,6`, and `cmp eax,5 / jbe`. That
    settles the *packet*; whether the server should also cap at six is now a consequence.
+
+---
+
+## 9. APPENDED 2026-09-04: it has now been on the wire, and §7's builder had a two-byte defect
+
+Everything above §7 **survived its first wire test**. The owner pressed Create; the server built the
+`0x0E` body from §5.1's field list; the 209 bytes it produced decode exactly as §5.1 and §3 say,
+re-derived independently from the field list without reading the Rust. **The decode is not what
+was wrong.**
+
+**One line of §7 is wrong**, and it is the line that caused the client to show *"Due to an unknown
+error, your party request failed."*:
+
+```rust
+pub fn party_created(...) -> Vec<u8> {
+    let mut w = PacketWriter::with_opcode(PARTY_RESULT);   // <-- WRONG
+```
+
+The `Vec` these builders return becomes `Reply.body`, and `Reply::packet()`
+(`crates/world/src/session/mod.rs:43`) prepends `opcode.to_le_bytes()` itself. The wire therefore
+carried `a5 00 | a5 00 0e 01 ...`, the client's first `u8` read at `0x1413baf47` returned **`0xA5`**,
+`add eax,-3 / cmp eax,0x2c / ja` sent it to the **default arm** at `0x1413bcbb5`, and that arm is
+the one that loads string `0x012A`. **Every builder in §7 must start `PacketWriter::new()`.**
+
+Two things this pass could not have known and one it could:
+
+* **`request_failed()` has the identical defect and it is invisible**, because `UNKNOWN_ERROR = 0x04`
+  is itself a default-arm code — the doubled opcode produces the same message the code would have.
+  So the valve "worked" and proved nothing.
+* **`world.log` cannot show it.** `server::send` logs `packet[2..]`, i.e. the body, so the two bytes
+  it prepends are the two it never prints. §8.4's *"nothing here has been on the wire"* was right;
+  what nobody had checked is that the log of an outbound packet is the **builder's output, not the
+  wire**.
+* One upgrade in the other direction: §3's *"`a`/`b` together resolve to a display string - the job
+  name is the obvious candidate. **[I]**"* is now **[D]**. `FUN_1402b0250` builds a job table whose
+  first three inserts are key `0` -> `0x0022` *"Beginner"*, key `0x64` -> `0x002D` *"Swordsman"*,
+  key `0x6e` -> `0x002E` *"Fighter"*. **`member+0x14` is the job id.** **[L]** What `+0x18` is
+  remains unknown; it is that lookup's second argument, and the level may belong at `+0x1c` instead.
+
+Full working, with the four independent legs and the controls: `research/party-create-refused-first-wire-observation.md`.
