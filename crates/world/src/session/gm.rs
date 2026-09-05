@@ -1839,20 +1839,41 @@ impl Session {
     /// submit one, so an empty `0x00E7` means something else is going on, and a balloon
     /// with no text is a worse answer than none.
     ///
-    /// This is a **local echo, not a broadcast**: it goes back to the one connection that
-    /// spoke. There is nobody else on the field to send it to yet - the server has no
-    /// concept of a second player in a field - and saying so here is cheaper than
-    /// rediscovering it when there is.
+    /// The speaker gets the echo back on this connection, and **everyone else on the map gets
+    /// the same packet through the bus**. `0x0231` carries the character id, so a remote
+    /// client draws the balloon over that character's head and writes the chat-log line.
+    ///
+    /// This said *"a local echo, not a broadcast ... there is nobody else on the field to send
+    /// it to yet"* until 2026-09-05, which was true when written and had been false since the
+    /// multiplayer bus arrived. The owner, on the first two-client run with chat: *"each client was
+    /// only able to see the message that they sent."* Built before the bus, never revisited -
+    /// the "built is not wired" shape in its oldest form.
     pub(super) fn say_out_loud(&mut self, text: &str) -> Vec<Reply> {
         if text.is_empty() {
             return Vec::new();
         }
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        vec![Reply {
+        let echo = Reply {
             opcode: net::userchat::USER_CHAT,
             body: net::userchat::user_chat(chr.id, text),
             what: format!("UserChat: {} ({}) says {:?}", chr.id, chr.name, text),
-        }]
+        };
+        // `supersedes: None` - chat is an event, and two lines are two lines.
+        if let Some(map) = self.bus().map_of(self.subscriber) {
+            self.bus().publish(
+                self.subscriber,
+                map,
+                Reply {
+                    what: format!(
+                        "UserChat (relayed to the map): {} ({}) says {:?}",
+                        chr.id, chr.name, text
+                    ),
+                    ..echo.clone()
+                },
+                None,
+            );
+        }
+        vec![echo]
     }
 }
 

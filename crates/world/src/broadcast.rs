@@ -424,6 +424,27 @@ impl Bus {
         true
     }
 
+    /// **A finished packet to one character, wherever on this channel they are.** Returns
+    /// whether anybody got it.
+    ///
+    /// [`Bus::publish_to_character`] matches the map as well, because a drop belongs to a
+    /// field. A party invite does not: it is owed to a person, on whatever map they are
+    /// standing, and a target who walked through a portal between the leader typing the name
+    /// and the packet being built is still the target. Same-channel only, like everything on
+    /// this bus - an invite to a character on another channel process is not delivered, and
+    /// the `false` is the caller's cue to say so.
+    pub fn publish_to_character_anywhere(&self, character: u32, reply: Reply) -> bool {
+        let mut inner = self.lock();
+        let Some(id) = inner.boxes.iter().find_map(|(id, m)| {
+            let p = m.presence.as_ref()?;
+            (p.character == character).then_some(*id)
+        }) else {
+            return false;
+        };
+        inner.post_to(id, reply);
+        true
+    }
+
     pub fn send_to_character(&self, character: u32, event: Event) -> bool {
         let mut inner = self.lock();
         let mut delivered = false;

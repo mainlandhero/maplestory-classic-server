@@ -111,6 +111,17 @@ both built, tested, and exercised against the shipped binaries:
   (`claims_smoke` proves it for the login socket; the world banner self-tests the lookup).
   `-BindMigrations never` is the escape hatch if a character stops entering the world.
 
+* **After the first enforced two-client run** (both clients entered the world - the on-box
+  binding held on a real channel socket): **chat now reaches the other client** - `say_out_loud`
+  was a local echo written before the bus and never revisited - and **the party invite is
+  answered properly**: the leader gets `0x1B` outcome 0 *"You have invited '%s'"* ([L]; it was
+  `UNKNOWN_ERROR` because the body was undecoded), the target is handed the `0x03` that opens
+  the invite dialog (shape [L], fields 3-6 [I]: inviter name, level, job, 0), and `0x0183` is
+  read as `{op, answer, value}` with `value` the party id: answer `1` (the measured auto-decline)
+  declines, anything else is treated as accept **until a Decline click's byte is read off
+  `world.log`**. A join sends `0x13` to every member; whether the member list refreshes on it is
+  the next run's measurement. T14.
+
 What did **not** change: the game socket still carries no credential. What changed about the
 exposure: forwarded to the internet, a stranger reaching 8484 is no longer served as anyone
 by default - only a connection attributed to a live sign-in is served, and attribution by

@@ -601,6 +601,109 @@ mod tests {
     /// mailbox contributed and nothing else.
     const NOTHING: [u8; 2] = [0xFF, 0xFE];
 
+    /// Two sessions on one map. The speaker gets the echo on its own connection; the other
+    /// hears it through the bus, with the speaker's character id; the speaker does not hear
+    /// itself twice. The owner, 2026-09-05: *"each client was only able to see the message that
+    /// they sent."*
+    #[test]
+    fn a_chat_line_reaches_everyone_else_on_the_map() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Cobalt", "Tester2"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: 104_040_000,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut speaker = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut listener = Session::joining(store, config, fields);
+        speaker.claim_for_character(ids[0]);
+        listener.claim_for_character(ids[1]);
+        speaker.on_field_entered();
+        listener.on_field_entered();
+        let _ = speaker.tick(1_000);
+        let _ = listener.tick(1_000);
+
+        let echo = speaker.say_out_loud("hello cobalt");
+        assert_eq!(echo.len(), 1);
+        assert_eq!(echo[0].opcode, net::userchat::USER_CHAT);
+
+        let mail = listener.tick(2_000);
+        let heard: Vec<&Reply> = mail.iter().filter(|r| r.opcode == net::userchat::USER_CHAT).collect();
+        assert_eq!(heard.len(), 1, "the other player hears it once");
+        assert_eq!(heard[0].body, echo[0].body, "the same packet: the speaker's id and the text");
+        assert!(heard[0].what.contains("relayed"), "{}", heard[0].what);
+
+        let own: Vec<Reply> = speaker.tick(3_000);
+        assert!(own.iter().all(|r| r.opcode != net::userchat::USER_CHAT), "no double line for the speaker");
+    }
+
+    /// **Invite, dialog, accept - across two sessions.** The leader is told the outcome, the
+    /// target is handed the 0x03 that opens the dialog (field 2 being the party id the answer
+    /// echoes), and an Accept tells both that the joiner joined. Shapes [L]; what the dialog
+    /// draws from fields 3-6 is [I] and belongs to the next run.
+    #[test]
+    fn a_party_invite_reaches_the_target_and_an_accept_tells_everyone() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Cobalt", "Tester2"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: 104_040_000,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut leader = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut invitee = Session::joining(store, config, fields);
+        leader.claim_for_character(ids[0]);
+        invitee.claim_for_character(ids[1]);
+        leader.on_field_entered();
+        invitee.on_field_entered();
+        let _ = leader.tick(1_000);
+        let _ = invitee.tick(1_000);
+
+        let created = leader.run_party_request(
+            ids[0],
+            crate::party::Request::Create { name: "Cobalt's Party".into() },
+        );
+        assert_eq!(created[0].body[0], net::party::result::CREATED, "{created:?}");
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+
+        let out = leader.run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].body[0], net::party::result::INVITE_OUTCOME, "not UNKNOWN_ERROR any more");
+        assert_eq!(&out[0].body[1..5], &0i32.to_le_bytes(), "outcome 0: You have invited");
+        assert!(out[0].what.contains("Tester2"), "{}", out[0].what);
+
+        let mail = invitee.tick(2_000);
+        let notify = mail
+            .iter()
+            .find(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::INVITE_NOTIFY_A)
+            .unwrap_or_else(|| panic!("the target must be handed the dialog: {mail:?}"));
+        assert_eq!(&notify.body[1..5], &ids[0].to_le_bytes(), "field 1: the inviter");
+        assert_eq!(&notify.body[5..9], &party.to_le_bytes(), "field 2: the party id");
+
+        let joined = invitee.run_party_request(ids[1], crate::party::Request::Accept { party });
+        assert!(
+            joined.iter().any(|r| r.body[0] == net::party::result::JOIN),
+            "the joiner is told: {joined:?}"
+        );
+        let mail = leader.tick(3_000);
+        assert!(
+            mail.iter().any(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::JOIN),
+            "and so is the leader: {mail:?}"
+        );
+    }
+
     /// Two sessions, one channel, one map - and a **real** `0x0224` crosses
     /// between them. This is the end-to-end claim of the whole feature, and it
     /// is the test that fails if any link in the chain is unhooked: the

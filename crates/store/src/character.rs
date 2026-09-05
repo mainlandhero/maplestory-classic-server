@@ -649,3 +649,35 @@ mod tests {
         assert_eq!(store.check_character_name("Hello").unwrap(), NameCheck::Available);
     }
 }
+
+impl Store {
+    /// A character's name by id, or `None`. For packets that name somebody OTHER than the
+    /// connection's own character - a party invite outcome names the target, a join names the
+    /// joiner - where the session holds only an id from the state machine.
+    pub fn character_name(&self, character_id: u32) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension as _;
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT name FROM characters WHERE id = ?1",
+                rusqlite::params![character_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+}
+
+#[cfg(test)]
+mod name_by_id_tests {
+    use super::*;
+
+    #[test]
+    fn a_character_name_is_found_by_id_and_a_missing_id_is_none() {
+        let store = Store::open_in_memory().unwrap();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Tester2".to_string(), ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        assert_eq!(store.character_name(id).unwrap().as_deref(), Some("Tester2"));
+        assert_eq!(store.character_name(id + 1000).unwrap(), None);
+    }
+}

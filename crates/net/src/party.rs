@@ -448,6 +448,101 @@ pub fn request_failed() -> Vec<u8> {
     refusal(result::UNKNOWN_ERROR).expect("UNKNOWN_ERROR is in SILENT_CODES")
 }
 
+/// The eleven outcomes `0x1B` can carry. `research/party-result-0x00A5.md` §5.7, all **[L]**:
+/// the arm's second jump table has one message per value and reads nothing else.
+pub mod invite_outcome {
+    /// *"You have invited '%s' to your party."* - what the leader sees after a successful invite.
+    pub const INVITED: i32 = 0;
+    /// *"%s is currently blocking any party invitations."*
+    pub const BLOCKING: i32 = 1;
+    /// *"'%s' is taking care of another invitation."*
+    pub const BUSY: i32 = 2;
+    /// *"You have already invited '%s' to your party."*
+    pub const ALREADY_INVITED: i32 = 3;
+    /// *"%s has denied the party request."*
+    pub const DENIED: i32 = 4;
+    /// *"'%s' could not be found in the current server."*
+    pub const NOT_FOUND: i32 = 7;
+    /// *"Party cannot be found. Please check the party info once again."*
+    pub const NO_SUCH_PARTY: i32 = 8;
+    /// *"The party you're trying to join is already in full capacity."*
+    pub const FULL: i32 = 9;
+    /// *"%s' is already in a party."*
+    pub const ALREADY_IN_A_PARTY: i32 = 10;
+}
+
+/// `0x1B` - the invite **outcome**, to the inviter. `raw[4] outcome (i32), str name`, and the
+/// body is always exactly `4 + 2 + len(name)` bytes past the code. **[L]**
+/// (`research/party-result-0x00A5.md` §5.7.) Until 2026-09-05 a successful invite was
+/// answered with `UNKNOWN_ERROR` because this was undecoded - which is what the owner saw as *"Due
+/// to an unknown error, your party request failed"* after an invite that had in fact worked.
+pub fn invite_outcome(outcome: i32, name: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(result::INVITE_OUTCOME);
+    // Read as four raw bytes and used as an i32 - written as its little-endian bits.
+    w.u32(outcome as u32);
+    w.str(name);
+    w.into_vec()
+}
+
+/// `0x03` - an invite arriving at the **target**. Six unconditional fields, so the body never
+/// varies in shape; their meanings are mixed. `research/party-result-0x00A5.md` §5.4:
+///
+/// | # | | |
+/// |---|---|---|
+/// | 1 | `u32` | looked up in a client-side blocked-user list - **a character id [D]**: the inviter's |
+/// | 2 | `u32` | **echoed back in the `0x0183` answer** - the invite's identity [D]: the party id |
+/// | 3 | `str` | handed to the dialog - the inviter's name **[I]** |
+/// | 4, 5, 6 | `u32` | handed to the dialog, meanings **not established** - sent as the inviter's level, job and 0 **[I]** |
+///
+/// The shape is [L]; which value goes where beyond field 2 is what the next client run
+/// measures, and the reader accepts zeros for all of 4-6.
+pub fn invite_notify(inviter_id: u32, party_id: u32, inviter_name: &str, level: u32, job: u32) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(result::INVITE_NOTIFY_A);
+    w.u32(inviter_id);
+    w.u32(party_id);
+    w.str(inviter_name);
+    w.u32(level);
+    w.u32(job);
+    w.u32(0);
+    w.into_vec()
+}
+
+/// `0x13` - *"'%s' has joined the party."* / *"You have joined the party."*, `str`. **[L]** shape;
+/// which of the two strings the client picks is its own business (`research/party.md` table).
+pub fn joined(name: &str) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(result::JOIN);
+    w.str(name);
+    w.into_vec()
+}
+
+/// The invitee's answer, `0x0183`. `{u8 op, u8 answer, u64 value}` encoded as a FlatBuffers
+/// table (`research/party.md`: op is `0x1B`, and `value` is field 2 of the `0x03` that opened
+/// the dialog). **Slot order is [D]** - the struct's field order, which is how the `0x0182`
+/// tables were laid out - and **the answer byte's values are [D]/[I]**: the auto-decline path
+/// sends `1`; the dialog's two buttons send two other constants and which is accept has not
+/// been measured. The world server acts only on what is established and logs the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InviteAnswer {
+    pub op: u8,
+    pub answer: u8,
+    pub value: u64,
+}
+
+/// The answer byte the client sends when it declines WITHOUT a dialog (`0x1413bafd3`). **[L]**
+pub const INVITE_ANSWER_AUTO_DECLINE: u8 = 1;
+
+pub fn parse_invite_answer(body: &[u8]) -> Option<InviteAnswer> {
+    let root = read_u32(body, 0)? as usize;
+    let (table, vtable) = table_at(body, root)?;
+    let op = table_u8(body, table, vtable, 0)?.unwrap_or(0);
+    let answer = table_u8(body, table, vtable, 1)?.unwrap_or(0);
+    let value = table_u64(body, table, vtable, 2)?.unwrap_or(0);
+    Some(InviteAnswer { op, answer, value })
+}
+
 /// What a [`CLIENT_PARTY_REQUEST`] asked for, as far as its body can be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartyRequest {
@@ -881,5 +976,67 @@ mod tests {
         seen.dedup();
         assert_eq!(seen.len(), all.len());
         assert_eq!(seen, vec![0, 1, 2, 3, 4, 5, 6]);
+    }
+}
+
+#[cfg(test)]
+mod invite_tests {
+    use super::*;
+
+    /// The outcome body is exactly `code + 4 + 2 + len(name)`, the length the arm reads.
+    #[test]
+    fn the_invite_outcome_is_the_length_the_client_reads() {
+        let body = invite_outcome(invite_outcome::INVITED, "Tester2");
+        assert_eq!(body.len(), 1 + 4 + 2 + 7);
+        assert_eq!(body[0], result::INVITE_OUTCOME);
+        assert_eq!(&body[1..5], &0i32.to_le_bytes());
+        let denied = invite_outcome(invite_outcome::DENIED, "Tester2");
+        assert_eq!(&denied[1..5], &4i32.to_le_bytes());
+    }
+
+    /// Six fields, all present, in the order the arm reads them.
+    #[test]
+    fn the_invite_notify_has_six_unconditional_fields() {
+        let body = invite_notify(213, 1, "Cobalt", 18, 200);
+        assert_eq!(body.len(), 1 + 4 + 4 + (2 + 6) + 4 + 4 + 4);
+        assert_eq!(body[0], result::INVITE_NOTIFY_A);
+        assert_eq!(&body[1..5], &213u32.to_le_bytes(), "field 1, the inviter");
+        assert_eq!(&body[5..9], &1u32.to_le_bytes(), "field 2, echoed back in 0x0183");
+        assert_eq!(&body[9..11], &6u16.to_le_bytes());
+        assert_eq!(&body[11..17], b"Cobalt");
+        assert_eq!(&body[17..21], &18u32.to_le_bytes());
+        assert_eq!(&body[21..25], &200u32.to_le_bytes());
+        assert_eq!(&body[25..29], &0u32.to_le_bytes());
+    }
+
+    #[test]
+    fn joined_is_the_code_and_a_string() {
+        let body = joined("Tester2");
+        assert_eq!(body, [&[result::JOIN][..], &7u16.to_le_bytes(), b"Tester2"].concat());
+    }
+
+    /// A hand-built FlatBuffers table `{op, answer, value}` in slot order: root offset, then
+    /// the vtable, then the table whose soffset points back at it. This pins the READER; the
+    /// slot order it assumes is the [D] part and a real capture is what checks it.
+    #[test]
+    fn the_invite_answer_reader_walks_a_three_slot_table() {
+        let mut b = Vec::new();
+        b.extend_from_slice(&14u32.to_le_bytes()); // root: the table starts at 14
+        // vtable at 4: size 10, table size 16, slots at +4, +5, +8
+        for v in [10u16, 16, 4, 5, 8] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        // table at 14: soffset = table - vtable = 10
+        b.extend_from_slice(&10i32.to_le_bytes());
+        b.push(0x1B); // op
+        b.push(1); // answer
+        b.extend_from_slice(&[0, 0]); // padding to the u64
+        b.extend_from_slice(&7u64.to_le_bytes()); // value: the party id we sent as field 2
+        assert_eq!(b.len(), 30);
+        assert_eq!(
+            parse_invite_answer(&b),
+            Some(InviteAnswer { op: 0x1B, answer: INVITE_ANSWER_AUTO_DECLINE, value: 7 })
+        );
+        assert_eq!(parse_invite_answer(&b[..8]), None, "a truncated body is None, not a guess");
     }
 }

@@ -78,6 +78,19 @@
 
     ============ WHAT THIS RUN IS FOR ============
 
+    T14 (2026-09-05, after the two-client run). CHAT AND PARTY INVITE. Chat: a line typed on
+    one client draws the balloon and the chat-log line on the OTHER client - `say_out_loud`
+    was a local echo written before the bus existed, and each client saw only its own line.
+    Party: leader Create, Invite by name. The leader must read "You have invited '<name>' to
+    your party." (0x1B outcome 0, [L]) instead of "unknown error"; the TARGET gets the 0x03
+    invite dialog for the first time ever - its six fields are [L] in shape and fields 3-6
+    are [I] in meaning (sent: inviter name, level, job, 0), so what the dialog draws is the
+    measurement. ACCEPT: both clients read "has joined the party" (0x13, [L]); whether the
+    window's member list refreshes on that is NOT established - say. DECLINE: the two dialog
+    buttons' answer bytes are unmeasured, so anything but the auto-decline value 1 is treated
+    as accept for now; world.log prints "0x0183 invite answer ... answer=N raw=..." either
+    way, and N from a Decline click is the constant that fixes it.
+
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. The new observation is the
     REFUSAL on a real client: with nobody signed in yet, start the PATCHED client with its own
@@ -1590,6 +1603,17 @@ function Show-TestPlan {
         Write-Host '       world.log for "REFUSED the migration" - that is the on-box'
         Write-Host '       attestation failing, it is a finding, and -BindMigrations never'
         Write-Host '       gets you playing while it is looked at.'
+        Write-Host '    0b. CHAT AND PARTY INVITE (fixed 2026-09-05 after the two-client run).'
+        Write-Host '       CHAT: type on one client, the OTHER client shows the balloon over'
+        Write-Host '       that character and the chat-log line. Before: each saw only its own.'
+        Write-Host '       PARTY: leader Create, then Invite by name. Leader should now read'
+        Write-Host '       "You have invited <name> to your party." (not "unknown error"), and'
+        Write-Host '       the TARGET should get an invite DIALOG - first time ever; fields 3-6'
+        Write-Host '       of it are inferred, so say what it displays (name? level? job?).'
+        Write-Host '       Click ACCEPT: both should read "has joined the party"; whether the'
+        Write-Host '       member LIST refreshes is unknown - say. A DECLINE click is treated as'
+        Write-Host '       accept for now (the two button values are unmeasured): world.log'
+        Write-Host '       prints "0x0183 invite answer ... answer=N" - that N is what fixes it.'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'

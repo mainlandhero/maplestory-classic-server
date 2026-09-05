@@ -151,6 +151,104 @@ impl super::Session {
                         ),
                     });
                 }
+                // **The invite, both halves.** `research/party-result-0x00A5.md` §5.4 and §5.7.
+                Effect::Invited { party, from, target } => {
+                    let target_name = self.name_of(*target);
+                    // To the inviter: 0x1B outcome 0, "You have invited '%s' to your party." [L].
+                    // Until 2026-09-05 this was UNKNOWN_ERROR, which is the sentence the owner saw.
+                    let outcome = Reply {
+                        opcode: net::party::PARTY_RESULT,
+                        body: net::party::invite_outcome(
+                            net::party::invite_outcome::INVITED,
+                            &target_name,
+                        ),
+                        what: format!(
+                            "PartyResult INVITE OUTCOME 0 to character {from}: \"You have invited \
+                             '{target_name}' to your party.\" [L]"
+                        ),
+                    };
+                    self.deliver(*from, actor, outcome, &mut out);
+                    // To the target: 0x03, six unconditional fields. The SHAPE is [L]; which
+                    // value the dialog draws where, beyond field 2, is what the next client run
+                    // measures - see `net::party::invite_notify`.
+                    let (inviter_name, level, job) = match self.claimed_character() {
+                        Some(c) if c.id == *from => (c.name.clone(), u32::from(c.level), u32::from(c.job)),
+                        _ => (self.name_of(*from), 0, 0),
+                    };
+                    let notify = Reply {
+                        opcode: net::party::PARTY_RESULT,
+                        body: net::party::invite_notify(*from, *party, &inviter_name, level, job),
+                        what: format!(
+                            "PartyResult INVITE NOTIFY (0x03) to character {target}: inviter {from} \
+                             {inviter_name:?}, party {party} as field 2 (echoed back in 0x0183), \
+                             level {level} and job {job} as fields 4-5 [I]. Opens the invite dialog"
+                        ),
+                    };
+                    if !self.bus().publish_to_character_anywhere(*target, notify) {
+                        crate::server::log(&format!(
+                            "   party: character {target} is not on this channel, so the invite \
+                             dialog was NOT delivered. The invite is recorded; a target on another \
+                             channel will not see it until invites cross channels"
+                        ));
+                    }
+                }
+                // The invitee declined (or the invite was overtaken). The leader is told
+                // "%s has denied the party request." [L]; the invitee, if this is their own
+                // decline, gets code 0x17 - an arm inside the epilogue that shows nothing [L] -
+                // because an unanswered 0x0183 is a packet nobody has measured the client
+                // surviving, and UNKNOWN_ERROR would print a lie.
+                Effect::InviteDropped { party, target } => {
+                    let target_name = self.name_of(*target);
+                    if let Some(leader) = self.fields.parties().party(*party).map(|p| p.leader) {
+                        let denied = Reply {
+                            opcode: net::party::PARTY_RESULT,
+                            body: net::party::invite_outcome(
+                                net::party::invite_outcome::DENIED,
+                                &target_name,
+                            ),
+                            what: format!(
+                                "PartyResult INVITE OUTCOME 4 to character {leader}: \"{target_name} \
+                                 has denied the party request.\" [L]"
+                            ),
+                        };
+                        self.deliver(leader, actor, denied, &mut out);
+                    }
+                    if actor == *target {
+                        if let Some(body) = net::party::refusal(net::party::result::SILENT_17) {
+                            out.push(Reply {
+                                opcode: net::party::PARTY_RESULT,
+                                body,
+                                what: format!(
+                                    "PartyResult 0x17 to character {actor}: the decline is acknowledged \
+                                     with an arm that draws nothing [L]"
+                                ),
+                            });
+                        }
+                    }
+                }
+                // Everyone in the party, the joiner included, gets 0x13 with the joiner's name:
+                // "'%s' has joined the party." / "You have joined the party." [L] shape. Whether
+                // the window's member list refreshes on it is NOT established - the next run says.
+                Effect::Joined { party, who } => {
+                    let who_name = self.name_of(*who);
+                    let members = self
+                        .fields
+                        .parties()
+                        .party(*party)
+                        .map(|p| p.members.clone())
+                        .unwrap_or_default();
+                    for member in members {
+                        let reply = Reply {
+                            opcode: net::party::PARTY_RESULT,
+                            body: net::party::joined(&who_name),
+                            what: format!(
+                                "PartyResult JOIN (0x13) to character {member}: {who_name:?} joined \
+                                 party {party} [L shape; member-list refresh is [I]]"
+                            ),
+                        };
+                        self.deliver(member, actor, reply, &mut out);
+                    }
+                }
                 other => undecoded.push(format!("{other:?}")),
             }
         }
@@ -175,6 +273,28 @@ impl super::Session {
             });
         }
         out
+    }
+
+    /// A packet for `to`: onto this connection's own reply list when `to` is the actor,
+    /// otherwise through the bus to whichever connection on this channel plays `to`. A
+    /// recipient who is not on this channel is logged, not invented.
+    fn deliver(&self, to: u32, actor: u32, reply: Reply, out: &mut Vec<Reply>) {
+        if to == actor {
+            out.push(reply);
+        } else if !self.bus().publish_to_character_anywhere(to, reply) {
+            crate::server::log(&format!(
+                "   party: character {to} is not on this channel and was NOT told"
+            ));
+        }
+    }
+
+    /// A character's name for a packet, by id; `#id` when the store has no such row.
+    fn name_of(&self, id: u32) -> String {
+        self.store
+            .character_name(id)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| format!("#{id}"))
     }
 
     /// This character as a party seat.
@@ -279,11 +399,37 @@ impl super::Session {
                 )),
             }
         } else {
-            Err(format!(
-                "invite answer, {}-byte body {body:02x?} - the party id in it is not decoded. \
-                 Use !party accept",
-                body.len()
-            ))
+            // `0x0183`: `{u8 op, u8 answer, u64 value}`, value being the party id this server
+            // sent as field 2 of the 0x03 that opened the dialog. The reader's slot order is
+            // [D]; the answer byte is [L] for the auto-decline (1) and [I] for the dialog's two
+            // buttons - so the raw body is logged every time, and the decision is stated as a
+            // decision: 1 declines, anything else is treated as ACCEPT. If a real Decline click
+            // lands here as a join, the value in this log line is the decline constant.
+            match net::party::parse_invite_answer(body) {
+                Some(answer) => {
+                    crate::server::log(&format!(
+                        "   party: 0x0183 invite answer op={:#04x} answer={} value={} raw={body:02x?}",
+                        answer.op, answer.answer, answer.value
+                    ));
+                    let party = u32::try_from(answer.value).unwrap_or(0);
+                    if answer.answer == net::party::INVITE_ANSWER_AUTO_DECLINE {
+                        Ok(crate::party::Request::Decline { party })
+                    } else {
+                        crate::server::log(&format!(
+                            "   party: answer byte {} is not the auto-decline value; ACTING AS ACCEPT \
+                             [I] - the dialog's two button values have not been measured. If this \
+                             was a Decline, {} is the decline constant",
+                            answer.answer, answer.answer
+                        ));
+                        Ok(crate::party::Request::Accept { party })
+                    }
+                }
+                None => Err(format!(
+                    "invite answer, {}-byte body {body:02x?} did not parse as a FlatBuffers \
+                     table - these bytes are what the next decode pass needs",
+                    body.len()
+                )),
+            }
         };
 
         let Some(actor) = self.claimed_character().map(|c| c.id) else {
