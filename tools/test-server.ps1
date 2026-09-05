@@ -80,8 +80,14 @@
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. The new observation is the
-    REFUSAL on a real client: -ServersOnly, then start client-patched\MapleStory.exe
-    -NXLDEBUG 127.0.0.1 8484 by hand with nobody signed in. Expected: the client's own "not a
+    REFUSAL on a real client: with nobody signed in yet, start the PATCHED client with its own
+    folder as the working directory - Start-Process -FilePath <repo>\client-patched\
+    MapleStory.exe -WorkingDirectory <repo>\client-patched -ArgumentList '-NXLDEBUG',
+    '127.0.0.1','8484'. The working directory is not optional: the hook writes its log and
+    reads its markers relative to it, and the client inspects that folder. And it must be the
+    client-patched copy, not the one under C:\Nexon, whose real GameGuard answers a hand
+    launch with "Please delete the hacking program from the MapleStory launch folder" (seen
+    2026-09-05 on the first attempt at this step). Expected: the client's own "not a
     registered ID" notice, and a client that stays usable afterwards. A FROZEN client means
     the refusal packet was not accepted by the login-result handler and the "always answer"
     rule is broken on this path - that is the finding, and it is the reason this is a step
@@ -1570,8 +1576,11 @@ function Show-TestPlan {
         Write-Host '  WHAT IS WORTH A RUN NOW, in order:' -ForegroundColor Yellow
         Write-Host '    0. LOGIN IS ENFORCED (new 2026-09-05). The launcher path is the run'
         Write-Host '       now: sign in there, Start Game, the world as before. To SEE the'
-        Write-Host '       refusal: -ServersOnly, then start client-patched\MapleStory.exe'
-        Write-Host '       -NXLDEBUG 127.0.0.1 8484 by hand with nobody signed in. It must'
+        Write-Host '       refusal, with NOBODY signed in yet, start the PATCHED client with'
+        Write-Host '       its OWN folder as the working directory (the hook logs and reads'
+        Write-Host '       its markers relative to it, and the client checks that folder):'
+        Write-Host ("         Start-Process -FilePath `"{0}\client-patched\MapleStory.exe`" -WorkingDirectory `"{0}\client-patched`" -ArgumentList '-NXLDEBUG','127.0.0.1','8484'" -f $root)
+        Write-Host '       NOT the copy under C:\Nexon - that one has real GameGuard. It must'
         Write-Host '       show "not a registered ID" and stay USABLE (a frozen client would'
         Write-Host '       mean the refusal packet was not accepted - report that). login.log'
         Write-Host '       says "served as NOBODY - REFUSED" for that connection.'
