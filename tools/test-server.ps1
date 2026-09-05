@@ -1453,7 +1453,9 @@ if (Test-Path $authExe) {
     $authSrv = Start-Process -FilePath $authExe -WorkingDirectory $root -PassThru @spawn `
         -ArgumentList @('--db', "`"$Database`"", '--bind', '127.0.0.1', '--port', '8080') `
         -RedirectStandardOutput $authLog -RedirectStandardError "$authLog.err"
-    Write-Host "sign-in service on 127.0.0.1:8080 (pid $($authSrv.Id)), log $authLog"
+    # TLS: the service writes auth-cert-fingerprint.txt at the repo root (beside its db), and a
+    # dev-layout launcher reads it from there - nothing to copy on this machine.
+    Write-Host "sign-in service on 127.0.0.1:8080 (pid $($authSrv.Id), TLS; the launcher pins auth-cert-fingerprint.txt from the repo root), log $authLog"
 } else {
     Write-Host "NO SIGN-IN SERVICE at $authExe - the launcher cannot log in." -ForegroundColor Red
     Write-Host "  cargo build --release -p auth" -ForegroundColor Red

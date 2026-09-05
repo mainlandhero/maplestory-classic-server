@@ -247,7 +247,18 @@ fn register_launch(
         // Already reported by `Launched::describe`, which says what it costs. Not repeated.
         return;
     };
-    let reply = crate::http::bind_launch(&plan.ip, layout.auth_port, launch_id, pid);
+    let Some(pin) = layout.auth_fingerprint.as_ref() else {
+        // Unreachable after a sign-in, which needs the same pin - but the sentence exists
+        // because a layout can change between the two.
+        log(
+            Level::Warn,
+            "this launch cannot be registered: no certificate fingerprint is pinned, so nothing \
+             is sent to the sign-in service. The client still starts."
+                .into(),
+        );
+        return;
+    };
+    let reply = crate::http::bind_launch(&plan.ip, layout.auth_port, pin, launch_id, pid);
     let level = match reply {
         crate::http::LaunchReply::Bound { .. } => Level::Good,
         _ => Level::Warn,

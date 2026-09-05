@@ -4,8 +4,10 @@
 //! session token, and hands that token to the game. The login server later validates
 //! the same token, so both sides agree on who the player is.
 //!
-//! Deliberately **binds to localhost only** — this is a single-machine test server and
-//! has no business listening on a network interface.
+//! Defaults to a loopback bind; an installed server box passes `--bind 0.0.0.0`. Either way
+//! it speaks **TLS 1.3 with its own certificate**, which every launcher pins by fingerprint -
+//! `crate::tls` makes the certificate, `crates/tlspin` defines the pin, and `crate::http`
+//! says why no HTTP library is underneath.
 
 use std::sync::Arc;
 
@@ -13,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use store::{AuthOutcome, Store};
 
 pub mod http;
+pub mod tls;
 
 /// Default port. Arbitrary, just not one the game itself uses.
 pub const DEFAULT_PORT: u16 = 8080;

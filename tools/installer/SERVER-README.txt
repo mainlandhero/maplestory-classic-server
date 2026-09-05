@@ -59,6 +59,23 @@ SETUP
 4. Double-click start-servers.cmd. THAT WINDOW IS THE SERVER - closing it stops
    everything, and there is no stop script to forget.
 
+5. Copy the sign-in certificate's fingerprint to every client machine. The
+   server window prints it:
+
+     TLS: fingerprint sha256:<64 hex characters>
+
+   (it is also in auth-cert-fingerprint.txt beside maplecw.db). On each client,
+   either install with `install.ps1 -AuthFingerprint <that value>`, or set
+   `auth_fingerprint = "sha256:..."` in maplecw-launcher.toml beside the
+   launcher, or copy the .txt file beside the launcher. A launcher with no
+   fingerprint refuses to sign in rather than sending the password anywhere.
+
+   The certificate is generated on the FIRST start and kept in auth-cert.pem
+   and auth-key.pem beside the database. Delete them and the next start makes
+   a new pair - and every client's pin stops matching until it is updated.
+   That is the same thing a client would see under an impostor server, and it
+   is meant to be indistinguishable.
+
 
 THE TWO THINGS THAT WILL GO WRONG
 ---------------------------------
@@ -146,8 +163,8 @@ checkip.amazonaws.com, api.ipify.org and icanhazip.com in turn over plain HTTP
 and refuses any answer that is not a public address; it is re-checked every ten
 minutes, and a change is logged.
 
-Read the next section before you do this. Forwarded to the internet, the two
-facts in it are the entire security posture of this server.
+Read the next section before you do this. Forwarded to the internet, the
+second fact in it is the entire security posture of this server.
 
 
 WHAT IS AND IS NOT PROTECTED
@@ -155,10 +172,12 @@ WHAT IS AND IS NOT PROTECTED
 
 The launcher checks a password with argon2id before it says who is playing.
 
-THE PASSWORD CROSSES THE NETWORK IN PLAIN TEXT. Sign-in is plain HTTP, so
-anything between the client and this machine can read it. That is the price of
-being installable and it is fine on a network you control; it is not fine on
-the internet.
+SIGN-IN IS TLS TO A PINNED CERTIFICATE. The server makes its own certificate
+and every launcher is told its fingerprint (step 5 above); the launcher accepts
+that certificate and no other, and refuses to send a password at all when it
+has no fingerprint. Nobody on the path can read the password or the launch
+token, and an impostor server fails the handshake before a byte is sent. Until
+2026-09-05 this section said the password crossed in plain text; it does not.
 
 THE GAME SOCKET CARRIES NO CREDENTIALS AT ALL. The client never sends a user
 name. A connection the server can tie to a launcher sign-in is served as that

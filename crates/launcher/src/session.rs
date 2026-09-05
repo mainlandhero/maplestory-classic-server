@@ -138,11 +138,23 @@ impl SignIn {
 ///
 /// `crate::http` carries the warning that matters: the password crosses the wire in plain
 /// text, which is acceptable for a test server on a network you control and nothing else.
-pub fn sign_in(host: &str, auth_port: u16, identity: &str, password: &str) -> SignIn {
+pub fn sign_in(
+    host: &str,
+    auth_port: u16,
+    pin: Option<&tlspin::Fingerprint>,
+    identity: &str,
+    password: &str,
+) -> SignIn {
     if identity.trim().is_empty() {
         return SignIn::BadCredentials;
     }
-    match http::login(host, auth_port, identity, password) {
+    // No pin, no request. The password does not leave this machine for a server nobody has
+    // named - see `crate::http`. `Unreachable` because that is what the UI already knows how
+    // to show, and the sentence carries the fix.
+    let Some(pin) = pin else {
+        return SignIn::Unreachable(NOT_PINNED.to_string());
+    };
+    match http::login(host, auth_port, pin, identity, password) {
         AuthReply::Ok { account_id, launch_id, client_token, .. } => SignIn::Ok {
             account_id,
             identity: identity.to_string(),
@@ -155,6 +167,12 @@ pub fn sign_in(host: &str, auth_port: u16, identity: &str, password: &str) -> Si
         AuthReply::Failed(why) => SignIn::Unreachable(why),
     }
 }
+
+/// What the log pane says when there is nothing to pin the sign-in service to.
+pub const NOT_PINNED: &str = "no certificate fingerprint is pinned, so the password was NOT \
+    sent. The sign-in service prints its fingerprint at startup and writes \
+    auth-cert-fingerprint.txt beside its database: put the value in maplecw-launcher.toml as \
+    auth_fingerprint = \"sha256:...\", or copy that file beside the launcher.";
 
 /// The claim lifetime, for the message only.
 ///
@@ -192,7 +210,7 @@ mod tests {
     fn an_empty_identity_is_refused_without_touching_the_network() {
         // Not a round trip: an empty box is a mistake, and making the server say so would
         // cost an argon2id verify and a message that reads as if the server were at fault.
-        assert_eq!(sign_in("127.0.0.1", 1, "   ", "whatever"), SignIn::BadCredentials);
+        assert_eq!(sign_in("127.0.0.1", 1, None, "   ", "whatever"), SignIn::BadCredentials);
     }
 
     /// A signed-in outcome with a working launch handle, which is the ordinary case.

@@ -31,6 +31,12 @@ maplecw.db
 maplecw.db-wal
 maplecw.db-shm
 
+# The sign-in service's TLS identity, generated beside the database on first start. The key
+# is a secret and the fingerprint is per-installation; neither is source. crates/auth/src/tls.rs.
+auth-cert.pem
+auth-key.pem
+auth-cert-fingerprint.txt
+
 # Client exit forensics, rewritten by every run. Was tracked by accident until
 # 2026-08-19, so it showed as pending after every launch. Runs worth keeping are
 # copied into research/fixtures/ under a name that says what they prove.

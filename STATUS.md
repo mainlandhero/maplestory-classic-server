@@ -1,4 +1,4 @@
-# Where things stand — 2026-09-04: **two clients on one map, and the party window draws**
+# Where things stand — 2026-09-05: **two clients on one map, and the server is ready to leave this machine**
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
@@ -32,6 +32,37 @@ like a server that is not running. It cost one of the owner's manual launches on
 **Nothing authenticates the game socket.** The launcher authenticates a *person* (argon2id)
 and stakes a login claim the login server matches to the process that owns the socket; the
 game socket itself carries no credential and never has. Say so in every progress report.
+
+**2026-09-05: the server is ready to leave this machine.** Two changes for the homelab move,
+both built, tested, and exercised against the shipped binaries:
+
+* **No hardcoded address anywhere.** Both servers bind `0.0.0.0` on an installed box and
+  decide *per connection* which host to write into the migration packet - the address the
+  client reached us on for a LAN, VPN or Tailscale peer; the box's own public address
+  (discovered from an echo service at startup, re-checked every ten minutes) for an internet
+  peer. `--advertise auto|list|<ip>`, one rule in `crates/net/src/advertise.rs`. The installed
+  `start-server.ps1` carries bare ports and no IP at all. `tools/package-server.ps1` builds
+  the ~9 MB server payload; `SERVER-README.txt` in it is current.
+* **Sign-in is TLS 1.3 to a pinned certificate.** `maplecw-auth` makes its own certificate on
+  first start and prints its fingerprint; every launcher pins exactly that value
+  (`crates/tlspin`, the one definition both ends use) and **refuses to send a password when it
+  has no pin**. `tiny_http` is gone - its TLS feature pinned end-of-life rustls 0.20 with
+  CVE-2024-32650 unfixed - and five endpoints are served by a bounded hand-rolled loop over
+  rustls 0.23. Verified three ways: unit and end-to-end tests, Python's OpenSSL against the
+  shipped `maplecw-auth.exe` (TLS 1.3, fingerprint matched, plain HTTP gets an alert), and
+  `tools/claims_smoke.py` end to end. The owner's first suggestion - send the argon2 hash instead
+  of the password - was not done: it is pass-the-hash and makes a database leak an instant
+  login for every account.
+* **Found on the way:** through the real HTTP path a **wrong password had never read as a
+  wrong password** in the launcher. `http::parse` refused every 401 before reading the body,
+  and the unit test's fixture said `200 OK`, so it passed. The first end-to-end test that sent
+  a wrong password to a live service caught it. Fixed; the plan's "wrong-password refusal
+  CONFIRMED" dates from the pre-HTTP launcher and was true then.
+
+What did **not** change: the game socket still carries no credential. Forwarded to the
+internet, a stranger reaching 8484 while exactly one person is signed in is served as that
+person - `SERVER-README.txt` says so where the ports are listed. Ports, all TCP: 8080
+(sign-in, TLS), 8484 (login), 8485 and up (one per channel).
 
 ### What works — seen on a screen
 

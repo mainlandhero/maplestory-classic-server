@@ -77,10 +77,12 @@ it is what makes those checks about the token rather than about the pid.
       The anti-downgrade rule. A wrong credential must buy strictly less than no credential,
       or an attacker gets past it by guessing - which is easier than staying silent.
 """
+import hashlib
 import json
 import os
 import shutil
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -335,13 +337,34 @@ if len(sys.argv) > 1 and sys.argv[1] == "--connect":
 # --------------------------------------------------------------------------- the auth client
 
 
+# The sign-in service's certificate fingerprint, set by `Servers` once the throwaway service
+# has written it. `http_post` accepts that certificate and no other - the same pin the
+# launcher applies (crates/tlspin) - and sends nothing to anything else. The service stopped
+# speaking plain HTTP on 2026-09-05.
+AUTH_PIN = None
+
+
 def http_post(port, path, body):
     request = (
         "POST %s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n"
         "Content-Length: %d\r\nConnection: close\r\n\r\n%s" % (path, port, len(body), body)
     )
-    s = socket.create_connection(("127.0.0.1", port), timeout=30)
+    # Verification IS the pin below, not a certificate authority: the service's certificate
+    # is self-signed on purpose, so the CA check is switched off and the DER is compared
+    # byte-for-byte through its SHA-256 before a byte of the request is sent.
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    raw = socket.create_connection(("127.0.0.1", port), timeout=30)
+    s = ctx.wrap_socket(raw, server_hostname="127.0.0.1")
     try:
+        der = s.getpeercert(binary_form=True)
+        got = "sha256:" + hashlib.sha256(der).hexdigest()
+        if got != AUTH_PIN:
+            raise SystemExit(
+                "the auth service presented certificate %s, not the pinned %s - nothing sent"
+                % (got, AUTH_PIN)
+            )
         s.sendall(request.encode())
         out = b""
         while True:
@@ -405,8 +428,22 @@ class Servers:
         )
         self._wait(self.auth_port, self.auth, "auth")
         self._wait(self.login_port, self.login, "login")
+        # The service writes its certificate fingerprint beside its database before it
+        # listens, so by the time the port answers the file is there. Waited for anyway: a
+        # missing pin must fail loudly here, not as a confusing refusal in section 6.
+        global AUTH_PIN
+        pin_file = os.path.join(self.dir, "auth-cert-fingerprint.txt")
+        for _ in range(50):
+            if os.path.exists(pin_file):
+                break
+            time.sleep(0.1)
+        if not os.path.exists(pin_file):
+            raise SystemExit("maplecw-auth never wrote %s - read %s" % (pin_file, self.auth_log.name))
+        with open(pin_file) as f:
+            AUTH_PIN = f.read().strip()
         print("throwaway auth on %d, login on %d, database %s"
               % (self.auth_port, self.login_port, self.db))
+        print("pinned the auth certificate %s" % AUTH_PIN)
 
     def _make_character(self, account, name):
         """A character each, straight into the database.

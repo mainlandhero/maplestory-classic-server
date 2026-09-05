@@ -85,6 +85,18 @@ practical purposes.
 Tokens are 32 bytes from the OS CSPRNG and the database stores only their hash; passwords
 are argon2id with a per-password salt. Nothing in the crate logs a password or a token.
 
+**Built 2026-09-05: that service is TLS 1.3 to a pinned certificate.** The owner: *"We should not
+be sending passwords in plain text."* The service generates a self-signed certificate beside
+its database on first start (`crates/auth/src/tls.rs`) and prints its SHA-256; the launcher
+accepts exactly that certificate (`crates/tlspin`, one definition of the fingerprint for both
+ends) and **refuses to send a password when it has no pin**. `install.ps1 -AuthFingerprint`,
+`auth_fingerprint` in `maplecw-launcher.toml`, or `auth-cert-fingerprint.txt` beside the
+launcher; a dev checkout finds the dev service's file at the repo root. `tiny_http` went with
+the change - its TLS feature pins rustls 0.20, end-of-life with CVE-2024-32650 unfixed - and
+the five endpoints are served by a bounded hand-rolled HTTP/1.1 loop over rustls 0.23. The
+alternative the owner first suggested, sending the argon2 hash instead of the password, was not
+done: it is pass-the-hash, and it turns a database leak into instant login for every account.
+
 **That flow was: launcher → auth → token → client launch argument → game socket → login
 server → `/consume`. The middle of it does not exist and cannot be built.** Measured
 2026-08-18 and recorded in `docs/launcher.md`: `-NXLDEBUG` does route launch arguments into
@@ -108,9 +120,9 @@ reach the login port is served as whatever the current claim names.
 
 So for a real multi-machine deployment the remaining work is:
 
-* **`crates/auth` needs a bind that is not hardcoded loopback** - its own doc comment says it
-  hardcodes `127.0.0.1` - and TLS once it is off-box. A homelab CA with a certificate for the
-  server name is enough. Do not put it on the internet.
+* ~~**`crates/auth` needs a bind that is not hardcoded loopback** and TLS once it is off-box.~~
+  Both done: `--bind 0.0.0.0` and TLS with a pinned self-signed certificate (no CA needed -
+  see the "Built 2026-09-05" paragraph above).
 * **The launcher needs to authenticate over that service rather than against a local database
   file**, because a client machine will not have one. It has a server IP field already; today
   that field directs the *game* connection only.
@@ -138,7 +150,7 @@ machine versus server machine, not service versus service:
 ```text
   The owner's PC                          homelab
   ---------                          -------
-  launcher  ── HTTPS ──────────────▶ auth        (crates/auth,   TCP 8443)
+  launcher  ── TLS, pinned cert ───▶ auth        (crates/auth,   TCP 8080)
   client    ── Maple protocol ─────▶ login       (crates/login,  TCP 8484)
                                      channel     (crates/channel, later)
                                      store       (crates/store, SQLite file)

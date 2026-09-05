@@ -3,15 +3,22 @@ name = "auth"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Local authentication server and account administration CLI for MapleCW."
+description = "Sign-in service (TLS, pinned certificate) and account administration CLI for MapleCW."
 
 [dependencies]
 store = { path = "../store" }
+tlspin = { path = "../tlspin" }
 thiserror.workspace = true
-tiny_http = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rpassword = "7"
+# The same rustls the launcher uses, via tlspin. `ring` because aws-lc-rs needs nasm and
+# cmake on Windows; no `tls12` because both ends are ours. tiny_http was removed with the
+# move to TLS - see src/http.rs for why its TLS feature (rustls 0.20) could not be kept.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# 1.8 is where PEM decoding (`PemObject`) arrived; it lives under `std`, not a feature.
+rustls-pki-types = { version = "1.12", features = ["std"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
 [[bin]]
 name = "maplecw-auth"

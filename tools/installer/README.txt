@@ -23,6 +23,10 @@ Options worth knowing:
 
     -InstallDir "D:\Games\MapleCW"   somewhere other than C:\MapleCW
     -ServerIp   192.168.1.20         the machine running the servers, if not this one
+    -AuthFingerprint sha256:...      the sign-in server's certificate fingerprint. Its
+                                     window prints it at startup. REQUIRED to sign in:
+                                     the launcher will not send a password to a server
+                                     it has not been told to trust
     -NoFirewall                      skip the outbound block rule (read the warning first)
     -NoAccount                       install without creating an account
 

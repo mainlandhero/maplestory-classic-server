@@ -126,16 +126,40 @@ $watched += $login
 # service. Bound to $Bind - which defaults to 0.0.0.0 here, unlike the dev script - because a
 # loopback bind would mean only this machine could ever log in.
 #
-# THE PASSWORD CROSSES THE WIRE IN PLAIN TEXT. That is stated in crates/launcher/src/http.rs
-# and in docs/deployment.md, and it is the price of being installable at all. This is a test
-# server on a network you control; do not put it on the internet.
+# TLS, to a certificate the service makes for itself beside the database on first start.
+# Every launcher pins its fingerprint, which is printed below once the service has written
+# it. This block used to say the password crossed the wire in plain text; since 2026-09-05
+# it does not - crates/auth/src/tls.rs and crates/tlspin.
 $authArgs = @('--db', "$db", '--bind', "$Bind", '--port', '8080')
 $auth = Start-Process -FilePath (Join-Path $bin 'maplecw-auth.exe') -WorkingDirectory $root `
     -ArgumentList $authArgs -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $root 'auth.log') `
     -RedirectStandardError  (Join-Path $root 'auth.log.err')
-Write-Host "sign-in       pid $($auth.Id)  $($Bind):8080  <- the launcher signs in here"
+Write-Host "sign-in       pid $($auth.Id)  $($Bind):8080  <- the launcher signs in here (TLS)"
 $watched += $auth
+
+# The fingerprint every client must pin. The service writes it beside the database within a
+# moment of starting; waited for rather than assumed, so the line below is the real value and
+# not a stale file from a certificate that has since been regenerated.
+$pinFile = Join-Path $root 'auth-cert-fingerprint.txt'
+$pinStamp = if (Test-Path $pinFile) { (Get-Item $pinFile).LastWriteTime } else { [datetime]::MinValue }
+$waited = 0
+while ($waited -lt 50 -and -not ((Test-Path $pinFile) -and (Get-Item $pinFile).LastWriteTime -gt $pinStamp)) {
+    Start-Sleep -Milliseconds 100
+    $waited++
+}
+if (Test-Path $pinFile) {
+    $pin = (Get-Content $pinFile -Raw).Trim()
+    Write-Host ''
+    Write-Host 'EVERY CLIENT MACHINE MUST PIN THIS CERTIFICATE FINGERPRINT:' -ForegroundColor Cyan
+    Write-Host ("    {0}" -f $pin) -ForegroundColor Cyan
+    Write-Host '  install.ps1 -AuthFingerprint <it>, or auth_fingerprint = "<it>" in'
+    Write-Host '  maplecw-launcher.toml beside the launcher. A launcher without it refuses'
+    Write-Host '  to sign in. See SERVER-README.txt step 5.'
+    Write-Host ''
+} else {
+    Write-Host '  (the sign-in service has not written auth-cert-fingerprint.txt yet - read auth.log)' -ForegroundColor Yellow
+}
 
 for ($ch = 0; $ch -lt $Channels; $ch++) {
     $chLog = if ($ch -eq 0) { 'world.log' } else { "world-ch$ch.log" }

@@ -30,7 +30,7 @@ pub const CONFIG_FILE_NAME: &str = "maplecw-launcher.toml";
 /// Every key this reader understands. Anything else is reported rather than ignored, because
 /// a typo'd key that silently does nothing is the same failure mode as a stale instrument.
 pub const KNOWN_KEYS: &[&str] =
-    &["client_dir", "stub_path", "server_ip", "port", "auth_port"];
+    &["client_dir", "stub_path", "server_ip", "port", "auth_port", "auth_fingerprint"];
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LauncherConfig {
@@ -39,6 +39,9 @@ pub struct LauncherConfig {
     pub server_ip: Option<String>,
     pub port: Option<u16>,
     pub auth_port: Option<u16>,
+    /// The sign-in service's certificate fingerprint, as pasted. Parsed and validated in
+    /// `crate::paths`, where a bad value becomes a problem line rather than a silent absence.
+    pub auth_fingerprint: Option<String>,
     /// Lines that could not be used, with a reason. Surfaced in the UI; never fatal.
     pub problems: Vec<String>,
 }
@@ -50,6 +53,8 @@ impl LauncherConfig {
             && self.stub_path.is_none()
             && self.server_ip.is_none()
             && self.port.is_none()
+            && self.auth_port.is_none()
+            && self.auth_fingerprint.is_none()
     }
 }
 
@@ -102,6 +107,7 @@ pub fn parse(text: &str) -> LauncherConfig {
             )),
             "stub_path" => cfg.stub_path = Some(value),
             "server_ip" => cfg.server_ip = Some(value),
+            "auth_fingerprint" => cfg.auth_fingerprint = Some(value),
             "auth_port" => match value.parse::<u16>() {
                 Ok(0) => cfg
                     .problems

@@ -16,16 +16,17 @@
 //! one nobody tried. `tools/test-server.ps1` starts `maplecw-auth` alongside the other two
 //! servers so the dev flow runs exactly what an installed one does.
 //!
-//! # THE PASSWORD CROSSES THE WIRE IN PLAIN TEXT
+//! # TLS to a pinned certificate, or nothing
 //!
-//! Stated here rather than buried. This is plain HTTP: anything on the path between the
-//! client machine and the server can read the password. That is a real downgrade from reading
-//! a local file, and it is the price of being installable at all.
+//! This said *"THE PASSWORD CROSSES THE WIRE IN PLAIN TEXT"* until 2026-09-05, as the price of
+//! being installable. The owner: *"We should not be sending passwords in plain text."* It is now
+//! TLS 1.3, and the launcher accepts exactly one certificate: the one whose fingerprint it was
+//! told (`crates/tlspin`). No fingerprint means the password is **not sent** - `sign_in`
+//! refuses with a sentence naming the config key - rather than sent in the clear or sent to
+//! whoever answers. A certificate that does not match fails the handshake before a byte of
+//! the request leaves this machine, and the error says so in those words.
 //!
-//! It is acceptable for **a test server on a network you control**, which is the only thing
-//! this project is. `docs/deployment.md` records TLS as the work that has to happen before it
-//! is anything else, and the auth service still defaults to a loopback bind so going wider is
-//! a decision somebody makes rather than one that happens.
+//! What this does not change: the *game* socket still carries no credentials.
 //!
 //! # Why it is hand-rolled
 //!
@@ -33,9 +34,12 @@
 //! a TLS stack and a hundred crates for that, and this workspace declares its Win32 by hand
 //! for the same reason. `tiny_http` is the server side of the same trade.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
+
+use rustls::pki_types::ServerName;
+use tlspin::Fingerprint;
 
 /// How long to wait for the whole exchange.
 ///
@@ -183,7 +187,7 @@ impl LaunchReply {
 /// The **launch handle is** returned, and it is a different thing: it is what lets this
 /// machine say which client process belongs to this sign-in. Without it two launchers on one
 /// box are indistinguishable to the server and both fall back.
-pub fn login(host: &str, port: u16, identity: &str, password: &str) -> AuthReply {
+pub fn login(host: &str, port: u16, pin: &Fingerprint, identity: &str, password: &str) -> AuthReply {
     let body = format!(
         "{{\"username\":{},\"password\":{}}}",
         json_string(identity),
@@ -198,7 +202,7 @@ pub fn login(host: &str, port: u16, identity: &str, password: &str) -> AuthReply
         body.len()
     );
 
-    let response = match send(host, port, request.as_bytes()) {
+    let response = match send(host, port, pin, request.as_bytes()) {
         Ok(r) => r,
         Err(e) => return AuthReply::Failed(e),
     };
@@ -212,7 +216,13 @@ pub fn login(host: &str, port: u16, identity: &str, password: &str) -> AuthReply
 /// game connection, which is the only per-launch fact either end can observe - the client
 /// sends nothing that varies between launches, and the address is shared by every client on
 /// the machine.
-pub fn bind_launch(host: &str, port: u16, launch_id: &LaunchId, pid: u32) -> LaunchReply {
+pub fn bind_launch(
+    host: &str,
+    port: u16,
+    pin: &Fingerprint,
+    launch_id: &LaunchId,
+    pid: u32,
+) -> LaunchReply {
     if launch_id.is_empty() {
         return LaunchReply::Failed(
             "the sign-in did not hand back a launch handle, so the server has no claim to \
@@ -229,7 +239,7 @@ pub fn bind_launch(host: &str, port: u16, launch_id: &LaunchId, pid: u32) -> Lau
          Connection: close\r\n\r\n{body}",
         body.len()
     );
-    match send(host, port, request.as_bytes()) {
+    match send(host, port, pin, request.as_bytes()) {
         Ok(r) => parse_launch(&r),
         Err(e) => LaunchReply::Failed(e),
     }
@@ -258,15 +268,18 @@ pub fn parse_launch(response: &str) -> LaunchReply {
     }
 }
 
-/// Connect, write, read to EOF.
-fn send(host: &str, port: u16, request: &[u8]) -> Result<String, String> {
+/// Connect, handshake against the pinned certificate, write, read to EOF.
+///
+/// The handshake runs inside the first write, so a certificate that does not match the pin
+/// fails there - before the request, and therefore before the password, has been sent.
+fn send(host: &str, port: u16, pin: &Fingerprint, request: &[u8]) -> Result<String, String> {
     let addr = (host, port)
         .to_socket_addrs()
         .map_err(|e| format!("{host}:{port} is not an address this machine can resolve: {e}"))?
         .next()
         .ok_or_else(|| format!("{host}:{port} resolved to nothing"))?;
 
-    let mut stream = TcpStream::connect_timeout(&addr, TIMEOUT).map_err(|e| {
+    let stream = TcpStream::connect_timeout(&addr, TIMEOUT).map_err(|e| {
         format!(
             "could not reach the sign-in service at {host}:{port}: {e}\n\
              Is the server running, and is that the right address? On the server box it is \
@@ -275,14 +288,51 @@ fn send(host: &str, port: u16, request: &[u8]) -> Result<String, String> {
     })?;
     stream.set_read_timeout(Some(TIMEOUT)).ok();
     stream.set_write_timeout(Some(TIMEOUT)).ok();
-    stream.write_all(request).map_err(|e| format!("could not send the sign-in request: {e}"))?;
-    stream.flush().ok();
+    stream.set_nodelay(true).ok();
+
+    // The name is irrelevant to a pinned verifier, but rustls needs one; an IP literal is a
+    // valid ServerName and is what the field almost always holds.
+    let server_name = ServerName::try_from(host.to_string())
+        .map_err(|e| format!("{host:?} is not a host name or address TLS can be asked for: {e}"))?;
+    let conn = rustls::ClientConnection::new(tlspin::client_config(pin), server_name)
+        .map_err(|e| format!("could not start TLS: {e}"))?;
+    let mut tls = rustls::StreamOwned::new(conn, stream);
+
+    tls.write_all(request).map_err(|e| explain(host, port, e, "send the sign-in request"))?;
+    tls.flush().ok();
 
     let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("the sign-in service closed before answering: {e}"))?;
+    match tls.read_to_end(&mut buf) {
+        Ok(_) => {}
+        // A server that closed the socket without a TLS close_notify. Ours sends one; an
+        // answer that arrived is still an answer.
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof && !buf.is_empty() => {}
+        Err(e) => return Err(explain(host, port, e, "read the answer")),
+    }
     Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// A TLS or socket error as a sentence that says what to do. The fingerprint case is the one
+/// that matters: it is what an operator sees after regenerating the server's certificate, and
+/// also what they would see under an active man-in-the-middle, and it must not read as
+/// "network problem".
+fn explain(host: &str, port: u16, e: std::io::Error, doing: &str) -> String {
+    let text = e.to_string();
+    if text.contains("fingerprint") {
+        format!(
+            "the sign-in service at {host}:{port} presented a certificate that does NOT match \
+             the pinned fingerprint ({text}). Either this is not the server you think it is, or \
+             its certificate was regenerated - it prints its current fingerprint at startup. \
+             NOTHING was sent."
+        )
+    } else if text.contains("corrupt") || text.contains("InvalidMessage") || text.contains("record") {
+        format!(
+            "could not {doing}: {text}. What answered is not speaking TLS - an older \
+             maplecw-auth still on plain HTTP, or the wrong port?"
+        )
+    } else {
+        format!("could not {doing}: {text}")
+    }
 }
 
 /// Turn a raw HTTP response into an [`AuthReply`].
@@ -295,11 +345,20 @@ pub fn parse(response: &str) -> AuthReply {
     };
     let status = head.lines().next().unwrap_or("");
     let code = status.split_whitespace().nth(1).unwrap_or("");
-    if code != "200" {
+    // 401 is how the service says "wrong password" or "disabled", with the reason in the
+    // body. Until 2026-09-05 this returned `Failed` for anything but 200, so through the
+    // real service a wrong password read as "the sign-in service answered 401" rather than
+    // as a wrong password - found by the first end-to-end test that sent one. Any other
+    // code is still a failure whatever the body says: a 500 whose body happened to contain
+    // `"status":"ok"` must not read as a successful login.
+    if code != "200" && code != "401" {
         return AuthReply::Failed(format!("the sign-in service answered {status:?}"));
     }
 
     match field(body, "status").as_deref() {
+        Some("ok") if code != "200" => {
+            AuthReply::Failed(format!("the sign-in service answered {status:?} with an ok body"))
+        }
         Some("ok") => {
             let account_id = field(body, "account_id")
                 .and_then(|v| v.parse::<i64>().ok())
@@ -381,6 +440,53 @@ fn trim(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// **End to end, over TLS, against the real sign-in service.** The launcher's client, the
+    /// service's own certificate, and the pin between them - the one test here that a socket
+    /// takes part in. The wrong pin must fail before the password is sent, which is checked
+    /// by the fact that the service never sees a request at all: it answers nothing, and the
+    /// error names the fingerprint rather than the password.
+    #[test]
+    fn a_pinned_client_signs_in_over_tls_and_a_wrong_pin_never_sends_the_password() {
+        let dir = std::env::temp_dir().join(format!("maplecw-launcher-tls-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let identity = auth::tls::ensure_identity(&dir).unwrap();
+        let tls = identity.server_config().unwrap();
+        let store = store::Store::open_in_memory().unwrap();
+        store.create_account("tester", "correct horse battery").unwrap();
+        let service = std::sync::Arc::new(auth::AuthService::new(std::sync::Arc::new(store)));
+        let listener = auth::http::listen("127.0.0.1", 0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let _ = auth::http::run(listener, service, tls);
+        });
+        let pin = identity.fingerprint;
+
+        // Right pin, wrong password: TLS let the request through and the SERVICE said no.
+        assert_eq!(
+            login("127.0.0.1", port, &pin, "tester", "wrong"),
+            AuthReply::InvalidCredentials
+        );
+        // Right pin, right password.
+        match login("127.0.0.1", port, &pin, "tester", "correct horse battery") {
+            AuthReply::Ok { username, client_token, .. } => {
+                assert_eq!(username, "tester");
+                assert!(!client_token.is_empty(), "a claim was staked and a client token issued");
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+        // Wrong pin: refused in the handshake, and the sentence says which fingerprint.
+        let wrong = Fingerprint::of_der(b"not the service's certificate");
+        match login("127.0.0.1", port, &wrong, "tester", "correct horse battery") {
+            AuthReply::Failed(why) => {
+                assert!(why.contains("does NOT match the pinned"), "{why}");
+                assert!(why.contains("NOTHING was sent"), "{why}");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn http(status: &str, body: &str) -> String {
         format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\r\n{body}")
     }
@@ -432,6 +538,21 @@ mod tests {
 
     #[test]
     fn the_two_refusals_are_told_apart() {
+        // 401, because that is what the service sends with these bodies. This fixture said
+        // "200 OK" until 2026-09-05 and passed against a `parse` that refused every 401 -
+        // a test that pinned what the code did rather than what the service does. The
+        // end-to-end test above is what caught it.
+        assert_eq!(
+            parse(&http("401 Unauthorized", r#"{"status":"invalid_credentials"}"#)),
+            AuthReply::InvalidCredentials
+        );
+        assert_eq!(parse(&http("401 Unauthorized", r#"{"status":"disabled"}"#)), AuthReply::Disabled);
+        // The reason `parse` looks at the status line at all: an ok body under a failure
+        // status is not a login.
+        let AuthReply::Failed(why) = parse(&http("500 Internal Server Error", r#"{"status":"ok","account_id":1}"#)) else {
+            panic!("a 500 must never read as a successful login")
+        };
+        assert!(why.contains("500"), "{why}");
         assert_eq!(
             parse(&http("200 OK", r#"{"status":"invalid_credentials"}"#)),
             AuthReply::InvalidCredentials
@@ -534,7 +655,8 @@ mod tests {
     /// reporting whatever the server would have said about a blank id.
     #[test]
     fn an_empty_launch_handle_is_refused_before_the_network() {
-        let r = bind_launch("127.0.0.1", 1, &LaunchId::new(""), 42);
+        let pin = Fingerprint::of_der(b"any");
+        let r = bind_launch("127.0.0.1", 1, &pin, &LaunchId::new(""), 42);
         let LaunchReply::Failed(why) = r else { panic!("expected a refusal") };
         assert!(why.contains("launch handle"), "{why}");
     }
@@ -566,7 +688,8 @@ mod tests {
             })
             .expect("a closed port");
 
-        let r = login("127.0.0.1", port, "someone", "something");
+        let pin = Fingerprint::of_der(b"any");
+        let r = login("127.0.0.1", port, &pin, "someone", "something");
         let AuthReply::Failed(msg) = r else { panic!("expected a failure") };
         assert!(msg.contains("could not reach"), "{msg}");
         assert!(msg.contains("start-servers.cmd"), "the message must say how to fix it: {msg}");

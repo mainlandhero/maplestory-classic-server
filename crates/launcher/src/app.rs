@@ -131,10 +131,11 @@ impl LauncherApp {
         // SUCCESS, not here: a failed sign-in that also silently emptied the box would have
         // The owner retyping a password to find out they had typed it right the first time.
         // The SERVER checks the password, not this machine. A client machine has no
-        // database to read - `crate::http` has the whole reasoning, including the fact that
-        // the password crosses the wire in plain text.
+        // database to read - `crate::http` has the whole reasoning. It goes over TLS to the
+        // one certificate this launcher has pinned; with no pin it does not go at all.
         let host = self.server_ip.trim().to_string();
         let auth_port = self.layout.auth_port;
+        let pin = self.layout.auth_fingerprint;
         let identity = self.identity.trim().to_string();
         let password = self.password.clone();
         let tx = self.tx.clone();
@@ -143,10 +144,21 @@ impl LauncherApp {
         self.signing_in = true;
         self.signed_in = None;
         self.status = Some((Level::Info, "checking the password (argon2id is slow on purpose)…".into()));
-        self.push(Level::Info, format!("signing in against {host}:{auth_port}"));
+        match pin {
+            Some(fp) => self.push(
+                Level::Info,
+                format!("signing in against {host}:{auth_port} over TLS, pinned to {}", fp.short()),
+            ),
+            None => self.push(
+                Level::Warn,
+                "no certificate fingerprint is pinned - the sign-in will be refused rather than \
+                 sent in the clear"
+                    .into(),
+            ),
+        }
 
         thread::spawn(move || {
-            let outcome = session::sign_in(&host, auth_port, &identity, &password);
+            let outcome = session::sign_in(&host, auth_port, pin.as_ref(), &identity, &password);
             drop(password);
             let _ = tx.send(Msg::SignedIn(outcome));
             ctx.request_repaint();

@@ -1,0 +1,14 @@
+[package]
+name = "tlspin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Certificate-fingerprint pinning for MapleCW's sign-in service: the server prints it, the launcher pins it, and this is the one definition both use."
+
+[dependencies]
+# `ring`, not the default `aws-lc-rs`: the latter needs nasm and cmake to build on Windows and
+# this machine has neither. No `tls12` - the two ends of this connection are both ours, and
+# TLS 1.3 is the only version either will speak.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = { version = "1.12", features = ["std"] }
+sha2 = "0.10"

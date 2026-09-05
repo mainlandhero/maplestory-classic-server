@@ -120,6 +120,15 @@ pub struct Layout {
     /// different services and a machine can legitimately reach one and not the other; folding
     /// them into one number would make "wrong port" and "server down" the same report.
     pub auth_port: u16,
+    /// The sign-in service's certificate fingerprint, and the only certificate the launcher
+    /// will speak to. `None` means sign-in is REFUSED, not attempted in the clear - the
+    /// password does not leave this machine until the operator has said which server it is
+    /// for. From `auth_fingerprint` in the config file, else `auth-cert-fingerprint.txt`
+    /// beside the launcher, else the same file at the data root (the repo root in a dev
+    /// checkout, which is where the dev sign-in service writes it). `crates/tlspin`.
+    pub auth_fingerprint: Option<tlspin::Fingerprint>,
+    /// Where the pin came from, for the report - or why there is none.
+    pub auth_fingerprint_from: String,
 }
 
 impl Layout {
@@ -184,7 +193,11 @@ impl Layout {
         out.push_str(&format!("archives  {}\n", self.previous_runs_dir().display()));
         out.push_str(&format!("dumps     {}\n", self.dumps_dir().display()));
         out.push_str(&format!("game      {}:{}\n", self.server_ip, self.port));
-        out.push_str(&format!("sign-in   {}:{}\n", self.server_ip, self.auth_port));
+        out.push_str(&format!("sign-in   {}:{} (TLS)\n", self.server_ip, self.auth_port));
+        match &self.auth_fingerprint {
+            Some(fp) => out.push_str(&format!("pin       {fp}\n  from    {}\n", self.auth_fingerprint_from)),
+            None => out.push_str(&format!("pin       {}\n", self.auth_fingerprint_from)),
+        }
         for problem in &self.config_problems {
             out.push_str(&format!("CONFIG    {problem}\n"));
         }
@@ -263,8 +276,11 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
         server_ip: DEFAULT_SERVER_IP.to_string(),
         port: DEFAULT_PORT,
         auth_port: DEFAULT_AUTH_PORT,
+        auth_fingerprint: None,
+        auth_fingerprint_from: String::new(),
     };
 
+    let mut pinned_in_config: Option<String> = None;
     if let Some((path, cfg)) = config::load(exe_dir) {
         layout.config_file = Some(path);
         layout.config_problems = cfg.problems.clone();
@@ -277,10 +293,53 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
                 config::CONFIG_FILE_NAME
             ));
         }
+        pinned_in_config = cfg.auth_fingerprint.clone();
         apply_config(&mut layout, &cfg, exe_dir);
     }
+    resolve_fingerprint(&mut layout, pinned_in_config.as_deref(), exe_dir);
 
     layout
+}
+
+/// Decide which certificate the sign-in service must present, or record that none is known.
+///
+/// The config key wins, because it is the one an operator wrote on purpose. A file is second:
+/// the sign-in service writes `auth-cert-fingerprint.txt` beside its database, so in a dev
+/// checkout the launcher finds the dev service's pin at the repo root with nobody copying
+/// anything, and an installer can drop the same file beside an installed launcher. A value
+/// that is present and does not parse is a problem line, never silently "no pin" - that
+/// would turn a typo into a refused sign-in with nothing anywhere to explain it.
+fn resolve_fingerprint(layout: &mut Layout, in_config: Option<&str>, exe_dir: &Path) {
+    if let Some(text) = in_config {
+        match tlspin::Fingerprint::parse(text) {
+            Ok(fp) => {
+                layout.auth_fingerprint = Some(fp);
+                layout.auth_fingerprint_from = "auth_fingerprint in the config file".into();
+                layout.config_applied.push("auth_fingerprint".into());
+                return;
+            }
+            Err(e) => layout.config_problems.push(format!("auth_fingerprint: {e}")),
+        }
+    }
+    for candidate in [
+        exe_dir.join(tlspin::FINGERPRINT_FILE),
+        layout.data_root.join(tlspin::FINGERPRINT_FILE),
+    ] {
+        match tlspin::read_fingerprint_file(&candidate) {
+            None => continue,
+            Some(Ok(fp)) => {
+                layout.auth_fingerprint = Some(fp);
+                layout.auth_fingerprint_from = candidate.display().to_string();
+                return;
+            }
+            Some(Err(e)) => layout.config_problems.push(e),
+        }
+    }
+    layout.auth_fingerprint_from = format!(
+        "NOT PINNED - sign-in will be refused. Set auth_fingerprint in {} or put {} beside the launcher; the sign-in service prints the value at startup",
+        crate::config::CONFIG_FILE_NAME,
+        tlspin::FINGERPRINT_FILE
+    );
 }
 
 /// Overlay a config file onto an already-resolved layout. Separate so the precedence test

@@ -29,6 +29,11 @@ param(
     [string]$Email,
     [string]$ServerIp = '127.0.0.1',
     [int]$Port = 8484,
+    # The sign-in server's certificate fingerprint, as its console prints it:
+    # "sha256:<64 hex>". REQUIRED before this machine can sign in - the launcher refuses to
+    # send a password to a server it has not been told to trust. Also readable from
+    # auth-cert-fingerprint.txt beside the server's database.
+    [string]$AuthFingerprint,
     [switch]$NoFirewall,
     [switch]$NoShortcut,
     [switch]$NoAccount
@@ -142,6 +147,12 @@ if (-not $NoAccount) {
 # that expression turns C:\MapleCW\client into C:\\MapleCW\\client. Measured in 5.1, not
 # assumed. Win32 collapses the duplicate separators so it happened to work, which is the
 # worst kind of bug - it would have sat here looking fine.
+# Written as a comment when it was not given, so the file itself says what is missing.
+$pinLine = if ($AuthFingerprint) {
+    "auth_fingerprint = `"$($AuthFingerprint.Trim())`""
+} else {
+    "# auth_fingerprint = `"sha256:...`"   <- REQUIRED. The sign-in server prints it at startup."
+}
 $toml = @"
 # Written by install.ps1. The launcher reads this from beside its own executable.
 # Paths are literal - single backslashes, no escaping.
@@ -151,10 +162,19 @@ stub_path  = "$(Join-Path $InstallDir 'grap64.dll')"
 server_ip  = "$ServerIp"
 port       = "$Port"
 auth_port  = "8080"
+$pinLine
 "@
 Set-Content -Path (Join-Path $InstallDir 'maplecw-launcher.toml') -Value $toml -Encoding ascii
 Write-Host ''
 Write-Host "wrote $InstallDir\maplecw-launcher.toml"
+if (-not $AuthFingerprint) {
+    Write-Host ''
+    Write-Host 'NO CERTIFICATE FINGERPRINT WAS GIVEN, so this machine cannot sign in yet.' -ForegroundColor Yellow
+    Write-Host '  The launcher refuses to send a password to a server it has not been told to'
+    Write-Host '  trust. The server window prints "TLS: fingerprint sha256:..." at startup;'
+    Write-Host '  either re-run this with -AuthFingerprint <that value>, or edit'
+    Write-Host ("  {0}\maplecw-launcher.toml and set auth_fingerprint." -f $InstallDir)
+}
 
 # ---------------------------------------------------------------- firewall
 if ($NoFirewall) {

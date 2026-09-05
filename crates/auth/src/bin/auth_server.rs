@@ -71,8 +71,33 @@ fn main() -> std::process::ExitCode {
         Err(e) => eprintln!("could not list accounts: {e}"),
     }
 
+    // The certificate lives beside the database: the one directory an installed box, the dev
+    // checkout and a smoke test all agree is "this server's". The fingerprint file lands
+    // there too, which is where the dev launcher reads it from.
+    let cert_dir = std::path::Path::new(&db_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let identity = match auth::tls::ensure_identity(cert_dir) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("could not set up TLS in {}: {e}", cert_dir.display());
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    for line in identity.banner() {
+        println!("{line}");
+    }
+    let tls = match identity.server_config() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
     let service = Arc::new(AuthService::new(Arc::new(store)));
-    if let Err(e) = http::serve_on(service, &bind, port) {
+    if let Err(e) = http::serve_on(service, &bind, port, tls) {
         eprintln!("server error: {e}");
         return std::process::ExitCode::FAILURE;
     }

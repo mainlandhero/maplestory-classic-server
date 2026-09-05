@@ -36,6 +36,8 @@ mod stub;
 
 #[cfg(test)]
 mod testutil;
+#[cfg(test)]
+mod paths_pin_tests;
 
 const USAGE: &str = "\
 maplecw-launcher [--print-paths]
@@ -46,7 +48,7 @@ maplecw-launcher [--print-paths]
 
 The launcher takes no server address on the command line: the window has fields for it, and
 a maplecw-launcher.toml beside the executable can set defaults (client_dir, stub_path,
-server_ip, port, auth_port).";
+server_ip, port, auth_port, auth_fingerprint).";
 
 /// Print, or put it in a window when there is nothing to print to.
 ///
