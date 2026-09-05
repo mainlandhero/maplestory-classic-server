@@ -300,51 +300,31 @@ impl Session {
             };
             let template = self.fields.mob_template(map, target.object_id).unwrap_or(0);
 
-            // **Whoever hits it, drives it - because the flinch is not a packet.**
+            // **REVERTED 2026-09-04: handing the mob to its attacker made mobs teleport.**
             //
-            // The owner, 2026-09-04: *"If the client that does not have mob control attacks a mob,
-            // the mob does not flinch and get pushed back."* The flinch and the knockback are
-            // produced LOCALLY by the client that both swings and holds the mob's `0x03D2`,
-            // and they reach the other screens as that client's own `0x02FF` with the hit
-            // action - which this server already relays as `0x03D9`. There is no
-            // `MobDamaged` opcode in this client, and none of the six mob opcodes that can
-            // set an action carries a damage value. Two archived runs measure it: the
-            // controller swinging gave 10 hit-action reports for 10 wounding hits, a
-            // non-controller 0 for 15. `crate::mobshare::Controllers::hand_over_one`.
+            // The flinch really is local to whoever holds the `0x03D2` - that part was
+            // measured and stands (`research/mob-hit-reaction.md`). Handing the mob over on
+            // every hit made it work, and broke something this module states as an invariant
+            // two hundred lines above:
             //
-            // So the attacker is handed the mob, and the grant rides out with the reply to
-            // the swing that earned it. `Bus::publish` would exclude us - we ARE the
-            // recipient - so this goes in `out`, not on the bus.
+            //   > it is never revoked while its holder is still on the map, because the
+            //   > client's only revoke is a despawn.
             //
-            // **The first hit of a fight still will not flinch**, and that is inherent: the
-            // grant leaves with the reply to the hit that triggered it, so the mob is only
-            // ours from the second swing on. Mobs here take about three hits. A synthetic
-            // `0x03D9` would cover the first one and is deliberately not done - the flinch's
-            // path is six authored elements and the zero-element branch of the path decoder
-            // has never been read.
-            if self.fields.controllers().hand_over_one(map, target.object_id, self.subscriber.get())
-            {
-                if let Some(mob) =
-                    self.fields.mobs_on(map).iter().find(|m| m.spawn.object_id == target.object_id)
-                {
-                    // `as_seen`, not `spawn` - the mob is handed over where it is standing, or
-                    // it jumps back to its spawn point on every screen. Level NORMAL: level 0
-                    // despawns.
-                    out.push(Reply {
-                        opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
-                        body: net::mobmove::mob_change_controller(
-                            &mob.as_seen(),
-                            net::mobmove::CONTROL_NORMAL,
-                        ),
-                        what: format!(
-                            "MobChangeController: object id {} to the attacker, so its own \
-                             client can play the hit reaction. The flinch and the knockback \
-                             are local to whoever holds this grant",
-                            target.object_id
-                        ),
-                    });
-                }
-            }
+            // **There is no way to tell the old controller it lost the mob.** So it keeps
+            // simulating it locally while the new controller's `0x03D9` arrives describing
+            // somewhere else, and the mob jumps between the two answers. The owner: *"some mobs
+            // will teleport for an unknown reason to another location"* - and a snail driven
+            // by a stale simulation reaches a player standing where no snail should be, which
+            // is the other half of what they saw.
+            //
+            // Measured, in the run that shipped it: **3 of the 4 position jumps over 200 px
+            // followed a handover of that same mob within three seconds**, against 13
+            // handovers in a 3.5-minute run. The grants themselves were exonerated first -
+            // every one carried exactly the mob's last relayed position, so the packet was
+            // right and its consequence was not.
+            //
+            // `Controllers::hand_over_one` is kept: it is correct, tested, and is what a real
+            // fix would use. What is missing is a revoke, and this client has none.
 
             let damage = target.total_damage();
             let hit = net::combat::apply_damage(hp_before, damage);

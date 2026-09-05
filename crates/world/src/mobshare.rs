@@ -410,6 +410,13 @@ impl Controllers {
     /// It costs nothing to say nothing: that client has already torn its own mob pool down.
     /// **Give ONE mob to `to`, whoever held it.** Returns whether it changed hands.
     ///
+    /// **NOT CURRENTLY CALLED, and that is deliberate rather than an oversight.** Its one
+    /// caller handed a mob to whoever hit it, which made the flinch work and made mobs
+    /// teleport - see `session/combat.rs` for the measurement. Rotating control while the old
+    /// holder is still on the map violates this module's own invariant, because there is no
+    /// revoke to tell them. The function is correct and is what a real fix would use; what is
+    /// missing is a packet this client does not have.
+    ///
     /// The single-mob twin of [`Controllers::hand_over`], and it exists because of what a
     /// flinch turns out to be.
     ///
