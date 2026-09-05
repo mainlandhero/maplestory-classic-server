@@ -1,5 +1,5 @@
 //! The window: sign in, register, or recover a password - and a log pane that says what
-//! happened.
+//! happened, collapsed until something in it is worth reading.
 //!
 //! The owner asked for exactly this to begin with: *"input of email and password and server IP to
 //! be able to direct the client. There should be two buttons, Login then Start Game. Login
@@ -91,6 +91,10 @@ pub struct LauncherApp {
     signed_in: Option<SignIn>,
     status: Option<(Level, String)>,
 
+    /// Open the log pane on the next frame. Set whenever a warning or error is pushed, so a
+    /// collapsed log never hides a problem - the status line carries the headline, the pane
+    /// carries the detail, and the pane opens itself the moment there is detail worth reading.
+    reveal_log: bool,
     log: Vec<LogLine>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -121,6 +125,7 @@ impl LauncherApp {
             working: false,
             signed_in: None,
             status: None,
+            reveal_log: false,
             log: Vec::new(),
             tx,
             rx,
@@ -156,6 +161,9 @@ impl LauncherApp {
     }
 
     fn push(&mut self, level: Level, text: String) {
+        if matches!(level, Level::Warn | Level::Error) {
+            self.reveal_log = true;
+        }
         self.log.push(LogLine { level, text });
     }
 
@@ -687,19 +695,48 @@ impl eframe::App for LauncherApp {
             // for a machine where a window cannot be scripted into answering.
 
             ui.separator();
-            ui.label(RichText::new("Log").strong());
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
+
+            // **The log is collapsed by default.** The owner, 2026-09-05: *"can we hide it inside
+            // a collapsible panel since the average user will not care?"* The status line
+            // under the buttons is what a player reads; the pane is for the run that went
+            // wrong. Two things keep a collapsed log from hiding a problem: the header counts
+            // warnings, and `push` opens the pane whenever a warning or error arrives - so
+            // `announce_layout`'s "MapleStory.exe not found" at startup is still on screen,
+            // in the place the rest of the run is reported.
+            let warnings = self
+                .log
+                .iter()
+                .filter(|l| matches!(l.level, Level::Warn | Level::Error))
+                .count();
+            let title = if warnings == 0 {
+                format!("Log ({} lines)", self.log.len())
+            } else {
+                format!("Log ({} lines, {warnings} warnings)", self.log.len())
+            };
+            // Forced open for one frame when something worth reading arrived; otherwise the
+            // header keeps whatever the person last set it to.
+            let force_open = std::mem::take(&mut self.reveal_log).then_some(true);
+            egui::CollapsingHeader::new(RichText::new(title).strong())
+                // A fixed id, because the title changes with every line and egui would
+                // otherwise key the open state on the text and forget it each time.
+                .id_salt("log-pane")
+                .default_open(false)
+                .open(force_open)
                 .show(ui, |ui| {
-                    for line in &self.log {
-                        ui.label(
-                            RichText::new(&line.text)
-                                .monospace()
-                                .size(11.0)
-                                .color(colour(line.level)),
-                        );
-                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(260.0)
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for line in &self.log {
+                                ui.label(
+                                    RichText::new(&line.text)
+                                        .monospace()
+                                        .size(11.0)
+                                        .color(colour(line.level)),
+                                );
+                            }
+                        });
                 });
         });
     }
