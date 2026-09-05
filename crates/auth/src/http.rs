@@ -8,6 +8,8 @@
 //! | POST   | `/launch` | `{"launch_id":..,"pid":..}`         | bind the client process to that claim |
 //! | POST   | `/verify` | `{"token":..}`                      | check a token, leaves it valid |
 //! | POST   | `/consume`| `{"token":..}`                      | check and spend a token |
+//! | POST   | `/register` | `{"username","email","password","code"}` | create an account against a registration code (`crate::register`) |
+//! | POST   | `/recover`  | `{"identity","code","new_password"}`     | set a new password against a recovery code |
 //! | GET    | `/health` | —                                   | liveness |
 //!
 //! # `/launch` is what makes two clients on one machine work
@@ -43,7 +45,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::{AuthService, LoginRequest};
+use crate::{AuthService, LoginRequest, RecoverRequest, RegisterRequest};
 
 /// Cap on the request head (request line plus headers). These are a launcher's few lines.
 const MAX_HEAD: usize = 8 * 1024;
@@ -98,7 +100,10 @@ fn reason(status: u16) -> &'static str {
         401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        409 => "Conflict",
         413 => "Payload Too Large",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
         _ => "Error",
     }
 }
@@ -136,6 +141,24 @@ pub fn handle(service: &AuthService, req: &Request) -> Response {
             }
         },
 
+        // Registration and recovery: single-use codes a GM minted. The status code carries
+        // the verdict class and the body carries the sentence; the launcher reads both.
+        ("POST", "/register") => match serde_json::from_str::<RegisterRequest>(&req.body) {
+            // Never echo the body: it carries a password and a live code.
+            Err(_) => Response::error(400, "invalid JSON"),
+            Ok(r) => {
+                let resp = service.register(&r, req.peer.as_deref());
+                Response::json(resp.http_status(), serde_json::to_string(&resp).unwrap_or_default())
+            }
+        },
+        ("POST", "/recover") => match serde_json::from_str::<RecoverRequest>(&req.body) {
+            Err(_) => Response::error(400, "invalid JSON"),
+            Ok(r) => {
+                let resp = service.recover(&r, req.peer.as_deref());
+                Response::json(resp.http_status(), serde_json::to_string(&resp).unwrap_or_default())
+            }
+        },
+
         ("POST", "/verify") | ("POST", "/consume") => {
             match serde_json::from_str::<TokenRequest>(&req.body) {
                 Err(_) => Response::error(400, "invalid JSON"),
@@ -154,9 +177,8 @@ pub fn handle(service: &AuthService, req: &Request) -> Response {
             }
         }
 
-        ("GET", "/login") | ("GET", "/launch") | ("GET", "/verify") | ("GET", "/consume") => {
-            Response::error(405, "POST")
-        }
+        ("GET", "/login") | ("GET", "/launch") | ("GET", "/verify") | ("GET", "/consume")
+        | ("GET", "/register") | ("GET", "/recover") => Response::error(405, "POST"),
         _ => Response::error(404, "not found"),
     }
 }

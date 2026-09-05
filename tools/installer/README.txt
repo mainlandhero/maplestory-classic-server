@@ -44,6 +44,13 @@ Two double-clicks. No typing.
    Windows asks for administrator. Say yes: the game client requires it, and
    accepting here means the client does not ask a second time.
 
+   No account yet? The launcher's REGISTER tab makes one - username, email,
+   password, and a single-use registration code the administrator gives you
+   (they mint it in game with !registrationcode). Forgot the password? The
+   FORGOT PASSWORD tab takes your email or username, a recovery code from the
+   administrator (!recoverycode <your email>), and the new password. Passwords
+   must be at least 8 characters with a letter and a digit.
+
 Closing the server window terminates the servers rather than asking them to
 finish, and nothing is lost by that: every log line is flushed as it is written,
 and the database is in WAL mode, which is crash-safe by design.

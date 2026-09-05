@@ -540,7 +540,9 @@ impl Store {
     }
 
     /// Account names are used in URLs, logs, and the game protocol, so keep them plain.
-    fn validate_name(name: &str) -> Result<()> {
+    /// The rule for an account name. Public since 2026-09-05 so `auth::register` can refuse a
+    /// bad name BEFORE spending a registration code, with the same sentence this would give.
+    pub fn validate_name(name: &str) -> Result<()> {
         let bad = |reason| {
             Err(StoreError::InvalidAccountName {
                 name: name.to_string(),

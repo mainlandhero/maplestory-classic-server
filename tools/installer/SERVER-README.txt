@@ -44,13 +44,28 @@ SETUP
 
 1. Unzip anywhere. C:\MapleCW-server is fine.
 
-2. Make an account, and give it GM:
+2. Make YOUR account, and give it GM:
 
      & ".\bin\maplecw-useradd.exe" --db ".\maplecw.db" <name> --email <address>
      & ".\bin\maplecw-useradd.exe" --db ".\maplecw.db" --gm <name>
 
    The leading & is required - PowerShell reads a line starting with a quoted
    string as a string, not a command.
+
+   OTHER PLAYERS register themselves through the launcher, but only with a
+   single-use code you mint. In game, as the GM:
+
+     !registrationcode                  a code that lets one person register
+                                        (Register tab in the launcher; 7 days)
+     !recoverycode <email or username>  a code that lets THAT account set a
+                                        new password (Forgot password tab;
+                                        24 hours)
+
+   The code appears as a chat notice on your screen and nowhere else - the
+   server keeps only a hash and never logs it. The same codes come from this
+   console with --registration-code and --recovery-code <name|email>. A lost
+   code is replaced, not looked up. Passwords players choose must be at least
+   8 characters with a letter and a digit; the launcher says so before sending.
 
 3. Open inbound TCP 8080, 8484, 8485 and 8486 on this machine:
 

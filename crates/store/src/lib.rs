@@ -64,5 +64,7 @@ pub use storage::{
 pub use db::{Account, AuthOutcome, Store, FIRST_CHARACTER_ID, SESSION_TTL_SECS};
 pub use error::{Result, StoreError};
 pub use migration::{ClaimedMigration, MIGRATION_TTL_SECS};
-pub use password::{hash_password, verify_password, MIN_PASSWORD_LEN};
+pub use password::{
+    check_password_policy, hash_password, verify_password, MIN_PASSWORD_LEN, PASSWORD_POLICY,
+};
 pub use session::{hash_token, new_token, NewSession};

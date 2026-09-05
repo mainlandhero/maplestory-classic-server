@@ -95,24 +95,19 @@
 //! connection deadlocks. Doing it properly means a combined method in `db.rs`, which is not
 //! this file.)
 //!
-//! # NOT WIRED: `Store::init` does not call [`create_tables`]
+//! # Wired, and used
 //!
-//! Every other module's `create_tables` has a line in `db::Store::init`. This one does not,
-//! because `db.rs` belongs to the coordinator this session and was off limits. **The
-//! belt-and-braces ensure at the top of each entry point below is currently the only thing
-//! creating these tables**, which is the "Built is not wired" failure `CLAUDE.md` describes,
-//! caught early. It works - `a_store_with_no_codes_answers_rather_than_failing` is the proof
-//! that the read path makes its own tables - but the line in `Store::init` should still be
-//! added:
+//! `db::Store::init` calls [`create_tables`] like every other module's. This section used to
+//! say it did not - written when `db.rs` was another agent's file - and stayed stale after the
+//! line was added. The per-entry-point ensure below remains for the reason `claims.rs` gives:
+//! these run from a launcher-facing service and an admin CLI, where "no such table" is a
+//! dialog box, and the cost is one no-op `CREATE TABLE IF NOT EXISTS`.
 //!
-//! ```ignore
-//! crate::codes::create_tables(&conn)?;
-//! ```
-//!
-//! The per-entry-point ensure stays even after that, for the reason `claims.rs` gives: these
-//! are called from a launcher and an admin CLI where a "no such table" error is a dialog box,
-//! not a crash, and the cost is one no-op `CREATE TABLE IF NOT EXISTS` per administrative
-//! action.
+//! Who mints and who redeems, as of 2026-09-05: a GM in game (`!registrationcode`,
+//! `!recoverycode <email|username>`, `crates/world/src/session/gm.rs`) or an administrator
+//! (`maplecw-useradd --registration-code`, `--recovery-code`) mints; the sign-in service
+//! redeems on behalf of the launcher's Register and Forgot-password screens
+//! (`auth::register`).
 
 use rand::RngCore;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
@@ -171,24 +166,29 @@ pub const RECOVERY_TTL_SECS: i64 = 24 * 3600;
 /// trusting the string above, because the string above is a claim.
 pub const CODE_ALPHABET: &str = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-/// Characters in a code, not counting the hyphens.
+/// Characters in a code, not counting the hyphen. **Eight**, since 2026-09-05.
 ///
 /// # How much this is worth, stated plainly
 ///
-/// 30 characters is `log2(30) = 4.907` bits each, so 16 of them is **about 78.5 bits**. A
-/// session token is 32 bytes - **256 bits**. These are not equivalent and this module must not
-/// be described as if they were: an invite code is roughly a third of a session token's
-/// entropy.
+/// 30 characters is `log2(30) = 4.907` bits each, so 8 of them is **about 39 bits** -
+/// `30^8 = 6.6e11` codes. A session token is 32 bytes, 256 bits. These are not remotely
+/// equivalent and this module must not be described as if they were.
 ///
-/// It is still far more than enough for what it does. There is no offline attack - the hash is
-/// SHA-256 of a high-entropy string, with nothing to guess at - so the only way in is to type
-/// codes at a live redeem, and `2^78` guesses is not a thing that happens against a server on
-/// one person's LAN. Note what that argument rests on, though: **this module does no rate
-/// limiting.** The margin is what makes the missing rate limit harmless, so shortening a code
-/// for convenience later is not a cosmetic change.
-pub const CODE_CHARS: usize = 16;
+/// It was 16 (78.5 bits) until the owner asked for *"a 1 time use 8 character alphanumeric code
+/// (uppercase)"* - a code a person reads to another person over voice chat. The doc at 16
+/// said, correctly, that the margin was what made the absence of rate limiting harmless and
+/// that shortening the code would not be cosmetic. So shortening it came with the rate limit:
+/// `auth::ratelimit` budgets **failed** redemptions per peer and overall (10 and 200 per
+/// fifteen minutes by default), which caps the whole internet at ~0.2 wrong codes per second.
+/// Half the space at that rate is about 47,000 years. Without the limiter, a thousand guesses
+/// a second over TLS would need about ten years per code - longer than any code lives, but not
+/// the kind of margin to rest on, which is why the limiter is not optional.
+///
+/// There is still no offline attack: the store holds SHA-256 of a random string, and nothing
+/// about a code is derived from anything guessable.
+pub const CODE_CHARS: usize = 8;
 
-/// Characters between hyphens. `XXXX-XXXX-XXXX-XXXX`.
+/// Characters between hyphens. `XXXX-XXXX`.
 const CODE_GROUP_LEN: usize = 4;
 
 /// Mint a code from the OS CSPRNG.
@@ -402,13 +402,11 @@ impl Store {
     /// disabled account still leaves it disabled and unable to log in. If that should change,
     /// it is one `AND enabled = 1` in the lookup below plus a test.
     ///
-    /// `account_name` is matched against `accounts.name` only, which is `COLLATE NOCASE`, so
-    /// case is not a way to miss the account. It is deliberately **not**
-    /// `Store::get_account_by_identity`, which would also accept an email: the parameter is
-    /// named `account_name` and widening a contract quietly is worse than not widening it. If
-    /// an administrator should be able to say the email instead, that is a one-line change to
-    /// the `WHERE` and it should be made on purpose.
-    pub fn create_recovery_code(&self, account_name: &str, ttl_secs: i64) -> Result<NewCode> {
+    /// `identity` is the account's **name or email**, both `COLLATE NOCASE`. This took the name
+    /// only until 2026-09-05 and said that widening it to the email should be done on purpose;
+    /// The owner's `!recoverycode <email>/<username>` is the purpose. The two namespaces cannot
+    /// collide - `Store::validate_name` allows no `@` - so the `OR` can never match two rows.
+    pub fn create_recovery_code(&self, identity: &str, ttl_secs: i64) -> Result<NewCode> {
         let code = mint_code();
         let code_hash = hash_token(&normalize_code(&code));
         let now = Store::now();
@@ -423,14 +421,14 @@ impl Store {
 
         let account_id: Option<i64> = tx
             .query_row(
-                "SELECT id FROM accounts WHERE name = ?1",
-                rusqlite::params![account_name],
+                "SELECT id FROM accounts WHERE name = ?1 OR email = ?1",
+                rusqlite::params![identity],
                 |row| row.get(0),
             )
             .optional()?;
         // The refusal drops the transaction unread, so a refused mint writes nothing at all.
         let Some(account_id) = account_id else {
-            return Err(StoreError::NoSuchAccount { name: account_name.to_string() });
+            return Err(StoreError::NoSuchAccount { name: identity.to_string() });
         };
 
         tx.execute(
@@ -502,6 +500,35 @@ impl Store {
         tx.commit()?;
 
         Ok(Some(account_id))
+    }
+
+    /// **Consume a recovery code only if it was minted for THIS account.** `Ok(false)` if it is
+    /// unknown, expired, used, or belongs to a different account - and in that last case the
+    /// code is **still live**, which is the point of this method existing beside
+    /// [`Store::redeem_recovery_code`].
+    ///
+    /// The launcher's Forgot-password screen sends an identity and a code. Redeeming first and
+    /// comparing afterwards would burn a code on a typo in the identity, and the person would
+    /// have to ask the administrator for another one to find out why. So the account is part
+    /// of the same `WHERE` clause that consumes the row - the guard is in the statement, as it
+    /// is everywhere else in this file - and a mismatch changes nothing.
+    pub fn redeem_recovery_code_for(&self, code: &str, account_id: i64) -> Result<bool> {
+        let entered = normalize_code(code);
+        if entered.is_empty() {
+            return Ok(false);
+        }
+        let code_hash = hash_token(&entered);
+        let now = Store::now();
+
+        let conn = self.conn();
+        create_tables(&conn)?;
+        let consumed = conn.execute(
+            "UPDATE recovery_codes
+                SET used_at = ?2
+              WHERE code_hash = ?1 AND account_id = ?3 AND used_at IS NULL AND expires_at > ?2",
+            rusqlite::params![code_hash, now, account_id],
+        )?;
+        Ok(consumed == 1)
     }
 
     /// **How many live codes of each kind: `(invites, recovery)`.** For the admin CLI.
@@ -875,7 +902,7 @@ mod tests {
     /// [`CODE_ALPHABET`] alone - the alphabet is a claim, and a test that only asserts "every
     /// character is in the alphabet" would keep passing if somebody put `O` back in it.
     ///
-    /// 200 codes, because one 16-character sample could miss a character that appears one time
+    /// 200 codes, because one 8-character sample could miss a character that appears one time
     /// in thirty.
     #[test]
     fn codes_contain_no_ambiguous_characters() {
@@ -996,6 +1023,28 @@ mod tests {
     /// An in-memory store cannot catch a non-idempotent schema - it is a fresh database every
     /// time, so the second open never happens. This needs a real file for that reason, the same
     /// shape as `claims::tests::a_claim_survives_a_reopen`.
+    /// `!recoverycode <email>` - the identity may be the email, and the code it mints is the
+    /// account's.
+    #[test]
+    fn a_recovery_code_can_be_minted_by_email() {
+        let (store, wisp, _) = store_with_accounts();
+        store.set_email("wisp", Some("wisp@example.test")).unwrap();
+        let minted = store.create_recovery_code("WISP@EXAMPLE.TEST", RECOVERY_TTL_SECS).unwrap();
+        assert_eq!(store.redeem_recovery_code(&minted.code).unwrap(), Some(wisp));
+        let err = store.create_recovery_code("nobody@example.test", RECOVERY_TTL_SECS).unwrap_err();
+        assert!(matches!(err, StoreError::NoSuchAccount { .. }), "{err}");
+    }
+
+    /// The launcher sends an identity AND a code; a typo in the identity must not burn the code.
+    #[test]
+    fn a_recovery_code_is_not_burnt_by_the_wrong_account() {
+        let (store, wisp, other) = store_with_accounts();
+        let minted = store.create_recovery_code("wisp", RECOVERY_TTL_SECS).unwrap();
+        assert!(!store.redeem_recovery_code_for(&minted.code, other).unwrap(), "not that account");
+        assert!(store.redeem_recovery_code_for(&minted.code, wisp).unwrap(), "still live for the right one");
+        assert!(!store.redeem_recovery_code_for(&minted.code, wisp).unwrap(), "and single use");
+    }
+
     #[test]
     fn codes_survive_a_reopen() {
         let dir = std::env::temp_dir().join(format!("maplecw-codes-{}", std::process::id()));

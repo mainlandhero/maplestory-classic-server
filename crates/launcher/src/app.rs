@@ -1,16 +1,26 @@
-//! The window: three inputs, two buttons, and a log pane that says what happened.
+//! The window: sign in, register, or recover a password - and a log pane that says what
+//! happened.
 //!
-//! The owner asked for exactly this: *"input of email and password and server IP to be able to
-//! direct the client. There should be two buttons, Login then Start Game. Login validates the
-//! session and then enables the 'Start Game' button."* So **Start Game is disabled until a
-//! sign-in succeeds**, and both buttons do their work on a worker thread - argon2id is
-//! deliberately slow, and a window that stops repainting during it looks hung.
+//! The owner asked for exactly this to begin with: *"input of email and password and server IP to
+//! be able to direct the client. There should be two buttons, Login then Start Game. Login
+//! validates the session and then enables the 'Start Game' button."* So **Start Game is
+//! disabled until a sign-in succeeds**, and every server call runs on a worker thread -
+//! argon2id is deliberately slow, and a window that stops repainting during it looks hung.
+//!
+//! Two more screens since 2026-09-05, both behind a single-use code an administrator mints
+//! (in game: `!registrationcode`, `!recoverycode <email|username>`): **Register** - username,
+//! email, password, code - and **Forgot password** - email or username, code, new password. A
+//! client machine has no database and no `maplecw-useradd`, so these are the only way a
+//! player gets an account or gets back into one. The password rule is checked here first, so
+//! the sentence appears before a round trip, and again on the server, which is the check that
+//! counts.
 
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
 use egui::{Color32, RichText};
 
+use crate::http::{RecoverReply, RegisterReply};
 use crate::paths::Layout;
 use crate::prepare::{self, Level, Plan};
 use crate::session::{self, SignIn};
@@ -29,7 +39,17 @@ const NO_CREDENTIALS_NOTE: &str = "The game socket carries no credentials. Signi
 enum Msg {
     Log(Level, String),
     SignedIn(SignIn),
+    Registered(RegisterReply),
+    Recovered(RecoverReply),
     LaunchFinished(Result<(), String>),
+}
+
+/// Which of the three things the window is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    SignIn,
+    Register,
+    Recover,
 }
 
 struct LogLine {
@@ -39,6 +59,7 @@ struct LogLine {
 
 pub struct LauncherApp {
     layout: Layout,
+    screen: Screen,
 
     identity: String,
     password: String,
@@ -49,8 +70,23 @@ pub struct LauncherApp {
     /// half-typed path is a half-typed path and not a resolution failure on every keystroke.
     client_dir_text: String,
 
+    // The Register screen.
+    reg_username: String,
+    reg_email: String,
+    reg_password: String,
+    reg_confirm: String,
+    reg_code: String,
+
+    // The Forgot-password screen.
+    rec_identity: String,
+    rec_code: String,
+    rec_password: String,
+    rec_confirm: String,
+
     signing_in: bool,
     launching: bool,
+    /// A registration or recovery is in flight.
+    working: bool,
     /// `Some` once a sign-in has succeeded. This is the gate on **Start Game**.
     signed_in: Option<SignIn>,
     status: Option<(Level, String)>,
@@ -68,10 +104,21 @@ impl LauncherApp {
             port_text: layout.port.to_string(),
             client_dir_text: layout.client_dir.display().to_string(),
             layout,
+            screen: Screen::SignIn,
             identity: String::new(),
             password: String::new(),
+            reg_username: String::new(),
+            reg_email: String::new(),
+            reg_password: String::new(),
+            reg_confirm: String::new(),
+            reg_code: String::new(),
+            rec_identity: String::new(),
+            rec_code: String::new(),
+            rec_password: String::new(),
+            rec_confirm: String::new(),
             signing_in: false,
             launching: false,
+            working: false,
             signed_in: None,
             status: None,
             log: Vec::new(),
@@ -112,6 +159,11 @@ impl LauncherApp {
         self.log.push(LogLine { level, text });
     }
 
+    fn fail(&mut self, text: String) {
+        self.push(Level::Error, text.clone());
+        self.status = Some((Level::Error, text));
+    }
+
     fn port(&self) -> Result<u16, String> {
         match self.port_text.trim().parse::<u16>() {
             Ok(0) | Err(_) => Err(format!("{:?} is not a port (1..=65535)", self.port_text.trim())),
@@ -119,11 +171,46 @@ impl LauncherApp {
         }
     }
 
+    fn busy(&self) -> bool {
+        self.signing_in || self.launching || self.working
+    }
+
     fn can_sign_in(&self) -> bool {
-        !self.signing_in
-            && !self.launching
-            && !self.identity.trim().is_empty()
-            && !self.password.is_empty()
+        !self.busy() && !self.identity.trim().is_empty() && !self.password.is_empty()
+    }
+
+    fn can_register(&self) -> bool {
+        !self.busy()
+            && !self.reg_username.trim().is_empty()
+            && !self.reg_email.trim().is_empty()
+            && !self.reg_password.is_empty()
+            && !self.reg_confirm.is_empty()
+            && !self.reg_code.trim().is_empty()
+    }
+
+    fn can_recover(&self) -> bool {
+        !self.busy()
+            && !self.rec_identity.trim().is_empty()
+            && !self.rec_code.trim().is_empty()
+            && !self.rec_password.is_empty()
+            && !self.rec_confirm.is_empty()
+    }
+
+    /// Where the sign-in service is and which certificate it must present - or the sentence
+    /// saying why nothing will be sent. Every server call starts here.
+    fn service_target(&mut self) -> Option<(String, u16, tlspin::Fingerprint)> {
+        let host = self.server_ip.trim().to_string();
+        let port = self.layout.auth_port;
+        match self.layout.auth_fingerprint {
+            Some(pin) => {
+                self.push(Level::Info, format!("{host}:{port} over TLS, pinned to {}", pin.short()));
+                Some((host, port, pin))
+            }
+            None => {
+                self.fail(session::NOT_PINNED.to_string());
+                None
+            }
+        }
     }
 
     fn start_sign_in(&mut self, ctx: &egui::Context) {
@@ -133,9 +220,7 @@ impl LauncherApp {
         // The SERVER checks the password, not this machine. A client machine has no
         // database to read - `crate::http` has the whole reasoning. It goes over TLS to the
         // one certificate this launcher has pinned; with no pin it does not go at all.
-        let host = self.server_ip.trim().to_string();
-        let auth_port = self.layout.auth_port;
-        let pin = self.layout.auth_fingerprint;
+        let Some((host, auth_port, pin)) = self.service_target() else { return };
         let identity = self.identity.trim().to_string();
         let password = self.password.clone();
         let tx = self.tx.clone();
@@ -144,23 +229,81 @@ impl LauncherApp {
         self.signing_in = true;
         self.signed_in = None;
         self.status = Some((Level::Info, "checking the password (argon2id is slow on purpose)…".into()));
-        match pin {
-            Some(fp) => self.push(
-                Level::Info,
-                format!("signing in against {host}:{auth_port} over TLS, pinned to {}", fp.short()),
-            ),
-            None => self.push(
-                Level::Warn,
-                "no certificate fingerprint is pinned - the sign-in will be refused rather than \
-                 sent in the clear"
-                    .into(),
-            ),
-        }
 
         thread::spawn(move || {
-            let outcome = session::sign_in(&host, auth_port, pin.as_ref(), &identity, &password);
+            let outcome = session::sign_in(&host, auth_port, Some(&pin), &identity, &password);
             drop(password);
             let _ = tx.send(Msg::SignedIn(outcome));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Everything about a registration that can be decided without the server, decided
+    /// first - so the sentence appears at once and the round trip is not spent on a typo.
+    fn register_checks(&self) -> Result<(), String> {
+        if self.reg_password != self.reg_confirm {
+            return Err("the two passwords are not the same".into());
+        }
+        store::check_password_policy(&self.reg_password)?;
+        if !self.reg_email.trim().contains('@') {
+            return Err("that does not look like an email address".into());
+        }
+        Ok(())
+    }
+
+    fn start_register(&mut self, ctx: &egui::Context) {
+        if let Err(why) = self.register_checks() {
+            self.fail(why);
+            return;
+        }
+        let Some((host, auth_port, pin)) = self.service_target() else { return };
+        let username = self.reg_username.trim().to_string();
+        let email = self.reg_email.trim().to_string();
+        let password = self.reg_password.clone();
+        let code = self.reg_code.trim().to_string();
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+
+        self.working = true;
+        self.status = Some((Level::Info, "registering…".into()));
+        self.push(Level::Info, format!("--- registering {username} ---"));
+
+        thread::spawn(move || {
+            let reply = crate::http::register(&host, auth_port, &pin, &username, &email, &password, &code);
+            drop(password);
+            let _ = tx.send(Msg::Registered(reply));
+            ctx.request_repaint();
+        });
+    }
+
+    fn recover_checks(&self) -> Result<(), String> {
+        if self.rec_password != self.rec_confirm {
+            return Err("the two passwords are not the same".into());
+        }
+        store::check_password_policy(&self.rec_password)?;
+        Ok(())
+    }
+
+    fn start_recover(&mut self, ctx: &egui::Context) {
+        if let Err(why) = self.recover_checks() {
+            self.fail(why);
+            return;
+        }
+        let Some((host, auth_port, pin)) = self.service_target() else { return };
+        let identity = self.rec_identity.trim().to_string();
+        let code = self.rec_code.trim().to_string();
+        let password = self.rec_password.clone();
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+
+        self.working = true;
+        self.status = Some((Level::Info, "setting the new password…".into()));
+        self.push(Level::Info, format!("--- password recovery for {identity} ---"));
+
+        thread::spawn(move || {
+            let reply = crate::http::recover(&host, auth_port, &pin, &identity, &code, &password);
+            drop(password);
+            let _ = tx.send(Msg::Recovered(reply));
             ctx.request_repaint();
         });
     }
@@ -247,9 +390,40 @@ impl LauncherApp {
                         self.status = Some((Level::Good, text));
                         self.signed_in = Some(outcome);
                     } else {
-                        self.push(Level::Error, text.clone());
-                        self.status = Some((Level::Error, text));
+                        self.fail(text);
                         self.signed_in = None;
+                    }
+                }
+                Msg::Registered(reply) => {
+                    self.working = false;
+                    let text = reply.message();
+                    if let RegisterReply::Ok { username, .. } = &reply {
+                        // Straight to the sign-in screen with the name filled in. The code is
+                        // spent and the passwords are gone; the log says what to do next.
+                        self.identity = username.clone();
+                        wipe(&mut self.reg_password);
+                        wipe(&mut self.reg_confirm);
+                        self.reg_code.clear();
+                        self.screen = Screen::SignIn;
+                        self.push(Level::Good, text.clone());
+                        self.status = Some((Level::Good, text));
+                    } else {
+                        self.fail(text);
+                    }
+                }
+                Msg::Recovered(reply) => {
+                    self.working = false;
+                    let text = reply.message();
+                    if let RecoverReply::Ok { username } = &reply {
+                        self.identity = username.clone();
+                        wipe(&mut self.rec_password);
+                        wipe(&mut self.rec_confirm);
+                        self.rec_code.clear();
+                        self.screen = Screen::SignIn;
+                        self.push(Level::Good, text.clone());
+                        self.status = Some((Level::Good, text));
+                    } else {
+                        self.fail(text);
                     }
                 }
                 Msg::LaunchFinished(result) => {
@@ -258,14 +432,21 @@ impl LauncherApp {
                         Ok(()) => {
                             self.status = Some((Level::Good, "the client is starting".into()));
                         }
-                        Err(e) => {
-                            self.push(Level::Error, e.clone());
-                            self.status = Some((Level::Error, e));
-                        }
+                        Err(e) => self.fail(e),
                     }
                 }
             }
         }
+    }
+
+    fn text_row(ui: &mut egui::Ui, enabled: bool, label: &str, value: &mut String, password: bool, hint: &str) {
+        ui.label(label);
+        let mut edit = egui::TextEdit::singleline(value).desired_width(300.0).password(password);
+        if !hint.is_empty() {
+            edit = edit.hint_text(hint);
+        }
+        ui.add_enabled(enabled, edit);
+        ui.end_row();
     }
 }
 
@@ -275,7 +456,7 @@ impl LauncherApp {
 /// undo history for a `TextEdit`, the worker thread had a copy, and any process can be
 /// dumped. What is actually guaranteed is narrower and is what matters here: the password is
 /// never written to a file, never put in the log pane, and never leaves the process except
-/// into `store`'s argon2id verification.
+/// over the pinned TLS connection to the sign-in service.
 fn wipe(password: &mut String) {
     let len = password.len();
     if len > 0 {
@@ -308,27 +489,51 @@ impl eframe::App for LauncherApp {
             );
             ui.separator();
 
-            let busy = self.signing_in || self.launching;
+            let busy = self.busy();
+
+            // Which of the three things this window does. Register and Forgot password exist
+            // because a client machine has no database and no useradd: the only way in is a
+            // code from the administrator, typed here.
+            ui.horizontal(|ui| {
+                for (screen, label) in [
+                    (Screen::SignIn, "Sign in"),
+                    (Screen::Register, "Register"),
+                    (Screen::Recover, "Forgot password"),
+                ] {
+                    let selected = self.screen == screen;
+                    if ui.add_enabled(!busy, egui::SelectableLabel::new(selected, label)).clicked()
+                        && !selected
+                    {
+                        self.screen = screen;
+                        self.status = None;
+                    }
+                }
+            });
+            ui.add_space(4.0);
 
             egui::Grid::new("fields")
                 .num_columns(2)
                 .spacing([10.0, 8.0])
                 .show(ui, |ui| {
-                    ui.label("Email or account name");
-                    ui.add_enabled(
-                        !busy,
-                        egui::TextEdit::singleline(&mut self.identity).desired_width(300.0),
-                    );
-                    ui.end_row();
-
-                    ui.label("Password");
-                    ui.add_enabled(
-                        !busy,
-                        egui::TextEdit::singleline(&mut self.password)
-                            .password(true)
-                            .desired_width(300.0),
-                    );
-                    ui.end_row();
+                    match self.screen {
+                        Screen::SignIn => {
+                            Self::text_row(ui, !busy, "Email or account name", &mut self.identity, false, "");
+                            Self::text_row(ui, !busy, "Password", &mut self.password, true, "");
+                        }
+                        Screen::Register => {
+                            Self::text_row(ui, !busy, "Username", &mut self.reg_username, false, "3-24 letters, digits, underscore");
+                            Self::text_row(ui, !busy, "Email", &mut self.reg_email, false, "you@example.com");
+                            Self::text_row(ui, !busy, "Password", &mut self.reg_password, true, store::PASSWORD_POLICY);
+                            Self::text_row(ui, !busy, "Confirm password", &mut self.reg_confirm, true, "");
+                            Self::text_row(ui, !busy, "Registration code", &mut self.reg_code, false, "from the administrator, e.g. 7K3M-PQ2X");
+                        }
+                        Screen::Recover => {
+                            Self::text_row(ui, !busy, "Email or account name", &mut self.rec_identity, false, "");
+                            Self::text_row(ui, !busy, "Recovery code", &mut self.rec_code, false, "from the administrator, e.g. 7K3M-PQ2X");
+                            Self::text_row(ui, !busy, "New password", &mut self.rec_password, true, store::PASSWORD_POLICY);
+                            Self::text_row(ui, !busy, "Confirm new password", &mut self.rec_confirm, true, "");
+                        }
+                    }
 
                     ui.label("Server IP");
                     ui.add_enabled(
@@ -363,67 +568,99 @@ impl eframe::App for LauncherApp {
             ui.add_space(4.0);
 
             ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(self.can_sign_in(), egui::Button::new("Login"))
-                    .clicked()
-                {
-                    self.start_sign_in(ctx);
-                }
-
-                // **Sign out, so a second account does not need a second launcher.**
-                //
-                // The owner, 2026-09-02, on the run where two clients first worked: *"I had to
-                // close and reopen the launcher to be able to login to another account since
-                // there's no logout button."* Two clients means two accounts, and the shape
-                // that was fine for one player is a restart for every swap.
-                //
-                // It clears the sign-in and the password, and **leaves the identity**, which
-                // is a deliberate asymmetry: the next sign-in is usually the OTHER account, so
-                // the field wants replacing rather than preserving - but retyping a name you
-                // can see is cheap, and losing what you typed is annoying.
-                //
-                // No server call. A claim is keyed per launch and expires on its own; nothing
-                // here can revoke one, and pretending otherwise in the UI would be a lie about
-                // what the button does.
-                if ui.add_enabled(self.signed_in.is_some() && !busy, egui::Button::new("Sign out")).clicked() {
-                    self.signed_in = None;
-                    wipe(&mut self.password);
-                    self.status = Some((
-                        Level::Info,
-                        "signed out - type another account and press Login".into(),
-                    ));
-                    self.push(
-                        Level::Info,
-                        "--- signed out. The login claim from that sign-in is NOT revoked: it \
-                         is keyed per launch and expires on its own. A client already running \
-                         keeps its own session ---"
-                            .into(),
-                    );
-                }
-
-                // Disabled until a sign-in has succeeded - the whole point of the two-button
-                // shape the owner asked for.
-                let ready = self.signed_in.is_some() && !busy;
-                let start = ui.add_enabled(ready, egui::Button::new("Start Game"));
-                if start.clicked() {
-                    // A typed path counts, not only a browsed one.
-                    self.commit_client_dir();
-                    match self.port() {
-                        Ok(port) => {
-                            let plan = Plan {
-                                ip: self.server_ip.trim().to_string(),
-                                port,
-                            };
-                            self.start_launch(ctx, plan);
+                match self.screen {
+                    Screen::SignIn => {
+                        if ui
+                            .add_enabled(self.can_sign_in(), egui::Button::new("Login"))
+                            .clicked()
+                        {
+                            self.start_sign_in(ctx);
                         }
-                        Err(e) => {
-                            self.push(Level::Error, e.clone());
-                            self.status = Some((Level::Error, e));
+
+                        // **Sign out, so a second account does not need a second launcher.**
+                        //
+                        // The owner, 2026-09-02, on the run where two clients first worked: *"I had
+                        // to close and reopen the launcher to be able to login to another
+                        // account since there's no logout button."* Two clients means two
+                        // accounts, and the shape that was fine for one player is a restart for
+                        // every swap.
+                        //
+                        // It clears the sign-in and the password, and **leaves the identity**,
+                        // which is a deliberate asymmetry: the next sign-in is usually the
+                        // OTHER account, so the field wants replacing rather than preserving -
+                        // but retyping a name you can see is cheap, and losing what you typed
+                        // is annoying.
+                        //
+                        // No server call. A claim is keyed per launch and expires on its own;
+                        // nothing here can revoke one, and pretending otherwise in the UI would
+                        // be a lie about what the button does.
+                        if ui
+                            .add_enabled(self.signed_in.is_some() && !busy, egui::Button::new("Sign out"))
+                            .clicked()
+                        {
+                            self.signed_in = None;
+                            wipe(&mut self.password);
+                            self.status = Some((
+                                Level::Info,
+                                "signed out - type another account and press Login".into(),
+                            ));
+                            self.push(
+                                Level::Info,
+                                "--- signed out. The login claim from that sign-in is NOT revoked: it \
+                                 is keyed per launch and expires on its own. A client already running \
+                                 keeps its own session ---"
+                                    .into(),
+                            );
+                        }
+
+                        // Disabled until a sign-in has succeeded - the whole point of the
+                        // two-button shape the owner asked for.
+                        let ready = self.signed_in.is_some() && !busy;
+                        let start = ui.add_enabled(ready, egui::Button::new("Start Game"));
+                        if start.clicked() {
+                            // A typed path counts, not only a browsed one.
+                            self.commit_client_dir();
+                            match self.port() {
+                                Ok(port) => {
+                                    let plan = Plan {
+                                        ip: self.server_ip.trim().to_string(),
+                                        port,
+                                    };
+                                    self.start_launch(ctx, plan);
+                                }
+                                Err(e) => self.fail(e),
+                            }
+                        }
+                        if self.signed_in.is_none() {
+                            let _ = start.on_disabled_hover_text("sign in first");
                         }
                     }
-                }
-                if self.signed_in.is_none() {
-                    let _ = start.on_disabled_hover_text("sign in first");
+                    Screen::Register => {
+                        if ui
+                            .add_enabled(self.can_register(), egui::Button::new("Create account"))
+                            .clicked()
+                        {
+                            self.start_register(ctx);
+                        }
+                        ui.label(
+                            RichText::new("The code is single use and comes from the administrator.")
+                                .small()
+                                .color(colour(Level::Info)),
+                        );
+                    }
+                    Screen::Recover => {
+                        if ui
+                            .add_enabled(self.can_recover(), egui::Button::new("Set new password"))
+                            .clicked()
+                        {
+                            self.start_recover(ctx);
+                        }
+                        ui.label(
+                            RichText::new("The code is single use, lasts a day, and is minted for your account only.")
+                                .small()
+                                .color(colour(Level::Info)),
+                        );
+                    }
                 }
 
                 if busy {

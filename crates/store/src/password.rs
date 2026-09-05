@@ -52,9 +52,50 @@ pub fn verify_password(password: &str, stored_phc: &str) -> Result<bool> {
         .is_ok())
 }
 
+/// The rule for a password a PLAYER sets - registration and recovery through the launcher.
+///
+/// The owner, 2026-09-05: *"ensures that passwords are of at least 8 characters with numbers and
+/// letters."* Stated once here and read by the service (`auth::register`) and by the launcher's
+/// forms, so the sentence on screen and the check on the server cannot disagree.
+pub const PASSWORD_POLICY: &str = "at least 8 characters, with at least one letter and one digit";
+
+/// Check a password against [`PASSWORD_POLICY`]. `Err` carries the sentence to show.
+///
+/// **Not called by [`hash_password`], on purpose.** That would retroactively apply the rule to
+/// `maplecw-useradd --passwd`, an administrator's own act, and to every existing test fixture;
+/// the rule is about what a player may choose, and it is enforced where a player chooses.
+pub fn check_password_policy(password: &str) -> std::result::Result<(), String> {
+    if password.chars().count() < MIN_PASSWORD_LEN {
+        return Err(format!("the password must be {PASSWORD_POLICY}"));
+    }
+    let has_letter = password.chars().any(|c| c.is_alphabetic());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    if !(has_letter && has_digit) {
+        return Err(format!("the password must be {PASSWORD_POLICY}"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_player_policy_wants_length_a_letter_and_a_digit() {
+        assert!(check_password_policy("Passw0rd").is_ok());
+        assert!(check_password_policy("12345678a").is_ok());
+        assert!(check_password_policy("ünïcödé1").is_ok(), "letters are letters, not ASCII");
+        for bad in ["Pass1", "password", "12345678", "", "        "] {
+            let err = check_password_policy(bad).unwrap_err();
+            assert!(err.contains(PASSWORD_POLICY), "{bad:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn hashing_does_not_apply_the_player_policy() {
+        // An administrator's password and every existing fixture keep working.
+        assert!(hash_password("correct horse battery").is_ok());
+    }
 
     #[test]
     fn hash_is_phc_argon2id_and_not_the_password() {

@@ -245,6 +245,191 @@ pub fn bind_launch(
     }
 }
 
+/// What `POST /register` said. The Register screen shows [`RegisterReply::message`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterReply {
+    Ok { account_id: i64, username: String },
+    /// Unknown, expired or already used - one answer for all three, from the service.
+    InvalidCode,
+    UsernameTaken,
+    /// The service refused the input itself - name shape, email shape, password policy - and
+    /// this is the sentence it wants shown.
+    Refused(String),
+    TooManyAttempts,
+    /// Unreachable, a non-200 that was not a refusal, or an unreadable body.
+    Failed(String),
+}
+
+impl RegisterReply {
+    pub fn message(&self) -> String {
+        match self {
+            RegisterReply::Ok { username, .. } => format!(
+                "account {username} created. Sign in with it - or with the email you gave - and \
+                 press Start Game."
+            ),
+            RegisterReply::InvalidCode => "that registration code is not valid: unknown, expired, \
+                 or already used. Ask the administrator for another one (in game: \
+                 !registrationcode)."
+                .into(),
+            RegisterReply::UsernameTaken => "that username is taken - choose another.".into(),
+            RegisterReply::Refused(why) => why.clone(),
+            RegisterReply::TooManyAttempts => "too many wrong codes from this address recently. \
+                 Wait fifteen minutes and try again."
+                .into(),
+            RegisterReply::Failed(why) => why.clone(),
+        }
+    }
+}
+
+/// What `POST /recover` said. The Forgot-password screen shows [`RecoverReply::message`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecoverReply {
+    Ok { username: String },
+    /// Unknown, expired, used, minted for another account, or the identity names no account.
+    /// The service deliberately does not say which.
+    InvalidCode,
+    Refused(String),
+    TooManyAttempts,
+    Failed(String),
+}
+
+impl RecoverReply {
+    pub fn message(&self) -> String {
+        match self {
+            RecoverReply::Ok { username } => {
+                format!("the password for {username} was changed. Sign in with the new one.")
+            }
+            RecoverReply::InvalidCode => "that recovery code is not valid for that account: \
+                 unknown, expired, already used, minted for a different account - or no \
+                 account has that name or email. Ask the administrator for another one (in \
+                 game: !recoverycode <email or username>)."
+                .into(),
+            RecoverReply::Refused(why) => why.clone(),
+            RecoverReply::TooManyAttempts => "too many wrong codes from this address recently. \
+                 Wait fifteen minutes and try again."
+                .into(),
+            RecoverReply::Failed(why) => why.clone(),
+        }
+    }
+}
+
+/// `POST /register`: create an account against a registration code.
+///
+/// The password goes over the same pinned TLS connection the sign-in uses, and nowhere else.
+pub fn register(
+    host: &str,
+    port: u16,
+    pin: &Fingerprint,
+    username: &str,
+    email: &str,
+    password: &str,
+    code: &str,
+) -> RegisterReply {
+    let body = format!(
+        "{{\"username\":{},\"email\":{},\"password\":{},\"code\":{}}}",
+        json_string(username),
+        json_string(email),
+        json_string(password),
+        json_string(code)
+    );
+    match send(host, port, pin, post_request(host, port, "/register", &body).as_bytes()) {
+        Ok(r) => parse_register(&r),
+        Err(e) => RegisterReply::Failed(e),
+    }
+}
+
+/// `POST /recover`: set a new password against a recovery code minted for that account.
+pub fn recover(
+    host: &str,
+    port: u16,
+    pin: &Fingerprint,
+    identity: &str,
+    code: &str,
+    new_password: &str,
+) -> RecoverReply {
+    let body = format!(
+        "{{\"identity\":{},\"code\":{},\"new_password\":{}}}",
+        json_string(identity),
+        json_string(code),
+        json_string(new_password)
+    );
+    match send(host, port, pin, post_request(host, port, "/recover", &body).as_bytes()) {
+        Ok(r) => parse_recover(&r),
+        Err(e) => RecoverReply::Failed(e),
+    }
+}
+
+fn post_request(host: &str, port: u16, path: &str, body: &str) -> String {
+    format!(
+        "POST {path} HTTP/1.1\r\n\
+         Host: {host}:{port}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// Split a response into its status code and body, or say why not.
+fn status_and_body(response: &str) -> Result<(&str, &str, &str), String> {
+    let Some((head, body)) = response.split_once("\r\n\r\n") else {
+        return Err(format!("no HTTP body in the answer: {}", trim(response)));
+    };
+    let status = head.lines().next().unwrap_or("");
+    let code = status.split_whitespace().nth(1).unwrap_or("");
+    Ok((status, code, body))
+}
+
+/// Turn a raw HTTP response into a [`RegisterReply`]. The body's `status` is the verdict; the
+/// HTTP status only has to agree with it for `ok`, for the reason [`parse`] gives.
+pub fn parse_register(response: &str) -> RegisterReply {
+    let (status, code, body) = match status_and_body(response) {
+        Ok(parts) => parts,
+        Err(e) => return RegisterReply::Failed(e),
+    };
+    let message = || field(body, "message");
+    match field(body, "status").as_deref() {
+        Some("ok") if code == "200" => match number(body, "account_id") {
+            Some(account_id) => RegisterReply::Ok {
+                account_id,
+                username: field(body, "username").unwrap_or_default(),
+            },
+            None => RegisterReply::Failed(format!("no account id in the answer: {}", trim(body))),
+        },
+        Some("ok") => RegisterReply::Failed(format!("the service answered {status:?} with an ok body")),
+        Some("invalid_code") => RegisterReply::InvalidCode,
+        Some("username_taken") => RegisterReply::UsernameTaken,
+        Some("invalid_username") | Some("invalid_email") | Some("weak_password") => {
+            RegisterReply::Refused(message().unwrap_or_else(|| "the service refused the input".into()))
+        }
+        Some("too_many_attempts") => RegisterReply::TooManyAttempts,
+        Some("failed") => RegisterReply::Failed(message().unwrap_or_else(|| "the service refused".into())),
+        _ => RegisterReply::Failed(format!("could not read the answer ({status:?}): {}", trim(body))),
+    }
+}
+
+/// Turn a raw HTTP response into a [`RecoverReply`].
+pub fn parse_recover(response: &str) -> RecoverReply {
+    let (status, code, body) = match status_and_body(response) {
+        Ok(parts) => parts,
+        Err(e) => return RecoverReply::Failed(e),
+    };
+    let message = || field(body, "message");
+    match field(body, "status").as_deref() {
+        Some("ok") if code == "200" => {
+            RecoverReply::Ok { username: field(body, "username").unwrap_or_default() }
+        }
+        Some("ok") => RecoverReply::Failed(format!("the service answered {status:?} with an ok body")),
+        Some("invalid_code") => RecoverReply::InvalidCode,
+        Some("weak_password") => {
+            RecoverReply::Refused(message().unwrap_or_else(|| "the service refused the password".into()))
+        }
+        Some("too_many_attempts") => RecoverReply::TooManyAttempts,
+        Some("failed") => RecoverReply::Failed(message().unwrap_or_else(|| "the service refused".into())),
+        _ => RecoverReply::Failed(format!("could not read the answer ({status:?}): {}", trim(body))),
+    }
+}
+
 /// Turn a raw HTTP response into a [`LaunchReply`]. Status line first, for the same reason
 /// [`parse`] checks it first.
 pub fn parse_launch(response: &str) -> LaunchReply {
@@ -485,6 +670,74 @@ mod tests {
             other => panic!("expected Failed, got {other:?}"),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **Registration and recovery, end to end over TLS.** The codes are minted in the store
+    /// the way a GM's `!registrationcode` / `!recoverycode` mint them, and redeemed by this
+    /// client through the real service. The negative half is what matters: a weak password is
+    /// refused BEFORE the code is spent, and a spent code registers nobody else.
+    #[test]
+    fn a_registration_code_creates_an_account_and_a_recovery_code_resets_its_password() {
+        let dir = std::env::temp_dir().join(format!("maplecw-launcher-codes-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let identity = auth::tls::ensure_identity(&dir).unwrap();
+        let tls = identity.server_config().unwrap();
+        let store = std::sync::Arc::new(store::Store::open_in_memory().unwrap());
+        let service = std::sync::Arc::new(auth::AuthService::new(store.clone()));
+        let listener = auth::http::listen("127.0.0.1", 0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let _ = auth::http::run(listener, service, tls);
+        });
+        let pin = identity.fingerprint;
+        let h = "127.0.0.1";
+
+        let invite = store.create_invite_code(store::INVITE_TTL_SECS).unwrap().code;
+        match register(h, port, &pin, "newbie", "newbie@example.test", "lettersonly", &invite) {
+            RegisterReply::Refused(why) => assert!(why.contains("digit"), "{why}"),
+            other => panic!("a weak password must be refused first, got {other:?}"),
+        }
+        match register(h, port, &pin, "newbie", "newbie@example.test", "Passw0rd", &invite) {
+            RegisterReply::Ok { username, .. } => assert_eq!(username, "newbie"),
+            other => panic!("expected Ok, got {other:?}"),
+        }
+        assert!(matches!(login(h, port, &pin, "newbie@example.test", "Passw0rd"), AuthReply::Ok { .. }));
+        assert_eq!(
+            register(h, port, &pin, "someone_else", "x@example.test", "Passw0rd", &invite),
+            RegisterReply::InvalidCode,
+            "spent"
+        );
+
+        let recovery = store.create_recovery_code("newbie@example.test", store::RECOVERY_TTL_SECS).unwrap().code;
+        assert_eq!(
+            recover(h, port, &pin, "newbie", &recovery, "NewPass99"),
+            RecoverReply::Ok { username: "newbie".into() }
+        );
+        assert_eq!(login(h, port, &pin, "newbie", "Passw0rd"), AuthReply::InvalidCredentials, "old password gone");
+        assert!(matches!(login(h, port, &pin, "newbie", "NewPass99"), AuthReply::Ok { .. }));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn register_and_recover_answers_are_read_by_body_status_with_ok_requiring_200() {
+        assert_eq!(
+            parse_register(&http("200 OK", r#"{"status":"ok","account_id":7,"username":"newbie"}"#)),
+            RegisterReply::Ok { account_id: 7, username: "newbie".into() }
+        );
+        assert_eq!(parse_register(&http("409 Conflict", r#"{"status":"username_taken"}"#)), RegisterReply::UsernameTaken);
+        assert_eq!(parse_register(&http("401 Unauthorized", r#"{"status":"invalid_code"}"#)), RegisterReply::InvalidCode);
+        assert_eq!(
+            parse_register(&http("400 Bad Request", r#"{"status":"weak_password","message":"the password must be longer"}"#)),
+            RegisterReply::Refused("the password must be longer".into())
+        );
+        assert_eq!(parse_register(&http("429 Too Many Requests", r#"{"status":"too_many_attempts"}"#)), RegisterReply::TooManyAttempts);
+        assert!(matches!(parse_register(&http("500 Internal Server Error", r#"{"status":"ok","account_id":1}"#)), RegisterReply::Failed(_)));
+        assert_eq!(
+            parse_recover(&http("200 OK", r#"{"status":"ok","username":"newbie"}"#)),
+            RecoverReply::Ok { username: "newbie".into() }
+        );
+        assert_eq!(parse_recover(&http("401 Unauthorized", r#"{"status":"invalid_code"}"#)), RecoverReply::InvalidCode);
     }
 
     fn http(status: &str, body: &str) -> String {

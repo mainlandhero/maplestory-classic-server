@@ -59,6 +59,22 @@ both built, tested, and exercised against the shipped binaries:
   a wrong password to a live service caught it. Fixed; the plan's "wrong-password refusal
   CONFIRMED" dates from the pre-HTTP launcher and was true then.
 
+* **Players get accounts through single-use codes, minted in game.** The owner, later the same
+  day: `!registrationcode` and `!recoverycode <email|username>` mint an 8-character code
+  (`XXXX-XXXX`, the confusion-free alphabet `store::codes` already had) as a chat notice on
+  the GM's screen and **nowhere else** - `world.log` records "minted (not logged)". The
+  launcher grew a **Register** tab (username, email, password, code) and a **Forgot
+  password** tab (email or username, code, new password); the service grew `/register` and
+  `/recover` (`auth::register`). Passwords a player chooses must be **8+ characters with a
+  letter and a digit** (`store::PASSWORD_POLICY`, one owner, checked on the launcher first
+  and on the server always). Everything checkable is checked *before* the code is spent, and
+  a recovery code is consumed only against the account it was minted for, so a typo never
+  burns one. Eight characters is ~39 bits, down from ~78 - so the service now budgets failed
+  code attempts per peer and overall (`auth::ratelimit`; 10 and 200 per fifteen minutes),
+  which is what the codes module always said shortening would require. `maplecw-useradd
+  --registration-code / --recovery-code / --codes` do the same from the console. T12 in the
+  test plan is the screen half; the suite covers every sentence in it.
+
 What did **not** change: the game socket still carries no credential. Forwarded to the
 internet, a stranger reaching 8484 while exactly one person is signed in is served as that
 person - `SERVER-README.txt` says so where the ports are listed. Ports, all TCP: 8080

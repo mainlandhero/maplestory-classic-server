@@ -72,6 +72,17 @@
 
     ============ WHAT THIS RUN IS FOR ============
 
+    T12 (NEW 2026-09-05). REGISTRATION AND RECOVERY, and the launcher half needs no client.
+    As the GM type !registrationcode: a chat notice shows an 8-character code, XXXX-XXXX,
+    and world.log must NOT contain it (grep it - the log line says "not logged"). In the
+    launcher, Register tab: any username, an email, a password WITHOUT a digit -> refused on
+    the spot and the code is still live; with a digit -> "account created", the Sign in tab
+    comes back with the name filled in, Login works. Then !recoverycode <that email> in game;
+    Forgot password tab with the email, the code and a new password -> the new one signs in
+    and the old one is refused. The wrong identity with the right code -> refused AND the code
+    still works afterwards. Every one of those sentences is a test in the suite; this run is
+    whether the SCREENS say them.
+
     T11 IS THE MEASUREMENT, and T10 is right behind it. Both are walks, not clicks.
 
     T11 crosses to ANOTHER CONTINENT - 87 maps, a separate portal component from
@@ -1533,6 +1544,16 @@ function Show-TestPlan {
         Write-Host '       archive, ZERO carrying a damage fraction. Two clients have'
         Write-Host '       never killed the SAME mob. Do that.'
         Write-Host '    3. T11/T10, single-client, still untested.'
+        Write-Host '    4. REGISTRATION AND RECOVERY (new 2026-09-05, no client needed for'
+        Write-Host '       the launcher half). As the GM type !registrationcode - a chat'
+        Write-Host '       notice shows an 8-character code, XXXX-XXXX, and world.log must'
+        Write-Host '       NOT contain it. In the launcher: Register tab, any username, an'
+        Write-Host '       email, a password WITHOUT a digit -> refused on the spot, the'
+        Write-Host '       code still live; with a digit -> "account created", back on the'
+        Write-Host '       Sign in tab, name filled in, Login works. Then !recoverycode'
+        Write-Host '       <that email> in game; Forgot password tab with the email, the'
+        Write-Host '       code and a new password -> sign in with the new one, old refused.'
+        Write-Host '       Wrong identity + right code -> refused AND the code still works.'
         Write-Host '  Full text: Get-Help on this script.'
         Write-Host ''
         Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green

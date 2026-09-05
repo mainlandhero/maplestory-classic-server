@@ -10,6 +10,9 @@
 //!   maplecw-useradd --no-gm <name>          take that away
 //!   maplecw-useradd --claims                who is signed in, one row per launch
 //!   maplecw-useradd --clear-claims          forget which accounts are "playing"
+//!   maplecw-useradd --registration-code     a single-use code to register through the launcher
+//!   maplecw-useradd --recovery-code <name|email>  a single-use code to set a new password
+//!   maplecw-useradd --codes                 how many of each are live
 //!
 //! GM status is authorisation, **not authentication**. The game socket carries no
 //! credentials, so it says which *account* may use `!item`; which account a connection is
@@ -105,6 +108,15 @@ fn main() -> std::process::ExitCode {
             (Some(name), Some(addr)) => set_email(&store, name, addr),
             _ => Err("--email needs an account name and an address (\"\" clears it)".into()),
         },
+        // The same codes a GM mints in game with !registrationcode / !recoverycode, for an
+        // administrator at the server's console. The code is printed ONCE; the database keeps
+        // only its hash, so there is nothing to print again - mint another.
+        Some("--registration-code") => registration_code(&store),
+        Some("--recovery-code") => match rest.get(1) {
+            Some(identity) => recovery_code(&store, identity),
+            None => Err("--recovery-code needs the account's name or email".into()),
+        },
+        Some("--codes") => live_codes(&store),
         Some(flag) if flag.starts_with('-') => Err(format!("unknown option: {flag}")),
         Some(name) => create(&store, name, new_email.as_deref()),
         None => {
@@ -134,7 +146,12 @@ fn usage() {
          maplecw-useradd --disable <name>\n  \
          maplecw-useradd --enable  <name>\n  \
          maplecw-useradd --claims                who is signed in, one row per launch\n  \
-         maplecw-useradd --clear-claims          forget which accounts are playing\n\n\
+         maplecw-useradd --clear-claims          forget which accounts are playing\n  \
+         maplecw-useradd --registration-code     mint a single-use code that lets one person\n  \
+                                                 register through the launcher (7 days)\n  \
+         maplecw-useradd --recovery-code <name|email>  mint a single-use code that lets that\n  \
+                                                 account set a new password (24 hours)\n  \
+         maplecw-useradd --codes                 how many codes are live, by kind\n\n\
          options:\n  \
          --db <path>                             database file (default {DEFAULT_DB})\n\n\
          Passwords are read from a prompt or stdin, never from an argument.\n  \
@@ -143,6 +160,39 @@ fn usage() {
          GM status is authorisation, not authentication: the game socket carries no\n  \
          credentials, so it gates the ACCOUNT rather than whoever is connected."
     );
+}
+
+fn registration_code(store: &Store) -> Result<(), String> {
+    let minted = store
+        .create_invite_code(store::INVITE_TTL_SECS)
+        .map_err(|e| format!("could not mint a registration code: {e}"))?;
+    println!("registration code: {}", minted.code);
+    println!(
+        "  single use, valid {} days. The person enters it on the launcher's Register screen \
+         with a username, email and password. It is not stored and cannot be shown again.",
+        store::INVITE_TTL_SECS / 86_400
+    );
+    Ok(())
+}
+
+fn recovery_code(store: &Store, identity: &str) -> Result<(), String> {
+    let minted = store
+        .create_recovery_code(identity, store::RECOVERY_TTL_SECS)
+        .map_err(|e| format!("could not mint a recovery code for {identity:?}: {e}"))?;
+    println!("recovery code for {identity}: {}", minted.code);
+    println!(
+        "  single use, valid {} hours. They enter it on the launcher's Forgot password screen \
+         with their email or username and a new password.",
+        store::RECOVERY_TTL_SECS / 3_600
+    );
+    Ok(())
+}
+
+fn live_codes(store: &Store) -> Result<(), String> {
+    let (invites, recovery) = store.live_code_counts().map_err(|e| e.to_string())?;
+    println!("{invites} registration code(s) and {recovery} recovery code(s) are live (unused and unexpired).");
+    println!("  Only counts: the database holds hashes, so a lost code is replaced, not looked up.");
+    Ok(())
 }
 
 /// Read a password without echoing it. Falls back to stdin when piped, so the tool can

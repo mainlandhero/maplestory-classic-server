@@ -8327,3 +8327,67 @@ fn coming_back_to_a_map_this_connection_controls_re_sends_every_grant() {
     );
 }
 
+
+// ---------------------------------------------------------------- account codes, 2026-09-05
+
+/// A code as the two commands print it: eight alphabet characters as `XXXX-XXXX`.
+fn code_in(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .map(|t| t.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-'))
+        .find(|t| {
+            t.len() == 9
+                && t.as_bytes()[4] == b'-'
+                && t.chars().filter(|c| *c != '-').all(|c| store::CODE_ALPHABET.contains(c))
+        })
+        .map(str::to_string)
+}
+
+/// **`!registrationcode` mints a code the launcher can redeem, shows it to the GM, and logs
+/// none of it.** The owner, 2026-09-05. The code is a credential: it belongs on the GM's screen
+/// and not in world.log, so `Reply::what` carries a redaction rather than the text.
+#[test]
+fn a_gm_mints_a_registration_code_that_redeems_once_and_is_not_logged() {
+    let (mut s, store, _) = gm_session();
+    let out = s.handle(&gm_chat("!registrationcode"));
+    assert_eq!(out.len(), 1, "one chat notice");
+    assert_eq!(out[0].opcode, net::notice::CHAT_NOTICE);
+    let text = notice_text(&out[0]);
+    let code = code_in(&text).unwrap_or_else(|| panic!("no code in {text:?}"));
+    assert!(!out[0].what.contains(&code), "the code must not reach world.log: {}", out[0].what);
+    assert!(out[0].what.contains("not logged"), "{}", out[0].what);
+    assert!(store.redeem_invite_code(&code).unwrap(), "the launcher could redeem it");
+    assert!(!store.redeem_invite_code(&code).unwrap(), "exactly once");
+}
+
+/// `!recoverycode` takes the email or the username, refuses a blank, and says when nobody
+/// matches - a code for an account that does not exist would be a promise nothing can keep.
+#[test]
+fn a_gm_mints_a_recovery_code_by_email_or_name_and_is_told_when_neither_exists() {
+    let (mut s, store, _) = gm_session();
+    store.set_email("maplecw", Some("gm@example.test")).unwrap();
+    let account = store.get_account("maplecw").unwrap().unwrap();
+
+    let by_email = notice_text(&s.handle(&gm_chat("!recoverycode gm@example.test"))[0]);
+    let code = code_in(&by_email).unwrap_or_else(|| panic!("no code in {by_email:?}"));
+    assert!(store.redeem_recovery_code_for(&code, account.id).unwrap(), "minted for that account");
+
+    let by_name = notice_text(&s.handle(&gm_chat("!recoverycode maplecw"))[0]);
+    assert!(code_in(&by_name).is_some(), "{by_name}");
+
+    let missing = notice_text(&s.handle(&gm_chat("!recoverycode nobody@example.test"))[0]);
+    assert!(missing.contains("no account"), "{missing}");
+    assert!(code_in(&missing).is_none(), "and no code was shown: {missing}");
+
+    let blank = notice_text(&s.handle(&gm_chat("!recoverycode"))[0]);
+    assert!(blank.contains("needs"), "{blank}");
+}
+
+/// The gate every `!` command has: a non-GM typing these says them out loud and mints nothing.
+#[test]
+fn a_non_gm_typing_the_code_commands_mints_nothing() {
+    let (mut s, store, _) = gm_session();
+    store.set_gm("maplecw", false).unwrap();
+    let out = s.handle(&gm_chat("!registrationcode"));
+    assert_eq!(out[0].opcode, net::userchat::USER_CHAT, "said, not obeyed");
+    assert_eq!(store.live_code_counts().unwrap(), (0, 0));
+}

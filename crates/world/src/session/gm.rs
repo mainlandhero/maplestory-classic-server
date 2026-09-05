@@ -155,6 +155,10 @@ impl Session {
             "locker" => self.gm_locker(arg),
             // Re-read `data/npc-dialogue.txt` without restarting. See `gm_npc_reload`.
             "npcreload" => self.gm_npc_reload(arg),
+            // Account administration from inside the game. The owner, 2026-09-05. The codes are
+            // credentials and go to the GM's screen ONLY - see the two functions.
+            "registrationcode" | "regcode" | "invite" => self.gm_registration_code(),
+            "recoverycode" => self.gm_recovery_code(arg),
             "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
@@ -1766,6 +1770,66 @@ impl Session {
     /// `net::notice` records that colour is not controllable through this packet.
     pub(super) fn gm_ack(&self, text: String) -> Vec<Reply> {
         self.notice(text)
+    }
+
+    /// `!registrationcode` - mint a single-use registration code and show it to the GM.
+    ///
+    /// The owner, 2026-09-05: *"There should be a !registrationcode and !recoverycode
+    /// <email>/<username> command ingame, which outputs a 1 time use 8 character alphanumeric
+    /// code (uppercase) to allow clients to either register an account with us or set a new
+    /// password for an existing account."*
+    ///
+    /// **The code is a credential and it reaches the GM's screen and nothing else.** `notice`
+    /// would copy the text into `Reply::what`, and `what` is what `world.log` records - so
+    /// these two commands build their notice through [`Session::code_notice`], whose log line
+    /// says a code was minted and not which. `store::codes` keeps only a hash; the plaintext
+    /// exists in the packet to the GM and then wherever the GM chooses to paste it.
+    pub(super) fn gm_registration_code(&self) -> Vec<Reply> {
+        match self.store.create_invite_code(store::INVITE_TTL_SECS) {
+            Ok(minted) => self.code_notice(
+                format!(
+                    "Registration code {} - single use, valid {} days. The player enters it on \
+                     the launcher's Register screen with a username, email and password.",
+                    minted.code,
+                    store::INVITE_TTL_SECS / 86_400
+                ),
+                "registration code minted (not logged)".to_string(),
+            ),
+            Err(e) => self.gm_ack(format!("could not mint a registration code: {e}")),
+        }
+    }
+
+    /// `!recoverycode <email|username>` - mint a single-use password-reset code for one account.
+    pub(super) fn gm_recovery_code(&self, arg: &str) -> Vec<Reply> {
+        let identity = arg.trim();
+        if identity.is_empty() {
+            return self.gm_ack("!recoverycode needs the account's email or username".to_string());
+        }
+        match self.store.create_recovery_code(identity, store::RECOVERY_TTL_SECS) {
+            Ok(minted) => self.code_notice(
+                format!(
+                    "Recovery code for {identity}: {} - single use, valid {} hours. They enter \
+                     it on the launcher's Forgot password screen with their email or username \
+                     and a new password.",
+                    minted.code,
+                    store::RECOVERY_TTL_SECS / 3_600
+                ),
+                format!("recovery code minted for {identity:?} (not logged)"),
+            ),
+            Err(store::StoreError::NoSuchAccount { .. }) => {
+                self.gm_ack(format!("no account has the name or email {identity:?}"))
+            }
+            Err(e) => self.gm_ack(format!("could not mint a recovery code: {e}")),
+        }
+    }
+
+    /// A chat notice whose LOG LINE is not its text. For the two code commands only.
+    fn code_notice(&self, text: String, what: String) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::notice::CHAT_NOTICE,
+            body: net::notice::chat_notice(&text),
+            what: format!("ChatNotice: {what}"),
+        }]
     }
 
 

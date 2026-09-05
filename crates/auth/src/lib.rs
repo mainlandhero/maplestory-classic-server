@@ -15,7 +15,13 @@ use serde::{Deserialize, Serialize};
 use store::{AuthOutcome, Store};
 
 pub mod http;
+pub mod ratelimit;
+pub mod register;
 pub mod tls;
+#[cfg(test)]
+mod register_tests;
+
+pub use register::{RecoverRequest, RecoverResponse, RegisterRequest, RegisterResponse};
 
 /// Default port. Arbitrary, just not one the game itself uses.
 pub const DEFAULT_PORT: u16 = 8080;
@@ -105,11 +111,18 @@ pub enum VerifyResponse {
 /// Shared service state.
 pub struct AuthService {
     store: Arc<Store>,
+    /// The failure budget for registration and recovery codes. `crate::ratelimit`.
+    codes: ratelimit::Limiter,
 }
 
 impl AuthService {
     pub fn new(store: Arc<Store>) -> Self {
-        Self { store }
+        Self::with_limiter(store, ratelimit::Limiter::default())
+    }
+
+    /// [`AuthService::new`] with a chosen code-failure budget, for tests that need a small one.
+    pub fn with_limiter(store: Arc<Store>, codes: ratelimit::Limiter) -> Self {
+        Self { store, codes }
     }
 
     /// Authenticate, issue a token, and **stake the login claim**.
