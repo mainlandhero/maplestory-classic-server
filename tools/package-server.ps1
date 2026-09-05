@@ -194,6 +194,9 @@ Write-Host '       & ".\bin\maplecw-useradd.exe" --db ".\maplecw.db" <name> --em
 Write-Host '       & ".\bin\maplecw-useradd.exe" --db ".\maplecw.db" --gm <name>'
 Write-Host '  3. Open inbound TCP 8080, 8484, 8485 and 8486 in its firewall.'
 Write-Host '  4. Double-click start-servers.cmd. THAT WINDOW IS THE SERVER.'
+Write-Host '     It binds 0.0.0.0 and works out the host each client must dial on its'
+Write-Host '     own - LAN address for LAN clients, the discovered public address for'
+Write-Host '     internet ones. -Advertise <ip> pins one. login.log prints the decision.'
 Write-Host ''
 Write-Host 'THEN ON EACH CLIENT MACHINE - and this is the step that is easy to miss:' -ForegroundColor Yellow
 Write-Host '  the launcher needs the SERVER IP, not 127.0.0.1, and the client-side'

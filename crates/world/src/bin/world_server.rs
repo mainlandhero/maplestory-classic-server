@@ -20,9 +20,12 @@ maplecw-world - one channel of the MapleCW game world
   --db PATH        the SQLite file                (default maplecw.db)
   --world-id N     which world                    (default 0)
   --channel N      which channel                  (default 0)
-  --channels A,B,. one address per channel, in channel order. Needed only to answer
-                   Change Channel (0x00D2); without it the request is refused with a
-                   message rather than ignored.
+  --channels A,B,. one address per channel, in channel order - host:port, or a bare port
+                   when --advertise decides the host. Needed only to answer Change
+                   Channel (0x00D2); without it the request is refused with a message
+                   rather than ignored.
+  --advertise MODE which HOST a Change Channel answer names: auto (default), list, or
+                   one IPv4 address. --help prints the full description.
   --inventory-slots N  give every inventory N slots instead of the character's own,
                    so a client run can read the number off the screen (1..=100).
                    Go UNDER the 30 default: the window is 5x6 with a scrollbar,
@@ -96,7 +99,7 @@ fn main() -> ExitCode {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
         let outcome: Result<(), String> = match arg.as_str() {
             "-h" | "--help" => {
-                println!("{USAGE}");
+                println!("{USAGE}\n\n{}", net::advertise::USAGE);
                 return ExitCode::SUCCESS;
             }
             "--bind" => value().and_then(|v| {
@@ -110,11 +113,14 @@ fn main() -> ExitCode {
                 v.parse().map(|n| config.channel_id = n).map_err(|e| format!("--channel {v}: {e}"))
             }),
             "--channels" => value().and_then(|v| {
-                v.split(',')
-                    .map(|a| a.trim().parse::<std::net::SocketAddrV4>())
-                    .collect::<Result<Vec<_>, _>>()
+                net::advertise::parse_channels(&v)
                     .map(|c| config.channels = c)
-                    .map_err(|e| format!("--channels {v}: {e} (IPv4 host:port, comma separated)"))
+                    .map_err(|e| format!("--channels {v}: {e}"))
+            }),
+            "--advertise" => value().and_then(|v| {
+                net::advertise::Mode::parse(&v).map(|mode| {
+                    config.advertise = std::sync::Arc::new(net::advertise::Advertiser::new(mode))
+                })
             }),
             "--set-field-probe" => {
                 config.set_field_probe = true;
@@ -454,6 +460,11 @@ fn main() -> ExitCode {
 
     report_binding_readiness();
 
+    // A bare-port channel under --advertise list would answer Change Channel with 0.0.0.0.
+    if let Err(e) = config.advertise.validate(&config.channels) {
+        eprintln!("{e}\n\n{USAGE}");
+        return ExitCode::FAILURE;
+    }
     if let Err(e) = world::serve(config) {
         eprintln!("maplecw-world: {e}");
         return ExitCode::FAILURE;

@@ -66,19 +66,30 @@ THE TWO THINGS THAT WILL GO WRONG
 Both of these produce the same symptom - the client sits on "Connecting..."
 forever - and neither says anything about itself.
 
-1. THE CHANNEL ADDRESSES MUST BE THIS MACHINE'S LAN IP, NOT 127.0.0.1.
+1. THE ADDRESS THE CLIENT IS TOLD TO DIAL MUST BE ONE IT CAN REACH.
 
    When a player enters the world the login server hands the client an address
    to connect to. That address is used BY THE CLIENT MACHINE, so loopback means
-   "the client's own computer", which is not where the server is.
+   "the client's own computer" and a LAN address means nothing to a client on
+   the internet.
 
-   start-server.ps1 binds 0.0.0.0 and advertises whatever -Bind says, so pass
-   the real address:
+   This is decided PER CONNECTION now, and the default needs no configuration:
+   a client on your LAN or VPN is told the address it reached this box on, and
+   a client on the internet is told this box's PUBLIC address, which the server
+   discovers at startup. The first lines of login.log say what was found:
 
-     powershell -ExecutionPolicy Bypass -File ".\start-server.ps1" -Bind 192.168.1.20
+     advertise: AUTO - each client is told the host it can actually reach:
+       public address: 203.0.113.5 (from checkip.amazonaws.com, ...)
 
-   Character select will work perfectly with this wrong and the world will not,
-   which is the confusing half.
+   If that line says UNKNOWN - no internet at startup, or the echo services
+   were unreachable - LAN clients still work and internet clients will not.
+   Pin the address by hand:
+
+     powershell -ExecutionPolicy Bypass -File ".\start-server.ps1" -Advertise 203.0.113.5
+
+   Character select works perfectly with this wrong and the world does not,
+   which is the confusing half. Every migration line in login.log ends with
+   "Advertised as <address>, <why>", so a stuck client can be read back.
 
 2. THE CLIENT MACHINE'S FIREWALL RULE BLOCKS THE SERVER.
 
@@ -122,6 +133,23 @@ The sign-in service is assumed to be on 8080 at the same address. If you moved
 it, set auth_port in maplecw-launcher.toml beside the launcher.
 
 
+REACHING IT FROM OUTSIDE YOUR NETWORK
+-------------------------------------
+
+On the router, forward TCP 8080, 8484, 8485 and 8486 to this machine - one more
+port per extra channel (-Channels). Nothing here uses UDP.
+
+The server advertises the right host on its own: an internet client is told the
+public address discovered at startup, a LAN client is still told the LAN
+address, so the router does not need NAT hairpinning. Discovery asks
+checkip.amazonaws.com, api.ipify.org and icanhazip.com in turn over plain HTTP
+and refuses any answer that is not a public address; it is re-checked every ten
+minutes, and a change is logged.
+
+Read the next section before you do this. Forwarded to the internet, the two
+facts in it are the entire security posture of this server.
+
+
 WHAT IS AND IS NOT PROTECTED
 ----------------------------
 
@@ -133,5 +161,8 @@ being installable and it is fine on a network you control; it is not fine on
 the internet.
 
 THE GAME SOCKET CARRIES NO CREDENTIALS AT ALL. The client never sends a user
-name, so anything that can reach port 8484 is served as whichever account
-signed in last. Do not port-forward any of this.
+name. A connection the server can tie to a launcher sign-in is served as that
+sign-in's account; one it cannot is served as the fallback account - and when
+exactly one person is signed in, a stranger who reaches port 8484 is served AS
+THAT PERSON. On a network you control that is nobody. On the internet it is
+anyone who finds the port.

@@ -45,6 +45,12 @@ pub struct Config {
     /// refused with a message rather than ignored - see `Session::on_change_channel`.
     pub channels: Vec<std::net::SocketAddrV4>,
 
+    /// **Which host a Change Channel answer names** - `--advertise`, the same flag and the
+    /// same rule as the login server's, because both write a channel address into a packet
+    /// the client dials. `channels` above keeps the ports; this decides the host per
+    /// connection. `net::advertise`.
+    pub advertise: std::sync::Arc<net::advertise::Advertiser>,
+
     /// Play the game: answer the migration hello, portal walks, and field entry.
     ///
     /// **The name is a fossil and the doc that went with it was badly stale.** It was written
@@ -1849,6 +1855,7 @@ impl Default for Config {
             shops: crate::shops::ShopTable::default(),
             shop_by_template: HashMap::new(),
             channels: Vec::new(),
+            advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             map_names: HashMap::new(),
             item_names: HashMap::new(),
             send_mobs: true,

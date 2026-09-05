@@ -28,6 +28,8 @@ maplecw-login - the MapleCW login server
                         *client* machine, not from the server. IPv4 only: the migration
                         packet carries four octets. Run one maplecw-world per address.
   --channel N           which channel a player entering the world is sent to (default 0)
+  --advertise MODE      which HOST those channels are advertised as: auto (default), list,
+                        or one IPv4 address. --help prints the full description
   --list                print the stored characters and exit, without listening
   --delete NAME         delete one character on --account, then exit
   --bind-migrations     bind each migration to the launcher sign-in that authorised it.
@@ -52,11 +54,16 @@ fn main() -> ExitCode {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
         let outcome: Result<(), String> = match arg.as_str() {
             "-h" | "--help" => {
-                println!("{USAGE}");
+                println!("{USAGE}\n\n{}", net::advertise::USAGE);
                 return ExitCode::SUCCESS;
             }
             "--bind" => value().and_then(|v| {
                 v.parse().map(|b| config.bind = b).map_err(|e| format!("--bind {v}: {e}"))
+            }),
+            "--advertise" => value().and_then(|v| {
+                net::advertise::Mode::parse(&v).map(|mode| {
+                    config.advertise = std::sync::Arc::new(net::advertise::Advertiser::new(mode))
+                })
             }),
             "--list" => {
                 list_only = true;
@@ -75,11 +82,9 @@ fn main() -> ExitCode {
                 v.parse().map(|n| config.world.id = n).map_err(|e| format!("--world-id {v}: {e}"))
             }),
             "--channels" => value().and_then(|v| {
-                v.split(',')
-                    .map(|a| a.trim().parse())
-                    .collect::<Result<Vec<_>, _>>()
+                net::advertise::parse_channels(&v)
                     .map(|c| config.world.channels = c)
-                    .map_err(|e| format!("--channels {v}: {e} (IPv4 host:port, comma separated)"))
+                    .map_err(|e| format!("--channels {v}: {e}"))
             }),
             "--channel" => value().and_then(|v| {
                 v.parse()
@@ -113,6 +118,11 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     debug_assert!(id <= u32::from(u8::MAX));
+    // A bare-port channel under --advertise list would tell the client to dial 0.0.0.0.
+    if let Err(e) = config.advertise.validate(channels) {
+        eprintln!("{e}\n\n{USAGE}");
+        return ExitCode::FAILURE;
+    }
 
     let outcome = match (list_only, delete_name.as_deref()) {
         (_, Some(name)) => login::delete(&config, name),

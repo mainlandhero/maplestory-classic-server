@@ -127,11 +127,19 @@ pub fn serve(config: Config) -> std::io::Result<()> {
 
     let listener = TcpListener::bind(config.bind)?;
     log(&format!("listening on {}", config.bind));
-    for (id, addr) in config.world.channels.iter().enumerate() {
-        log(&format!("channel {id} advertised to the client at {addr}"));
-        if addr.ip().is_loopback() && !config.bind.ip().is_loopback() {
-            log("  WARNING: bind is not loopback but this channel is advertised as one, so");
-            log("  an off-box client will be sent back to itself. See docs/deployment.md.");
+    // What each channel is advertised as. Under `auto` the host is decided per connection,
+    // and the public address is discovered HERE, once, so the banner can print it - then
+    // re-checked in the background. `net::advertise`.
+    for line in config.advertise.prepare(&config.world.channels) {
+        log(&line);
+    }
+    config.advertise.spawn_refresher(|line| log(&line));
+    if config.advertise.mode() == net::advertise::Mode::List {
+        for (id, addr) in config.world.channels.iter().enumerate() {
+            if addr.ip().is_loopback() && !config.bind.ip().is_loopback() {
+                log(&format!("  WARNING: bind is not loopback but channel {id} is listed as loopback, so"));
+                log("  an off-box client will be sent back to itself. Use --advertise auto.");
+            }
         }
     }
     log(&format!("database {}", config.db_path.display()));
@@ -383,9 +391,17 @@ fn connection(
 
     // The address is recorded on any migration this connection mints. Defence in depth and
     // an audit trail - **not** a discriminator: two clients on one machine share an address.
+    let local_addr = stream.local_addr().ok();
     let session = match stream.peer_addr() {
         Ok(addr) => Session::new(store, config, account).with_peer(addr.ip().to_string()),
         Err(_) => Session::new(store, config, account),
+    };
+    // The server's end of the socket. On a 0.0.0.0 bind it is the interface this client
+    // actually reached, which is what a directly-connected client is told to dial for its
+    // channel. `net::advertise`.
+    let session = match local_addr {
+        Some(local) => session.with_local_addr(local),
+        None => session,
     };
     // The claim THIS connection resolved to, not whichever is newest. See the note on
     // `Session::with_claim_token_hash`.

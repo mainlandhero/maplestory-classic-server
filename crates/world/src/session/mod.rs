@@ -160,6 +160,12 @@ pub struct Session {
     /// `None` for every constructed-in-a-test session, which is why the attestation below
     /// degrades to "presents nothing" rather than failing.
     peer_addr: Option<std::net::SocketAddr>,
+    /// The server's own end of the accepted socket - which interface this client reached.
+    ///
+    /// Under `--advertise auto` a directly-connected client is told THIS host, with the
+    /// target channel's port, when it changes channel. `None` in every test-built session,
+    /// where the listed host is used instead. `net::advertise`.
+    local_addr: Option<std::net::SocketAddr>,
     // `asked_to_hide_hit_damage` was removed 2026-08-28 with the packet it gated. `0x00EA`
     // carrying "/hitdamagetest 0" reached the client and was ECHOED into chat, and no
     // `0x0189` ever came back - so the command's permission gate refused it and the stub
@@ -482,6 +488,7 @@ impl Session {
             claimed: None,
             peer: None,
             peer_addr: None,
+            local_addr: None,
             conversation: None,
             in_cash_shop: false,
             chatter: Vec::new(),
@@ -523,6 +530,12 @@ impl Session {
     pub fn with_peer_addr(mut self, addr: std::net::SocketAddr) -> Self {
         self.peer = Some(addr.ip().to_string());
         self.peer_addr = Some(addr);
+        self
+    }
+
+    /// Record the server's end of the accepted socket. See the `local_addr` field.
+    pub fn with_local_addr(mut self, addr: std::net::SocketAddr) -> Self {
+        self.local_addr = Some(addr);
         self
     }
 

@@ -62,6 +62,14 @@ pub struct Config {
     /// to be reshaped before an off-box server can be reached at all.
     pub bind: SocketAddr,
 
+    /// **Which host the client is told to dial for a channel** - `--advertise`.
+    ///
+    /// `world.channels` carries the ports and the order. The host written into the migration
+    /// packet is decided per connection by [`net::advertise::Advertiser`]: under `auto` a
+    /// client on a private network is told the address it reached this server on, and a
+    /// client on a public address is told this box's public address. Behind an `Arc` because
+    /// the discovered public address is one fact for the whole process.
+    pub advertise: std::sync::Arc<net::advertise::Advertiser>,
 
     /// The SQLite file. Characters live here, and this is the whole point of the crate.
     pub db_path: PathBuf,
@@ -117,6 +125,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             bind: "127.0.0.1:8484".parse().expect("a literal address"),
+            advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             db_path: PathBuf::from("maplecw.db"),
             account: "maplecw".to_string(),
             display_name: "maplecw".to_string(),

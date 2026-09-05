@@ -486,11 +486,18 @@ impl Session {
             return self
                 .change_channel_refused("no character is claimed on this connection".to_string());
         };
-        let Some(addr) = self.config.channels.get(target as usize).copied() else {
+        let Some(listed) = self.config.channels.get(target as usize).copied() else {
             return self.change_channel_refused(format!(
                 "this world has no address for channel {target} - pass --channels to the world server"
             ));
         };
+        // The listed host is only what --channels said. The client is told the host decided
+        // for THIS connection from the two ends of its socket. `net::advertise`.
+        let (addr, advertised_as) = self.config.advertise.address_for(
+            listed,
+            self.peer_addr.map(|a| a.ip()),
+            self.local_addr.map(|a| a.ip()),
+        );
         if target == self.config.channel_id {
             return self.change_channel_refused(format!(
                 "channel {target} is the one you are already on"
@@ -541,13 +548,17 @@ impl Session {
         // is told so. Releasing alone leaves them alive and motionless on every remaining
         // screen. No packet to the leaver: its only revoke is a despawn. `crate::mobshare`.
         self.hand_over_all_mobs();
-        self.migrate_candidates(
+        let mut out = self.migrate_candidates(
             target,
             addr,
             seed,
             Self::MIGRATE_COMMAND_CHANNEL,
             Self::MIGRATE_COMMAND_CHANNEL,
-        )
+        );
+        for reply in &mut out {
+            reply.what.push_str(&format!(". Advertised as {advertised_as}"));
+        }
+        out
     }
 
 

@@ -117,10 +117,16 @@ fn connection(
     // matches the first row and returns a confident wrong pid. `with_peer_addr` sets both
     // fields, so this line changes nothing about the log and adds the one fact the attestation
     // needs.
+    let local_addr = stream.local_addr().ok();
     let mut session = match stream.peer_addr() {
         Ok(addr) => Session::joining(store, config.clone(), fields).with_peer_addr(addr),
         Err(_) => Session::joining(store, config.clone(), fields),
     };
+    // The server's end of the socket: on a 0.0.0.0 bind, the interface this client reached,
+    // which is what it is told to dial when it changes channel. `net::advertise`.
+    if let Some(local) = local_addr {
+        session = session.with_local_addr(local);
+    }
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
     }
@@ -234,6 +240,12 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         config.world_id, config.channel_id, config.bind
     ));
     log(&format!("database {}", config.db_path.display()));
+    // What a Change Channel answer names as the host - decided per connection under `auto`;
+    // the public address is discovered here, once, and re-checked in the background.
+    for line in config.advertise.prepare(&config.channels) {
+        log(&line);
+    }
+    config.advertise.spawn_refresher(|line| log(&line));
     log("NOT AUTHENTICATED: a migration seed is a u32, so it identifies a pending");
     log("  migration rather than proving who is on the far end. It is single-use.");
     if config.set_field_probe {

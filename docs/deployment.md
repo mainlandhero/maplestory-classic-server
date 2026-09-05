@@ -1,8 +1,8 @@
 # Running the server and the client on different machines
 
-Written 2026-08-17, when the owner said the server will eventually live on a homelab box. Nothing
-here is built yet - this is the design the next stage should be written against, so that
-"move it to the homelab" is a config change rather than a rewrite.
+Written 2026-08-17, when the owner said the server will eventually live on a homelab box, as the
+design the next stage should be written against, so that "move it to the homelab" is a config
+change rather than a rewrite. Sections say when they were built; the rest is still design.
 
 Everything marked **measured** comes from a run; everything marked **needs measuring** is a
 guess with a way to check it.
@@ -49,15 +49,23 @@ So every service needs **two** addresses in its config:
 | `bind` | what the socket listens on, e.g. `0.0.0.0:8484` |
 | `advertise` | what gets written *into packets* for the client to dial, e.g. `192.168.1.50` |
 
-**Where this bites us specifically is not yet known**, and it is worth finding out before
-building. The world list (`0x000B`) we send today carries no IP - the body is a world id, a
-name, a channel count and channel names (`docs/opcodes.md`). In MapleStory the channel
-address travels with *migration*, and our candidate for that packet is inbound `0x0011`
-(`SelectCharacterResult`), which is Stage 4 and unimplemented.
+**Built 2026-09-04, and the packet question is answered.** Two packets carry a channel
+address: the login migration `0x0011` (`net::opcode::migrate`) and the Change Channel answer
+`0x001A`, both four octets straight into the client's `sockaddr_in`, IPv4 only. Both servers
+take `--advertise`, and the rule lives in one place, `crates/net/src/advertise.rs`:
 
-**Needs measuring:** whether `0x0011`, or whatever answers the select-character request
-`0x0078`, carries an IP and port. Decode it before designing around it. If it does, that
-field is the first consumer of `advertise`.
+| the client's address is | it is told |
+|---|---|
+| loopback, RFC 1918 private, link-local, CGNAT `100.64/10` | the address it reached the server on - the accepted socket's local end |
+| public | the box's public address, discovered from an echo service at startup and re-checked every ten minutes |
+
+So `bind` stays `0.0.0.0` and nothing is configured for a LAN, a VPN or a Tailscale overlay -
+the accepted socket already knows which interface the client reached. Only the internet case
+needs discovery, because a NATed box cannot learn its public address any other way, and a
+failed discovery is logged (and printed against every migration) rather than guessed at.
+`--advertise <ip>` pins one host; `--advertise list` is the pre-2026-09-04 behaviour, kept as
+the control. `--channels` now takes bare ports, so the installed `start-server.ps1` carries no
+address at all.
 
 ## Credentials never travel on the game socket
 

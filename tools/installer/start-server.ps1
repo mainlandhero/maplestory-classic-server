@@ -27,10 +27,21 @@
     further channels). The previous run's logs are MOVED into previous-runs\, not deleted:
     a run's output is the most expensive data this project produces, and conclusions have
     died with an overwritten world.log more than once.
+
+    THE HOST A CLIENT IS TOLD TO DIAL IS DECIDED PER CONNECTION, NOT HERE. -Bind is what
+    the sockets listen on and stays 0.0.0.0. The host written into the migration packet
+    comes from -Advertise: `auto` (the default) tells a LAN or VPN client the address it
+    reached this box on, and an internet client this box's PUBLIC address, discovered at
+    startup and re-checked every ten minutes; an IPv4 address pins one host for everyone.
+    This script used to build the channel list from -Bind, which meant the default
+    advertised 0.0.0.0 and a LAN install needed -Bind <lan ip> to work at all. The first
+    lines of login.log print what was decided and, under auto, the public address found.
 #>
 [CmdletBinding()]
 param(
     [string]$Bind = '0.0.0.0',
+    # auto | list | an IPv4 address. See the header; crates\net\src\advertise.rs owns the rule.
+    [string]$Advertise = 'auto',
     [int]$Port = 8484,
     [int]$ChannelPort = 8485,
     [int]$Channels = 2,
@@ -86,7 +97,9 @@ foreach ($log in (Get-ChildItem $root -Filter '*.log' -File -ErrorAction Silentl
     Move-Item $log.FullName (Join-Path $archive ("{0}-{1}.log" -f $log.BaseName, $stamp)) -Force
 }
 
-$channelList = (0..($Channels - 1) | ForEach-Object { "$($Bind):$($ChannelPort + $_)" }) -join ','
+# Bare PORTS, deliberately no host. The host is decided per connection by --advertise (see
+# the header); writing $Bind here is what used to advertise 0.0.0.0 to every client.
+$channelList = (0..($Channels - 1) | ForEach-Object { "$($ChannelPort + $_)" }) -join ','
 
 # Built on its own line rather than inline in -ArgumentList. That is not style: an inline
 # array parses fine and hands the server one mangled argument, and a syntax check does not
@@ -95,7 +108,8 @@ $loginArgs = @(
     '--bind', "$($Bind):$Port",
     '--db', "$db",
     '--account', "$Account",
-    '--channels', "$channelList"
+    '--channels', "$channelList",
+    '--advertise', "$Advertise"
 )
 $watched = @()
 $login = Start-Process -FilePath (Join-Path $bin 'maplecw-login.exe') -WorkingDirectory $root `
@@ -103,6 +117,7 @@ $login = Start-Process -FilePath (Join-Path $bin 'maplecw-login.exe') -WorkingDi
     -RedirectStandardOutput (Join-Path $root 'login.log') `
     -RedirectStandardError  (Join-Path $root 'login.log.err')
 Write-Host "login server  pid $($login.Id)  $($Bind):$Port  fallback account '$Account'"
+Write-Host "              channels advertised as: $Advertise  (login.log's first lines say what each client is told)"
 $watched += $login
 
 # THE SIGN-IN SERVICE, and on an installed box it must be REACHABLE.
@@ -135,6 +150,7 @@ for ($ch = 0; $ch -lt $Channels; $ch++) {
         '--db', "$db",
         '--channel', "$ch",
         '--channels', "$channelList",
+        '--advertise', "$Advertise",
         '--set-field-probe'
     )
     $w = Start-Process -FilePath (Join-Path $bin 'maplecw-world.exe') -WorkingDirectory $root `

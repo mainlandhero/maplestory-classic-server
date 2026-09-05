@@ -694,6 +694,24 @@ fn a_channel_change_is_answered_with_a_migration_for_the_target() {
     assert!(other.claim_for_character(id).contains("claimed the migration"));
 }
 
+/// **The host in the answer is decided per connection, not copied from `--channels`.**
+///
+/// A LAN client that reached this channel at `192.168.1.20` is told `192.168.1.20` for the
+/// target channel too - the listed `127.0.0.1` would send it back to itself. The port is
+/// the target channel's. `net::advertise`.
+#[test]
+fn a_channel_change_advertises_the_host_this_client_reached_not_the_listed_one() {
+    let (s, _, _) = two_channel_session();
+    let mut s = s
+        .with_peer_addr("192.168.1.77:51000".parse().unwrap())
+        .with_local_addr("192.168.1.20:8485".parse().unwrap());
+    let out = s.handle(&change_channel(1));
+    assert_eq!(out.len(), 1);
+    assert_eq!(&out[0].body[1..5], &[192, 168, 1, 20], "the interface the client reached");
+    assert_eq!(&out[0].body[5..7], &8486u16.to_le_bytes(), "but channel 1's port");
+    assert!(out[0].what.contains("Advertised as 192.168.1.20"), "{}", out[0].what);
+}
+
 /// **A channel migration is claimed by CHANNEL, because the packet carries no character.**
 ///
 /// Measured 2026-08-21: `0x001A`'s body is `u8 ok, u32 ip, u16 port` - seven bytes, no

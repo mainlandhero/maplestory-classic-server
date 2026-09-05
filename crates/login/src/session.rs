@@ -170,6 +170,14 @@ pub struct Session {
     /// same IP as well, IP cannot be the sole discriminator."* Two clients on one machine
     /// both present `127.0.0.1`.
     peer: Option<String>,
+    /// `peer` as an address, when it parses as one. Read by `net::advertise` to decide which
+    /// host goes into the migration packet.
+    peer_ip: Option<std::net::IpAddr>,
+    /// The server's own end of the accepted socket. On a `0.0.0.0` bind this is the specific
+    /// interface the client reached, which is exactly the host a directly-connected client
+    /// should be told to dial for its channel. `None` in every test-built session, where the
+    /// listed host is used and nothing changes.
+    local_ip: Option<std::net::IpAddr>,
     /// The SHA-256 of the session token behind **the login claim this connection resolved
     /// to**, if it resolved to one.
     ///
@@ -216,6 +224,8 @@ impl Session {
             account,
             seen_login_request: false,
             peer: None,
+            peer_ip: None,
+            local_ip: None,
             claim_token_hash: None,
             fallback: None,
             launch_pid: None,
@@ -229,7 +239,18 @@ impl Session {
     /// below that do not care about addressing keep compiling. A session with no peer mints
     /// a migration with no address recorded, which is exactly what an in-process test is.
     pub fn with_peer(mut self, peer: impl Into<String>) -> Self {
-        self.peer = Some(peer.into());
+        let peer = peer.into();
+        self.peer_ip = peer.parse().ok();
+        self.peer = Some(peer);
+        self
+    }
+
+    /// Record the address this connection was ACCEPTED on - the server's end of the socket.
+    ///
+    /// Under `--advertise auto` this is what a LAN or VPN client is told to dial for its
+    /// channel: the interface it already reached, with the channel's port. `net::advertise`.
+    pub fn with_local_addr(mut self, local: std::net::SocketAddr) -> Self {
+        self.local_ip = Some(local.ip());
         self
     }
 
@@ -794,12 +815,16 @@ impl Session {
 
         let world = &self.config.world;
         let channel = world.channel_id;
-        let Some(addr) = world.channel_address(channel) else {
+        let Some(listed) = world.channel_address(channel) else {
             return refuse(format!(
                 "REFUSED - world {} has no address for channel {channel}; the client would be sent nowhere",
                 world.id
             ));
         };
+        // The host in that entry is only what --channels SAID. What the client is told is
+        // decided here, for this connection, from the two ends of its socket. `net::advertise`.
+        let (addr, advertised_as) =
+            self.config.advertise.address_for(listed, self.peer_ip, self.local_ip);
 
         // The seed is minted here and claimed by the channel server out of the same
         // database. It is a u32 - all the packet has room for - so it identifies a pending
@@ -875,7 +900,7 @@ impl Session {
             MIGRATE_COMMAND,
             migrate(addr, id, seed),
             format!(
-                "migrate {:?} (id {id}) to world {} channel {channel} at {addr}, seed {seed:#010x} - single use, NOT authentication. Migration {binding}",
+                "migrate {:?} (id {id}) to world {} channel {channel} at {addr}, seed {seed:#010x} - single use, NOT authentication. Migration {binding}. Advertised as {advertised_as}",
                 chosen.name, world.id
             ),
         )]
@@ -2066,6 +2091,44 @@ mod tests {
         assert_eq!(*body, migrate(s.config.world.channel_address(0).unwrap(), id, seed));
         let claimed = s.store.claim_migration(seed).unwrap().expect("the seed was minted");
         assert_eq!(claimed.character_id, id);
+    }
+
+    /// **The host is decided per connection under `--advertise auto`.** The listed channel is
+    /// `127.0.0.1:8485`; a LAN client that reached this server at `192.168.1.20` is told
+    /// `192.168.1.20:8485`, because loopback would send it back to itself. `net::advertise`.
+    #[test]
+    fn a_lan_client_is_migrated_to_the_address_it_reached_the_server_on() {
+        let base = session();
+        let mut s = Session::new(base.store.clone(), base.config.clone(), base.account.clone())
+            .with_peer("192.168.1.77")
+            .with_local_addr("192.168.1.20:8484".parse().unwrap());
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        let seed = seed_from(&replies[0].body);
+        assert_eq!(replies[0].body, migrate("192.168.1.20:8485".parse().unwrap(), id, seed));
+        assert!(replies[0].what.contains("Advertised as 192.168.1.20"), "{}", replies[0].what);
+    }
+
+    /// `--advertise <ip>` overrides everything, a loopback peer included.
+    #[test]
+    fn a_fixed_advertise_address_is_used_for_every_client() {
+        let base = session();
+        let fixed = net::advertise::Mode::Fixed("203.0.113.9".parse().unwrap());
+        let config = Config {
+            advertise: Arc::new(net::advertise::Advertiser::new(fixed)),
+            ..(*base.config).clone()
+        };
+        let mut s = Session::new(base.store.clone(), Arc::new(config), base.account.clone())
+            .with_peer("127.0.0.1")
+            .with_local_addr("127.0.0.1:8484".parse().unwrap());
+        s.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+
+        let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        let seed = seed_from(&replies[0].body);
+        assert_eq!(replies[0].body, migrate("203.0.113.9:8485".parse().unwrap(), id, seed));
     }
 
     /// The seed the client was handed, dug back out of a `MIGRATE_COMMAND` body.
