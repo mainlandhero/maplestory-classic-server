@@ -61,19 +61,26 @@
 //!
 //! # The model, in one sentence
 //!
-//! **Exactly one connection controls each mob; control is claimed by a session for itself,
-//! never handed to another session; and it is never revoked while its holder is still on the
-//! map, because the client's only revoke is a despawn.**
+//! **Exactly one connection controls each mob, at every instant.** Control is claimed by a
+//! session for itself on field entry, and afterwards moves only on two events: somebody hits
+//! a mob they do not hold, and a holder leaves the map.
 //!
-//! ## Why control is sticky: the revoke deletes the mob
+//! > **RETRACTED 2026-09-04.** This said control *"is never revoked while its holder is still
+//! > on the map, because the client's only revoke is a despawn"*. `CONTROL_RELEASE` does not
+//! > despawn a live mob; the erase behind it is guarded twice and a mob that entered the
+//! > field normally never reaches it. The owner said so and the listing agrees. The single owner
+//! > of that fact is [`net::mobmove::CONTROL_RELEASE`]; the working is
+//! > `research/control-release-does-it-despawn.md`. **This module states no version of it -
+//! > flattening that claim into a second place is exactly what cost a revert.**
 //!
-//! `net::mobmove::CONTROL_RELEASE` is level `0`, and `141d30ef5 TEST EBP,EBP / JE 141d30f1c`
-//! takes the zero branch straight into the pool's erase path. **[L]**, and
-//! `mob_release_controller`'s own name says so. There is no "you are no longer the
-//! controller, but keep drawing it" packet in this client, so a real server's proximity-based
-//! rotation is not available: rotating would mean despawning the mob on the old controller's
-//! screen and re-creating it with a fresh `0x03C6`, which is a visible pop and an animation
-//! reset for a cosmetic gain.
+//! ## Why control moves only on a hit or a departure
+//!
+//! Rotation IS available - `CONTROL_RELEASE` releases - but it is not free: each change is a
+//! release to the old holder and a grant to the new one, **in that order**. Granting first
+//! leaves two clients past their run gate, both rolling independent wanders, and the mob
+//! visibly jumps between them. So control changes on the two events that need it: somebody
+//! hits a mob they do not hold, and a holder leaves the map.
+
 //!
 //! So **this server never sends `CONTROL_RELEASE` at all.** A controller loses its mobs only
 //! by leaving the field, and a client that leaves a field has already torn its own mob pool
@@ -369,8 +376,9 @@ impl Controllers {
     /// exactly the reason `Bus::part` takes no map either. Idempotent: a session that left
     /// its field cleanly and is then dropped calls this a second time and frees nothing.
     ///
-    /// **No packet follows.** The only revoke this client has is a despawn, and a client that
-    /// has left a field has already destroyed its own mob pool. See the module docs.
+    /// **No packet follows**, and here that is right for a reason unrelated to what a release
+    /// does: a client that has left a field has already destroyed its own mob pool, so there
+    /// is nobody to tell.
     pub fn release_all(&self, session: SessionId) -> usize {
         let mut inner = self.lock();
         let mut freed = 0;
@@ -405,9 +413,9 @@ impl Controllers {
     /// exist. The caller still has to send `to` its grants; that is [`Controllers`]'s boundary
     /// - it knows who controls what and nothing about packets.
     ///
-    /// **No packet goes to `from`.** Level 0 is the client's only revoke and it *despawns*, so
-    /// telling the departing client anything would delete the mob on the screen it is leaving.
-    /// It costs nothing to say nothing: that client has already torn its own mob pool down.
+    /// **No packet goes to `from`.** Not because a release would be harmful - it would not,
+    /// see [`net::mobmove::CONTROL_RELEASE`] - but because `from` has left the field and torn
+    /// its own mob pool down, so the packet would name an object it no longer holds.
     /// **Give ONE mob to `to`, whoever held it.** Returns whether it changed hands.
     ///
     /// Returns `None` when `to` already held it - the common case in a fight, and it must
@@ -811,7 +819,9 @@ pub fn own_type_for(party: &Party) -> u8 {
 // ---------------------------------------------------------------------------------------
 // What is NOT here, deliberately
 //
-// * **No `CONTROL_RELEASE`, ever.** It despawns. See the module docs.
+// * **`CONTROL_RELEASE` is sent on a handover, and only there.** It releases; it does not
+//   despawn a live mob. `net::mobmove::CONTROL_RELEASE` owns that fact and this file does not
+//   restate it.
 // * **No proximity rotation.** Same reason.
 // * **No timer.** `research/mob-behaviour.md` §13: both new packets are reactive - one
 //   `0x03E4` per inbound `0x02FF`, one `0x03D9` per inbound `0x02FF` per other client on the

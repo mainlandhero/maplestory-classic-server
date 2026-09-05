@@ -364,9 +364,12 @@ session does **not** already control:
 
 **`as_seen`, not `spawn`, and `CONTROL_NORMAL` (= 1), not 0.** `as_seen` hands the mob over at
 its current position and HP, so the new controller resumes the wander where the monster is
-standing instead of teleporting it back to its spawn point. Level `0` is this client's only
-revoke and it **despawns** — `141d30ef5 TEST EBP,EBP / JE 141d30f1c` straight into the pool's
-erase path (`net::mobmove::CONTROL_RELEASE`, `research/mob-share.md` §2). Level `1` rather than
+standing instead of teleporting it back to its spawn point.
+
+**On level `0`:** it RELEASES, and `crates/net/src/mobmove.rs::CONTROL_RELEASE` is the one
+place that says so. This file said *"it despawns - straight into the pool's erase path"* until
+2026-09-04, which was a restatement of a claim that had lost its two guards on the way here.
+A release to the old holder is now half of every handover. Level `1` rather than
 `2` because `> 1` is the aggro flag and takes the branch with the unguarded `mob+0x2c0`
 dereference (`research/mob-behaviour.md` §4.1).
 

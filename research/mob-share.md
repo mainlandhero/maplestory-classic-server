@@ -22,9 +22,10 @@ inferred - policy nothing on this machine can confirm.
 
 ## 0. Answer up front
 
-**Exactly one connection controls each mob; control is claimed by a session for itself, never
-handed to another session; and it is never revoked while its holder is still on the map,
-because the client's only revoke is a despawn.**
+**Exactly one connection controls each mob, at every instant.** Control is claimed by a
+session for itself on field entry, and afterwards moves on two events: somebody hits a mob
+they do not hold, and a holder leaves the map. A change is a **release to the old holder, then
+a grant to the new one** - see §2 for what that costs and why the order is the fix.
 
 Everything else falls out of that. Damage, death, respawn and movement are published to the
 map; grants and acknowledgements are private to one connection; drops are private to the top
@@ -73,32 +74,32 @@ Not suspected. Read out of the files named.
 
 ---
 
-## 2. Why control is sticky: the only revoke deletes the mob
+## 2. Control rotates on a hit, and the release is real - RETRACTED AND REPLACED
 
-`net::mobmove::CONTROL_RELEASE` is level `0`. `141d30ef5 TEST EBP,EBP / JE 141d30f1c` takes
-the zero branch straight into the pool's erase path - `FUN_141d51320(pool+0x38, …)`,
-`FUN_141d51670(pool+0x68, &id)`, `FUN_141d51700(pool+0xa8, &id)` - and the body stops after
-five bytes. **[L]**, and `net::mobmove::mob_release_controller`'s own doc says it: *"Named for
-what it does rather than for the field it sets, because 'release control' is what the level
-byte looks like and deleting the mob is what happens."*
+> **This section said the opposite until 2026-09-04, and the whole design below it rested on
+> the wrong half.** It read: *"Why control is sticky: the only revoke deletes the mob …
+> `141d30ef5 TEST EBP,EBP / JE 141d30f1c` takes the zero branch **straight** into the pool's
+> erase path … So there is no 'you are no longer the controller, keep drawing it' packet."*
+>
+> **`CONTROL_RELEASE` releases. It does not despawn a live mob.** The word "straight" was the
+> error: two guards sit in front of that erase and a mob that entered the field normally
+> stops at the second. The owner said the claim was wrong; the listing agrees.
+>
+> **The fact has ONE owner and it is not this file:** `crates/net/src/mobmove.rs`'s
+> `CONTROL_RELEASE`, with the working in `research/control-release-does-it-despawn.md`. This
+> section states no version of it - restating it here, flattened, is what made it survive.
 
-`research/mob-behaviour.md` §13 already flagged the consequence as the one open scheduling
-question: *"A real server rotates control as players move, and `0x03D2` with level 0 despawns
-rather than releasing, so a naive rotation deletes the mob."*
+The design that follows from the corrected fact:
 
-So there is no "you are no longer the controller, keep drawing it" packet. The alternatives
-are:
-
-| | cost |
+| | |
 |---|---|
-| **never rotate** (chosen) | a mob keeps its controller until that client leaves the field |
-| despawn + `0x03C6` re-spawn | the mob pops off and back onto the old controller's screen, and its animation state resets. Two packets and a visible artefact, for no gain a player can name |
-| rotate by proximity | the above, on every walk past |
+| claimed on field entry | the first session onto a map takes every uncontrolled mob |
+| **rotates on a hit** | whoever attacks a mob they do not hold is given it, because the flinch and the knockback are local to whoever holds the grant (`research/mob-hit-reaction.md`) |
+| rotates on a departure | a leaving holder's mobs go to whoever is still there |
+| **release first, then grant** | granting first leaves two clients past their run gate, both rolling independent wanders. That is not theoretical: it shipped on 2026-09-04 and the mobs visibly teleported |
 
-**Chosen: never rotate, and never send `CONTROL_RELEASE` at all.** A controller loses its mobs
-only by leaving the field - and a client that leaves a field has already destroyed its own mob
-pool, because the `SetField` handler does it. So the losing side of a handover costs **zero
-packets**.
+The cost is two packets per change of attacker - one release, one grant - against the old
+design's zero, and it buys a mob that reacts to being hit by anybody.
 
 ---
 
@@ -169,8 +170,9 @@ replaces: there is no instant at which two ids hold the mob, and none at which z
 grant, so the spawn point would teleport every handed-over monster across the map - the jarring
 thing this path exists to remove, arriving by a different door.
 
-**Nothing is sent to the leaver.** `CONTROL_RELEASE` is this client's only revoke and it
-*despawns*; and that client has torn its own mob pool down already.
+**Nothing is sent to the leaver** - not because a release would harm it, but because a
+client that has left the field destroyed its own mob pool in the `SetField`, so the packet
+would name an object it no longer holds.
 
 **With nobody left it degrades to the old release**, so the next arrival claims everything -
 pinned by `the_last_player_out_frees_the_mobs_for_the_next_arrival`.
@@ -413,8 +415,10 @@ that are not implemented.
 Six things, all [I], all reversible, and all somewhere the owner could reasonably have gone the
 other way:
 
-1. **Control never rotates.** Forced by the despawn, but "never" is still a choice - a
-   despawn-and-respawn rotation is available and was rejected for a visible pop.
+1. **Control rotates on a hit, and only on a hit.** It could rotate by proximity, or on
+   every swing regardless of holder, or never. Rotating on a hit is the least of them that
+   still makes a mob react to whoever is hitting it. *(Written as "never rotates, forced by
+   the despawn" until 2026-09-04 - the despawn forced nothing, because there is none.)*
 2. **The first session to learn a mob needs a controller takes it.** First arrival takes the
    whole map; a respawn goes to whichever session ticked first, which spreads control over
    time. The alternative - balancing the map's mobs across the sessions on it - was rejected

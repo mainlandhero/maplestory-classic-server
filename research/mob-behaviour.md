@@ -182,7 +182,11 @@ The dispatcher reads three fields itself and forks on the first: [L]
 141d30f12  CALL 0x141d34a70   ; (pool, level, objectId, thatByte, packet)
 ```
 
-**`level == 0` is a despawn, not a "drop control".** The zero branch walks the pool's hash map
+**`level == 0` RELEASES.** *(This paragraph said "is a despawn, not a 'drop control'" until
+2026-09-04. The fact is owned by `crates/net/src/mobmove.rs::CONTROL_RELEASE` and worked in
+`research/control-release-does-it-despawn.md`; what follows is the walk that was misread, kept
+because the misreading is instructive - the two guards are in it and were skipped over.)*
+The zero branch walks the pool's hash map
 at `pool+0x68`, calls `[vtable+0x48]` (bail if 0), `[vtable+0x40](mob, 0)`, `FUN_141c543c0`
 (bail if non-zero), and then erases the mob from `pool+0x38`, `pool+0x68` and `pool+0xa8`. [L]
 
@@ -224,7 +228,7 @@ when the mob is already on the client's field:
 
 | off | size | read at | name |
 |---|---|---|---|
-| 0 | u8 | `141d30ee3` | **controller level** (`0` despawns) |
+| 0 | u8 | `141d30ee3` | **controller level** (`0` releases - `net::mobmove::CONTROL_RELEASE`) |
 | 1 | u32 | `141d30eee` | **objectId** |
 | 5 | u8 | `141d30efc` | the same byte `0x03C6` puts at offset 5 - it becomes `FUN_141c76190`'s third argument in **both** handlers (`141d3390e` passes `[rbp-0x75]`, the offset-5 byte; `141d34c7e` passes `r13d`, this one) |
 | 6 | u32 | `141d34aac` | **templateId** |
@@ -562,9 +566,10 @@ analysis is right, and it costs nothing.
 3. **The controller level's meaning beyond `> 1`.** `1` vs `2` differs only in
    `FUN_141cc1e40`, which reaches `FUN_141c54430` and (per the v214 reference) means "chase
    the player". Naming it aggro is **[I]**.
-4. **Which mob the server should hand to which client.** Irrelevant today - one player - but
-   a real server rotates control on proximity, and `0x03D2` with level `0` **despawns** rather
-   than releasing, so a naive "revoke" would delete the mob. Section 3.
+4. **Which mob the server should hand to which client.** Answered 2026-09-04: whoever hits a
+   mob they do not hold is given it, because the flinch is local to whoever holds the grant.
+   A change is a release to the old holder then a grant to the new one, **in that order**.
+   `research/mob-hit-reaction.md`.
 5. **`0x3D1`, `0x3D3`, `0x3D4`, `0x3D6`, `0x3D7`, `0x3D8`.** Read counts only; no field
    meanings. `0x3D3`'s five reads land in `FUN_141cdf1e0`, the same consumer as `encodeInit`
    offsets 74-86, so it is a candidate for "server retargets a mob" - unread.
@@ -958,9 +963,10 @@ inbound `0x02FF` per *other* client on the field. No periodic send is required b
 read here, and none should be added speculatively - the client is the clock, and it is the
 thing that decides when a mob has finished a step.
 
-The one open scheduling question is **re-granting**. A real server rotates control as players
-move, and `0x03D2` with level `0` **despawns** rather than releasing (section 3), so a naive
-rotation deletes the mob. Section 7 item 4 still stands.
+**Re-granting was the one open scheduling question and it is closed.** Control rotates on a
+hit: `0x03D2` level `0` to the old holder, then level `1` to the attacker. Level `0` releases
+- it does not delete the mob, which is what this section assumed until 2026-09-04. See
+`crates/net/src/mobmove.rs::CONTROL_RELEASE`.
 
 ## 14. Instruments added, with their controls
 
