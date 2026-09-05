@@ -410,12 +410,18 @@ impl Controllers {
     /// It costs nothing to say nothing: that client has already torn its own mob pool down.
     /// **Give ONE mob to `to`, whoever held it.** Returns whether it changed hands.
     ///
-    /// **NOT CURRENTLY CALLED, and that is deliberate rather than an oversight.** Its one
-    /// caller handed a mob to whoever hit it, which made the flinch work and made mobs
-    /// teleport - see `session/combat.rs` for the measurement. Rotating control while the old
-    /// holder is still on the map violates this module's own invariant, because there is no
-    /// revoke to tell them. The function is correct and is what a real fix would use; what is
-    /// missing is a packet this client does not have.
+    /// Returns `None` when `to` already held it - the common case in a fight, and it must
+    /// cost no packet. Otherwise `Some(previous)`, and **the previous holder has to be told**:
+    /// `net::mobmove::mob_release_controller`, sent to them BEFORE the grant goes to `to`.
+    ///
+    /// # This was reverted once, for a reason that turned out to be wrong
+    ///
+    /// Its first caller handed a mob to whoever hit it and made mobs teleport, because
+    /// nothing told the old holder and two clients simulated one mob. The conclusion drawn -
+    /// that control must never rotate while its holder is present - rested on
+    /// `CONTROL_RELEASE` despawning, which **it does not**. The owner said so; the listing agrees.
+    /// See `net::mobmove::CONTROL_RELEASE` for the retraction and
+    /// `research/control-release-does-it-despawn.md` for the working.
     ///
     /// The single-mob twin of [`Controllers::hand_over`], and it exists because of what a
     /// flinch turns out to be.
@@ -451,14 +457,19 @@ impl Controllers {
     ///
     /// There is no instant at which the mob belongs to nobody. Returns `false` when `to`
     /// already holds it, which is the common case in a fight and must cost no packet.
-    pub fn hand_over_one(&self, map: u32, object_id: u32, to: SessionId) -> bool {
+    pub fn hand_over_one(
+        &self,
+        map: u32,
+        object_id: u32,
+        to: SessionId,
+    ) -> Option<Option<SessionId>> {
         let mut inner = self.lock();
         let held = inner.entry(map).or_default();
-        match held.get(&object_id) {
-            Some(who) if *who == to => false,
-            _ => {
+        match held.get(&object_id).copied() {
+            Some(who) if who == to => None,
+            previous => {
                 held.insert(object_id, to);
-                true
+                Some(previous)
             }
         }
     }

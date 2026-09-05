@@ -296,37 +296,66 @@ impl Session {
         // `()`. Nothing about `out` changes, which is what
         // `the_broadcast_does_not_change_what_the_attacker_gets` pins.
         self.publish_user_attack(opcode, payload);
+        let me = self.subscriber.get();
         for target in &attack.targets {
             let Some(hp_before) = self.fields.mob_hp(map, target.object_id) else {
                 continue; // not a mob of ours, or already dead and removed
             };
             let template = self.fields.mob_template(map, target.object_id).unwrap_or(0);
 
-            // **REVERTED 2026-09-04: handing the mob to its attacker made mobs teleport.**
+            // **Whoever hits it, drives it - and the old holder is TOLD, which is what was
+            // missing the first time.**
             //
-            // The flinch really is local to whoever holds the `0x03D2` - that part was
-            // measured and stands (`research/mob-hit-reaction.md`). Handing the mob over on
-            // every hit made it work, and broke something this module states as an invariant
-            // two hundred lines above:
+            // The flinch and the knockback are local to whoever holds the `0x03D2`; nothing
+            // the server sends produces them (`research/mob-hit-reaction.md`). So the
+            // attacker has to own what it hits.
             //
-            //   > it is never revoked while its holder is still on the map, because the
-            //   > client's only revoke is a despawn.
+            // That shipped once without the release and made mobs teleport - two clients
+            // simulating one mob - and was reverted because `CONTROL_RELEASE` was documented
+            // as a despawn. **It is not.** The owner said so and the listing agrees: the zero
+            // branch releases and a live mob never reaches the erase behind it. See
+            // `net::mobmove::CONTROL_RELEASE`.
             //
-            // **There is no way to tell the old controller it lost the mob.** So it keeps
-            // simulating it locally while the new controller's `0x03D9` arrives describing
-            // somewhere else, and the mob jumps between the two answers. The owner: *"some mobs
-            // will teleport for an unknown reason to another location"* - and a snail driven
-            // by a stale simulation reaches a player standing where no snail should be, which
-            // is the other half of what they saw.
-            //
-            // Measured, in the run that shipped it: **3 of the 4 position jumps over 200 px
-            // followed a handover of that same mob within three seconds**, against 13
-            // handovers in a 3.5-minute run. The grants themselves were exonerated first -
-            // every one carried exactly the mob's last relayed position, so the packet was
-            // right and its consequence was not.
-            //
-            // `Controllers::hand_over_one` is kept: it is correct, tested, and is what a real
-            // fix would use. What is missing is a revoke, and this client has none.
+            // **Release first, then grant.** Granting first leaves both clients past their
+            // run gate, both rolling independent wanders, both sending `0x02FF` - which is
+            // exactly the teleporting. Order is the fix, not an optimisation.
+            if let Some(previous) =
+                self.fields.controllers().hand_over_one(map, target.object_id, me)
+            {
+                if let Some(loser) = previous.and_then(|s| self.bus().subscriber_of(s)) {
+                    self.bus().publish_to_subscriber(
+                        loser,
+                        Reply {
+                            opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                            body: net::mobmove::mob_release_controller(target.object_id),
+                            what: format!(
+                                "MobChangeController RELEASE: object id {} - somebody else is \
+                                 hitting it and needs to drive it. This does NOT despawn a \
+                                 live mob; it stops this client simulating it, and the 0x03D9 \
+                                 relay keeps it moving on their screen",
+                                target.object_id
+                            ),
+                        },
+                    );
+                }
+                if let Some(mob) =
+                    self.fields.mobs_on(map).iter().find(|m| m.spawn.object_id == target.object_id)
+                {
+                    // `as_seen`, not `spawn`, or the mob jumps back to its spawn point.
+                    out.push(Reply {
+                        opcode: net::mobmove::MOB_CHANGE_CONTROLLER,
+                        body: net::mobmove::mob_change_controller(
+                            &mob.as_seen(),
+                            net::mobmove::CONTROL_NORMAL,
+                        ),
+                        what: format!(
+                            "MobChangeController: object id {} to the attacker, so its own \
+                             client can play the hit reaction",
+                            target.object_id
+                        ),
+                    });
+                }
+            }
 
             let damage = target.total_damage();
             let hit = net::combat::apply_damage(hp_before, damage);

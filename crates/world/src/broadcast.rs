@@ -489,6 +489,18 @@ impl Bus {
             .count()
     }
 
+    /// **The subscriber behind a raw id, if that connection is still here.**
+    ///
+    /// `crate::mobshare` stores a `SessionId`, which is a bare `u64` taken from a
+    /// `SubscriberId`. Addressing that connection again needs the typed handle back, and it
+    /// has to be able to fail: a mob's holder may have dropped between claiming it and
+    /// somebody else hitting it, and a release aimed at a departed mailbox must be a no-op
+    /// rather than a panic or a silent send into nothing.
+    pub fn subscriber_of(&self, id: u64) -> Option<SubscriberId> {
+        let inner = self.lock();
+        inner.boxes.keys().find(|s| s.get() == id).copied()
+    }
+
     /// **Somebody else still standing on this map**, or `None` if nobody is.
     ///
     /// Exists for one caller: a controller leaving a field has to give its mobs to a

@@ -7796,49 +7796,67 @@ fn channel_with_mob_2002(hp: u64) -> (Arc<Store>, Arc<Config>, Arc<crate::fields
     (store, config, fields, account)
 }
 
-/// **Hitting a mob does NOT take it from its controller**, and that is the invariant.
+/// **Hitting a mob takes it, and the old holder is TOLD - in that order.**
 ///
-/// The opposite of this test shipped on 2026-09-04 and was reverted the same evening. Handing
-/// the mob to whoever hit it made the flinch work - the flinch really is local to whoever
-/// holds the `0x03D2` - and it made mobs **teleport**, because this module's own rule is that
-/// control *"is never revoked while its holder is still on the map, because the client's only
-/// revoke is a despawn"*. The old holder is never told, so it keeps simulating the mob while
-/// the new holder's `0x03D9` says somewhere else.
+/// This assertion has been written three ways in one evening and the history is the point:
 ///
-/// Measured in the run that shipped it: **3 of the 4 jumps over 200 px followed a handover of
-/// that same mob within three seconds.** The grants themselves were exonerated first - each
-/// carried exactly the mob's last relayed position.
+///   1. no handover at all - a non-controller's hits did not flinch the mob;
+///   2. handover with no release - the flinch worked and **mobs teleported**, because two
+///      clients simulated one mob;
+///   3. handover WITH a release, which is this - and it only became possible when the owner
+///      pushed back on `CONTROL_RELEASE` being a despawn. It is not: the zero branch releases
+///      and a live mob never reaches the erase behind it (`net::mobmove::CONTROL_RELEASE`).
 ///
-/// So this asserts the restored behaviour, and it names the thing that must not come back.
+/// **Order is the fix, not a detail.** Granting first leaves both clients past their run
+/// gate, both rolling independent wanders, both sending `0x02FF` - which is what step 2
+/// looked like on screen.
 #[test]
-fn hitting_a_mob_does_not_take_control_of_it() {
+fn hitting_a_mob_takes_control_and_releases_the_old_holder() {
     let (store, config, fields, account) = channel_with_mob_2002(500);
     let (mut owner, _) = join_channel(&store, &config, &fields, account, "Owner");
     let (mut other, _) = join_channel(&store, &config, &fields, account, "Other");
     owner.on_field_entered();
     other.on_field_entered();
+    let _ = owner.tick(1);
 
-    let held_by = fields.controllers().controller_of(SHARED_MAP, 2002);
-    assert_eq!(held_by, Some(owner.subscriber.get()), "the control: the owner walked in first");
-
-    let out = other.handle(&melee_packet());
-    assert_eq!(
-        count_of(&out, net::mobmove::MOB_CHANGE_CONTROLLER),
-        0,
-        "a swing must not re-grant a mob somebody else is driving: {out:?}"
-    );
     assert_eq!(
         fields.controllers().controller_of(SHARED_MAP, 2002),
-        held_by,
-        "and the registry is unchanged - one holder, and it keeps it while it is here"
+        Some(owner.subscriber.get()),
+        "the control: the owner walked in first and holds it"
     );
 
-    // The damage still lands and is still published; only the OWNERSHIP is untouched. That is
-    // the half that was never in question and the half a revert must not break.
-    assert!(
-        out.iter().any(|r| r.opcode == net::combat::MOB_HP_CHANGE),
-        "the hit still moves the bar: {out:?}"
+    let out = other.handle(&melee_packet());
+    let grants: Vec<&Reply> =
+        out.iter().filter(|r| r.opcode == net::mobmove::MOB_CHANGE_CONTROLLER).collect();
+    assert_eq!(grants.len(), 1, "the attacker is handed the mob: {out:?}");
+    assert_eq!(grants[0].body[0], net::mobmove::CONTROL_NORMAL, "granted, not released");
+    assert_eq!(
+        fields.controllers().controller_of(SHARED_MAP, 2002),
+        Some(other.subscriber.get()),
+        "one holder at every instant, and it is the attacker"
     );
+
+    // **The old holder is told, and its absence is what made mobs teleport.**
+    let told = owner.tick(2);
+    let released: Vec<&Reply> = told
+        .iter()
+        .filter(|r| {
+            r.opcode == net::mobmove::MOB_CHANGE_CONTROLLER
+                && r.body.first() == Some(&net::mobmove::CONTROL_RELEASE)
+        })
+        .collect();
+    assert_eq!(released.len(), 1, "the previous holder gets a release: {told:?}");
+    assert_eq!(
+        u32::from_le_bytes(released[0].body[1..5].try_into().unwrap()),
+        2002,
+        "and it names the mob it lost"
+    );
+    assert_eq!(released[0].body.len(), 5, "a release is five bytes and carries nothing else");
+
+    // Already ours: no second grant, and nobody is released again.
+    let again = other.handle(&melee_packet());
+    assert_eq!(count_of(&again, net::mobmove::MOB_CHANGE_CONTROLLER), 0, "{again:?}");
+    assert_eq!(count_of(&owner.tick(3), net::mobmove::MOB_CHANGE_CONTROLLER), 0);
 }
 
 /// **The owner's first sentence, end to end**: *"All clients need to see other clients damages to

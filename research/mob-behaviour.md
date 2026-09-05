@@ -186,6 +186,16 @@ The dispatcher reads three fields itself and forks on the first: [L]
 at `pool+0x68`, calls `[vtable+0x48]` (bail if 0), `[vtable+0x40](mob, 0)`, `FUN_141c543c0`
 (bail if non-zero), and then erases the mob from `pool+0x38`, `pool+0x68` and `pool+0xa8`. [L]
 
+> ### RETRACTED 2026-09-04 - level 0 RELEASES. See section 3.3 below and
+> ### `research/control-release-does-it-despawn.md`.
+>
+> The sentence above is wrong, and the paragraph it sits in **contains its own refutation**:
+> it lists two bail-outs and then names the branch after the third thing. Every clause in it
+> is accurate; the summary is not. This is `CLAUDE.md`'s *"a conditional erase summarised as
+> an unconditional one"*, and it propagated to `crates/net/src/mobmove.rs` (three doc blocks,
+> a `debug_assert!` and a test name), `research/mob-share.md` (five places, including the
+> design decision *"never rotate control"*) and `research/mob-hit-reaction.md:368`.
+
 ### 3.1 `FUN_141d34a70` - what it reads, and the fork that changes the length
 
 `tools/reads.py 0x141d34a70 1`: [L]
@@ -257,9 +267,68 @@ confirmed against a hand trace of the listing: [L]
 copied `encodeInit`'s predicate would desynchronise a `-6` mob. `crates/net/src/mobmove.rs`
 implements the `0x3D2` predicate, not the `0x3C6` one. [L]
 
----
+### 3.3 The zero branch, read properly - it RELEASES
 
-## 4. The mechanism: one virtual call the spawn packet never makes
+Added 2026-09-04. Full working in `research/control-release-does-it-despawn.md`; this is the
+part that changes what section 3 says.
+
+**Step 3 always bails for a mob that is in the field.** `FUN_141c543c0` is not a predicate on
+anything the packet carries - it is a **getter** for an obfuscated triple, 14 bytes with no
+`.pdata` entry: **[L]**
+
+```asm
+141c543c0  mov  edx,[rcx+0x2e0]   ; checksum word
+141c543c6  add  rcx,0x2d8         ; the triple's base (the cookie; the VALUE is at +0x2dc)
+141c543cd  jmp  0x141d11770       ; de-obfuscate: rol([base+4],5) ^ [base]
+```
+
+Its complete writer set, from `tools/callers.py` on both setters cross-checked against
+`tools/rangescan.py` over all three words: **[L]**
+
+```text
+mob base constructor  FUN_141c4cee0  141c4d205 inline, and 141c4e6ce -> FUN_141d23730   ->  0
+0x03C6 MobEnterField  FUN_141d33630  141d3372c (existing mob) and 141d338f2 (new mob)   ->  1
+0x03D1 leave type 0   FUN_141d33c70  141d33dfc                                          ->  0
+```
+
+`FUN_141c543e0` has exactly **3 call sites in 2 functions**; `FUN_141d23730` exactly **1**, in
+the constructor. Nothing else in the image writes it. It is a plain **"this mob is in the
+field"** flag, and `FUN_141d34a70` - the `0x03D2` *grant* - is **not** among its writers.
+
+So for any mob that arrived by `0x03C6`, `141d30f82` returns 1 and `141d30f89 jne 0x141d3116a`
+returns straight out of the dispatcher (`141d3116a` is the epilogue). **The erase at
+`141d30f8f` is unreachable.** [D]
+
+**Step 2 is the mirror of the grant, not a teardown.** `[vtable+0x40]` is slot 8
+`FUN_141c54200` - the same function section 4 reads, but section 4 only ever read the
+`edx = 1` arm. `tools/listing.py` merges 4 contiguous `.pdata` entries to give the real
+382-byte extent; the `edx == 0` arm at **`0x141c542b5` is its own 190-byte `.pdata` entry**,
+which is why it had never been read: **[L]**
+
+| | grant `edx=1` | release `edx=0` |
+|---|---|---|
+| animation-running test `0x1409c5080` | `141c54248 jne` -> already running, do nothing | `141c542bc je` -> not running, do nothing |
+| state `mob+0x2e4` | `:= 3` | `:= -2` (from 3), `-3` (from 4), else `-1` |
+| pump | `FUN_141c55750(mob, 1)` | `FUN_141c55750(mob, 0)` |
+| `[anim+0x118]` | live de-obfuscated coordinates, `141c558b9` | **all zeros**, `141c54349` |
+| touches the pool | no | no |
+
+**Step 1, `[vtable+0x48]`, is slot 9 `FUN_141c54390`** (34 bytes, no `.pdata`): returns 0 if
+`mob+0x2c0` is null, else the same `0x1409c5080` predicate. `0x03E4 MobCtrlAck` confirms the
+polarity from a completely independent path - `141c8207d` calls slot 9 and, **if it is 0**,
+calls slot 8 with `1` to *start*. Ack starts, level-0 stops. **[L]**
+
+**Consequences for sections 7 and 13.** Section 7 item 4 and section 13's *"a naive rotation
+deletes the mob"* are withdrawn. Rotation is available; the sequence is **release A, then grant
+B, then relay `0x03D9` to A** - order matters, and granting first is what made mobs teleport on
+2026-09-04. Two hazards that are *not* obvious: **`0x03E4` un-does a release** (do not ack a
+`0x02FF` from a client that is no longer the controller), and a mob known to a client only from
+a **137-byte `0x03D2`** never gets the in-field flag set, so for *that* mob level 0 really does
+erase.
+
+**And the claim had never been tested.** A census of 505 distinct archived log files
+(240 788 events, deduplicated on `(timestamp, direction, opcode, body)`) finds **2 664**
+`0x03D2` bodies with level `1` and **zero** with level `0`.
 
 This is the part that is not a naming exercise. Enumerate the **indirect** calls each handler
 makes, out of the listing: [L]

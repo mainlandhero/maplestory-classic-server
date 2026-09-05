@@ -119,11 +119,49 @@ pub const MOB_MOVE: u16 = 0x03D9;
 /// said no such packet existed.
 pub const MOB_CTRL_ACK: u16 = 0x03E4;
 
-/// Controller level `0`. **This DESPAWNS the mob - it does not merely release control.**
+/// Controller level `0`. **This RELEASES control. It does not despawn a live mob.**
 ///
-/// `141d30ef5 TEST EBP,EBP / JE 141d30f1c` takes the zero branch straight into the pool's
-/// erase path: `FUN_141d51320(pool+0x38, …)`, `FUN_141d51670(pool+0x68, &id)`,
-/// `FUN_141d51700(pool+0xa8, &id)`. The body stops after 5 bytes. **[L]**
+/// # This said the opposite for two weeks, and the owner corrected it
+///
+/// The old text: *"This DESPAWNS the mob - it does not merely release control … takes the
+/// zero branch straight into the pool's erase path."* **Straight** was the wrong word, and it
+/// was tagged **[L]**. The zero branch has two guards in front of the erase and a live mob
+/// stops at the second:
+///
+/// ```text
+///   141d30f69  call [rax+0x48]      slot 9  -> non-zero, continue
+///   141d30f7c  call [rax+0x40]      slot 8, edx=0  <- THE RELEASE
+///   141d30f82  call 0x141c543c0     the in-field flag -> 1
+///   141d30f89  jne  0x141d3116a     -> THE EPILOGUE. The erase is never reached
+///   141d30f8f  …                    erase from pool+0x38 / +0x68 / +0xa8
+/// ```
+///
+/// `FUN_141c543c0` reads an obfuscated triple at `mob+0x2d8` whose complete writer set is the
+/// constructor (0), `0x03C6` MobEnterField (**1**, both branches) and `0x03D1` leave (0).
+/// Nothing else writes it. So any mob that entered the field the normal way returns 1 here
+/// and takes the branch to the epilogue. **[L]**
+///
+/// Slot 8 with `edx == 0` is the exact mirror of the grant, and it has its **own 190-byte
+/// `.pdata` entry** - which is why nobody had read it: every earlier pass read the `edx = 1`
+/// arm. Grant sets the running state and starts the animation with live coordinates; release
+/// clears it and passes zeros. **Neither touches the pool.** Confirmed from the other end:
+/// `0x03E4` MobCtrlAck calls slot 9 and, if it is 0, calls slot 8 with `1` to **start** -
+/// complementary to stopping.
+///
+/// # The one case where level 0 really does erase
+///
+/// A mob a client knows only from a **137-byte `0x03D2`** never had the in-field flag set,
+/// because that spawn path does not call the setter. For that mob the guard returns 0 and the
+/// erase runs. That is almost certainly where the original reading came from: true, for the
+/// one spawn path this server never uses. **Never pair
+/// [`mob_change_controller_spawning`] with a release.**
+///
+/// # It had never been sent
+///
+/// 505 archived log files, 240 788 events deduplicated on `(timestamp, direction, opcode,
+/// body)`: **2 664** `0x03D2` bodies at level 1 and **zero** at level 0. The claim shaped the
+/// whole mob-sharing design - "never rotate control while its holder is present" - and was
+/// never once tested against the client.
 pub const CONTROL_RELEASE: u8 = 0;
 
 /// Controller level `1` - the client owns this mob's movement. **Send this one.**
