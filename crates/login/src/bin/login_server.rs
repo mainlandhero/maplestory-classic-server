@@ -18,8 +18,13 @@ maplecw-login - the MapleCW login server
 
   --bind ADDR           what to listen on           (default 127.0.0.1:8484)
   --db PATH             the SQLite file             (default maplecw.db)
-  --account NAME        which account every connection is served as (default maplecw)
-  --display-name NAME   what the login screen shows (default: the account name)
+  --fallback-account NAME  serve a connection this server CANNOT attribute to a launcher
+                        sign-in as NAME instead of refusing it. OFF by default: without
+                        it, such a connection gets a login failure (notRegisteredID) and
+                        sees no characters. For the smoke tests and a one-player dev box
+                        only - with it on, ANYTHING that reaches this port is served as NAME
+  --account NAME        the account --list and --delete operate on
+  --display-name NAME   what the login screen shows for an account with no email
   --world NAME          world name                  (default Scania)
   --world-id N          world id                    (default 0)
   --channels A,B,...    one address per channel, in channel order (default
@@ -40,8 +45,9 @@ maplecw-login - the MapleCW login server
                         send the token on the channel socket first.
   -h, --help            this
 
-The game socket carries no credentials, so --account is not a login: it decides whose
-characters every connection sees. See docs/launcher.md.";
+The game socket carries no credentials. A connection is served as the account whose launcher
+sign-in it can be tied to - by the one-time token the client carries, the process that owns
+the socket, or the address - and refused when it cannot be tied to any. See docs/launcher.md.";
 
 fn main() -> ExitCode {
     let mut config = Config::default();
@@ -75,7 +81,8 @@ fn main() -> ExitCode {
             }
             "--delete" => value().map(|v| delete_name = Some(v)),
             "--db" => value().map(|v| config.db_path = PathBuf::from(v)),
-            "--account" => value().map(|v| config.account = v),
+            "--account" => value().map(|v| config.account = Some(v)),
+            "--fallback-account" => value().map(|v| config.fallback_account = Some(v)),
             "--display-name" => value().map(|v| display_name = Some(v)),
             "--world" => value().map(|v| config.world.name = v),
             "--world-id" => value().and_then(|v| {
@@ -99,8 +106,10 @@ fn main() -> ExitCode {
         }
     }
 
-    // The login screen shows the account name unless something better is configured.
-    config.display_name = display_name.unwrap_or_else(|| config.account.clone());
+    // What the login screen shows for an account with no email: the fallback's name if there
+    // is one, else the server's. Every account with an email shows its own masked address.
+    config.display_name = display_name
+        .unwrap_or_else(|| config.fallback_account.clone().unwrap_or_else(|| "MapleCW".into()));
     let World { id, ref channels, channel_id, .. } = config.world;
     if channels.is_empty() {
         eprintln!("--channels: at least one channel address is required

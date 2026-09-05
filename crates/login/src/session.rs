@@ -158,7 +158,12 @@ pub struct Session {
     ///
     /// Resolved from configuration at startup, **not** from anything the client sent -
     /// the game socket carries no credentials. See the crate docs.
-    account: Account,
+    ///
+    /// `None` is an UNATTRIBUTED connection under enforced login: nothing tied it to a
+    /// launcher sign-in and there is no fallback. It is kept open and answered - every
+    /// request gets [`Session::refuse_unclaimed`] - because a `0x0073` client token can still
+    /// arrive and attribute it. The owner, 2026-09-05: *"enforce login"*.
+    account: Option<Account>,
     /// Has the client asked to log in yet? Only used to decide whether the startup gate
     /// needs repeating - see [`Session::on_quiet`].
     seen_login_request: bool,
@@ -218,6 +223,16 @@ pub struct Session {
 
 impl Session {
     pub fn new(store: Arc<Store>, config: Arc<Config>, account: Account) -> Self {
+        Self::with_account(store, config, Some(account))
+    }
+
+    /// A connection nothing attributed to a sign-in. Answered, never served - until a client
+    /// token attributes it. See the `account` field.
+    pub fn unclaimed(store: Arc<Store>, config: Arc<Config>) -> Self {
+        Self::with_account(store, config, None)
+    }
+
+    fn with_account(store: Arc<Store>, config: Arc<Config>, account: Option<Account>) -> Self {
         Session {
             store,
             config,
@@ -278,7 +293,50 @@ impl Session {
     }
 
     pub fn account_name(&self) -> &str {
-        &self.account.name
+        self.account.as_ref().map(|a| a.name.as_str()).unwrap_or("(unattributed)")
+    }
+
+    /// The served account's id. Tests only: every test session is built served, and a
+    /// `None` here would be the test's own mistake.
+    #[cfg(test)]
+    fn account_id(&self) -> i64 {
+        self.account.as_ref().expect("a served session").id
+    }
+
+    /// The served account. Tests only, same reasoning.
+    #[cfg(test)]
+    fn served_account(&self) -> Account {
+        self.account.clone().expect("a served session")
+    }
+
+    /// Who this connection is being served as, for a log line. Never a guess.
+    fn served_as(&self) -> String {
+        match &self.account {
+            Some(a) => format!("{:?}", a.name),
+            None => "NOBODY (unattributed - login is enforced)".to_string(),
+        }
+    }
+
+    /// The answer to any request from a connection nothing has tied to a launcher sign-in,
+    /// when there is no fallback account: a login FAILURE carrying the client's own
+    /// `notRegisteredID` notice. The connection stays open - a `0x0073` client token can
+    /// still attribute it - but nothing of anybody's is sent.
+    ///
+    /// The owner, 2026-09-05: *"enforce login"*. Before this, such a connection was served the
+    /// `--account` fallback's characters.
+    fn refuse_unclaimed(&mut self, cause: &str) -> Vec<Reply> {
+        vec![Reply::new(
+            LOGIN_RESULT,
+            net::opcode::login_refused(net::opcode::LOGIN_REFUSED_NOT_REGISTERED),
+            format!(
+                "{cause}: REFUSED - this connection is attributed to NO launcher sign-in and \
+                 there is no --fallback-account, so it is answered with login failure {} \
+                 (notRegisteredID) and sees no characters. A client that came through \
+                 maplecw-launcher is attributed by its token, its process or its address; \
+                 one started any other way ends here",
+                net::opcode::LOGIN_REFUSED_NOT_REGISTERED
+            ),
+        )]
     }
 
     /// Take the log lines produced since the last call. The server drains these after every
@@ -415,19 +473,22 @@ impl Session {
     /// created before the column existed - would otherwise put an empty string in the field,
     /// and the client draws that as a blank line where a person expects to see themselves. So
     /// `--display-name` remains, as the answer for an account that cannot supply one.
-    fn display_name(&self) -> String {
-        self.account
+    fn display_name(&self, account: &Account) -> String {
+        account
             .masked_email()
             .unwrap_or_else(|| self.config.display_name.clone())
     }
 
     /// Account info, the world entry, and the end-of-list terminator.
     fn world_head(&mut self, cause: &str) -> Vec<Reply> {
+        let Some(account) = self.account.clone() else {
+            return self.refuse_unclaimed(cause);
+        };
         let world = &self.config.world;
         vec![
             Reply::new(
                 ACCOUNT_INFO,
-                account_info(&self.account.name, &self.display_name()),
+                account_info(&account.name, &self.display_name(&account)),
                 format!("{cause}: account info"),
             ),
             Reply::new(
@@ -440,11 +501,16 @@ impl Session {
     }
 
     fn world_and_characters(&mut self, cause: &str) -> Vec<Reply> {
+        // THE ENFORCEMENT POINT. A connection with no account gets a login failure here and
+        // nothing else - not a character list, not a world list. `refuse_unclaimed`.
+        let Some(account) = self.account.clone() else {
+            return self.refuse_unclaimed(cause);
+        };
         let world = &self.config.world;
         let mut out = vec![
             Reply::new(
                 ACCOUNT_INFO,
-                account_info(&self.account.name, &self.display_name()),
+                account_info(&account.name, &self.display_name(&account)),
                 format!("{cause}: account info"),
             ),
             Reply::new(
@@ -457,7 +523,7 @@ impl Session {
 
         let (channel, channel_note) = advertised_channel(world);
 
-        let characters = match self.store.characters_for(self.account.id, world.id) {
+        let characters = match self.store.characters_for(account.id, world.id) {
             Ok(c) => c,
             Err(e) => {
                 // Send an empty list rather than nothing. A character select screen with
@@ -584,21 +650,24 @@ impl Session {
                 // served off a stale string.
                 match self.store.get_account(&claim.claim.account_name) {
                     Ok(Some(account)) if account.enabled => {
-                        if account.id != self.account.id {
+                        if self.account.as_ref().map(|a| a.id) != Some(account.id) {
                             self.note(format!(
-                                "0x0073 IDENTITY: account CHANGED {:?} -> {:?} by the client's \
+                                "0x0073 IDENTITY: account CHANGED {} -> {:?} by the client's \
                                  own credential. The character list about to be sent is {:?}'s",
-                                self.account.name, account.name, account.name
+                                self.served_as(),
+                                account.name,
+                                account.name
                             ));
                         }
-                        self.account = account;
+                        self.account = Some(account);
                         // The migration this connection later mints binds to THIS claim.
                         self.claim_token_hash = claim.token_hash.clone();
                     }
                     _ => self.note(format!(
                         "0x0073 IDENTITY: the token named account {:?}, which is gone or \
-                         disabled. Serving {:?} unchanged",
-                        claim.claim.account_name, self.account.name
+                         disabled. Serving {} unchanged",
+                        claim.claim.account_name,
+                        self.served_as()
                     )),
                 }
             }
@@ -614,33 +683,44 @@ impl Session {
                         // from X to X" when the weaker rules had already landed on the
                         // fallback reads as a bug in the log rather than as a refusal, and
                         // this line is the one the owner reads off a run.
-                        let same = fallback.id == self.account.id;
+                        let same = self.account.as_ref().map(|a| a.id) == Some(fallback.id);
                         self.note(if same {
                             format!(
-                                "0x0073 IDENTITY: DOWNGRADING to the --account fallback {:?} - \
+                                "0x0073 IDENTITY: DOWNGRADING to the --fallback-account {:?} - \
                                  which is what this connection was ALREADY being served as, so \
                                  nothing on screen changes. The refusal still happened",
                                 fallback.name
                             )
                         } else {
                             format!(
-                                "0x0073 IDENTITY: DOWNGRADING this connection from {:?} to the \
-                                 --account fallback {:?}. A connection that presents a \
+                                "0x0073 IDENTITY: DOWNGRADING this connection from {} to the \
+                                 --fallback-account {:?}. A connection that presents a \
                                  credential gets THAT claim or none; it must not keep what the \
                                  weaker rules gave it, or a wrong token would be as good as no \
                                  token",
-                                self.account.name, fallback.name
+                                self.served_as(),
+                                fallback.name
                             )
                         });
-                        self.account = fallback;
+                        self.account = Some(fallback);
                         self.claim_token_hash = None;
                     }
-                    None => self.note(
-                        "0x0073 IDENTITY: refused, but this session was never given a fallback \
-                         account, so there is nothing to downgrade to. The account is UNCHANGED \
-                         - wire Session::with_fallback in crates/login/src/server.rs"
-                            .to_string(),
-                    ),
+                    None => {
+                        // Login is enforced and there is nothing to downgrade TO: the
+                        // connection becomes unattributed, and its next request is refused.
+                        // Same rule, stronger consequence - a wrong token still buys less than
+                        // no token, because no token could at least have been attributed by
+                        // the weaker rules.
+                        self.note(format!(
+                            "0x0073 IDENTITY: refused, and there is no --fallback-account. This \
+                             connection was being served as {} by the weaker rules and is now \
+                             UNATTRIBUTED: its next login request is answered with a login \
+                             failure",
+                            self.served_as()
+                        ));
+                        self.account = None;
+                        self.claim_token_hash = None;
+                    }
                 }
             }
         }
@@ -687,8 +767,11 @@ impl Session {
         let refuse = |code: u8, why: String| {
             vec![Reply::new(CREATE_CHARACTER_RESULT, create_character_failed(code), why)]
         };
+        let Some(account) = self.account.clone() else {
+            return self.refuse_unclaimed("create character");
+        };
 
-        match self.store.character_count(self.account.id, world.id) {
+        match self.store.character_count(account.id, world.id) {
             Ok(n) if n >= CHARACTER_SLOTS => {
                 return refuse(
                     CREATE_INSUFFICIENT_SLOT,
@@ -707,7 +790,7 @@ impl Session {
         // The id argument is discarded: the database assigns the real one, and it has to
         // be distinct per character or the client silently drops the second.
         let wanted = request.character(0);
-        match self.store.create_character(self.account.id, world.id, &wanted) {
+        match self.store.create_character(account.id, world.id, &wanted) {
             Ok(stored) => {
                 let what = format!(
                     "created {:?} as id {} with {} equipped item(s)",
@@ -747,15 +830,18 @@ impl Session {
             )];
         };
 
+        let Some(account) = self.account.clone() else {
+            return self.refuse_unclaimed("delete character");
+        };
         // Look the name up before deleting, so the log says what went, not just an id.
         let name = self
             .store
-            .characters_for(self.account.id, self.config.world.id)
+            .characters_for(account.id, self.config.world.id)
             .ok()
             .and_then(|cs| cs.into_iter().find(|c| c.id == id).map(|c| c.name))
             .unwrap_or_else(|| "unknown".to_string());
 
-        match self.store.delete_character(self.account.id, id) {
+        match self.store.delete_character(account.id, id) {
             Ok(true) => vec![Reply::new(
                 DELETE_CHARACTER_RESULT,
                 delete_character_result(id, DELETE_OK),
@@ -805,7 +891,10 @@ impl Session {
         };
         let id = request.character_id;
 
-        let characters = match self.store.characters_for(self.account.id, self.config.world.id) {
+        let Some(account) = self.account.clone() else {
+            return self.refuse_unclaimed("select character");
+        };
+        let characters = match self.store.characters_for(account.id, self.config.world.id) {
             Ok(cs) => cs,
             Err(e) => return refuse(format!("REFUSED - could not read the character list: {e}")),
         };
@@ -885,7 +974,7 @@ impl Session {
         // entry point, and binding in the INSERT means the row is never briefly visible in an
         // unbound state.
         let seed = match self.store.create_migration_bound_hash(
-            self.account.id,
+            account.id,
             id,
             world.id,
             channel,
@@ -1099,7 +1188,7 @@ mod tests {
     #[test]
     fn the_login_screen_shows_the_masked_email_of_the_account_being_served() {
         let s = session_with_email("wispplayer@example.com");
-        assert_eq!(s.display_name(), "wisp****@example.com");
+        assert_eq!(s.display_name(&s.served_account()), "wisp****@example.com");
     }
 
     #[test]
@@ -1126,8 +1215,8 @@ mod tests {
     #[test]
     fn an_account_without_an_email_falls_back_to_the_configured_display_name() {
         let s = session();
-        assert_eq!(s.display_name(), Config::default().display_name);
-        assert!(!s.display_name().is_empty(), "a blank field is the failure this avoids");
+        assert_eq!(s.display_name(&s.served_account()), Config::default().display_name);
+        assert!(!s.display_name(&s.served_account()).is_empty(), "a blank field is the failure this avoids");
     }
 
     /// The account is resolved per connection now, so the screen has to follow it. If this
@@ -1137,8 +1226,8 @@ mod tests {
     fn the_screen_follows_the_account_not_the_configuration() {
         let a = session_with_email("wispplayer@example.com");
         let b = session_with_email("someone.else@example.com");
-        assert_ne!(a.display_name(), b.display_name());
-        assert_eq!(b.display_name(), "some****@example.com");
+        assert_ne!(a.display_name(&a.served_account()), b.display_name(&b.served_account()));
+        assert_eq!(b.display_name(&b.served_account()), "some****@example.com");
     }
 
     fn opcodes(replies: &[Reply]) -> Vec<u16> {
@@ -1448,7 +1537,7 @@ mod tests {
         assert_eq!(replies[0].opcode, CREATE_CHARACTER_RESULT);
         assert!(replies[0].what.contains("4 equipped item(s)"), "{}", replies[0].what);
 
-        let stored = s.store.characters_for(s.account.id, 0).unwrap();
+        let stored = s.store.characters_for(s.account_id(), 0).unwrap();
         assert_eq!(stored[0].hair, 30030);
         assert_eq!(stored[0].face, 21002);
         assert_eq!(stored[0].gender, 1);
@@ -1466,7 +1555,7 @@ mod tests {
         let mut s = session();
         s.handle(&create_request("Alpha", 30030, &STYLE));
         s.handle(&create_request("Bravo", 30020, &STYLE));
-        let stored = s.store.characters_for(s.account.id, 0).unwrap();
+        let stored = s.store.characters_for(s.account_id(), 0).unwrap();
         assert_eq!(stored.len(), 2);
         assert_ne!(stored[0].id, stored[1].id);
     }
@@ -1508,7 +1597,7 @@ mod tests {
 
         assert_eq!(replies[0].opcode, CREATE_CHARACTER_RESULT);
         assert_ne!(replies[0].body[0], 0, "a refusal must not carry the success code");
-        assert_eq!(s.store.characters_for(s.account.id, 0).unwrap().len(), 1);
+        assert_eq!(s.store.characters_for(s.account_id(), 0).unwrap().len(), 1);
     }
 
     #[test]
@@ -1517,11 +1606,11 @@ mod tests {
         for name in ["Alpha", "Bravo", "Charlie"] {
             s.handle(&create_request(name, 30030, &STYLE));
         }
-        assert_eq!(s.store.characters_for(s.account.id, 0).unwrap().len(), 3);
+        assert_eq!(s.store.characters_for(s.account_id(), 0).unwrap().len(), 3);
 
         let replies = s.handle(&create_request("Delta", 30030, &STYLE));
         assert_eq!(replies[0].body, vec![CREATE_INSUFFICIENT_SLOT]);
-        assert_eq!(s.store.characters_for(s.account.id, 0).unwrap().len(), 3);
+        assert_eq!(s.store.characters_for(s.account_id(), 0).unwrap().len(), 3);
     }
 
     #[test]
@@ -1896,15 +1985,16 @@ mod tests {
     /// account. `CLAUDE.md`: built is not wired, and an unwired refusal looks identical to no
     /// refusal at all.
     #[test]
-    fn a_refusal_with_no_fallback_configured_says_so_loudly() {
+    fn a_refusal_with_no_fallback_leaves_nobody_and_says_so() {
         let store = Arc::new(Store::open_in_memory().unwrap());
         store.create_account("maplecw", "correct horse battery").unwrap();
         let account = store.get_account("maplecw").unwrap().unwrap();
         let mut s = Session::new(store, Arc::new(Config::default()), account);
         s.handle(&identity_request(5, "AAAAAAAAAAAAAAAAAAAAAAAAAA"));
         let notes = s.take_notes().join("\n");
-        assert!(notes.contains("never given a fallback"), "{notes}");
-        assert!(notes.contains("with_fallback"), "the fix has to be in the line: {notes}");
+        assert!(notes.contains("no --fallback-account"), "{notes}");
+        assert!(notes.contains("UNATTRIBUTED"), "{notes}");
+        assert_eq!(s.account_name(), "(unattributed)", "a wrong token with nothing to fall back to leaves nobody");
     }
 
     #[test]
@@ -1940,14 +2030,14 @@ mod tests {
     fn deleting_removes_the_character_and_frees_its_name() {
         let mut s = session();
         s.handle(&create_request("Doomed", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let replies = s.handle(&delete_request(id));
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].opcode, DELETE_CHARACTER_RESULT);
         assert_eq!(replies[0].body, delete_character_result(id, DELETE_OK));
 
-        assert_eq!(s.store.characters_for(s.account.id, 0).unwrap().len(), 0);
+        assert_eq!(s.store.characters_for(s.account_id(), 0).unwrap().len(), 0);
         // The slot and the name both come back.
         assert_eq!(s.handle(&name_request("Doomed"))[0].body.last(), Some(&NAME_AVAILABLE));
     }
@@ -1961,7 +2051,7 @@ mod tests {
         assert_eq!(s.handle(&create_request("Delta", 30030, &STYLE))[0].body,
                    vec![CREATE_INSUFFICIENT_SLOT]);
 
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
         s.handle(&delete_request(id));
 
         let replies = s.handle(&create_request("Delta", 30030, &STYLE));
@@ -1975,7 +2065,7 @@ mod tests {
         // So a refusal that used, say, 1 would show a delete that did not happen.
         let mut s = session();
         s.handle(&create_request("Safe", 30030, &STYLE));
-        let mine = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let mine = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         for body in [delete_request(mine + 999), request(CLIENT_DELETE_CHARACTER_REQUEST, &[1, 2])] {
             let replies = s.handle(&body);
@@ -1986,7 +2076,7 @@ mod tests {
                 "refusals must use DELETE_FAILED, not any non-zero code"
             );
         }
-        assert_eq!(s.store.characters_for(s.account.id, 0).unwrap().len(), 1);
+        assert_eq!(s.store.characters_for(s.account_id(), 0).unwrap().len(), 1);
     }
 
     #[test]
@@ -2073,7 +2163,7 @@ mod tests {
     fn selecting_a_character_migrates_it_to_the_advertise_address() {
         let mut s = session();
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
         assert_eq!(replies.len(), 1);
@@ -2099,11 +2189,11 @@ mod tests {
     #[test]
     fn a_lan_client_is_migrated_to_the_address_it_reached_the_server_on() {
         let base = session();
-        let mut s = Session::new(base.store.clone(), base.config.clone(), base.account.clone())
+        let mut s = Session::new(base.store.clone(), base.config.clone(), base.served_account())
             .with_peer("192.168.1.77")
             .with_local_addr("192.168.1.20:8484".parse().unwrap());
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
         let seed = seed_from(&replies[0].body);
@@ -2120,15 +2210,80 @@ mod tests {
             advertise: Arc::new(net::advertise::Advertiser::new(fixed)),
             ..(*base.config).clone()
         };
-        let mut s = Session::new(base.store.clone(), Arc::new(config), base.account.clone())
+        let mut s = Session::new(base.store.clone(), Arc::new(config), base.served_account())
             .with_peer("127.0.0.1")
             .with_local_addr("127.0.0.1:8484".parse().unwrap());
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
         let seed = seed_from(&replies[0].body);
         assert_eq!(replies[0].body, migrate("203.0.113.9:8485".parse().unwrap(), id, seed));
+    }
+
+    // ---------------------------------------------------------------- enforced login
+
+    /// **A connection nothing attributed gets a login FAILURE, not somebody's characters.**
+    /// The owner, 2026-09-05: *"enforce login"*. The code is 5, the client's `notRegisteredID`.
+    #[test]
+    fn an_unattributed_connection_is_refused_at_the_login_request() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut s = Session::unclaimed(store, Arc::new(Config::default()));
+
+        let replies = s.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        assert_eq!(replies.len(), 1, "one refusal and nothing else - no account info, no world list");
+        assert_eq!(replies[0].opcode, LOGIN_RESULT);
+        assert_eq!(replies[0].body[0], net::opcode::LOGIN_REFUSED_NOT_REGISTERED);
+        assert!(replies[0].what.contains("REFUSED"), "{}", replies[0].what);
+        // And the other things a forged client might send are refused the same way.
+        let create = s.handle(&create_request("Wanderer", 30030, &STYLE));
+        assert_eq!(create[0].opcode, LOGIN_RESULT, "{}", create[0].what);
+        assert_eq!(create[0].body[0], net::opcode::LOGIN_REFUSED_NOT_REGISTERED);
+    }
+
+    /// The connection stays open for a reason: the client's own token can still attribute it.
+    #[test]
+    fn a_client_token_attributes_an_unclaimed_connection_and_the_list_follows() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("second_one", "correct horse battery").unwrap();
+        let claimed_id = store.get_account("second_one").unwrap().unwrap().id;
+        let session_token = match store.authenticate("second_one", "correct horse battery").unwrap() {
+            store::AuthOutcome::Ok { token, .. } => token,
+            other => panic!("{other:?}"),
+        };
+        let staked = store
+            .stake_login_claim_with(claimed_id, &session_token, store::LOGIN_CLAIM_TTL_SECS, Some("127.0.0.1"))
+            .unwrap();
+        let mut s = Session::unclaimed(store, Arc::new(Config::default())).with_launch_pid(Some(4242));
+
+        let before = s.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        assert_eq!(before[0].body[0], net::opcode::LOGIN_REFUSED_NOT_REGISTERED, "refused first");
+
+        assert!(s.handle(&identity_request(5, &staked.client_token)).is_empty());
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("ACCEPTED"), "{notes}");
+        assert!(notes.contains("NOBODY"), "the change is logged from nobody to the account: {notes}");
+
+        let after = s.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        let result = after.iter().find(|r| r.opcode == LOGIN_RESULT).expect("a login result");
+        assert_eq!(result.body[0], net::opcode::LOGIN_OK, "served now: {}", result.what);
+        assert_eq!(s.account_name(), "second_one");
+    }
+
+    /// A wrong token with no fallback leaves the connection with NOTHING - the anti-downgrade
+    /// rule with its strongest consequence.
+    #[test]
+    fn a_wrong_token_with_no_fallback_leaves_the_connection_unattributed() {
+        let mut s = session();
+        assert_eq!(s.handle(&request(CLIENT_LOGIN_REQUEST, &[]))[3].body[0], net::opcode::LOGIN_OK, "served by the weaker rules first");
+        assert!(s.handle(&identity_request(5, "AAAAAAAAAAAAAAAAAAAAAAAAAA")).is_empty());
+        let notes = s.take_notes().join("\n");
+        assert!(notes.contains("UNATTRIBUTED"), "{notes}");
+        let replies = s.handle(&request(CLIENT_LOGIN_REQUEST, &[]));
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].body[0], net::opcode::LOGIN_REFUSED_NOT_REGISTERED, "{}", replies[0].what);
+        assert_eq!(s.account_name(), "(unattributed)");
     }
 
     /// The seed the client was handed, dug back out of a `MIGRATE_COMMAND` body.
@@ -2153,17 +2308,17 @@ mod tests {
     fn binding_session() -> Session {
         let base = session();
         let config = Config { bind_migrations: true, ..(*base.config).clone() };
-        Session::new(base.store.clone(), Arc::new(config), base.account.clone())
+        Session::new(base.store.clone(), Arc::new(config), base.served_account())
     }
 
     #[test]
     fn a_migration_minted_under_a_live_claim_is_bound_to_it() {
         let mut s = binding_session();
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let token = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-        s.store.stake_login_claim(s.account.id, token, store::LOGIN_CLAIM_TTL_SECS).unwrap();
+        s.store.stake_login_claim(s.account_id(), token, store::LOGIN_CLAIM_TTL_SECS).unwrap();
         // What `server::resolve_account` does once per connection: decide which claim this
         // connection is, and hand the session that claim's token hash.
         s = s.with_claim_token_hash(Some(store::hash_token(token)));
@@ -2202,8 +2357,8 @@ mod tests {
     fn binding_is_off_by_default_even_with_a_live_claim() {
         let mut s = session();
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
-        s.store.stake_login_claim(s.account.id, "abc", 3600).unwrap();
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
+        s.store.stake_login_claim(s.account_id(), "abc", 3600).unwrap();
 
         let seed = migrate_and_get_seed(&mut s, id);
         assert!(
@@ -2223,7 +2378,7 @@ mod tests {
     fn a_migration_minted_with_no_claim_is_unbound_and_says_so() {
         let mut s = binding_session();
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
         assert!(
@@ -2242,9 +2397,9 @@ mod tests {
         for stake in [false, true] {
             let mut s = session();
             s.handle(&create_request("Wanderer", 30030, &STYLE));
-            let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+            let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
             if stake {
-                s.store.stake_login_claim(s.account.id, "abc", 3600).unwrap();
+                s.store.stake_login_claim(s.account_id(), "abc", 3600).unwrap();
             }
             let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
             assert_eq!(replies.len(), 1, "stake={stake}");
@@ -2256,10 +2411,10 @@ mod tests {
     #[test]
     fn the_peer_address_is_recorded_on_the_migration_when_there_is_one() {
         let base = session();
-        let mut s = Session::new(base.store.clone(), base.config.clone(), base.account.clone())
+        let mut s = Session::new(base.store.clone(), base.config.clone(), base.served_account())
             .with_peer("203.0.113.7");
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
         let seed = migrate_and_get_seed(&mut s, id);
 
         let binding = s.store.migration_binding(seed).unwrap().expect("the row was minted");
@@ -2277,7 +2432,7 @@ mod tests {
         let world = World { channel_id: 3, ..World::default() };
         let mut s = Session::new(store, Arc::new(Config { world, ..Config::default() }), account);
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let replies = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
         assert_eq!(replies[0].body[0], net::opcode::MIGRATE_REFUSED);
@@ -2289,7 +2444,7 @@ mod tests {
     fn a_migration_cannot_be_claimed_twice() {
         let mut s = session();
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
         let body = s
             .handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)))
             .remove(0)
@@ -2322,7 +2477,7 @@ mod tests {
         };
         let mut s = Session::new(store, Arc::new(config), account);
         s.handle(&create_request("Wanderer", 30030, &STYLE));
-        let id = s.store.characters_for(s.account.id, 0).unwrap()[0].id;
+        let id = s.store.characters_for(s.account_id(), 0).unwrap()[0].id;
 
         let body = s.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)))
             .remove(0)
@@ -2356,7 +2511,7 @@ mod tests {
         let config = Arc::new(Config::default());
         let mut a = Session::new(store.clone(), config.clone(), otter);
         a.handle(&create_request("AlicesChar", 30030, &STYLE));
-        let id = a.store.characters_for(a.account.id, 0).unwrap()[0].id;
+        let id = a.store.characters_for(a.account_id(), 0).unwrap()[0].id;
 
         let mut b = Session::new(store, config, owl);
         let replies = b.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));

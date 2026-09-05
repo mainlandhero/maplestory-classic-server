@@ -18,6 +18,12 @@
     TWO copies in this file - this one and the Write-Host block near the bottom that
     actually gets printed. Update both, then RENDER the second one and read it.
 
+    HOW A RUN STARTS, since 2026-09-05: the servers come up and THE LAUNCHER OPENS. Sign
+    in there, press Start Game. Nothing is served to a client that did not come through a
+    sign-in - the login server answers it "not a registered ID". The old default, which
+    opened MapleStory.exe directly and served it as maplecw with nobody signed in, is
+    -DirectClient -FallbackAccount maplecw, and it is for arming hook watches only.
+
     ORDER: THE SINGLE-CLIENT HALF. The multiplayer half is BLOCKED, not untested.
     -----------------------------------------------------------------------------
     T0 is ANSWERED: this machine runs two clients. It took six launches and the
@@ -71,6 +77,16 @@
     file and overlapping launches give both clients the same credential.
 
     ============ WHAT THIS RUN IS FOR ============
+
+    T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
+    Start Game, and the world as before - that half is regression. The new observation is the
+    REFUSAL on a real client: -ServersOnly, then start client-patched\MapleStory.exe
+    -NXLDEBUG 127.0.0.1 8484 by hand with nobody signed in. Expected: the client's own "not a
+    registered ID" notice, and a client that stays usable afterwards. A FROZEN client means
+    the refusal packet was not accepted by the login-result handler and the "always answer"
+    rule is broken on this path - that is the finding, and it is the reason this is a step
+    rather than a test in the suite (the suite proves the packet goes out, not that the client
+    likes it). login.log shows "served as NOBODY - REFUSED" for that connection.
 
     T12 (NEW 2026-09-05). REGISTRATION AND RECOVERY, and the launcher half needs no client.
     As the GM type !registrationcode: a chat notice shows an 8-character code, XXXX-XXXX,
@@ -702,23 +718,27 @@ param(
     # world-ch<N>.log (the rest). Channel 0 keeps the plain name because every doc and
     # instruction in this repo points at world.log.
     [int]$Channels = 2,
-    # The FALLBACK account - who a connection is served as when no launcher claim is live.
+    # The account -ListOnly prints. Nothing else reads it any more.
     #
-    # It used to be the only answer: the login server resolved it once at startup, so one
-    # process could only ever be one player. It is now resolved PER CONNECTION, and a claim
-    # staked by maplecw-launcher wins. Create the account first with
-    #   .\target\release\maplecw-useradd.exe <name> --email <address>
-    # The game socket still carries no credentials, so neither this nor a claim is a login:
-    # they decide whose characters appear, and anything that reaches the port gets them.
+    # Until 2026-09-05 this was ALSO the fallback the login server served every connection it
+    # could not tie to a launcher sign-in - which is how the default run opened a client that
+    # was simply "logged in" as maplecw with nobody having signed in anywhere. The owner: "I want to
+    # remove this functionality and enforce login." The fallback is -FallbackAccount now, off
+    # by default, and the default run goes through the launcher.
     [string]$Account = 'maplecw',
-    # Start maplecw-launcher instead of the client, and let IT start the client.
-    #
-    # This is the multi-account path: sign in as whoever you want, press Start Game, and the
-    # launcher installs the hook and launches. The servers are started either way. Use it
-    # when the question is about accounts; use the ordinary path when the question is about
-    # the game, because the launcher writes the same marker files by a different route and
-    # that is one more thing standing between a run and its evidence.
+    # Serve a connection the login server CANNOT attribute to a launcher sign-in as this
+    # account instead of refusing it. Off = LOGIN ENFORCED. Only -DirectClient needs it.
+    [string]$FallbackAccount,
+    # The launcher drives every ordinary run now: it signs in, installs the hook and starts
+    # the client. This switch is kept so an old command line still works; it changes nothing.
     [switch]$Launcher,
+    # THE OLD DEFAULT: start MapleStory.exe directly, no launcher, no sign-in. Kept for
+    # arming a hook watch (-Probe, -Session) because the launcher writes those markers with
+    # its own defaults. Login is enforced, so a direct client is REFUSED at the login screen
+    # unless -FallbackAccount names who to serve it as - and then so is anything else that
+    # reaches the port. The script refuses to start a direct client without it, because a
+    # run whose client cannot get past the login screen answers nothing.
+    [switch]$DirectClient,
     # Start the servers and stop there - launch neither the client nor the launcher.
     #
     # This is what start-servers.cmd uses. The owner starts the servers by double-clicking that,
@@ -1404,8 +1424,9 @@ Remove-Item $serverLog -Force -ErrorAction SilentlyContinue
 # that then all read as broken. The login server logs which one it used every time, but the
 # banner the owner reads at launch is not the server log.
 #
-# -Launcher deliberately does NOT do this: there, the claim is the whole point.
-if (-not $Launcher -and -not $ServersOnly) {
+# Only the direct-client path does this, because only there is the claim a trap: the
+# launcher path is about to stake a fresh one, and -ServersOnly hands over to the launcher.
+if ($DirectClient) {
     $userAddExe = Join-Path $root 'target\release\maplecw-useradd.exe'
     if (Test-Path $userAddExe) {
         & $userAddExe --db "$Database" --clear-claims | ForEach-Object { Write-Host "  $_" }
@@ -1433,19 +1454,22 @@ if (-not $Launcher -and -not $ServersOnly) {
 # shows the difference is this switch rather than something incidental about the close.
 $spawn = if ($ServersOnly) { @{ NoNewWindow = $true } } else { @{ WindowStyle = 'Hidden' } }
 
+# One address per channel. The client connects to this when it enters the world, so it must
+# be reachable from the *client* machine - loopback here, and --advertise decides elsewhere.
+# The -join that builds $channelList MUST be fully parenthesised: PowerShell's -join binds
+# looser than the commas of an array literal, so an unparenthesised one swallows the rest of
+# the argument list into one string and the server sees a single argument "--db,...".
+$loginArgs = @(
+    '--db', "`"$Database`"", '--bind', "127.0.0.1:$Port",
+    '--channels', $channelList,
+    '--display-name', "`"$DisplayName`"", '--world', $World
+)
+# LOGIN ENFORCED unless -FallbackAccount says otherwise. No --account: it selected the
+# fallback until 2026-09-05, and a default run should never be able to reach a character
+# list without somebody having signed in through the launcher.
+if ($FallbackAccount) { $loginArgs += @('--fallback-account', $FallbackAccount) }
 $server = Start-Process -FilePath $loginExe -WorkingDirectory $root -PassThru @spawn `
-    -ArgumentList @(
-        '--db', "`"$Database`"", '--bind', "127.0.0.1:$Port",
-        # One address per channel. The client connects to this when it enters the world,
-        # so it must be reachable from the *client* machine - loopback here, a LAN address
-        # once the server moves to the homelab.
-        # The -join MUST be fully parenthesised. PowerShell's -join binds looser than the
-        # commas of an array literal, so `(...) -join ',', '--account', $Account` makes the
-        # rest of the argument list part of the join's right operand and collapses the whole
-        # thing into one string - the server then sees a single argument "--db,...".
-        '--channels', $channelList,
-        '--account', $Account, '--display-name', "`"$DisplayName`"", '--world', $World
-    ) `
+    -ArgumentList $loginArgs `
     -RedirectStandardOutput $serverLog -RedirectStandardError "$serverLog.err"
 
 # THE SIGN-IN SERVICE. Started with the other two, and that is not optional any more.
@@ -1537,6 +1561,13 @@ function Show-TestPlan {
         Write-Host '    seat, then position/foothold/facing. All fixed.'
         Write-Host ''
         Write-Host '  WHAT IS WORTH A RUN NOW, in order:' -ForegroundColor Yellow
+        Write-Host '    0. LOGIN IS ENFORCED (new 2026-09-05). The launcher path is the run'
+        Write-Host '       now: sign in there, Start Game, the world as before. To SEE the'
+        Write-Host '       refusal: -ServersOnly, then start client-patched\MapleStory.exe'
+        Write-Host '       -NXLDEBUG 127.0.0.1 8484 by hand with nobody signed in. It must'
+        Write-Host '       show "not a registered ID" and stay USABLE (a frozen client would'
+        Write-Host '       mean the refusal packet was not accepted - report that). login.log'
+        Write-Host '       says "served as NOBODY - REFUSED" for that connection.'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'
@@ -1945,7 +1976,9 @@ if ($ServersOnly) {
     return
 }
 
-if ($Launcher) {
+# THE DEFAULT PATH since 2026-09-05: the launcher drives. The old default - MapleStory.exe
+# started directly and served as --account with nobody signed in - is -DirectClient, below.
+if (-not $DirectClient) {
     # Hand over to maplecw-launcher and stop here, BEFORE the marker block below.
     #
     # The launcher writes the same four hook markers and launches the client itself. Placed
@@ -2022,6 +2055,22 @@ $env:MAPLECW_HOOK_LOG = $hookLog
 # produced a 9.4 MB dump here, while the real client's own 0xC0000005 at 13:49:56 -
 # 88 minutes AFTER WER was switched on - produced nothing at all.
 $dumpDir = Join-Path $root 'dumps'
+# -DirectClient from here on. Login is enforced, so this client is refused at the login
+# screen unless the login server was told whom to serve it as - and a run that cannot get
+# past the login screen measures nothing, so it is refused HERE, with the fix.
+if (-not $FallbackAccount) {
+    Write-Host ''
+    Write-Host '-DirectClient starts the client with no sign-in, and LOGIN IS ENFORCED.' -ForegroundColor Red
+    Write-Host '  The login server would answer it with "not a registered ID". To serve a'
+    Write-Host '  direct client as an account anyway (dev only - anything reaching the'
+    Write-Host '  port is then served as it too), pass:'
+    Write-Host '    -DirectClient -FallbackAccount maplecw' -ForegroundColor Yellow
+    Write-Host '  Or drop -DirectClient and sign in through the launcher, which is the'
+    Write-Host '  ordinary run now.'
+    Write-Host ''
+    Stop-All
+    throw '-DirectClient needs -FallbackAccount <name>'
+}
 New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.dumpdir') -Value $dumpDir -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Encoding ascii

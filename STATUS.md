@@ -19,10 +19,14 @@ One command, from an **elevated** shell:
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
 ```
 
-It builds, installs the hook into `client-patched/`, starts **both servers** -
-`maplecw-login` on 8484 and `maplecw-world` on 8485 - applies the client patches and
-launches the client. Close the client by hand when done, then `-Stop`. `-ListOnly` prints
-the stored characters and launches nothing. **Launch the two clients one at a time.**
+It builds, installs the hook into `client-patched/`, starts **the servers** - `maplecw-login`
+on 8484, `maplecw-world` on 8485 and 8486, `maplecw-auth` on 8080 - and starts **the
+launcher**. Sign in there, press Start Game. **Login is enforced since 2026-09-05**: a client
+that did not come through a launcher sign-in is refused at the login screen (the
+`notRegisteredID` notice), not served a fallback account - the old default, which opened the
+client straight in as `maplecw`, is behind `-DirectClient -FallbackAccount maplecw` for hook
+debugging only. Close the client by hand when done, then `-Stop`. `-ListOnly` prints the
+stored characters and launches nothing. **Launch the two clients one at a time.**
 
 **`-SetFieldProbe` is not optional.** Its name is a fossil: it now means "the channel
 answers at all". Without it `Session::handle` returns nothing for *every* packet, the
@@ -75,10 +79,24 @@ both built, tested, and exercised against the shipped binaries:
   --registration-code / --recovery-code / --codes` do the same from the console. T12 in the
   test plan is the screen half; the suite covers every sentence in it.
 
-What did **not** change: the game socket still carries no credential. Forwarded to the
-internet, a stranger reaching 8484 while exactly one person is signed in is served as that
-person - `SERVER-README.txt` says so where the ports are listed. Ports, all TCP: 8080
-(sign-in, TLS), 8484 (login), 8485 and up (one per channel).
+* **Login is enforced.** The owner, after the default run opened a client that was simply served
+  `maplecw`: *"I want to remove this functionality and enforce login."* The login server's
+  fallback account is gone by default: a connection it cannot attribute to a launcher sign-in
+  (client token in `0x0073`, owning process, or address) is answered with a **login failure**
+  - code 5, the client's own `notRegisteredID` notice - and sees nobody's characters. The
+  connection stays open so a `0x0073` token can still attribute it. `--fallback-account NAME`
+  restores the old behaviour by name (the two smoke scripts pass it; the banner shouts when it
+  is on). `test-server.ps1`'s default is the launcher path; the direct client is
+  `-DirectClient -FallbackAccount <name>` and the script refuses to start one without the
+  fallback, because a client that cannot pass the login screen measures nothing. Found while
+  doing it: a server test named "a later claim replaces an earlier one" was passing because
+  the later account was also the fallback - two live claims were always ambiguous.
+
+What did **not** change: the game socket still carries no credential. What changed about the
+exposure: forwarded to the internet, a stranger reaching 8484 is no longer served as anyone
+by default - only a connection attributed to a live sign-in is served, and attribution by
+address is the weakest of the three rules. `SERVER-README.txt` says so where the ports are
+listed. Ports, all TCP: 8080 (sign-in, TLS), 8484 (login), 8485 and up (one per channel).
 
 ### What works — seen on a screen
 

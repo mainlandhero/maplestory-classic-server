@@ -45,7 +45,11 @@ param(
     [int]$Port = 8484,
     [int]$ChannelPort = 8485,
     [int]$Channels = 2,
+    # Kept so an old command line is told what changed rather than silently ignored.
     [string]$Account,
+    # Serve a connection that cannot be tied to a launcher sign-in as THIS account instead of
+    # refusing it. Off by default - login is enforced. Dev and smoke-test use only.
+    [string]$FallbackAccount,
     [switch]$Stop
 )
 
@@ -73,17 +77,18 @@ no database at $db - create an account first:
 "@
 }
 
-# The fallback account: who a connection is served as when no launcher claim is live. The
-# launcher overrides it every time it signs in, so this only matters for a server started
-# before anyone has run the launcher.
-if (-not $Account) {
-    $listing = & (Join-Path $bin 'maplecw-useradd.exe') --db "$db" --list 2>&1 | Out-String
-    $first = ($listing -split "`n" | Where-Object { $_ -match '^\s*\d+\s+(\S+)' } |
-              Select-Object -First 1)
-    if ($first -match '^\s*\d+\s+(\S+)') { $Account = $matches[1] }
+# LOGIN IS ENFORCED. A connection the login server cannot tie to a launcher sign-in is
+# refused with a login failure - it is not served anybody's characters. This script used to
+# pick the FIRST account in the database as a fallback and serve every unattributable
+# connection as that person, which on a forwarded port meant a stranger reaching 8484 was
+# served as the administrator. The owner, 2026-09-05: "enforce login". -FallbackAccount <name>
+# turns the old behaviour back on by hand, and the login server's banner says so when it is.
+if ($Account) {
+    Write-Host '-Account no longer selects a fallback. Login is enforced; use -FallbackAccount <name> to serve unattributable connections as one account (dev/test only).' -ForegroundColor Yellow
 }
-if (-not $Account) {
-    throw "no accounts in $db - create one with maplecw-useradd before starting the servers"
+$listing = & (Join-Path $bin 'maplecw-useradd.exe') --db "$db" --list 2>&1 | Out-String
+if (-not ($listing -match '^\s*\d+\s+\S+')) {
+    throw "no accounts in $db - create your own (and make it GM) with maplecw-useradd before starting the servers; players then register with codes you mint"
 }
 
 Stop-All
@@ -107,16 +112,17 @@ $channelList = (0..($Channels - 1) | ForEach-Object { "$($ChannelPort + $_)" }) 
 $loginArgs = @(
     '--bind', "$($Bind):$Port",
     '--db', "$db",
-    '--account', "$Account",
     '--channels', "$channelList",
     '--advertise', "$Advertise"
 )
+if ($FallbackAccount) { $loginArgs += @('--fallback-account', "$FallbackAccount") }
 $watched = @()
 $login = Start-Process -FilePath (Join-Path $bin 'maplecw-login.exe') -WorkingDirectory $root `
     -ArgumentList $loginArgs -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $root 'login.log') `
     -RedirectStandardError  (Join-Path $root 'login.log.err')
-Write-Host "login server  pid $($login.Id)  $($Bind):$Port  fallback account '$Account'"
+$enforced = if ($FallbackAccount) { "FALLBACK '$FallbackAccount' - anything reaching this port is served as it" } else { 'login enforced - unattributable connections are refused' }
+Write-Host "login server  pid $($login.Id)  $($Bind):$Port  $enforced"
 Write-Host "              channels advertised as: $Advertise  (login.log's first lines say what each client is told)"
 $watched += $login
 
@@ -188,8 +194,8 @@ for ($ch = 0; $ch -lt $Channels; $ch++) {
 Write-Host ''
 Write-Host 'THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
 Write-Host '  Now double-click maplecw-launcher.exe, sign in, and press Start Game.'
-Write-Host '  The launcher decides which account plays; --account above is only the'
-Write-Host '  fallback for a connection that arrives before anyone has signed in.'
+Write-Host '  The launcher decides which account plays. A client that did not come'
+Write-Host '  through a launcher sign-in is refused at the login screen.'
 Write-Host ''
 
 # THE WAIT, and it is what makes closing this window enough.

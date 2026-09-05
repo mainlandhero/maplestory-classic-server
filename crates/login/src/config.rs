@@ -74,12 +74,26 @@ pub struct Config {
     /// The SQLite file. Characters live here, and this is the whole point of the crate.
     pub db_path: PathBuf,
 
-    /// **Which account every connection is served as.**
+    /// **The account `--list` and `--delete` operate on.** Nothing else reads it.
     ///
-    /// The game socket carries no credentials, so there is nothing to authenticate with
-    /// yet. This is a stand-in, and it is deliberately a required piece of configuration
-    /// rather than a silent default, so nobody can read a run and think a login happened.
-    pub account: String,
+    /// Until 2026-09-05 this was also the account every unattributable connection was served
+    /// as; that is [`Config::fallback_account`] now, and it is off by default.
+    pub account: Option<String>,
+
+    /// **Serve a connection this server cannot attribute to a launcher sign-in as this
+    /// account, instead of refusing it.** `--fallback-account`. `None` - the default - means
+    /// **login is enforced**: such a connection is answered with a login failure
+    /// (`net::opcode::LOGIN_REFUSED_NOT_REGISTERED`) and sees no characters.
+    ///
+    /// The owner, 2026-09-05, after the default run opened a client that was simply served
+    /// `maplecw`: *"I want to remove this functionality and enforce login."* The fallback is
+    /// what made that happen - anything reaching the port got the fallback's characters, and
+    /// the README had to say so beside the port list. It stays as an explicit option because
+    /// two instruments need it: `tools/login_smoke.py` is a stand-in client that stakes no
+    /// claim, and `tools/claims_smoke.py`'s control is precisely "an unattributable
+    /// connection sees the fallback". Both pass the flag by name now, and the startup banner
+    /// says out loud when it is on.
+    pub fallback_account: Option<String>,
 
     /// What the login screen displays as the account name.
     ///
@@ -127,8 +141,10 @@ impl Default for Config {
             bind: "127.0.0.1:8484".parse().expect("a literal address"),
             advertise: std::sync::Arc::new(net::advertise::Advertiser::default()),
             db_path: PathBuf::from("maplecw.db"),
-            account: "maplecw".to_string(),
-            display_name: "maplecw".to_string(),
+            account: None,
+            // OFF: login enforced. See the field.
+            fallback_account: None,
+            display_name: "MapleCW".to_string(),
             // OFF. See the field's doc block: on, with today's channel server, every
             // migration is refused and nobody can enter the world.
             bind_migrations: false,

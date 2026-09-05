@@ -35,31 +35,50 @@ pub fn log(msg: &str) {
 /// A missing account is fatal rather than auto-created: a server that quietly invents one
 /// would put a character list behind a name nobody made, and creating an account here
 /// would mean inventing a password, which this project does not do anywhere.
-fn open(config: &Config) -> std::io::Result<(Arc<Store>, Account)> {
+/// Open the store, and load the fallback account if one is configured.
+///
+/// `None` is the enforced state: a connection nothing attributes to a launcher sign-in is
+/// refused. A configured fallback that does not exist or is disabled is a startup error, as
+/// it always was - a server that silently ran without the account it was told to serve would
+/// look, from a client, exactly like the enforced state, and the two must not be confusable.
+fn open(config: &Config) -> std::io::Result<(Arc<Store>, Option<Account>)> {
     let store = Store::open(&config.db_path).map_err(|e| {
         std::io::Error::other(format!("could not open {}: {e}", config.db_path.display()))
     })?;
     let store = Arc::new(store);
+    let fallback = match &config.fallback_account {
+        Some(name) => Some(load_account(&store, config, name)?),
+        None => None,
+    };
+    Ok((store, fallback))
+}
 
-    let account = match store.get_account(&config.account) {
+/// One named account, or the sentence saying why not.
+fn load_account(store: &Store, config: &Config, name: &str) -> std::io::Result<Account> {
+    let account = match store.get_account(name) {
         Ok(Some(a)) => a,
         Ok(None) => {
             return Err(std::io::Error::other(format!(
-                "no account named {:?} in {} - create one with `maplecw-useradd {}`",
-                config.account,
-                config.db_path.display(),
-                config.account
+                "no account named {name:?} in {} - create one with `maplecw-useradd {name}`",
+                config.db_path.display()
             )))
         }
         Err(e) => return Err(std::io::Error::other(format!("account lookup failed: {e}"))),
     };
     if !account.enabled {
-        return Err(std::io::Error::other(format!(
-            "account {:?} is disabled",
-            config.account
-        )));
+        return Err(std::io::Error::other(format!("account {name:?} is disabled")));
     }
-    Ok((store, account))
+    Ok(account)
+}
+
+/// The account `--list` and `--delete` work on. Required for those two, and only those two.
+fn admin_account(store: &Store, config: &Config) -> std::io::Result<Account> {
+    let Some(name) = &config.account else {
+        return Err(std::io::Error::other(
+            "--list and --delete need --account <name> to say whose characters",
+        ));
+    };
+    load_account(store, config, name)
 }
 
 /// Print what is stored, without listening.
@@ -67,7 +86,8 @@ fn open(config: &Config) -> std::io::Result<(Arc<Store>, Account)> {
 /// Worth having as its own mode: "did the last run actually save the character?" is the
 /// question this crate exists to answer, and answering it should not cost a client launch.
 pub fn list(config: &Config) -> std::io::Result<()> {
-    let (store, account) = open(config)?;
+    let (store, _) = open(config)?;
+    let account = admin_account(&store, config)?;
     let characters = store
         .characters_for(account.id, config.world.id)
         .map_err(|e| std::io::Error::other(format!("could not read characters: {e}")))?;
@@ -98,7 +118,8 @@ pub fn list(config: &Config) -> std::io::Result<()> {
 /// Ownership is still enforced - the delete is scoped to the configured account - so this
 /// cannot reach into someone else's characters just because it runs from a command line.
 pub fn delete(config: &Config, name: &str) -> std::io::Result<()> {
-    let (store, account) = open(config)?;
+    let (store, _) = open(config)?;
+    let account = admin_account(&store, config)?;
     let characters = store
         .characters_for(account.id, config.world.id)
         .map_err(|e| std::io::Error::other(format!("could not read characters: {e}")))?;
@@ -123,7 +144,7 @@ pub fn delete(config: &Config, name: &str) -> std::io::Result<()> {
 /// Listen, and serve every connection until the process is stopped.
 pub fn serve(config: Config) -> std::io::Result<()> {
     let config = Arc::new(config);
-    let (store, account) = open(&config)?;
+    let (store, fallback) = open(&config)?;
 
     let listener = TcpListener::bind(config.bind)?;
     log(&format!("listening on {}", config.bind));
@@ -147,11 +168,22 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         "world {} id {} with {} channel(s)",
         config.world.name, config.world.id, config.world.channel_count()
     ));
-    let characters = store.character_count(account.id, config.world.id).unwrap_or(0);
-    log(&format!(
-        "fallback account {:?} (id {}), {characters} character(s) stored",
-        account.name, account.id
-    ));
+    match &fallback {
+        Some(fb) => {
+            let characters = store.character_count(fb.id, config.world.id).unwrap_or(0);
+            log("LOGIN IS NOT ENFORCED: --fallback-account is set. A connection this server cannot");
+            log(&format!(
+                "  attribute to a launcher sign-in is served as {:?} (id {}, {characters} character(s)).",
+                fb.name, fb.id
+            ));
+            log("  That is ANYTHING that reaches this port. Dev and smoke-test use only.");
+        }
+        None => {
+            log("LOGIN ENFORCED: a connection this server cannot attribute to a launcher sign-in is");
+            log("  REFUSED with login failure 5 (notRegisteredID) and sees no characters. Attribution");
+            log("  is the client token in 0x0073, the process that owns the socket, or the address.");
+        }
+    }
     match store.live_login_claims() {
         Ok(claims) if claims.is_empty() => {
             log("no login claim is live - run maplecw-launcher and sign in")
@@ -161,17 +193,17 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                 "{} login claim(s) live. A connection this server can attribute to a launch is",
                 claims.len()
             ));
-            log("  served as that launch's account; one it cannot is served as the fallback");
-            log("  below. It is never GUESSED at - serving the newest claim is how one player");
-            log("  ends up looking at another player's characters.");
+            log("  served as that launch's account; one it cannot is refused (or served as the");
+            log("  fallback, if --fallback-account is set). It is never GUESSED at - serving the");
+            log("  newest claim is how one player ends up looking at another player's characters.");
             for c in &claims {
                 log(&format!("  claim: {:?} until {}", c.account_name, c.expires_at));
             }
         }
         Err(e) => log(&format!("could not read login claims: {e} - the fallback will be used")),
     }
-    log("NOT AUTHENTICATED: the game socket carries no credentials, so anyone who");
-    log("  connects is served as whichever account the claim or the fallback names.");
+    log("NOT AUTHENTICATED: the game socket carries no credentials. A connection is served as");
+    log("  whichever account it can be ATTRIBUTED to, and refused when it cannot be.");
     log("  The launcher checks a password before staking a claim; this socket does not.");
     log("  See docs/launcher.md.");
     log("CLIENT TOKEN (0x0073): this server now READS the identity string the client carries");
@@ -213,7 +245,7 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                 nth += 1;
                 let store = store.clone();
                 let config = config.clone();
-                let account = account.clone();
+                let fallback = fallback.clone();
                 std::thread::spawn(move || {
                     let peer_addr = stream.peer_addr().ok();
                     let peer = peer_addr
@@ -253,20 +285,23 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                     // Resolved HERE, per connection, not once at startup - that is what lets
                     // the launcher decide who is playing without restarting the server.
                     let (resolved, why, claim_token_hash) =
-                        resolve_account(&store, &account, &evidence);
+                        resolve_account(&store, fallback.as_ref(), &evidence);
                     log(&format!("{peer} served as {why}"));
                     log(&format!(
                         "{peer} that decision is PROVISIONAL: if this client carries a one-time \
                          token in 0x0073, it overrides the above - and if it carries a wrong one \
-                         this connection is downgraded to the fallback {:?}",
-                        account.name
+                         this connection is downgraded to {}",
+                        match &fallback {
+                            Some(fb) => format!("the fallback {:?}", fb.name),
+                            None => "NOBODY and refused".to_string(),
+                        }
                     ));
                     match connection(
                         stream,
                         store,
                         config,
                         resolved,
-                        account,
+                        fallback,
                         claim_token_hash,
                         launch_pid,
                     ) {
@@ -308,23 +343,32 @@ pub fn serve(config: Config) -> std::io::Result<()> {
 ///    time, so a run is never ambiguous about whose characters are on screen.
 fn resolve_account(
     store: &Store,
-    fallback: &Account,
+    fallback: Option<&Account>,
     evidence: &store::ClaimEvidence,
-) -> (Account, String, Option<String>) {
+) -> (Option<Account>, String, Option<String>) {
     use store::ClaimResolution;
+
+    // What an unattributable connection gets: the fallback if one is configured, else
+    // nothing - and "nothing" is served as a login failure by `Session::refuse_unclaimed`.
+    // The sentence is built once so every arm below says the same thing about it.
+    let unattributed = |reason: String| -> (Option<Account>, String, Option<String>) {
+        match fallback {
+            Some(fb) => (
+                Some(fb.clone()),
+                format!("account {:?} (id {}) from --fallback-account; {reason}", fb.name, fb.id),
+                None,
+            ),
+            None => (
+                None,
+                format!("NOBODY - REFUSED at the login request (login is enforced; no --fallback-account); {reason}"),
+                None,
+            ),
+        }
+    };
 
     let outcome = match store.resolve_login_claim(evidence) {
         Ok(outcome) => outcome,
-        Err(e) => {
-            return (
-                fallback.clone(),
-                format!(
-                    "account {:?} (id {}) from --account; the claim lookup FAILED: {e}",
-                    fallback.name, fallback.id
-                ),
-                None,
-            )
-        }
+        Err(e) => return unattributed(format!("the claim lookup FAILED: {e}")),
     };
     // Built before the match, because `ClaimResolution::why` is where the three sentences
     // live and two of them describe outcomes that are easy to summarise into silence.
@@ -333,31 +377,21 @@ fn resolve_account(
     match outcome {
         ClaimResolution::Resolved(resolved) => {
             match store.get_account(&resolved.claim.account_name) {
-                Ok(Some(acc)) if acc.enabled => (acc, why, resolved.token_hash),
+                Ok(Some(acc)) if acc.enabled => (Some(acc), why, resolved.token_hash),
                 // The claim resolved to nothing usable. `resolve_login_claim` already joins
                 // to `accounts` and skips disabled ones, so reaching here means the row
-                // changed underneath us between the two statements - rare, and not worth a
-                // refusal.
-                _ => (
-                    fallback.clone(),
-                    format!(
-                        "account {:?} (id {}) - a claim named {:?} but it is no longer usable",
-                        fallback.name, fallback.id, resolved.claim.account_name
-                    ),
-                    None,
-                ),
+                // changed underneath us between the two statements - rare.
+                _ => unattributed(format!(
+                    "a claim named {:?} but it is no longer usable",
+                    resolved.claim.account_name
+                )),
             }
         }
-        // BOTH of the remaining outcomes fall back, and they are DIFFERENT events with
+        // BOTH of the remaining outcomes are unattributed, and they are DIFFERENT events with
         // different fixes - "nobody has signed in" and "two people have and this connection
         // could not be told apart". `why` says which, every time, which is the whole reason
-        // the store returns three variants instead of an Option. "from --account" is kept
-        // verbatim because `tests::with_no_claim_...` greps the line for it.
-        ClaimResolution::NoClaim | ClaimResolution::Ambiguous { .. } => (
-            fallback.clone(),
-            format!("account {:?} (id {}) from --account; {why}", fallback.name, fallback.id),
-            None,
-        ),
+        // the store returns three variants instead of an Option.
+        ClaimResolution::NoClaim | ClaimResolution::Ambiguous { .. } => unattributed(why),
     }
 }
 
@@ -371,8 +405,8 @@ fn connection(
     mut stream: TcpStream,
     store: Arc<Store>,
     config: Arc<Config>,
-    account: Account,
-    fallback: Account,
+    account: Option<Account>,
+    fallback: Option<Account>,
     claim_token_hash: Option<String>,
     launch_pid: Option<u32>,
 ) -> std::io::Result<()> {
@@ -392,9 +426,15 @@ fn connection(
     // The address is recorded on any migration this connection mints. Defence in depth and
     // an audit trail - **not** a discriminator: two clients on one machine share an address.
     let local_addr = stream.local_addr().ok();
+    // `None` is an unattributed connection under enforced login: it gets a Session so it can
+    // be answered (a login failure) and so a 0x0073 client token can still attribute it.
+    let session = match account {
+        Some(account) => Session::new(store, config, account),
+        None => Session::unclaimed(store, config),
+    };
     let session = match stream.peer_addr() {
-        Ok(addr) => Session::new(store, config, account).with_peer(addr.ip().to_string()),
-        Err(_) => Session::new(store, config, account),
+        Ok(addr) => session.with_peer(addr.ip().to_string()),
+        Err(_) => session,
     };
     // The server's end of the socket. On a 0.0.0.0 bind it is the interface this client
     // actually reached, which is what a directly-connected client is told to dial for its
@@ -411,10 +451,11 @@ fn connection(
     // upwards to the claim the token names, or **downwards** to the fallback when the token is
     // refused. The pid is what lets the same client process re-present a spent token; it comes
     // from the OS's TCP table at accept time, never from the client.
-    let mut session = session
-        .with_claim_token_hash(claim_token_hash)
-        .with_fallback(fallback)
-        .with_launch_pid(launch_pid);
+    let session = session.with_claim_token_hash(claim_token_hash).with_launch_pid(launch_pid);
+    let mut session = match fallback {
+        Some(fallback) => session.with_fallback(fallback),
+        None => session,
+    };
     for reply in session.on_connect() {
         send(&mut stream, &mut tx, &reply.opcode, &reply.packet(), &reply.what)?;
     }
@@ -534,64 +575,113 @@ mod tests {
         (store, fallback, other)
     }
 
+    /// The id of a resolution that must have served somebody.
+    fn id(resolved: Option<Account>) -> i64 {
+        resolved.expect("this connection must be served").id
+    }
+
+    // ---------------------------------------------------------------- enforced: no fallback
+
+    /// **The default since 2026-09-05.** No claim, no fallback: nobody. The sentence says
+    /// REFUSED, because it is what the log shows against a bare client on the port.
+    #[test]
+    fn with_no_claim_and_no_fallback_a_connection_is_served_as_nobody() {
+        let (store, _, _) = two_accounts();
+        let (acc, why, _) = resolve_account(&store, None, &store::ClaimEvidence::none());
+        assert!(acc.is_none());
+        assert!(why.contains("REFUSED"), "{why}");
+        assert!(why.contains("no launcher claim is live"), "{why}");
+    }
+
+    #[test]
+    fn a_claim_serves_its_account_with_no_fallback_configured() {
+        let (store, _, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        let (acc, why, _) = resolve_account(&store, None, &store::ClaimEvidence::none());
+        assert_eq!(id(acc), other.id);
+        assert!(why.contains("login claim"), "{why}");
+    }
+
+    /// A disabled account must not keep playing on a claim staked before it was disabled;
+    /// with no fallback the connection is nobody's. (The session still ANSWERS it - a login
+    /// failure - so the client's UI does not freeze; `Session::refuse_unclaimed`.)
+    #[test]
+    fn disabling_an_account_mid_claim_makes_the_connection_nobodys_without_a_fallback() {
+        let (store, _, other) = two_accounts();
+        store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
+        store.set_enabled("second_one", false).unwrap();
+        let (acc, why, _) = resolve_account(&store, None, &store::ClaimEvidence::none());
+        assert!(acc.is_none(), "{why}");
+    }
+
+    // ---------------------------------------------------------------- with --fallback-account
+
     #[test]
     fn with_no_claim_a_connection_is_served_as_the_configured_fallback() {
         let (store, fallback, _) = two_accounts();
-        let (acc, why, _) = resolve_account(&store, &fallback, &store::ClaimEvidence::none());
-        assert_eq!(acc.id, fallback.id);
-        assert!(why.contains("--account"), "{why}");
+        let (acc, why, _) = resolve_account(&store, Some(&fallback), &store::ClaimEvidence::none());
+        assert_eq!(id(acc), fallback.id);
+        assert!(why.contains("--fallback-account"), "{why}");
     }
 
     #[test]
     fn a_claim_overrides_the_fallback() {
         let (store, fallback, other) = two_accounts();
         store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
-        let (acc, why, _) = resolve_account(&store, &fallback, &store::ClaimEvidence::none());
-        assert_eq!(acc.id, other.id, "the launcher's claim decides, not --account");
+        let (acc, why, _) = resolve_account(&store, Some(&fallback), &store::ClaimEvidence::none());
+        assert_eq!(id(acc), other.id, "the launcher's claim decides, not the fallback");
         assert!(why.contains("login claim"), "{why}");
     }
 
     /// **The regression test for logging out.** The client opens a SECOND login connection
     /// after "Log Out" and "Choose another world" - `CLAUDE.md` records two `0x0010`s in one
-    /// launch. If resolving consumed the claim, that second connection would fall back to
-    /// `--account` and the player would watch their characters turn into someone else's.
+    /// launch. If resolving consumed the claim, that second connection would be nobody's (or
+    /// the fallback's) and the player would watch their characters turn into someone else's.
     #[test]
     fn resolving_twice_serves_the_same_account_because_a_claim_is_not_consumed() {
-        let (store, fallback, other) = two_accounts();
+        let (store, _, other) = two_accounts();
         store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
-        let first = resolve_account(&store, &fallback, &store::ClaimEvidence::none()).0;
-        let second = resolve_account(&store, &fallback, &store::ClaimEvidence::none()).0;
-        assert_eq!(first.id, other.id);
-        assert_eq!(second.id, other.id, "the log-out reconnect must not change account");
+        let first = resolve_account(&store, None, &store::ClaimEvidence::none()).0;
+        let second = resolve_account(&store, None, &store::ClaimEvidence::none()).0;
+        assert_eq!(id(first), other.id);
+        assert_eq!(id(second), other.id, "the log-out reconnect must not change account");
     }
 
+    /// Two live claims and nothing to tell them apart is AMBIGUOUS, and the resolver refuses
+    /// to guess: nobody without a fallback, the fallback with one.
+    ///
+    /// This test was called `a_later_claim_replaces_an_earlier_one` and asserted the second
+    /// account was served. It passed only because that account was also the fallback - the
+    /// "replacement" it pinned never existed; claims are per launch and two live ones do not
+    /// evict each other. Found when the fallback was made optional.
     #[test]
-    fn a_later_claim_replaces_an_earlier_one() {
+    fn two_live_claims_with_no_evidence_are_served_as_nobody_or_the_fallback_never_guessed() {
         let (store, fallback, other) = two_accounts();
         store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
         store.stake_login_claim(fallback.id, "b-token", LOGIN_CLAIM_TTL_SECS).unwrap();
-        assert_eq!(resolve_account(&store, &fallback, &store::ClaimEvidence::none()).0.id, fallback.id);
+        let (nobody, why, _) = resolve_account(&store, None, &store::ClaimEvidence::none());
+        assert!(nobody.is_none(), "{why}");
+        assert!(why.contains("REFUSED"), "{why}");
+        let (acc, why, _) = resolve_account(&store, Some(&fallback), &store::ClaimEvidence::none());
+        assert_eq!(id(acc), fallback.id, "{why}");
     }
 
     #[test]
     fn an_expired_claim_falls_back_rather_than_serving_a_stale_account() {
         let (store, fallback, other) = two_accounts();
         store.stake_login_claim(other.id, "a-token", -1).unwrap();
-        let (acc, why, _) = resolve_account(&store, &fallback, &store::ClaimEvidence::none());
-        assert_eq!(acc.id, fallback.id);
+        let (acc, why, _) = resolve_account(&store, Some(&fallback), &store::ClaimEvidence::none());
+        assert_eq!(id(acc), fallback.id);
         assert!(why.contains("no launcher claim is live"), "{why}");
     }
 
-    /// A disabled account must not keep playing on a claim staked before it was disabled -
-    /// and the fall-back must still answer, because refusing the connection outright would
-    /// leave the client with no reply, which freezes its entire UI.
     #[test]
-    fn disabling_an_account_mid_claim_falls_back_instead_of_refusing() {
+    fn disabling_an_account_mid_claim_falls_back_when_a_fallback_is_configured() {
         let (store, fallback, other) = two_accounts();
         store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
         store.set_enabled("second_one", false).unwrap();
-        let (acc, _, _) = resolve_account(&store, &fallback, &store::ClaimEvidence::none());
-        assert_eq!(acc.id, fallback.id);
+        let (acc, _, _) = resolve_account(&store, Some(&fallback), &store::ClaimEvidence::none());
+        assert_eq!(id(acc), fallback.id);
     }
 
     #[test]
@@ -599,19 +689,21 @@ mod tests {
         let (store, fallback, other) = two_accounts();
         store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
         store.clear_login_claims().unwrap();
-        assert_eq!(resolve_account(&store, &fallback, &store::ClaimEvidence::none()).0.id, fallback.id);
+        assert_eq!(id(resolve_account(&store, Some(&fallback), &store::ClaimEvidence::none()).0), fallback.id);
     }
 
     /// The log line is the only way a run says whose characters were on screen, and three of
     /// this project's answers came from reading a log after the fact. It must always name the
-    /// account it chose.
+    /// account it chose - or say NOBODY.
     #[test]
     fn every_outcome_names_the_account_it_chose() {
         let (store, fallback, other) = two_accounts();
-        let (_, no_claim, _) = resolve_account(&store, &fallback, &store::ClaimEvidence::none());
+        let (_, nobody, _) = resolve_account(&store, None, &store::ClaimEvidence::none());
+        assert!(nobody.contains("NOBODY"), "{nobody}");
+        let (_, no_claim, _) = resolve_account(&store, Some(&fallback), &store::ClaimEvidence::none());
         assert!(no_claim.contains("maplecw"), "{no_claim}");
         store.stake_login_claim(other.id, "a-token", LOGIN_CLAIM_TTL_SECS).unwrap();
-        let (_, claimed, _) = resolve_account(&store, &fallback, &store::ClaimEvidence::none());
+        let (_, claimed, _) = resolve_account(&store, None, &store::ClaimEvidence::none());
         assert!(claimed.contains("second_one"), "{claimed}");
     }
 }

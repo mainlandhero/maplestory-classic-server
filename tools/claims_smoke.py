@@ -420,8 +420,11 @@ class Servers:
         )
         self.login_log = open(os.path.join(self.dir, "login.log"), "w")
         self.login = subprocess.Popen(
+            # --fallback-account BY NAME. Login is enforced by default since 2026-09-05 - an
+            # unattributable connection is refused - and this script's control in section 5
+            # is precisely "an unattributable connection sees the fallback", so it opts in.
             [exe("maplecw-login"), "--db", self.db,
-             "--account", "fallback",
+             "--fallback-account", "fallback",
              "--bind", "127.0.0.1:%d" % self.login_port,
              "--channels", "127.0.0.1:%d" % self.channel_port],
             stdout=self.login_log, stderr=subprocess.STDOUT,

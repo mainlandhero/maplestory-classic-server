@@ -196,7 +196,11 @@ token, and an impostor server fails the handshake before a byte is sent. Until
 
 THE GAME SOCKET CARRIES NO CREDENTIALS AT ALL. The client never sends a user
 name. A connection the server can tie to a launcher sign-in is served as that
-sign-in's account; one it cannot is served as the fallback account - and when
-exactly one person is signed in, a stranger who reaches port 8484 is served AS
-THAT PERSON. On a network you control that is nobody. On the internet it is
-anyone who finds the port.
+sign-in's account; one it cannot is REFUSED with a login failure and sees no
+characters (since 2026-09-05 - it used to be served a fallback account). What
+ties a connection to a sign-in is, in order: the one-time token the launcher
+gives the client to carry, the process that owns the socket (same machine),
+and the address. So on a forwarded port the remaining exposure is narrower:
+a stranger is served as you only if their connection is attributed to your
+sign-in - by arriving from your address while your claim is live - not merely
+by connecting.

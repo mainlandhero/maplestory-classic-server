@@ -394,8 +394,13 @@ class Throwaway:
             raise SystemExit("throwaway account failed: " + r.stderr.strip())
 
         self.log = open(os.path.join(self.dir, "login.log"), "w")
+        # --fallback-account, by name: this script is a stand-in client that stakes no
+        # launcher claim, and login is enforced by default since 2026-09-05 - without the
+        # flag every connection here would be refused with a login failure, which is the
+        # server working, not the thing under test.
         self.proc = subprocess.Popen(
             [login_exe, "--db", self.db,
+             "--fallback-account", "maplecw",
              "--bind", "127.0.0.1:%d" % self.port,
              "--channels", "127.0.0.1:%d" % self.channel_port],
             stdout=self.log, stderr=subprocess.STDOUT)

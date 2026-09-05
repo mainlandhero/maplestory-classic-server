@@ -1288,6 +1288,27 @@ pub fn login_result(world_id: u32, channel_id: u32, characters: &[Character]) ->
     out
 }
 
+/// The login-result code that draws the client's `notRegisteredID` notice - "this is not a
+/// registered ID". `docs/session.md` has the whole table, read out of `FUN_141b2a280`.
+///
+/// Chosen for the connection the login server cannot attribute to any launcher sign-in: as
+/// far as this server is concerned, nobody has logged in, and that is the notice that says so.
+/// Codes -1, 6, 8, 9 and 12 would draw the generic "trouble logging in, ask support", which
+/// tells the person nothing they can act on.
+pub const LOGIN_REFUSED_NOT_REGISTERED: u8 = 5;
+
+/// A login result that REFUSES. Same shape as [`login_result`] with the result byte set, so a
+/// client that reads past the code - the handler gates on it, but a gate is a claim - finds
+/// the fields it expects rather than the end of the packet.
+///
+/// The owner, 2026-09-05: *"enforce login"*. This is what the login server sends to a connection
+/// it cannot tie to a launcher sign-in, in place of the fallback account's character list.
+pub fn login_refused(code: u8) -> Vec<u8> {
+    let mut out = login_result(0, 0, &[]);
+    out[0] = code;
+    out
+}
+
 /// The reply to the client's [`CLIENT_CHECK_NAME_REQUEST`].
 ///
 /// The client echoes nothing itself - it compares the name we send back, so it has to be
@@ -4412,6 +4433,18 @@ mod tests {
     fn migrate_body_is_the_length_the_client_reads() {
         let body = migrate("127.0.0.1:8484".parse().unwrap(), 203, 0);
         assert_eq!(body.len(), 59);
+    }
+
+    /// A refusal is the success shape with the code byte changed: nothing a client reads past
+    /// the code can run off the end.
+    #[test]
+    fn a_refused_login_is_the_success_shape_with_the_code_set() {
+        let refused = login_refused(LOGIN_REFUSED_NOT_REGISTERED);
+        let ok = login_result(0, 0, &[]);
+        assert_eq!(refused[0], 5, "notRegisteredID");
+        assert_eq!(ok[0], LOGIN_OK);
+        assert_eq!(refused.len(), ok.len());
+        assert_eq!(&refused[1..], &ok[1..]);
     }
 
     /// The address goes into `sin_addr` unconverted, so the octets are in order on the
