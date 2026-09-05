@@ -173,10 +173,10 @@ which on screen is indistinguishable from absent.
 | | |
 |---|---|
 | **the heap corruption** | `0xC0000374`, **17 distinct fault events** across ~16 archived runs (4 with dumps), deduplicated on `(timestamp, code, address)`. The damaged word is the identical `0x0000000100000020` every time. **The writer is still not found.** This is what ends a long session - the 2026-09-03 two-client death was at **371 s** of client life - and it is the one thing standing between "two players can play" and "two players can play for an hour". `research/heap-corruption-2026-08-27.md`. Do **not** pass `-HeapFix`: it armed, it held, the client died anyway, and every dump taken with it on is unusable for the free-list argument. *(Only 3 of the 17 sit in a log carrying an `ARMING` line, so client-age-at-death is measurable for 3; "never under ~192 s" is the 2026-09-03 figure and is `UNVERIFIED 2026-09-04` here - one of the three is a 7.9 s instance-guard experiment.)* |
-| **party invite** | the state machine invites correctly - `party: Invited { party: 1, from: 213, target: 214 }` - and the **success `0x00A5` body is undecoded**, so the handler refuses out loud rather than guessing. Guessing a body on this wire has killed the client three times. `research/party-result-0x00A5.md` |
+| **party invite → a party anyone can join** | no longer blocked on the body: since 2026-09-05 the `0x00A5` outcome (`0x1B`) and invite-dialog (`0x03`) shapes are decoded and the leader is told *"You have invited"*. What is left is a screen: the target's dialog has never been drawn, whether Accept refreshes the member list is unknown, and the Decline button's `0x0183` byte is unread, so Decline currently **joins**. `research/party-result-0x00A5.md` |
 | **trade and chat rooms** | both are `CMiniRoom`, a subsystem this server has never touched. The client declines **locally and sends no packet at all** - checked the documented way, by grepping `research/msexe-send-opcodes.txt` for the builder rather than eyeballing the tail. There is nothing here to answer; it is a whole feature that does not exist |
 | party pick-up rights | `action 2` is not routed - `crate::party::Request` has no variant for it |
-| `0x0183` accept/decline | slot 2 echoes the second `u32` of the `0x00A5` being answered, and **which of answers 4 and 5 means accept is [D]** |
+| `0x0183` accept/decline | read as `{op, answer, value}` since 2026-09-05, `value` the party id. Answer `1` is the measured auto-decline (the dialog timing out on the client); **the Decline button's byte is unmeasured**, so a Decline click currently joins. One click and one `world.log` line (`0x0183 invite answer ... answer=N`) fixes it. Server-side, an invite now lapses after 60 s so a faded dialog no longer blocks a re-invite - unwatched |
 | second-job skill casts | none of the 66 has a cast handler. `firstjob.rs` is the shape it wants |
 | the keyboard layout | not saved because **nothing has ever tried** - neither opcode is known, on either half. `research/keymap-not-saved.md` |
 
@@ -190,8 +190,11 @@ which on screen is indistinguishable from absent.
    *"N/M of the damage"* onto a non-majority cut; the archive holds **329** `exp from a kill`
    lines and **zero** with a fraction in them, so the EXP-sharing path - built 2026-08-29,
    the reason `broadcast.rs` exists at all - has never executed on a wire. Same launch as (1).
-3. **Decode the `0x00A5` invite success body**, which is the last thing between the party
-   state machine and a party anyone can join.
+3. **Watch the party invite land.** The `0x00A5` bodies are decoded (2026-09-05) and the
+   leader reads *"You have invited"*; unseen are the target's dialog, whether Accept refreshes
+   the member list, and the Decline button's `0x0183` byte, which one click reads off
+   `world.log`. Invites lapse after 60 s server-side now, so a dialog left to fade no longer
+   blocks a re-invite - also unwatched. T14, same launch as (1) and (2).
 4. **`0x0184` and `0x0194`**, which arrive unanswered at field entry, twice each, once per
    client - `FUN_142defbc0` and `FUN_142defc50`, adjacent builders 0x90 apart, and `0x0184`
    sits between the two party opcodes this server *does* answer. If either is *"tell me my

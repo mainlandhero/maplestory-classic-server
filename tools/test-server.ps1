@@ -89,11 +89,18 @@
     window's member list refreshes on that is NOT established - say. DECLINE: the two dialog
     buttons' answer bytes are unmeasured, so anything but the auto-decline value 1 is treated
     as accept for now; world.log prints "0x0183 invite answer ... answer=N raw=..." either
-    way, and N from a Decline click is the constant that fixes it.
+    way, and N from a Decline click is the constant that fixes it. TIMEOUT: invites lapse
+    server-side after 60 s (the client fades the dialog at about 30 s, and the server used to
+    wait forever, refusing every re-invite as "already invited"). Invite, leave the dialog
+    alone for about a minute, invite the same character again: it must go through, and
+    world.log prints "party: invite to character ... LAPSED after".
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
-    Start Game, and the world as before - that half is regression. The new observation is the
-    REFUSAL on a real client: with nobody signed in yet, start the PATCHED client with its own
+    Start Game, and the world as before - that half is regression. (Every Start Game also puts
+    one "served as NOBODY - REFUSED" line in login.log about half a second before the served
+    connection: that is the launcher probing the port before it starts the client - see
+    crates/launcher/src/servers.rs - not a client being refused. Seen in the run of 2026-09-05
+    18:17.) The new observation is the REFUSAL on a real client: with nobody signed in yet, start the PATCHED client with its own
     folder as the working directory - Start-Process -FilePath <repo>\client-patched\
     MapleStory.exe -WorkingDirectory <repo>\client-patched -ArgumentList '-NXLDEBUG',
     '127.0.0.1','8484'. The working directory is not optional: the hook writes its log and
@@ -1597,6 +1604,9 @@ function Show-TestPlan {
         Write-Host '       show "not a registered ID" and stay USABLE (a frozen client would'
         Write-Host '       mean the refusal packet was not accepted - report that). login.log'
         Write-Host '       says "served as NOBODY - REFUSED" for that connection.'
+        Write-Host '       (Every Start Game ALSO draws one REFUSED line half a second before'
+        Write-Host '       the served connection - that is the launcher probing the port, not'
+        Write-Host '       a client. The T13 line is the one with login traffic after it.)'
         Write-Host '       AND THE CHANNEL NOW HOLDS THE CLAIM TO THE SIGN-IN: on this box the'
         Write-Host '       migration is bound to your launcher sign-in and the channel checks'
         Write-Host '       it through the OS. If a character does NOT enter the world, read'
@@ -1614,6 +1624,9 @@ function Show-TestPlan {
         Write-Host '       member LIST refreshes is unknown - say. A DECLINE click is treated as'
         Write-Host '       accept for now (the two button values are unmeasured): world.log'
         Write-Host '       prints "0x0183 invite answer ... answer=N" - that N is what fixes it.'
+        Write-Host '       TIMEOUT (new): invite, leave the dialog ALONE about a minute, then'
+        Write-Host '       invite the SAME character again. It must go through - it used to'
+        Write-Host '       be "already invited" forever. world.log: "invite ... LAPSED".'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'
