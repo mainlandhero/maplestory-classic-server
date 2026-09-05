@@ -485,8 +485,14 @@ The live consequence on map 1: **Heena has WZ `f = 1` so they are sent action `0
 `f` so they are sent action `1`.** Sera's animation nodes, in WZ order, are
 `stand, move, blink, angry, smile, image, alert, hair`. Byte 21 is read `movzx`, i.e.
 **unsigned**, so `-1` ("leave the animation alone") is not expressible there — `0` is.
-**Recommended, as its own change: send `0` for byte 21 and the facing bit for byte 20.**
-Worth one launch on its own; not worth combining with §6.
+> **DO NOT DO THIS.** *"Send `0` for byte 21 and the facing bit for byte 20"* was recommended
+> here and **that byte arrangement killed the client on 2026-08-21**. The recommendation is
+> kept rather than deleted because the reasoning above it - a facing flag is a bool, an action
+> is a value - is still the best reading of the stores, and it was tagged **[D]**. What went
+> wrong is that a `[D]` recommendation was carried out as though it were a plan.
+>
+> The shipping arrangement is whatever `crates/net/src/opcode.rs` currently sends, and that
+> file owns it. Anything here about which byte to send is superseded.
 
 ### 7.2 The `0x0451` "already present" branch is still unread
 

@@ -247,7 +247,8 @@ pub fn change_controller_len(mob: &FieldMob) -> usize {
 ///
 /// # `level`
 ///
-/// [`CONTROL_NORMAL`]. [`CONTROL_RELEASE`] here **despawns**, and this function will not build
+/// [`CONTROL_NORMAL`]. [`CONTROL_RELEASE`] does not belong in THIS builder - a grant and a
+/// release are opposite acts - and this function will not build
 /// it - use [`mob_release_controller`], whose name says what it does.
 ///
 /// # The layout
@@ -258,7 +259,7 @@ pub fn change_controller_len(mob: &FieldMob) -> usize {
 pub fn mob_change_controller(mob: &FieldMob, level: u8) -> Vec<u8> {
     debug_assert!(
         level != CONTROL_RELEASE,
-        "level 0 despawns the mob rather than releasing it - use mob_release_controller"
+        "level 0 is a RELEASE and belongs in mob_release_controller, not in a grant"
     );
 
     let mut b = Vec::with_capacity(change_controller_len(mob));
@@ -331,7 +332,7 @@ pub fn mob_change_controller(mob: &FieldMob, level: u8) -> Vec<u8> {
 pub fn mob_change_controller_spawning(mob: &FieldMob, level: u8) -> Vec<u8> {
     debug_assert!(
         level != CONTROL_RELEASE,
-        "level 0 despawns the mob rather than releasing it - use mob_release_controller"
+        "level 0 is a RELEASE and belongs in mob_release_controller, not in a grant"
     );
     let mut b = crate::mob::mob_enter_field(mob);
     b[0] = level; // 141d30ee3 reads byte 0 as the controller level, not as `sealed`
@@ -341,7 +342,9 @@ pub fn mob_change_controller_spawning(mob: &FieldMob, level: u8) -> Vec<u8> {
 /// Level 0: **remove the mob from the client's pool.** Five bytes, and the handler reads no
 /// more.
 ///
-/// This is the only "revoke" the client has, and it is a despawn: `141d30f1c` onward looks the
+/// **This is the client's revoke, and it RELEASES** - see [`CONTROL_RELEASE`], which owns
+/// that fact. What follows is the walk as it was first read, kept because the misreading is
+/// instructive: `141d30f1c` onward looks the
 /// object id up in `pool+0x68`, calls `[vtable+0x48]` (returns without doing anything if it is
 /// 0), `[vtable+0x40](mob, 0)` and `FUN_141c543c0` (returns if non-zero), then erases the mob
 /// from all three pool containers. **[L]**
@@ -762,9 +765,13 @@ mod tests {
         assert_eq!(&both[1..], &spawn[1..]);
     }
 
-    /// Level 0 is a despawn and the handler reads exactly five bytes.
+    /// A release is exactly five bytes, and the handler stops there.
+    ///
+    /// Called `..._and_is_a_despawn` until 2026-09-04. The length is what it always checked;
+    /// the NAME asserted something it never tested, and a passing test with a wrong name in
+    /// its title is part of how that claim kept its footing for two weeks.
     #[test]
-    fn release_is_five_bytes_and_is_a_despawn() {
+    fn release_is_five_bytes() {
         let b = mob_release_controller(2000);
         assert_eq!(b.len(), 5);
         assert_eq!(b[0], CONTROL_RELEASE, "141d30ef5 TEST EBP,EBP / JE");

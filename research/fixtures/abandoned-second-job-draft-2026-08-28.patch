@@ -1,0 +1,495 @@
+diff --git a/crates/world/src/secondjob.rs b/crates/world/src/secondjob.rs
+index 1a00df1..d5339ac 100644
+--- a/crates/world/src/secondjob.rs
++++ b/crates/world/src/secondjob.rs
+@@ -47,9 +47,17 @@
+ //! 4. **There is no stat prerequisite, and that is a measured negative rather than a failed
+ //!    search.** See *No stat prerequisite, and why that is measured*, below.
+ //!
+-//! 5. **Thirteen skills in these books are `invisible = 1` and must never be granted.** See
+-//!    [`HIDDEN_SKILLS`]. This is the one place where a straightforward reading of
+-//!    [`crate::skilltable`] is currently wrong, and it is wrong only at second job.
++//! 5. **Thirteen skills in these books are `invisible = 1` and must never be granted.** The
++//!    client has no `String.wz` name and no tooltip for them, so a granted point draws
++//!    nothing. **[L]** - `research/second-job.md` §7 has the enumeration and both directions
++//!    of the equivalence.
++//!
++//!    **[`crate::skilltable`] owns this**, and this module deliberately keeps no second copy
++//!    of the thirteen ids. It carried one - `HIDDEN_SKILLS` - for the window in which
++//!    `SkillTable` did not parse the `invisible` column at all; the column is parsed now,
++//!    `SkillTable::may_learn` refuses those ids on every grant path, and
++//!    [`SecondJob::grantable_skills`] takes the table and asks it. `CLAUDE.md`'s rule about
++//!    two copies of one predicate: the copy that is not consulted is the one that goes stale.
+ //!
+ //! # No stat prerequisite, and why that is measured
+ //!
+@@ -107,6 +115,7 @@
+ use net::opcode::Character;
+ 
+ use crate::skillpoints::{self, Tier};
++use crate::skilltable::SkillTable;
+ 
+ // ---------------------------------------------------------------------------------------
+ // The numbers
+@@ -146,45 +155,6 @@ pub const MAX_HP_GAIN_POINTS: u32 = 0;
+ /// reasoning as [`MAX_HP_GAIN_POINTS`].
+ pub const MAX_MP_GAIN_POINTS: u32 = 0;
+ 
+-/// **The thirteen skills that exist in the archive and must never be granted.**
+-///
+-/// Every one of them has `invisible = 1` in `Skill.wz` and **no entry at all** in
+-/// `String.wz/Skill.img`, so the client has no name and no tooltip to draw for them.
+-///
+-/// This is an exact equivalence rather than a coincidence, enumerated over all 176 skills in
+-/// all 25 books: **13 skills lack a String.wz name, 13 carry `invisible = 1`, and the two sets
+-/// are identical** - zero unnamed-but-visible, zero invisible-but-named. **[L]**
+-///
+-/// Four of them are the hidden half of a named skill, named by that skill's own
+-/// `extraSkillInfo` node: `2101004` (Poison Breath) -> `2101005`, `3101004` -> `3101005`,
+-/// `3111001` -> `3111006`, `3211001` -> `3211006`. **[L]** Poison Breath is the clearest
+-/// case: its own level node carries **no `mad`, no `damage`, no `dot` and no `mastery`**,
+-/// while its tooltip says *"Basic Attack 50; Mastery level 1; 45% success rate; deals 10 Basic
+-/// Attack over 5 sec"* - and `2101005` carries `mad 50`, `mastery 1`, `prop 45`, `dot 10`,
+-/// `dotTime 5` exactly. The other nine are referenced from nowhere in `Skill.wz`; the
+-/// discriminator that covers all thirteen is `invisible`, not `extraSkillInfo`.
+-///
+-/// # Why this constant is here rather than in `crate::skilltable`
+-///
+-/// **`skilltable::book()` would hand these out.** Its filter is `job != 0 && may_learn(...)`
+-/// and it does not parse the `invisible` column at all - `SkillTable` has no field for it. At
+-/// first job that is harmless, because none of the 24 first-job skills is invisible. At second
+-/// job `book(110)` returns **10** entries where the player may only ever have **8**.
+-///
+-/// `crates/world/src/skilltable.rs` is not this module's file to edit, so the correction lives
+-/// here as [`SecondJob::grantable_skills`] and is reported. `research/second-job.md` §7.
+-pub const HIDDEN_SKILLS: [u32; 13] = [
+-    1101006, 1101007, // Fighter
+-    1201006, 1201007, // Page
+-    1301006, 1301007, // Spearman
+-    2101005, // Wizard (Fire/Poison) - Poison Breath's damage half
+-    2111006, // (third job, Adv. Fire & Poison - listed for completeness of the negative)
+-    3101005, 3101006, // Hunter
+-    3111006, // (third job, Path of the Ranger)
+-    3201005, // Crossbowman
+-    3211006, // (third job, Sniper's Scope)
+-];
+-
+ // ---------------------------------------------------------------------------------------
+ // The table
+ // ---------------------------------------------------------------------------------------
+@@ -225,17 +195,31 @@ pub struct SecondJob {
+ }
+ 
+ impl SecondJob {
+-    /// The skills a player may be granted: [`SecondJob::skill_book`] minus [`HIDDEN_SKILLS`].
++    /// The skills a player may be granted: [`SecondJob::skill_book`] minus the thirteen the
++    /// client cannot draw.
+     ///
+-    /// The filter is [`is_hidden`] rather than a second list written beside the first, so the
+-    /// book and the grant cannot disagree about what exists - `CLAUDE.md`'s Heena lesson.
+-    pub fn grantable_skills(&self) -> impl Iterator<Item = u32> + '_ {
+-        self.skill_book.iter().copied().filter(|id| !is_hidden(*id))
++    /// **The filter is [`SkillTable::may_learn`]** - the same predicate `0x013B`'s `+` button
++    /// and `!learn` already call - rather than a list of hidden ids written beside the book.
++    /// That is `CLAUDE.md`'s Heena lesson applied to a set instead of a guard: a second copy
++    /// is not wrong on the day it is written, it is wrong on the day the client is repacked
++    /// and only one of the two is updated. It also means an advancement cannot hand out a
++    /// skill the point-spend handler would then refuse.
++    ///
++    /// **An empty table yields an empty iterator**, deliberately, and it fails in the same
++    /// direction as everything else that consults `SkillTable`: `may_learn` is `false` for
++    /// every id when `gm-handbook/skills.txt` has not been generated, so a missing file grants
++    /// nothing rather than granting all ten. [`Self::grantable_count`]'s caller should say so
++    /// out loud the way `session::gm::gm_learn` does.
++    pub fn grantable_skills<'a>(&self, skills: &'a SkillTable) -> impl Iterator<Item = u32> + 'a {
++        let job = self.job;
++        // `skill_book` is `&'static`, so the returned iterator borrows only `skills`.
++        self.skill_book.iter().copied().filter(move |id| skills.may_learn(job, *id))
+     }
+ 
+-    /// How many of [`SecondJob::skill_book`] a player may actually have.
+-    pub fn grantable_count(&self) -> usize {
+-        self.grantable_skills().count()
++    /// How many of [`SecondJob::skill_book`] a player may actually have. `0` if `skills` is
++    /// empty - see [`Self::grantable_skills`].
++    pub fn grantable_count(&self, skills: &SkillTable) -> usize {
++        self.grantable_skills(skills).count()
+     }
+ }
+ 
+@@ -572,12 +556,6 @@ pub fn is_second_job(job: u16) -> bool {
+     second_job(job).is_some()
+ }
+ 
+-/// Whether a skill id is one the client draws no name for and no player may be granted.
+-/// See [`HIDDEN_SKILLS`].
+-pub fn is_hidden(skill_id: u32) -> bool {
+-    HIDDEN_SKILLS.contains(&skill_id)
+-}
+-
+ // ---------------------------------------------------------------------------------------
+ // The decision
+ // ---------------------------------------------------------------------------------------
+@@ -789,9 +767,10 @@ mod tests {
+     /// Every row of `gm-handbook/skills.txt` as `(skillId, jobBook, invisible)`, or `None` on
+     /// a clean checkout where `gm-handbook/` has not been generated.
+     ///
+-    /// This reads the file directly rather than through [`crate::skilltable`] because
+-    /// `SkillTable` does not parse the `invisible` column - which is the whole point of
+-    /// [`HIDDEN_SKILLS`].
++    /// This reads the file directly rather than through [`crate::skilltable`] **on purpose**:
++    /// the book enumeration below is the check that `SkillTable`'s own parse is not the only
++    /// reading of the same bytes. The `invisible` column is [`crate::skilltable`]'s business
++    /// and is asserted there, against the parsed flag; here it only labels the rows.
+     fn real_skill_rows() -> Option<Vec<(u32, u16, bool)>> {
+         let path = Path::new("../../gm-handbook/skills.txt");
+         if !path.exists() {
+@@ -919,39 +898,27 @@ mod tests {
+         assert!(by_book[&300].contains(&3001003), "and 300 has Power Knockback instead");
+     }
+ 
+-    /// **`HIDDEN_SKILLS` is exactly the set the client marks `invisible = 1`.**
++    /// **The grantable book is the book minus the ones the client will not draw, and the
++    /// counts are stated.**
+     ///
+-    /// Asserted in both directions over the whole archive, so it cannot pass by naming a
+-    /// subset - which is the failure mode `CLAUDE.md` calls "enumerate before you filter".
++    /// The exclusion itself belongs to [`crate::skilltable`] and is asserted there, in both
++    /// directions, against the parsed `invisible` flag. What this test says is the thing only
++    /// this module can say: **that `grantable_skills` actually consults the table**, and that
++    /// the ten static [`SecondJob::skill_book`] arrays shrink by the right amount when it
++    /// does. A `grantable_skills` that ignored its argument would pass the skilltable test and
++    /// fail here.
+     #[test]
+-    fn the_hidden_skills_are_exactly_the_invisible_ones() {
+-        let Some(rows) = real_skill_rows() else { return };
+-        let mut invisible: BTreeSet<u32> = BTreeSet::new();
+-        let mut visible: BTreeSet<u32> = BTreeSet::new();
+-        for (id, _, inv) in &rows {
+-            if *inv { invisible.insert(*id); } else { visible.insert(*id); }
+-        }
+-        // Positive control: the column was actually read and it is not empty everywhere.
+-        assert_eq!(invisible.len(), 13, "13 invisible skills in the archive");
+-        assert!(visible.len() > 150, "and the rest are visible: {}", visible.len());
+-        assert!(invisible.is_disjoint(&visible), "no skill is both");
+-
+-        let declared: BTreeSet<u32> = HIDDEN_SKILLS.iter().copied().collect();
+-        assert_eq!(declared, invisible, "HIDDEN_SKILLS must be the invisible set exactly");
+-        for id in HIDDEN_SKILLS {
+-            assert!(is_hidden(id));
+-        }
+-        for id in [2001003u32, 1001001, 3001003, 4001003, 1002] {
+-            assert!(!is_hidden(id), "skill {id} is a real, named skill");
++    fn grantable_skills_exclude_the_ones_the_client_will_not_draw() {
++        let path = Path::new("../../gm-handbook/skills.txt");
++        if !path.exists() {
++            return;
+         }
+-    }
++        let skills = crate::skilltable::SkillTable::load(path);
++        // Positive control: the table loaded. Without this the counts below are all zero and
++        // every `assert_eq!(.., 0)` would be trivially true - the vacuous shape `CLAUDE.md`
++        // warns about, and the exact failure an empty table produces here.
++        assert_eq!(skills.len(), 176, "the whole archive loaded");
+ 
+-    /// **The grantable book is the book minus the hidden ones, and the counts are stated.**
+-    ///
+-    /// This is the correction to `skilltable::book()`, which does not parse `invisible` and
+-    /// would hand a Fighter ten skills where the player may only ever have eight.
+-    #[test]
+-    fn grantable_skills_exclude_the_ones_the_client_will_not_draw() {
+         let expected: [(u16, usize, usize); 10] = [
+             // (job, all in book, grantable)
+             (110, 10, 8),
+@@ -969,19 +936,29 @@ mod tests {
+         for (job, all, grantable) in expected {
+             let c = second_job(job).unwrap_or_else(|| panic!("job {job}"));
+             assert_eq!(c.skill_book.len(), all, "{} book size", c.job_name);
+-            assert_eq!(c.grantable_count(), grantable, "{} grantable", c.job_name);
+-            assert!(
+-                c.grantable_skills().all(|id| !is_hidden(id)),
+-                "{} grants nothing hidden",
+-                c.job_name
+-            );
++            assert_eq!(c.grantable_count(&skills), grantable, "{} grantable", c.job_name);
++            // Nothing grantable is invisible, and every id still comes out of this job's own
++            // book - `may_learn` allows first-job skills too, so a filter applied to the wrong
++            // collection would silently grow the list.
++            for id in c.grantable_skills(&skills) {
++                let s = skills.get(id).unwrap_or_else(|| panic!("{id} is in the archive"));
++                assert!(!s.invisible, "{} grants nothing invisible: {id}", c.job_name);
++                assert_eq!(s.job, job, "{id} is in book {job}");
++            }
+             total_grantable += grantable;
+         }
+         assert_eq!(total_grantable, 66, "66 grantable second-job skills across the ten books");
+         // The control that this filter does something: the three Warrior books really do lose
+         // two each, and the Thief books lose none.
+-        assert_eq!(second_job(110).unwrap().grantable_count() + 2, 10);
+-        assert_eq!(second_job(410).unwrap().grantable_count(), 6);
++        assert_eq!(second_job(110).unwrap().grantable_count(&skills) + 2, 10);
++        assert_eq!(second_job(410).unwrap().grantable_count(&skills), 6);
++
++        // **An empty table grants nothing rather than everything.** This is the direction the
++        // failure has to go: `gm-handbook/` is gitignored and regenerable, so a missing file
++        // must not turn into ten books handed out whole.
++        let none = crate::skilltable::SkillTable::load(Path::new("no/such/skills.txt"));
++        assert!(none.is_empty());
++        assert_eq!(second_job(110).unwrap().grantable_count(&none), 0);
+     }
+ 
+     /// **The quest chains, checked against the client's own generated quest dump.**
+diff --git a/crates/world/src/skilltable.rs b/crates/world/src/skilltable.rs
+index 853b6ed..83e3d4b 100644
+--- a/crates/world/src/skilltable.rs
++++ b/crates/world/src/skilltable.rs
+@@ -185,8 +185,13 @@ const COL_NAME: usize = 5;
+ /// and `extraSkillInfo` is not.
+ ///
+ /// **None of the 24 first-job skills is invisible**, which is why this never mattered until
+-/// second job appeared on the horizon: `book()` would have handed a Fighter ten skills, and a
+-/// skill with no `String.wz` entry is one the client cannot draw.
++/// second job appeared on the horizon: [`SkillTable::book`] would have handed a Fighter ten
++/// skills, and a skill with no `String.wz` entry is one the client cannot draw.
++///
++/// The gate is [`SkillTable::may_learn`] - every grant path in the crate goes through it, and
++/// `book` filters through it too, so there is one test for this and not two. `secondjob` used
++/// to carry a hand-written copy of the thirteen ids for exactly the window in which this
++/// column went unparsed; it now defers here.
+ const COL_INVISIBLE: usize = 24;
+ const COL_MP_CON: usize = 31;
+ const COL_TIME: usize = 37;
+@@ -377,9 +382,22 @@ impl SkillTable {
+     /// An **unknown** skill is refused. That is the same choice the handler made before this
+     /// table existed, and for the same reason: granting a level in something the client has no
+     /// data for gives it a number it cannot draw.
++    ///
++    /// **An `invisible` skill is refused for exactly that reason**, one step further in.
++    /// [`COL_INVISIBLE`]'s thirteen ids are in the client's `Skill.wz` and in *no* other sense
++    /// exist: no `String.wz` name, no tooltip, nothing to draw. A point spent on `1101006` is
++    /// the unknown-id case wearing a row, so it gets the unknown-id answer. This arm is first
++    /// because it is unconditional - none of the thirteen is a book-`0` skill, but nothing
++    /// below should have to be read to know that.
++    ///
++    /// This is the **only** gate, and [`Self::book`] filters through it rather than repeating
++    /// the `invisible` test beside it. Both grant paths - `0x013B`'s `+` button in
++    /// `session::skills` and `!learn` in `session::gm` - already call nothing else, so the
++    /// thirteen are now refused on every one of them rather than only in the bulk listing.
+     pub fn may_learn(&self, job: u16, skill_id: u32) -> bool {
+         match self.get(skill_id) {
+             None => false,
++            Some(s) if s.invisible => false,
+             Some(s) if s.job == 0 => true,
+             Some(s) => s.job / 100 == job / 100 && s.job <= job,
+         }
+@@ -400,15 +418,13 @@ impl SkillTable {
+     /// Sorted by id because a `HashMap` walk is not stable, and an unstable order turns a
+     /// chat report into something nobody can diff against the last run.
+     pub fn book(&self, job: u16) -> Vec<&Skill> {
+-        // **Invisible skills are excluded**, and that only started mattering with second job.
+-        // Thirteen skills carry `invisible` and are exactly the thirteen with no `String.wz`
+-        // name; none is in the first-job books, so `!learn` was correct by luck until now. A
+-        // Fighter's book would otherwise hand out ten skills the client cannot draw.
+-        let mut out: Vec<&Skill> = self
+-            .by_id
+-            .values()
+-            .filter(|s| s.job != 0 && !s.invisible && self.may_learn(job, s.id))
+-            .collect();
++        // **The thirteen `invisible` skills are excluded by `may_learn`, not here.** They were
++        // filtered with a second `!s.invisible` in this expression for one commit, which is the
++        // two-copies shape the doc block above warns about - and it left the hole it was
++        // written to close, because the `+` button and `!learn <id> <level>` reach `may_learn`
++        // without ever passing through this function.
++        let mut out: Vec<&Skill> =
++            self.by_id.values().filter(|s| s.job != 0 && self.may_learn(job, s.id)).collect();
+         out.sort_by_key(|s| s.id);
+         out
+     }
+@@ -445,6 +461,7 @@ impl SkillTable {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use std::collections::BTreeSet;
+ 
+     /// The real table, or `None` on a clean checkout where `gm-handbook/` has not been
+     /// generated. Every test below is guarded on this and asserts a **positive control first**,
+@@ -519,6 +536,91 @@ mod tests {
+         assert_eq!(t.level(9_999_999, 1), None);
+     }
+ 
++    /// **The thirteen `invisible` skills are exactly the thirteen the client cannot name, and
++    /// `may_learn` refuses every one of them.**
++    ///
++    /// Asserted in **both directions** over the whole archive, so it cannot pass by naming a
++    /// subset - `CLAUDE.md`'s "enumerate before you filter". The literal list is a test
++    /// constant on purpose: nothing at runtime consults it, so this is a check against
++    /// something that can disagree rather than a second copy of the predicate. If the client
++    /// is ever repacked and a fourteenth appears, this fails here instead of putting an
++    /// undrawable skill in a player's window.
++    ///
++    /// The equivalence with `String.wz` was measured in `research/second-job.md` §7: 13 skills
++    /// have no `String.wz/Skill.img` entry, 13 carry `invisible = 1`, and the two sets are
++    /// identical - zero unnamed-but-visible, zero invisible-but-named. That half cannot be
++    /// re-checked from `skills.txt`, which carries no `String.wz` column; what is checked here
++    /// is the `invisible` set itself and what this module does with it.
++    #[test]
++    fn the_invisible_skills_are_refused_by_may_learn() {
++        // `research/second-job.md` §7. Four are the damage half of a named skill, reached
++        // through its `extraSkillInfo`; the other nine are referenced from nowhere in
++        // `Skill.wz`, which is why `invisible` is the discriminator and `extraSkillInfo` is not.
++        const INVISIBLE: [u32; 13] = [
++            1101006, 1101007, // Fighter
++            1201006, 1201007, // Page
++            1301006, 1301007, // Spearman
++            2101005, // Wizard (Fire/Poison) - Poison Breath's damage half
++            2111006, // Adv. Fire & Poison (third job, listed to complete the negative)
++            3101005, 3101006, // Hunter
++            3111006, // Path of the Ranger (third job)
++            3201005, // Crossbowman
++            3211006, // Sniper's Scope (third job)
++        ];
++
++        let Some(t) = real_table() else { return };
++        // Positive control: the column was actually read, and it is neither empty nor set
++        // everywhere. A parser that returned `false` for every row would pass one direction of
++        // the check below and nothing else.
++        assert_eq!(t.len(), 176, "the whole archive loaded");
++        let found: BTreeSet<u32> =
++            t.by_id.values().filter(|s| s.invisible).map(|s| s.id).collect();
++        let visible = t.len() - found.len();
++        assert_eq!(found.len(), 13, "13 invisible skills in the archive");
++        assert_eq!(visible, 163, "and the other 163 are visible");
++        assert_eq!(found, INVISIBLE.into_iter().collect::<BTreeSet<u32>>());
++
++        // **The refusal, on the job that owns each one.** `1101006` is in book 110, so the
++        // branch-and-tier rule alone would allow a Fighter to spend a point on it - this is
++        // the arm that says no, and asserting it at the owning job is what makes it load
++        // bearing rather than incidentally true.
++        for id in INVISIBLE {
++            let s = t.get(id).unwrap_or_else(|| panic!("{id} is in the archive"));
++            assert!(s.invisible, "{id}");
++            assert!(!t.may_learn(s.job, id), "job {} must not learn invisible {id}", s.job);
++            assert!(!t.book(s.job).iter().any(|b| b.id == id), "book({}) omits {id}", s.job);
++        }
++
++        // And the control that the refusal discriminates: every *visible* skill of those same
++        // books is still learnable, so this is not a filter that simply says no.
++        for s in t.by_id.values().filter(|s| !s.invisible && s.job != 0) {
++            assert!(t.may_learn(s.job, s.id), "{} ({}) is still learnable", s.name, s.id);
++        }
++
++        // **The ten second-job books, counted.** This is the number the whole finding is
++        // about: `book(110)` returned ten entries where a Fighter may only ever have eight.
++        // `book` includes the first-job skills the character keeps, so these count the second
++        // job's own book rather than the whole listing.
++        let own = |job: u16| t.book(job).iter().filter(|s| s.job == job).count();
++        for (job, want) in
++            [(110u16, 8usize), (120, 8), (130, 8), (210, 6), (220, 6), (230, 6), (310, 6), (320, 6), (410, 6), (420, 6)]
++        {
++            assert_eq!(own(job), want, "book({job})");
++        }
++        let total: usize =
++            [110u16, 120, 130, 210, 220, 230, 310, 320, 410, 420].iter().map(|j| own(*j)).sum();
++        assert_eq!(total, 66, "66 grantable second-job skills across the ten books, not 72");
++
++        // **None of the first-job books is affected**, which is why this went unnoticed: every
++        // `!learn` anyone has run so far was correct.
++        for job in [100u16, 200, 300, 400] {
++            assert!(
++                t.book(job).iter().all(|s| !s.invisible),
++                "no first-job skill is invisible, so book({job}) never changed"
++            );
++        }
++    }
++
+     /// **Nimble Feet, which is the strongest control this repo has.**
+     ///
+     /// Its four numbers are stated three independent times: by `Skill.wz`, by the client's own
+diff --git a/research/second-job.md b/research/second-job.md
+index 9810ab4..9cbb7c2 100644
+--- a/research/second-job.md
++++ b/research/second-job.md
+@@ -290,15 +290,16 @@ and the `bookName` lives at `<book>/bookName` for each of the 25 three-character
+ 
+ ---
+ 
+-## 7. THIRTEEN INVISIBLE SKILLS, and the one place `skilltable` is currently wrong
++## 7. THIRTEEN INVISIBLE SKILLS. Fixed in `skilltable`; this section is the evidence
+ 
+-**`skilltable::book()` would hand a Fighter ten skills where the player may only ever have
+-eight.**
++**As first written, `skilltable::book()` would hand a Fighter ten skills where the player may
++only ever have eight.** That is no longer true - see *What was done*, below - and the
++enumeration is kept because it is the measurement the fix rests on.
+ 
+-`SkillTable` does not parse the `invisible` column - it has no field for it - and `book()`'s
+-filter is `job != 0 && may_learn(...)`. At **first** job that is harmless: none of the 24
+-first-job skills is invisible, which is exactly why nothing has caught it. At **second** job it
+-is wrong for four of the ten books.
++`SkillTable` did not parse the `invisible` column - it had no field for it - and `book()`'s
++filter was `job != 0 && may_learn(...)`. At **first** job that is harmless: none of the 24
++first-job skills is invisible, which is exactly why nothing had caught it. At **second** job it
++was wrong for four of the ten books.
+ 
+ The enumeration, over all 176 skills in all 25 books:
+ 
+@@ -362,16 +363,39 @@ four edges across the entire archive, so it explains 4 of 13 and **is not the di
+ point: `CLAUDE.md`'s *"a burst is not an object; it is a set, and it has to be enumerated like
+ one"*.
+ 
+-### What to do about it
++### What was done
+ 
+-`secondjob::HIDDEN_SKILLS` holds the thirteen, `secondjob::is_hidden` tests it, and
+-`SecondJob::grantable_skills()` filters the book through that one predicate. The test asserts
+-the constant equals the `invisible = 1` set in `gm-handbook/skills.txt` **exactly**, in both
+-directions, with a positive control that the file loaded first.
++The durable fix this section asked for is in place. `skilltable::Skill::invisible: bool` is
++parsed from column 24, and **the gate is `SkillTable::may_learn`**, not `book()`:
+ 
+-`crates/world/src/skilltable.rs` was off-limits to this pass. **The durable fix is a
+-`Skill::invisible: bool` there** (column 24, present on exactly those 13 rows and empty on
+-every other), so that `book()` and `may_learn()` agree with this without a second list.
++```rust
++match self.get(skill_id) {
++    None => false,
++    Some(s) if s.invisible => false,     // <- the thirteen
++    Some(s) if s.job == 0 => true,
++    Some(s) => s.job / 100 == job / 100 && s.job <= job,
++}
++```
++
++**`may_learn` rather than `book` is the load-bearing half of that choice.** `book()` briefly
++carried a `!s.invisible` beside its `may_learn` call, which is two copies of one predicate -
++and it left the hole it was written to close, because neither grant path goes through `book`:
++`0x013B`'s `+` button (`session::skills`) and `!learn <id> <level>` (`session::gm`) both call
++`may_learn` alone. A crafted `0x013B`, or a GM typing the id, could still have spent a point on
++`1101006`. With the test in `may_learn`, `book` filters through it and every path agrees.
++
++`secondjob` no longer keeps a list. `HIDDEN_SKILLS` and `is_hidden` are **gone**;
++`SecondJob::grantable_skills(&SkillTable)` takes the table and filters on `may_learn`, so the
++advancement cannot hand out a skill the point-spend handler would refuse. An empty table (no
++`gm-handbook/`) yields an empty iterator - it grants nothing rather than everything.
++
++The both-directions check moved with the column, to
++`skilltable::tests::the_invisible_skills_are_refused_by_may_learn`: the thirteen ids are a
++**test** constant, consulted by nothing at runtime, asserted equal to the parsed `invisible`
++set in both directions with a positive control that the archive loaded first. It also asserts
++the counts below (8/8/8/6/6/6/6/6/6/6, 66 total) and that every *visible* skill of those same
++books is still learnable, so it cannot pass by refusing everything. Verified to discriminate:
++removing the `invisible` arm fails it and the `secondjob` count test, and nothing else.
+ 
+ ---
+ 
+@@ -506,8 +530,9 @@ routes through `secondjob::advancement_to` would exercise the real decision. Che
+   level, nothing records what has been spent, so points come back on the next advancement.
+   Adding a second pool doubles the surface of that. **Say it when reporting** - a player who
+   spends and sees them return will file it as a bug.
+-* **`skilltable::book()` will offer the thirteen invisible skills** to a second-job character.
+-  §7. `!learn` on a Fighter would report ten and grant two the client cannot draw.
++* ~~**`skilltable::book()` will offer the thirteen invisible skills** to a second-job
++  character.~~ **Fixed.** `may_learn` refuses them, so `book` and both grant paths agree;
++  `!learn` on a Fighter reports eight. §7.
+ * **No second-job skill has a cast handler.** `firstjob.rs` classifies the 24 first-job skills
+   and `session/skills.rs` acts on them; nothing equivalent exists for the 66.
+ * **The `Test of Qualification` hidden field and its `q20002s` script do not exist**, so the

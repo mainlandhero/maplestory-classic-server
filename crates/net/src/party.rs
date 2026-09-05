@@ -6,18 +6,22 @@
 //! table or a capture; **[D]** derived from two or more [L] facts; **[I]** inferred - a
 //! candidate nothing on this machine can confirm.
 //!
-//! # THIS MODULE IS NOT WIRED
+//! # WIRED 2026-09-04, and the first `0x00A5` is on the wire
 //!
-//! Nothing calls anything in this file. `crates/world/src/session/` belongs to the
-//! coordinator and was not touched. `research/party.md` § "WIRE IT LIKE THIS" is the
-//! integration, and saying so out loud is `CLAUDE.md`'s *"built is not wired"* rule.
+//! This said *"THIS MODULE IS NOT WIRED. Nothing calls anything in this file"* and that
+//! `0x00A5` *"has never been sent by this server"*, with a 452-log sweep behind it. Both were
+//! true when written and neither is now: `crates/world/src/session/party.rs` routes `0x0182`
+//! into the state machine, the owner pressed Create, and the party window drew.
 //!
-//! # Nothing here has been on the wire
+//! **The first send exposed a bug this file caused.** `party_created` and `refusal` both
+//! built with `PacketWriter::with_opcode`, and `Reply::packet()` prepends the opcode too, so
+//! the wire carried `a5 00 | a5 00 0e ...`. The client read `0xA5` as the result code, took
+//! the default arm, and printed *"your party request failed"*. It hid because `UNKNOWN_ERROR`
+//! is itself a default-arm code, so **every refusal produced exactly the message it intended**
+//! - the defect was invisible until a real arm was sent. Bodies here start at the CODE byte.
 //!
-//! **[`PARTY_RESULT`] has never been sent by this server.** An event-deduplicated sweep of
-//! **452** archived logs across `previous-runs/` and `research/fixtures/` finds **zero**
-//! `0x00A5` in either direction, with `<- 0x02FF` at 164 117 distinct events as the positive
-//! control that the search works. Every byte layout below is static analysis.
+//! Still static: every layout below except `0x0E`. The success arms for join, leave, invite
+//! and leader-change have not been sent.
 //!
 //! The one exception, and it is the reason this file can be specific at all: **the client
 //! has sent exactly one `0x0182`**, and it is archived. See [`parse_request`].

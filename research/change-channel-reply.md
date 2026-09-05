@@ -1,5 +1,14 @@
 # The channel's own migrate reply — `FUN_1415d8c00`
 
+> **ANSWERED 2026-08-21: the opcode is `0x001A`, not `0x001B`.** This file predicts `0x001B`
+> in at least three places (§0, §4, §7's code block) and every one of them is tagged **[I]**
+> honestly. A ten-candidate sweep settled it: the dispatch line for `0x001A` took **354 ms**
+> where its neighbour took 64 us, and the long one is a socket teardown.
+>
+> **The fact's owner is `crates/world/src/session/field.rs::MIGRATE_COMMAND_CHANNEL`.** The
+> predictions below are kept as the working - the alignment reasoning is sound and produced
+> a candidate one off - but nothing here should be read as the answer.
+
 **Written 2026-08-21 while holding the Ghidra lock, and it did not need Ghidra.** Everything
 below came from `tools/listing.py`, `tools/reads.py`, `tools/callers.py`,
 `tools/pdata_lookup.py`, `tools/dump_va.py`, a 4-byte-RVA scanner written for this task, the
@@ -328,6 +337,17 @@ they are the *login* migrate, they work, and they are a different packet.
 
 ### 7.1 The new constant and builder (belongs in `crates/net/src/channel.rs`)
 
+> **THE BLOCK BELOW IS WRONG AND IS KEPT ONLY TO SHOW WHAT WAS PREDICTED.** It is
+> paste-ready Rust declaring `0x001B`, and the shipping code points readers at this file.
+> **The measured opcode is `0x001A`** - a ten-candidate sweep sent them all and the dispatch
+> line for `0x001A` took 354 ms where its neighbour took 64 us, because the long one is a
+> socket teardown. The owner of that fact is
+> `crates/world/src/session/field.rs::MIGRATE_COMMAND_CHANNEL`.
+>
+> The prediction was honest - tagged **[I]**, from a block alignment - and it was still one
+> off, which is what [I] means. Kept rather than deleted because the reasoning that produced
+> it is sound and the next `[I]` opcode guess will look exactly like it.
+
 ```rust
 /// The channel stage's own migrate command, handled by `FUN_1415d8c00` - a socket-level
 /// handler, not a case of `FUN_142cbaa80`. `research/change-channel-reply.md`.
@@ -335,7 +355,7 @@ they are the *login* migrate, they work, and they are a different packet.
 /// **The number is [I]**, from a +0x0A block alignment anchored on seven mscw-confirmed
 /// SOCKET opcodes; the handler and its body are [L]. It cannot be read statically: the
 /// dispatch is Themida VM bytecode and `.themida` has no file bytes.
-pub const CHANNEL_MIGRATE_COMMAND: u16 = 0x001B;
+pub const CHANNEL_MIGRATE_COMMAND: u16 = 0x001B; // <- WRONG. SEE BELOW. DO NOT PASTE.
 
 /// Body of a [`CHANNEL_MIGRATE_COMMAND`]. Three fields, seven bytes - `FUN_1415d8c00`
 /// reads `u8, u32, u16` and stops. Read count cross-checked between `tools/listing.py`

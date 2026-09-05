@@ -4,12 +4,12 @@
 //! and the "what I did NOT establish" list are in **`research/ap-allocation.md`**; read that
 //! before changing a constant in this file.
 //!
-//! # NOT WIRED
+//! # WIRED
 //!
-//! Nothing in `crates/world/` handles either opcode. It compiles, it is tested, and on
-//! screen it is identical to not existing - the state `CLAUDE.md` § "Built is not wired"
-//! exists to stop being mistaken for working. `research/ap-allocation.md` § "Wire it like
-//! this" says how to connect it.
+//! This said *"NOT WIRED. Nothing in `crates/world/` handles either opcode."* Three
+//! production files in `crates/world/src` use this module now. Left as a heading rather than
+//! deleted because the sentence under it is the one worth keeping: an unwired module is, on
+//! screen, identical to one that does not exist - `CLAUDE.md` § "Built is not wired".
 //!
 //! # There are TWO requests, not one
 //!
