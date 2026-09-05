@@ -67,6 +67,11 @@ If you would rather use a PowerShell window, the same two steps are:
    Login. When it succeeds, Start Game becomes available. Start Game installs the GameGuard
    stub into client\ and launches the client.
 
+   If your MapleStory.exe is somewhere other than client\, press Browse... beside "Game
+   folder" and pick it once. The launcher remembers that folder (in
+   maplecw-launcher.remembered.toml beside maplecw-launcher.exe) and opens on it from
+   then on; delete that file to go back to the default.
+
 Windows will raise a UAC prompt when the client starts. That is the client's own elevation
 manifest, not something this launcher asks for.
 

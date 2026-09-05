@@ -143,6 +143,16 @@ impl LauncherApp {
     fn announce_layout(&mut self) {
         self.push(Level::Info, format!("launcher: {}", self.layout.exe_dir.display()));
         self.push(Level::Info, format!("paths from: {}", self.layout.source.label()));
+        // The game folder gets its own line naming its source, because a remembered choice
+        // that has gone stale looks exactly like a wrong guess until the line says which.
+        self.push(
+            Level::Info,
+            format!(
+                "game folder: {} ({})",
+                self.layout.client_dir.display(),
+                self.layout.client_dir_from
+            ),
+        );
         if let Some(cfg) = self.layout.config_file.clone() {
             self.push(Level::Info, format!("config: {}", cfg.display()));
             let applied = self.layout.config_applied.join(", ");
@@ -349,6 +359,46 @@ impl LauncherApp {
             return;
         }
         self.layout.client_dir = std::path::PathBuf::from(typed);
+        self.remember_client_dir();
+    }
+
+    /// Save the chosen folder beside the executable, so the next start opens on it.
+    ///
+    /// The owner, 2026-09-05: *"Setting it every time is going to be very frustrating for users."*
+    /// Until this, Browse changed the running launcher and nothing else.
+    ///
+    /// Only a folder that actually holds `MapleStory.exe` is remembered. Browse cannot produce
+    /// any other kind, and a typed one that does not is a typo rather than a choice -
+    /// remembering it would greet the next start with a red line about a folder nobody meant.
+    /// The launch that follows a bad typed path fails with its own message, so the line here
+    /// is information, not a second alarm.
+    fn remember_client_dir(&mut self) {
+        if !self.layout.client_exe().is_file() {
+            self.push(
+                Level::Info,
+                format!(
+                    "no {} in {} - not remembered for next time",
+                    crate::paths::CLIENT_EXE_NAME,
+                    self.layout.client_dir.display()
+                ),
+            );
+            return;
+        }
+        match crate::remembered::save_client_dir(&self.layout.exe_dir, &self.layout.client_dir) {
+            Ok(path) => self.push(
+                Level::Info,
+                format!("game folder remembered for next time in {}", path.display()),
+            ),
+            // A read-only install directory, most likely. The launch still works with the
+            // folder in the box; only the memory of it is lost, and the line says so.
+            Err(e) => self.push(
+                Level::Warn,
+                format!(
+                    "could not remember the game folder - {} is not writable: {e}",
+                    self.layout.exe_dir.join(crate::remembered::FILE_NAME).display()
+                ),
+            ),
+        }
     }
 
     fn start_launch(&mut self, ctx: &egui::Context, plan: Plan) {

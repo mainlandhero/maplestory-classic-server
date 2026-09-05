@@ -12,6 +12,7 @@
 //! | module | what it owns |
 //! |---|---|
 //! | [`config`] | the optional `maplecw-launcher.toml` beside the exe |
+//! | [`remembered`] | the game folder the player chose last time, saved beside the exe and read ahead of the config |
 //! | [`paths`] | resolving the client, database, stub and output directories - **never hard-coded** |
 //! | [`session`] | Login: argon2id verification, then staking the login claim |
 //! | [`client`] | the GameGuard stub, the hook markers, archiving the previous run's log |
@@ -30,6 +31,7 @@ mod http;
 mod launch;
 mod paths;
 mod prepare;
+mod remembered;
 mod servers;
 mod session;
 mod stub;
@@ -48,7 +50,9 @@ maplecw-launcher [--print-paths]
 
 The launcher takes no server address on the command line: the window has fields for it, and
 a maplecw-launcher.toml beside the executable can set defaults (client_dir, stub_path,
-server_ip, port, auth_port, auth_fingerprint).";
+server_ip, port, auth_port, auth_fingerprint). The game folder chosen with Browse is kept in
+maplecw-launcher.remembered.toml beside the executable and used ahead of the config on the
+next start; delete that file to go back to the default.";
 
 /// Print, or put it in a window when there is nothing to print to.
 ///

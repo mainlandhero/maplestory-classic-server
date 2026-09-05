@@ -104,6 +104,11 @@ pub struct Layout {
     pub config_problems: Vec<String>,
 
     pub client_dir: PathBuf,
+    /// Where `client_dir` came from, in words: the layout, the config file, or the folder the
+    /// player chose last time (`crate::remembered`). Shown beside the path, because a
+    /// remembered choice that has gone stale looks exactly like a wrong guess until the line
+    /// says which it is.
+    pub client_dir_from: String,
     /// The GameGuard stub to install, when one is on disk. A launcher that carries its own
     /// (the normal case) never reads it - see `crate::stub`.
     pub stub_path: PathBuf,
@@ -187,6 +192,7 @@ impl Layout {
             )),
         }
         out.push_str(&format!("client    {}\n", self.client_dir.display()));
+        out.push_str(&format!("  from    {}\n", self.client_dir_from));
         out.push_str(&format!("exe       {}\n", self.client_exe().display()));
         out.push_str(&format!("stub      {}\n", self.stub_path.display()));
         out.push_str(&format!("output    {}\n", self.data_root.display()));
@@ -271,6 +277,7 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
         config_applied: Vec::new(),
         config_problems: Vec::new(),
         client_dir,
+        client_dir_from: format!("the {}", base_source.label()),
         stub_path,
         data_root,
         server_ip: DEFAULT_SERVER_IP.to_string(),
@@ -297,8 +304,44 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
         apply_config(&mut layout, &cfg, exe_dir);
     }
     resolve_fingerprint(&mut layout, pinned_in_config.as_deref(), exe_dir);
+    apply_remembered(&mut layout, exe_dir);
 
     layout
+}
+
+/// Overlay the folder the player chose last time, on top of everything else.
+///
+/// It wins over the config file on purpose: the config's `client_dir` is what the installer
+/// guessed, and a Browse is a person correcting that guess. Correcting it once and having the
+/// next start undo it is the complaint that made this exist (the owner, 2026-09-05: *"setting it
+/// every time is going to be very frustrating for users"*).
+///
+/// A remembered folder that no longer holds `MapleStory.exe` is **kept, and flagged** by
+/// [`Layout::problems`] like any other missing client, rather than silently dropped for the
+/// default. Dropping it would launch a different client from the one the player chose with
+/// nothing on screen to say so; keeping it puts the stale path in the box, one Browse from
+/// fixed, with a line naming the file it came from.
+fn apply_remembered(layout: &mut Layout, exe_dir: &Path) {
+    let Some((path, remembered)) = crate::remembered::load(exe_dir) else {
+        return;
+    };
+    for problem in &remembered.problems {
+        layout
+            .config_problems
+            .push(format!("{}: {problem}", crate::remembered::FILE_NAME));
+    }
+    match remembered.client_dir {
+        Some(v) => {
+            layout.client_dir = absolutise(exe_dir, &v);
+            layout.client_dir_from =
+                format!("the folder chosen last time, remembered in {}", path.display());
+        }
+        None if remembered.problems.is_empty() => layout.config_problems.push(format!(
+            "{} is present but remembers nothing",
+            crate::remembered::FILE_NAME
+        )),
+        None => {}
+    }
 }
 
 /// Decide which certificate the sign-in service must present, or record that none is known.
@@ -347,6 +390,7 @@ fn resolve_fingerprint(layout: &mut Layout, in_config: Option<&str>, exe_dir: &P
 fn apply_config(layout: &mut Layout, cfg: &LauncherConfig, exe_dir: &Path) {
     if let Some(v) = &cfg.client_dir {
         layout.client_dir = absolutise(exe_dir, v);
+        layout.client_dir_from = format!("client_dir in {}", config::CONFIG_FILE_NAME);
         layout.config_applied.push("client_dir".into());
     }
     if let Some(v) = &cfg.stub_path {
@@ -613,6 +657,93 @@ mod tests {
             vec!["client_dir".to_string(), "server_ip".into(), "port".into()]
         );
         assert!(l.config_file.is_some());
+    }
+
+    /// The complaint that made `crate::remembered` exist: a chosen folder has to survive a
+    /// restart, and it has to beat the installer's guess in the config file.
+    #[test]
+    fn a_remembered_folder_beats_the_config_and_the_layout() {
+        let t = TempDir::new("remembered-wins");
+        let exe_dir = make_installed(&t);
+        let configured = t.dir("configured");
+        t.file("configured/MapleStory.exe", "configured client");
+        std::fs::write(
+            exe_dir.join(config::CONFIG_FILE_NAME),
+            format!("client_dir = \"{}\"\nserver_ip = 192.168.1.20\n", configured.display()),
+        )
+        .unwrap();
+        let chosen = t.dir("chosen");
+        t.file("chosen/MapleStory.exe", "the one the player picked");
+        crate::remembered::save_client_dir(&exe_dir, &chosen).unwrap();
+
+        let l = resolve_from(&exe_dir);
+        assert_eq!(l.client_dir, chosen);
+        assert!(l.client_dir_from.contains("remembered"), "{}", l.client_dir_from);
+        assert!(
+            l.client_dir_from.contains(crate::remembered::FILE_NAME),
+            "the line must name the file, or nobody can find it to delete it: {}",
+            l.client_dir_from
+        );
+        // Only the client folder is remembered. The server address still comes from the
+        // config, and the config is still reported as having set client_dir - it did; it was
+        // then overridden, and the report says by what.
+        assert_eq!(l.server_ip, "192.168.1.20");
+        assert!(l.problems().is_empty(), "{:?}", l.problems());
+        assert!(l.report().contains("remembered"), "{}", l.report());
+    }
+
+    #[test]
+    fn without_a_remembered_file_the_config_still_wins_and_says_so() {
+        let t = TempDir::new("remembered-absent");
+        let exe_dir = make_installed(&t);
+        let configured = t.dir("configured");
+        t.file("configured/MapleStory.exe", "configured client");
+        std::fs::write(
+            exe_dir.join(config::CONFIG_FILE_NAME),
+            format!("client_dir = \"{}\"\n", configured.display()),
+        )
+        .unwrap();
+        let l = resolve_from(&exe_dir);
+        assert_eq!(l.client_dir, configured);
+        assert!(l.client_dir_from.contains(config::CONFIG_FILE_NAME), "{}", l.client_dir_from);
+    }
+
+    #[test]
+    fn with_neither_the_layout_is_named_as_the_source() {
+        let t = TempDir::new("remembered-neither");
+        let exe_dir = make_installed(&t);
+        let l = resolve_from(&exe_dir);
+        assert_eq!(l.client_dir, exe_dir.join("client"));
+        assert!(l.client_dir_from.contains("installed layout"), "{}", l.client_dir_from);
+    }
+
+    /// The player moved the game after choosing it. The stale choice stays in the box and is
+    /// flagged, rather than being silently swapped for the default - see `apply_remembered`.
+    #[test]
+    fn a_stale_remembered_folder_is_kept_and_flagged_not_dropped() {
+        let t = TempDir::new("remembered-stale");
+        let exe_dir = make_installed(&t);
+        let gone = t.path().join("moved-away");
+        crate::remembered::save_client_dir(&exe_dir, &gone).unwrap();
+        let l = resolve_from(&exe_dir);
+        assert_eq!(l.client_dir, gone);
+        let problems = l.problems();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("moved-away"), "{problems:?}");
+    }
+
+    #[test]
+    fn a_remembered_file_that_remembers_nothing_is_reported() {
+        let t = TempDir::new("remembered-empty");
+        let exe_dir = make_installed(&t);
+        std::fs::write(exe_dir.join(crate::remembered::FILE_NAME), "# nothing here\n").unwrap();
+        let l = resolve_from(&exe_dir);
+        assert_eq!(l.client_dir, exe_dir.join("client"));
+        assert!(
+            l.config_problems.iter().any(|p| p.contains("remembers nothing")),
+            "{:?}",
+            l.config_problems
+        );
     }
 
     #[test]

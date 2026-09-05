@@ -122,6 +122,20 @@ both built, tested, and exercised against the shipped binaries:
   `world.log`**. A join sends `0x13` to every member; whether the member list refreshes on it is
   the next run's measurement. T14.
 
+* **The launcher remembers the game folder.** The owner, 2026-09-05: *"does our launcher save
+  whatever the user set it to upon subsequent starts? Setting it every time is going to be
+  very frustrating for users."* It did not - Browse and a typed path changed the running
+  launcher only. Now a chosen folder that holds `MapleStory.exe` is written to
+  `maplecw-launcher.remembered.toml` **beside the executable** (not `%LOCALAPPDATA%`: the
+  launcher runs elevated, and under an over-the-shoulder UAC prompt that profile is the
+  administrator's, not the player's) and read on the next start **ahead of the config file**,
+  since a Browse is a person correcting the installer's guess. One key, the config's own
+  literal reader, `crate::remembered`. A stale remembered folder is kept and flagged, not
+  silently swapped for the default; the startup log and `--print-paths` name the source of
+  the folder either way. Unit-tested at the resolver (remembered > config > layout, stale
+  kept, empty file reported) and the file round trip; **not yet seen through the window** -
+  the next launcher restart after a Browse is the check.
+
 What did **not** change: the game socket still carries no credential. What changed about the
 exposure: forwarded to the internet, a stranger reaching 8484 is no longer served as anyone
 by default - only a connection attributed to a live sign-in is served, and attribution by
