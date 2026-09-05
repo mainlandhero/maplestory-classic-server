@@ -241,7 +241,14 @@ impl Session {
             .and_then(|l| i16::try_from(l.foothold).ok())
             .unwrap_or(0);
 
-        net::userpool::RemoteAt { x, y, move_action: 0, foothold }
+        // **The stance and the facing.** `0` here is action 0 facing RIGHT - a real value,
+        // and the reason every remote player was drawn facing right until this was wired.
+        // `MOVE_ACTION_STANDING` is the resting pose, which is the honest answer for somebody
+        // who has not moved since arriving.
+        let move_action =
+            self.last_move_action.unwrap_or(net::userpool::MOVE_ACTION_STANDING);
+
+        net::userpool::RemoteAt { x, y, move_action, foothold }
     }
 
     /// **Remember where this character is, and tell the bus, so a LATER joiner is not sent
@@ -271,11 +278,18 @@ impl Session {
     ///
     /// Cheap by construction: it returns before touching the store when the position has not
     /// actually changed, which is most `0x00D9`s in a stationary crowd.
-    pub(super) fn note_own_position(&mut self, x: i16, y: i16) {
-        if self.last_position == Some((x, y)) {
+    ///
+    /// **Takes the stance too, and the early return compares BOTH.** Turning on the spot and
+    /// landing change the pose without moving a pixel, and a position-only comparison would
+    /// skip the refresh and leave the announced stance one packet stale - which is the same
+    /// class of bug as the frozen snapshot this function exists to fix, one field over.
+    pub(super) fn note_own_position(&mut self, x: i16, y: i16, move_action: Option<u8>) {
+        let action = move_action.or(self.last_move_action);
+        if self.last_position == Some((x, y)) && self.last_move_action == action {
             return;
         }
         self.last_position = Some((x, y));
+        self.last_move_action = action;
         // Only worth rebuilding while somebody could still arrive and be told. A connection
         // with no presence is not on a field.
         let Some(chr) = self.claimed_character() else { return };
@@ -1436,6 +1450,47 @@ fn logging_out_leaves_the_field_and_the_later_drop_says_nothing_more() {
         assert_eq!(out[0].opcode, net::userpool::USER_LEAVE_FIELD);
     }
 
+
+    /// **A player who has not moved is announced STANDING, not facing-right-doing-nothing.**
+    ///
+    /// `move_action` is `(action << 1) | facing`, and `0` is action 0 facing right - a value
+    /// this client has never emitted in 28 134 archived elements. Sending it is why every
+    /// remote player was drawn facing right whatever they were doing.
+    ///
+    /// Both halves again, because only the pair is a check: the reported stance is used when
+    /// there is one, and the standing fallback when there is not.
+    #[test]
+    fn the_announced_stance_is_the_reported_one_or_standing() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let chr = net::opcode::Character { name: "Poser".to_string(), ..Default::default() };
+        let id = store.create_character(account, 0, &chr).unwrap().id;
+        store.create_migration(account, id, 0, 0).unwrap();
+        let mut s = Session::joining(store, config, fields);
+        s.claim_for_character(id);
+
+        assert_eq!(
+            s.remote_at().move_action,
+            net::userpool::MOVE_ACTION_STANDING,
+            "nobody has moved yet, so they are standing - NOT action 0 facing right"
+        );
+        assert_ne!(s.remote_at().move_action, 0, "0 is a real pose and the wrong one");
+
+        // A reported stance wins, facing bit and all. 0x03 is action 1 facing LEFT.
+        s.note_own_position(500, 395, Some(0x03));
+        assert_eq!(s.remote_at().move_action, 0x03);
+        assert_eq!(s.remote_at().move_action & 1, 1, "bit 0 is the facing, and it is left");
+
+        // **A turn on the spot still updates.** The early return compares the stance as well
+        // as the position, or a character that turned without walking would be announced with
+        // its old facing - the same staleness this whole path exists to remove.
+        s.note_own_position(500, 395, Some(0x02));
+        assert_eq!(s.remote_at().move_action, 0x02, "turning without moving must register");
+
+        // And an attack, which carries no stance, leaves it alone rather than clearing it.
+        s.note_own_position(600, 395, None);
+        assert_eq!(s.remote_at().move_action, 0x02, "None means unchanged, not unknown");
+    }
 
     /// **A standing player is sent the foothold under them, not `0`.**
     ///

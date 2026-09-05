@@ -271,6 +271,12 @@ pub struct Session {
     /// A drop with no position at all is refused rather than guessed, because a guessed one
     /// loses the item to a spot the player cannot reach.
     last_position: Option<(i16, i16)>,
+    /// The stance and facing this character last reported, `(action << 1) | facing`.
+    ///
+    /// `None` until a move arrives. **Not defaulted to `0`**: that is action 0 facing right,
+    /// a value this client never sends, and announcing it is why every remote player faced
+    /// right. `net::userpool::MOVE_ACTION_STANDING` is the fallback instead.
+    last_move_action: Option<u8>,
 
     /// Session milliseconds of the last thing the player did: moved, attacked, or was hit.
     ///
@@ -487,6 +493,7 @@ impl Session {
             buffs: Vec::new(),
             skill_ready_ms: std::collections::HashMap::new(),
             last_position: None,
+            last_move_action: None,
             banner_shown: None,
             last_activity_ms: 0,
             next_regen_ms: None,
@@ -780,7 +787,7 @@ impl Session {
             net::usermove::CLIENT_USER_MOVE => {
                 let payload = body.get(2..).unwrap_or(&[]);
                 if let Some(m) = net::usermove::parse_user_move(payload) {
-                    self.note_own_position(m.x, m.y);
+                    self.note_own_position(m.x, m.y, m.move_action);
                     self.note_activity();
                     // **The packet the whole bus exists for.** The owner, 2026-08-29:
                     // *"the client's own movement is completely disregarded ...

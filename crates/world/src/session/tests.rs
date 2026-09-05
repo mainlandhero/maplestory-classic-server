@@ -8064,7 +8064,7 @@ fn someone_joining_late_is_told_where_the_others_are_now() {
 
     // Early walks. This is the move packet's own path, not a test back door.
     let walked = (1337i16, 395i16);
-    early.note_own_position(walked.0, walked.1);
+    early.note_own_position(walked.0, walked.1, None);
 
     let (mut late, _) = join_channel(&store, &config, &fields, account, "Late");
     let seen = late.on_field_entered();

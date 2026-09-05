@@ -366,6 +366,9 @@ impl Session {
         // is drawn and can never be collected - which `research/user-move.md` opens by
         // saying is indistinguishable on screen from nothing happening.
         self.last_position = None;
+        // The stance goes with it. A pose from the map we just left is no more use than a
+        // position from it, and `remote_at` falls back to standing rather than to `0`.
+        self.last_move_action = None;
         // **And everyone on the map we are leaving is told, by us, now.**
         //
         // Until this, a server-initiated warp published a farewell only as a side effect of

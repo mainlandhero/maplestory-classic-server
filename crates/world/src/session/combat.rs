@@ -279,7 +279,9 @@ impl Session {
         // Nothing parses `0x00D9`, so until something does, this is where a drop learns
         // where to land - see `Session::last_position`. Recording it here rather than in the
         // drop path means it survives the swing that produced it.
-        self.note_own_position(attack.x as i16, attack.y as i16);
+        // The attack packet carries no stance, so the last one reported stands. `None`
+        // means "unchanged" here rather than "unknown".
+        self.note_own_position(attack.x as i16, attack.y as i16, None);
         self.note_activity();
         // Read once rather than per target: it is a database round trip, and a swing can
         // legitimately kill several mobs at once.

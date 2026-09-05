@@ -377,6 +377,17 @@ pub struct RemoteAt {
     pub foothold: i16,
 }
 
+/// **A standing character, facing right** - the fallback when nobody has moved yet.
+///
+/// `move_action` is `(action << 1) | facing`. Action 2 is the resting pose: 66% of the
+/// packets carrying it are followed by more than three seconds of silence, and it is 261 of
+/// the 393 rest events in the archive. So `2 << 1 = 4`.
+///
+/// **Not `0`.** `0` is action 0 facing right - a value this client has emitted **zero** times
+/// in 28 134 archived elements - and sending it is why every remote player was drawn facing
+/// right until 2026-09-04, whatever they were actually doing.
+pub const MOVE_ACTION_STANDING: u8 = 4;
+
 /// The remote temporary-stat mask: **124 bytes**, all clear meaning "no buffs".
 ///
 /// Read as one raw block at `1429ce4e4` and handed to `FUN_140a46e50` -

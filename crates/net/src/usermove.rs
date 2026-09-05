@@ -202,6 +202,15 @@ pub fn element_len(command: u8) -> usize {
     1 + payload + if tail { ELEMENT_COMMON_TAIL_LEN } else { 0 }
 }
 
+/// Does this element end with the four-byte common tail?
+///
+/// Three commands do not - `0x0c`, `0x3d`, `0x3f` - and [`element_len`] already knows it.
+/// This says the same thing as a predicate, because a caller that wants the tail's first
+/// byte needs to ask before it indexes.
+pub fn element_has_common_tail(command: u8) -> bool {
+    !matches!(command, 0x0c | 0x3d | 0x3f)
+}
+
 /// Does this element carry a position of its own, or inherit the previous one?
 ///
 /// The two obfuscated slots at element `+0x00` and `+0x40` are the pair the common tail
@@ -277,6 +286,26 @@ pub struct UserMove {
     /// See [`UserMove::x`].
     pub y: i16,
     /// The key-state trailer's count, from the byte at `0x141d580e5`.
+    /// **The stance, and the direction the character is facing.**
+    ///
+    /// `(action << 1) | facing`, facing in **bit 0** - the same shape the mob path already
+    /// uses at `0x02FF` offset 7. Four remote handlers replace that bit on its own with
+    /// `and [X+0x6e4], 0xfffffffe` / `or [X+0x6e4], byte & 1`, which is what a separately
+    /// settable low bit means. **[L]**
+    ///
+    /// Taken from the **first byte of the last tail-bearing element's common tail**. That is
+    /// the byte the client's own element builder fills from `[avatar+0x358]`, its
+    /// `nMoveAction`, and it is the same field `0x0224`'s decoder refreshes `CUser+0x6e4`
+    /// from - the same value at both ends, with no arithmetic on the path. **[L]**
+    ///
+    /// The last element is the one that persists: over 6 444 consecutive packet pairs the
+    /// byte carries to the next report **95.3%** of the time and the facing bit **99.1%**,
+    /// against a positive control (last position == next start) of 98.0%.
+    ///
+    /// **`Option`, and that is the point.** A `u8` would default to `0`, and `0` is
+    /// action 0 facing **right** - a real value this client has never once emitted in 28 134
+    /// archived elements, and the reason every remote player faced right until 2026-09-04.
+    pub move_action: Option<u8>,
     pub key_count: u8,
     /// **Did the element walk land exactly on the end of the body?**
     ///
@@ -415,6 +444,7 @@ pub fn parse_user_move(body: &[u8]) -> Option<UserMove> {
         walk_closed: false,
         path_len: MOVE_PATH_HEAD_LEN,
         key_states_len: 0,
+            move_action: None,
     };
     if element_count < 0 {
         return Some(m);
@@ -432,7 +462,16 @@ pub fn parse_user_move(body: &[u8]) -> Option<UserMove> {
                 m.x = i16::from_le_bytes([xy[0], xy[1]]);
                 m.y = i16::from_le_bytes([xy[2], xy[3]]);
             }
-            p += element_len(command);
+            let len = element_len(command);
+            // The stance is the FIRST byte of the common tail. Overwritten each iteration, so
+            // what survives the loop is the last element's - which is the one that persists
+            // into the next packet. See `UserMove::move_action`.
+            if element_has_common_tail(command) {
+                if let Some(&action) = path.get(p + len - ELEMENT_COMMON_TAIL_LEN) {
+                    m.move_action = Some(action);
+                }
+            }
+            p += len;
         }
 
         // The key-state trailer, written by FUN_141d57c60 after the path returns: a count at
@@ -468,6 +507,42 @@ mod tests {
     }
 
     /// Every field of a real captured body, at the offsets the builder writes them.
+    /// **The stance and the facing, off the last element's tail.**
+    ///
+    /// `move_action` is `(action << 1) | facing`, facing in bit 0. `0x0224` sent `0` for it
+    /// until 2026-09-04, and `0` is action 0 facing RIGHT - so every remote player was drawn
+    /// facing right whatever they were doing.
+    ///
+    /// The three archived bodies carry three different values, which is what makes this a
+    /// check rather than a constant: `0x04` is action 2 facing right, `0x02` action 1 facing
+    /// right, `0x08` action 4 facing right.
+    ///
+    /// The last assertion is the property the whole design rests on: **the last element of
+    /// one packet is the state the next packet starts from.** Measured at 95.3% over 6 444
+    /// consecutive pairs in the archive; here it is exact on the two bodies this file already
+    /// holds, which happen to be consecutive.
+    #[test]
+    fn the_move_action_is_the_last_elements_stance_and_facing() {
+        let first = parse_user_move(&body(MAP1_FIRST)).expect("the first body parses");
+        let second = parse_user_move(&body(MAP1_SECOND)).expect("the second body parses");
+        let melee = parse_user_move(&body(MELEE)).expect("the melee body parses");
+
+        assert_eq!(first.move_action, Some(0x04));
+        assert_eq!(second.move_action, Some(0x02));
+        assert_eq!(melee.move_action, Some(0x08));
+
+        // Facing is bit 0, and all three of these are facing right.
+        for m in [&first, &second, &melee] {
+            assert_eq!(m.move_action.unwrap() & 1, 0, "bit 0 is the facing");
+        }
+
+        // **`None` is not the same as `0`.** A body with no tail-bearing element yields no
+        // stance, and the caller has to be able to tell that from "action 0, facing right" -
+        // which is a real value and was the bug.
+        let empty = parse_user_move(&body(MAP1_FIRST)[..USER_MOVE_HEAD_LEN + MOVE_PATH_HEAD_LEN]);
+        assert!(empty.is_none() || empty.unwrap().move_action.is_none());
+    }
+
     #[test]
     fn the_head_is_ten_bytes_and_the_path_starts_at_ten() {
         let b = body(MAP1_FIRST);
