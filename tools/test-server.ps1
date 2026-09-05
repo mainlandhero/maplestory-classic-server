@@ -65,19 +65,27 @@
     SO: SIGN IN IN WHATEVER ORDER YOU LIKE. If both clients still show the same account,
     that is a NEW finding and worth saying.
 
-    STILL UNKNOWN: whether this client will run twice on one machine at all. If the second
-    instance refuses to start, SAY SO - that is a finding, not a failed test, and the
-    answer is two machines.
+    TWO CLIENTS RUN. Answered 2026-09-03 - this block said "STILL UNKNOWN" four lines
+    under its own "T0 IS ANSWERED", which is the two-copies drift CLAUDE.md is about,
+    inside ONE copy. Launch them one at a time: maplecw-hook.identity is a single shared
+    file and overlapping launches give both clients the same credential.
 
     ============ WHAT THIS RUN IS FOR ============
 
     T11 IS THE MEASUREMENT, and T10 is right behind it. Both are walks, not clicks.
 
-    T11 crosses to ANOTHER CONTINENT. Orbis and El Nath are 87 maps this server has never
-    served and no character has ever stood on - they are a separate portal component from
-    Victoria Island, and until today there was no way to reach them at all. If a client
-    dies loading one of them, that is the finding, and it is worth more than the
-    advancement it was on the way to.
+    T11 crosses to ANOTHER CONTINENT - 87 maps, a separate portal component from
+    Victoria Island, reachable only by the ferry.
+
+    **ORBIS ITSELF ALREADY LOADED, and this block claimed the opposite for a week.** Map
+    20000000 was served twice on 2026-08-28, the client answered 0x00DC 526 ms later and
+    four NPCs drew. So "no character has ever stood on them" was false when written, and
+    the risky-sounding part of T11 - does the client survive an Orbis map - is already
+    answered YES. What is untested is EL NATH and the ferry that reaches it.
+
+    That correction matters more than the map: the sentence was repeated into the printed
+    plan and into three conversations, and it made T11 sound like an expedition when the
+    expedition had already happened. The archive had it the whole time.
 
     The second job advancement now exists end to end, and FOUR MAPS THAT NOBODY HAS EVER
     STOOD IN are part of it. 80001300 / 80001100 / 80001000 / 80001200 have exactly one
@@ -1455,14 +1463,20 @@ function Show-TestPlan {
     Write-Host ''
     Write-Host 'On screen:'
     if ($SetFieldProbe) {
-        Write-Host '  THIS RUN IS SINGLE-CLIENT: T11, then T10, then the rest.' -ForegroundColor Yellow
-        Write-Host '  T0 IS ANSWERED - two clients DO run on this machine.' -ForegroundColor Green
-        Write-Host '  T1/T2/T2b are BLOCKED, not untested: 0x0224 no longer kills'
-        Write-Host '  the clients but a fault at 0x140f9295e still does, and it is'
-        Write-Host '  being read out of crash dumps rather than out of launches.'
-        Write-Host '  DO NOT spend a launch putting two clients on one map - the'
-        Write-Host '  answer is known (they die) and the next reading needs a change,'
-        Write-Host '  not a repeat.'
+        Write-Host '  TWO CLIENTS PLAY TOGETHER NOW. T0, T1 and T2 are ANSWERED.' -ForegroundColor Green
+        Write-Host '    They see each other move, attack, and take damage. 0x0224'
+        Write-Host '    killed both clients three times on the way - the stat tail'
+        Write-Host '    (7 -> 23), then a SEAT INDEX at body 416 where 0 is a valid'
+        Write-Host '    seat, then position/foothold/facing. All fixed.'
+        Write-Host ''
+        Write-Host '  WHAT IS WORTH A RUN NOW, in order:' -ForegroundColor Yellow
+        Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
+        Write-Host '       SECOND hit it should flinch and slide. First hit never'
+        Write-Host '       will - the grant ships with that swing.'
+        Write-Host '    2. EXP SHARING has NEVER executed. 329 kill payouts in the'
+        Write-Host '       archive, ZERO carrying a damage fraction. Two clients have'
+        Write-Host '       never killed the SAME mob. Do that.'
+        Write-Host '    3. T11/T10, single-client, still untested.'
         Write-Host '  Full text: Get-Help on this script.'
         Write-Host ''
         Write-Host '  THIS WINDOW IS THE SERVER. Close it to stop.' -ForegroundColor Green
@@ -1486,14 +1500,17 @@ function Show-TestPlan {
         Write-Host '  character list before pressing Login in the second, because'
         Write-Host '  maplecw-hook.identity is one shared file.'
         Write-Host ''
-        Write-Host '  IF T0 SAYS YES, T2b IS THE ONE. It is the newest thing here' -ForegroundColor Magenta
-        Write-Host '  and the cheapest to read: one player leaves the map, and the'
-        Write-Host '  measurement is the screen of the one who STAYS. Nothing in the'
-        Write-Host '  last three commits has ever been on a wire between two clients.'
+        Write-Host '  T2b: the departure handover. MEASURED on the wire already -' -ForegroundColor Magenta
+        Write-Host '  30 mobs handed over, then 1170 reports from the heir over 41 s.'
+        Write-Host '  What is unmeasured is the SCREEN: do they keep walking, or'
+        Write-Host '  freeze, or jump to their spawn points.'
         Write-Host ''
-        Write-Host '  IF T0 SAYS NO, T11 IS WHAT THIS RUN IS FOR, T10 behind it.' -ForegroundColor Magenta
-        Write-Host '  T11 CROSSES TO ANOTHER CONTINENT. Orbis and El Nath are 87 maps'
-        Write-Host '  this server has never served and no character has ever stood on.'
+        Write-Host '  T11 AND T10 are the single-client half, and still untested.' -ForegroundColor Magenta
+        Write-Host '  T11 CROSSES TO ANOTHER CONTINENT - 87 maps behind a ferry.'
+        Write-Host '  ORBIS ITSELF ALREADY LOADED (2026-08-28, 0x00DC accepted, NPCs'
+        Write-Host '  drew). This plan claimed it never had, for a week. What is'
+        Write-Host '  untested is EL NATH and the ferry - not "can the client survive'
+        Write-Host '  a map over there", which is answered yes.'
         Write-Host '  If a client dies loading one, THAT is the finding - worth more'
         Write-Host '  than the advancement it was on the way to.'
         Write-Host ''

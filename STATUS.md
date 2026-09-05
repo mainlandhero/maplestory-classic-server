@@ -1,13 +1,17 @@
-# Where things stand — 2026-08-31b: **a second continent, and the third job advancement on it**
+# Where things stand — 2026-09-04: **two clients on one map, and the party window draws**
 
 Pick-up notes for the next session. See `ROADMAP.md` for the plan and `docs/` for the
 specs.
 
 ## START HERE
 
-**There is a real server now.** `crates/login` replaced the Python harness on 2026-08-18,
-and **characters persist between launches** - the priority the owner set the day before. The
-client also no longer kills itself, so a session runs as long as you want it to.
+*Rewritten 2026-09-04 against the code and the archive. Everything below this section is
+reverse-chronological working, kept for **how** things were found and how they went wrong -
+a verdict down there may have been overturned up here.*
+
+**This is a playable single-player server, and as of 2026-09-03 a two-player one.** Two
+clients run on one machine, stand on one map, and see each other move, attack, take damage
+and form a party. That was the blocker on every multiplayer feature for weeks and it is gone.
 
 One command, from an **elevated** shell:
 
@@ -18,12 +22,84 @@ powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -Set
 It builds, installs the hook into `client-patched/`, starts **both servers** -
 `maplecw-login` on 8484 and `maplecw-world` on 8485 - applies the client patches and
 launches the client. Close the client by hand when done, then `-Stop`. `-ListOnly` prints
-the stored characters and launches nothing.
+the stored characters and launches nothing. **Launch the two clients one at a time.**
 
 **`-SetFieldProbe` is not optional.** Its name is a fossil: it now means "the channel
 answers at all". Without it `Session::handle` returns nothing for *every* packet, the
 migration hello goes unanswered, and the client sits on "Connecting..." looking exactly
 like a server that is not running. It cost one of the owner's manual launches on 2026-08-20.
+
+**Nothing authenticates the game socket.** The launcher authenticates a *person* (argon2id)
+and stakes a login claim the login server matches to the process that owns the socket; the
+game socket itself carries no credential and never has. Say so in every progress report.
+
+### What works — seen on a screen
+
+| | |
+|---|---|
+| **two clients, one map** | 2026-09-03. Avatars, movement, attacks, HP bars, and a late joiner told where people **are** rather than where they entered |
+| **remote damage and the hurt flinch** | 2026-09-04. *"I now see the flinch damage when the non-primary player is taking damage."* |
+| **the party window** | 2026-09-04. Create from the client's own window: *"You have created a new party"* and a list row with the right name, job and level |
+| the single-player world | dressed character, NPCs and dialogue, portals, combat both directions, drops, pick-up, EXP, levelling, AP/SP, death and revive, buffs, quests, shops, storage, channel change |
+| the Cash Shop | opens on the same socket (`0x01A3`, no migrate); the currency is **Leaf Points**, `!lp` funds it, a purchase completes |
+| character select | list, create, name check, three-slot limit, delete, persistence across relaunches |
+
+### What is built and has **never** been on a screen
+
+CLAUDE.md's "built is not wired" category, one step further on: these are wired *and* unseen,
+which on screen is indistinguishable from absent.
+
+| | |
+|---|---|
+| **second job advancement**, end to end | the four hidden test fields, their mobs, the 30 marbles, the examiner and the warden. `research/second-job.md`, `research/second-job-fields.md` |
+| **third job advancement** + the Ossyria ferry | ten jobs, four instructors on map 20001001, Eurek's 1000-meso crossing. `research/third-job.md` |
+| **the departure handover** | measured *on the wire* (below), never watched on a screen |
+| **the release-first control rotation** | landed 2026-09-04 20:37, after the last run of the day. `research/control-release-does-it-despawn.md` |
+| remote `move_action` / facing, foothold, seat index | all landed 2026-09-04 after the last run |
+| **EXP shares to other players** | wired 2026-08-29 and **never executed on a wire either**: 329 kill-EXP lines in the archive, zero carrying a damage fraction. Nobody has ever killed a mob together |
+| return scrolls, `!npcreload`, Phil routing Beginners to their instructor | wired since 2026-08-29 |
+
+### What is blocked, and on what
+
+| | |
+|---|---|
+| **the heap corruption** | `0xC0000374`, **17 distinct fault events** across ~16 archived runs (4 with dumps), deduplicated on `(timestamp, code, address)`. The damaged word is the identical `0x0000000100000020` every time. **The writer is still not found.** This is what ends a long session - the 2026-09-03 two-client death was at **371 s** of client life - and it is the one thing standing between "two players can play" and "two players can play for an hour". `research/heap-corruption-2026-08-27.md`. Do **not** pass `-HeapFix`: it armed, it held, the client died anyway, and every dump taken with it on is unusable for the free-list argument. *(Only 3 of the 17 sit in a log carrying an `ARMING` line, so client-age-at-death is measurable for 3; "never under ~192 s" is the 2026-09-03 figure and is `UNVERIFIED 2026-09-04` here - one of the three is a 7.9 s instance-guard experiment.)* |
+| **party invite** | the state machine invites correctly - `party: Invited { party: 1, from: 213, target: 214 }` - and the **success `0x00A5` body is undecoded**, so the handler refuses out loud rather than guessing. Guessing a body on this wire has killed the client three times. `research/party-result-0x00A5.md` |
+| **trade and chat rooms** | both are `CMiniRoom`, a subsystem this server has never touched. The client declines **locally and sends no packet at all** - checked the documented way, by grepping `research/msexe-send-opcodes.txt` for the builder rather than eyeballing the tail. There is nothing here to answer; it is a whole feature that does not exist |
+| party pick-up rights | `action 2` is not routed - `crate::party::Request` has no variant for it |
+| `0x0183` accept/decline | slot 2 echoes the second `u32` of the `0x00A5` being answered, and **which of answers 4 and 5 means accept is [D]** |
+| second-job skill casts | none of the 66 has a cast handler. `firstjob.rs` is the shape it wants |
+| the keyboard layout | not saved because **nothing has ever tried** - neither opcode is known, on either half. `research/keymap-not-saved.md` |
+
+### What to do next, in order
+
+1. **Watch a departure handover and a control rotation on a screen.** Both landed after the
+   last run and both are one two-client launch. The free measurement that comes with it:
+   count inbound `0x02FF` per connection for one object id - after a release there must be
+   **exactly one sender**. Two senders is the teleporting the owner saw on 2026-09-04.
+2. **Kill one mob with both clients**, which has **never been done**. `share_reason` writes
+   *"N/M of the damage"* onto a non-majority cut; the archive holds **329** `exp from a kill`
+   lines and **zero** with a fraction in them, so the EXP-sharing path - built 2026-08-29,
+   the reason `broadcast.rs` exists at all - has never executed on a wire. Same launch as (1).
+3. **Decode the `0x00A5` invite success body**, which is the last thing between the party
+   state machine and a party anyone can join.
+4. **`0x0184` and `0x0194`**, which arrive unanswered at field entry, twice each, once per
+   client - `FUN_142defbc0` and `FUN_142defc50`, adjacent builders 0x90 apart, and `0x0184`
+   sits between the two party opcodes this server *does* answer. If either is *"tell me my
+   party state on arrival"*, a client that has a party would not learn about it on entering
+   a field, which looks exactly like the party system not working from a different direction.
+   Not investigated and not guessed at.
+5. **The heap writer.** Everything else is bounded by it.
+6. **The third and second job advancements**, which are two walks and have never been tried.
+   Orbis loads (below); El Nath and the ferry menu do not have an observation between them.
+
+**The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
+`.NOTES` block and the `Write-Host` dialogue the launcher prints - and both must be kept
+current. **As of 2026-09-04 that file is stale and its two copies disagree**: the printed
+block says T0 is answered, and the `.NOTES` block at line 68 still says *"STILL UNKNOWN:
+whether this client will run twice on one machine at all"* four lines under its own "T0 is
+ANSWERED". The whole plan predates the two-client run, the party window and the flinch work.
+Rewriting it is the first job of whoever launches next, and it is not this file's to own.
 
 ### LANDED 2026-09-01 — two players share the mobs, and a departure hands them on
 
@@ -68,8 +144,183 @@ it degrades to the old release, so the next arrival still claims everything.
 Proved by injection: restoring the release-only behaviour fails three of the four new tests,
 and the fourth is the nobody-left case the injection is identical to.
 
-**Not observed on a screen.** Two clients on one machine is still blocked on the `grap-stub`
-instance work, so every claim here rests on the suite.
+> **CORRECTED 2026-09-04.** This entry ended *"Not observed on a screen. Two clients on one
+> machine is still blocked on the `grap-stub` instance work, so every claim here rests on the
+> suite."* Both halves are now out of date: two clients run (2026-09-03), and the departure
+> handover has been **measured on the wire** three times. See the section above this one.
+
+### LANDED 2026-09-02 → 09-04 — two clients, and everything that broke on the way
+
+Three days, and the single sentence for it is: **the multiplayer half stopped being a design
+and started being a thing on a screen.** Ordered by what a reader needs first.
+
+#### Two clients run on one machine, and the guard was two guards
+
+T0 had been open for weeks and the answer is yes. `crates/grap-stub/src/instance.rs`:
+
+| gate | how it is beaten |
+|---|---|
+| `FindWindowA("MapleStoryClass")` | hooked in `user32`, and the class name is matched before anything else happens |
+| `Global\WvsClientMtx` | `kernel32!CreateMutexW`/`A` are **six-byte `ff 25` forwarders**; the fix rewrites the **pointer they read**, not the code they reach |
+
+**Patching `kernelbase` hung the client** - three launches of six died that way, and the hang
+came from the *presence* of the patch, not from the logic: 77 `CreateMutex` calls run through
+`DirectSound`'s `DllMain` and a detour that logged from inside one deadlocked the loader. So
+the slot rewrite is eight bytes of data, leaves everything that calls `kernelbase` directly
+untouched, and the detour matches the mutex name before it does anything at all.
+
+#### `0x0224` UserEnterField: four wrong zeros in one packet
+
+Every one of these killed both clients or drew them wrong, and every one of them was a field
+where **`0` is a real value that means something** - which is why no length check and no
+"is it set" test could catch any of them.
+
+| what | was | is | how it read |
+|---|---|---|---|
+| `REMOTE_STAT_TAIL_LEN` | 7 | **23** | the body was short; both clients died inside the handler |
+| body 416, the seat index | `0` | **`-1`** | `0` is a valid seat; the accessor **reports** out-of-range and then honours it, returning `0 + 48*0 + 8` = address 8 |
+| `RemoteAt.foothold` | `0` | `Footholds::landing` | `0` means *not standing on a foothold*, and the client drew everyone **floating** |
+| `RemoteAt.move_action` | `0` | `Option<u8>`, default **4** | `move_action` is `(action << 1) \| facing`, so `0` is *"facing right, doing nothing"* - a pose this client has emitted **zero** times in 28 134 archived elements |
+
+Two instrument lessons out of that run of failures, both already in `CLAUDE.md` and both paid
+for again here:
+
+* **An offset table is meaningless without the base it is indexed against.** The seat fix went
+  out at body offset 41 first and changed nothing - same instruction, same register state, same
+  14-frame unwind. The static pass had the right field and the right sentinel and read its
+  answer out of a `param_1`-based table while measuring against an `r15`-based one, and
+  `r15 = param_1 + 0x100`. What finally settled it was a **new** instrument: take the remote
+  `CUser` of the same character from the run before the change and the run after, keep only the
+  dwords that went `0 -> 0xFFFFFFFF`, and exactly one offset comes back - `0x100` below where
+  the table said to look. That instrument did not exist until the wrong fix had shipped.
+* **Body offset 41 was called "fame"** because the v214 reference tree calls it that. It is a
+  per-map array index. The row was tagged `[I]` honestly and was still read back as a fact.
+  `CLAUDE.md` scores that tree 1 of 8; it is a candidate generator.
+
+The chain is closed: `0x140f9295e` last appears in the archive on **2026-09-03 22:23**, and
+the four runs after the seat fix carry **zero `CLIENT FAULT` lines**. Those runs are short
+(2-5 minutes), so that is "the decode no longer kills it", not "the client is stable".
+
+#### RETRACTED 2026-09-04: `CONTROL_RELEASE` does **not** despawn
+
+This is the most expensive retraction in the file, because the wrong version was **[L]** and
+it shaped the whole mob-sharing design.
+
+*What it said:* `0x03D2` at level 0 *"DESPAWNS the mob ... takes the zero branch **straight**
+into the pool's erase path"*, therefore control can never rotate while its holder is present,
+therefore this server must never send it.
+
+*Why it was wrong:* **"straight" was the whole error.** Two guards sit in front of that erase
+and a live mob stops at the second - `FUN_141c543c0` reads an in-field flag whose complete
+writer set is the constructor (0), `0x03C6` MobEnterField (**1**, both branches) and `0x03D1`
+leave (0), so any mob that entered normally returns 1 and branches to the epilogue. The
+original working in `research/mob-behaviour.md` §3 **described both bails**; every copy after
+it dropped them, and the copy being quoted stated it flattest. It was restated in **nine
+places** and derived in one.
+
+*And it had never been tested.* 505 archived logs, 240 788 events deduplicated on
+`(timestamp, direction, opcode, body)`: **2 664** `0x03D2` at level 1 and **zero** at level 0.
+`mob_release_controller` had no call site in `crates/`.
+
+The owner of the fact is now `crates/net/src/mobmove.rs::CONTROL_RELEASE`, the working is
+`research/control-release-does-it-despawn.md`, and `STATUS.md` deliberately does not restate
+it - which is the point of the pass that retired the other eight copies.
+
+**There is one real despawn**, and it is almost certainly where the reading came from: a mob
+known only from a 137-byte `0x03D2` never has the in-field flag set, so level 0 erases it.
+True for the one spawn path this server never uses.
+
+#### The flinch is not a packet, and the order of two packets is the fix
+
+The owner: *"If the client that does not have mob control attacks a mob, the mob does not flinch and
+get pushed back."* **There is no `MobDamaged` opcode in this client** - both mob dispatch
+tables enumerated, 19 + 117 slots, 98 distinct handlers, six opcodes can set a mob action and
+none carries a damage value. The flinch is produced **locally** by the client that both swings
+and holds the mob's `0x03D2`, and reaches other screens as that client's own `0x02FF`.
+
+The experiment was already sitting in `previous-runs/`, same build, same map, same two
+characters, differing only in who walked in first: **controller swings, 10 wounding hits, 10
+hit-action reports; non-controller swings, 15 wounding hits, 0.** Both copied into
+`research/fixtures/` under names that say what they prove.
+
+So the fix is ownership - and shipping it **without a release made mobs teleport**, because two
+clients then simulate one mob. The order is not an optimisation:
+
+```text
+1. -> the old holder   0x03D2 level 0   release      <- FIRST
+2. -> the attacker     0x03D2 level 1   grant
+3. -> the old holder   0x03D9 relays, which it already got
+```
+
+**The first hit of a fight still will not flinch**, inherently: the grant leaves with the reply
+to the swing that earned it. Mobs here take about three hits. `research/mob-hit-reaction.md`.
+
+#### The departure handover is real, and it is measured on the wire
+
+The 2026-09-01 entry above ended *"not observed on a screen"*. It is still not on a screen, but
+it is no longer only a suite result. Three archived runs carry the line, and the heir really
+drove the mobs afterwards:
+
+```text
+02:51:00.913   mob control: 30 mob(s) on map 40 handed from connection 1 to connection 3,
+                            30 grant(s) delivered
+02:51:00.988 .. 02:51:42.042   1 170 inbound 0x02FF over 41 s   <- the heir moving them
+```
+
+`previous-runs/world-20260903-225142.log` (also in `fixtures/` under two other names - the same
+run, not three observations).
+
+#### Party: the window draws, and three things were learned by it failing
+
+**Create works from the client's own window.** Two bugs stood between the state machine and
+that, and both are the shapes this file keeps recording:
+
+* **The opcode went out twice.** `party_created` built with `PacketWriter::with_opcode(...)`
+  and `Reply::packet()` prepends the opcode again, so the client's first read returned `0xA5`,
+  fell to the default arm and drew *"Due to an unknown error, your party request failed."*
+  **It survived because `UNKNOWN_ERROR` is itself a default-arm code**, so every refusal path
+  had the identical defect and produced exactly the message it intended. Only a real arm could
+  expose it. All four tests were green on a packet the client could not read - `CLAUDE.md`'s
+  *a test that pins what the code already does is not a check*, and they now assert
+  `Reply::packet()`, which is what reaches the framer.
+* **The level was in the wrong slot.** `member+0x18` is the job-name lookup's second argument
+  rather than a field, so level belongs at `+0x1c`. Predicted, deliberately not acted on, and
+  the screen settled it: "Magician", level 0. **[D] -> [L]**.
+
+`MAX_MEMBERS = 6` is **[L]** now on two legs (the member array is `party+8`, span 0x420, stride
+0xB0; and the invite path refuses at `cmp eax,6 / jl`). **An empty seat is a zero dword, not a
+zeroed 155-byte record** - writing the long form shifts every field after it, the same class as
+the seat index. Invite carries a **name** the client does not resolve; expel and change-leader
+carry an **id** it already resolved against its own member list.
+
+Drops are party-scoped from the moment a party forms. There is deliberately **no `!party` GM
+command**: the owner asked for it to be removed, on the grounds that a back door that works makes a
+broken feature look finished.
+
+#### Remote damage: an echo would have drawn nothing
+
+`0x02A5` USER_HIT_REMOTE. `crates/net` said of it *"there is no builder because there is nothing
+to build: the 147 bytes are the client's, and the server's job is to pass them on."* Wrong in
+the direction that produces no error and no complaint:
+
+* the handler draws the damage from HITINFO **+0xa8**, body offset 143, and gates the 1500 ms
+  flinch on that same field being `> 0`;
+* the client sends `0` there in **331 of 331** event-deduplicated captured bodies, and its own
+  builder has no write to that slot at all.
+
+So it is a **server-fill** field, and an echo calls the damage renderer with 0 - the MISS path.
+`user_hit_remote` copies the client's 147 bytes and replaces four of them; the test asserts the
+dword at 143 is the server's number and **every byte either side is byte-identical**. It is the
+`applied` damage, not the client's claim, and **positive** - the client negates it itself, and a
+negative selects digit set 3, the blue recovery number. Confirmed on screen 2026-09-04.
+
+#### A late joiner was told where people entered, not where they are
+
+`Presence.spawn` was built once at field entry and the bus handed that frozen body to every
+later arrival, so an existing player appeared wherever they stood when *they* entered - the map
+origin, before their first step. `Bus::refresh_spawn` was written for exactly this and **had
+zero callers**. Setting the position and refreshing the bus are now one function, because two
+call sites is how the refresh gets forgotten.
 
 ### LANDED 2026-08-31b — the third advancement, and the continent it is on
 
@@ -124,7 +375,7 @@ world of MapleStory"*, and who carries **zero** quest rows. **[L]** on all three
 | The Ossyria ferry line — 3 stops, 1000 mesos | wired, **never on a screen** |
 | `skillpoints::Tier::Third` and the tier-3 SP pool in `0x007C` | wired, **never on a screen** |
 | The three invisible third-job skills | already filtered — `secondjob::HIDDEN_SKILLS` holds all 13 |
-| **87 Orbis/El Nath maps** | all have field images and footholds; **none has ever been loaded** |
+| **87 Orbis/El Nath maps** | all have field images and footholds. **CORRECTED 2026-09-04 — one of them HAS been loaded**, see below |
 
 **A behaviour change worth naming: the second SP tier now stops accruing at 70**, exactly as
 the first stops at 30, because a tier with a successor should hand over to it. Nobody loses a
@@ -132,12 +383,44 @@ point they already had — `top_up` saturates and never claws back — but a lev
 character who does not advance stops earning second-job points. A test caught this change when
 I made it, which is the whole reason it is stated here rather than discovered later.
 
-#### Two things this run will settle that nothing cheaper can
+#### CORRECTED 2026-09-04: this client loads an Ossyria map, and the proof was three days old
 
-* **Can this client load an Ossyria map at all?** 87 maps, zero observations. If a client dies
-  there, that is worth more than the advancement it was on the way to.
-* **Does the ferry menu list two stops and not six?** Six would mean the network filter broke
-  and every Victoria cab is now selling 500-meso rides to another continent.
+*What this section said:* *"Can this client load an Ossyria map at all? **87 maps, zero
+observations.** If a client dies there, that is worth more than the advancement it was on the
+way to."*
+
+*Why it was wrong:* **Orbis is map `20000000` and it was loaded on 2026-08-28**, three days
+before the sentence was written, in `previous-runs/world-20260828-142900.log`:
+
+```text
+18:25:28.774  -> 0x01A0 SetField ... carrying map 20000000 for character 213 (Cobalt)
+18:25:29.300  <- 0x00DC CLIENT_FIELD_ENTERED         the client accepted it
+18:25:29.301  -> 0x044F NpcEnterField  x 9           and drew the town
+18:26:01.416  -> 0x01A0 SetField, GM !map 10001010   33 s later, on purpose
+```
+
+Cobalt's **stored map** was already Orbis, so the login put them there on connect - nobody had
+to build a ferry to see it. Nine NPCs drew, 22 idle-chatter packets went out, the client
+answered normally and **no `CLIENT FAULT` line appears in that window**. They stood still for the
+33 seconds and then `!map`'d out, so this is *"the field loads and the client survives it"*, not
+*"Orbis is playable"*.
+
+Two things this cost, and both are `CLAUDE.md` rules with a new instance:
+
+* **"Zero observations" was a property of the search.** Nobody ever asked *"has map 20000000
+  ever appeared in a SetField"* - the specific-question control that the cash shop's `0x00D5`
+  taught this project and that the second-job hidden fields taught it again a week later. One
+  grep, free, and decisive on the day.
+* **The archive double-counts.** `carrying map 20000000` appears three times on disk and is
+  **one event**: the other two are `research/fixtures/` copies of that same run under
+  `iron-body-no-reduction-...` and `learn-max-hp-increase-...`, named for what their author was
+  looking at rather than for everything the file contains.
+
+**Still open, and the ferry run is still worth making:** whether an El Nath map loads (Orbis is
+one map of 87, and the instructors are on `20001001`), whether a character can *play* there
+rather than stand for 33 seconds, and **whether the ferry menu lists two stops and not six** -
+six would mean the network filter broke and every Victoria cab is selling 500-meso rides to
+another continent.
 
 ---
 
@@ -200,17 +483,23 @@ carries, and **its conclusion is superseded here**. The second-job choice box th
 on a measurement rather than a gamble, and **Phil could now be collapsed from four yes/no
 boxes to one menu** — not done, and named rather than left implicit.
 
-#### Still open in this area
+#### Still open in this area — two of the four are CLOSED, checked 2026-09-04
 
-* **Skill points are not persisted when spent**, so a second pool doubles the surface of
-  that. A player who spends and sees them return will file it as a bug.
-* **`skilltable::book()` will offer the thirteen `invisible = 1` skills** to a second-job
-  character. `secondjob::HIDDEN_SKILLS` holds them; `!learn` does not go through the filter.
+* ~~**Skill points are not persisted when spent.**~~ **CLOSED.** `crates/store/src/skillpoints.rs`
+  persists spend per character *per tier* - `skill_points_spent`, `skill_points_available`,
+  `spend_skill_points` - so the pool survives a relaunch and the tier-3 pool inherits it.
+* **`skilltable::book()` will offer the thirteen `invisible = 1` skills**, and the scope is
+  narrower than this said: `book()`'s only non-test caller is **`gm_learn`**, so `!learn` is the
+  one path that can hand out an undrawable skill. Nothing player-facing goes through it.
+  `secondjob::HIDDEN_SKILLS` is asserted equal to the client's `invisible = 1` set by a test.
 * **No second-job skill has a cast handler.** Nothing equivalent to `firstjob.rs` exists for
-  the 66.
-* **The MP-recovery passive still does nothing.** Skill `2000000` carries `y = 20` (the item
-  recovery bonus) and `session/consume.rs` has no skill lookup on the recovery path.
-  Diagnosed, not fixed.
+  the 66. Still true - `crates/world/` has `firstjob.rs` and `magic.rs` and no sibling.
+* ~~**The MP-recovery passive still does nothing.**~~ **CLOSED**, and on both halves, which is
+  the part worth keeping: `2000000` carries **two** bonuses - `y`, the item-recovery percentage,
+  now read in `session/consume.rs` through `itemrecovery::restored`; and `x`, *"regenerates 1%
+  of Max MP every 10 seconds"*, now in `session/regen.rs`. Implementing one and calling the
+  skill done is exactly the failure `CLAUDE.md`'s quest-payout section describes.
+  `research/item-recovery.md`, `research/mp-regen.md`.
 
 ---
 
@@ -238,15 +527,15 @@ compiler emitted first and says nothing about the rest.** The answer had been si
 that negative to another agent as settled, which caused a **correct** type-6 implementation to
 be withdrawn. Do not propagate a negative you have not checked.
 
-| what | state |
+| what | state — the "never on a screen" column re-checked 2026-09-04 |
 |---|---|
-| EXP shares reach other players | wired, **never on a screen** |
-| Taxi rides, 8 NPCs, 500 mesos, Lyn as tour guide | wired, **never on a screen**, sends type 6 |
-| Phil routes Beginners to their instructor | wired, **never on a screen**, sends yes/no |
+| EXP shares reach other players | wired, **never on a wire either**, and now measured: **329** `exp from a kill` lines across the whole archive and **zero** carrying a damage fraction. Two clients have fought on one map and have never killed the same mob. `share_reason` appends *"N/M of the damage"* to a non-majority cut, so the search has a positive control and it found nothing |
+| Taxi rides, 8 NPCs, 500 mesos, Lyn as tour guide | ~~never on a screen~~ **CONFIRMED 2026-08-29** — Lyn's type-6 menu drew, a line was picked, 500 mesos were taken and the `SetField` landed in Kerning City |
+| Phil routes Beginners to their instructor | wired, **never on a screen**, sends yes/no. Still true - "Phil" appears in no archived world log |
 | Return scrolls, 10 of them, same-continent rule | wired, **never on a screen** |
 | `!npcreload` — NPC dialogue swaps under a live connection | wired, smoke-tested, **never on a screen** |
 | Per-launch login claims | **fixed and proved over real sockets** |
-| Migration credential binding | **BUILT AND OFF.** See below |
+| Migration credential binding | **BUILT AND OFF.** Still off: `login::config` defaults `bind_migrations: false`. See below |
 | NPC and mob names in the dumps | done |
 
 **`--bind-migrations` is OFF by default and until it is on, the migration hole is not fixed.**
@@ -281,7 +570,14 @@ server resolve pid → claim → `token_hash` and satisfy a bound migration **wi
 for same-machine clients. Assessed, not built. It must never be constructible from anything a
 connection sends.
 
-**MULTIPLAYER IS WIRED AND HAS NEVER BEEN ON A SCREEN — 2026-08-29.** The owner:
+> **SUPERSEDED 2026-09-03 — it is on a screen.** Two clients, one map, seeing each other move
+> and attack. The heading below said *"WIRED AND HAS NEVER BEEN ON A SCREEN"*, which was true
+> for five days. The delivery mechanism it describes is unchanged and still the right reading;
+> the **body** it describes is not - `0x0224` was 508 bytes here and is 531 + name + equips
+> now, and four of its fields were wrong. See "two clients, and everything that broke on the
+> way" at the top of this file.
+
+**MULTIPLAYER IS WIRED — 2026-08-29, first on a screen 2026-09-03.** The owner:
 *"the client's own movement is completely disregarded ... their movements and their
 attacks need to be broadcasted and shown on all clients."* The first half of that was
 literally true and worse than it sounded: **no session could say anything to another
@@ -324,12 +620,18 @@ Three things are worth not relearning:
 **Known wrong, and it self-heals: a just-arrived character is announced at the map
 origin.** The server's only source of position is the client's own `0x00D9` reports, and
 `gm-handbook/portals.txt` carries no coordinates. It snaps on that player's first step.
-The real fix is teaching `tools/dump_portals.py` to emit portal x/y.
+The real fix is teaching `tools/dump_portals.py` to emit portal x/y. **STILL TRUE for the
+arriving player**; the *other* half of it - a late joiner seeing everyone else at the origin -
+was `Bus::refresh_spawn` having zero callers, and is fixed (2026-09-03).
 
-**Nothing in `0x224..0x39F` has ever been observed doing anything in any archived run**,
-so the first question on the next launch is not whether the position is right — it is
-whether the client accepts `0x0224` at all. If it is dropped in silence, the answer is a
-watch on `0x1429ba60b`, not more body work. Test plan steps M1–M4.
+> **ANSWERED 2026-09-03.** This paragraph said *"Nothing in `0x224..0x39F` has ever been
+> observed doing anything in any archived run, so the first question on the next launch is
+> whether the client accepts `0x0224` at all."* It does. It was accepted and dispatched with
+> `ret=1` on 2026-09-03 once `REMOTE_STAT_TAIL_LEN` went 7 -> 23, and the run after the seat
+> index went `0 -> -1` drew both avatars. The watch on `0x1429ba60b` was never needed - the
+> discriminator that worked was the **two-log count**: `world.log` says what we sent,
+> `client-patched\maplecw-hook.log` writes its dispatch line **on return**, so a missing line
+> means the handler was entered and never came back.
 
 **The character-select screen is finished and server-driven**, all confirmed on screen:
 the list, create, a truthful name check, the three-slot limit, **delete**, and persistence
@@ -467,20 +769,35 @@ all sent as-is and none of them mattered.
 Login and world entry are done. Each goal carries what is already established, so nobody
 re-derives it, and the **one concrete next step**.
 
-**Where the lettered goals stand, 2026-08-22.** A (quests), B (NPC chatter), F (NPC shops -
-the *keeper* side; Mina's classic counter window is a separate thing and is still unbuilt),
-I (inventory persistence) and the combat/drops/EXP chain are all wired and confirmed on
-screen. E (job advancement) has its packet and a `!job` command but not its NPC conversation.
-The rest stand as written below.
+**Where the lettered goals stand, updated 2026-09-04.** Each heading below now carries its own
+verdict, so this paragraph is a summary rather than the record:
 
-### START HERE - what to do next, in order
+| | |
+|---|---|
+| **done and on a screen** | A quests, B NPC chatter, C drops, D level up, E first job advancement (packet *and* NPC conversation), F NPC shops, G storage, I bag persistence, K HP/MP per level |
+| **decoded, not enforced** | J the damage formula - physical and magic both read, `check_hit` and `max_plausible_hit` still have no caller |
+| **open** | H citizenship (zero server code), L attack-speed timing (lowest priority, and the source page does not carry the table) |
 
-**Last updated 2026-08-27, after the first buy request was captured and the purchase was wired.** Read this section and nothing else to
-know where the project is. Everything under it is older and kept **for its working, not its
-verdicts** - the log below is reverse-chronological and a claim in it may have been retracted
-further up.
+The live work is not covered by any letter: it is the multiplayer chain at the top of this file.
 
-**What changed most recently, newest first:**
+Two corrections to what used to stand here. E said *"has its packet and a `!job` command but not
+its NPC conversation"* - untrue since 2026-08-31. And **Mina's classic shop counter was called
+"a separate thing and still unbuilt"**: `net::classicshop` and `session/shop.rs` build it,
+`0x055D` has gone out **9 times** in the archive, and `tools/test-server.ps1`'s own "what
+previous runs closed" block records that the classic shop draws and that selling works. It is
+not in this file's CONFIRMED table, so the screen fact is second-hand - `UNVERIFIED 2026-09-04`
+as to what it looks like, but "unbuilt" is definitely wrong.
+
+### The 2026-08-24 → 08-27 changelog (was "START HERE", superseded)
+
+> **This is no longer the front door.** It used to say *"read this section and nothing else to
+> know where the project is"*, and it was last updated on 2026-08-27 - before the second and
+> third job advancements, before mob sharing, before two clients ran, before the party window.
+> **The current state is the `START HERE` section at the top of this file.** Everything from
+> here down is kept **for its working, not its verdicts**: the log is reverse-chronological and
+> a claim in it may have been retracted further up.
+
+**What changed over 2026-08-24 → 08-27, newest first:**
 
 * **`-HeapFix` was tried, it armed, and it cannot work. RETRACTION of what this file said two
   entries ago.** It said the patch *"would have prevented the 2026-08-27 death"* because the
@@ -627,15 +944,13 @@ further up.
   and a rate **since falsified** - see the 2026-08-27 entry - and a **null dereference during a map
   load** that has been seen once.
 
-**The next-steps table is further down**, under "What to do next, in order". It is rewritten
-whenever a row closes, because a list that still names finished work is how a launch gets
-spent re-testing.
-
-**The test plan is NOT here.** It is in `tools/test-server.ps1`, in **two** places - the
-`.NOTES` block and the `Write-Host` dialogue the launcher prints on screen - and both must be
-kept current. `CLAUDE.md` has the section on why.
+**The next-steps table further down, under "What to do next, in order", is the 2026-08-22 one
+and is superseded** - see the banner on it, and the ordered list in `START HERE` at the top of
+this file.
 
 #### CONFIRMED on a real client
+
+*Cumulative, oldest first. The 2026-09-03/04 rows are at the bottom.*
 
 | | |
 |---|---|
@@ -666,6 +981,12 @@ kept current. `CLAUDE.md` has the section on why.
 | **the Cash Shop button is answered** | `0x00D5` is an **exclusive request**: unanswered it fired once per session and left `[ctx+0x2330]` set. Three clicks give three requests, latch `0/0/0` |
 | **THE CASH SHOP OPENS** | `0x01A3` on the same channel socket, **no migrate**. One `0x14209ad60` hook line dispatching `0x01A3`; the stage's `OnPacket` took both `0x05AD`s; both balance fields right, in order; the `0x03E0` poll fired twice in 103 s; an empty `0x00D1` brought the field back with its NPCs. The opcode was `[D]` from three discriminators and is now **read** |
 | **the shop's currency is LEAF POINTS** | every price tag reads `LP`, and a client holding 10,000 NX and 0 LP **refused the purchase itself and sent zero `0x03E1`**. `!lp` funds it; `!nx` fills the other field and buys nothing |
+| **the type-6 NPC menu renders from the server** | 2026-08-29. Lyn and the Regular Cab each sent one box; each answered by a 10-byte `0x00F3` ending `06 01` with a real selection - **line 2** then **line 0** - each followed by the fare and the `SetField`. Two NPCs, two different lines, one session. `research/fixtures/type6-menu-renders-and-taxi-rides-world.log` |
+| **TWO CLIENTS, ONE MAP** | 2026-09-03. Cobalt, Robin and Tester2 on Snail Hunting Ground I, seeing each other **move and attack**. The instance guard is `FindWindowA` + the `CreateMutex` forwarder slot; six launches and three decoded crash dumps to get there |
+| **remote avatars are dressed and positioned** | 2026-09-03. `0x0224` accepted and dispatched `ret=1` once the tail was 23 bytes and the seat index was `-1`; a late joiner is told where people **are**, not where they entered |
+| **remote damage and the hurt flinch** | 2026-09-04. *"I now see the flinch damage when the non-primary player is taking damage."* `0x02A5` with the damage written into HITINFO **+0xa8** - a plain echo would have drawn nothing at all |
+| **the mob flinch follows control** | 2026-09-04, measured rather than watched: controller swings, 10 wounding hits, **10** hit-action reports; non-controller swings, 15 wounding hits, **0** |
+| **THE PARTY WINDOW DRAWS** | 2026-09-04. *"You have created a new party."* and a list row with the right name, job and level. Create only - invite's success body is still undecoded |
 
 #### The purchase, the pet, and a mistake of mine that cost two days
 
@@ -2077,7 +2398,23 @@ everywhere it appears. `!buff <skill> <level> <tail>` makes the number typeable 
 that survives can bisect it in chat lines instead of one launch per attempt; 18 and below are
 refused, because 18 has already killed a client once. `research/buffs-underflow.md`.
 
-#### What to do next, in order
+#### What to do next, in order — SUPERSEDED, the 2026-08-22 list
+
+> **Do not work off this table.** It was rewritten 2026-08-22 after the Cash Shop run and eight
+> of its eleven rows have since closed or been retracted. The live list is `START HERE` at the
+> top of this file. What follows is annotated rather than deleted, because three of the closures
+> are corrections and the reason each one was wrong is the part worth keeping.
+>
+> | row | what happened |
+> |---|---|
+> | 1 Cash Shop | **CLOSED 2026-08-25.** It opens, `0x01A3` confirmed on the wire; the currency is Leaf Points and a purchase completes |
+> | 2 Henesys Park null deref | **RETRACTED.** The map is not fatal - a character stood there 52 s into a connection and the session ran another fifty. Both deaths blamed on it were at ~400 s and were **different exceptions**. It was the session, not the map |
+> | 3 the classic shop counter | **BUILT since that table was written.** `net::classicshop` + `session/shop.rs`; `0x055D` appears 9 times in the archive, and the launcher's own closed-list says the counter draws and selling works |
+> | 4 the heap wild write | **still open**, but the `-HeapFix` sentence in it is **retracted**: the patch armed, held, and the client died anyway at a second pooled free the route to which is fixed at compile time |
+> | 8 job advancement, the conversation | **CLOSED 2026-08-31.** First job through the instructors; second and third built end to end and unseen |
+> | 11 the NPC first draw | **the comparison itself was never a control.** The mobs it was measured against were not in the field-entry batch at all - they arrived from the respawn tick 7.16 s later, with nothing to be late against. Nobody has ever watched an NPC and a mob created at the same instant |
+>
+> Rows 5, 6, 7, 9 and 10 are **unrevisited** - `UNVERIFIED 2026-09-04`.
 
 **Rewritten 2026-08-22, after the Cash Shop run.** Rows close fast at the moment - buffs both
 directions, storage end to end including Organize, the pick-up latch, and the Cash Shop
@@ -2322,9 +2659,19 @@ had checked.
   a `lea` scan of the whole neighbourhood that fills it finds exactly one `.data` target and
   it is the EXP curve itself. HP/MP per level is a server-side rule and the client never
   computes it - it is told new maxima. See goal K.
-* **The bag is not the unequip blocker**, `0x02FF` must be answered, `0x0107` must always be
-  answered including refusals, and the client computes its own damage.
-* **`0x0301` is a MOB picking up a drop**, not the player's request.
+* **The bag is not the unequip blocker.** `presence[7]` lands; 125 slots render, minimum 30 and
+  maximum 125, both from the owner. And **the four lists after the equipped one are not four bags** -
+  only the first is, the Equip tab; the other three take positions 3000+, which nothing here can
+  create. `research/bag-lists.md`.
+* **`0x02FF` must be answered**, or mobs freeze after one simulation step. **`0x0107` must
+  always be answered, including refusals**, or the whole inventory UI dies.
+* **The client computes its own damage** — *and that is no longer true everywhere.* It holds for
+  damage **to** mobs: we send consequences, never numbers, and the floating damage number over a
+  mob is a client-side stub that read `1` while a Drake emptied a 238-HP bar. It does **not**
+  hold for a player being hurt on somebody else's screen: `0x02A5`'s HITINFO **+0xa8** is a
+  server-fill field, the client writes `0` there in 331 of 331 captures, and an echo draws
+  nothing. Corrected 2026-09-04.
+* **`0x0301` is a MOB picking up a drop**, not the player's request. It nearly shipped as one.
 * **`0x00AC` is BroadcastMsg and type 4 is the banner**, `0x00AB` is TownPortal, and the
   candidate table's two `BroadcastMsg` entries are both wrong. `research/broadcast-banner.md`
   has the working, including the bit mask that says which types carry no string.
@@ -2609,48 +2956,38 @@ like a regression somewhere else. The warning is on the field in `crates/net/src
 
 #### Things that are NOT open, so nobody re-opens them
 
-* **The bag is not the unequip blocker.** `presence[7]` lands; 125 slots render. Minimum 30,
-  maximum 125, both from the owner.
-* **The four lists after the equipped one are not four bags.** Only the first is - the Equip
-  tab. The other three take positions 3000+, which nothing here can create. `research/bag-lists.md`.
-* **`0x02FF` must be answered**, or mobs freeze after one simulation step.
-* **`0x0107` must always be answered, including refusals**, or the whole inventory UI dies.
-* **The client computes its own damage.** We never send numbers, only consequences.
-* **`0x0301` is a MOB picking up a drop**, not the player's request. It nearly shipped as one.
+> **MERGED 2026-09-04.** There were two lists under this exact heading. This one was a subset of
+> the newer one - the list **further up**, immediately after "The heap corruption, and what the
+> last run actually showed" - and its two unique items (the bag numbers, and the four lists that
+> are not four bags) have been folded into it. **Read that list.** It also carries the correction
+> to *"the client computes its own damage"*, which stopped being true everywhere when `0x02A5`
+> started carrying a server-filled number.
 
-#### The test plan for the next run
+#### The test plan for the next run — STRUCK 2026-09-04
 
-```
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
-```
-
-**The path is absolute on purpose - write it that way in anything the owner runs.** The launch has
-to come from an **elevated** window, and an elevated window opens in `C:\Windows\System32`,
-so a relative `tools\test-server.ps1` is not a shorter spelling of the same command. It is
-one that works in the agent's shell and fails in theirs.
-
-**`-SetFieldProbe` is not optional and its name is a fossil.** Without it `Session::handle`
-returns nothing for *every* packet: the migration hello goes unanswered and the client
-freezes on "Connecting...". It cost a launch on 2026-08-20. `crates/world/src/session/mod.rs`,
-`Session::handle`.
+> **Ten steps used to stand here and nine are confirmed**: `!item` and the `0x0070` it rides on,
+> the shop counter and both prices, the quest journal across a map change, `!exp`, the drop, the
+> pick-up and the channel-change row colour. They are in the CONFIRMED table near the top of this
+> file. Re-running them costs the owner a launch and answers nothing.
+>
+> **The exception is step 6, the chat balloon, and it is a genuine hole.** `0x0231 USER_CHAT` has
+> gone out exactly **twice in the whole archive** - 2026-08-19 *"Hello David"* and 2026-08-29
+> *"hello"* - and no capture can say whether a balloon drew, because that is a screen fact and
+> nobody has been asked. `UNVERIFIED 2026-09-04`. One sentence from the owner on any future run
+> settles it, and it is free: type something without a `!` and say whether a bubble appears.
+>
+> **A test plan does not belong in `STATUS.md` at all** - `CLAUDE.md` has the section on why, and
+> this block is the fossil it was written about. The plan lives in `tools/test-server.ps1`, in
+> two copies that must be updated together.
+>
+> Three things from that block are not duplicated anywhere and are kept below: the `-Probe`
+> positive-control trap, the `0x025F` retraction, and the two watches that still need runs of
+> their own.
 
 **Do not pass `-Probe` unless you mean to.** With `-SetFieldProbe` and no explicit `-Probe`
 the launcher installs a matched pair *plus* `140304100:hits=200`, the **positive control**:
 no lines from it means the hook never armed and nothing else in the log proves anything.
 Passing `-Probe` by hand replaces all four slots and silently drops it.
-
-| # | do | what to watch | what it means |
-|---|---|---|---|
-| 1 | glance at the top of `login.log` | an ELog record | the client replays its on-disk error log at startup and then deletes it. Free, and it is the only place a previous crash survives. Run it **from the repo** - `cd C:\MapleCW` then `python tools/decode_elog.py login.log --stack`; the repo has to be the working directory or the script imports the scratchpad's stale copies |
-| 2 | enter the world, `!item 1302000` | the sword appears in the Equip tab | `!item` works, and so does the `0x0070` Add it rides on |
-| 3 | `!map 1013`, click **Lucy**, with **`-ShopRows 1`** | the shop counter | **the counter opening at all is the result.** Twelve rows killed the client on 2026-08-20; one buy row says whether the shop path is sound. If it opens, raise `-ShopRows` next run |
-| 4 | buy something, then sell it back | mesos, and the bag | both directions, both prices. The **buy** price is authored; the **sell** price is the client's own |
-| 5 | accept a quest, then `!map 40` | the quest journal | still listed = the journal persists |
-| 6 | type **Hello** in the chat box | a balloon and a log line | the flag byte was `0` and the client's own builder sends `3`. Nothing still = the handler is not running, and the next step is `0x0224`, **not** more chat bytes |
-| 7 | `!exp 100` | the EXP bar | it moves **at once** - `0x007C` bit 16 carries the new total. Relog and it is still 100 |
-| 8 | walk a few steps, then drag the sword out of the window | the sword on the ground | `0x00D9` is parsed now, so the server knows where you are. A `0x025F` in `world.log` means the client **rejected** our `0x046E` and abandoned the drop - read its second `u32` against `research/item-drop.md` §10.1 |
-| 9 | walk over the sword | it goes back in the bag | **even if nothing visible happens, this step succeeded**: `grep UNKNOWN world.log` names the pick-up opcode, which is the whole reason for it |
-| 10 | open Change Channel, **single-click** CH.2 | the row's colour | cream then blue = the enable byte is right. **Do the double-click last of all** - it sends `0x00D2` and either changes channel or ends the session |
 
 **`0x025F` was a false alarm, and the retraction is worth reading.** The claim was that the
 client "builds it six times from inside `DropEnterField`, so it will arrive the moment a
@@ -2718,7 +3055,14 @@ which are a pure function over data already generated.
 **Depends on item 1 above:** a quest cannot be *accepted* until the client can answer a
 yes/no box.
 
-#### B. NPC idle chatter
+#### B. NPC idle chatter - **DONE**, and the open question below is answered
+
+> **ANSWERED.** The paragraph below asks *"whether the server sends it at all"*. It does, it is
+> confirmed on screen, and the proof is a side effect nobody was looking for: chatter for the
+> field a player had **left** kept arriving while they were in the Cash Shop - 38 dispatches
+> with `rdx=0x453` in 103 seconds. It is server-side, it works, and the residual bug is that it
+> follows the player onto a stage they are not on. That fix wants a "which stage am I on" flag
+> on `Session` and is still not done.
 
 The owner, 2026-08-19: NPCs should cycle their idle lines **in order, on a cooldown**. The data
 is generated - `gm-handbook/npcstrings.txt`, 441 chatter lines across 266 NPCs, and Robin's
@@ -2793,7 +3137,7 @@ getting from the reference server and paying for later - the inventory bag was 2
 commit because of it. Take it from this client's own WZ, and if it cannot be found there,
 say so and label the number **[I]** rather than shipping it as fact.
 
-#### E. First job advancement at level 10 - set by the owner, 2026-08-19
+#### E. First job advancement at level 10 - **DONE**, packet and NPC conversation both
 
 > *"Once player levels up to 10, they should be able to job advance to one of the 4 primary
 > job IDs, either Thief/Magician/Bowman/Warrior by talking to the respective job advancement
@@ -2844,7 +3188,7 @@ whether the client needs anything beyond the stat block's `job` field at the nex
 already sent on every `SetField`, so the cheapest first experiment is whether simply storing
 a new job and re-sending the record is enough to make the client show a first-job character.
 
-#### F. NPC shops - **UNBLOCKED 2026-08-20: the opcode is `0x055D`**
+#### F. NPC shops - **DONE**: the counter draws, buying and selling both work
 
 **`0x0560` cannot work on this client and no server byte can change that.** The shop window's
 constructor loads `UI/UIWindow2.img/Shop2/backgrnd`; that image is **not in this client's
@@ -2890,7 +3234,7 @@ The original brief:
 > in their inventory back to the NPC shop for mesos, such as unused equips and monster ETC
 > drops. Please do not allow quest items to be sold."*
 
-#### G. Storage - set by the owner, 2026-08-19
+#### G. Storage - **DONE 2026-08-22, end to end including Organize**
 
 > *"Storage is kind of like inventory, except all of the characters of a particular account
 > share this inventory. The storage stores mesos and items. Please do not allow untradeable
@@ -3059,7 +3403,7 @@ expressible: `crates/store` needs a per-character `(town, grade, contribution)` 
 `crates/world` needs to honour `Check.citizenshipTown`/`citizenshipGrade`, both of which are
 small next to what is already built.
 
-#### I. The bag has to persist - set by the owner, 2026-08-19
+#### I. The bag has to persist - **DONE**, confirmed across relaunches
 
 The owner, after the first successful unequip: *"when I travel to map 40, the item I un-equipped
 re-equipped itself. This is not correct, items taken off should persist as is during
@@ -3117,7 +3461,7 @@ the unequip alone.
 *outbound* half of any inventory change is settled - `crates/net/src/inventory.rs`. What is
 missing is durability and the record block, not the ability to tell the client.
 
-#### J. The damage formula - set by the owner, 2026-08-20
+#### J. The damage formula - **DECODED, physical and magic; no validator is wired**
 
 The owner: *"an integral part of our server"*, with three links. All three are captured in
 **`research/meowdb-combat-formulas.md`** - the formulas, the weapon multiplier table, the
@@ -3313,38 +3657,16 @@ between runs.
 **Not yet built: respawn.** A share-balanced *refill* when a mob dies is the same rule
 applied over time, and nothing here kills mobs yet.
 
-### THE RUN - what to do, in this order, and what each outcome means
+### THE RUN of 2026-08-19 — STRUCK 2026-09-04, every step of it is answered
 
-All four builds are pre-flighted: `cargo test` (210), `channel_smoke.py`,
-`channel_smoke.py --set-field-probe` and `login_smoke.py --spawn` all pass, so framing, the
-cipher and every field offset are already checked over an independent Python transport. What
-a launch adds is the only thing those cannot: **what the client does with the bytes.**
-
-```bash
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -SetFieldProbe
-```
-
-**`-SetFieldProbe` is not optional and the name is a lie.** `Session::handle` returns
-`Vec::new()` for every packet unless it is on, so without it the channel answers **nothing at
-all** - not even the migration hello - and the client sits on "Connecting..." with a frozen
-UI. It gates the whole working channel now: the `SetField`, the NPCs, the mobs, the portals,
-chat and the quest reply. It stopped being a probe some time ago.
-
-**Do them in this order. The last one can end the session.**
-
-| # | do | what to look at | what it means |
-|---|---|---|---|
-| 0 | Log in and enter the world with a character that has equipment | does a character appear on the map at all? | **This is the gate.** The equipment change is inside the character record, which has no length prefix and no resync point. If world entry breaks - a fault, or a freeze on "Connecting..." - the record desynchronised, and **nothing below can be observed**. Read the `ELog` (`0x008F`/`0x0090`) and run `tools/pdata_lookup.py` on its RVAs; that names the mis-sized field |
-| 1 | **Hover the TROUSERS (slot 6, item 1060002) and read the tooltip** | the Grey T-Shirt should now say **Weapon Def.: +6**, **Remaining Enhancements: 7**, and **no** "Cannot be Traded when equipped". The starter sword should show **17** attack | Being dressed is already confirmed; what is new is what each item *says*. **No stat line at all** - the packet value is not what the tooltip reads. **A wrong number** - the bit order is off, and which stat shows which number names the bit. **Fault or freeze** - the record desynchronised; items are **129** bytes now and the record **759**, so a width error is live again. **Answer this even if nothing changed:** are the `Remaining Enhancements` and `Scissors Usages Available` lines present *at all*? They sit behind the same `ITEMINFO` gate as the stat lines, so "those two are there and the stats are not" and "all three are gone" are completely different diagnoses |
-| 2 | ~~Walk to map 30~~ **SKIP - mobs are off.** | - | The mob body faulted the client on 2026-08-19 and `send_mobs` is now `false`. Re-enable with `--mobs` only when the mob body is the variant under test |
-| 3 | Click a **quest** NPC (Heena, map 1) **and** a **quest-less** one (Robin, map 40) | does a dialog box appear for both? | They take different paths through the client - Heena's click sends `0x0151`, Robin's `0x00F2` - and only the first was answered before, which is exactly why Robin was silent. **Text on both** - the whole chain works. **Nothing, no fault** - check `world.log` shows the `0x055B` going out, then suspect the message type or the flags |
-| 4 | Open Change Channel | is CH.2 **cream** rather than grey? does clicking it turn it blue? | Cream means the enable byte is right. Blue on click is only a highlight move, not a send |
-| 5 | **LAST.** Click the Change button | anything | **A freeze here is the measurement, not a crash.** Nothing answers `0x00D2` yet, and an unanswered packet freezes the client's whole UI - including the quit prompt's OK. `world.log`'s last inbound line names the packet, which is what this step is for |
-
-**One variant at a time still holds** - these are four disjoint subsystems with four disjoint
-observables (the record, a separate pool, a reply to a click, the login world list), so a
-failure in one does not explain a failure in another. The single exception is step 0, which
-gates everything.
+> Six steps stood here and all six closed long ago: a dressed character enters the world, the
+> tooltips read their stats, **mobs are on** (the `send_mobs = false` in step 2 was reverted the
+> same week - `!map 30` is ordinary now), both NPC click paths answer, the Change Channel row
+> goes cream then blue, and `0x00D2` is answered and migrates on `0x001A`.
+>
+> It is struck rather than deleted because of what it got right about *method*: every step named
+> **what each outcome would mean** before the launch, which is what turns a run into a
+> measurement. The two rules under it have each cost a run and are kept.
 
 **Two rules that have each cost a run:**
 
