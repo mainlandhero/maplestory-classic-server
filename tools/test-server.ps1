@@ -729,6 +729,12 @@ param(
     # Serve a connection the login server CANNOT attribute to a launcher sign-in as this
     # account instead of refusing it. Off = LOGIN ENFORCED. Only -DirectClient needs it.
     [string]$FallbackAccount,
+    # When a migration is bound to the sign-in that minted it: auto (default - bound when the
+    # login connection came from a process on this machine, which the channel re-checks
+    # through the OS; address-bound otherwise), always, or never. The escape hatch if a
+    # character stops entering the world and world.log says "REFUSED the migration":
+    #   -BindMigrations never
+    [string]$BindMigrations = 'auto',
     # The launcher drives every ordinary run now: it signs in, installs the hook and starts
     # the client. This switch is kept so an old command line still works; it changes nothing.
     [switch]$Launcher,
@@ -1462,7 +1468,8 @@ $spawn = if ($ServersOnly) { @{ NoNewWindow = $true } } else { @{ WindowStyle = 
 $loginArgs = @(
     '--db', "`"$Database`"", '--bind', "127.0.0.1:$Port",
     '--channels', $channelList,
-    '--display-name', "`"$DisplayName`"", '--world', $World
+    '--display-name', "`"$DisplayName`"", '--world', $World,
+    '--bind-migrations', $BindMigrations
 )
 # LOGIN ENFORCED unless -FallbackAccount says otherwise. No --account: it selected the
 # fallback until 2026-09-05, and a default run should never be able to reach a character
@@ -1568,6 +1575,12 @@ function Show-TestPlan {
         Write-Host '       show "not a registered ID" and stay USABLE (a frozen client would'
         Write-Host '       mean the refusal packet was not accepted - report that). login.log'
         Write-Host '       says "served as NOBODY - REFUSED" for that connection.'
+        Write-Host '       AND THE CHANNEL NOW HOLDS THE CLAIM TO THE SIGN-IN: on this box the'
+        Write-Host '       migration is bound to your launcher sign-in and the channel checks'
+        Write-Host '       it through the OS. If a character does NOT enter the world, read'
+        Write-Host '       world.log for "REFUSED the migration" - that is the on-box'
+        Write-Host '       attestation failing, it is a finding, and -BindMigrations never'
+        Write-Host '       gets you playing while it is looked at.'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'

@@ -78,6 +78,20 @@ pub struct Config {
     /// `STATUS.md`'s test plan says so in the command line itself.
     pub set_field_probe: bool,
 
+    /// **What this channel does when a claiming connection's address is not the one the
+    /// migration was minted for** - `--migration-peer-policy`. `Require` (the default since
+    /// 2026-09-05) refuses it; `Record` logs it and lets it through, which is what every run
+    /// before that did.
+    ///
+    /// The owner: *"is there a way to enforce that the initial character enter has to be from an
+    /// authenticated session from our launcher?"* For a client on another machine the address
+    /// is the one fact the channel connection and the login connection share, so requiring it
+    /// is the whole of the off-box enforcement; on this machine the OS attestation of the
+    /// owning process does the stronger job (`claim_for_character`). Addresses are compared
+    /// after normalisation - `::ffff:a.b.c.d` is `a.b.c.d`, and the two loopbacks are one -
+    /// which is what removed the dual-stack false refusal that kept this at `Record`.
+    pub peer_policy: store::migration::PeerPolicy,
+
     /// Override every character's inventory slot counts, for one run.
     ///
     /// **A test lever, not a game rule.** The real value is per-character and persisted
@@ -1832,6 +1846,7 @@ impl Default for Config {
             world_id: 0,
             channel_id: 0,
             set_field_probe: false,
+            peer_policy: store::migration::PeerPolicy::Require,
             inventory_slots: None,
             portals: HashMap::new(),
             portal_index: HashMap::new(),

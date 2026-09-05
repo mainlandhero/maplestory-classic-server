@@ -1076,7 +1076,11 @@ impl Session {
         // existing assertion on this string is `.contains(..)` - there is no `assert_eq!` on
         // it anywhere in the crate - so prefixing moves no test. Appending would have been
         // equally safe; leading with what the connection could prove is the useful order.
-        let outcome = match self.store.claim_migration_for_character_with(character_id, &evidence, PeerPolicy::Record) {
+        // The address policy is the channel's config: Require by default since 2026-09-05.
+        // For an off-box client the address is the only fact this connection shares with the
+        // login connection that minted the row, so requiring it IS the enforcement there.
+        let policy: PeerPolicy = self.config.peer_policy;
+        let outcome = match self.store.claim_migration_for_character_with(character_id, &evidence, policy) {
             Ok(ClaimOutcome::Claimed { migration, peer_mismatch }) => {
                 accept(migration, "by character id", peer_mismatch)
             }
@@ -1092,7 +1096,7 @@ impl Session {
             // `u8 ok, u32 ip, u16 port` and carries no character - so this is the ordinary
             // channel-change case, not an error.
             Ok(ClaimOutcome::NoMigration) => match self.store.claim_sole_migration_for_channel_with(
-                self.config.world_id, self.config.channel_id, &evidence, PeerPolicy::Record,
+                self.config.world_id, self.config.channel_id, &evidence, policy,
             ) {
                 Ok(ClaimOutcome::Claimed { migration, peer_mismatch }) => accept(
                     migration,

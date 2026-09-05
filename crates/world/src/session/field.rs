@@ -503,11 +503,17 @@ impl Session {
                 "channel {target} is the one you are already on"
             ));
         }
-        let seed = match self.store.create_migration(
+        // Address-recorded like a login migration, so the target channel holds the claiming
+        // connection to the same address under PeerPolicy::Require. Not token-bound: the
+        // channel connection's own attestation is the login server's business and the owner's
+        // rule is that channel-to-channel is fine once the first entry was legitimate.
+        let seed = match self.store.create_migration_bound_hash(
             claimed.account_id,
             claimed.character_id,
             self.config.world_id,
             target,
+            None,
+            self.peer.as_deref(),
         ) {
             Ok(seed) => seed,
             Err(e) => return self.change_channel_refused(format!("could not mint a migration: {e}")),

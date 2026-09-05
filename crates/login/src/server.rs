@@ -220,19 +220,26 @@ pub fn serve(config: Config) -> std::io::Result<()> {
     log("  presenting a bad one is not a credential.");
     log("  This authenticates the LOGIN socket only. 0x0073 has never appeared on a channel");
     log("  connection, so the game socket is unchanged.");
-    if config.bind_migrations {
-        log("MIGRATION BINDING IS ON. Every migration is bound to the live login claim's");
-        log("  session token and CANNOT be claimed by a connection that presents none.");
-        log("  The stock channel server presents none, so unless the hook has been taught");
-        log("  to send the token, every character select will be refused and nobody will");
-        log("  enter the world. If that is what you are seeing, this flag is why.");
-    } else {
-        log("MIGRATION BINDING IS OFF (--bind-migrations). A migration is claimed by the");
-        log("  character id the connecting client ASSERTS, and nothing checks that the");
-        log("  connection has any right to it - so any connection to a channel port can");
-        log("  claim any character's pending migration by naming it. No race is needed.");
-        log("  The mechanism to close this is built and tested; it needs the hook to send");
-        log("  the session token on the channel socket before it can be switched on.");
+    match config.bind_migrations {
+        crate::config::MigrationBinding::Auto => {
+            log("MIGRATION BINDING: AUTO. A migration minted for a login connection from a process");
+            log("  on THIS machine is bound to that sign-in's token; the channel attests the same");
+            log("  process through the OS and refuses any other. One minted for an off-box login");
+            log("  connection is bound to its ADDRESS, which the channel requires to match. Left");
+            log("  open: an attacker behind the same NAT racing the real client inside the");
+            log("  60-second migration window with a guessed character id.");
+        }
+        crate::config::MigrationBinding::Always => {
+            log("MIGRATION BINDING IS ALWAYS ON. Every migration is bound to the live login claim's");
+            log("  session token and CANNOT be claimed by a connection that presents none. A channel");
+            log("  connection from another machine presents none, so every OFF-BOX character select");
+            log("  is refused until the hook carries the token on the channel connection.");
+        }
+        crate::config::MigrationBinding::Never => {
+            log("MIGRATION BINDING IS OFF (--bind-migrations never). A migration is claimed by the");
+            log("  character id the connecting client ASSERTS; only the address is checked. Any");
+            log("  connection from the minting address can claim a pending migration by naming it.");
+        }
     }
 
     // The migration makes the client come back on a second connection, so the log has to

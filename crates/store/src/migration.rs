@@ -382,6 +382,26 @@ pub enum PeerPolicy {
     Require,
 }
 
+/// Are two recorded peer addresses the same machine, as far as an address can say?
+///
+/// This is what let [`PeerPolicy::Require`] become the default on 2026-09-05. Its doc above
+/// records why it was not: a login connection on `::1` and a channel connection on
+/// `127.0.0.1` are one dual-stack client and differ as strings. So: both sides are parsed,
+/// an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, what a dual-stack listener reports for an
+/// IPv4 peer) is its IPv4, and the two loopbacks are one. Anything that does not parse falls
+/// back to string equality, so a peer recorded in some other form is compared the way it
+/// always was rather than never matching.
+pub fn same_peer(a: &str, b: &str) -> bool {
+    use std::net::IpAddr;
+    match (a.trim().parse::<IpAddr>(), b.trim().parse::<IpAddr>()) {
+        (Ok(x), Ok(y)) => {
+            let (x, y) = (x.to_canonical(), y.to_canonical());
+            x == y || (x.is_loopback() && y.is_loopback())
+        }
+        _ => a.trim() == b.trim(),
+    }
+}
+
 /// Why a claim was refused. Every variant is an event worth a log line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
@@ -879,8 +899,10 @@ impl Store {
         }
 
         // The address is advisory unless the caller asked otherwise; see `PeerPolicy`.
+        // Compared through `same_peer`, not as strings: the dual-stack case that kept
+        // `Require` off was a string inequality between two spellings of one machine.
         let peer_mismatch = match (minted_peer.as_deref(), evidence.peer.as_deref()) {
-            (Some(a), Some(b)) => a != b,
+            (Some(a), Some(b)) => !same_peer(a, b),
             // One side unknown is not a mismatch - it is an absence of evidence, and the two
             // read identically only if you forget which is which.
             _ => false,
@@ -1528,12 +1550,16 @@ mod tests {
             .is_some());
     }
 
-    /// The address is recorded and reported, never fatal by default - a dual-stack client
-    /// can legitimately arrive as ::1 on one socket and 127.0.0.1 on the other.
+    /// Under `Record` the address is reported, never fatal.
+    ///
+    /// The fixture used to be `::1` against `127.0.0.1` - "a dual-stack client can
+    /// legitimately arrive as ::1 on one socket and 127.0.0.1 on the other". Since 2026-09-05
+    /// `same_peer` treats those as one machine, so they are no longer a mismatch at all
+    /// (`peer_compare_tests` pins that); two different machines are.
     #[test]
     fn a_peer_mismatch_is_reported_but_not_refused_by_default() {
         let (store, account_id, id) = store_with_character();
-        let seed = store.create_migration_bound(account_id, id, 0, 0, None, Some("::1")).unwrap();
+        let seed = store.create_migration_bound(account_id, id, 0, 0, None, Some("10.0.0.1")).unwrap();
         match store
             .claim_migration_with(
                 seed,
@@ -2152,5 +2178,48 @@ mod tests {
             .execute("UPDATE accounts SET enabled = 0 WHERE id = ?1", [account_id])
             .unwrap();
         assert_eq!(store.live_claim_token_hash().unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod peer_compare_tests {
+    use super::*;
+
+    /// The dual-stack spellings of one machine are one peer; two machines are two.
+    #[test]
+    fn same_peer_sees_through_dual_stack_spellings_and_nothing_else() {
+        assert!(same_peer("127.0.0.1", "::1"), "the two loopbacks are one machine");
+        assert!(same_peer("::ffff:192.168.1.5", "192.168.1.5"), "an IPv4-mapped peer is its IPv4");
+        assert!(same_peer("192.168.1.5", "192.168.1.5 "));
+        assert!(!same_peer("192.168.1.5", "192.168.1.6"));
+        assert!(!same_peer("203.0.113.5", "127.0.0.1"), "loopback is not a wildcard");
+        assert!(same_peer("not-an-address", "not-an-address"), "unparseable falls back to equality");
+        assert!(!same_peer("not-an-address", "127.0.0.1"));
+    }
+
+    /// `Require` now refuses a claim from another address and still accepts the same client
+    /// on its other stack - the case that used to be a false refusal.
+    #[test]
+    fn require_refuses_another_address_and_accepts_the_dual_stack_twin() {
+        let store = Store::open_in_memory().unwrap();
+        let account = store.create_account("wisp", "correct horse battery").unwrap();
+        // A real character: migrations.character_id is a foreign key.
+        let record = net::opcode::Character { name: "Roamer".to_string(), ..Default::default() };
+        let chr = store.create_character(account, 0, &record).unwrap().id;
+        store
+            .create_migration_bound_hash(account, chr, 0, 0, None, Some("192.168.1.5"))
+            .unwrap();
+        let stranger = MigrationEvidence::none().from_peer("192.168.1.9");
+        match store.claim_migration_for_character_with(chr, &stranger, PeerPolicy::Require).unwrap() {
+            ClaimOutcome::Refused(Refusal::PeerMismatch { minted_at, presented }) => {
+                assert_eq!((minted_at.as_str(), presented.as_str()), ("192.168.1.5", "192.168.1.9"));
+            }
+            other => panic!("expected a peer refusal, got {other:?}"),
+        }
+        let twin = MigrationEvidence::none().from_peer("::ffff:192.168.1.5");
+        assert!(matches!(
+            store.claim_migration_for_character_with(chr, &twin, PeerPolicy::Require).unwrap(),
+            ClaimOutcome::Claimed { peer_mismatch: false, .. }
+        ));
     }
 }

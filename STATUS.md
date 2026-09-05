@@ -92,6 +92,25 @@ both built, tested, and exercised against the shipped binaries:
   doing it: a server test named "a later claim replaces an earlier one" was passing because
   the later account was also the fallback - two live claims were always ambiguous.
 
+* **The channel holds the first entry to the sign-in that minted it.** The owner: *"is there a
+  way to enforce that the initial character enter has to be from an authenticated session from
+  our launcher? Migration between channels are fine as long as the initial assumption is
+  true."* Two facts a channel connection can be held to without the client carrying anything
+  new: on this machine, the OS says which process owns the channel socket and the launcher
+  registered that process to a sign-in (`attest_channel_connection`, which existed); off box,
+  the channel connection must come from the **same address** as the login connection (recorded
+  on every migration; `PeerPolicy::Require` existed and was never on because `::1` vs
+  `127.0.0.1` false-refused - `same_peer` normalises that). So `--bind-migrations auto` (login,
+  default) token-binds a migration when the login connection was attributed by process and
+  address-binds it otherwise; `--migration-peer-policy require` (world, default) refuses a
+  claim from another address; channel→channel mints record the address too. **Left open, and
+  stated:** an attacker behind the victim's own NAT racing the real client inside the
+  60-second migration window with a guessed character id. Closing that needs the hook to carry
+  the token on the channel connection - client work, the follow-up. Not yet seen on a real
+  client: whether the on-box attestation holds for the real client's channel socket
+  (`claims_smoke` proves it for the login socket; the world banner self-tests the lookup).
+  `-BindMigrations never` is the escape hatch if a character stops entering the world.
+
 What did **not** change: the game socket still carries no credential. What changed about the
 exposure: forwarded to the internet, a stranger reaching 8484 is no longer served as anyone
 by default - only a connection attributed to a live sign-in is served, and attribution by

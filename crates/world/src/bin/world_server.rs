@@ -26,6 +26,11 @@ maplecw-world - one channel of the MapleCW game world
                    rather than ignored.
   --advertise MODE which HOST a Change Channel answer names: auto (default), list, or
                    one IPv4 address. --help prints the full description.
+  --migration-peer-policy require|record
+                   what to do when the connection claiming a migration does not come
+                   from the address the migration was minted for. require (default)
+                   refuses it - the off-box half of only-the-launcher-client-enters;
+                   record logs it and lets it through, as every run before 2026-09-05 did.
   --inventory-slots N  give every inventory N slots instead of the character's own,
                    so a client run can read the number off the screen (1..=100).
                    Go UNDER the 30 default: the window is 5x6 with a scrollbar,
@@ -121,6 +126,17 @@ fn main() -> ExitCode {
                 net::advertise::Mode::parse(&v).map(|mode| {
                     config.advertise = std::sync::Arc::new(net::advertise::Advertiser::new(mode))
                 })
+            }),
+            "--migration-peer-policy" => value().and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
+                "require" => {
+                    config.peer_policy = store::migration::PeerPolicy::Require;
+                    Ok(())
+                }
+                "record" => {
+                    config.peer_policy = store::migration::PeerPolicy::Record;
+                    Ok(())
+                }
+                other => Err(format!("--migration-peer-policy {other:?}: expected require or record")),
             }),
             "--set-field-probe" => {
                 config.set_field_probe = true;

@@ -37,12 +37,15 @@ maplecw-login - the MapleCW login server
                         or one IPv4 address. --help prints the full description
   --list                print the stored characters and exit, without listening
   --delete NAME         delete one character on --account, then exit
-  --bind-migrations     bind each migration to the launcher sign-in that authorised it.
-                        DO NOT PASS THIS YET. A bound migration can only be claimed by a
-                        connection presenting a matching session token, and the channel
-                        server presents nothing - so with this on, every migration is
-                        refused and no character can enter the world. It needs the hook to
-                        send the token on the channel socket first.
+  --bind-migrations MODE  when a migration is bound to the sign-in that authorised it, so
+                        that only that launch's client can claim it at the channel:
+                          auto    (default) bind when the login connection came from a
+                                  process on THIS machine - the channel can check that
+                                  through the OS. Off-box connections are bound by their
+                                  address instead (the channel requires it to match)
+                          always  bind every migration. Refuses every OFF-BOX client until
+                                  the hook carries the token on the channel connection
+                          never   bind nothing (the behaviour before 2026-09-05)
   -h, --help            this
 
 The game socket carries no credentials. A connection is served as the account whose launcher
@@ -75,10 +78,9 @@ fn main() -> ExitCode {
                 list_only = true;
                 Ok(())
             }
-            "--bind-migrations" => {
-                config.bind_migrations = true;
-                Ok(())
-            }
+            "--bind-migrations" => value().and_then(|v| {
+                login::config::MigrationBinding::parse(&v).map(|m| config.bind_migrations = m)
+            }),
             "--delete" => value().map(|v| delete_name = Some(v)),
             "--db" => value().map(|v| config.db_path = PathBuf::from(v)),
             "--account" => value().map(|v| config.account = Some(v)),

@@ -934,14 +934,29 @@ impl Session {
         // channel server presents nothing today - so binding unconditionally would refuse
         // every migration and lock the player out of the world entirely. See
         // `Config::bind_migrations` for the measurement behind that.
-        let (token_hash, binding) = if !self.config.bind_migrations {
+        // Bound, or bound by address only - `Config::bind_migrations`. Under `Auto` the
+        // deciding fact is whether THIS connection was attributed by its owning process, which
+        // is the one fact the channel can independently re-derive for the client's second
+        // socket. `launch_pid` is set only on that path.
+        let bind_now = match self.config.bind_migrations {
+            crate::config::MigrationBinding::Always => true,
+            crate::config::MigrationBinding::Never => false,
+            crate::config::MigrationBinding::Auto => self.launch_pid.is_some(),
+        };
+        let (token_hash, binding) = if !bind_now {
             (
                 None,
-                "UNBOUND - migration binding is off (--bind-migrations). Any channel \
-                 connection that names this character id can claim it. Binding needs the \
-                 hook to present the session token on the channel socket; without that, \
-                 turning it on refuses every migration"
-                    .to_string(),
+                match self.config.bind_migrations {
+                    crate::config::MigrationBinding::Auto => "bound by ADDRESS only - this login \
+                     connection was not attributed by a process on this machine (it is off-box, \
+                     or the pid lookup failed), so the channel cannot attest it; the channel will \
+                     require the claiming connection to come from the same address"
+                        .to_string(),
+                    _ => "UNBOUND - migration binding is off (--bind-migrations never). Any \
+                          channel connection from this address that names the character id can \
+                          claim it"
+                        .to_string(),
+                },
             )
         } else {
             // **This connection's claim, not the newest one.** `Store::live_claim_token_hash`
@@ -2286,6 +2301,44 @@ mod tests {
         assert_eq!(s.account_name(), "(unattributed)");
     }
 
+    /// **`Auto` binds exactly when the channel can check the binding.** A login connection
+    /// attributed by its owning process (same machine) mints a token-bound migration; one
+    /// that was not mints an address-bound one. Both record the address.
+    #[test]
+    fn auto_binding_follows_whether_the_connection_was_attributed_by_process() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store.create_account("maplecw", "correct horse battery").unwrap();
+        let account = store.get_account("maplecw").unwrap().unwrap();
+        let token = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        store.stake_login_claim(account.id, token, store::LOGIN_CLAIM_TTL_SECS).unwrap();
+        let config = Arc::new(Config::default());
+        assert_eq!(config.bind_migrations, crate::config::MigrationBinding::Auto);
+
+        // On-box: resolved by process, so bound.
+        let mut on_box = Session::new(store.clone(), config.clone(), account.clone())
+            .with_peer("127.0.0.1")
+            .with_claim_token_hash(Some(store::hash_token(token)))
+            .with_launch_pid(Some(4242));
+        on_box.handle(&create_request("Wanderer", 30030, &STYLE));
+        let id = store.characters_for(account.id, 0).unwrap()[0].id;
+        let seed = migrate_and_get_seed(&mut on_box, id);
+        let binding = store.migration_binding(seed).unwrap().unwrap();
+        assert!(binding.token_bound, "attributed by process, so the channel can attest it");
+        assert_eq!(binding.peer.as_deref(), Some("127.0.0.1"));
+
+        // Off-box: resolved by address, no process to attest at the channel - bound by
+        // address only, and the log line says so.
+        let mut off_box = Session::new(store.clone(), config, account)
+            .with_peer("192.168.1.77")
+            .with_claim_token_hash(Some(store::hash_token(token)));
+        let replies = off_box.handle(&request(CLIENT_SELECT_CHARACTER_REQUEST, &select_payload(id)));
+        let seed = seed_from(&replies[0].body);
+        let binding = store.migration_binding(seed).unwrap().unwrap();
+        assert!(!binding.token_bound, "nothing at the channel could present the token");
+        assert_eq!(binding.peer.as_deref(), Some("192.168.1.77"));
+        assert!(replies[0].what.contains("bound by ADDRESS only"), "{}", replies[0].what);
+    }
+
     /// The seed the client was handed, dug back out of a `MIGRATE_COMMAND` body.
     fn seed_from(body: &[u8]) -> u32 {
         let key = u32::from_le_bytes(body[47..51].try_into().unwrap());
@@ -2307,7 +2360,10 @@ mod tests {
     /// A session with migration binding switched on.
     fn binding_session() -> Session {
         let base = session();
-        let config = Config { bind_migrations: true, ..(*base.config).clone() };
+        let config = Config {
+            bind_migrations: crate::config::MigrationBinding::Always,
+            ..(*base.config).clone()
+        };
         Session::new(base.store.clone(), Arc::new(config), base.served_account())
     }
 

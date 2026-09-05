@@ -130,9 +130,44 @@ pub struct Config {
     /// startup banner says which state the server is in.
     ///
     /// The mechanism underneath is complete and tested either way; only the switch is off.
-    pub bind_migrations: bool,
+    ///
+    /// **`Auto` since 2026-09-05**, and that paragraph above is about `Always`. The owner: *"is
+    /// there a way to enforce that the initial character enter has to be from an
+    /// authenticated session from our launcher?"* There is, without the hook, for the one
+    /// case where the channel CAN present a credential: a client on the server's own machine,
+    /// whose channel socket the OS attributes to the process the launcher registered
+    /// (`Store::attest_channel_connection`). So `Auto` binds a migration to the sign-in's
+    /// token exactly when the login connection was attributed by process - on-box - and
+    /// leaves it unbound (but address-recorded, and the channel requires the address to
+    /// match) when it was not. `Always` is the old flag and still refuses every off-box
+    /// client until the hook carries the token; `Never` is the old default.
+    pub bind_migrations: MigrationBinding,
 
     pub world: World,
+}
+
+/// When a freshly minted migration is bound to the login claim's token. See
+/// [`Config::bind_migrations`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationBinding {
+    /// Bind when the login connection was attributed by its owning process (same machine),
+    /// where the channel can attest the same fact. The default.
+    Auto,
+    /// Bind every migration. Off-box clients are refused until the hook carries the token.
+    Always,
+    /// Bind nothing. The pre-2026-09-05 default.
+    Never,
+}
+
+impl MigrationBinding {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(MigrationBinding::Auto),
+            "always" | "on" | "true" => Ok(MigrationBinding::Always),
+            "never" | "off" | "false" => Ok(MigrationBinding::Never),
+            other => Err(format!("--bind-migrations {other:?}: expected auto, always or never")),
+        }
+    }
 }
 
 impl Default for Config {
@@ -145,9 +180,9 @@ impl Default for Config {
             // OFF: login enforced. See the field.
             fallback_account: None,
             display_name: "MapleCW".to_string(),
-            // OFF. See the field's doc block: on, with today's channel server, every
-            // migration is refused and nobody can enter the world.
-            bind_migrations: false,
+            // Auto: bound where the channel can check it (same machine), address-bound
+            // elsewhere. See the field.
+            bind_migrations: MigrationBinding::Auto,
             world: World::default(),
         }
     }

@@ -8391,3 +8391,30 @@ fn a_non_gm_typing_the_code_commands_mints_nothing() {
     assert_eq!(out[0].opcode, net::userchat::USER_CHAT, "said, not obeyed");
     assert_eq!(store.live_code_counts().unwrap(), (0, 0));
 }
+
+// ---------------------------------------------------------------- the channel holds the address, 2026-09-05
+
+/// **The off-box half of "only the launcher's client enters."** A migration minted for a
+/// login connection from one address cannot be claimed by a channel connection from another;
+/// the same address claims it. `PeerPolicy::Require` is the world server's default now.
+#[test]
+fn a_channel_refuses_a_migration_claimed_from_a_different_address_and_accepts_the_same_one() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Roamer".to_string(), ..Default::default() };
+    let id = store.create_character(account_id, 0, &chr).unwrap().id;
+    store.create_migration_bound_hash(account_id, id, 0, 0, None, Some("192.168.1.5")).unwrap();
+    let config = Arc::new(Config { set_field_probe: true, ..Config::default() });
+
+    let mut stranger = Session::new(store.clone(), config.clone())
+        .with_peer_addr("192.168.1.9:50000".parse().unwrap());
+    let note = stranger.claim_for_character(id);
+    assert!(note.contains("REFUSED"), "{note}");
+    assert!(note.contains("192.168.1.5") && note.contains("192.168.1.9"), "names both addresses: {note}");
+    assert!(stranger.claimed().is_none());
+
+    let mut owner = Session::new(store, config).with_peer_addr("192.168.1.5:50001".parse().unwrap());
+    let note = owner.claim_for_character(id);
+    assert!(note.contains("claimed the migration"), "the refusal did not consume it: {note}");
+    assert!(owner.claimed().is_some());
+}
