@@ -1890,17 +1890,33 @@ mod tests {
         let f = unsafe { walk.scan() }.0[0];
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop2 = stop.clone();
+        // **The churn has to be RUNNING before `confirm` reads, or this test asserts
+        // nothing.** It used to spawn the thread and call `confirm` immediately: under load -
+        // two agents compiling in the same `target/` was enough - the writer got no time
+        // slice between the scanner's reads, the value looked stable, and the test failed for
+        // a reason that had nothing to do with the scanner. A test that can fail on
+        // scheduling is not measuring what its name says.
+        let writes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let writes2 = writes.clone();
         let churn = std::thread::spawn(move || {
             let mut i = 1u64;
             while !stop2.load(Ordering::SeqCst) {
                 unsafe { std::ptr::write_volatile(at as *mut u64, (i << 32) | 0x20) };
+                writes2.fetch_add(1, Ordering::SeqCst);
                 i = i.wrapping_add(1);
                 std::thread::yield_now();
             }
         });
+        while writes.load(Ordering::SeqCst) == 0 {
+            std::thread::yield_now();
+        }
+
         let got = unsafe { walk.confirm(&f) };
+        let during = writes.load(Ordering::SeqCst);
         stop.store(true, Ordering::SeqCst);
         churn.join().unwrap();
+
+        assert!(during > 0, "the churn never ran, so this run tested nothing");
         assert_eq!(got, None, "a churning value was confirmed as stable damage");
     }
 
