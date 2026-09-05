@@ -1284,6 +1284,60 @@ try {
 }
 finally { Pop-Location }
 
+# **A launcher built BEFORE grap-stub carries no stub at all, and still says "Finished".**
+#
+# `crates/launcher/build.rs` embeds `grap64.dll` with `include_bytes!`. On a COLD build - the
+# first after `cargo clean` - cargo is free to finish `-p launcher` before `-p grap-stub` has
+# produced the dll, and build.rs handles that case by printing a `cargo:warning` and compiling
+# WITHOUT the stub. The build still ends "Finished". The launcher then starts the client,
+# installs nothing, and the run measures an UNHOOKED client while looking entirely normal: no
+# instance guard, no WATCH lines, no crash dump, no session patches.
+#
+# That is the same failure as the stale 01:53 launcher noted further down, arriving by a
+# different route, and it is worse in one way - a stale binary at least contains A stub.
+#
+# Measured 2026-09-04, on the first build after the `cargo clean` the owner asked for:
+# 4,653,056 bytes cold against 5,038,080 once relinked. The 385 KB difference is grap64.dll,
+# which is 386,048 bytes.
+#
+# Checked by CONTENT rather than by SIZE, because a size threshold is a magic number that goes
+# stale the first time either binary changes - and it would go stale by passing.
+# 'MapleCW-client-instance' is the stub's own mutex name (crates/grap-stub/src/instance.rs)
+# and appears in the launcher only if the stub is inside it.
+$launcherBin = Join-Path $root 'target\release\maplecw-launcher.exe'
+$stubMark = 'MapleCW-client-instance'
+$launcherHasStub = $false
+if (Test-Path $launcherBin) {
+    $launcherHasStub = [System.Text.Encoding]::ASCII.GetString(
+        [System.IO.File]::ReadAllBytes($launcherBin)).Contains($stubMark)
+}
+if (-not $launcherHasStub) {
+    # Repaired rather than reported, because a guard that hands back a paste-able command is a
+    # guard whose answer can be ignored, and this script has already built everything it needs
+    # to fix it. build.rs is touched because cargo otherwise considers the launcher fresh and
+    # will not re-run the script that does the embedding.
+    Write-Host ''
+    Write-Host 'THE LAUNCHER EMBEDS NO STUB - relinking it now.' -ForegroundColor Yellow
+    Write-Host '  It compiled before grap-stub produced grap64.dll, which build.rs reports'
+    Write-Host '  only as a cargo:warning in a build that ends "Finished".'
+    (Get-Item (Join-Path $root 'crates\launcher\build.rs')).LastWriteTime = Get-Date
+    Push-Location $root
+    try { & cargo build --release -p launcher }
+    finally { Pop-Location }
+    $launcherHasStub = (Test-Path $launcherBin) -and [System.Text.Encoding]::ASCII.GetString(
+        [System.IO.File]::ReadAllBytes($launcherBin)).Contains($stubMark)
+    if (-not $launcherHasStub) {
+        Write-Host ''
+        Write-Host 'THE LAUNCHER STILL EMBEDS NO STUB. STOP.' -ForegroundColor Red
+        Write-Host '  A run from here would install no hook and measure an unhooked client.'
+        Write-Host '  Check that grap-stub actually built:'
+        Write-Host ("    Get-Item `"{0}\target\release\grap64.dll`"" -f $root) -ForegroundColor Yellow
+        Write-Host ''
+        throw 'the launcher embeds no stub - it would install no hook'
+    }
+    Write-Host '  relinked, and the stub is in it.' -ForegroundColor Green
+}
+
 # Rebuilding grap-stub does not update the client: cargo writes target/release/grap64.dll
 # and the client loads client-patched/grap64.dll. Skipping this is the most expensive kind
 # of failure here, because the run looks normal and the new hook code simply is not there.
