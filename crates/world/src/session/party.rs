@@ -88,7 +88,22 @@ impl super::Session {
     /// string and then ignored by the payout beside it.
     pub(super) fn run_party_request(&mut self, actor: u32, request: crate::party::Request) -> Vec<Reply> {
         let described = format!("{request:?}");
-        let outcome = self.fields.parties().apply(actor, request);
+        // Wall-clock seconds, the one clock every connection shares - `Session::clock_ms`
+        // restarts per connection and the invite table is shared across all of them. `apply`
+        // ages invites itself; this call is here to LOG the lapses, which apply discards.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        for (party, target) in self.fields.parties().expire_invites(now) {
+            crate::server::log(&format!(
+                "   party: invite to character {target} for party {party} LAPSED after \
+                 {}s of no answer and was dropped - no packet is sent, the client faded its \
+                 own dialog. crate::party::INVITE_TTL_SECS",
+                crate::party::INVITE_TTL_SECS
+            ));
+        }
+        let outcome = self.fields.parties().apply(now, actor, request);
         match outcome {
             Err(refusal) => {
                 // **A specific refusal, not the blanket one.** `Refusal::result_code` is a

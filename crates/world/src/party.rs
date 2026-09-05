@@ -112,7 +112,7 @@
 //! There is one number in this file - [`MAX_MEMBERS`] - and its unit is **characters,
 //! including the leader**.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// A character id. Ids start at 200 in this project (`store::FIRST_CHARACTER_ID`); nothing
 /// here depends on that.
@@ -422,11 +422,29 @@ pub struct Parties {
     /// Which party each character is in. The **only** index; `parties` is the truth and this
     /// is kept in step by [`Parties::apply`] alone. [`Parties::check_invariants`] proves it.
     of: BTreeMap<CharacterId, PartyId>,
-    /// Outstanding invites, `(party, invitee)`. An invitee may hold several at once - the
-    /// client's `0x011F` refusal is per *(party, character)*, not per character. **[L]**
-    invites: BTreeSet<(PartyId, CharacterId)>,
+    /// Outstanding invites, `(party, invitee) -> the unix second it was minted`. An invitee
+    /// may hold several at once - the client's `0x011F` refusal is per *(party, character)*,
+    /// not per character. **[L]**
+    ///
+    /// The timestamp is what [`Parties::expire_invites`] ages out. It arrived 2026-09-05:
+    /// The owner, *"the client fades the party invitation out after 30 seconds of client inaction,
+    /// I don't want the server to keep waiting for a reply it will never get."* Before it a
+    /// faded invite lived forever, and a leader could never re-invite that character - the
+    /// state machine kept answering [`Refusal::TargetAlreadyInvited`].
+    invites: BTreeMap<(PartyId, CharacterId), i64>,
     next_id: PartyId,
 }
+
+/// How long the server keeps an outstanding invite before it lapses, in seconds.
+///
+/// The client fades the invite dialog after **~30 s** of inaction (the owner, 2026-09-05 - **[I]**,
+/// an observation not read off the client). This is deliberately **longer** than that, because
+/// the two failures are not symmetric: expire too EARLY and an invitee who clicks Accept just
+/// as the dialog fades gets a silent "no such invite" for an action that looked valid; expire
+/// too LATE and the only cost is that the leader's re-invite is refused with the truthful
+/// "already invited" for a few extra seconds until it lapses. So err long. Once the dialog is
+/// gone no accept can arrive, so holding past the fade only affects the re-invite window.
+pub const INVITE_TTL_SECS: i64 = 60;
 
 impl Parties {
     /// An empty registry.
@@ -489,14 +507,37 @@ impl Parties {
         self.party_of(who).is_some_and(|p| p.leader == who)
     }
 
-    /// Whether `target` holds an outstanding invite to `party`.
+    /// Whether `target` holds an outstanding invite to `party`. Does **not** age: call
+    /// [`Parties::expire_invites`] first if the answer must exclude lapsed ones.
     pub fn has_invite(&self, party: PartyId, target: CharacterId) -> bool {
-        self.invites.contains(&(party, target))
+        self.invites.contains_key(&(party, target))
     }
 
     /// Every outstanding invite `target` holds, oldest id first.
     pub fn invites_for(&self, target: CharacterId) -> Vec<PartyId> {
-        self.invites.iter().filter(|(_, c)| *c == target).map(|(p, _)| *p).collect()
+        self.invites.keys().filter(|(_, c)| *c == target).map(|(p, _)| *p).collect()
+    }
+
+    /// **Drop every invite older than [`INVITE_TTL_SECS`], and say which went.**
+    ///
+    /// This is the answer to the owner's timeout: a faded invite is not a decline, so it emits **no
+    /// [`Effect`]** - the leader is told nothing, because the client already removed the dialog
+    /// on its own and there is no "invite lapsed" packet to send. Contrast [`Parties::decline`],
+    /// which is an active refusal and does tell the leader. The returned list is for the log,
+    /// so a run can show an invite lapsing rather than a re-invite mysteriously succeeding.
+    ///
+    /// [`Parties::apply`] calls this at every entry, so a re-invite or an accept always sees an
+    /// aged-out invite as gone; a caller may also call it on a timer to reclaim memory.
+    pub fn expire_invites(&mut self, now: i64) -> Vec<(PartyId, CharacterId)> {
+        let mut gone = Vec::new();
+        self.invites.retain(|key, minted| {
+            let live = now - *minted < INVITE_TTL_SECS;
+            if !live {
+                gone.push(*key);
+            }
+            live
+        });
+        gone
     }
 
     /// How many parties exist.
@@ -519,12 +560,18 @@ impl Parties {
     /// refused request still needs a reply, and there is no path here that returns nothing.
     pub fn apply(
         &mut self,
+        now: i64,
         actor: CharacterId,
         request: Request,
     ) -> Result<Vec<Effect>, Refusal> {
+        // Every entry ages invites first, so a re-invite sees a faded one as gone and an
+        // accept of a lapsed invite is `NoSuchInvite` rather than a join. The dropped list is
+        // discarded here; the session logs it via its own `expire_invites` call. See the
+        // field doc and `expire_invites`.
+        self.expire_invites(now);
         match request {
             Request::Create { name } => self.create(actor, name),
-            Request::Invite { target } => self.invite(actor, target),
+            Request::Invite { target } => self.invite(now, actor, target),
             Request::Accept { party } => self.accept(actor, party),
             Request::Decline { party } => self.decline(actor, party),
             Request::Leave => self.leave(actor),
@@ -559,6 +606,7 @@ impl Parties {
 
     fn invite(
         &mut self,
+        now: i64,
         actor: CharacterId,
         target: CharacterId,
     ) -> Result<Vec<Effect>, Refusal> {
@@ -572,14 +620,17 @@ impl Parties {
         if self.of.contains_key(&target) {
             return Err(Refusal::TargetAlreadyInAParty);
         }
-        if !self.invites.insert((party, target)) {
+        // `apply` expired stale invites before this ran, so a key still here is genuinely
+        // live - a real double-invite, not a faded one. Stamp the fresh one with `now`.
+        if self.invites.contains_key(&(party, target)) {
             return Err(Refusal::TargetAlreadyInvited);
         }
+        self.invites.insert((party, target), now);
         Ok(vec![Effect::Invited { party, from: actor, target }])
     }
 
     fn accept(&mut self, actor: CharacterId, party: PartyId) -> Result<Vec<Effect>, Refusal> {
-        if !self.invites.contains(&(party, actor)) {
+        if !self.invites.contains_key(&(party, actor)) {
             return Err(Refusal::NoSuchInvite);
         }
         if self.of.contains_key(&actor) {
@@ -605,7 +656,7 @@ impl Parties {
     }
 
     fn decline(&mut self, actor: CharacterId, party: PartyId) -> Result<Vec<Effect>, Refusal> {
-        if !self.invites.remove(&(party, actor)) {
+        if self.invites.remove(&(party, actor)).is_none() {
             return Err(Refusal::NoSuchInvite);
         }
         Ok(vec![Effect::InviteDropped { party, target: actor }])
@@ -710,7 +761,7 @@ impl Parties {
         out.push(Effect::Departed { party, who, how, remaining: remaining.clone() });
         if remaining.is_empty() {
             self.parties.remove(&party);
-            self.invites.retain(|(pid, _)| *pid != party);
+            self.invites.retain(|(pid, _), _| *pid != party);
             out.push(Effect::Disbanded { party, members: vec![who] });
         }
         out
@@ -744,7 +795,7 @@ impl Parties {
                 remaining: left.clone(),
             });
         }
-        self.invites.retain(|(pid, _)| *pid != party);
+        self.invites.retain(|(pid, _), _| *pid != party);
         out.push(Effect::Disbanded { party, members: p.members });
         out
     }
@@ -752,7 +803,7 @@ impl Parties {
     /// Void every invite held by one character.
     fn drop_invites_to(&mut self, who: CharacterId) -> Vec<Effect> {
         let gone: Vec<PartyId> =
-            self.invites.iter().filter(|(_, c)| *c == who).map(|(p, _)| *p).collect();
+            self.invites.keys().filter(|(_, c)| *c == who).map(|(p, _)| *p).collect();
         for p in &gone {
             self.invites.remove(&(*p, who));
         }
@@ -798,7 +849,7 @@ impl Parties {
                 _ => {}
             }
         }
-        for (id, c) in &self.invites {
+        for (id, c) in self.invites.keys() {
             if !self.parties.contains_key(id) {
                 return Err(format!("invite to missing party {id} for {c}"));
             }
@@ -811,6 +862,9 @@ impl Parties {
 mod tests {
     use super::*;
 
+    // A fixed "now" for the tests that do not care about invite expiry; the ones that do
+    // pass their own. Any value works: a fresh invite is minted at NOW and NOW - NOW < TTL.
+    const NOW: i64 = 1_000_000;
     const A: CharacterId = 200;
     const B: CharacterId = 201;
     const C: CharacterId = 202;
@@ -820,12 +874,12 @@ mod tests {
     /// rule change that breaks the fixture fails loudly rather than silently shrinking it.
     fn party_of(n: usize) -> (Parties, PartyId) {
         let mut p = Parties::new();
-        p.apply(A, Request::Create { name: "A's Party".into() }).unwrap();
+        p.apply(NOW, A, Request::Create { name: "A's Party".into() }).unwrap();
         let id = p.party_id_of(A).unwrap();
         for i in 1..n {
             let who = A + i as u32;
-            p.apply(A, Request::Invite { target: who }).unwrap();
-            p.apply(who, Request::Accept { party: id }).unwrap();
+            p.apply(NOW, A, Request::Invite { target: who }).unwrap();
+            p.apply(NOW, who, Request::Accept { party: id }).unwrap();
         }
         p.check_invariants().unwrap();
         (p, id)
@@ -910,7 +964,7 @@ mod tests {
     #[test]
     fn create_makes_a_one_member_party_led_by_its_creator() {
         let mut p = Parties::new();
-        let out = p.apply(A, Request::Create { name: "A's Party".into() }).unwrap();
+        let out = p.apply(NOW, A, Request::Create { name: "A's Party".into() }).unwrap();
         let id = p.party_id_of(A).unwrap();
         assert_eq!(out, vec![Effect::Created { party: id, leader: A }]);
         let party = p.party(id).unwrap();
@@ -926,7 +980,7 @@ mod tests {
     fn create_refuses_a_character_already_in_a_party_and_changes_nothing() {
         let (mut p, id) = party_of(2);
         let before = p.clone();
-        let err = p.apply(B, Request::Create { name: "B's Party".into() }).unwrap_err();
+        let err = p.apply(NOW, B, Request::Create { name: "B's Party".into() }).unwrap_err();
         assert_eq!(err, Refusal::AlreadyInAParty);
         // Every observable, not just the one the refusal is about.
         assert_eq!(p.len(), before.len());
@@ -939,7 +993,7 @@ mod tests {
     fn create_refuses_an_empty_name() {
         let mut p = Parties::new();
         assert_eq!(
-            p.apply(A, Request::Create { name: "   ".into() }).unwrap_err(),
+            p.apply(NOW, A, Request::Create { name: "   ".into() }).unwrap_err(),
             Refusal::NameIsEmpty
         );
         assert!(p.is_empty());
@@ -948,21 +1002,21 @@ mod tests {
     #[test]
     fn party_ids_start_at_one_and_never_repeat() {
         let mut p = Parties::new();
-        p.apply(A, Request::Create { name: "A".into() }).unwrap();
+        p.apply(NOW, A, Request::Create { name: "A".into() }).unwrap();
         let first = p.party_id_of(A).unwrap();
         assert_eq!(first, FIRST_PARTY_ID);
         assert_ne!(first, NO_PARTY);
-        p.apply(A, Request::Leave).unwrap();
-        p.apply(A, Request::Create { name: "A again".into() }).unwrap();
+        p.apply(NOW, A, Request::Leave).unwrap();
+        p.apply(NOW, A, Request::Create { name: "A again".into() }).unwrap();
         assert_eq!(p.party_id_of(A), Some(first + 1));
     }
 
     #[test]
     fn creating_a_party_voids_every_invite_the_creator_held() {
         let (mut p, id) = party_of(1);
-        p.apply(A, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
         assert!(p.has_invite(id, B));
-        let out = p.apply(B, Request::Create { name: "B's Party".into() }).unwrap();
+        let out = p.apply(NOW, B, Request::Create { name: "B's Party".into() }).unwrap();
         let b_party = p.party_id_of(B).unwrap();
         assert_eq!(
             out,
@@ -980,7 +1034,7 @@ mod tests {
     #[test]
     fn invite_records_an_invite_and_nothing_else() {
         let (mut p, id) = party_of(1);
-        let out = p.apply(A, Request::Invite { target: B }).unwrap();
+        let out = p.apply(NOW, A, Request::Invite { target: B }).unwrap();
         assert_eq!(out, vec![Effect::Invited { party: id, from: A, target: B }]);
         assert!(p.has_invite(id, B));
         // An invite is not a membership. Both halves, because checking one gives false
@@ -995,7 +1049,7 @@ mod tests {
     fn only_the_leader_may_invite() {
         let (mut p, _) = party_of(2);
         assert_eq!(
-            p.apply(B, Request::Invite { target: C }).unwrap_err(),
+            p.apply(NOW, B, Request::Invite { target: C }).unwrap_err(),
             Refusal::NotTheLeader
         );
         assert!(p.invites_for(C).is_empty());
@@ -1005,7 +1059,7 @@ mod tests {
     fn you_may_not_invite_yourself() {
         let (mut p, _) = party_of(1);
         assert_eq!(
-            p.apply(A, Request::Invite { target: A }).unwrap_err(),
+            p.apply(NOW, A, Request::Invite { target: A }).unwrap_err(),
             Refusal::TargetIsYourself
         );
     }
@@ -1013,9 +1067,9 @@ mod tests {
     #[test]
     fn you_may_not_invite_someone_already_in_a_party() {
         let (mut p, _) = party_of(2);
-        p.apply(C, Request::Create { name: "C's Party".into() }).unwrap();
+        p.apply(NOW, C, Request::Create { name: "C's Party".into() }).unwrap();
         assert_eq!(
-            p.apply(A, Request::Invite { target: C }).unwrap_err(),
+            p.apply(NOW, A, Request::Invite { target: C }).unwrap_err(),
             Refusal::TargetAlreadyInAParty
         );
     }
@@ -1023,9 +1077,9 @@ mod tests {
     #[test]
     fn a_second_invite_to_the_same_character_is_refused() {
         let (mut p, id) = party_of(1);
-        p.apply(A, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
         assert_eq!(
-            p.apply(A, Request::Invite { target: B }).unwrap_err(),
+            p.apply(NOW, A, Request::Invite { target: B }).unwrap_err(),
             Refusal::TargetAlreadyInvited
         );
         assert!(p.has_invite(id, B));
@@ -1037,22 +1091,22 @@ mod tests {
         // `0x011F` refuses a repeat invite from the SAME party. Two parties inviting the
         // same person is a different thing and the client has no string against it.
         let (mut p, one) = party_of(1);
-        p.apply(C, Request::Create { name: "C's Party".into() }).unwrap();
+        p.apply(NOW, C, Request::Create { name: "C's Party".into() }).unwrap();
         let two = p.party_id_of(C).unwrap();
-        p.apply(A, Request::Invite { target: B }).unwrap();
-        p.apply(C, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, C, Request::Invite { target: B }).unwrap();
         assert_eq!(p.invites_for(B), vec![one, two]);
     }
 
     #[test]
     fn accept_joins_and_voids_the_other_invites() {
         let (mut p, one) = party_of(1);
-        p.apply(C, Request::Create { name: "C's Party".into() }).unwrap();
+        p.apply(NOW, C, Request::Create { name: "C's Party".into() }).unwrap();
         let two = p.party_id_of(C).unwrap();
-        p.apply(A, Request::Invite { target: B }).unwrap();
-        p.apply(C, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, C, Request::Invite { target: B }).unwrap();
 
-        let out = p.apply(B, Request::Accept { party: one }).unwrap();
+        let out = p.apply(NOW, B, Request::Accept { party: one }).unwrap();
         assert_eq!(
             out,
             vec![
@@ -1071,7 +1125,7 @@ mod tests {
     fn accept_without_an_invite_is_refused() {
         let (mut p, id) = party_of(1);
         assert_eq!(
-            p.apply(B, Request::Accept { party: id }).unwrap_err(),
+            p.apply(NOW, B, Request::Accept { party: id }).unwrap_err(),
             Refusal::NoSuchInvite
         );
         assert_eq!(p.party(id).unwrap().members, vec![A]);
@@ -1083,9 +1137,9 @@ mod tests {
         let outsider = A + MAX_MEMBERS as u32;
         // The party filled up between the invite and the acceptance. The invite was legal
         // when it was sent, so this is the only place the cap can be enforced.
-        p.invites.insert((id, outsider));
+        p.invites.insert((id, outsider), NOW);
         assert_eq!(
-            p.apply(outsider, Request::Accept { party: id }).unwrap_err(),
+            p.apply(NOW, outsider, Request::Accept { party: id }).unwrap_err(),
             Refusal::PartyIsFull
         );
         assert_eq!(p.party(id).unwrap().size(), MAX_MEMBERS);
@@ -1098,7 +1152,7 @@ mod tests {
         let (mut p, id) = party_of(MAX_MEMBERS);
         let outsider = A + MAX_MEMBERS as u32;
         assert_eq!(
-            p.apply(A, Request::Invite { target: outsider }).unwrap_err(),
+            p.apply(NOW, A, Request::Invite { target: outsider }).unwrap_err(),
             Refusal::PartyIsFull
         );
         assert!(!p.has_invite(id, outsider));
@@ -1115,17 +1169,17 @@ mod tests {
     #[test]
     fn disbanding_a_party_makes_a_pending_accept_read_as_no_such_invite() {
         let (mut p, id) = party_of(1);
-        p.apply(A, Request::Invite { target: B }).unwrap();
-        p.apply(A, Request::Leave).unwrap(); // the leader leaves: the party disbands
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, A, Request::Leave).unwrap(); // the leader leaves: the party disbands
         assert!(p.party(id).is_none());
         assert!(!p.has_invite(id, B));
         assert_eq!(
-            p.apply(B, Request::Accept { party: id }).unwrap_err(),
+            p.apply(NOW, B, Request::Accept { party: id }).unwrap_err(),
             Refusal::NoSuchInvite
         );
         // Idempotent: the same click twice gives the same honest answer.
         assert_eq!(
-            p.apply(B, Request::Accept { party: id }).unwrap_err(),
+            p.apply(NOW, B, Request::Accept { party: id }).unwrap_err(),
             Refusal::NoSuchInvite
         );
         p.check_invariants().unwrap();
@@ -1134,15 +1188,15 @@ mod tests {
     #[test]
     fn decline_drops_exactly_one_invite() {
         let (mut p, one) = party_of(1);
-        p.apply(C, Request::Create { name: "C's Party".into() }).unwrap();
+        p.apply(NOW, C, Request::Create { name: "C's Party".into() }).unwrap();
         let two = p.party_id_of(C).unwrap();
-        p.apply(A, Request::Invite { target: B }).unwrap();
-        p.apply(C, Request::Invite { target: B }).unwrap();
-        let out = p.apply(B, Request::Decline { party: one }).unwrap();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, C, Request::Invite { target: B }).unwrap();
+        let out = p.apply(NOW, B, Request::Decline { party: one }).unwrap();
         assert_eq!(out, vec![Effect::InviteDropped { party: one, target: B }]);
         assert_eq!(p.invites_for(B), vec![two]);
         assert_eq!(
-            p.apply(B, Request::Decline { party: one }).unwrap_err(),
+            p.apply(NOW, B, Request::Decline { party: one }).unwrap_err(),
             Refusal::NoSuchInvite
         );
     }
@@ -1152,7 +1206,7 @@ mod tests {
     #[test]
     fn a_member_leaving_leaves_the_party_standing() {
         let (mut p, id) = party_of(3);
-        let out = p.apply(B, Request::Leave).unwrap();
+        let out = p.apply(NOW, B, Request::Leave).unwrap();
         assert_eq!(
             out,
             vec![Effect::Departed {
@@ -1174,7 +1228,7 @@ mod tests {
         // `0x0114` "You have quit as the leader of the party. The party has been disbanded."
         // and `0x0115` "You have left the party since the party leader quit." **[L]**
         let (mut p, id) = party_of(3);
-        let out = p.apply(A, Request::Leave).unwrap();
+        let out = p.apply(NOW, A, Request::Leave).unwrap();
         assert_eq!(
             out,
             vec![
@@ -1210,7 +1264,7 @@ mod tests {
     #[test]
     fn the_last_member_leaving_disbands_the_party() {
         let (mut p, id) = party_of(1);
-        let out = p.apply(A, Request::Leave).unwrap();
+        let out = p.apply(NOW, A, Request::Leave).unwrap();
         assert_eq!(out.len(), 2, "one Departed, one Disbanded");
         assert!(matches!(out[0], Effect::Departed { who: A, .. }));
         assert_eq!(out[1], Effect::Disbanded { party: id, members: vec![A] });
@@ -1221,24 +1275,24 @@ mod tests {
     #[test]
     fn leaving_when_you_are_in_no_party_is_refused() {
         let mut p = Parties::new();
-        assert_eq!(p.apply(A, Request::Leave).unwrap_err(), Refusal::NotInAParty);
+        assert_eq!(p.apply(NOW, A, Request::Leave).unwrap_err(), Refusal::NotInAParty);
     }
 
     #[test]
     fn only_the_leader_may_expel_and_only_a_member() {
         let (mut p, _) = party_of(3);
         assert_eq!(
-            p.apply(B, Request::Expel { target: C }).unwrap_err(),
+            p.apply(NOW, B, Request::Expel { target: C }).unwrap_err(),
             Refusal::NotTheLeader
         );
         assert_eq!(
-            p.apply(A, Request::Expel { target: D }).unwrap_err(),
+            p.apply(NOW, A, Request::Expel { target: D }).unwrap_err(),
             Refusal::NotAMember
         );
         // Expelling yourself is refused rather than routed to Leave: a leader clicking
         // "expel" on their own row must not silently disband the party.
         assert_eq!(
-            p.apply(A, Request::Expel { target: A }).unwrap_err(),
+            p.apply(NOW, A, Request::Expel { target: A }).unwrap_err(),
             Refusal::NotAMember
         );
         assert_eq!(p.party_of(A).unwrap().members, vec![A, B, C]);
@@ -1247,7 +1301,7 @@ mod tests {
     #[test]
     fn expel_removes_the_target_and_says_how() {
         let (mut p, id) = party_of(3);
-        let out = p.apply(A, Request::Expel { target: C }).unwrap();
+        let out = p.apply(NOW, A, Request::Expel { target: C }).unwrap();
         assert_eq!(
             out,
             vec![Effect::Departed {
@@ -1266,7 +1320,7 @@ mod tests {
     #[test]
     fn change_leader_moves_the_leadership_and_keeps_everyone() {
         let (mut p, id) = party_of(3);
-        let out = p.apply(A, Request::ChangeLeader { target: C }).unwrap();
+        let out = p.apply(NOW, A, Request::ChangeLeader { target: C }).unwrap();
         assert_eq!(out, vec![Effect::LeaderChanged { party: id, from: A, to: C }]);
         assert!(p.is_leader(C));
         assert!(!p.is_leader(A));
@@ -1278,15 +1332,15 @@ mod tests {
     fn change_leader_is_refused_for_a_non_leader_a_non_member_and_yourself() {
         let (mut p, _) = party_of(3);
         assert_eq!(
-            p.apply(B, Request::ChangeLeader { target: C }).unwrap_err(),
+            p.apply(NOW, B, Request::ChangeLeader { target: C }).unwrap_err(),
             Refusal::NotTheLeader
         );
         assert_eq!(
-            p.apply(A, Request::ChangeLeader { target: D }).unwrap_err(),
+            p.apply(NOW, A, Request::ChangeLeader { target: D }).unwrap_err(),
             Refusal::NotAMember
         );
         assert_eq!(
-            p.apply(A, Request::ChangeLeader { target: A }).unwrap_err(),
+            p.apply(NOW, A, Request::ChangeLeader { target: A }).unwrap_err(),
             Refusal::NotAMember
         );
         assert!(p.is_leader(A));
@@ -1295,12 +1349,12 @@ mod tests {
     #[test]
     fn after_handing_over_the_new_leader_can_invite_and_the_old_one_cannot() {
         let (mut p, _) = party_of(2);
-        p.apply(A, Request::ChangeLeader { target: B }).unwrap();
+        p.apply(NOW, A, Request::ChangeLeader { target: B }).unwrap();
         assert_eq!(
-            p.apply(A, Request::Invite { target: C }).unwrap_err(),
+            p.apply(NOW, A, Request::Invite { target: C }).unwrap_err(),
             Refusal::NotTheLeader
         );
-        assert!(p.apply(B, Request::Invite { target: C }).is_ok());
+        assert!(p.apply(NOW, B, Request::Invite { target: C }).is_ok());
     }
 
     // --- disconnect ---------------------------------------------------------------------
@@ -1368,7 +1422,7 @@ mod tests {
     #[test]
     fn disconnecting_drops_the_invites_that_character_held() {
         let (mut p, id) = party_of(1);
-        p.apply(A, Request::Invite { target: B }).unwrap();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
         let out = p.disconnect(B);
         assert_eq!(out, vec![Effect::InviteDropped { party: id, target: B }]);
         assert!(!p.has_invite(id, B));
@@ -1378,9 +1432,9 @@ mod tests {
     #[test]
     fn disbanding_a_party_clears_the_invites_it_had_outstanding() {
         let (mut p, id) = party_of(2);
-        p.apply(A, Request::Invite { target: C }).unwrap();
+        p.apply(NOW, A, Request::Invite { target: C }).unwrap();
         assert!(p.has_invite(id, C));
-        p.apply(A, Request::Leave).unwrap();
+        p.apply(NOW, A, Request::Leave).unwrap();
         assert!(!p.has_invite(id, C));
         assert!(p.invites_for(C).is_empty());
         p.check_invariants().unwrap();
@@ -1449,7 +1503,7 @@ mod tests {
             (D, Request::Create { name: "D".into() }),
         ];
         for (actor, req) in script {
-            let _ = p.apply(actor, req);
+            let _ = p.apply(NOW, actor, req);
             p.check_invariants().expect("invariant broken");
             // The one thing that must never be true, checked after every single step.
             let mut seen: BTreeMap<CharacterId, PartyId> = BTreeMap::new();
@@ -1459,5 +1513,96 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod invite_expiry_tests {
+    use super::*;
+
+    const NOW: i64 = 1_000_000;
+    const A: CharacterId = 200;
+    const B: CharacterId = 201;
+
+    /// A party with a leader, for the expiry tests. Actor A leads party `id`.
+    fn led_party() -> (Parties, PartyId) {
+        let mut p = Parties::new();
+        let out = p.apply(NOW, A, Request::Create { name: "A's Party".into() }).unwrap();
+        let id = match out[0] {
+            Effect::Created { party, .. } => party,
+            ref other => panic!("{other:?}"),
+        };
+        (p, id)
+    }
+
+    /// **The owner's timeout.** An invite left unanswered past the TTL lapses: the invitee can no
+    /// longer accept it, and - the point - the leader can invite them again.
+    #[test]
+    fn an_unanswered_invite_lapses_and_frees_a_re_invite() {
+        let (mut p, id) = led_party();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        assert!(p.has_invite(id, B));
+
+        // One second before the deadline it is still live: a re-invite is refused, an accept
+        // would work.
+        let almost = NOW + INVITE_TTL_SECS - 1;
+        assert_eq!(
+            p.apply(almost, A, Request::Invite { target: B }).unwrap_err(),
+            Refusal::TargetAlreadyInvited,
+        );
+
+        // At the deadline it lapses. The re-invite now succeeds - the state this whole change
+        // exists to unstick - and the fresh invite is stamped at the new time.
+        let after = NOW + INVITE_TTL_SECS;
+        let out = p.apply(after, A, Request::Invite { target: B }).unwrap();
+        assert_eq!(out, vec![Effect::Invited { party: id, from: A, target: B }]);
+        assert!(p.has_invite(id, B));
+    }
+
+    /// A lapsed invite cannot be accepted: it reads as `NoSuchInvite`, not a silent join.
+    #[test]
+    fn a_lapsed_invite_cannot_be_accepted() {
+        let (mut p, id) = led_party();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        assert_eq!(
+            p.apply(NOW + INVITE_TTL_SECS, B, Request::Accept { party: id }).unwrap_err(),
+            Refusal::NoSuchInvite,
+        );
+    }
+
+    /// An accept that lands just before the deadline still joins - the generous TTL is so a
+    /// late-but-valid click is honoured rather than silently refused.
+    #[test]
+    fn an_accept_just_before_the_deadline_still_joins() {
+        let (mut p, id) = led_party();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        let out = p.apply(NOW + INVITE_TTL_SECS - 1, B, Request::Accept { party: id }).unwrap();
+        assert!(out.iter().any(|e| matches!(e, Effect::Joined { who, .. } if *who == B)));
+    }
+
+    /// **A lapse is not a decline.** Expiry emits no effect and tells nobody - the client
+    /// faded its own dialog - whereas a decline returns `InviteDropped` so the leader hears
+    /// "denied". `expire_invites` reports the dropped pair for the log and nothing else.
+    #[test]
+    fn expiry_is_silent_where_a_decline_speaks() {
+        let (mut p, id) = led_party();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        let dropped = p.expire_invites(NOW + INVITE_TTL_SECS);
+        assert_eq!(dropped, vec![(id, B)], "reported for the log");
+        assert!(!p.has_invite(id, B));
+        // Re-invite and DECLINE instead: that one does produce an effect.
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        let out = p.apply(NOW, B, Request::Decline { party: id }).unwrap();
+        assert_eq!(out, vec![Effect::InviteDropped { party: id, target: B }]);
+    }
+
+    /// Expiry leaves a still-live invite alone, and the invariant holds across it.
+    #[test]
+    fn expiry_spares_a_fresh_invite_and_keeps_the_invariant() {
+        let (mut p, id) = led_party();
+        p.apply(NOW, A, Request::Invite { target: B }).unwrap();
+        assert!(p.expire_invites(NOW + INVITE_TTL_SECS - 1).is_empty());
+        assert!(p.has_invite(id, B));
+        p.check_invariants().unwrap();
     }
 }
