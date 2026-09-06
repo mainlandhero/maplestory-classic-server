@@ -36,7 +36,11 @@ param(
     [string]$AuthFingerprint,
     [switch]$NoFirewall,
     [switch]$NoShortcut,
-    [switch]$NoAccount
+    [switch]$NoAccount,
+    # Install even though the Visual C++ runtime is missing. See the preflight below: the
+    # launcher and the GameGuard stub both import VCRUNTIME140.dll, so without it nothing
+    # here starts. Only pass this if you are installing now and fetching the runtime later.
+    [switch]$SkipRuntimeCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -68,6 +72,39 @@ if (-not $hasClient) {
     Write-Host '      The servers will install and run; there is nothing to launch.' -ForegroundColor Yellow
     Write-Host ''
 }
+# The CLIENT side is NOT built with a static C runtime - the server binaries are, and that
+# difference was written up as if it covered both. Measured 2026-09-06 with
+# `python tools\pe_import_dlls.py`:
+#
+#     maplecw-launcher.exe   imports VCRUNTIME140.dll and eight api-ms-win-crt-* stubs
+#     grap64.dll             imports VCRUNTIME140.dll, api-ms-win-crt-{runtime,heap}
+#
+# The api-ms-win-crt-* stubs ship with Windows 10 and 11. VCRUNTIME140.dll does NOT - it
+# comes from the Visual C++ Redistributable. The development box has it, which is exactly
+# why this has never been seen: it works on the machine that built it. On a clean machine
+# the launcher dies at startup with a missing-DLL dialog, and the stub - which is loaded
+# INSIDE MapleStory.exe - would fail there instead, which is far harder to read.
+#
+# So this is a hard stop rather than a warning: a warning thirty lines above a dialog on a
+# machine nobody is sitting at is not a warning.
+if (-not $SkipRuntimeCheck) {
+    $vcruntime = Join-Path $env:SystemRoot 'System32\vcruntime140.dll'
+    if (-not (Test-Path $vcruntime)) {
+        throw @"
+this machine is missing the Visual C++ runtime (VCRUNTIME140.dll).
+
+maplecw-launcher.exe and grap64.dll both import it, so the launcher will not start and the
+GameGuard stub will not load inside the client. The game's own MapleStory.exe does not need
+it, so having the game installed is no guarantee it is here.
+
+Install "Microsoft Visual C++ 2015-2022 Redistributable (x64)" - vc_redist.x64.exe from
+Microsoft - then run this again. This installer is safe to re-run; it updates in place.
+
+  -SkipRuntimeCheck   install anyway, and fetch the runtime before playing
+"@
+    }
+}
+
 if (-not $NoFirewall -and -not (Test-Elevated)) {
     throw @"
 not elevated, and the firewall rule needs it.

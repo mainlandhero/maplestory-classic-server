@@ -9,10 +9,31 @@ patched. Everything else is below. The client payload `tools\make-installer.ps1`
 
 Built by `cargo build --release -p launcher` into `target\release\`, or taken from
 `out\MapleCW\`. It is the whole client-side program: it signs in, patches the client, starts
-it, and gets out of the way. Its imports are only DLLs Windows ships (`kernel32`,
-`bcryptprimitives`, `api-ms-win-core-synch`), so **no Visual C++ Redistributable and no other
-runtime** is needed. It asks for administrator on start because the game client demands it,
-and accepting there means the client does not ask again.
+it, and gets out of the way. It asks for administrator on start because the game client
+demands it, and accepting there means the client does not ask again.
+
+**It needs the Visual C++ runtime, and the game does not.** This section said the opposite
+until 2026-09-06; that was wrong, and it was wrong in the direction that only shows up on
+somebody else's machine. Measured with `python tools\pe_import_dlls.py`:
+
+| binary | imports `VCRUNTIME140.dll`? |
+|---|---|
+| `maplecw-launcher.exe` | **yes**, plus eight `api-ms-win-crt-*` stubs |
+| `grap64.dll` (the injected stub) | **yes** |
+| `MapleStory.exe` | no |
+| the four server binaries | no - those *are* built with a static C runtime |
+
+The `api-ms-win-crt-*` stubs are part of Windows 10 and 11. `VCRUNTIME140.dll` is not: it
+comes from **Microsoft Visual C++ 2015-2022 Redistributable (x64)** (`vc_redist.x64.exe`).
+The development box has it, which is why this was never seen - the classic "works on the
+machine that built it". On a clean machine the launcher dies at startup with a missing-DLL
+dialog; worse, `grap64.dll` is loaded *inside* `MapleStory.exe`, so a missing runtime there
+reads as the client failing rather than as a missing dependency. Having MapleStory installed
+proves nothing, because the game itself does not import it.
+
+`install.ps1` now refuses to run on a machine without it and says so by name
+(`-SkipRuntimeCheck` overrides). Installing by hand: check for
+`C:\Windows\System32\vcruntime140.dll` before anything else.
 
 What it does to the client folder at **Start Game**, so nobody has to do it by hand:
 

@@ -29,7 +29,7 @@ These executables are built with the C runtime linked in, and the only DLLs
 they import ship with Windows:
 
     KERNEL32  ADVAPI32  WS2_32  ntdll  bcrypt  bcryptprimitives
-    api-ms-win-core-synch-l1-2-0
+    api-ms-win-core-synch-l1-2-0    IPHLPAPI (login and world only)
 
 That is checked when the package is built, not assumed - `tools\package-server.ps1`
 refuses to produce a package whose binaries import VCRUNTIME140.dll. An ordinary

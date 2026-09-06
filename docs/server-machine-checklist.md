@@ -25,8 +25,12 @@ produces **`out\MapleCW-server.zip`** (about 8 MB). Copy that one file. Its cont
 
 The binaries are built with the C runtime linked in and import only DLLs that ship with
 Windows. **Nothing has to be installed on the server box** - no Rust, no .NET, no Visual C++
-Redistributable, no database engine (SQLite is compiled in). The packaging script refuses to
-build a package whose binaries import `VCRUNTIME140.dll`, so this is checked, not assumed.
+Redistributable, no database engine (SQLite is compiled in). The packaging script asserts the
+whole import list, not just the absence of `VCRUNTIME140.dll`, so a new dependency on
+something a clean box may lack fails the packaging run rather than the deployment.
+
+**This is true of the server only.** The launcher and `grap64.dll` are not built that way and
+do need the Visual C++ Redistributable - see [the client checklist](client-machine-checklist.md).
 
 ## 2. Not in the zip, and deliberately
 

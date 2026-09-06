@@ -7,6 +7,19 @@ The client and its WZ data in client\ are Nexon's; this payload exists so a mach
 can run files you own, not as a way to hand them to anyone else.
 
 
+BEFORE YOU START
+----------------
+
+This machine needs "Microsoft Visual C++ 2015-2022 Redistributable (x64)" -
+vc_redist.x64.exe from Microsoft. The launcher and the GameGuard stub both import
+VCRUNTIME140.dll from it. MapleStory itself does not, so having the game installed is
+not evidence that it is here; check for C:\Windows\System32\vcruntime140.dll. install.ps1
+stops with this message if it is missing rather than letting the launcher die at startup
+with a missing-DLL dialog.
+
+Nothing else is needed. No Rust, no .NET, no Python.
+
+
 INSTALL
 -------
 
@@ -34,6 +47,8 @@ Options worth knowing:
                                      it has not been told to trust
     -NoFirewall                      skip the outbound block rule (read the warning first)
     -NoAccount                       install without creating an account
+    -SkipRuntimeCheck                install without the Visual C++ runtime present. The
+                                     launcher will not start until you install it
 
 
 RUN

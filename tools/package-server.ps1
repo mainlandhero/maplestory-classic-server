@@ -30,9 +30,18 @@
     Measured after the change, the same binaries import only:
 
         KERNEL32  ADVAPI32  WS2_32  ntdll  bcrypt  bcryptprimitives
-        api-ms-win-core-synch-l1-2-0
+        api-ms-win-core-synch-l1-2-0    IPHLPAPI (login and world only)
 
-    Every one of those ships with Windows. Cost: about 120 KB per executable. SQLite was
+    Every one of those ships with Windows. That list is now ASSERTED by the check below
+    rather than eyeballed - it fails on any name not in it, in either direction, so a new
+    dependency cannot slip through the way IPHLPAPI did.
+
+    THE CLIENT SIDE IS A DIFFERENT STORY AND THE DIFFERENCE WAS MISSED. maplecw-launcher.exe
+    and grap64.dll both import VCRUNTIME140.dll, so a client machine DOES need the Visual C++
+    Redistributable. See docs\client-machine-checklist.md; tools\installer\install.ps1
+    refuses to install without it.
+
+    Cost: about 120 KB per executable. SQLite was
     never a problem - `rusqlite`'s `bundled` feature compiles it in - and everything else in
     the tree is pure Rust.
 
@@ -159,19 +168,53 @@ Copy-Item (Join-Path $here 'installer\SERVER-README.txt') $stage -Force
 # one command - where believing it costs a trip to the other machine to find out.
 Write-Host ''
 Write-Host 'checking the shipped binaries import nothing outside Windows...' -ForegroundColor Cyan
+
+# Every name here ships with Windows. The list is ASSERTED, not merely scanned for
+# known-bad names: the green line below claims "and nothing else", and a check that only
+# greps for VCRUNTIME cannot support that sentence - a new dependency on some DLL that is
+# not on a clean box would have sailed straight through it. Anything unlisted fails here,
+# named, which is the right place to decide whether it is safe to add.
+$WindowsDlls = @(
+    'kernel32.dll', 'advapi32.dll', 'ws2_32.dll', 'ntdll.dll',
+    'bcrypt.dll', 'bcryptprimitives.dll', 'iphlpapi.dll',
+    'api-ms-win-core-synch-l1-2-0.dll'
+)
 $bad = @()
 foreach ($b in $binaries) {
-    $imports = & python (Join-Path $here 'pe_imports.py') (Join-Path $stage "bin\$b") 2>&1 | Out-String
-    foreach ($forbidden in @('VCRUNTIME', 'api-ms-win-crt', 'MSVCP')) {
-        if ($imports -match $forbidden) { $bad += "$b imports $forbidden" }
+    # pe_import_dlls.py is stdlib-only ON PURPOSE. Its richer sibling pe_imports.py needs
+    # `pefile`, which is installed in WISP's per-user site-packages and is NOT visible to
+    # the elevated window this script is run from - so on 2026-09-06 this very step died
+    # with ModuleNotFoundError, after a full static build. `python -s tools/pe_imports.py`
+    # reproduces it without elevation.
+    $dlls = & python (Join-Path $here 'pe_import_dlls.py') (Join-Path $stage "bin\$b") 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        # A reader that failed must never read as a clean result. The old form captured
+        # stderr into the same variable it then searched for forbidden names, so a
+        # traceback contains no 'VCRUNTIME' and would have passed as proof of a clean
+        # binary had anything swallowed the error.
+        Write-Host ($dlls | Out-String) -ForegroundColor Red
+        Fail "could not read the imports of $b - the check did NOT run, so nothing here is verified"
+    }
+    foreach ($line in $dlls) {
+        $dll = ("$line".Split(' ')[0]).Trim().ToLower()
+        if (-not $dll) { continue }
+        if ($WindowsDlls -notcontains $dll) { $bad += "$b imports $dll" }
     }
 }
 if ($bad) {
-    Write-Host 'FAILED - these need the Visual C++ Redistributable on the target:' -ForegroundColor Red
-    $bad | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
-    Fail 'the static build did not take effect'
+    Write-Host 'FAILED - the shipped binaries import something a clean Windows box may not have:' -ForegroundColor Red
+    $bad | Sort-Object -Unique | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    if (($bad -join ' ') -match 'vcruntime|msvcp|api-ms-win-crt') {
+        Fail 'the static build did not take effect - these come from the Visual C++ Redistributable'
+    }
+    Fail @"
+an import outside the known-good list. If it really does ship with Windows, add it to
+`$WindowsDlls in this script and say why. If it does not, the target box needs it installed
+and this package is no longer self-contained.
+"@
 }
-Write-Host '  clean - KERNEL32, ADVAPI32, WS2_32, ntdll, bcrypt and nothing else' -ForegroundColor Green
+Write-Host ("  clean - {0}" -f ($WindowsDlls -join ', ')) -ForegroundColor Green
+Write-Host '  every one of those ships with Windows; nothing else is imported.' -ForegroundColor Green
 
 # ---------------------------------------------------------------- report
 $bytes = (Get-ChildItem $stage -Recurse -File | Measure-Object -Property Length -Sum).Sum
