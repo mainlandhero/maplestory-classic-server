@@ -248,6 +248,129 @@ impl Session {
     /// when it swings at empty air, and on 2026-08-19 it was also - wrongly - reported as
     /// proof that the client would not target our mobs at all. That claim came from combining
     /// two different sessions and is retracted; `research/mob-combat.md` §17.
+    /// **How many arrows this swing costs, and which stack they come from.**
+    ///
+    /// The owner, 2026-09-06: *"regular attacks or skills using bows/crossbows should consume
+    /// arrows from the use tab depending on the attack amount. for example double shot should
+    /// consume 2 arrows."* Until this, nothing did: `crate::firstjob` had carried
+    /// [`crate::firstjob::BulletDuty`] since 2026-08-28 - Arrow Blow `Consume(1)`, Double Shot
+    /// `Consume(2)`, Power Knockback none - and `on_attack` never read it. Built, not wired.
+    ///
+    /// # The rule
+    ///
+    /// * The character must be holding a **bow or a crossbow**; any other weapon costs no
+    ///   arrow whatever the packet says. Found by item class among the worn items, because
+    ///   only weapon ids classify (`WeaponClass::from_item_id`).
+    /// * A **skill** costs its `bulletConsume` - the column the client's own data carries for
+    ///   Arrow Blow (1) and Double Shot (2), read through `firstjob::server_obligation`. A
+    ///   skill with **no** bullet column costs nothing: Power Knockback is the bow swung as a
+    ///   club, and its row has no `bulletConsume` at any level. **[L]**
+    /// * A skill the data does not settle (`bulletCount` with no `bulletConsume`, or a skill
+    ///   outside the first-job book) costs **one on the shoot opcode and nothing on melee** -
+    ///   the plain-shot rule, and it is logged as [I] every time it fires.
+    /// * A **plain attack** costs one arrow on `0x00E0 USER_SHOOT_ATTACK` and nothing on the
+    ///   melee opcode. The client sends a bow's normal attack as a shoot. **[L]** for the
+    ///   opcode; the "one arrow" is the game's rule and is stated as such.
+    /// * Bows take **`2060xxx` arrows**, crossbows **`2061xxx`** - `gm-handbook/items.txt`
+    ///   names them *"Arrows for Bows"* / *"Arrows for Crossbows"*. The lowest Use-tab slot
+    ///   holding a matching stack is drained first; a stack short of the cost gives what it
+    ///   has and the remainder comes out of the next.
+    ///
+    /// # What the packet does NOT carry
+    ///
+    /// No field of the 33-field attack header is a bullet slot (`net::attack::AttackHeader`,
+    /// every field read and most of them constant across 434 captures), so the server picks
+    /// the stack rather than being told. That is a decision and it is written down as one.
+    ///
+    /// # It never refuses
+    ///
+    /// The arrow has already flown on the shooter's screen. No matching stack, or not enough,
+    /// is a log line and a smaller deduction, never a rejected swing - the client will not
+    /// fire without arrows in the first place, so a shortfall here is the two ends
+    /// disagreeing about a count, which the `0x0070` sent for what *was* taken then repairs.
+    fn spend_attack_arrows(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
+        use crate::damage::WeaponClass;
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Ok(parsed) = net::attack::parse(opcode, payload) else { return Vec::new() };
+
+        // The weapon in hand decides everything else.
+        let held = self
+            .store
+            .equipped_items(chr.id)
+            .unwrap_or_default()
+            .iter()
+            .find_map(|e| WeaponClass::from_item_id(e.item_id));
+        let arrow_range = match held {
+            Some(WeaponClass::Bow) => 2_060_000..=2_060_999,
+            Some(WeaponClass::Crossbow) => 2_061_000..=2_061_999,
+            _ => return Vec::new(),
+        };
+
+        let shooting = opcode == net::combat::USER_SHOOT_ATTACK;
+        let (cost, why): (u32, String) = match parsed.skill() {
+            None => (u32::from(shooting), "a plain shot".to_string()),
+            Some((skill_id, _)) => match crate::firstjob::server_obligation(skill_id).map(|o| o.bullets) {
+                Some(crate::firstjob::BulletDuty::Consume(n)) => {
+                    (n, format!("skill {skill_id}: bulletConsume {n} [L]"))
+                }
+                Some(crate::firstjob::BulletDuty::None) => {
+                    (0, format!("skill {skill_id}: no bullet column - the bow swung, not fired [L]"))
+                }
+                Some(crate::firstjob::BulletDuty::ProjectilesNoConsumeColumn(fired)) => (
+                    u32::from(shooting),
+                    format!(
+                        "skill {skill_id}: fires {fired} but the data has no bulletConsume; \
+                         charging the plain-shot rule [I]"
+                    ),
+                ),
+                None => (
+                    u32::from(shooting),
+                    format!("skill {skill_id}: not in the first-job book; plain-shot rule [I]"),
+                ),
+            },
+        };
+        if cost == 0 {
+            return Vec::new();
+        }
+
+        // Lowest matching stack first, draining across stacks if one is short.
+        let Ok(stacks) = self.store.bag_items(chr.id, store::InventoryType::Use) else {
+            return Vec::new();
+        };
+        let mut remaining = cost;
+        let mut out = Vec::new();
+        let mut taken_from = Vec::new();
+        for row in stacks.iter().filter(|r| arrow_range.contains(&r.item.item_id)) {
+            if remaining == 0 {
+                break;
+            }
+            let held = u32::from(row.item.kind.quantity());
+            if held == 0 {
+                continue;
+            }
+            let take = remaining.min(held);
+            let take_u16 = u16::try_from(take).unwrap_or(u16::MAX);
+            if let Err(e) = self.store.remove_item(chr.id, store::InventoryType::Use, row.slot, Some(take_u16)) {
+                crate::server::log(&format!(
+                    "   arrows: could not take {take} from Use slot {} for {why}: {e}",
+                    row.slot
+                ));
+                break;
+            }
+            let left = u16::try_from(held - take).unwrap_or(0);
+            out.extend(self.stack_change_replies(store::InventoryType::Use, row.slot, left));
+            taken_from.push(format!("slot {} ({} -> {left})", row.slot, held));
+            remaining -= take;
+        }
+        crate::server::log(&format!(
+            "   arrows: {} of {cost} taken for {why} - {}{}",
+            cost - remaining,
+            if taken_from.is_empty() { "NO matching arrow stack in the Use tab".to_string() } else { taken_from.join(", ") },
+            if remaining > 0 && !taken_from.is_empty() { format!("; SHORT by {remaining}, swing not refused") } else { String::new() }
+        ));
+        out
+    }
+
     pub(super) fn on_attack(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
         let Ok(attack) = net::combat::parse_attack(payload) else {
             return Vec::new();
@@ -273,6 +396,9 @@ impl Session {
         // computed its damage; rejecting the swing here would desynchronise the very thing
         // this is fixing. If the MP does not cover it we spend what there is and say so.
         let mut out = self.spend_attack_mp(opcode, payload);
+        // **And the arrows it cost.** Same rule as the MP: the shot has already left the
+        // bow on screen, so the server takes the arrows it owes and never refuses the swing.
+        out.extend(self.spend_attack_arrows(opcode, payload));
         // **The only coordinate pair this server reads from the client.** The attack body
         // carries the player's own position (fields 13/14), which is how the zero-target
         // captures were paired against mob positions in `research/mob-target-gates.md` §1.

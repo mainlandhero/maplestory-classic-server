@@ -1401,6 +1401,152 @@ fn a_row_index_naming_the_wrong_item_is_refused() {
 }
 
 /// Current MP straight out of the database, by character id. (`mp_of` is taken.)
+// ---------------------------------------------------------------------------------------
+// Arrows. The owner, 2026-09-06: "regular attacks or skills using bows/crossbows should consume
+// arrows from the use tab depending on the attack amount. for example double shot should
+// consume 2 arrows."
+// ---------------------------------------------------------------------------------------
+
+/// A level-1 archer holding `weapon` with `arrows` x `count` in Use slot 1, and the skills of
+/// the Bowman book granted. `None` when the generated skill table is absent (gitignored).
+fn archer_with(weapon: u32, arrows: u32, count: u16) -> Option<(Arc<Store>, Session, u32)> {
+    let skills = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !skills.exists() {
+        return None; // python tools/dump_skills.py
+    }
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+    let chr = net::opcode::Character { name: "Robin".to_string(), ..Default::default() };
+    let mut made = store.create_character(account_id, 0, &chr).unwrap();
+    made.job = 300;
+    made.mp = 200;
+    made.max_mp = 200;
+    store.save_character_progress(&made).unwrap();
+    for skill in [3_001_001u32, 3_001_002, 3_001_003] {
+        store.set_skill_level(made.id, skill, 1).unwrap();
+    }
+    // The weapon goes into the Equip bag and then onto the weapon slot (11), the way the
+    // client's drag does it; nothing here auto-equips.
+    store.add_item(made.id, store::InventoryType::Equip, &store::Item::equip(weapon), 1).unwrap();
+    store.equip_from_bag(made.id, 1, 11).unwrap();
+    if count > 0 {
+        store
+            .add_item(made.id, store::InventoryType::Use, &store::Item::bundle(arrows, count), 1000)
+            .unwrap();
+    }
+    store.create_migration(account_id, made.id, 0, 0).unwrap();
+    let config = Config {
+        set_field_probe: true,
+        firstjob: crate::firstjob::CombatTable::load(skills),
+        ..Config::default()
+    };
+    let mut s = Session::new(store.clone(), Arc::new(config));
+    s.claim_for_character(made.id);
+    Some((store, s, made.id))
+}
+
+/// The captured swing from `an_attack_skill_costs_mp_and_a_potion_does_not_undo_it`, with
+/// `skill` and level 1 patched into body offsets 2 and 6, behind `opcode`.
+fn swing_packet(opcode: u16, skill: u32) -> Vec<u8> {
+    const SWING: &str = concat!(
+        "0000000000000000000000000000000000050000009fae34080104000000e6a81f08f7018b0100000000f7018b010000",
+        "0000000000000000000000000000000000000000000000000100000001000000000a0055736572204d656c6565890100",
+        "000000000000000000000000000000000000000000000000000080e8da8f00",
+    );
+    let hex: String = SWING.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut payload: Vec<u8> =
+        (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+    payload[2..6].copy_from_slice(&skill.to_le_bytes());
+    payload[6] = if skill == 0 { 0 } else { 1 };
+    assert!(net::attack::parse(opcode, &payload).is_ok(), "the patched body must still parse");
+    let mut body = opcode.to_le_bytes().to_vec();
+    body.extend_from_slice(&payload);
+    body
+}
+
+/// How many arrows sit in Use slot 1, or 0 when the slot is empty.
+fn arrows_in_slot_1(store: &Arc<Store>, id: u32) -> u16 {
+    store
+        .bag_items(id, store::InventoryType::Use)
+        .unwrap()
+        .iter()
+        .find(|r| r.slot == 1)
+        .map(|r| r.item.kind.quantity())
+        .unwrap_or(0)
+}
+
+const BOW: u32 = 1_452_000;
+const CROSSBOW: u32 = 1_462_000;
+const BOW_ARROWS: u32 = 2_060_000;
+const CROSSBOW_ARROWS: u32 = 2_061_000;
+
+#[test]
+fn a_plain_shot_with_a_bow_takes_one_arrow_and_tells_the_client() {
+    let Some((store, mut s, id)) = archer_with(BOW, BOW_ARROWS, 50) else { return };
+    let out = s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 49);
+    let qty = out
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+        .expect("a 0x0070 must carry the new stack size, or the client's count drifts");
+    assert_eq!(qty.body[7], net::inventory::MODE_QUANTITY, "mode 1: the stack shrank, it is not empty");
+}
+
+#[test]
+fn double_shot_takes_two_arrows_arrow_blow_one() {
+    let Some((store, mut s, id)) = archer_with(BOW, BOW_ARROWS, 50) else { return };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_001_002));
+    assert_eq!(arrows_in_slot_1(&store, id), 48, "Double Shot: bulletConsume 2");
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_001_001));
+    assert_eq!(arrows_in_slot_1(&store, id), 47, "Arrow Blow: bulletConsume 1");
+}
+
+#[test]
+fn power_knockback_and_a_melee_swing_with_a_bow_take_no_arrow() {
+    let Some((store, mut s, id)) = archer_with(BOW, BOW_ARROWS, 50) else { return };
+    // Power Knockback is the bow swung as a club: no bullet column at any level.
+    s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 3_001_003));
+    assert_eq!(arrows_in_slot_1(&store, id), 50);
+    // And a plain melee swing while holding a bow fires nothing either.
+    s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 50);
+}
+
+#[test]
+fn a_crossbow_takes_crossbow_arrows_and_ignores_bow_arrows() {
+    let Some((store, mut s, id)) = archer_with(CROSSBOW, BOW_ARROWS, 50) else { return };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 50, "2060xxx are for bows; a crossbow leaves them alone");
+    let Some((store, mut s, id)) = archer_with(CROSSBOW, CROSSBOW_ARROWS, 50) else { return };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 49);
+}
+
+#[test]
+fn the_last_arrow_empties_the_slot_with_a_remove_and_a_quiver_short_of_two_is_not_refused() {
+    let Some((store, mut s, id)) = archer_with(BOW, BOW_ARROWS, 1) else { return };
+    // Double Shot wants 2; there is 1. The swing is not refused, the one is taken, and the
+    // slot is reported EMPTY (mode 3), not "down to 0".
+    let out = s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_001_002));
+    assert_eq!(arrows_in_slot_1(&store, id), 0);
+    let op = out
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+        .expect("the emptied slot must be reported");
+    assert_eq!(op.body[7], net::inventory::MODE_REMOVE);
+    // With no arrows at all the swing still goes through and nothing is sent about a bag.
+    let out = s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
+}
+
+#[test]
+fn a_sword_never_costs_an_arrow_however_the_packet_is_labelled() {
+    let Some((store, mut s, id)) = archer_with(1_302_000, BOW_ARROWS, 50) else { return };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_001_002));
+    assert_eq!(arrows_in_slot_1(&store, id), 50);
+}
+
 fn stored_mp(store: &Arc<Store>, id: u32) -> u32 {
     store
         .characters_for(1, 0)

@@ -180,6 +180,30 @@ both built, tested, and exercised against the shipped binaries:
   fills. Full chain and two decoys: `research/party-result-0x00A5.md` §12.
   **Unseen still:** the invite dialog itself, and every one of the seven above on a screen. T14.
 
+* **Archer audit, 2026-09-06.** The owner: *"regular attacks or skills using bows/crossbows should
+  consume arrows from the use tab depending on the attack amount ... double shot should
+  consume 2 arrows, and power knockback should knock back the mob considerably."* Findings:
+  - **Arrows were never taken.** `firstjob.rs` had carried the rule since 08-28 - Arrow Blow
+    `bulletConsume 1`, Double Shot `2`, Power Knockback none - and `on_attack` never read it:
+    built, not wired. Now wired: a normal shot 1, Arrow Blow 1, Double Shot 2, Power Knockback
+    0, bows from `2060xxx`, crossbows from `2061xxx`, lowest matching Use-tab stack first, the
+    new count sent as a `0x0070`, a shortfall logged and the swing **never refused**. The
+    attack header has no bullet-slot field (all 33 read, most constant across 434 captures),
+    so the server picks the stack. Six tests over the real captured swing.
+  - **Power Knockback's push is the client's, not the server's.** `research/mob-hit-reaction.md`:
+    the flinch and knockback are produced locally by the client that both swings and holds the
+    mob, and no packet the server sends produces them. The distance is the skill's own
+    `range` column - **130 px at level 1 to 150 at 15**, the tooltip's *"knockback N enemies
+    by 130"* ([L]) - against a normal hit's short shove. What the server owes is control, and
+    it hands it to whoever hits, so on a mob the other client drove the first hit transfers and
+    the second pushes. MP (12 → 8) is already spent. Nothing to build; two things to watch.
+  - **The rest of the book:** Critical Shot and The Eye of Amazon are client-side passives
+    (the critical flag arrives inbound); **Focus is acknowledged and NOT granted** - its two
+    stat bits (Accuracy, Avoidability) are unmeasured, the same gap Iron Body has.
+  - **Not covered:** second-job archer skills have no cast handlers at all (Arrow Bomb's
+    `noBulletConsume 1`, Soul Arrow's free shots, Strafe's `bulletCount 3` are read but
+    unused). `research/archer-audit-2026-09-06.md`. T15.
+
 * **The launcher remembers the game folder.** The owner, 2026-09-05: *"does our launcher save
   whatever the user set it to upon subsequent starts? Setting it every time is going to be
   very frustrating for users."* It did not - Browse and a typed path changed the running
@@ -225,6 +249,7 @@ which on screen is indistinguishable from absent.
 | remote `move_action` / facing, foothold, seat index | all landed 2026-09-04 after the last run |
 | **EXP shares to other players** | wired 2026-08-29 and **never executed on a wire either**: 329 kill-EXP lines in the archive, zero carrying a damage fraction. Nobody has ever killed a mob together |
 | return scrolls, `!npcreload`, Phil routing Beginners to their instructor | wired since 2026-08-29 |
+| **arrows leave the Use tab** | 2026-09-06. A normal shot 1, Arrow Blow 1, Double Shot 2, Power Knockback 0; bows take `2060xxx`, crossbows `2061xxx`; never refuses. Six tests over real captured swings; not yet watched |
 
 ### What is blocked, and on what
 

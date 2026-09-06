@@ -120,6 +120,19 @@
     has killed this client three times: DROPPING MESOS. Try it and read the inbound opcode off
     world.log (or report that none appears) - that one measurement is all it needs.
 
+    T15 (2026-09-06). ARCHER AUDIT. Arrows were never taken - the rule sat in firstjob.rs since
+    08-28 and on_attack never read it. Now: with a bow or crossbow worn, a normal shot takes 1
+    arrow from the lowest matching Use-tab stack (2060xxx for a bow, 2061xxx for a crossbow),
+    Arrow Blow 1, Double Shot 2 (their bulletConsume column, [L]), Power Knockback 0 (no bullet
+    column; the bow is swung). The stack size comes back as a 0x0070, mode 1, or mode 3 when it
+    empties. A shortfall is logged and the swing is NEVER refused. Read the count off the Use
+    tab. Power Knockback's push is produced by the CLIENT from the skill's own `range` (130 px
+    at level 1, 150 at 15 - the tooltip's "knockback N enemies by 130") and, like every hit
+    reaction, only on the screen of the client that controls the mob; the server hands control
+    to whoever hits, so on a mob the other client was driving the first hit transfers it and
+    the second pushes. Say how far it flies next to a normal hit and whether the other client's
+    screen shows the same landing spot. MP for all three is spent server-side already.
+
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
     one "served as NOBODY - REFUSED" line in login.log about half a second before the served
@@ -1675,6 +1688,14 @@ function Show-TestPlan {
         Write-Host '       party forming, and follow their HP when a mob hits them or they'
         Write-Host '       drink a potion. Also say whether the small bar OVER THEIR HEAD moves.'
         Write-Host '       Blank bar = the packet did not draw; that is the finding.'
+        Write-Host '    0e. ARCHER AUDIT (2026-09-06). Wear a bow, arrows in the Use tab.'
+        Write-Host '       Normal shot: the stack drops by 1. DOUBLE SHOT: by 2. ARROW BLOW: 1.'
+        Write-Host '       POWER KNOCKBACK: by 0 (the bow is swung, not fired). Read the count'
+        Write-Host '       off the Use tab, not the shot animation. A crossbow uses 2061xxx.'
+        Write-Host '       POWER KNOCKBACK''s push is the CLIENT''s (range 130 px at level 1) and'
+        Write-Host '       only plays when YOU control the mob: on a mob the other client was'
+        Write-Host '       driving, the FIRST hit hands it over and the SECOND pushes. Say how'
+        Write-Host '       far it flies next to a normal hit, and whether the other screen agrees.'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'

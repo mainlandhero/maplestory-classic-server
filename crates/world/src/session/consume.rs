@@ -318,7 +318,11 @@ impl Session {
     }
 
     /// Tell the client what the Use tab looks like now: one fewer, or the slot emptied.
-    fn stack_change_replies(
+    ///
+    /// `pub(super)` because the arrow consumption in `session::combat` sends the same two
+    /// shapes for the same reason, and a second copy is a second place to send mode 3 for a
+    /// partial take.
+    pub(super) fn stack_change_replies(
         &self,
         inv: store::InventoryType,
         slot: u16,
