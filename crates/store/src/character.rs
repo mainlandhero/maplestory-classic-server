@@ -665,6 +665,37 @@ impl Store {
             )
             .optional()?)
     }
+
+    /// Name, job and level of one character, for a party seat. `None` when there is no
+    /// such character. The level is as last saved; a member's own session holds the live
+    /// value, and the world prefers that when it has it.
+    pub fn character_brief(&self, character_id: u32) -> Result<Option<CharacterBrief>> {
+        use rusqlite::OptionalExtension as _;
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT name, job, level FROM characters WHERE id = ?1",
+                rusqlite::params![character_id],
+                |row| {
+                    Ok(CharacterBrief {
+                        id: character_id,
+                        name: row.get(0)?,
+                        job: row.get(1)?,
+                        level: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+}
+
+/// What a party seat needs to know about a character who is not on this connection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterBrief {
+    pub id: u32,
+    pub name: String,
+    pub job: u32,
+    pub level: u32,
 }
 
 #[cfg(test)]

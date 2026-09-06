@@ -693,10 +693,19 @@ mod tests {
         assert_eq!(&notify.body[5..9], &party.to_le_bytes(), "field 2: the party id");
 
         let joined = invitee.run_party_request(ids[1], crate::party::Request::Accept { party });
-        assert!(
-            joined.iter().any(|r| r.body[0] == net::party::result::JOIN),
-            "the joiner is told: {joined:?}"
-        );
+        let join = joined
+            .iter()
+            .find(|r| r.body[0] == net::party::result::JOIN)
+            .unwrap_or_else(|| panic!("the joiner is told: {joined:?}"));
+        // **The name alone killed both clients on 2026-09-05.** After the name comes the
+        // six-seat PARTYBLOCK: with two seats occupied that is well over 300 bytes, and the
+        // block's first field - the party id - sits right after the name's bytes.
+        let name_end = 1 + 2 + usize::from(u16::from_le_bytes([join.body[1], join.body[2]]));
+        assert_eq!(&join.body[name_end..name_end + 4], &party.to_le_bytes(), "{:02x?}", join.body);
+        assert!(join.body.len() > 300, "a 0x13 must carry the PARTYBLOCK: {} bytes", join.body.len());
+        // And both occupied seats name real characters, in order: leader, then joiner.
+        let seats = &join.body[name_end + 5..];
+        assert_eq!(&seats[0..4], &ids[0].to_le_bytes(), "seat 0 is the leader");
         let mail = leader.tick(3_000);
         assert!(
             mail.iter().any(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::JOIN),

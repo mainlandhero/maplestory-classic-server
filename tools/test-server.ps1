@@ -78,22 +78,26 @@
 
     ============ WHAT THIS RUN IS FOR ============
 
-    T14 (2026-09-05, after the two-client run). CHAT AND PARTY INVITE. Chat: a line typed on
-    one client draws the balloon and the chat-log line on the OTHER client - `say_out_loud`
-    was a local echo written before the bus existed, and each client saw only its own line.
-    Party: leader Create, Invite by name. The leader must read "You have invited '<name>' to
-    your party." (0x1B outcome 0, [L]) instead of "unknown error"; the TARGET gets the 0x03
-    invite dialog for the first time ever - its six fields are [L] in shape and fields 3-6
-    are [I] in meaning (sent: inviter name, level, job, 0), so what the dialog draws is the
-    measurement. ACCEPT: both clients read "has joined the party" (0x13, [L]); whether the
-    window's member list refreshes on that is NOT established - say. DECLINE: the two dialog
-    buttons' answer bytes are unmeasured, so anything but the auto-decline value 1 is treated
-    as accept for now; world.log prints "0x0183 invite answer ... answer=N raw=..." either
-    way, and N from a Decline click is the constant that fixes it. TIMEOUT: invites lapse
-    server-side after 60 s (the client fades the dialog at about 30 s, and the server used to
-    wait forever, refusing every re-invite as "already invited"). Invite, leave the dialog
-    alone for about a minute, invite the same character again: it must go through, and
-    world.log prints "party: invite to character ... LAPSED after".
+    T14 (2026-09-05, revised the same evening). CHAT AND PARTY INVITE. The evening run: the
+    invite went out and BOTH CLIENTS DIED. Two things were wrong, both now fixed and both
+    unit-tested against the client's own reader. (1) 0x13 "joined" went out as the joiner's
+    name alone; the client reads a six-seat PARTYBLOCK after the name, ran off the end, threw,
+    reported the packet back in 0x009E and closed its socket - both clients, the same stacks.
+    (2) The first 0x0183 ever decoded arrived 1 ms after the 0x03 with answer 0: that is the
+    client's own "dialog opening" acknowledgement, sent by its 0x03 handler before any click,
+    and the server took it for an accept. The answer byte is the 0x1B outcome numbering, read
+    off the client's code: 0 received, 1 blocking, 2 busy, 3 already invited (all sent by the
+    handler, no dialog), 4 the Decline button, 5 the Accept button (4/5 [D], the rest [L]).
+    Fixture: research/fixtures/party-join-0x13-rejected-by-client-0x009E-*.
+    This run: CHAT - a line typed on one client draws the balloon and the log line on the
+    OTHER. PARTY - leader Create, Invite by name; leader reads "You have invited"; the TARGET
+    gets a dialog that STAYS until clicked (say what it shows: name? level? job?), and nobody
+    joins before a click - a party window already listing the target means answer 0 is still
+    being acted on. ACCEPT - both read "has joined the party" and both party windows list
+    both members; the block is what draws them, so a client dying HERE means the block is
+    wrong: stop and keep the logs. DECLINE on a fresh invite - leader reads "has denied the
+    party request", nobody joins. TIMEOUT - invite, leave the dialog alone about a minute,
+    invite the same character again: it must go through; world.log prints "LAPSED".
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
@@ -1613,20 +1617,25 @@ function Show-TestPlan {
         Write-Host '       world.log for "REFUSED the migration" - that is the on-box'
         Write-Host '       attestation failing, it is a finding, and -BindMigrations never'
         Write-Host '       gets you playing while it is looked at.'
-        Write-Host '    0b. CHAT AND PARTY INVITE (fixed 2026-09-05 after the two-client run).'
-        Write-Host '       CHAT: type on one client, the OTHER client shows the balloon over'
-        Write-Host '       that character and the chat-log line. Before: each saw only its own.'
-        Write-Host '       PARTY: leader Create, then Invite by name. Leader should now read'
-        Write-Host '       "You have invited <name> to your party." (not "unknown error"), and'
-        Write-Host '       the TARGET should get an invite DIALOG - first time ever; fields 3-6'
-        Write-Host '       of it are inferred, so say what it displays (name? level? job?).'
-        Write-Host '       Click ACCEPT: both should read "has joined the party"; whether the'
-        Write-Host '       member LIST refreshes is unknown - say. A DECLINE click is treated as'
-        Write-Host '       accept for now (the two button values are unmeasured): world.log'
-        Write-Host '       prints "0x0183 invite answer ... answer=N" - that N is what fixes it.'
-        Write-Host '       TIMEOUT (new): invite, leave the dialog ALONE about a minute, then'
-        Write-Host '       invite the SAME character again. It must go through - it used to'
-        Write-Host '       be "already invited" forever. world.log: "invite ... LAPSED".'
+        Write-Host '    0b. CHAT AND PARTY INVITE. The 2026-09-05 evening run: the invite went'
+        Write-Host '       out and BOTH CLIENTS DIED - the "joined" packet was sent without its'
+        Write-Host '       party block, each client threw, reported it back (0x009E) and hung'
+        Write-Host '       up. Fixed: 0x13 now carries the six-seat block. And the first 0x0183'
+        Write-Host '       ever decoded was the client saying "dialog opening", not a click -'
+        Write-Host '       the server took it for an accept. The button values are now read'
+        Write-Host '       off the client: 5 accept, 4 decline. So, this run:'
+        Write-Host '       CHAT: type on one client, the OTHER shows the balloon and the log line.'
+        Write-Host '       PARTY: leader Create, Invite by name. Leader: "You have invited".'
+        Write-Host '       TARGET: an invite dialog that STAYS until you click. Say what it shows'
+        Write-Host '       (name? level? job?). Nobody joins before a click - if the party'
+        Write-Host '       window already lists the target, answer 0 is still being acted on.'
+        Write-Host '       ACCEPT: both read "has joined the party" and BOTH party windows list'
+        Write-Host '       both members - the block is what draws them. A client dying here'
+        Write-Host '       means the block is wrong: STOP and keep the logs.'
+        Write-Host '       DECLINE (fresh invite): leader reads "has denied the party request",'
+        Write-Host '       nobody joins.'
+        Write-Host '       TIMEOUT: invite, leave the dialog ALONE about a minute, then invite'
+        Write-Host '       the SAME character again. It must go through. world.log: "LAPSED".'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'

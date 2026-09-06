@@ -113,14 +113,34 @@ both built, tested, and exercised against the shipped binaries:
 
 * **After the first enforced two-client run** (both clients entered the world - the on-box
   binding held on a real channel socket): **chat now reaches the other client** - `say_out_loud`
-  was a local echo written before the bus and never revisited - and **the party invite is
-  answered properly**: the leader gets `0x1B` outcome 0 *"You have invited '%s'"* ([L]; it was
-  `UNKNOWN_ERROR` because the body was undecoded), the target is handed the `0x03` that opens
-  the invite dialog (shape [L], fields 3-6 [I]: inviter name, level, job, 0), and `0x0183` is
-  read as `{op, answer, value}` with `value` the party id: answer `1` (the measured auto-decline)
-  declines, anything else is treated as accept **until a Decline click's byte is read off
-  `world.log`**. A join sends `0x13` to every member; whether the member list refreshes on it is
-  the next run's measurement. T14.
+  was a local echo written before the bus and never revisited - and the party invite is
+  answered with what the client understands: the leader gets `0x1B` outcome 0 *"You have
+  invited '%s'"* ([L]; it was `UNKNOWN_ERROR` because the body was undecoded) and the target
+  is handed the `0x03` that opens the invite dialog (shape [L], fields 3-6 [I]).
+
+* **The evening run of 2026-09-05: one Invite killed both clients.** The owner: *"The act of
+  inviting someone to party crashed both clients."* Two mistakes, one launch, both settled from
+  the logs and the listing with no second launch:
+  1. **`0x13` went out as the joiner's name and nothing else.** The client reads a six-seat
+     `PARTYBLOCK` after the name (`research/party-result-0x00A5.md` §5.2 had said so since
+     09-04; the builder said `str`). Each client read a party id out of bytes that were not
+     there, ran off the body, threw three C++ exceptions with identical stacks, **reported the
+     packet back in `0x009E CLIENT_PACKET_REJECTED`** - body `a5 00 13 07 00 "Tester2"`, the
+     exact bytes - and closed its own socket. `net::party::PartyBlock` now follows the name;
+     the size identity and the first real capture are tests.
+  2. **The first `0x0183` ever decoded was not a click.** It arrived **1 ms** after the `0x03`
+     with answer 0, and *"anything but 1 is an accept"* turned it into a join nobody had
+     agreed to - which is what sent the fatal `0x13`. `tools/listing.py` over the `0x03` arm
+     and the two dialog callbacks: **the handler answers 0..=3 itself, immediately** (0 = the
+     dialog is opening; 1 blocking, 2 busy, 3 already invited - no dialog), and the buttons
+     send **4 = Decline, 5 = Accept** later. Every value but 5 is the `0x1B` outcome the leader
+     is shown for it; 5 is the one that table leaves silent. [L] for the paths and constants,
+     [D] for which button is which. `net::party::invite_answer`; the world relays 1-4 to the
+     leader as their own sentence and does nothing at all for 0.
+  Fixture: `research/fixtures/party-join-0x13-rejected-by-client-0x009E-both-clients-exit-*`.
+  **Unseen still:** the dialog itself (it was constructed - the handler took 1.6 ms and
+  answered 0 - and died with the client three seconds later), whether Accept refreshes both
+  windows, and the whole flow end to end. T14, rewritten.
 
 * **The launcher remembers the game folder.** The owner, 2026-09-05: *"does our launcher save
   whatever the user set it to upon subsequent starts? Setting it every time is going to be
@@ -173,10 +193,10 @@ which on screen is indistinguishable from absent.
 | | |
 |---|---|
 | **the heap corruption** | `0xC0000374`, **17 distinct fault events** across ~16 archived runs (4 with dumps), deduplicated on `(timestamp, code, address)`. The damaged word is the identical `0x0000000100000020` every time. **The writer is still not found.** This is what ends a long session - the 2026-09-03 two-client death was at **371 s** of client life - and it is the one thing standing between "two players can play" and "two players can play for an hour". `research/heap-corruption-2026-08-27.md`. Do **not** pass `-HeapFix`: it armed, it held, the client died anyway, and every dump taken with it on is unusable for the free-list argument. *(Only 3 of the 17 sit in a log carrying an `ARMING` line, so client-age-at-death is measurable for 3; "never under ~192 s" is the 2026-09-03 figure and is `UNVERIFIED 2026-09-04` here - one of the three is a 7.9 s instance-guard experiment.)* |
-| **party invite → a party anyone can join** | no longer blocked on the body: since 2026-09-05 the `0x00A5` outcome (`0x1B`) and invite-dialog (`0x03`) shapes are decoded and the leader is told *"You have invited"*. What is left is a screen: the target's dialog has never been drawn, whether Accept refreshes the member list is unknown, and the Decline button's `0x0183` byte is unread, so Decline currently **joins**. `research/party-result-0x00A5.md` |
+| **party invite → a party anyone can join** | not blocked, unseen. The `0x1B` outcome, the `0x03` dialog and the `0x13` join-with-block are all decoded [L] and on the wire; the one wire test of `0x13` (2026-09-05 evening) went out **without** the block and killed both clients, and the fix has been in front of a test but not a client. What is left is a screen: the dialog, Accept refreshing both windows, Decline reading as "denied". `research/party-result-0x00A5.md` §10 |
 | **trade and chat rooms** | both are `CMiniRoom`, a subsystem this server has never touched. The client declines **locally and sends no packet at all** - checked the documented way, by grepping `research/msexe-send-opcodes.txt` for the builder rather than eyeballing the tail. There is nothing here to answer; it is a whole feature that does not exist |
 | party pick-up rights | `action 2` is not routed - `crate::party::Request` has no variant for it |
-| `0x0183` accept/decline | read as `{op, answer, value}` since 2026-09-05, `value` the party id. Answer `1` is the measured auto-decline (the dialog timing out on the client); **the Decline button's byte is unmeasured**, so a Decline click currently joins. One click and one `world.log` line (`0x0183 invite answer ... answer=N`) fixes it. Server-side, an invite now lapses after 60 s so a faded dialog no longer blocks a re-invite - unwatched |
+| `0x0183` accept/decline | **settled from the listing, 2026-09-05 evening**, not blocked. The answer byte is the `0x1B` outcome numbering: the `0x03` handler itself sends 0 (dialog opening), 1 (blocking), 2 (busy) or 3 (already invited) before any click, and the buttons send 4 Decline / 5 Accept. The slot order is [L] from the first capture. `net::party::invite_answer`. Unwatched on a screen: a click of each button, and a faded dialog followed by a re-invite (invites lapse server-side after 60 s) |
 | second-job skill casts | none of the 66 has a cast handler. `firstjob.rs` is the shape it wants |
 | the keyboard layout | not saved because **nothing has ever tried** - neither opcode is known, on either half. `research/keymap-not-saved.md` |
 
@@ -190,11 +210,13 @@ which on screen is indistinguishable from absent.
    *"N/M of the damage"* onto a non-majority cut; the archive holds **329** `exp from a kill`
    lines and **zero** with a fraction in them, so the EXP-sharing path - built 2026-08-29,
    the reason `broadcast.rs` exists at all - has never executed on a wire. Same launch as (1).
-3. **Watch the party invite land.** The `0x00A5` bodies are decoded (2026-09-05) and the
-   leader reads *"You have invited"*; unseen are the target's dialog, whether Accept refreshes
-   the member list, and the Decline button's `0x0183` byte, which one click reads off
-   `world.log`. Invites lapse after 60 s server-side now, so a dialog left to fade no longer
-   blocks a re-invite - also unwatched. T14, same launch as (1) and (2).
+3. **Watch the party invite land, this time with the block.** The evening run's Invite
+   killed both clients (a `0x13` with no `PARTYBLOCK`, sent because the client's "dialog
+   opening" acknowledgement was taken for an accept); both are fixed and unit-tested against
+   the client's reader, and neither fix has been in front of a client. Unseen: the dialog,
+   Accept drawing both members in both windows, Decline reading as "denied", and a faded
+   dialog followed by a re-invite. **A client dying on Accept now means the block is wrong** -
+   stop and keep the logs. T14, same launch as (1) and (2).
 4. **`0x0184` and `0x0194`**, which arrive unanswered at field entry, twice each, once per
    client - `FUN_142defbc0` and `FUN_142defc50`, adjacent builders 0x90 apart, and `0x0184`
    sits between the two party opcodes this server *does* answer. If either is *"tell me my

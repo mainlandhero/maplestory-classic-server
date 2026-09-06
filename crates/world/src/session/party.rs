@@ -212,18 +212,29 @@ impl super::Session {
                 // decline, gets code 0x17 - an arm inside the epilogue that shows nothing [L] -
                 // because an unanswered 0x0183 is a packet nobody has measured the client
                 // surviving, and UNKNOWN_ERROR would print a lie.
-                Effect::InviteDropped { party, target } => {
+                Effect::InviteDropped { party, target, reason } => {
                     let target_name = self.name_of(*target);
                     if let Some(leader) = self.fields.parties().party(*party).map(|p| p.leader) {
+                        // The invitee's client named the outcome; the leader is shown that
+                        // sentence and no other. `research/party-result-0x00A5.md` §5.7.
+                        use crate::party::DeclineReason;
+                        use net::party::invite_outcome as oc;
+                        let (code, sentence) = match reason {
+                            DeclineReason::Refused => (oc::DENIED, "has denied the party request"),
+                            DeclineReason::Blocking => {
+                                (oc::BLOCKING, "is currently blocking any party invitations")
+                            }
+                            DeclineReason::Busy => (oc::BUSY, "is taking care of another invitation"),
+                            DeclineReason::AlreadyInvited => {
+                                (oc::ALREADY_INVITED, "- you have already invited them")
+                            }
+                        };
                         let denied = Reply {
                             opcode: net::party::PARTY_RESULT,
-                            body: net::party::invite_outcome(
-                                net::party::invite_outcome::DENIED,
-                                &target_name,
-                            ),
+                            body: net::party::invite_outcome(code, &target_name),
                             what: format!(
-                                "PartyResult INVITE OUTCOME 4 to character {leader}: \"{target_name} \
-                                 has denied the party request.\" [L]"
+                                "PartyResult INVITE OUTCOME {code} to character {leader}: \
+                                 \"{target_name} {sentence}.\" [L]"
                             ),
                         };
                         self.deliver(leader, actor, denied, &mut out);
@@ -241,24 +252,28 @@ impl super::Session {
                         }
                     }
                 }
-                // Everyone in the party, the joiner included, gets 0x13 with the joiner's name:
-                // "'%s' has joined the party." / "You have joined the party." [L] shape. Whether
-                // the window's member list refreshes on it is NOT established - the next run says.
+                // Everyone in the party, the joiner included, gets 0x13: the joiner's name and
+                // then the WHOLE PARTYBLOCK - "'%s' has joined the party." / "You have joined
+                // the party." and the window's six seats in one packet. [L] shape. On
+                // 2026-09-05 this went out as the name alone and both clients threw, reported
+                // the packet in 0x009E and closed their sockets - see `net::party::PartyBlock`.
                 Effect::Joined { party, who } => {
                     let who_name = self.name_of(*who);
-                    let members = self
-                        .fields
-                        .parties()
-                        .party(*party)
-                        .map(|p| p.members.clone())
-                        .unwrap_or_default();
+                    let Some(block) = self.party_block(*party) else {
+                        undecoded.push(format!("{effect:?} (party {party} is not in the table)"));
+                        continue;
+                    };
+                    let members: Vec<u32> =
+                        block.seats.iter().map(|m| m.char_id).filter(|&id| id != 0).collect();
+                    let occupied = members.len();
                     for member in members {
                         let reply = Reply {
                             opcode: net::party::PARTY_RESULT,
-                            body: net::party::joined(&who_name),
+                            body: net::party::joined(&who_name, &block),
                             what: format!(
                                 "PartyResult JOIN (0x13) to character {member}: {who_name:?} joined \
-                                 party {party} [L shape; member-list refresh is [I]]"
+                                 party {party}; the six-seat PARTYBLOCK follows the name, \
+                                 {occupied} occupied [L shape]"
                             ),
                         };
                         self.deliver(member, actor, reply, &mut out);
@@ -321,6 +336,58 @@ impl super::Session {
             level: u32::from(chr.level),
             unknown_b: 0,
             unknown_d: 0,
+        }
+    }
+
+    /// The whole party as the client's `PARTYBLOCK` wants it: six seats, occupied ones
+    /// first, each with a name, job and level. `None` when the party is not in the table.
+    fn party_block(&self, party: crate::party::PartyId) -> Option<net::party::PartyBlock> {
+        let (name, leader, members) = {
+            let parties = self.fields.parties();
+            let p = parties.party(party)?;
+            (p.name.clone(), p.leader, p.members.clone())
+        };
+        let mut block = net::party::PartyBlock {
+            party_id: party,
+            leader_char_id: leader,
+            name,
+            ..Default::default()
+        };
+        if members.len() > net::party::PARTY_SEATS {
+            crate::server::log(&format!(
+                "   party: party {party} has {} members and the client draws {} seats - the \
+                 rest are NOT sent",
+                members.len(),
+                net::party::PARTY_SEATS
+            ));
+        }
+        for (seat, id) in members.iter().take(net::party::PARTY_SEATS).enumerate() {
+            block.seats[seat] = self.seat_for(*id);
+        }
+        Some(block)
+    }
+
+    /// One member as a seat: this connection's own character when it is them (the live
+    /// level), else the store's row, else the id with a placeholder name - never an empty
+    /// seat, because an empty seat is four bytes and shifts every field after it.
+    fn seat_for(&self, id: u32) -> net::party::Member {
+        if let Some(chr) = self.claimed_character().filter(|c| c.id == id) {
+            return self.party_member(&chr);
+        }
+        match self.store.character_brief(id) {
+            Ok(Some(brief)) => net::party::Member {
+                char_id: id,
+                name: brief.name,
+                job: brief.job,
+                level: brief.level,
+                unknown_b: 0,
+                unknown_d: 0,
+            },
+            _ => net::party::Member {
+                char_id: id,
+                name: format!("#{id}"),
+                ..Default::default()
+            },
         }
     }
 
@@ -415,28 +482,44 @@ impl super::Session {
             }
         } else {
             // `0x0183`: `{u8 op, u8 answer, u64 value}`, value being the party id this server
-            // sent as field 2 of the 0x03 that opened the dialog. The reader's slot order is
-            // [D]; the answer byte is [L] for the auto-decline (1) and [I] for the dialog's two
-            // buttons - so the raw body is logged every time, and the decision is stated as a
-            // decision: 1 declines, anything else is treated as ACCEPT. If a real Decline click
-            // lands here as a join, the value in this log line is the decline constant.
+            // sent as field 2 of the 0x03. **The answer byte is the outcome, in the 0x1B
+            // numbering** - `net::party::invite_answer`, read off the client on 2026-09-05:
+            //
+            //   0  the dialog is opening. Sent by the 0x03 handler ITSELF, before any click.
+            //   1  blocking invitations, 2 busy with another, 3 already holds this invite -
+            //      sent by the handler instead of a dialog.
+            //   4  the Decline button.  5  the Accept button.
+            //
+            // The first 0x0183 this server ever decoded was a 0, one millisecond after the
+            // 0x03, and "anything but 1 is an accept" turned it into a join nobody had
+            // clicked. Zero changes nothing now, and nothing is sent back for it: the client
+            // is not waiting, and the leader was told "You have invited" when the invite went
+            // out.
             match net::party::parse_invite_answer(body) {
                 Some(answer) => {
+                    use crate::party::{DeclineReason, Request};
+                    use net::party::invite_answer as ia;
                     crate::server::log(&format!(
-                        "   party: 0x0183 invite answer op={:#04x} answer={} value={} raw={body:02x?}",
-                        answer.op, answer.answer, answer.value
+                        "   party: 0x0183 invite answer op={:#04x} answer={} ({}) value={} raw={body:02x?}",
+                        answer.op,
+                        answer.answer,
+                        ia::describe(answer.answer),
+                        answer.value
                     ));
                     let party = u32::try_from(answer.value).unwrap_or(0);
-                    if answer.answer == net::party::INVITE_ANSWER_AUTO_DECLINE {
-                        Ok(crate::party::Request::Decline { party })
-                    } else {
-                        crate::server::log(&format!(
-                            "   party: answer byte {} is not the auto-decline value; ACTING AS ACCEPT \
-                             [I] - the dialog's two button values have not been measured. If this \
-                             was a Decline, {} is the decline constant",
-                            answer.answer, answer.answer
-                        ));
-                        Ok(crate::party::Request::Accept { party })
+                    match answer.answer {
+                        ia::RECEIVED => return Vec::new(),
+                        ia::ACCEPTED => Ok(Request::Accept { party }),
+                        ia::DECLINED => Ok(Request::Decline { party, reason: DeclineReason::Refused }),
+                        ia::BLOCKING => Ok(Request::Decline { party, reason: DeclineReason::Blocking }),
+                        ia::BUSY => Ok(Request::Decline { party, reason: DeclineReason::Busy }),
+                        ia::ALREADY_INVITED => {
+                            Ok(Request::Decline { party, reason: DeclineReason::AlreadyInvited })
+                        }
+                        other => Err(format!(
+                            "invite answer {other} is not one of the six values the client's code \
+                             emits (0..=5) - body {body:02x?}"
+                        )),
                     }
                 }
                 None => Err(format!(

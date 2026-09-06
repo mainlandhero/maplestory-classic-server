@@ -509,21 +509,151 @@ pub fn invite_notify(inviter_id: u32, party_id: u32, inviter_name: &str, level: 
     w.into_vec()
 }
 
-/// `0x13` - *"'%s' has joined the party."* / *"You have joined the party."*, `str`. **[L]** shape;
-/// which of the two strings the client picks is its own business (`research/party.md` table).
-pub fn joined(name: &str) -> Vec<u8> {
+/// The whole party as the client's `PARTYBLOCK` decoder (`FUN_1406f2fd0`) reads it.
+/// `research/party-result-0x00A5.md` §4, every width **[L]**:
+///
+/// ```text
+///   u32   partyId
+///   u8    party+0x4E0     no observed consumer - 0
+///   MEMBER x 6            FIXED SIX, not counted; an empty seat is the 4-byte form
+///   u32   leaderCharId
+///   u32   count           the second, id-keyed member list - 0 skips it cleanly
+///   raw   24              six u32, one per seat - zeros
+///   raw   120             six 20-byte door records - zeros
+///   str   partyName
+///   u8    isPublic
+///   u8    party+0x4D9     no observed consumer - 0
+/// ```
+///
+/// **This is the block `0x13` carries after the joiner's name, and on 2026-09-05 a `0x13`
+/// without it killed both clients.** Each read the name, then a party id out of bytes that
+/// were not there, then a string whose length came from the same place, ran off the end of
+/// the body and threw - three C++ exceptions, identical stacks in both processes - then
+/// reported the packet back in `0x009E` and closed its own socket. The research doc had said
+/// `str name, PARTYBLOCK` all along; the builder said `str`. Fixture:
+/// `research/fixtures/party-join-0x13-rejected-by-client-0x009E-both-clients-exit-*.log`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PartyBlock {
+    pub party_id: u32,
+    /// Exactly six. Occupied seats first; `Member::default()` is the empty one.
+    pub seats: [Member; PARTY_SEATS],
+    pub leader_char_id: u32,
+    pub name: String,
+    /// `party+0x4D8`; arm `0x2D` names it. **[D]** Sent as the create sends it: false.
+    pub is_public: bool,
+}
+
+/// Write a [`PartyBlock`] in the client's order. The layout is on the struct.
+pub fn write_party_block(w: &mut PacketWriter, p: &PartyBlock) {
+    w.u32(p.party_id); //                    1406f2fe8
+    w.u8(0); //                              1406f2ff2  party+0x4E0
+    for seat in &p.seats {
+        write_member(w, Some(seat)); //      1406f2bb0  six, unconditionally
+    }
+    w.u32(p.leader_char_id); //              1406f2c0b
+    w.u32(0); //                             1406f2c25  the second list: none
+    w.zeros(24); //                          1406f301c
+    w.zeros(120); //                         1406f3031
+    w.str(&p.name); //                       1406f303e
+    w.u8(u8::from(p.is_public)); //          1406f3088
+    w.u8(0); //                              1406f309b  party+0x4D9
+}
+
+/// `0x13` - *"'%s' has joined the party."* / *"You have joined the party."*: `str name`, then
+/// the whole [`PartyBlock`]. **[L]** shape - both branches of the arm read the block
+/// (`0x1413bc0c0` / `0x1413bc158`). The client compares `name` with its own character's to
+/// pick the sentence, so `name` must be the joiner's real name, and the same bytes go to
+/// every member.
+pub fn joined(name: &str, party: &PartyBlock) -> Vec<u8> {
     let mut w = PacketWriter::new();
     w.u8(result::JOIN);
     w.str(name);
+    write_party_block(&mut w, party);
     w.into_vec()
+}
+
+#[cfg(test)]
+mod party_block_tests {
+    use super::*;
+
+    fn member(id: u32, name: &str) -> Member {
+        Member {
+            char_id: id,
+            name: name.to_string(),
+            job: 200,
+            level: 18,
+            unknown_b: 0,
+            unknown_d: 0,
+        }
+    }
+
+    /// The size identity the client's decoder imposes: 4 bytes per empty seat, 155 + name per
+    /// occupied one, 4+1 before the seats, 4+4+24+120+(2+name)+1+1 after them.
+    fn expected_len(block: &PartyBlock) -> usize {
+        let seats: usize = block
+            .seats
+            .iter()
+            .map(|m| if m.char_id == 0 { 4 } else { 155 + m.name.len() })
+            .sum();
+        4 + 1 + seats + 4 + 4 + 24 + 120 + 2 + block.name.len() + 1 + 1
+    }
+
+    #[test]
+    fn an_empty_block_is_185_bytes_and_its_six_empty_seats_are_24_zero_bytes() {
+        let block = PartyBlock::default();
+        let mut w = PacketWriter::new();
+        write_party_block(&mut w, &block);
+        let bytes = w.into_vec();
+        assert_eq!(bytes.len(), 185);
+        assert_eq!(bytes.len(), expected_len(&block));
+        assert!(bytes[5..29].iter().all(|&b| b == 0), "six empty seats, four bytes each");
+    }
+
+    #[test]
+    fn occupied_seats_take_the_long_form_and_the_rest_stay_four_bytes() {
+        let mut block = PartyBlock {
+            party_id: 1,
+            leader_char_id: 213,
+            name: "Cobalt's Party".into(),
+            ..Default::default()
+        };
+        block.seats[0] = member(213, "Cobalt");
+        block.seats[1] = member(214, "Tester2");
+        let mut w = PacketWriter::new();
+        write_party_block(&mut w, &block);
+        let bytes = w.into_vec();
+        assert_eq!(bytes.len(), expected_len(&block));
+        // Two long seats, four short ones, then the leader id.
+        let after_seats = 5 + (155 + 6) + (155 + 7) + 4 * 4;
+        assert_eq!(&bytes[after_seats..after_seats + 4], &213u32.to_le_bytes());
+    }
+
+    #[test]
+    fn the_join_body_is_the_code_the_name_and_then_the_block() {
+        let mut block = PartyBlock {
+            party_id: 1,
+            leader_char_id: 213,
+            name: "P".into(),
+            ..Default::default()
+        };
+        block.seats[0] = member(213, "Cobalt");
+        block.seats[1] = member(214, "Tester2");
+        let body = joined("Tester2", &block);
+        assert_eq!(body[0], result::JOIN);
+        assert_eq!(&body[1..3], &7u16.to_le_bytes());
+        assert_eq!(&body[3..10], b"Tester2");
+        assert_eq!(&body[10..14], &1u32.to_le_bytes(), "the block starts with the party id");
+        assert_eq!(body.len(), 1 + 2 + 7 + expected_len(&block));
+        // The 2026-09-05 body was these ten bytes and nothing after them.
+        assert!(body.len() > 10, "a 0x13 that stops after the name killed both clients");
+    }
 }
 
 /// The invitee's answer, `0x0183`. `{u8 op, u8 answer, u64 value}` encoded as a FlatBuffers
 /// table (`research/party.md`: op is `0x1B`, and `value` is field 2 of the `0x03` that opened
-/// the dialog). **Slot order is [D]** - the struct's field order, which is how the `0x0182`
-/// tables were laid out - and **the answer byte's values are [D]/[I]**: the auto-decline path
-/// sends `1`; the dialog's two buttons send two other constants and which is accept has not
-/// been measured. The world server acts only on what is established and logs the rest.
+/// the dialog). Slot order **[L]** as of the first one decoded on the wire, 2026-09-05: slot 0
+/// held `0x1B`, slot 1 was absent (answer 0, the schema default), slot 2 held the party id.
+/// The answer's values are [`invite_answer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InviteAnswer {
     pub op: u8,
@@ -531,8 +661,49 @@ pub struct InviteAnswer {
     pub value: u64,
 }
 
-/// The answer byte the client sends when it declines WITHOUT a dialog (`0x1413bafd3`). **[L]**
-pub const INVITE_ANSWER_AUTO_DECLINE: u8 = 1;
+/// The answer byte of `0x0183`, **in the `0x1B` outcome numbering.**
+///
+/// Read off the client on 2026-09-05 (`tools/listing.py` over the `0x03` arm of
+/// `FUN_1413bab80`, `0x1413baf80..0x1413bb136`, and the two dialog callbacks `FUN_14180b750`
+/// and `FUN_14180c6e0`), after the first `0x0183` ever decoded on the wire - answer 0, one
+/// millisecond after the `0x03` - had been taken for an accept.
+///
+/// **The `0x03` handler sends one of 0..=3 itself, immediately, before any dialog exists**,
+/// and opens the dialog only for 0 (`0x1413bb0dc test edi,edi / jne`). The buttons send 4
+/// and 5 later, through the same encoder. Every value but 5 is exactly the `0x1B` outcome the
+/// leader is then shown for it (`research/party-result-0x00A5.md` §5.7: 1 blocking, 2 busy,
+/// 3 already invited, 4 denied), and 5 is the one value that table leaves silent - a join is
+/// announced by `0x13`, not by a sentence. **[L]** for the constants and the paths that emit
+/// them; **[D]** that 5 is Accept and 4 is Decline: 4 is "denied" in the outcome table, and
+/// the callback that sends 5 is the one that applies the party to the client's UI.
+pub mod invite_answer {
+    /// The `0x03` was read and the dialog is being opened. Not a click; nothing to act on.
+    pub const RECEIVED: u8 = 0;
+    /// `[global+0x154] == 0` - the invite-permission option - or the inviter is on the
+    /// blocked list (`FUN_142d01050`). No dialog. `0x1413bb131`.
+    pub const BLOCKING: u8 = 1;
+    /// Another invitation is already pending on that client. No dialog. `0x1413bb127`.
+    pub const BUSY: u8 = 2;
+    /// That client already holds this very invite. No dialog. `0x1413bb098`.
+    pub const ALREADY_INVITED: u8 = 3;
+    /// The Decline button. `FUN_14180c6e0`, `word 0x41b`.
+    pub const DECLINED: u8 = 4;
+    /// The Accept button. `FUN_14180b750`, `word 0x51b`.
+    pub const ACCEPTED: u8 = 5;
+
+    /// For the log line.
+    pub fn describe(answer: u8) -> &'static str {
+        match answer {
+            RECEIVED => "received - the dialog is opening, not a click",
+            BLOCKING => "auto-refused: blocking invitations",
+            BUSY => "auto-refused: busy with another invitation",
+            ALREADY_INVITED => "auto-refused: already holds this invite",
+            DECLINED => "the Decline button",
+            ACCEPTED => "the Accept button",
+            _ => "NOT a value the client's code emits",
+        }
+    }
+}
 
 pub fn parse_invite_answer(body: &[u8]) -> Option<InviteAnswer> {
     let root = read_u32(body, 0)? as usize;
@@ -1009,10 +1180,35 @@ mod invite_tests {
         assert_eq!(&body[25..29], &0u32.to_le_bytes());
     }
 
+    /// This test used to pin `joined("Tester2")` as the code and the string and NOTHING
+    /// else - the exact ten bytes that killed both clients on 2026-09-05. A test that pins
+    /// what the code already does is not a check (`CLAUDE.md`); this one pins the client's
+    /// reader instead: the name, then a block whose first field is the party id.
     #[test]
-    fn joined_is_the_code_and_a_string() {
-        let body = joined("Tester2");
-        assert_eq!(body, [&[result::JOIN][..], &7u16.to_le_bytes(), b"Tester2"].concat());
+    fn joined_is_the_code_the_name_and_a_party_block_never_the_name_alone() {
+        let block = PartyBlock { party_id: 9, ..Default::default() };
+        let body = joined("Tester2", &block);
+        let name_alone = [&[result::JOIN][..], &7u16.to_le_bytes(), b"Tester2"].concat();
+        assert_eq!(&body[..name_alone.len()], &name_alone[..]);
+        assert_eq!(&body[10..14], &9u32.to_le_bytes(), "the block follows the name");
+        assert_eq!(body.len(), name_alone.len() + 185, "an empty block is 185 bytes");
+    }
+
+    /// The first `0x0183` ever captured, 2026-09-05 02:12:31.711, one millisecond after the
+    /// `0x03` that opened the dialog: slot 0 `0x1B`, slot 1 ABSENT (answer 0 - the handler's
+    /// own "received", not a click), slot 2 the party id. This is the capture the reader's
+    /// [D] slot order was waiting for.
+    #[test]
+    fn the_invite_answer_reader_decodes_the_first_real_capture() {
+        let capture: [u8; 32] = [
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x10, 0x00, 0x07, 0x00, 0x00, 0x00,
+            0x08, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1b, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(
+            parse_invite_answer(&capture),
+            Some(InviteAnswer { op: 0x1B, answer: invite_answer::RECEIVED, value: 1 })
+        );
     }
 
     /// A hand-built FlatBuffers table `{op, answer, value}` in slot order: root offset, then
@@ -1035,7 +1231,7 @@ mod invite_tests {
         assert_eq!(b.len(), 30);
         assert_eq!(
             parse_invite_answer(&b),
-            Some(InviteAnswer { op: 0x1B, answer: INVITE_ANSWER_AUTO_DECLINE, value: 7 })
+            Some(InviteAnswer { op: 0x1B, answer: invite_answer::BLOCKING, value: 7 })
         );
         assert_eq!(parse_invite_answer(&b[..8]), None, "a truncated body is None, not a guess");
     }

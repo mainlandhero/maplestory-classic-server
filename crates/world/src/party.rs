@@ -121,6 +121,24 @@ pub type CharacterId = u32;
 /// A party id, as the server assigns them.
 pub type PartyId = u32;
 
+/// Why an invite was dropped, as the invitee's client reported it in `0x0183`.
+///
+/// The client answers an invite with the **outcome code** the leader should be shown
+/// (`net::party::invite_answer`): the Decline button, or one of three automatic refusals its
+/// own `0x03` handler emits instead of opening a dialog. The state machine only carries the
+/// reason; the session turns it into the `0x1B` sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclineReason {
+    /// The Decline button (answer 4) - or a disconnect, which reads the same to the leader.
+    Refused,
+    /// The invitee blocks party invitations (answer 1); no dialog was shown.
+    Blocking,
+    /// The invitee is already looking at another invitation (answer 2); no dialog.
+    Busy,
+    /// The invitee's client already holds this very invite (answer 3); no dialog.
+    AlreadyInvited,
+}
+
 /// The id that means "no party". Never assigned to a real one.
 ///
 /// This is a **server-side convention and nothing more**. `0x00A5` code `0x0E` really does
@@ -209,7 +227,7 @@ pub enum Request {
     /// The invitee accepting. Arrives on `0x0183`, not `0x0182`.
     Accept { party: PartyId },
     /// The invitee declining. Arrives on `0x0183`.
-    Decline { party: PartyId },
+    Decline { party: PartyId, reason: DeclineReason },
     /// [`net::party::action::LEAVE`]. **If the actor is the leader this disbands the party**
     /// - see the module docs.
     Leave,
@@ -338,7 +356,7 @@ pub enum Effect {
     /// `target` now has an outstanding invite to `party`. Tell `target`.
     Invited { party: PartyId, from: CharacterId, target: CharacterId },
     /// The invite is gone without a join - declined, or overtaken by events.
-    InviteDropped { party: PartyId, target: CharacterId },
+    InviteDropped { party: PartyId, target: CharacterId, reason: DeclineReason },
     /// `who` is now a member of `party`. Tell everyone in it, `who` included.
     Joined { party: PartyId, who: CharacterId },
     /// `who` is no longer a member. `remaining` is the party **after** the departure, and is
@@ -573,7 +591,7 @@ impl Parties {
             Request::Create { name } => self.create(actor, name),
             Request::Invite { target } => self.invite(now, actor, target),
             Request::Accept { party } => self.accept(actor, party),
-            Request::Decline { party } => self.decline(actor, party),
+            Request::Decline { party, reason } => self.decline(actor, party, reason),
             Request::Leave => self.leave(actor),
             Request::Expel { target } => self.expel(actor, target),
             Request::ChangeLeader { target } => self.change_leader(actor, target),
@@ -655,11 +673,16 @@ impl Parties {
         Ok(out)
     }
 
-    fn decline(&mut self, actor: CharacterId, party: PartyId) -> Result<Vec<Effect>, Refusal> {
+    fn decline(
+        &mut self,
+        actor: CharacterId,
+        party: PartyId,
+        reason: DeclineReason,
+    ) -> Result<Vec<Effect>, Refusal> {
         if self.invites.remove(&(party, actor)).is_none() {
             return Err(Refusal::NoSuchInvite);
         }
-        Ok(vec![Effect::InviteDropped { party, target: actor }])
+        Ok(vec![Effect::InviteDropped { party, target: actor, reason }])
     }
 
     fn leave(&mut self, actor: CharacterId) -> Result<Vec<Effect>, Refusal> {
@@ -808,7 +831,7 @@ impl Parties {
             self.invites.remove(&(*p, who));
         }
         gone.into_iter()
-            .map(|party| Effect::InviteDropped { party, target: who })
+            .map(|party| Effect::InviteDropped { party, target: who, reason: DeclineReason::Refused })
             .collect()
     }
 
@@ -1022,7 +1045,7 @@ mod tests {
             out,
             vec![
                 Effect::Created { party: b_party, leader: B },
-                Effect::InviteDropped { party: id, target: B },
+                Effect::InviteDropped { party: id, target: B, reason: DeclineReason::Refused },
             ]
         );
         assert!(!p.has_invite(id, B));
@@ -1111,7 +1134,7 @@ mod tests {
             out,
             vec![
                 Effect::Joined { party: one, who: B },
-                Effect::InviteDropped { party: two, target: B },
+                Effect::InviteDropped { party: two, target: B, reason: DeclineReason::Refused },
             ]
         );
         assert_eq!(p.party_id_of(B), Some(one));
@@ -1192,11 +1215,11 @@ mod tests {
         let two = p.party_id_of(C).unwrap();
         p.apply(NOW, A, Request::Invite { target: B }).unwrap();
         p.apply(NOW, C, Request::Invite { target: B }).unwrap();
-        let out = p.apply(NOW, B, Request::Decline { party: one }).unwrap();
-        assert_eq!(out, vec![Effect::InviteDropped { party: one, target: B }]);
+        let out = p.apply(NOW, B, Request::Decline { party: one, reason: DeclineReason::Refused }).unwrap();
+        assert_eq!(out, vec![Effect::InviteDropped { party: one, target: B, reason: DeclineReason::Refused }]);
         assert_eq!(p.invites_for(B), vec![two]);
         assert_eq!(
-            p.apply(NOW, B, Request::Decline { party: one }).unwrap_err(),
+            p.apply(NOW, B, Request::Decline { party: one, reason: DeclineReason::Refused }).unwrap_err(),
             Refusal::NoSuchInvite
         );
     }
@@ -1424,7 +1447,7 @@ mod tests {
         let (mut p, id) = party_of(1);
         p.apply(NOW, A, Request::Invite { target: B }).unwrap();
         let out = p.disconnect(B);
-        assert_eq!(out, vec![Effect::InviteDropped { party: id, target: B }]);
+        assert_eq!(out, vec![Effect::InviteDropped { party: id, target: B, reason: DeclineReason::Refused }]);
         assert!(!p.has_invite(id, B));
         p.check_invariants().unwrap();
     }
@@ -1592,8 +1615,8 @@ mod invite_expiry_tests {
         assert!(!p.has_invite(id, B));
         // Re-invite and DECLINE instead: that one does produce an effect.
         p.apply(NOW, A, Request::Invite { target: B }).unwrap();
-        let out = p.apply(NOW, B, Request::Decline { party: id }).unwrap();
-        assert_eq!(out, vec![Effect::InviteDropped { party: id, target: B }]);
+        let out = p.apply(NOW, B, Request::Decline { party: id, reason: DeclineReason::Refused }).unwrap();
+        assert_eq!(out, vec![Effect::InviteDropped { party: id, target: B, reason: DeclineReason::Refused }]);
     }
 
     /// Expiry leaves a still-live invite alone, and the invariant holds across it.

@@ -845,3 +845,82 @@ Two things this pass could not have known and one it could:
   remains unknown; it is that lookup's second argument, and the level may belong at `+0x1c` instead.
 
 Full working, with the four independent legs and the controls: `research/party-create-refused-first-wire-observation.md`.
+
+## 10. APPENDED 2026-09-05 (evening): `0x13` without the block killed both clients, and `0x0183` is the outcome byte
+
+The owner: *"The act of inviting someone to party crashed both clients."* Fixture:
+`research/fixtures/party-join-0x13-rejected-by-client-0x009E-both-clients-exit-{world,hook}.log`.
+
+### What the wire and the hook say, in order (all **[L]**)
+
+```text
+world.log (UTC)                                   maplecw-hook.log (local, both clients in one file)
+02:12:31.603 -> 0x00A5 1b 00000000 0700 "Tester2"   to 213 (leader)          [no dispatch line - see below]
+02:12:31.710 -> 0x00A5 03 d5000000 01000000 0600 "Cobalt" 12000000 c8000000 00000000  to 214
+02:12:31.711 <- 0x0183 {op 0x1B, answer ABSENT (=0), value 1}   from 214, ONE MILLISECOND later
+02:12:31.712 -> 0x00A5 13 0700 "Tester2"            to 214   <- the name and NOTHING else
+                                                    22:12:31.713  897 opcode=0x00A5 elapsed_us=1600.9 ret=1   (214's 0x03 handler returning)
+                                                    22:12:31.713-.717  C++ THROW #5 #6 #7 on 214's thread
+02:12:31.715 <- 0x009E CLIENT_PACKET_REJECTED: 01 00 26000000 1000 ce4cc24c | a5 00 13 07 00 "Tester2" | a5 00
+02:12:31.782 -> 0x00A5 13 0700 "Tester2"            to 213
+                                                    22:12:31.792-.797  C++ THROW #5 #6 #7 #8 on 213's thread - the SAME three stacks
+                                                    22:12:34.812 / .816  SOCKET ... closed and cleared by the client (FUN_1415e3b60 ran), both
+02:12:34.630 / .653  both channel connections gone
+```
+
+* **The client named the packet.** `0x009E` carries the offending packet verbatim: opcode
+  `0x00A5`, body `13 07 00 54 65 73 74 65 72 32` - the `0x13` with the name and no block. There
+  is no inference in identifying the killer.
+* **Both clients threw the same three stacks** (`0x142ef6ddc` - the throw site every C++ THROW
+  in the log shares - then `0x1401d67aa`, `0x1406e8cb1`, `0x1406e90e8`, `0x14019b7eb`,
+  `0x1406f2fed`). `0x1406e8cb1`/`0x1406e90e8` are inside the read primitives §3 lists;
+  `0x1406f2fed` is inside `FUN_1406f2fd0`, the `PARTYBLOCK` reader. Reading a block that is
+  not there is what threw. No `CLIENT FAULT`, no dump: this was a caught exception followed by
+  the client's own orderly shutdown, not a crash in the WER sense.
+* **§5.2 was right and the builder was wrong.** `str name, PARTYBLOCK` has been in this file
+  since 09-04; `net::party::joined` wrote `str`. The block is now written by
+  `net::party::write_party_block` exactly as §4 lists it, and the size identity (4 bytes per
+  empty seat, 155 + name per occupied one, 185 for an empty block) is a test.
+* **The `0x1B` outcome to the leader has no dispatch line** and did no harm - 213 kept
+  dispatching for another 180 ms and died of the `0x13`. Why the hook wrote no line for it is
+  **not established**; it is noted here so nobody reads that absence as the `0x1B` being the
+  killer.
+
+### `0x0183`'s answer byte, read off the client (**[L]** paths, **[D]** which button is which)
+
+The first `0x0183` ever decoded arrived **1 ms after the `0x03`**, inside the handler's own
+1.6 ms - no human clicked. It was taken for an accept ("anything but 1"), which is what sent the
+fatal `0x13`. `tools/listing.py 0x1413bab80` over the `0x03` arm (`0x1413baf80..0x1413bb136`):
+
+```text
+1413bafc9  mov edi, r14d                      ; answer = 0
+1413bafd3  cmp [global+0x154], 0 / je bb131   ; invite option off  -> edi = 1, jump to the send
+1413bafea  FUN_142d01050(list, field1) / jne bb131 ; inviter blocked -> edi = 1
+1413bb08f  FUN_142d98230(ctx, 0x19, &entry, field2) ; already holds THIS invite -> edi = 3
+1413bb11a  FUN_142d98230(ctx, 0x19, &.., 0)          ; holds ANOTHER one        -> edi = 2
+1413bb0a2  new packet 0x183; {0x1B, edi, field2}; FUN_1413bd500; send      <- ALWAYS, first
+1413bb0dc  test edi,edi / jne bb245             ; nonzero: done, no dialog
+1413bb0e4  alloc 0x370, FUN_141808b90 (dialog), FUN_141810230(dlg, name, field2, f4, f5, f6)
+```
+
+and the two dialog callbacks: `FUN_14180b750` encodes `word 0x51b` = `{0x1B, 5}` (and
+`0x51c` = `{0x1C, 5}` for the join-request twin); `FUN_14180c6e0` encodes `0x41b` / `0x41c` =
+answer **4**. Value is `[obj+0x328]`, field 2 as saved by the dialog.
+
+So the answer byte is **§5.7's outcome numbering**: 1 blocking, 2 busy, 3 already invited,
+4 denied - the leader's own table - with **0 = "received, the dialog is opening"** (sent by
+the handler, not a click) and **5 = the one outcome §5.7 leaves silent**, i.e. Accept, whose
+announcement is `0x13`. That 5 is Accept and 4 Decline is **[D]**: 4 lines up with *"%s has
+denied the party request"*, and `FUN_14180b750` (the 5) is the callback that calls the party
+UI's apply path with flag 1 where `FUN_14180c6e0` (the 4) calls it with flag 0. The paths and
+constants are [L]. `net::party::invite_answer` is the owner; the world relays 1..=4 to the
+leader as their own `0x1B` sentence, accepts on 5, and does nothing at all on 0.
+
+### What this does NOT establish
+
+* Whether the dialog draws sensibly with level and job in fields 4-5. It was constructed
+  (answer 0, 1.6 ms) and died with the client three seconds later. Still the next run's
+  measurement.
+* Whether the member list refreshes on `0x13`'s block. The block has never reached a living
+  client.
+* Which of `0x03`/`0x06` is invite - unchanged from §8.3; only `0x03` was sent.
