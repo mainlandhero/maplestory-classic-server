@@ -1,4 +1,4 @@
-MapleCW - private local test server
+﻿MapleCW - private local test server
 ==================================
 
 Testing only. This runs a MapleStory client against a server written from scratch, on
@@ -41,6 +41,9 @@ Options worth knowing:
                                      leaves exactly that address reachable, and the
                                      default (this machine) blocks everything else. Get
                                      it wrong and the client sits on "Connecting..."
+    -AuthPort   8480                 the port the SERVER's sign-in service listens on, if
+                                     it was moved off 8080 (see start-servers.cmd there).
+                                     The two sides must agree or sign-in never connects
     -AuthFingerprint sha256:...      the sign-in server's certificate fingerprint. Its
                                      window prints it at startup. REQUIRED to sign in:
                                      the launcher will not send a password to a server

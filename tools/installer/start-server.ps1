@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Start the MapleCW servers on an installed machine.
 
@@ -45,6 +45,12 @@ param(
     [int]$Port = 8484,
     [int]$ChannelPort = 8485,
     [int]$Channels = 2,
+    # The sign-in service's port. 8080 is a popular port and something else may already hold
+    # it - a proxy, a dev server, IIS Express - in which case maplecw-auth cannot bind and
+    # exits on its own seconds after starting, which is what a server box did on 2026-09-06.
+    # Move it here rather than fighting for 8080, and set auth_port to match in
+    # maplecw-launcher.toml on every client.
+    [int]$AuthPort = 8080,
     # Kept so an old command line is told what changed rather than silently ignored.
     [string]$Account,
     # Serve a connection that cannot be tied to a launcher sign-in as THIS account instead of
@@ -140,7 +146,17 @@ $loginArgs = @(
     '--advertise', "$Advertise"
 )
 if ($FallbackAccount) { $loginArgs += @('--fallback-account', "$FallbackAccount") }
+
+# Each watched server carries its NAME and its LOG FILE, captured now rather than read back
+# off the Process object later. Two reasons, both measured on the owner's server box 2026-09-06:
+# .ProcessName on an exited process raises, and the report printed "(pid 2028) exit code"
+# with the name and the code both blank; and the report named login.log for whichever server
+# died, when the one that died was the sign-in service, which writes auth.log. It sent the
+# reader to a file that had nothing to do with it.
 $watched = @()
+function Add-Watched([string]$Name, $Proc, [string]$Log) {
+    $script:watched += [pscustomobject]@{ Name = $Name; Proc = $Proc; Pid = $Proc.Id; Log = $Log }
+}
 $login = Start-Process -FilePath (Join-Path $bin 'maplecw-login.exe') -WorkingDirectory $root `
     -ArgumentList $loginArgs -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $root 'login.log') `
@@ -148,7 +164,7 @@ $login = Start-Process -FilePath (Join-Path $bin 'maplecw-login.exe') -WorkingDi
 $enforced = if ($FallbackAccount) { "FALLBACK '$FallbackAccount' - anything reaching this port is served as it" } else { 'login enforced - unattributable connections are refused' }
 Write-Host "login server  pid $($login.Id)  $($Bind):$Port  $enforced"
 Write-Host "              channels advertised as: $Advertise  (login.log's first lines say what each client is told)"
-$watched += $login
+Add-Watched 'login server' $login 'login.log'
 
 # THE SIGN-IN SERVICE, and on an installed box it must be REACHABLE.
 #
@@ -160,13 +176,16 @@ $watched += $login
 # Every launcher pins its fingerprint, which is printed below once the service has written
 # it. This block used to say the password crossed the wire in plain text; since 2026-09-05
 # it does not - crates/auth/src/tls.rs and crates/tlspin.
-$authArgs = @('--db', "$db", '--bind', "$Bind", '--port', '8080')
+$authArgs = @('--db', "$db", '--bind', "$Bind", '--port', "$AuthPort")
 $auth = Start-Process -FilePath (Join-Path $bin 'maplecw-auth.exe') -WorkingDirectory $root `
     -ArgumentList $authArgs -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $root 'auth.log') `
     -RedirectStandardError  (Join-Path $root 'auth.log.err')
-Write-Host "sign-in       pid $($auth.Id)  $($Bind):8080  <- the launcher signs in here (TLS)"
-$watched += $auth
+Write-Host "sign-in       pid $($auth.Id)  $($Bind):$AuthPort  <- the launcher signs in here (TLS)"
+if ($AuthPort -ne 8080) {
+    Write-Host "              NOT the default 8080 - every client needs auth_port = `"$AuthPort`" in maplecw-launcher.toml" -ForegroundColor Yellow
+}
+Add-Watched 'sign-in' $auth 'auth.log'
 
 # The fingerprint every client must pin. The service writes it beside the database within a
 # moment of starting; waited for rather than assumed, so the line below is the real value and
@@ -212,7 +231,7 @@ for ($ch = 0; $ch -lt $Channels; $ch++) {
         -RedirectStandardOutput (Join-Path $root $chLog) `
         -RedirectStandardError  (Join-Path $root "$chLog.err")
     Write-Host "channel $ch      pid $($w.Id)  $($Bind):$($ChannelPort + $ch)  -> $chLog"
-    $watched += $w
+    Add-Watched "channel $ch" $w $chLog
 }
 
 Write-Host ''
@@ -236,15 +255,38 @@ Write-Host ''
 try {
     while ($true) {
         Start-Sleep -Seconds 1
-        $dead = @($watched | Where-Object { $_.HasExited })
+        $dead = @($watched | Where-Object { $_.Proc.HasExited })
         if ($dead.Count -gt 0) {
             Write-Host ''
             Write-Host 'A SERVER EXITED ON ITS OWN - that is not you closing the window.' -ForegroundColor Red
             foreach ($d in $dead) {
-                Write-Host ("  {0} (pid {1}) exit code {2}" -f $d.ProcessName, $d.Id, $d.ExitCode) -ForegroundColor Red
+                # ExitCode can be unreadable depending on how the handle was obtained, and a
+                # blank number in a red message is worse than saying it is not available.
+                $code = try { $d.Proc.ExitCode } catch { $null }
+                if ($null -eq $code) { $code = '(not available)' }
+                Write-Host ("  {0} (pid {1}) exited, code {2}" -f $d.Name, $d.Pid, $code) -ForegroundColor Red
+
+                # ITS OWN log, tailed here. The old message always named login.log, whichever
+                # server had died, and the first time this fired in earnest the dead one was
+                # the sign-in service - which writes auth.log. Reading the tail out loud
+                # costs nothing and saves a round trip to a machine you are not sitting at.
+                foreach ($suffix in @('', '.err')) {
+                    $file = Join-Path $root ($d.Log + $suffix)
+                    if (-not (Test-Path $file)) { continue }
+                    $tail = @(Get-Content $file -Tail 12 -ErrorAction SilentlyContinue |
+                              Where-Object { "$_".Trim() })
+                    if ($tail.Count -eq 0) { continue }
+                    Write-Host ("    last lines of {0}:" -f ($d.Log + $suffix)) -ForegroundColor Yellow
+                    $tail | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+                }
             }
-            Write-Host '  The usual cause is an account that does not exist. Read login.log' -ForegroundColor Red
-            Write-Host ("  and login.log.err in {0}" -f $root) -ForegroundColor Red
+            Write-Host ''
+            Write-Host '  Common causes, in the order they actually happen:' -ForegroundColor Red
+            Write-Host '    - the port is already taken by something else on this machine' -ForegroundColor Red
+            Write-Host '      (netstat -ano | findstr ":8080 :8484 :8485 :8486")' -ForegroundColor Red
+            Write-Host '    - the database is not readable, or is on a drive that went away' -ForegroundColor Red
+            Write-Host '    - -FallbackAccount naming an account that does not exist' -ForegroundColor Red
+            Write-Host ("  Full logs are in {0}" -f $root) -ForegroundColor Red
             break
         }
     }

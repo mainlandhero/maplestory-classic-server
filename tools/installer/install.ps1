@@ -29,6 +29,11 @@ param(
     [string]$Email,
     [string]$ServerIp = '127.0.0.1',
     [int]$Port = 8484,
+    # The sign-in service's port on the SERVER. Must match the -AuthPort the server was
+    # started with; 8080 is the default there too. Something else already holding 8080 on
+    # the server box is a real and common case, and the two sides have to agree or the
+    # launcher's sign-in simply never connects.
+    [int]$AuthPort = 8080,
     # The sign-in server's certificate fingerprint, as its console prints it:
     # "sha256:<64 hex>". REQUIRED before this machine can sign in - the launcher refuses to
     # send a password to a server it has not been told to trust. Also readable from
@@ -198,7 +203,7 @@ db_path    = "$db"
 stub_path  = "$(Join-Path $InstallDir 'grap64.dll')"
 server_ip  = "$ServerIp"
 port       = "$Port"
-auth_port  = "8080"
+auth_port  = "$AuthPort"
 $pinLine
 "@
 Set-Content -Path (Join-Path $InstallDir 'maplecw-launcher.toml') -Value $toml -Encoding ascii

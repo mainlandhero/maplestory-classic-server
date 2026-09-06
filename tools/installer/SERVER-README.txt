@@ -71,6 +71,17 @@ SETUP
 
      netsh advfirewall firewall add rule name="MapleCW server" dir=in action=allow protocol=TCP localport=8080,8484,8485,8486
 
+   8080 IS A POPULAR PORT. If something on this box already holds it - a proxy, a
+   dev server, IIS Express - maplecw-auth cannot bind and exits on its own a few
+   seconds after starting. Either free it, or move the sign-in service:
+
+     powershell -ExecutionPolicy Bypass -File ".\start-server.ps1" -AuthPort 8090
+
+   and put auth_port = "8090" in maplecw-launcher.toml on every client, and open
+   8090 instead of 8080 above. To see what holds a port:
+
+     netstat -ano | findstr ":8080 :8484 :8485 :8486"
+
 4. Double-click start-servers.cmd. THAT WINDOW IS THE SERVER - closing it stops
    everything, and there is no stop script to forget.
 
@@ -145,6 +156,22 @@ forever - and neither says anything about itself.
    That blocks everything except the server. The shipped install.ps1 derives
    the same shape from its -ServerIp, so a client installed with the right
    address needs neither. -Status prints the rule's RemoteIP line either way.
+
+
+IF A SERVER EXITS ON ITS OWN
+----------------------------
+
+The window says so in red, names which one it was, and prints the last lines of THAT
+server's log and its .err file - login.log, auth.log or world.log, whichever died.
+Read those lines first; they carry the reason.
+
+The most common one is a port already in use, and it reads as
+
+  server error: could not bind 0.0.0.0:8080: Only one usage of each socket address
+  (protocol/network address/port) is normally permitted. (os error 10048)
+
+See the -AuthPort note in step 3. Until 2026-09-06 this message always told you to
+read login.log no matter which server had died, and printed a blank exit code.
 
 
 BRINGING AN EXISTING DATABASE

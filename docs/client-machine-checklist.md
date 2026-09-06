@@ -55,9 +55,14 @@ Beside the launcher. `install.ps1` writes it; by hand it is four lines:
 ```
 server_ip        = "203.0.113.5"        the server's LAN address, or its public one from outside
 port             = "8484"               the login server
-auth_port        = "8080"               the sign-in service
+auth_port        = "8080"               the sign-in service - MUST match the server
 auth_fingerprint = "sha256:<64 hex>"    REQUIRED - see below
 ```
+
+**`auth_port` must match the server.** 8080 is a popular port and a server box may already
+have it spoken for, in which case its `start-servers.cmd` sets `AUTHPORT` to something else
+and every client has to follow. A mismatch is silent: the launcher just never connects.
+`install.ps1 -AuthPort <n>` writes it.
 
 **The fingerprint is not optional.** The launcher pins the sign-in server's certificate and
 refuses to send a password to a server it has not been told to trust. The value is what the

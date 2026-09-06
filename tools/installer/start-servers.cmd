@@ -12,12 +12,25 @@ rem  this; it asks for administrator once, and the client inherits that
 rem  elevation instead of raising a second prompt of its own.
 rem ===========================================================================
 
+rem  ---- SETTINGS -----------------------------------------------------------
+rem  The sign-in service's port. 8080 is a popular port and something else on
+rem  this machine may already hold it - a proxy, a dev server, IIS Express. When
+rem  that happens maplecw-auth cannot bind, exits a few seconds after starting,
+rem  and the window says so in red with the bind error from auth.log.err.
+rem
+rem  Change the number here, and then BOTH of these must match it:
+rem    - auth_port = "<port>" in maplecw-launcher.toml on every client machine
+rem      (or install.ps1 -AuthPort <port>)
+rem    - the inbound firewall rule on this machine
+set "AUTHPORT=8080"
+rem  --------------------------------------------------------------------------
+
 set "HERE=%~dp0"
 echo Starting the MapleCW server from %HERE%
 echo Close this window to stop it.
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%start-server.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%start-server.ps1" -AuthPort %AUTHPORT%
 
 rem Reached only if the script returned on its own - a server exiting early, or
 rem Ctrl+C. On a window close nothing here runs, and nothing here needs to.
