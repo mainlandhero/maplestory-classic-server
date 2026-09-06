@@ -599,6 +599,24 @@ impl Session {
         }
         let mut out = Vec::new();
         let me = mine;
+        // **The party seam for drops.** The owner, 2026-09-05: *"All members of a party should see
+        // all drops killed by members of the party ... Once someone leaves the party, they can
+        // no longer pick up the party's drops unless they were the killer."* So when the
+        // killer is in a party the drop is stamped with that party id and owned by the KILLER
+        // (not the top damager), and every current member on this field is shown it. The
+        // member roster and presence are read ONCE here, before any drop is minted, and the
+        // guard is dropped immediately so nothing holds the parties lock across `with_drops`.
+        let party = me.and_then(|k| {
+            self.fields
+                .parties()
+                .party_of(k)
+                .filter(|p| p.members.len() > 1)
+                .map(|p| (p.id, p.members.clone()))
+        });
+        let party_here: Vec<u32> = match &party {
+            Some((_, members)) => self.bus().characters_on(map, members),
+            None => Vec::new(),
+        };
         // Read the meso rate ONCE, not once per drop: it is a database query, and it cannot
         // change between two items falling off the same mob.
         let meso_rate = self.rate(store::rates::RateKind::Meso);
@@ -654,10 +672,16 @@ impl Session {
                 (item, inv, 0u32)
             };
             let now = self.clock_ms;
+            // A party drop belongs to the killer (so a member who later leaves loses it while
+            // the killer keeps it), a solo drop to the top damager the walk below settles on.
+            let (owner_id, party_id) = match &party {
+                Some((id, _)) => (me.unwrap_or(first_choice), *id),
+                None => (first_choice, 0),
+            };
             let (drop_id, first_reply) = self.fields.with_drops(map, |d| {
                 d.drop_from_mob(crate::drops::DropFromMob {
                     map_id: map,
-                    owner_id: first_choice,
+                    owner_id,
                     item,
                     inv_type,
                     meso,
@@ -667,6 +691,7 @@ impl Session {
                     source_x: mob_x,
                     source_y: mob_y,
                     now_ms: now,
+                    party_id,
                 })
             });
             // The landing goes in the log line, so "did the placement do anything" is a
@@ -677,6 +702,30 @@ impl Session {
                 .filter(|l| l.moved != 0)
                 .map(|l| format!(" [{}]", l.what()))
                 .unwrap_or_default();
+
+            // **A party drop is shown to EVERY member on this field, not one winner.** The
+            // enter packet is the same bytes for everyone - it names the owner (the killer),
+            // not the recipient - so this connection keeps a copy and the rest get it over the
+            // bus. Pick-up is gated by membership at take time, so a member seeing it can take
+            // it and a bystander who is not in the party cannot.
+            if party.is_some() {
+                let mut first_reply = first_reply.clone();
+                first_reply.what.push_str(&note);
+                let mut shown_to = Vec::new();
+                for &member in &party_here {
+                    if Some(member) == me {
+                        out.push(first_reply.clone());
+                        shown_to.push(member);
+                    } else if self.bus().publish_to_character(member, map, first_reply.clone()) {
+                        shown_to.push(member);
+                    }
+                }
+                crate::server::log(&format!(
+                    "   drop {drop_id} on map {map} is a PARTY drop owned by {owner_id}; shown to \
+                     {shown_to:?} of party members {party_here:?} on this field"
+                ));
+                continue;
+            }
 
             // **The walk.** Stop at the first candidate this drop can actually be given to on
             // this map. `ranked[0]` already owns it, so the first iteration never re-addresses.
@@ -857,6 +906,16 @@ impl Session {
         chr_id: u32,
         shares: &[crate::fields::DamageShare],
     ) -> Vec<Reply> {
+        // **In a party, the split is by membership, not by damage.** The owner, 2026-09-05: *"my
+        // party members are not getting party exp in yellow"*, and the rule in
+        // `research/exp-sharing.md`: the killer gets 70%, every other party member on the same
+        // field splits the remaining 30% equally, their line yellow. A party member who never
+        // touched the mob is still paid; a non-party bystander is not. So the damage `shares`
+        // do not enter this path at all - presence does.
+        if let Some(party) = self.party_exp_split(worth, chr_id) {
+            return party;
+        }
+
         // Nothing credited means nothing landed - a mob that died without being hurt, which
         // only a bug produces. Pay the killer in full rather than nothing.
         let Some(mine) = shares.iter().find(|s| s.character == chr_id) else {
@@ -900,6 +959,66 @@ impl Session {
     /// The majority holder is paid in full and told the plain reason; everyone else is told
     /// what fraction of the damage they did, because a smaller number with no denominator
     /// reads as a bug rather than as a share.
+    /// The party split, or `None` when the killer is not in a party with anyone else on this
+    /// field - in which case the caller falls back to the solo damage-share path.
+    ///
+    /// The owner, 2026-09-05, and `research/exp-sharing.md`: the killer keeps **70%**, every other
+    /// party member standing on the same map splits the other **30%** equally, and their line
+    /// is **yellow** - the client shows *"You received EXP"* in yellow, which is this client's
+    /// party-EXP presentation; there is no distinct string id for it. A member on another map
+    /// or offline is not eligible and their slice is not minted, so the killer keeps the
+    /// remainder and a lone party member on the field gets the full worth.
+    ///
+    /// **AFK is not modelled** - this server has no idle signal - so "on the same field and
+    /// online" is the whole of the eligibility test. Said out loud because the owner's rule names
+    /// AFK and this is the honest approximation of it.
+    fn party_exp_split(&mut self, worth: u64, chr_id: u32) -> Option<Vec<Reply>> {
+        let map = self.claimed_character().map(|c| c.map_id)?;
+        let members = self.fields.parties().party_of(chr_id).map(|p| p.members.clone())?;
+        if members.len() < 2 {
+            return None; // a party of one is solo for EXP purposes
+        }
+        let others: Vec<u32> = members.into_iter().filter(|&m| m != chr_id).collect();
+        let eligible = self.bus().characters_on(map, &others);
+        if eligible.is_empty() {
+            // Nobody else is here. The killer keeps the whole worth, white, and there is no
+            // solo damage-share to fall back to - being in a party is what suppressed it.
+            return Some(self.award_experience(worth, "for the kill (party, alone on the map)", true, false));
+        }
+
+        // 30% split equally; the killer keeps 70% plus whatever the integer split could not
+        // divide, so the four numbers always add back to `worth` exactly.
+        let pool = worth * 30 / 100;
+        let each = pool / eligible.len() as u64;
+        let paid_out = each * eligible.len() as u64;
+        let killer_share = worth - paid_out;
+
+        for member in &eligible {
+            let delivered = self.bus().send_to_character(
+                *member,
+                crate::broadcast::Event::Experience {
+                    amount: each,
+                    why: "party EXP".to_string(),
+                    white: false,
+                },
+            );
+            if !delivered {
+                // Raced off the map between the presence check and now. Ordinary; logged, not
+                // swallowed - a share that vanishes silently is the shape CLAUDE.md warns of.
+                crate::server::log(&format!(
+                    "   exp: party member {member} was on map {map} at the split and gone by \
+                     delivery; their {each} party EXP was not paid"
+                ));
+            }
+        }
+        crate::server::log(&format!(
+            "   exp: party kill on map {map} - killer {chr_id} keeps {killer_share} (white), \
+             {} member(s) split {paid_out} at {each} each (yellow, party EXP)",
+            eligible.len()
+        ));
+        Some(self.award_experience(killer_share, "for the kill (party)", true, false))
+    }
+
     fn share_reason(why: &str, share: &crate::fields::DamageShare) -> String {
         if share.majority {
             why.to_string()
@@ -1299,7 +1418,52 @@ impl Session {
     /// The client counts the bag live whenever it checks, so an item quest needs no running
     /// total and gets no packet. Only mob requirements have a counter, which is why the
     /// progress string's length is measured in mob slots.
-    pub(super) fn credit_kill_to_quests(&mut self, template: u32, character_id: u32) -> Vec<Reply> {
+    /// A kill credits the killer's own kill-quests, **and every party member on the same
+    /// field who needs that mob**.
+    ///
+    /// The owner, 2026-09-05: *"Monster quests killed in a party should have their quest
+    /// progression shared amongst the party members (only if party members need a particular
+    /// mob killed, so any party member contributing to one person's kill count quest is
+    /// allowed.)"* Each member advances **their own** quest row: the per-character crediting
+    /// only touches a quest that that character has in progress and that needs this template,
+    /// so a member with no such quest is untouched. The killer's records come back as replies
+    /// on this connection; every other member's are delivered to them over the bus.
+    pub(super) fn credit_kill_to_quests(&mut self, template: u32, killer: u32) -> Vec<Reply> {
+        if self.config.quest_reqs.quests_for_mob(template).is_empty() {
+            return Vec::new();
+        }
+        let out = self.credit_kill_to_quests_for(template, killer);
+
+        // Fan out to party members standing on the same field. Solo, or a party alone on the
+        // map, adds nothing here and the killer's own credit above is the whole of it.
+        //
+        // The roster is read into a local so the parties lock is not held across the mutable
+        // per-member crediting below - the same guard-lifetime trap `CLAUDE.md` warns of.
+        let roster = self.fields.parties().party_of(killer).map(|p| p.members.clone());
+        if let Some(map) = self.claimed_character().map(|c| c.map_id) {
+            if let Some(members) = roster {
+                let others: Vec<u32> = members.into_iter().filter(|&m| m != killer).collect();
+                for member in self.bus().characters_on(map, &others) {
+                    for reply in self.credit_kill_to_quests_for(template, member) {
+                        // Delivered to that member's own connection; their client draws the
+                        // updated counter. A member who raced off the map is logged by
+                        // publish returning false, not crashed.
+                        if !self.bus().publish_to_character(member, map, reply) {
+                            crate::server::log(&format!(
+                                "   quest: party member {member} advanced a kill-quest on map \
+                                 {map} but was gone before the record could be delivered"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Credit one character's own kill-quests for `template`, returning the `0x0A0F` records.
+    /// No party logic - the fan-out is [`Session::credit_kill_to_quests`].
+    fn credit_kill_to_quests_for(&mut self, template: u32, character_id: u32) -> Vec<Reply> {
         let quests = self.config.quest_reqs.quests_for_mob(template);
         if quests.is_empty() {
             return Vec::new();

@@ -188,6 +188,12 @@ pub struct Party {
     /// its members in is the order the server sends them, so throwing it away here would
     /// throw away information the wire needs later.
     pub members: Vec<CharacterId>,
+    /// The item pick-up-rights mode the client last set, slot 1 of a tag-5 `0x0182`
+    /// (`net::party::action::SET_PICKUP_RIGHTS`). The Create button leaves it at **1**; the
+    /// meaning of each value is [I] and this server only stores it and echoes it back, so a
+    /// leader who sets it does not get an "unknown error". Drop visibility is by membership,
+    /// not by this value - see `crate::mobshare`.
+    pub pickup_rights: u8,
 }
 
 impl Party {
@@ -235,6 +241,9 @@ pub enum Request {
     Expel { target: CharacterId },
     /// [`net::party::action::CHANGE_LEADER`]. Leader only.
     ChangeLeader { target: CharacterId },
+    /// [`net::party::action::SET_PICKUP_RIGHTS`]. Leader only. Stores the mode the client
+    /// sent so the leader gets an acknowledgement rather than *"unknown error"*.
+    SetPickupRights { rights: u8 },
 }
 
 /// Why a [`Request`] changed nothing.
@@ -369,6 +378,8 @@ pub enum Effect {
     },
     /// The party's leader changed. Both ids are still members.
     LeaderChanged { party: PartyId, from: CharacterId, to: CharacterId },
+    /// The party's item pick-up-rights mode changed. Tell every member so their window agrees.
+    PickupRightsChanged { party: PartyId, rights: u8 },
     /// The party no longer exists. `members` is who was in it at the moment it ended,
     /// **including** anyone whose [`Effect::Departed`] is in the same batch, so the caller has
     /// one list to notify and does not have to reassemble it.
@@ -595,6 +606,7 @@ impl Parties {
             Request::Leave => self.leave(actor),
             Request::Expel { target } => self.expel(actor, target),
             Request::ChangeLeader { target } => self.change_leader(actor, target),
+            Request::SetPickupRights { rights } => self.set_pickup_rights(actor, rights),
         }
     }
 
@@ -609,7 +621,7 @@ impl Parties {
         self.next_id = self.next_id.saturating_add(1);
         self.parties.insert(
             id,
-            Party { id, name, leader: actor, members: vec![actor] },
+            Party { id, name, leader: actor, members: vec![actor], pickup_rights: 1 },
         );
         self.of.insert(actor, id);
         // A character who was invited somewhere and then made their own party cannot still
@@ -671,6 +683,19 @@ impl Parties {
         self.invites.remove(&(party, actor));
         out.extend(self.drop_invites_to(actor));
         Ok(out)
+    }
+
+    /// The leader sets the party's item pick-up-rights mode. Members-only would be pointless;
+    /// the client gates the button on being the leader and so does this, so a non-leader
+    /// request is `NotTheLeader` rather than a silent success.
+    fn set_pickup_rights(&mut self, actor: CharacterId, rights: u8) -> Result<Vec<Effect>, Refusal> {
+        let party = *self.of.get(&actor).ok_or(Refusal::NotInAParty)?;
+        let p = self.parties.get_mut(&party).ok_or(Refusal::NoSuchParty)?;
+        if p.leader != actor {
+            return Err(Refusal::NotTheLeader);
+        }
+        p.pickup_rights = rights;
+        Ok(vec![Effect::PickupRightsChanged { party, rights }])
     }
 
     fn decline(
@@ -1221,6 +1246,34 @@ mod tests {
         assert_eq!(
             p.apply(NOW, B, Request::Decline { party: one, reason: DeclineReason::Refused }).unwrap_err(),
             Refusal::NoSuchInvite
+        );
+    }
+
+    // --- pick-up rights -----------------------------------------------------------------
+
+    #[test]
+    fn the_leader_sets_pick_up_rights_and_it_is_stored() {
+        let (mut p, id) = party_of(2);
+        let out = p.apply(NOW, A, Request::SetPickupRights { rights: 2 }).unwrap();
+        assert_eq!(out, vec![Effect::PickupRightsChanged { party: id, rights: 2 }]);
+        assert_eq!(p.party(id).unwrap().pickup_rights, 2);
+    }
+
+    #[test]
+    fn a_non_leader_cannot_set_pick_up_rights() {
+        let (mut p, _id) = party_of(2);
+        assert_eq!(
+            p.apply(NOW, B, Request::SetPickupRights { rights: 2 }).unwrap_err(),
+            Refusal::NotTheLeader
+        );
+    }
+
+    #[test]
+    fn setting_pick_up_rights_with_no_party_is_refused_not_a_panic() {
+        let mut p = Parties::new();
+        assert_eq!(
+            p.apply(NOW, A, Request::SetPickupRights { rights: 1 }).unwrap_err(),
+            Refusal::NotInAParty
         );
     }
 

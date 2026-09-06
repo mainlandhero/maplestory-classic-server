@@ -91,7 +91,7 @@ impl Session {
             Err(e) => return self.refuse_drop(m, &format!("the store would not release it: {e}")),
         };
         let (map, now) = (chr.map_id, self.clock_ms);
-        self.fields.with_drops(map, |d| {
+        let placed = self.fields.with_drops(map, |d| {
             d.drop_item(DropFromBag {
                 map_id: map,
                 character_id: chr.id,
@@ -102,7 +102,14 @@ impl Session {
                 y,
                 now_ms: now,
             })
-        })
+        });
+        // **The floor is shared.** The owner, 2026-09-05: *"If a player drops an item on the
+        // ground, anyone in the map should be able to see it and pick it up."* The `0x046E`
+        // goes to everyone else on the map through the bus; the dropper gets it directly,
+        // after the `0x0070` that clears their own inventory latch. `drop_item` marked the
+        // drop public, so `may_be_taken_by` lets anyone here take it.
+        self.bus().publish(self.subscriber, map, placed.enter.clone(), None);
+        vec![placed.removed, placed.enter]
     }
 
     /// Refuse a drop: the mandatory `0x0070`, **and** a line saying why.
@@ -164,7 +171,17 @@ impl Session {
         };
 
         let now = self.clock_ms;
-        let outcome = self.fields.with_drops(map, |d| d.take(object_id, chr.id, now));
+        // **Resolve the drop's party roster before taking it.** A party drop may be taken by
+        // any *current* member (or the killer, via owner); a member who has since left is no
+        // longer on this list and is refused, which is the owner's *"unless they were the killer"*.
+        // The two locks are independent, so reading the drop's party id, then the party, then
+        // taking, never holds one across the other.
+        let party_id = self.fields.with_drops(map, |d| d.get(object_id).map(|dr| dr.party_id));
+        let party_members: Vec<u32> = match party_id.filter(|&p| p != 0) {
+            Some(p) => self.fields.parties().party(p).map(|party| party.members.clone()).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let outcome = self.fields.with_drops(map, |d| d.take(object_id, chr.id, now, &party_members));
         // The log line is the deliverable. It is written to be greppable on one line,
         // because the run that produces it is read by eye.
         let mut out: Vec<Reply> = Vec::new();

@@ -106,9 +106,24 @@ been observed to do anything in any archived run. So the honest state is: *the s
 computed, delivered and applied in code, and nobody has watched a second player's yellow line
 appear.*
 
-**Parties do not exist**, so 70/30, the AFK exclusion, and `You received party EXP` are not
-implemented. The wording matters when they are: it is a different string id from the ordinary
-one, so it is a different message, not the same message in another colour.
+**Parties now exist, and the party split is implemented** (`Session::party_exp_split`,
+2026-09-05). When the killer is in a party of two or more, the damage-share path above is
+suppressed and this runs instead: the killer keeps **70%** (white), and every other member
+**standing on the killer's field** splits the remaining **30%** equally, yellow. The killer
+keeps the integer-division remainder, so the four numbers add back to the worth exactly. A
+member on another map or offline is not eligible and their slice is not minted, so a lone
+member on the field takes the whole 30% and a killer with nobody there keeps 100%.
+
+Two honest gaps, both stated in the code:
+
+* **AFK is not modelled.** The owner's rule excludes AFK members; this server has no idle signal,
+  so *"on the field and online"* is the whole eligibility test. `characters_on` (the bus) is
+  the query, read once before anyone is paid.
+* **There is no distinct `You received party EXP` string in this client.** The dump has
+  `0x00C1 "You received EXP"` and the party-quest line `0x00D5`, but no plain party-EXP
+  string, so the member's line is the ordinary one in **yellow** - which is this client's
+  party-EXP presentation. If a distinct id turns up in a capture, `why: "party EXP"` in the
+  bus event is where to switch it.
 
 ## The colour byte
 

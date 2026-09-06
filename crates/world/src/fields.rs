@@ -714,6 +714,7 @@ mod tests {
                 source_x: 1,
                 source_y: 1,
                 now_ms: 0,
+                party_id: 0,
             })
         });
 

@@ -924,3 +924,35 @@ leader as their own `0x1B` sentence, accepts on 5, and does nothing at all on 0.
 * Whether the member list refreshes on `0x13`'s block. The block has never reached a living
   client.
 * Which of `0x03`/`0x06` is invite - unchanged from §8.3; only `0x03` was sent.
+
+## 11. APPENDED 2026-09-05 (later): the party now works on a screen, and the six requests after it
+
+The join drew both members on both clients, at the level and job the block carries (the owner's
+screenshot: the party window listed *Cobalt Magician 18* and *Tester2 Beginner 8*). Accept is
+answer **5**, confirming §10. Six follow-on requests were then built, all server-side and
+unit-tested; the ones that need a client-measured opcode are called out.
+
+* **Leave / expel / disband now answer with `0x10`.** The Leave transition was in the session's
+  *undecoded* list, so it was answered with `UNKNOWN_ERROR` and the member stayed in the party
+  (*"Tester2 cannot also leave"*). `net::party::member_left` builds §5.3: `u32 charId, u8
+  stillExists, [u8 expelled, str name, PARTYBLOCK]`, disband stopping after the still-exists
+  byte. `Effect::Departed`/`Disbanded` are handled.
+* **Pick-up rights (action 2) is routed and stored, and answered with `0x0D`.** There is **no
+  standalone "rights changed" packet in this client** - the string `0x011A` is only ever shown
+  as a side effect of the `0x2D` public/private arm (`FUN_142d1d130(edi=0)`), and no `0x00A5`
+  arm stores the rights global `0x2710497` from the wire. So the server stores the mode
+  (`Party::pickup_rights`, slot 1 of the tag-5 payload, default 1) and refreshes the window
+  with `party_state` (`0x0D`), which removes the *"unknown error"*. Drop visibility is by
+  membership, not by this value.
+* **Party EXP, quest credit and drops are shared by membership**, not by damage - see
+  `research/exp-sharing.md` (updated) and `crate::mobshare::may_see_drop`, which already took a
+  `Party`. A party drop is owned by the killer and shown to every current member on the field;
+  a member who leaves is off the live roster the pick-up resolves and loses it, while the
+  killer keeps it. A player's own ground drop is public to the whole map.
+
+Still needing a client-measured opcode, and therefore **not built** (guessing a body has
+killed this client three times): the **party member HP** push - no `0x00A5`-adjacent packet
+carries a member's live HP, and the client sends only a one-byte `0x00B8` toggle, not its HP -
+and the **meso drop** request, which does not appear in any capture (the client may send a
+distinct opcode for it, or none). Both want one measurement: the owner dropping mesos, and a party
+member taking damage, with the inbound opcode read off `world.log`.

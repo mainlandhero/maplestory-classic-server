@@ -445,6 +445,25 @@ impl Bus {
         true
     }
 
+    /// **Which of `characters` are playing on `map` right now.** Order preserved, duplicates
+    /// in the input preserved, so a caller can keep a party's seat order.
+    ///
+    /// This is the presence query the EXP and quest split need *before* they pay anyone: the
+    /// share is divided by how many party members are on the killer's field, and that count
+    /// has to be known before the first payment. `publish_to_character` answers "did it land"
+    /// after the fact, which is one payment too late.
+    pub fn characters_on(&self, map: u32, characters: &[u32]) -> Vec<u32> {
+        let inner = self.lock();
+        let here: std::collections::HashSet<u32> = inner
+            .boxes
+            .values()
+            .filter_map(|m| m.presence.as_ref())
+            .filter(|p| p.map == map)
+            .map(|p| p.character)
+            .collect();
+        characters.iter().copied().filter(|c| here.contains(c)).collect()
+    }
+
     pub fn send_to_character(&self, character: u32, event: Event) -> bool {
         let mut inner = self.lock();
         let mut delivered = false;

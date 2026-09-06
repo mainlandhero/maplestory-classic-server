@@ -711,6 +711,27 @@ mod tests {
             mail.iter().any(|r| r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::JOIN),
             "and so is the leader: {mail:?}"
         );
+
+        // **The member leaves, and BOTH clients are told.** The owner, 2026-09-05: *"Tester2
+        // cannot also leave the party."* The leaver reads its own WITHDRAW (0x10) directly;
+        // the leader gets one over the bus. Before this the Leave transition was in the
+        // undecoded list and answered with UNKNOWN_ERROR - the client showed an error and
+        // stayed in the party.
+        let left = invitee.run_party_request(ids[1], crate::party::Request::Leave);
+        let leaver_told = left.iter().find(|r| {
+            r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::WITHDRAW
+        });
+        let leaver_told = leaver_told.unwrap_or_else(|| panic!("the leaver must get a 0x10: {left:?}"));
+        assert_eq!(&leaver_told.body[1..5], &ids[1].to_le_bytes(), "char_id is the leaver");
+        assert_eq!(leaver_told.body[5], 1, "still_exists: the party lives on");
+
+        let mail = leader.tick(4_000);
+        assert!(
+            mail.iter().any(|r| {
+                r.opcode == net::party::PARTY_RESULT && r.body[0] == net::party::result::WITHDRAW
+            }),
+            "the leader is told the member left: {mail:?}"
+        );
     }
 
     /// Two sessions, one channel, one map - and a **real** `0x0224` crosses

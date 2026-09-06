@@ -138,9 +138,36 @@ both built, tested, and exercised against the shipped binaries:
      [D] for which button is which. `net::party::invite_answer`; the world relays 1-4 to the
      leader as their own sentence and does nothing at all for 0.
   Fixture: `research/fixtures/party-join-0x13-rejected-by-client-0x009E-both-clients-exit-*`.
-  **Unseen still:** the dialog itself (it was constructed - the handler took 1.6 ms and
-  answered 0 - and died with the client three seconds later), whether Accept refreshes both
-  windows, and the whole flow end to end. T14, rewritten.
+
+* **The party works on a screen, and six requests after it are built.** The owner's next run:
+  the join drew both members with the right job and level (*Cobalt Magician 18*, *Tester2
+  Beginner 8*), and Accept is answer 5 as decoded. They then listed what was still wrong; all
+  server-side, all fixed and unit-tested (1975 pass), none yet on a screen:
+  - **Leave / expel / disband now answer** with `0x10` and the party block - the Leave
+    transition was answered with `UNKNOWN_ERROR` before, so *"Tester2 cannot leave"* left the
+    member stuck. Both the leaver and the remaining members are told.
+  - **Pick-up rights (the button that failed with "unknown error")** is routed, stored on the
+    party, and answered with a `0x0D` window refresh. This client has **no standalone
+    "rights changed" packet** - the string is only shown as a side effect of the
+    public/private arm - so the value is stored (drop visibility is by membership) and the
+    error is gone.
+  - **Party EXP** - killer keeps 70% (white), the other members on the field split 30% equally
+    (yellow); the free-for-all damage-share is suppressed while in a party. No AFK signal
+    exists, so "on the field and online" is the eligibility test, and there is no distinct
+    "party EXP" string, so the line is the ordinary one in yellow.
+  - **Kill-quest credit is shared** to every party member on the field who has that quest in
+    progress and needs that mob - each advances their own row.
+  - **Party drops are shown to every member on the field**, owned by the killer; a member who
+    later leaves is off the live roster the pick-up resolves and loses access, while the killer
+    keeps it (*"unless they were the killer"*).
+  - **A player's ground drop is public** - the `0x046E` is broadcast to the whole map and
+    anyone on it may pick it up, an untradeable item excepted.
+  **Two need a client measurement and were NOT guessed** (a guessed body has killed this
+  client three times): the **party-HP** push - no packet in the capture carries a member's
+  live HP, the client sends only a one-byte `0x00B8` toggle - and the **meso drop** request,
+  which appears in no capture. Both want one run: the owner dropping mesos, and a party member
+  taking damage, with the inbound opcode read off `world.log`.
+  **Unseen still:** the invite dialog itself, and every one of the six above on a screen. T14.
 
 * **The launcher remembers the game folder.** The owner, 2026-09-05: *"does our launcher save
   whatever the user set it to upon subsequent starts? Setting it every time is going to be
@@ -195,7 +222,8 @@ which on screen is indistinguishable from absent.
 | **the heap corruption** | `0xC0000374`, **17 distinct fault events** across ~16 archived runs (4 with dumps), deduplicated on `(timestamp, code, address)`. The damaged word is the identical `0x0000000100000020` every time. **The writer is still not found.** This is what ends a long session - the 2026-09-03 two-client death was at **371 s** of client life - and it is the one thing standing between "two players can play" and "two players can play for an hour". `research/heap-corruption-2026-08-27.md`. Do **not** pass `-HeapFix`: it armed, it held, the client died anyway, and every dump taken with it on is unusable for the free-list argument. *(Only 3 of the 17 sit in a log carrying an `ARMING` line, so client-age-at-death is measurable for 3; "never under ~192 s" is the 2026-09-03 figure and is `UNVERIFIED 2026-09-04` here - one of the three is a 7.9 s instance-guard experiment.)* |
 | **party invite → a party anyone can join** | not blocked, unseen. The `0x1B` outcome, the `0x03` dialog and the `0x13` join-with-block are all decoded [L] and on the wire; the one wire test of `0x13` (2026-09-05 evening) went out **without** the block and killed both clients, and the fix has been in front of a test but not a client. What is left is a screen: the dialog, Accept refreshing both windows, Decline reading as "denied". `research/party-result-0x00A5.md` §10 |
 | **trade and chat rooms** | both are `CMiniRoom`, a subsystem this server has never touched. The client declines **locally and sends no packet at all** - checked the documented way, by grepping `research/msexe-send-opcodes.txt` for the builder rather than eyeballing the tail. There is nothing here to answer; it is a whole feature that does not exist |
-| party pick-up rights | `action 2` is not routed - `crate::party::Request` has no variant for it |
+| party member HP bars | **needs a measured opcode.** No packet in any capture carries a party member's live HP, and the client sends only a one-byte `0x00B8` UI toggle, not its HP. Not guessed. `research/party-result-0x00A5.md` §11 |
+| dropping mesos | **needs a measured opcode.** The client's meso-drop request appears in no capture; a bag item's drop is `0x0107 dst==0`, but mesos are not a bag slot. One run with the owner dropping mesos names it |
 | `0x0183` accept/decline | **settled from the listing, 2026-09-05 evening**, not blocked. The answer byte is the `0x1B` outcome numbering: the `0x03` handler itself sends 0 (dialog opening), 1 (blocking), 2 (busy) or 3 (already invited) before any click, and the buttons send 4 Decline / 5 Accept. The slot order is [L] from the first capture. `net::party::invite_answer`. Unwatched on a screen: a click of each button, and a faded dialog followed by a re-invite (invites lapse server-side after 60 s) |
 | second-job skill casts | none of the 66 has a cast handler. `firstjob.rs` is the shape it wants |
 | the keyboard layout | not saved because **nothing has ever tried** - neither opcode is known, on either half. `research/keymap-not-saved.md` |

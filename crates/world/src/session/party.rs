@@ -279,7 +279,95 @@ impl super::Session {
                         self.deliver(member, actor, reply, &mut out);
                     }
                 }
-                other => undecoded.push(format!("{other:?}")),
+                // A member left or was expelled, and the party lives on. `0x10` with
+                // `still_exists` true, carrying the party AFTER the departure so every window
+                // redraws with the right seats. The leaver sees the first-person wording off
+                // their own id, the rest the third-person - the client picks from `char_id`.
+                Effect::Departed { party, who, how, remaining } => {
+                    let who_name = self.name_of(*who);
+                    let expelled = matches!(how, crate::party::Departure::Expelled);
+                    // The party still exists (Disbanded is a separate effect), so the block is
+                    // built from its current membership. `remaining` is that list.
+                    let block = self.party_block(*party);
+                    let _ = remaining;
+                    for member in self.recipients_for(*party, Some(*who)) {
+                        let body = match &block {
+                            Some(b) => net::party::member_left(*who, expelled, &who_name, Some(b)),
+                            // The party is gone from the table already (a one-member remnant
+                            // that dissolved); tell them it no longer exists rather than
+                            // nothing. Should not happen while Departed is distinct from
+                            // Disbanded, but a missing block must not drop the packet.
+                            None => net::party::member_left(*who, expelled, &who_name, None),
+                        };
+                        let reply = Reply {
+                            opcode: net::party::PARTY_RESULT,
+                            body,
+                            what: format!(
+                                "PartyResult WITHDRAW (0x10) to character {member}: {who_name:?} \
+                                 left party {party} ({how:?}) [L]"
+                            ),
+                        };
+                        self.deliver(member, actor, reply, &mut out);
+                    }
+                }
+                // The leader left, so the party is gone. `0x10` with `still_exists` false and
+                // `char_id` = the leader who quit: the leader reads "you disbanded", everyone
+                // else "left since the leader quit", off that one id. `members` is everyone
+                // who was in it at the end, this connection included.
+                Effect::Disbanded { party, members } => {
+                    let leader = actor; // the disband is driven by the leader's own Leave
+                    for member in members {
+                        let reply = Reply {
+                            opcode: net::party::PARTY_RESULT,
+                            body: net::party::member_left(leader, false, "", None),
+                            what: format!(
+                                "PartyResult WITHDRAW (0x10, disband) to character {member}: \
+                                 party {party} disbanded by leader {leader} [L]"
+                            ),
+                        };
+                        self.deliver(*member, actor, reply, &mut out);
+                    }
+                }
+                // The leadership moved. Push the window first so both ids are seats the client
+                // already holds, then narrate the change. `0x22` is silently dropped unless the
+                // new leader is already a seat (`research/party-result-0x00A5.md` §5.5).
+                Effect::LeaderChanged { party, from, to } => {
+                    if let Some(block) = self.party_block(*party) {
+                        for member in self.recipients_for(*party, None) {
+                            let refresh = Reply {
+                                opcode: net::party::PARTY_RESULT,
+                                body: net::party::party_state(Some(&block)),
+                                what: format!(
+                                    "PartyResult PARTY_STATE (0x0D) to character {member}: window \
+                                     refreshed before the leader change in party {party}"
+                                ),
+                            };
+                            self.deliver(member, actor, refresh, &mut out);
+                        }
+                    }
+                    crate::server::log(&format!(
+                        "   party: leadership of party {party} moved from {from} to {to}; 0x22 \
+                         narration is not built, the window refresh above carries the new leader"
+                    ));
+                }
+                // The pick-up-rights mode changed. No client packet narrates it on its own, so
+                // push the window (0x0D) to every member; the value is stored in party state.
+                Effect::PickupRightsChanged { party, rights } => {
+                    if let Some(block) = self.party_block(*party) {
+                        for member in self.recipients_for(*party, None) {
+                            let reply = Reply {
+                                opcode: net::party::PARTY_RESULT,
+                                body: net::party::party_state(Some(&block)),
+                                what: format!(
+                                    "PartyResult PARTY_STATE (0x0D) to character {member}: \
+                                     pick-up rights of party {party} set to {rights} [stored; the \
+                                     client has no standalone rights-changed packet]"
+                                ),
+                            };
+                            self.deliver(member, actor, reply, &mut out);
+                        }
+                    }
+                }
             }
         }
 
@@ -337,6 +425,24 @@ impl super::Session {
             unknown_b: 0,
             unknown_d: 0,
         }
+    }
+
+    /// Who should be told about a change to `party`: its current members, plus `also` when it
+    /// is a character no longer in the party who still needs the packet - the one who just
+    /// left. Deduplicated, so passing a still-present member changes nothing.
+    fn recipients_for(&self, party: crate::party::PartyId, also: Option<u32>) -> Vec<u32> {
+        let mut who: Vec<u32> = self
+            .fields
+            .parties()
+            .party(party)
+            .map(|p| p.members.clone())
+            .unwrap_or_default();
+        if let Some(extra) = also {
+            if !who.contains(&extra) {
+                who.push(extra);
+            }
+        }
+        who
     }
 
     /// The whole party as the client's `PARTYBLOCK` wants it: six seats, occupied ones
@@ -426,6 +532,14 @@ impl super::Session {
                         })
                     }
                     net::party::action::LEAVE => Ok(crate::party::Request::Leave),
+                    // **Pick-up rights.** The client sends the mode in slot 1 of a tag-5
+                    // payload (default 1). This server stores it and echoes the party window
+                    // so the leader stops seeing "unknown error"; it does not gate who may
+                    // pick up within a party - drop visibility is by membership. Absent slot
+                    // means the default, exactly as the create does.
+                    net::party::action::SET_PICKUP_RIGHTS => {
+                        Ok(crate::party::Request::SetPickupRights { rights: req.pickup.unwrap_or(1) })
+                    }
                     // **Invite carries a NAME and the server resolves it.** The client does
                     // not: `FUN_1413b9eb0` takes a `char*`, `strlen`s it, and the union emits
                     // a FlatBuffers string. **[L]**

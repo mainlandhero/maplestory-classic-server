@@ -99,6 +99,22 @@
     party request", nobody joins. TIMEOUT - invite, leave the dialog alone about a minute,
     invite the same character again: it must go through; world.log prints "LAPSED".
 
+    T14b (2026-09-05, from the owner's screenshot run - the party draws both members correctly).
+    Six party mechanics, all server-side and unit-tested, none yet on a screen. LEAVE: the
+    member can now actually leave (was "unknown error", stuck). PICK-UP RIGHTS: the leader's
+    button no longer errors (stored server-side; the value gates nothing beyond membership,
+    and this client has no standalone rights-changed packet). PARTY EXP: on the same map, one
+    kills a mob - the killer sees a white line, every other member on the field a yellow line
+    (their equal share of 30%; no AFK signal exists, so on-field-and-online is the test).
+    QUEST: a kill credits every party member on the field who has that kill-quest in progress.
+    DROPS: a party mob's drops show to all members on the field and any of them may take them;
+    a member who then LEAVES loses access while the killer keeps it. GROUND DROP: an item a
+    player drops from their bag is broadcast to the whole map and anyone may pick it up
+    (untradeable excepted). Two things are NOT built because their opcode has never been
+    captured, and guessing a packet body has killed this client three times: DROPPING MESOS
+    and the PARTY MEMBER HP push. For each, do the action and read the inbound opcode off
+    world.log (or report that none appears) - that one measurement is all they need.
+
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
     one "served as NOBODY - REFUSED" line in login.log about half a second before the served
@@ -1636,6 +1652,26 @@ function Show-TestPlan {
         Write-Host '       nobody joins.'
         Write-Host '       TIMEOUT: invite, leave the dialog ALONE about a minute, then invite'
         Write-Host '       the SAME character again. It must go through. world.log: "LAPSED".'
+        Write-Host '    0c. PARTY MECHANICS (new 2026-09-05, from the owner''s screenshot run).'
+        Write-Host '       LEAVE: the member clicks Leave - they must actually leave, and the'
+        Write-Host '       leader''s window drops them. Before: "unknown error", stuck in party.'
+        Write-Host '       PICK-UP RIGHTS: the leader clicks it - no more "unknown error".'
+        Write-Host '       PARTY EXP: both stand on the same map, ONE kills a mob. The other'
+        Write-Host '       should see a YELLOW EXP gain (their 30% share); the killer white.'
+        Write-Host '       QUEST: both have a kill quest (e.g. Sam''s snails). One kills - the'
+        Write-Host '       OTHER''s counter should tick up too.'
+        Write-Host '       PARTY DROPS: a mob killed by one shows its drops to BOTH, and either'
+        Write-Host '       may pick them up. Then one LEAVES and the other kills: the leaver'
+        Write-Host '       must NOT be able to take those drops (the killer still can).'
+        Write-Host '       GROUND DROP: drop an item from your bag - anyone on the map should'
+        Write-Host '       see it and be able to pick it up.'
+        Write-Host '    0d. STILL NEEDS A CAPTURE - do these and report the inbound opcode:'
+        Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
+        Write-Host '       client''s meso-drop request has never been captured. Note what'
+        Write-Host '       "<- 0x...." appears in world.log when you try (or that none does).'
+        Write-Host '       PARTY HP: let a party member take damage. Their HP bar does not'
+        Write-Host '       update because no HP packet is identified. Note any new inbound'
+        Write-Host '       opcode. Both are one measurement away from being built.'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'

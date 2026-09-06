@@ -8015,6 +8015,7 @@ fn an_expired_drop_fades_for_its_owner_and_not_for_the_session_that_swept_it() {
             source_x: 400,
             source_y: 395,
             now_ms: 0,
+            party_id: 0,
         })
     });
 
@@ -8064,6 +8065,7 @@ fn walking_into_a_field_does_not_re_send_another_players_drops() {
             source_x: 400,
             source_y: 395,
             now_ms: 0,
+            party_id: 0,
         })
     });
 

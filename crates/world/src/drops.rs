@@ -328,6 +328,19 @@ pub struct LiveDrop {
     /// The character who dropped it. See [`OWNER_LOCK_MS`] and
     /// [`drop_is_locked_to_owner_forever`].
     pub owner_id: u32,
+    /// The party this drop belongs to, or `0` for none. The owner, 2026-09-05: *"All members of a
+    /// party should see all drops killed by members of the party ... Once someone leaves the
+    /// party, they can no longer pick up the party's drops unless they were the killer."* So
+    /// a party drop may be taken by the `owner_id` (the killer) **or by anyone who is a member
+    /// of this party at the moment of the pick-up** - [`LiveDrop::may_be_taken_by`] is given
+    /// the live roster, so a member who has since left is no longer on it and loses the drop,
+    /// while the killer keeps it through `owner_id`.
+    pub party_id: u32,
+    /// A drop anyone on the map may see and take. The owner: *"If a player drops an item on the
+    /// ground, anyone in the map should be able to see it and pick it up."* Set on a player's
+    /// own ground drop; **an untradeable item overrides it** and stays owner-only, because
+    /// that rule gates the transfer and a public floor is still a transfer waiting to happen.
+    pub public: bool,
     /// Where it is lying. See the module docs: the server does not track a player position,
     /// so this is exactly as good as whatever the caller passed.
     pub x: i16,
@@ -394,14 +407,35 @@ impl LiveDrop {
 
     /// May `character_id` take this drop at `now_ms`?
     ///
-    /// The owner always may. Anyone else may once [`OWNER_LOCK_MS`] has passed - unless the
-    /// item is trade-blocked, in which case nobody else ever may. See the module docs.
-    pub fn may_be_taken_by(&self, character_id: u32, now_ms: u64, owner_lock_ms: u64) -> bool {
+    /// Who may pick this drop up. `party_members` is the drop's party's **current** roster,
+    /// resolved by the caller at pick-up time (empty for a solo or public drop).
+    ///
+    /// In order:
+    /// * the owner always may - the killer, or the player who put it down;
+    /// * a trade-blocked item is owner-only forever, and that **overrides** party and public -
+    ///   the rule gates the transfer, and party or floor is still a transfer;
+    /// * a public drop (a player's ground drop) may be taken by anyone;
+    /// * a party drop may be taken by anyone on `party_members` now - so a member who left is
+    ///   gone from that list and refused, while the killer still passes on `owner_id` above;
+    /// * otherwise the 15-second owner lock applies and then it is free to anyone.
+    pub fn may_be_taken_by(
+        &self,
+        character_id: u32,
+        now_ms: u64,
+        owner_lock_ms: u64,
+        party_members: &[u32],
+    ) -> bool {
         if character_id == self.owner_id {
             return true;
         }
         if drop_is_locked_to_owner_forever(self.item_id()) {
             return false;
+        }
+        if self.public {
+            return true;
+        }
+        if self.party_id != 0 && party_members.contains(&character_id) {
+            return true;
         }
         now_ms >= self.dropped_at_ms.saturating_add(owner_lock_ms)
     }
@@ -488,6 +522,23 @@ pub struct DropFromMob {
     pub source_y: i16,
     /// Session milliseconds, for expiry.
     pub now_ms: u64,
+    /// The killer's party, or `0`. When set, every current member of it may take the drop
+    /// (and the caller shows it to them) - see [`LiveDrop::party_id`].
+    pub party_id: u32,
+}
+
+/// The result of a player dropping an item on the floor: the inventory `0x0070` for the
+/// dropper, and the `0x046E` that puts it on the ground.
+///
+/// They go to different audiences and that is the whole reason this is not a `Vec`: the
+/// `removed` clears the dropper's own inventory latch and is theirs alone, while the `enter`
+/// is shown to **everyone on the map**, because a player's ground drop is public (the owner,
+/// 2026-09-05). The session sends `removed` to itself and broadcasts `enter`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedDrop {
+    pub object_id: u32,
+    pub removed: Reply,
+    pub enter: Reply,
 }
 
 /// One accepted drop, as the caller describes it.
@@ -839,6 +890,8 @@ impl DropTable {
             item: d.item,
             inv_type: d.inv_type,
             owner_id: d.owner_id,
+            party_id: d.party_id,
+            public: false,
             x: d.x,
             y: d.y,
             meso: d.meso,
@@ -878,7 +931,7 @@ impl DropTable {
         Some(drop.enter_reply(net::drops::ENTER_FLOATING))
     }
 
-    pub fn drop_item(&mut self, d: DropFromBag) -> Vec<Reply> {
+    pub fn drop_item(&mut self, d: DropFromBag) -> PlacedDrop {
         debug_assert!(
             d.slot >= 1,
             "mode 3 needs a positive bag slot; an equipped-slot drop is refused at the call site"
@@ -890,6 +943,10 @@ impl DropTable {
             item: d.item,
             inv_type: d.inv_type,
             owner_id: d.character_id,
+            party_id: 0,
+            // A player's own ground drop is public: anyone on the map may see and take it.
+            // An untradeable item overrides this in `may_be_taken_by` and stays owner-only.
+            public: true,
             x: d.x,
             y: d.y,
             meso: 0, // a bag drop is always an item
@@ -917,7 +974,7 @@ impl DropTable {
         };
         let enter = drop.enter_reply(net::drops::ENTER_FLOATING);
         self.live.insert(object_id, drop);
-        vec![removed, enter]
+        PlacedDrop { object_id, removed, enter }
     }
 
     /// **Pick a drop up.** Opcode-agnostic on purpose: this takes an object id, not a packet.
@@ -928,7 +985,13 @@ impl DropTable {
     /// A [`PickUp::Taken`] has already been removed from the table. If the caller then cannot
     /// put it in the bag, it must not send the leave packet and should call
     /// [`DropTable::restore`].
-    pub fn take(&mut self, object_id: u32, character_id: u32, now_ms: u64) -> PickUp {
+    pub fn take(
+        &mut self,
+        object_id: u32,
+        character_id: u32,
+        now_ms: u64,
+        party_members: &[u32],
+    ) -> PickUp {
         let Some(drop) = self.live.get(&object_id).copied() else {
             return PickUp::Unknown { object_id };
         };
@@ -936,7 +999,7 @@ impl DropTable {
             self.live.remove(&object_id);
             return PickUp::Expired { object_id, leave: fade_reply(&drop, "it had expired") };
         }
-        if !drop.may_be_taken_by(character_id, now_ms, self.owner_lock_ms) {
+        if !drop.may_be_taken_by(character_id, now_ms, self.owner_lock_ms, party_members) {
             if drop_is_locked_to_owner_forever(drop.item_id()) {
                 return PickUp::Untradeable { object_id, owner_id: drop.owner_id };
             }
@@ -1121,6 +1184,76 @@ mod tests {
         }
     }
 
+    /// A **mob** drop, owner WISP, no party. Owner-locked for [`OWNER_LOCK_MS`], which is the
+    /// behaviour the owner-lock tests need now that a *player's* ground drop is public and has
+    /// no lock at all (the owner, 2026-09-05).
+    fn from_mob_owned(item: Item, now_ms: u64) -> DropFromMob {
+        DropFromMob {
+            map_id: MAP,
+            owner_id: WISP,
+            item,
+            inv_type: InventoryType::Equip,
+            meso: 0,
+            x: 473,
+            y: 395,
+            source_x: 473,
+            source_y: 395,
+            now_ms,
+            party_id: 0,
+        }
+    }
+
+    /// A **party** mob drop, owner WISP (the killer), belonging to party `pid`.
+    fn party_mob(item: Item, now_ms: u64, pid: u32) -> DropFromMob {
+        DropFromMob { party_id: pid, ..from_mob_owned(item, now_ms) }
+    }
+
+    /// A player's own ground drop is public: anyone, at once, with no owner lock. The owner,
+    /// 2026-09-05: *"anyone in the map should be able to see it and pick it up."*
+    #[test]
+    fn a_player_ground_drop_is_public_and_has_no_owner_lock() {
+        let mut t = DropTable::with_lifetime(60_000, 15_000);
+        t.drop_item(dropping(Item::equip(SWORD), 0));
+        let id = t.on_field(MAP).next().unwrap().object_id;
+        // A stranger, one millisecond later, with nobody in any party.
+        assert!(t.take(id, SOMEBODY_ELSE, 1, &[]).taken().is_some(), "a public drop is free at once");
+    }
+
+    /// A trade-blocked item stays owner-only even on a public floor - the untradeable rule
+    /// gates the transfer, and the floor is a transfer waiting to happen.
+    #[test]
+    fn an_untradeable_ground_drop_is_still_owner_only() {
+        let mut t = DropTable::with_lifetime(60_000, 15_000);
+        t.drop_item(dropping(Item::equip(TRADE_BLOCKED_SWORD), 0));
+        let id = t.on_field(MAP).next().unwrap().object_id;
+        assert!(matches!(t.take(id, SOMEBODY_ELSE, 1, &[]), PickUp::Untradeable { .. }));
+        assert!(t.take(id, WISP, 1, &[]).taken().is_some(), "the owner always may");
+    }
+
+    /// A party drop: a current member may take it, a non-member may not, and a member who has
+    /// **left** (no longer on the roster passed in) may not - but the killer always can, off
+    /// `owner_id`. This is the owner's *"unless they were the killer."*
+    #[test]
+    fn a_party_drop_is_takeable_by_current_members_and_the_killer_only() {
+        const PID: u32 = 7;
+        const MEMBER: u32 = 202;
+        const OUTSIDER: u32 = 999;
+        let mut t = DropTable::with_lifetime(60_000, 15_000);
+        // WISP killed it; the party is {WISP, MEMBER}.
+        t.drop_from_mob(party_mob(Item::equip(SWORD), 0, PID));
+        let id = t.on_field(MAP).next().unwrap().object_id;
+        let roster = [WISP, MEMBER];
+
+        // A member, immediately, no owner-lock wait.
+        assert!(t.get(id).unwrap().may_be_taken_by(MEMBER, 1, t.owner_lock_ms(), &roster));
+        // A non-party bystander: refused (still inside the owner lock).
+        assert!(!t.get(id).unwrap().may_be_taken_by(OUTSIDER, 1, t.owner_lock_ms(), &roster));
+        // The member LEFT: the roster the caller resolves no longer lists them, so refused -
+        // while the killer, WISP, still passes on owner_id.
+        assert!(!t.get(id).unwrap().may_be_taken_by(MEMBER, 1, t.owner_lock_ms(), &[WISP]));
+        assert!(t.get(id).unwrap().may_be_taken_by(WISP, 1, t.owner_lock_ms(), &[WISP]));
+    }
+
     /// Not `EquipStats::default()`: an item somebody has scrolled.
     fn rolled() -> EquipStats {
         EquipStats {
@@ -1149,7 +1282,7 @@ mod tests {
 
         // Take it back and drop another: the id must NOT come round again. A duplicate makes
         // DropEnterField read the id at 0x1417a3014 and stop, silently.
-        assert!(t.take(first, WISP, 1).taken().is_some());
+        assert!(t.take(first, WISP, 1, &[]).taken().is_some());
         t.drop_item(dropping(Item::equip(SWORD), 2));
         let second = t.on_field(MAP).next().unwrap().object_id;
         assert_eq!(second, first + 1, "monotonic, and the freed id is not handed out again");
@@ -1190,20 +1323,19 @@ mod tests {
     fn a_drop_answers_with_the_remove_first_and_the_enter_second() {
         let mut t = DropTable::new();
         let out = t.drop_item(dropping(Item::equip(SWORD), 1_000));
-        assert_eq!(out.len(), 2);
 
-        assert_eq!(out[0].opcode, net::inventory::INVENTORY_OPERATION);
-        assert_eq!(out[0].body.len(), net::inventory::INVENTORY_REMOVE_LEN);
-        assert_eq!(out[0].body[0], 1, "bExclRequestSent - this is what clears +0x2330");
+        assert_eq!(out.removed.opcode, net::inventory::INVENTORY_OPERATION);
+        assert_eq!(out.removed.body.len(), net::inventory::INVENTORY_REMOVE_LEN);
+        assert_eq!(out.removed.body[0], 1, "bExclRequestSent - this is what clears +0x2330");
         // The 7-byte header is bExclRequestSent, a u8, the u32 nCount and notRemoveAddInfo,
         // so the mode is byte 7 and not byte 5. Counting it by eye got that wrong once.
-        assert_eq!(u32::from_le_bytes([out[0].body[2], out[0].body[3], out[0].body[4], out[0].body[5]]), 1, "nCount");
-        assert_eq!(out[0].body[7], net::inventory::MODE_REMOVE);
-        assert_eq!(out[0].body[8], InventoryType::Equip.as_u8());
-        assert_eq!(i16::from_le_bytes([out[0].body[9], out[0].body[10]]), 1, "the source slot");
+        assert_eq!(u32::from_le_bytes([out.removed.body[2], out.removed.body[3], out.removed.body[4], out.removed.body[5]]), 1, "nCount");
+        assert_eq!(out.removed.body[7], net::inventory::MODE_REMOVE);
+        assert_eq!(out.removed.body[8], InventoryType::Equip.as_u8());
+        assert_eq!(i16::from_le_bytes([out.removed.body[9], out.removed.body[10]]), 1, "the source slot");
 
-        assert_eq!(out[1].opcode, net::drops::DROP_ENTER_FIELD);
-        let b = &out[1].body;
+        assert_eq!(out.enter.opcode, net::drops::DROP_ENTER_FIELD);
+        let b = &out.enter.body;
         assert_eq!(b.len(), net::drops::DROP_ENTER_FIELD_LEN);
         assert_eq!(b[0], net::drops::DROP_TYPE_ITEM);
         assert_eq!(b[1], net::drops::ENTER_FLOATING, "1 and 2 are the pickable enter types");
@@ -1247,7 +1379,7 @@ mod tests {
         t.drop_item(dropping(scrolled, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
 
-        let out = t.take(id, WISP, 10);
+        let out = t.take(id, WISP, 10, &[]);
         let taken = out.taken().expect("the owner may take it");
         assert_eq!(taken.item, scrolled, "the stats came back byte for byte");
         assert_eq!(taken.inv_type, InventoryType::Equip, "and it knows which bag to go back to");
@@ -1264,7 +1396,7 @@ mod tests {
         let mut t = DropTable::new();
         t.drop_item(dropping(fresh, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
-        let taken = *t.take(id, WISP, 1).taken().unwrap();
+        let taken = *t.take(id, WISP, 1, &[]).taken().unwrap();
         assert_eq!(taken.item.kind, ItemKind::Equip(None), "None must not collapse to Some(0)");
         assert_ne!(taken.item.kind, ItemKind::Equip(Some(EquipStats::default())));
     }
@@ -1275,7 +1407,7 @@ mod tests {
         let mut t = DropTable::new();
         t.drop_item(dropping(stack, 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
-        let taken = *t.take(id, WISP, 1).taken().unwrap();
+        let taken = *t.take(id, WISP, 1, &[]).taken().unwrap();
         assert_eq!(taken.item, stack);
         assert_eq!(taken.quantity(), 7, "the wire never carried this - only the table has it");
     }
@@ -1290,7 +1422,7 @@ mod tests {
         t.drop_item(dropping(Item::equip(SWORD), 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
 
-        let out = t.take(id, WISP, 5);
+        let out = t.take(id, WISP, 5, &[]);
         let replies = out.replies();
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].opcode, net::drops::DROP_LEAVE_FIELD);
@@ -1308,8 +1440,8 @@ mod tests {
         let mut t = DropTable::new();
         t.drop_item(dropping(Item::equip(SWORD), 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
-        assert!(t.take(id, WISP, 1).taken().is_some());
-        let again = t.take(id, WISP, 2);
+        assert!(t.take(id, WISP, 1, &[]).taken().is_some());
+        let again = t.take(id, WISP, 2, &[]);
         assert_eq!(again, PickUp::Unknown { object_id: id });
         assert!(again.replies().is_empty());
         assert!(again.notice().is_some(), "no packet exists, so there must still be words");
@@ -1318,7 +1450,7 @@ mod tests {
     #[test]
     fn a_drop_that_was_never_ours_is_unknown_rather_than_a_panic() {
         let mut t = DropTable::new();
-        let out = t.take(12345, WISP, 0);
+        let out = t.take(12345, WISP, 0, &[]);
         assert_eq!(out, PickUp::Unknown { object_id: 12345 });
     }
 
@@ -1327,7 +1459,7 @@ mod tests {
         let mut t = DropTable::new();
         t.drop_item(dropping(Item::equip(SWORD), 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
-        let taken = *t.take(id, WISP, 1).taken().unwrap();
+        let taken = *t.take(id, WISP, 1, &[]).taken().unwrap();
         assert!(t.is_empty());
         // The bag was full: the leave packet was never sent, so the client never heard.
         t.restore(taken);
@@ -1342,10 +1474,11 @@ mod tests {
     #[test]
     fn the_owner_lock_opens_after_its_window() {
         let mut t = DropTable::with_lifetime(60_000, 15_000);
-        t.drop_item(dropping(Item::equip(SWORD), 1_000));
+        // A MOB drop is owner-locked; a player's own ground drop is public and has no lock.
+        t.drop_from_mob(from_mob_owned(Item::equip(SWORD), 1_000));
         let id = t.on_field(MAP).next().unwrap().object_id;
 
-        let early = t.take(id, SOMEBODY_ELSE, 5_000);
+        let early = t.take(id, SOMEBODY_ELSE, 5_000, &[]);
         assert_eq!(
             early,
             PickUp::NotYours { object_id: id, owner_id: WISP, opens_in_ms: 11_000 }
@@ -1353,7 +1486,7 @@ mod tests {
         assert!(early.notice().is_some());
         assert_eq!(t.len(), 1, "a refusal must not take it off the floor");
 
-        assert!(t.take(id, SOMEBODY_ELSE, 16_000).taken().is_some(), "the window has passed");
+        assert!(t.take(id, SOMEBODY_ELSE, 16_000, &[]).taken().is_some(), "the window has passed");
     }
 
     /// The owner's rule, at the point where an untradeable item would actually change hands.
@@ -1371,13 +1504,13 @@ mod tests {
 
         for now in [1_000, 100_000, 500_000] {
             assert_eq!(
-                t.take(id, SOMEBODY_ELSE, now),
+                t.take(id, SOMEBODY_ELSE, now, &[]),
                 PickUp::Untradeable { object_id: id, owner_id: WISP },
                 "long past the owner lock at {now} ms, and still nobody else's"
             );
         }
         // The owner always may, which is the half of the decision that keeps it droppable.
-        assert!(t.take(id, WISP, 500_000).taken().is_some());
+        assert!(t.take(id, WISP, 500_000, &[]).taken().is_some());
     }
 
     // ------------------------------------------------------------------------------
@@ -1442,7 +1575,7 @@ mod tests {
         t.drop_item(dropping(Item::equip(SWORD), 0));
         let id = t.on_field(MAP).next().unwrap().object_id;
 
-        let out = t.take(id, WISP, 10_001);
+        let out = t.take(id, WISP, 10_001, &[]);
         assert!(out.taken().is_none());
         assert!(matches!(out, PickUp::Expired { .. }));
         assert_eq!(out.replies().len(), 1, "the client is still told the drop is gone");
@@ -1569,16 +1702,18 @@ mod tests {
     #[test]
     fn every_pick_up_outcome_gives_the_caller_something_to_send() {
         let mut t = DropTable::with_lifetime(10_000, 15_000);
-        t.drop_item(dropping(Item::equip(SWORD), 0));
-        t.drop_item(dropping(Item::equip(TRADE_BLOCKED_SWORD), 0));
+        // Mob drops: owner-locked, so a stranger gets NotYours. A player's own ground drop is
+        // public now and would not.
+        t.drop_from_mob(from_mob_owned(Item::equip(SWORD), 0));
+        t.drop_from_mob(from_mob_owned(Item::equip(TRADE_BLOCKED_SWORD), 0));
         let ids: Vec<u32> = t.on_field(MAP).map(|d| d.object_id).collect();
 
         let outcomes = vec![
-            t.take(999_999, WISP, 1),                  // Unknown
-            t.take(ids[0], SOMEBODY_ELSE, 1),          // NotYours
-            t.take(ids[1], SOMEBODY_ELSE, 1),          // Untradeable
-            t.take(ids[0], WISP, 50_000),              // Expired
-            t.take(ids[1], WISP, 1),                   // Taken
+            t.take(999_999, WISP, 1, &[]),                  // Unknown
+            t.take(ids[0], SOMEBODY_ELSE, 1, &[]),          // NotYours
+            t.take(ids[1], SOMEBODY_ELSE, 1, &[]),          // Untradeable
+            t.take(ids[0], WISP, 50_000, &[]),              // Expired
+            t.take(ids[1], WISP, 1, &[]),                   // Taken
         ];
         for o in &outcomes {
             assert!(
@@ -1628,8 +1763,8 @@ mod tests {
 
         // The owner drags the sword out of the window on map 1.
         let answer = t.drop_item(dropping(sword, 1_000));
-        assert_eq!(answer[0].opcode, net::inventory::INVENTORY_OPERATION);
-        assert_eq!(answer[1].opcode, net::drops::DROP_ENTER_FIELD);
+        assert_eq!(answer.removed.opcode, net::inventory::INVENTORY_OPERATION);
+        assert_eq!(answer.enter.opcode, net::drops::DROP_ENTER_FIELD);
         let id = t.on_field(MAP).next().unwrap().object_id;
 
         // `!map 40` and back. The pool is rebuilt empty both times.
@@ -1640,7 +1775,7 @@ mod tests {
         assert_eq!(back[0].body[1], net::drops::ENTER_INSTANT);
 
         // And it is still the same object, with the same stats.
-        let taken = *t.take(id, WISP, 4_000).taken().unwrap();
+        let taken = *t.take(id, WISP, 4_000, &[]).taken().unwrap();
         assert_eq!(taken.item, sword);
         assert!(t.is_empty());
     }
@@ -1666,6 +1801,7 @@ mod tests {
             source_x: 100,
             source_y: 395,
             now_ms: 0,
+            party_id: 0,
         });
         assert_eq!(id, FIRST_DROP_OBJECT_ID, "the id comes back so it can be re-addressed");
         let owner_at = |r: &Reply| u32::from_le_bytes([r.body[23], r.body[24], r.body[25], r.body[26]]);
@@ -1681,8 +1817,8 @@ mod tests {
         );
         assert_eq!(t.get(id).unwrap().owner_id, SOMEBODY_ELSE, "the table agrees");
         // ...and so does the pick-up, which is the effect a packet-only assertion would miss.
-        assert!(t.get(id).unwrap().may_be_taken_by(SOMEBODY_ELSE, 1, t.owner_lock_ms()));
-        assert!(!t.get(id).unwrap().may_be_taken_by(WISP, 1, t.owner_lock_ms()));
+        assert!(t.get(id).unwrap().may_be_taken_by(SOMEBODY_ELSE, 1, t.owner_lock_ms(), &[]));
+        assert!(!t.get(id).unwrap().may_be_taken_by(WISP, 1, t.owner_lock_ms(), &[]));
 
         assert!(t.readdress(999_999, WISP).is_none(), "a drop that is not there is None");
     }

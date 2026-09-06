@@ -201,6 +201,11 @@ pub mod result {
     pub const NOT_IN_A_PARTY: u8 = 0x11;
     /// **"Leaving the party is restricted while on this map."** No fields. **[L]**
     pub const LEAVE_BLOCKED_HERE: u8 = 0x12;
+    /// **Push the whole party window, narrating nothing.** `u8 present`, then - when present
+    /// is non-zero - a `PARTYBLOCK`. Neither path resolves a string id, so it shows no
+    /// message; it is how the server re-syncs a client's window after a change the specific
+    /// messages do not cover. `research/party-result-0x00A5.md` §5.6, arm `0x1413bbab4`. **[L]**
+    pub const PARTY_STATE: u8 = 0x0D;
     /// The join family: `str`, then *"'%s' has joined the party."* or *"You have joined the
     /// party."* **[L]** for the arm and both strings.
     pub const JOIN: u8 = 0x13;
@@ -572,6 +577,58 @@ pub fn joined(name: &str, party: &PartyBlock) -> Vec<u8> {
     w.into_vec()
 }
 
+/// `0x0D` - push the client's whole party window with no message. `None` clears it.
+///
+/// `research/party-result-0x00A5.md` §5.6: `u8 present`, and if `present != 0` a full
+/// [`PartyBlock`]; `present == 0` stops the client reading anything further (`0x1413bbb2c`).
+/// Use it to re-sync after a change that has no dedicated sentence - a pick-up-rights change,
+/// for one, since this client has no standalone "rights changed" packet. **[L]**
+pub fn party_state(party: Option<&PartyBlock>) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(result::PARTY_STATE);
+    match party {
+        None => {
+            w.u8(0);
+        }
+        Some(p) => {
+            w.u8(1);
+            write_party_block(&mut w, p);
+        }
+    }
+    w.into_vec()
+}
+
+/// `0x10` - someone left, was expelled, or the party disbanded.
+///
+/// `research/party-result-0x00A5.md` §5.3, arm `0x1413bbcf1`, with the **second gate**: when
+/// `still_exists` is false the client reads nothing past that byte (`0x1413bbd0a`), so a
+/// disband is `u32 charId, u8 0` and nothing else. When it is true the body continues with
+/// `u8 expelled, str name, PARTYBLOCK`.
+///
+/// The client compares `char_id` with its own to pick first- or third-person wording, so:
+/// * a member leaving or expelled: `char_id` = the leaver, `party` = the party **after** they
+///   left, `still_exists` true;
+/// * a disband (the leader left): `char_id` = the leader who quit, `party` = `None`. Everyone
+///   still gets the packet; the leader reads *"You have disbanded"* and the rest *"left since
+///   the leader quit"*, off that one `char_id`. **[L]** for the shape and the string ids.
+pub fn member_left(char_id: u32, expelled: bool, name: &str, party: Option<&PartyBlock>) -> Vec<u8> {
+    let mut w = PacketWriter::new();
+    w.u8(result::WITHDRAW);
+    w.u32(char_id);
+    match party {
+        None => {
+            w.u8(0); // still_exists = false: the disband. The body ends here.
+        }
+        Some(p) => {
+            w.u8(1);
+            w.u8(u8::from(expelled));
+            w.str(name);
+            write_party_block(&mut w, p);
+        }
+    }
+    w.into_vec()
+}
+
 #[cfg(test)]
 mod party_block_tests {
     use super::*;
@@ -626,6 +683,54 @@ mod party_block_tests {
         // Two long seats, four short ones, then the leader id.
         let after_seats = 5 + (155 + 6) + (155 + 7) + 4 * 4;
         assert_eq!(&bytes[after_seats..after_seats + 4], &213u32.to_le_bytes());
+    }
+
+    #[test]
+    fn party_state_present_is_the_code_a_one_and_the_block_absent_is_the_code_and_a_zero() {
+        let empty = party_state(None);
+        assert_eq!(empty, vec![result::PARTY_STATE, 0]);
+
+        let block = PartyBlock { party_id: 3, ..Default::default() };
+        let full = party_state(Some(&block));
+        assert_eq!(full[0], result::PARTY_STATE);
+        assert_eq!(full[1], 1, "present");
+        assert_eq!(&full[2..6], &3u32.to_le_bytes(), "the block follows the present byte");
+    }
+
+    #[test]
+    fn member_left_disband_stops_after_the_still_exists_byte() {
+        // A disband: char_id = the leader, still_exists = 0, and NOTHING after it. The client
+        // reads no further (0x1413bbd0a), so a block here would be bytes it never consumes.
+        let body = member_left(213, false, "", None);
+        assert_eq!(body[0], result::WITHDRAW);
+        assert_eq!(&body[1..5], &213u32.to_le_bytes());
+        assert_eq!(body[5], 0, "still_exists = false");
+        assert_eq!(body.len(), 6, "the disband body ends at the still-exists byte");
+    }
+
+    #[test]
+    fn member_left_when_the_party_lives_carries_expelled_the_name_and_the_block() {
+        let block = PartyBlock { party_id: 1, ..Default::default() };
+        let body = member_left(214, true, "Tester2", Some(&block));
+        assert_eq!(body[0], result::WITHDRAW);
+        assert_eq!(&body[1..5], &214u32.to_le_bytes());
+        assert_eq!(body[5], 1, "still_exists");
+        assert_eq!(body[6], 1, "expelled");
+        assert_eq!(&body[7..9], &7u16.to_le_bytes(), "name length");
+        assert_eq!(&body[9..16], b"Tester2");
+        assert_eq!(&body[16..20], &1u32.to_le_bytes(), "the block's party id");
+    }
+
+    #[test]
+    fn a_pickup_rights_request_recovers_the_mode_from_slot_1() {
+        // The archived pickup body from research/party-request-payloads.md: action 2, tag 5,
+        // empty name, slot 1 = 2.
+        let hex = "1000000000000a000c000600070008000a000000000002050c00000008000800000007000800000000000002";
+        let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+        let got = parse_request(&bytes).expect("the pickup body must decode");
+        assert_eq!(got.action, action::SET_PICKUP_RIGHTS);
+        assert_eq!(got.payload_tag, 5);
+        assert_eq!(got.pickup, Some(2), "slot 1 held the mode 2");
     }
 
     #[test]
@@ -746,6 +851,12 @@ pub struct PartyRequest {
     /// name here would be wrong twice - the client never sent one, and it already proved the
     /// target is a member. **[L]**
     pub target_id: Option<u32>,
+    /// Slot 1 of a **tag-5** payload - the pick-up-rights mode. Absent means the schema
+    /// default **1**, not 0 (`research/party-request-payloads.md`: `1413beb42 cmp r15b,1 /
+    /// jne` skips a value equal to 1). The Create button always leaves it at 1; the Pick-Up
+    /// Rights button sends the mode the player chose. `None` for every other tag. **[L]** for
+    /// the slot and the default; what each value *means* is [I] and the server only stores it.
+    pub pickup: Option<u8>,
 }
 
 /// Read a [`CLIENT_PARTY_REQUEST`] body. `None` for anything that does not decode.
@@ -803,6 +914,7 @@ pub fn parse_request(body: &[u8]) -> Option<PartyRequest> {
     // what made an expel of character 4 decode as an empty name instead of failing.
     let mut name = None;
     let mut target_id = None;
+    let mut pickup = None;
     if let Some(Some(off)) = table_uoffset(body, table, vtable, 2) {
         if let Some((ptable, pvtable)) = table_at(body, off) {
             match payload_tag {
@@ -810,6 +922,10 @@ pub fn parse_request(body: &[u8]) -> Option<PartyRequest> {
                 2 | 5 => {
                     if let Some(Some(soff)) = table_uoffset(body, ptable, pvtable, 0) {
                         name = read_string(body, soff);
+                    }
+                    // Tag 5 also carries the pick-up-rights mode in slot 1, default 1.
+                    if payload_tag == 5 {
+                        pickup = Some(table_u8(body, ptable, pvtable, 1).flatten().unwrap_or(1));
                     }
                 }
                 // 4 = expel / change leader. Slot 0 is a `u64` character id, zero-extended
@@ -826,7 +942,7 @@ pub fn parse_request(body: &[u8]) -> Option<PartyRequest> {
             }
         }
     }
-    Some(PartyRequest { action, payload_tag, name, target_id })
+    Some(PartyRequest { action, payload_tag, name, target_id, pickup })
 }
 
 // --- the smallest FlatBuffers reader that can answer the question above ------------------
@@ -958,6 +1074,8 @@ mod tests {
                 action: action::CREATE,
                 payload_tag: 5,
                 name: Some("TestCharD's Party".to_string()),
+                // A create leaves slot 1 at its default 1, so the parser reports pickup 1.
+                pickup: Some(1),
                 // Tag 5's slot 0 is a string, so no id is recovered - and asking for one
                 // would be the misread this field exists to prevent.
                 target_id: None,
