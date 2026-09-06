@@ -148,8 +148,19 @@ $PublicOnly = '1.0.0.0-9.255.255.255,11.0.0.0-126.255.255.255,128.0.0.0-172.15.2
               '172.32.0.0-192.167.255.255,192.169.0.0-223.255.255.255'
 
 if ($AllowServer) {
+    # A name is resolved once, here: netsh takes addresses, so the rule pins whatever the
+    # name pointed at when this ran. Re-run it if the name is moved to another machine.
     if ($AllowServer -notmatch '^\d+\.\d+\.\d+\.\d+$') {
-        throw "-AllowServer '$AllowServer' is not a dotted IPv4 address"
+        $resolved = @()
+        try {
+            $resolved = @([System.Net.Dns]::GetHostAddresses($AllowServer) |
+                Where-Object { $_.AddressFamily -eq 'InterNetwork' })
+        } catch {
+            throw "-AllowServer '$AllowServer' is neither a dotted IPv4 address nor a name this machine can resolve: $($_.Exception.Message)"
+        }
+        if ($resolved.Count -eq 0) { throw "-AllowServer '$AllowServer' resolves to no IPv4 address" }
+        Write-Host ("{0} resolves to {1}; the rule is scoped to that ADDRESS and does not follow the name" -f $AllowServer, $resolved[0].IPAddressToString) -ForegroundColor Yellow
+        $AllowServer = $resolved[0].IPAddressToString
     }
     $server = ConvertTo-IpNumber $AllowServer
     # Start from "block everything" or, with -AllowLan too, from "block the public internet",

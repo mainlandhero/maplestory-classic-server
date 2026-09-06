@@ -36,6 +36,10 @@ Options worth knowing:
 
     -InstallDir "D:\Games\MapleCW"   somewhere other than C:\MapleCW
     -ServerIp   192.168.1.20         the machine running the servers, if not this one.
+                                     An IP, or a DNS NAME (a CNAME to the box is fine):
+                                     the launcher resolves it each time and hands the
+                                     client the address; the firewall rule below pins the
+                                     address the name had NOW - re-run if the name moves.
                                      THIS ALSO SHAPES THE FIREWALL RULE: a LAN address
                                      leaves private addresses reachable, a public address
                                      leaves exactly that address reachable, and the

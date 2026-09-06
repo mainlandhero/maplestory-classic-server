@@ -193,7 +193,12 @@ WHAT THE LAUNCHER NEEDS TO KNOW
 
 On each client machine, in the launcher:
 
-    Server IP    this machine's LAN address
+    Server IP    this machine's LAN address - or a DNS NAME that resolves to it. The
+                 launcher resolves a name itself and hands the client the address, so a
+                 CNAME can be given out instead of an IP. The client-side firewall rule
+                 pins the address the name had when the client was installed; if the
+                 name is moved, install.ps1 (or firewall.ps1 -AllowServer <name>) is
+                 re-run there.
     Port         8484   (the game / login server)
 
 The sign-in service is assumed to be on 8080 at the same address. If you moved

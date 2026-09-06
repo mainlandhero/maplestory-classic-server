@@ -31,8 +31,55 @@ pub enum Level {
 /// The two things the user chooses on the launch line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Plan {
+    /// What was typed or configured: a dotted IPv4 address **or a host name**. See
+    /// [`Plan::resolved`] - the client is only ever handed the former.
     pub ip: String,
     pub port: u16,
+}
+
+impl Plan {
+    /// The same plan with `ip` turned into a dotted IPv4 literal, resolving a host name if
+    /// that is what was typed.
+    ///
+    /// The owner, 2026-09-06: *"I would like to give my clients a CNAME and have them DNS resolve
+    /// the server IP using that."* The launcher's own connections already take a name -
+    /// `to_socket_addrs` resolves it for the sign-in and for the reachability probe, and the
+    /// pinned TLS verifier ignores the server name - but the same string also went straight
+    /// into `-NXLDEBUG <host> <port>`, and **whether the game client resolves a name is not
+    /// known.** Its Winsock imports are rebuilt at runtime by the packer, so `gethostbyname`'s
+    /// one static import has no traceable caller, and the `NXLDEBUG` string has no static
+    /// reference either: both cross-references came back zero on 2026-09-06, and both zeros
+    /// are properties of the packing, not findings. Rather than spend a client launch on it,
+    /// the launcher resolves the name itself and the client is always handed a literal - the
+    /// one input it has ever been measured accepting.
+    ///
+    /// IPv4 only. The client's address tables and the login server's advertised hosts are
+    /// dotted quads throughout, and a v6 literal on this command line would be a new
+    /// experiment; it is refused rather than tried. The first IPv4 answer is taken - a name
+    /// with several addresses is a round-robin the sign-in may land on differently, which
+    /// matters only if those addresses are different machines.
+    pub fn resolved(&self) -> Result<Plan, String> {
+        let host = self.ip.trim();
+        if host.parse::<std::net::Ipv4Addr>().is_ok() {
+            return Ok(Plan { ip: host.to_string(), port: self.port });
+        }
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            return Err(format!(
+                "{host} is an IPv6 address, and the client is only known to take IPv4 on its \
+                 command line"
+            ));
+        }
+        let addrs = std::net::ToSocketAddrs::to_socket_addrs(&(host, self.port))
+            .map_err(|e| format!("{host:?} is not an address and did not resolve as a name: {e}"))?;
+        let v4 = addrs
+            .filter_map(|a| match a {
+                std::net::SocketAddr::V4(v4) => Some(*v4.ip()),
+                std::net::SocketAddr::V6(_) => None,
+            })
+            .next()
+            .ok_or_else(|| format!("{host:?} resolved, but to no IPv4 address"))?;
+        Ok(Plan { ip: v4.to_string(), port: self.port })
+    }
 }
 
 /// The client's command line.
@@ -171,6 +218,18 @@ pub fn prepare_and_launch(
 ) -> Result<(), String> {
     prepare(layout, client_token.map(|t| t.as_str()), log)?;
 
+    // The address the client will be handed: a literal, resolved here if a name was typed.
+    // Before the probe, so the probe and the client agree on which address was checked.
+    let typed = plan;
+    let resolved = typed.resolved().map_err(|e| format!("{e}\n\n(The client was NOT launched.)"))?;
+    let plan = &resolved;
+    if plan.ip != typed.ip.trim() {
+        log(
+            Level::Info,
+            format!("{} resolves to {} - the client is given the address, not the name", typed.ip.trim(), plan.ip),
+        );
+    }
+
     // BEFORE the client, and after everything else: a client launched at a dead port sits on
     // "Connecting..." forever and reads as a broken client. `tools/test-server.ps1` carries
     // the same guard for the same reason. One TCP connect is cheap; a manual launch is not.
@@ -272,6 +331,27 @@ mod tests {
     use crate::paths::{resolve_from, Source};
     use crate::testutil::TempDir;
     use std::path::PathBuf;
+
+    /// **The client is handed a literal, whatever was typed.** A dotted address passes
+    /// through trimmed; `localhost` - the one name every machine resolves without a network -
+    /// becomes `127.0.0.1`, IPv4 chosen over the `::1` Windows lists first; a v6 literal is
+    /// refused rather than tried; and a name in the reserved `.invalid` domain, which no
+    /// resolver may answer, is an error that names the host.
+    #[test]
+    fn a_plan_resolves_a_name_to_a_dotted_address_before_the_client_sees_it() {
+        let literal = Plan { ip: " 10.1.2.3 ".into(), port: 8484 };
+        assert_eq!(literal.resolved().unwrap(), Plan { ip: "10.1.2.3".into(), port: 8484 });
+
+        let local = Plan { ip: "localhost".into(), port: 8484 }.resolved().unwrap();
+        assert_eq!(local, Plan { ip: "127.0.0.1".into(), port: 8484 });
+        assert_eq!(launch_args(&local)[1], "127.0.0.1", "and that is what -NXLDEBUG carries");
+
+        let v6 = Plan { ip: "::1".into(), port: 8484 }.resolved().unwrap_err();
+        assert!(v6.contains("IPv6"), "{v6}");
+
+        let bad = Plan { ip: "no-such-host.invalid".into(), port: 8484 }.resolved().unwrap_err();
+        assert!(bad.contains("no-such-host.invalid"), "{bad}");
+    }
 
     /// 26 characters of uppercase base32, the shape `store::claims` mints.
     const TEST_TOKEN: &str = "MFRGGZDFMZTWQ2LKNNWG23TP2A";

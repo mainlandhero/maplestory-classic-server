@@ -246,6 +246,25 @@ if ($NoFirewall) {
         return ('{0}.{1}.{2}.{3}' -f (($n -shr 24) -band 255), (($n -shr 16) -band 255), (($n -shr 8) -band 255), ($n -band 255))
     }
     $ip = $ServerIp.Trim()
+    # A NAME is accepted - the owner, 2026-09-06: clients are given a CNAME - and resolved ONCE,
+    # here, because netsh takes addresses and the launcher does its own resolving at run
+    # time (the toml above keeps the name). So the rule pins the address the name had at
+    # install time: if the name is ever pointed at another machine, re-run this, or
+    # tools\firewall.ps1 -Add -AllowServer <name>, and the rule follows.
+    if ($ip -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        $resolved = @()
+        try {
+            $resolved = @([System.Net.Dns]::GetHostAddresses($ip) |
+                Where-Object { $_.AddressFamily -eq 'InterNetwork' })
+        } catch {
+            throw "-ServerIp '$ServerIp' is neither a dotted IPv4 address nor a name this machine can resolve: $($_.Exception.Message)"
+        }
+        if ($resolved.Count -eq 0) {
+            throw "-ServerIp '$ServerIp' resolves to no IPv4 address, so the firewall rule cannot be scoped to it"
+        }
+        Write-Host ("  {0} resolves to {1}; the firewall rule is scoped to that ADDRESS - re-run this if the name moves" -f $ip, $resolved[0].IPAddressToString) -ForegroundColor Yellow
+        $ip = $resolved[0].IPAddressToString
+    }
     $isLoopback = $ip -like '127.*'
     $isPrivate = ($ip -like '10.*') -or ($ip -like '192.168.*') -or
         ($ip -match '^172\.(1[6-9]|2[0-9]|3[01])\.')

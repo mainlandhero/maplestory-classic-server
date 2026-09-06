@@ -593,7 +593,7 @@ impl eframe::App for LauncherApp {
                         }
                     }
 
-                    ui.label("Server IP");
+                    ui.label("Server address (IP or name)");
                     ui.add_enabled(
                         !busy,
                         egui::TextEdit::singleline(&mut self.server_ip).desired_width(300.0),

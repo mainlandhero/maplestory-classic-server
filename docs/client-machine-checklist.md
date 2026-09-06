@@ -53,11 +53,21 @@ launcher and used on every later start. Never point it at the original Nexon ins
 Beside the launcher. `install.ps1` writes it; by hand it is four lines:
 
 ```
-server_ip        = "203.0.113.5"        the server's LAN address, or its public one from outside
+server_ip        = "203.0.113.5"        the server's LAN address, its public one, OR A DNS NAME
 port             = "8484"               the login server
 auth_port        = "8080"               the sign-in service - MUST match the server
 auth_fingerprint = "sha256:<64 hex>"    REQUIRED - see below
 ```
+
+**A DNS name works in `server_ip`, and the launcher does the resolving.** Since 2026-09-06 the
+sign-in, the reachability probe and the client launch all accept a name (a CNAME to the box
+is the intended use); the launcher resolves it to an IPv4 address *before* `-NXLDEBUG`, so
+the game client is only ever handed a literal - whether the client itself would resolve a
+name is unknown and was deliberately not made to matter. Two consequences: the log line
+`<name> resolves to <ip>` on Start Game is where a wrong DNS record shows up, and **the
+firewall rule pins the address the name had at install time** (netsh takes addresses), so if
+the name is moved to another machine, re-run `install.ps1` or `firewall.ps1 -Add -AllowServer
+<name>`.
 
 **`auth_port` must match the server.** 8080 is a popular port and a server box may already
 have it spoken for, in which case its `start-servers.cmd` sets `AUTHPORT` to something else
