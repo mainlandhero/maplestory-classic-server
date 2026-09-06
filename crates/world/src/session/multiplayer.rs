@@ -98,6 +98,9 @@ impl Session {
                 crate::broadcast::Event::Experience { amount, why, white } => {
                     out.extend(self.award_experience(amount, &why, white, false));
                 }
+                crate::broadcast::Event::PartyBuff { skill_id, level, caster } => {
+                    out.extend(self.receive_party_buff(skill_id, level, caster));
+                }
             }
         }
         out
@@ -819,6 +822,106 @@ mod tests {
         let again: Vec<_> = got.iter().filter(|r| is_hp(r)).map(hp_of).collect();
         assert_eq!(again.len(), 1, "the change is broadcast once: {got:?}");
         assert_eq!(again[0].1, u32::try_from(hurt.hp).unwrap(), "with the new HP");
+    }
+
+    /// **A party buff reaches every member on the caster's field, and nobody else.**
+    ///
+    /// The owner, 2026-09-06: *"party buffs should apply to everyone in the party who is in the
+    /// same map."* Haste (4101001) is the specimen: `indieSpeed 10`, `indieJump 1`, 100 s at
+    /// level 1, and the `lt`/`rb` rectangle that marks a party buff in the table. Four
+    /// sessions on one channel: the caster, a member on the same field, a member on another
+    /// field, and a stranger on the caster's field who is in no party. Claims: the caster's
+    /// own `0x007D` carries bits 92 and 93; the same-field member's next tick delivers one
+    /// too, value 10 with the skill as its reason; the other two get nothing; only the caster
+    /// paid MP; and the **recipient owns the expiry** - its own tick past 100 s is what sends
+    /// the `0x007E`, because only the session that holds that client can.
+    #[test]
+    fn a_party_buff_reaches_every_member_on_the_field_and_nobody_else() {
+        let skills = std::path::Path::new("../../gm-handbook/skills.txt");
+        if !skills.exists() {
+            return; // generated, gitignored - python tools/dump_skills.py
+        }
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config {
+            set_field_probe: true,
+            firstjob: crate::firstjob::CombatTable::load(skills),
+            ..Config::default()
+        });
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let make = |name: &str, map: u32| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: map, ..Default::default() };
+            let mut made = store.create_character(account, 0, &chr).unwrap();
+            made.mp = 200;
+            made.max_mp = 200;
+            store.save_character_progress(&made).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut caster, caster_id) = make("Cobalt", 104_040_000);
+        let (mut near, near_id) = make("Tester2", 104_040_000);
+        let (mut far, far_id) = make("Farside", 100_000_000);
+        let (mut stranger, _) = make("Stranger", 104_040_000);
+        store.set_skill_level(caster_id, 4_101_001, 1).unwrap();
+
+        // Form the party: caster leads, both members accept.
+        let created = caster.run_party_request(
+            caster_id,
+            crate::party::Request::Create { name: "Cobalt's Party".into() },
+        );
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for (member, id) in [(&mut near, near_id), (&mut far, far_id)] {
+            let _ = caster.run_party_request(caster_id, crate::party::Request::Invite { target: id });
+            let _ = member.tick(1_000);
+            let _ = member.run_party_request(id, crate::party::Request::Accept { party });
+        }
+        // Drain the party traffic so the buff packets below stand alone.
+        for s in [&mut caster, &mut near, &mut far, &mut stranger] {
+            let _ = s.tick(2_000);
+            let _ = s.tick(2_100);
+        }
+
+        // The cast: `0x013C`, u32 skillId, u32 level.
+        let mut body = net::buff::CLIENT_SKILL_USE.to_le_bytes().to_vec();
+        body.extend_from_slice(&4_101_001u32.to_le_bytes());
+        body.extend_from_slice(&1u32.to_le_bytes());
+        let _ = caster.tick(3_000);
+        let out = caster.handle(&body);
+
+        let is_set = |r: &Reply| r.opcode == net::buff::TEMPORARY_STAT_SET;
+        let own = out.iter().find(|r| is_set(r)).unwrap_or_else(|| panic!("the caster's own grant: {out:?}"));
+        assert_eq!(net::buff::bits_in_mask(&own.body[..net::buff::MASK_LEN]), vec![92, 93], "Speed and Jump");
+
+        let got = near.tick(3_100);
+        let theirs: Vec<_> = got.iter().filter(|r| is_set(r)).collect();
+        assert_eq!(theirs.len(), 1, "one grant for the member on the same field: {got:?}");
+        let b = &theirs[0].body;
+        assert_eq!(net::buff::bits_in_mask(&b[..net::buff::MASK_LEN]), vec![92, 93]);
+        // Entries follow the mask in ascending bit order: bit 92 first - i16 value, u32 reason.
+        let m = net::buff::MASK_LEN;
+        assert_eq!(&b[m..m + 2], &10i16.to_le_bytes(), "Speed +10 at level 1");
+        assert_eq!(&b[m + 2..m + 6], &4_101_001u32.to_le_bytes(), "the reason is the skill");
+
+        assert!(!far.tick(3_100).iter().any(is_set), "a member on another field gets nothing");
+        assert!(!stranger.tick(3_100).iter().any(is_set), "a stranger on the same field gets nothing");
+
+        // Only the caster paid.
+        let mp = |id: u32| {
+            store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().mp
+        };
+        assert_eq!(mp(caster_id), 185, "Haste level 1 costs 15");
+        assert_eq!(mp(near_id), 200, "the recipient paid nothing");
+
+        // The recipient owns the expiry: nothing at 99 s, the reset from ITS tick at 101 s.
+        assert!(!near.tick(3_100 + 99_000).iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET));
+        let later = near.tick(3_100 + 101_000);
+        assert!(
+            later.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET),
+            "the member's own session sends the 0x007E: {later:?}"
+        );
     }
 
     /// Two sessions, one channel, one map - and a **real** `0x0224` crosses

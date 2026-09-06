@@ -159,7 +159,16 @@ impl Session {
     /// The swing has already happened on screen. Refusing here cannot un-play the animation,
     /// and would recreate the very desynchronisation this exists to fix - so an overdraw
     /// spends what is there, floors at zero, and says so in the log line.
-    fn spend_attack_mp(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
+    ///
+    /// **And the HP, for the one skill that has an `hpCon`.** Slash Blast costs 3..8 HP a
+    /// swing on top of its MP (`firstjob.rs`: *"Slash Blast is the only one of the 24 with an
+    /// `hpCon`"*). `Obligation::deduct_hp` had said so since 2026-08-28 and nothing read it -
+    /// the same "built, not wired" shape as the arrows, found by the Warrior audit on
+    /// 2026-09-06. The HP is **floored at 1, not 0**: a skill's own cost must never be the
+    /// thing that kills its caster, and the client does not let a swing go out at 1 HP for
+    /// a 3-HP skill in the first place, so a floor is a repair of a desync and not a rule
+    /// the player can lean on.
+    fn spend_attack_costs(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
         let Some(mut chr) = self.claimed_character() else { return Vec::new() };
         // The full parser rather than a hand-rolled offset read: it checks the length and the
         // trailer, so a body it accepts is one whose head we have actually understood.
@@ -173,29 +182,55 @@ impl Session {
             .ok()
             .filter(|l| *l > 0)
             .unwrap_or(u32::from(claimed_level));
-        let Some(cost) = self.config.firstjob.level(skill_id, level).and_then(|l| l.mp_con) else {
-            return Vec::new(); // no cost column, or a skill this table does not describe
+        let Some(row) = self.config.firstjob.level(skill_id, level) else {
+            return Vec::new(); // a skill this table does not describe
         };
-        if cost == 0 {
-            return Vec::new();
+        let mp_cost = row.mp_con.unwrap_or(0);
+        let hp_cost = row.hp_con.unwrap_or(0);
+        if mp_cost == 0 && hp_cost == 0 {
+            return Vec::new(); // no cost column at all
         }
-        let short = cost.saturating_sub(chr.mp);
-        chr.mp = chr.mp.saturating_sub(cost);
+        let mp_short = mp_cost.saturating_sub(chr.mp);
+        chr.mp = chr.mp.saturating_sub(mp_cost);
+        let hp_before = chr.hp;
+        if hp_cost > 0 {
+            chr.hp = chr.hp.saturating_sub(hp_cost).max(1);
+        }
+        let hp_short = hp_cost.saturating_sub(hp_before.saturating_sub(1));
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.notice(format!("Could not spend the MP for skill {skill_id}: {e}"));
         }
         vec![Reply {
             opcode: net::stats::STAT_CHANGED,
-            body: net::stats::StatChange { mp: Some(chr.mp), ..Default::default() }.build(),
+            body: net::stats::StatChange {
+                mp: Some(chr.mp),
+                hp: (hp_cost > 0).then_some(chr.hp),
+                ..Default::default()
+            }
+            .build(),
             what: format!(
-                "StatChanged: skill {skill_id} level {level} cost {cost} mp -> {}/{}{}. The \
+                "StatChanged: skill {skill_id} level {level} cost {mp_cost} mp -> {}/{}{}{}. The \
                  CLIENT already spent this locally; before 2026-08-28 the server did not, and \
                  the stale total came back the next time any 0x007C carried the MP field - \
                  which is what looked like a Red Potion restoring MP",
                 chr.mp,
                 chr.max_mp,
-                if short > 0 {
-                    format!(" (SHORT by {short}, floored at 0 rather than refused)")
+                if mp_short > 0 {
+                    format!(" (SHORT by {mp_short}, floored at 0 rather than refused)")
+                } else {
+                    String::new()
+                },
+                if hp_cost > 0 {
+                    format!(
+                        " and {hp_cost} hp -> {}/{} (hpCon; Slash Blast is the only first-job skill with one){}",
+                        chr.hp,
+                        chr.max_hp,
+                        if hp_short > 0 {
+                            format!(" (SHORT by {hp_short}, floored at 1 - a skill never kills its caster)")
+                        } else {
+                            String::new()
+                        }
+                    )
                 } else {
                     String::new()
                 }
@@ -288,10 +323,47 @@ impl Session {
     /// is a log line and a smaller deduction, never a rejected swing - the client will not
     /// fire without arrows in the first place, so a shortfall here is the two ends
     /// disagreeing about a count, which the `0x0070` sent for what *was* taken then repairs.
+    ///
+    /// **Throwing stars follow the same rule with a claw.** The owner, 2026-09-06: *"Thief
+    /// skills/basic attack should consume stars similar to bowman with arrows."* A claw
+    /// (`147xxxx`) draws from the `207xxxx` family - the same two-range test the client's own
+    /// bundle decoder makes (`net::bag::BUNDLE_SERIAL_RANGES`), so Subi through Hwabi and
+    /// the three event stars all count. A plain throw is one star; Lucky Seven is **two**,
+    /// which is where the archer rule was tightened: it fires `bulletCount 2` with no
+    /// `bulletConsume` column, and the old arm charged the plain-shot 1 for that shape.
+    /// The owner's rule is "depending on the attack amount", so a skill that fires N and names no
+    /// consume column is now charged N. That is **[I]** - no capture shows a Lucky Seven -
+    /// and it changes nothing for the Archer (Double Shot has the column, Power Knockback
+    /// fires nothing) or for wands, which never reach this far.
+    ///
+    /// **Which stack.** The attack header has no slot field (`net::attack::AttackHeader`,
+    /// forty fields, none of them an inventory position), so the lowest matching stack goes
+    /// first. A Rogue carrying two kinds of star will see the lower slot drain whichever kind
+    /// the client's star icon shows; the `0x0070` keeps the counts honest either way.
+    ///
+    /// **One instrument caveat, stated because it decides whether any of this runs.** The
+    /// parser was decoded from `0x00DF` melee bodies - **no `0x00E0` shoot body has ever been
+    /// captured** (67 archived logs carry a melee, none a shot, checked 2026-09-06). All
+    /// three attack opcodes share one encoder (`FUN_140f31fe0`, `net::attack` module docs),
+    /// which is why the same parser is used; but a shot that failed to parse would take
+    /// nothing and say nothing, so that case now logs loudly instead of returning quietly.
     fn spend_attack_arrows(&mut self, opcode: u16, payload: &[u8]) -> Vec<Reply> {
         use crate::damage::WeaponClass;
         let Some(chr) = self.claimed_character() else { return Vec::new() };
-        let Ok(parsed) = net::attack::parse(opcode, payload) else { return Vec::new() };
+        let parsed = match net::attack::parse(opcode, payload) {
+            Ok(p) => p,
+            Err(e) => {
+                if opcode == net::combat::USER_SHOOT_ATTACK {
+                    crate::server::log(&format!(
+                        "   projectiles: a 0x00E0 SHOOT body did not parse ({e:?}, {} bytes) - \
+                         no arrow or star was taken. The parser comes from melee captures; \
+                         if this line appears, the shoot layout differs and needs a capture",
+                        payload.len()
+                    ));
+                }
+                return Vec::new();
+            }
+        };
 
         // The weapon in hand decides everything else.
         let held = self
@@ -300,9 +372,11 @@ impl Session {
             .unwrap_or_default()
             .iter()
             .find_map(|e| WeaponClass::from_item_id(e.item_id));
-        let arrow_range = match held {
-            Some(WeaponClass::Bow) => 2_060_000..=2_060_999,
-            Some(WeaponClass::Crossbow) => 2_061_000..=2_061_999,
+        let (arrow_range, ammo) = match held {
+            Some(WeaponClass::Bow) => (2_060_000..=2_060_999, "arrows"),
+            Some(WeaponClass::Crossbow) => (2_061_000..=2_061_999, "crossbow arrows"),
+            // The whole 207 family, as the client's own bundle decoder ranges it.
+            Some(WeaponClass::Claw) => (2_070_000..=2_079_999, "stars"),
             _ => return Vec::new(),
         };
 
@@ -314,13 +388,14 @@ impl Session {
                     (n, format!("skill {skill_id}: bulletConsume {n} [L]"))
                 }
                 Some(crate::firstjob::BulletDuty::None) => {
-                    (0, format!("skill {skill_id}: no bullet column - the bow swung, not fired [L]"))
+                    (0, format!("skill {skill_id}: no bullet column - the weapon swung, not fired [L]"))
                 }
+                // Lucky Seven: `bulletCount 2`, no consume column, charged 2 when thrown.
                 Some(crate::firstjob::BulletDuty::ProjectilesNoConsumeColumn(fired)) => (
-                    u32::from(shooting),
+                    if shooting { fired } else { 0 },
                     format!(
-                        "skill {skill_id}: fires {fired} but the data has no bulletConsume; \
-                         charging the plain-shot rule [I]"
+                        "skill {skill_id}: fires {fired} and the data has no bulletConsume; \
+                         charging one per projectile - the owner's attack-amount rule [I]"
                     ),
                 ),
                 None => (
@@ -363,9 +438,9 @@ impl Session {
             remaining -= take;
         }
         crate::server::log(&format!(
-            "   arrows: {} of {cost} taken for {why} - {}{}",
+            "   {ammo}: {} of {cost} taken for {why} - {}{}",
             cost - remaining,
-            if taken_from.is_empty() { "NO matching arrow stack in the Use tab".to_string() } else { taken_from.join(", ") },
+            if taken_from.is_empty() { format!("NO matching {ammo} stack in the Use tab") } else { taken_from.join(", ") },
             if remaining > 0 && !taken_from.is_empty() { format!("; SHORT by {remaining}, swing not refused") } else { String::new() }
         ));
         out
@@ -395,9 +470,9 @@ impl Session {
         // **Log only, never refuse.** The client has already played the animation and
         // computed its damage; rejecting the swing here would desynchronise the very thing
         // this is fixing. If the MP does not cover it we spend what there is and say so.
-        let mut out = self.spend_attack_mp(opcode, payload);
-        // **And the arrows it cost.** Same rule as the MP: the shot has already left the
-        // bow on screen, so the server takes the arrows it owes and never refuses the swing.
+        let mut out = self.spend_attack_costs(opcode, payload);
+        // **And the arrows or stars it cost.** Same rule as the MP: the shot has already
+        // left the weapon on screen, so the server takes what it owes and never refuses.
         out.extend(self.spend_attack_arrows(opcode, payload));
         // **The only coordinate pair this server reads from the client.** The attack body
         // carries the player's own position (fields 13/14), which is how the zero-target

@@ -172,6 +172,18 @@ pub enum Event {
     /// rate applies to a share - has to be made deliberately rather than inherited
     /// from whoever happened to land the killing blow.
     Experience { amount: u64, why: String, white: bool },
+
+    /// A **party buff** `caster` just put on themselves reaches this character too:
+    /// `skill_id` at `level`, cast while both stood on one field.
+    ///
+    /// The owner, 2026-09-06: *"party buffs should apply to everyone in the party who is in the
+    /// same map."* The recipient builds its own `0x007D` from its own tables and records the
+    /// expiry in its own `buffs`, so the `0x007E` that has to follow comes from the session
+    /// that owns the client. That is why a stat crosses as a fact and not as bytes: a buff's
+    /// value can depend on the wearer (Iron Body's percent resolves against the wearer's own
+    /// defence), and only the recipient can say what it is worth to them. No MP is spent and
+    /// no cooldown is stamped on the recipient - those were the caster's.
+    PartyBuff { skill_id: u32, level: u32, caster: u32 },
 }
 
 /// One queued packet and whether a newer one may replace it.
@@ -1012,6 +1024,8 @@ mod tests {
             .iter()
             .map(|e| match e {
                 Event::Experience { amount, .. } => *amount,
+                // These tests only ever queue EXP shares; a party buff here is a test bug.
+                Event::PartyBuff { skill_id, .. } => panic!("not an EXP share: skill {skill_id}"),
             })
             .collect()
     }

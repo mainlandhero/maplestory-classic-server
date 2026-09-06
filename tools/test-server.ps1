@@ -133,6 +133,28 @@
     the second pushes. Say how far it flies next to a normal hit and whether the other client's
     screen shows the same landing spot. MP for all three is spent server-side already.
 
+    T16 (2026-09-06). THIEF AND WARRIOR AUDIT. STARS: with a claw worn and stars in the Use tab,
+    a normal throw takes 1 star, LUCKY SEVEN takes 2 (one per projectile - the data has no
+    bulletConsume for it, so this is the owner's attack-amount rule, [I]), Double Stab with a dagger
+    takes 0. Every 207xxxx star counts; the lowest matching stack drains first (the attack
+    packet carries no slot). If a throw takes NOTHING and world.log says "a 0x00E0 SHOOT body
+    did not parse", that is the finding: no shoot body has ever been captured and the parser
+    comes from melee. RECHARGE: at any Grocer (Lucy, Mina, Luna...) select a partial star stack
+    in your inventory and press Recharge. Expected: the stack fills to slotMax (Subi 500) and
+    the meso count drops by ceil(missing x unitPrice), Subi 0.3 per star; write down the number
+    the window showed next to "Recharge:" and the number the mesos moved by - if they differ
+    the rounding direction is the client's and ours is wrong by that much. A star Lucy does not
+    list (Wolbi and up) is refused with the not-enough-mesos message; that is deliberate. SLASH
+    BLAST now costs HP (3 at level 1) as well as MP; Power Strike does not. PARTY BUFFS: Haste
+    (Assassin/Bandit) and Rage (Fighter) reach every party member ON THE SAME MAP; a member on
+    another map and a non-member beside you get nothing. No second job needed to see the bits:
+    as the GM, `!buff 4101001 1` puts Haste on YOU only (it is the table check, not a cast);
+    the party path needs a character that actually has the skill. What to watch: the buff icon
+    on BOTH screens, the recipient's walk AND jump for Haste (jump is bit 93, [D] - a faster
+    walk with the same jump means the pair is off), Rage's number on the stat window's attack
+    line (bit 84, [D] - icon without the number means 83 is next). Iron Will is SELF-ONLY in
+    this client's data (no lt/rb rectangle) - report it as expected, not as a bug.
+
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
     one "served as NOBODY - REFUSED" line in login.log about half a second before the served
@@ -1696,6 +1718,27 @@ function Show-TestPlan {
         Write-Host '       only plays when YOU control the mob: on a mob the other client was'
         Write-Host '       driving, the FIRST hit hands it over and the SECOND pushes. Say how'
         Write-Host '       far it flies next to a normal hit, and whether the other screen agrees.'
+        Write-Host '    0f. THIEF AUDIT (2026-09-06). Wear a claw, stars in the Use tab.'
+        Write-Host '       Normal throw: the stack drops by 1. LUCKY SEVEN: by 2 (one per'
+        Write-Host '       star thrown - the data has no bulletConsume, so [I]). Double Stab'
+        Write-Host '       with a dagger: 0. If NOTHING drops and world.log says "SHOOT body'
+        Write-Host '       did not parse", that is the finding: no 0x00E0 was ever captured.'
+        Write-Host '       RECHARGE: at Lucy/Mina/Luna, click a partial star stack, press'
+        Write-Host '       Recharge. Stack fills to 500 (Subi); mesos drop by missing x 0.3,'
+        Write-Host '       rounded UP. WRITE DOWN the "Recharge:" number the window showed'
+        Write-Host '       and what the mesos moved by - a difference is the rounding rule.'
+        Write-Host '       Wolbi and up at Lucy is refused (they list only Subi): deliberate.'
+        Write-Host '    0g. WARRIOR AUDIT. SLASH BLAST costs HP (3 at level 1) AND MP now;'
+        Write-Host '       Power Strike only MP. Watch the HP bar tick down per swing.'
+        Write-Host '    0h. PARTY BUFFS. Haste (4101001/4201001) and Rage (1101004) reach'
+        Write-Host '       every party member ON THE SAME MAP: icon on BOTH screens. A member'
+        Write-Host '       on another map, or a stranger beside you, gets nothing. Haste: the'
+        Write-Host '       recipient walks AND jumps higher (jump = bit 93, [D]; faster walk'
+        Write-Host '       with the same jump = pair off by one). Rage: the number on the'
+        Write-Host '       stat window''s attack line (bit 84, [D]; icon and no number = try'
+        Write-Host '       83). GM shortcut: !buff 4101001 1 buffs YOU only (table check).'
+        Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
+        Write-Host '       expected, not a bug.'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'

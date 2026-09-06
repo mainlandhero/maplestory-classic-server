@@ -72,25 +72,39 @@ impl Session {
                 skipped_free += 1;
                 continue;
             }
-            rows.push(net::classicshop::ClassicShopRow::buy(
-                item.item_id,
-                u64::from(item.buy_price),
-                // **Never zero.** `ItemData::slot_max` is zero for 2495 of the 2785 rows in
-                // `gm-handbook/itemdata.txt`, and a zero cap makes every purchase of that row
-                // fail with no message at all - to the player or to us.
-                i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
-            ));
+            rows.push(
+                net::classicshop::ClassicShopRow::buy(
+                    item.item_id,
+                    u64::from(item.buy_price),
+                    // **Never zero.** `ItemData::slot_max` is zero for 2495 of the 2785 rows in
+                    // `gm-handbook/itemdata.txt`, and a zero cap makes every purchase of that row
+                    // fail with no message at all - to the player or to us.
+                    i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
+                )
+                // **The recharge price rides on the same row.** The owner, 2026-09-06: stars
+                // "should be able to recharge ... at general merchants". The client offers
+                // Recharge for an id this counter lists with a non-zero unit price
+                // (`research/classic-shop-rows.md` §3 row 41a), and every Grocer already lists
+                // Subi, so this is one field on a row that already went out - not a new row.
+                // On a non-rechargeable id the field is not on the wire and the value drops.
+                .with_unit_price(self.unit_price_milli(item.item_id)),
+            );
         }
         for item in &shop.items {
             let Some(data) = self.config.shops.item_data.get(&item.item_id) else { continue };
             if !data.may_be_sold() {
                 continue; // the owner: "Please do not allow quest items to be sold."
             }
-            rows.push(net::classicshop::ClassicShopRow::sell(
-                item.item_id,
-                u64::from(data.price),
-                i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
-            ));
+            rows.push(
+                net::classicshop::ClassicShopRow::sell(
+                    item.item_id,
+                    u64::from(data.price),
+                    i16::try_from(self.config.shops.max_per_purchase(item.item_id)).unwrap_or(100),
+                )
+                // The Sell-tab twin carries the same price, so whichever row the client's
+                // Recharge list resolves the id to, it reads a non-zero double.
+                .with_unit_price(self.unit_price_milli(item.item_id)),
+            );
         }
         // **No Buy Back rows.** This client's `UI/UIShop.img/Shop` has no `repurchaseInfo`
         // node and exactly two tabs, `TabBuy` and `TabSell`. See `classic_sell`.
@@ -113,13 +127,14 @@ impl Session {
         let body = net::classicshop::classic_open_shop(template, &rows);
         let what = format!(
             "ClassicOpenShop 0x055D: {} ({}) for character {character_id} - {} rows ({} buy, \
-             {} sell, {} buy-back), {} bytes{}{}",
+             {} sell, {} buy-back, {} rechargeable with a unit price), {} bytes{}{}",
             shop.npc,
             shop.role,
             rows.len(),
             rows.iter().filter(|r| !r.sell && !r.buy_back).count(),
             rows.iter().filter(|r| r.sell).count(),
             rows.iter().filter(|r| r.buy_back).count(),
+            rows.iter().filter(|r| r.unit_price().is_some_and(|p| p > 0.0)).count(),
             body.len(),
             if skipped_free > 0 {
                 format!(" - {skipped_free} row(s) DROPPED for a zero buy price")
@@ -156,14 +171,9 @@ impl Session {
                 self.open_shop = None;
                 Vec::new() // nothing is latched on close
             }
-            net::classicshop::ClassicShopRequest::Recharge { inventory_slot } => self
-                .classic_refused(
-                    net::classicshop::RESULT_NOT_ENOUGH_MESOS,
-                    &format!(
-                        "recharge of slot {inventory_slot} - no row this server sends is \
-                         rechargeable, so this should be unreachable"
-                    ),
-                ),
+            net::classicshop::ClassicShopRequest::Recharge { inventory_slot } => {
+                self.classic_recharge(inventory_slot)
+            }
             net::classicshop::ClassicShopRequest::Buy { row_index, item_id, quantity } => {
                 self.classic_buy(row_index, item_id, quantity)
             }
@@ -326,6 +336,116 @@ impl Session {
     // Shop2 crash produced for the same reason.
     //
     // **Type 35 is the survivor** if a refill is ever wanted: it selects tab 0.
+
+    /// `info/unitPrice` in thousandths, or `0` for an item the table does not price.
+    fn unit_price_milli(&self, item_id: u32) -> u32 {
+        self.config.shops.item_data.get(&item_id).map(|d| d.unit_price_milli).unwrap_or(0)
+    }
+
+    /// `u8 2` - **recharge** the throwing stars or bullets in one Use-tab slot.
+    ///
+    /// The owner, 2026-09-06: *"they should be able to recharge stars at general merchants."* The
+    /// client sends only the slot; everything else is the server's to work out, and every
+    /// step that can refuse does so with a `0x055E`, because the window latched on send.
+    ///
+    /// **What it costs.** `ceil((slotMax - held) * unitPrice)` whole mesos, `unitPrice` being
+    /// the item's own `info/unitPrice` (Subi 0.3 ... Hwabi 1.0, `ItemData::unit_price_milli`).
+    /// The rounding direction is **[I]**: the client formats its own *"Recharge: %lld"* and
+    /// the arithmetic behind that string has not been read, so the test plan asks for the
+    /// number the window shows against the number the meso count moved by.
+    ///
+    /// **How it lands.** The top-up is a `buy_item` of exactly `slotMax - held` units at the
+    /// total price, in one transaction: `place_into_bag` fills existing partial stacks before
+    /// it opens a slot, and `need` is by construction what the stack has room for, so the
+    /// units land in the slot the player pointed at and the `0x0070` reports that slot's new
+    /// count. Pay-then-fail and fail-then-pay are both impossible for the same reason a
+    /// purchase cannot half-happen.
+    fn classic_recharge(&mut self, slot: u16) -> Vec<Reply> {
+        use net::classicshop::RESULT_NOT_ENOUGH_MESOS as REFUSED;
+        let Some(chr) = self.claimed_character() else {
+            return self.classic_refused(REFUSED, "no character is claimed");
+        };
+        let Some((_, rows)) = self.open_shop.clone() else {
+            return self.classic_refused(REFUSED, "no shop is open");
+        };
+        let Ok(bag) = self.store.bag_items(chr.id, store::InventoryType::Use) else {
+            return self.classic_refused(REFUSED, "could not read the Use tab");
+        };
+        let Some(held) = bag.iter().find(|r| r.slot == slot) else {
+            return self.classic_refused(REFUSED, &format!("recharge: Use slot {slot} is empty"));
+        };
+        let item_id = held.item.item_id;
+        if !net::bag::bundle_has_serial(item_id) {
+            return self.classic_refused(
+                REFUSED,
+                &format!("recharge: item {item_id} in Use slot {slot} is not a star or a bullet"),
+            );
+        }
+        // The window offers Recharge only for an id this counter listed with a unit price, so
+        // anything else is a drifted list or a forged body - refused, not priced from the
+        // item table, because a shop that does not stock a star should not recharge it.
+        let Some(unit_milli) = rows
+            .iter()
+            .filter(|r| r.item_id == item_id)
+            .map(|r| r.unit_price_milli)
+            .find(|m| *m > 0)
+        else {
+            return self.classic_refused(
+                REFUSED,
+                &format!("recharge: this counter lists no rechargeable row for item {item_id}"),
+            );
+        };
+        let slot_max = self.config.shops.item_data.get(&item_id).map(|d| d.slot_max).unwrap_or(0);
+        if slot_max == 0 {
+            return self.classic_refused(
+                REFUSED,
+                &format!("recharge: item {item_id} has no slotMax in the item table, so a full stack is unknown"),
+            );
+        }
+        let have = held.item.kind.quantity();
+        if have >= slot_max {
+            return self.classic_refused(
+                REFUSED,
+                &format!("recharge: Use slot {slot} already holds {have} of {slot_max}"),
+            );
+        }
+        let need = slot_max - have;
+        let cost_milli = u64::from(need) * u64::from(unit_milli);
+        let cost = u32::try_from(cost_milli.div_ceil(1000)).unwrap_or(u32::MAX);
+        match self.store.buy_item(
+            chr.id,
+            store::InventoryType::Use,
+            &store::Item::bundle(item_id, need),
+            slot_max,
+            cost,
+        ) {
+            Ok(changed) => {
+                let mut out = vec![Reply {
+                    opcode: net::classicshop::CLASSIC_SHOP_RESULT,
+                    body: net::classicshop::classic_shop_success(item_id, 0),
+                    what: format!(
+                        "ClassicShopResult success: recharged item {item_id} in Use slot {slot} \
+                         {have} -> {slot_max} (+{need}) for {cost} mesos ({need} x {} mesos, \
+                         rounded up)",
+                        f64::from(unit_milli) / 1000.0
+                    ),
+                }];
+                // The result moves nothing by itself - same as a purchase.
+                out.extend(self.inventory_added_replies(store::InventoryType::Use, &changed, "recharged"));
+                out.extend(self.meso_reply(chr.id));
+                out
+            }
+            Err(store::StoreError::NotEnoughMesos { .. }) => self.classic_refused(
+                REFUSED,
+                &format!("recharge: not enough mesos - {need} units at {} each is {cost}", f64::from(unit_milli) / 1000.0),
+            ),
+            Err(store::StoreError::BagFull { .. }) => self.classic_refused(
+                net::classicshop::RESULT_INVENTORY_FULL,
+                "recharge: the top-up did not fit the slot it was meant for",
+            ),
+            Err(e) => self.classic_refused(REFUSED, &format!("recharge failed: {e}")),
+        }
+    }
 
     /// A `0x055E` refusal. **Never skip one**: the window latches on send.
     fn classic_refused(&self, result_type: u8, why: &str) -> Vec<Reply> {

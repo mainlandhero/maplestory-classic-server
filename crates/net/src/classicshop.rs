@@ -163,6 +163,12 @@ pub struct ClassicShopRow {
     /// The Buy Back flag, the second trailing byte. **A flagged row must carry no gates** - see
     /// the module header, this is the desync.
     pub buy_back: bool,
+    /// `row+0x40`, the **recharge unit price** in thousandths of a meso - written as an IEEE
+    /// double, and **only for a rechargeable id** (`crate::bag::bundle_has_serial`); every
+    /// other row has no such field. `0` keeps the Recharge arm unreachable for the row:
+    /// `FUN_141fb9240` refuses when the double is `0.0` (`research/classic-shop-rows.md`
+    /// §3 row 41a). Thousandths rather than a float so the row stays `Eq`.
+    pub unit_price_milli: u32,
 }
 
 impl ClassicShopRow {
@@ -180,7 +186,22 @@ impl ClassicShopRow {
             remaining_stock: 0,
             sell: false,
             buy_back: false,
+            unit_price_milli: 0,
         }
+    }
+
+    /// The same row, rechargeable at `unit_price_milli` thousandths of a meso per unit.
+    ///
+    /// Only meaningful on a `207xxxx`/`233xxxx` id - on anything else the field is not on
+    /// the wire and the value is dropped, which is the right outcome for a data error.
+    pub fn with_unit_price(self, unit_price_milli: u32) -> Self {
+        Self { unit_price_milli, ..self }
+    }
+
+    /// The unit price as the client reads it, or `None` when this row carries no such field.
+    pub fn unit_price(&self) -> Option<f64> {
+        crate::bag::bundle_has_serial(self.item_id)
+            .then(|| f64::from(self.unit_price_milli) / 1000.0)
     }
 
     /// A Sell-tab row - the price the NPC pays.
@@ -206,6 +227,7 @@ impl ClassicShopRow {
             remaining_stock: u32::try_from(stack.max(1)).unwrap_or(1),
             sell: false,
             buy_back: true,
+            unit_price_milli: 0,
         }
     }
 
@@ -265,12 +287,15 @@ impl ClassicShopRow {
         // takes this `i16` into `row+0x1c`. Writing the `i16` for a star left the client 6
         // bytes short and it read past the end - reason `0x26`, "not enough bytes left".
         //
-        // Zero is not a filler: `0x1404ba579` pre-zeroes that slot, so sending zero keeps the
-        // Recharge arm unreachable, which is what `session/shop.rs` has always claimed and
-        // until now could not deliver. The same two ranges are already read off a different
-        // site in `crate::bag`, so they are shared rather than restated.
-        if crate::bag::bundle_has_serial(self.item_id) {
-            w.u64(0); // +0x40  raw[8], the rechargeable slot
+        // The 8 bytes are an IEEE-754 double, the recharge price per unit: `FUN_141fb9240`
+        // refuses to recharge when it is `0.0`, so a row built without `with_unit_price`
+        // keeps the Recharge arm unreachable - which was every row until 2026-09-06, when
+        // The owner asked for stars to be rechargeable at the general stores. The same two id
+        // ranges are already read off a different site in `crate::bag`, so they are shared
+        // rather than restated. Little-endian bits of the double, which is what `movsd`
+        // at `0x141faf1e2` loads straight out of the row.
+        if let Some(unit) = self.unit_price() {
+            w.u64(unit.to_bits()); // +0x40  double unitPrice
         } else {
             w.i16(self.bundle_quantity); // +0x1c
         }
@@ -602,6 +627,37 @@ mod tests {
         let body = classic_open_shop(9_000_000, &[ordinary.clone(), subi.clone()]);
         assert_eq!(body.len(), CLASSIC_HEAD_LEN + ordinary.wire_len() + subi.wire_len());
         assert_eq!(body.len(), CLASSIC_HEAD_LEN + 2 * CLASSIC_ROW_LEN + 6);
+    }
+
+    /// **A rechargeable row carries its unit price as a little-endian IEEE double**, in the
+    /// eight bytes that used to be written as zero. The owner, 2026-09-06: stars should be
+    /// rechargeable at the general stores. `0.3` is Subi's `info/unitPrice`, read out of
+    /// `Item/Consume/0207.img` the same day.
+    ///
+    /// The zero-priced row still writes `0.0`, which keeps the client's Recharge arm
+    /// unreachable for it - `FUN_141fb9240` tests the double against zero. And a potion
+    /// given a price drops it: the field is not on the wire for a non-rechargeable id, so
+    /// the row width cannot move.
+    #[test]
+    fn a_rechargeable_row_writes_its_unit_price_as_a_little_endian_double() {
+        let subi = ClassicShopRow::buy(2_070_000, 500, 100).with_unit_price(300);
+        assert_eq!(subi.unit_price(), Some(0.3));
+        assert_eq!(subi.wire_len(), CLASSIC_ROW_LEN + 6, "the price does not widen the row");
+
+        let potion = ClassicShopRow::buy(2_000_000, 50, 100).with_unit_price(300);
+        assert_eq!(potion.unit_price(), None, "a potion has no such field on the wire");
+        assert_eq!(potion.wire_len(), CLASSIC_ROW_LEN);
+
+        let body = classic_open_shop(9_000_000, &[subi]);
+        assert_eq!(body.len(), CLASSIC_HEAD_LEN + subi.wire_len());
+        // The double is the 8 bytes before `i16 maxPerPurchase, u8 sell, u8 buyBack`.
+        let at = body.len() - 12;
+        let bits = u64::from_le_bytes(body[at..at + 8].try_into().unwrap());
+        assert_eq!(f64::from_bits(bits), 0.3, "{:02x?}", &body[at..at + 8]);
+
+        let unpriced = classic_open_shop(9_000_000, &[ClassicShopRow::buy(2_070_000, 500, 100)]);
+        assert_eq!(unpriced.len(), body.len());
+        assert_eq!(&unpriced[at..at + 8], &[0u8; 8], "no price is still 0.0, and Recharge stays unreachable");
     }
 
     #[test]

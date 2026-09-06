@@ -1050,6 +1050,26 @@ pub struct CastNumbers {
     pub time_seconds: Option<u32>,
     /// `cooltime` — **SECONDS.** None of the 24 carries one.
     pub cooltime_seconds: Option<u32>,
+    /// `indieSpeed` — a **flat** Speed grant. Haste: 10 at level 1, 30 at 20.
+    ///
+    /// The six `indie_*` fields are the temporary stats a buff row carries as flat, signed
+    /// points; `world::session::buff` maps each onto its CTS bit. **Signed** because Rage's
+    /// `indiePdd` is `-10..-40`. `None` where the column is absent from the generated file
+    /// (an older `skills.txt`) or empty on the row. The `*R` percent columns - `indiePddR`,
+    /// which is Iron Body - are deliberately NOT here: a percent is not a grant until
+    /// something resolves it against a base, and `net::jobbuffs::iron_body_flat_pdd` is the
+    /// one place that does.
+    pub indie_speed: Option<i32>,
+    /// `indieJump` — flat Jump. Haste: 1 at level 1, 10 at 20.
+    pub indie_jump: Option<i32>,
+    /// `indiePad` — flat Weapon Attack. Rage: 10..40.
+    pub indie_pad: Option<i32>,
+    /// `indieMad` — flat Magic Attack. No Warrior, Archer or Rogue skill carries it.
+    pub indie_mad: Option<i32>,
+    /// `indiePdd` — flat Weapon Defence. Iron Will: +20..+50; Rage: **-10..-40**.
+    pub indie_pdd: Option<i32>,
+    /// `indieMdd` — flat Magic Defence.
+    pub indie_mdd: Option<i32>,
 }
 
 /// One skill's rows, plus the columns that are constant across them.
@@ -1065,6 +1085,19 @@ pub struct SkillCombat {
     pub processtype: Option<i32>,
     /// `psd == 1`.
     pub psd: bool,
+    /// The skill carries an `lt`/`rb` rectangle on at least one level.
+    ///
+    /// **This is what makes a buff a PARTY buff.** The owner, 2026-09-06: *"party buffs should
+    /// apply to everyone in the party who is in the same map."* The archive has no column
+    /// that says "party" in words; what the party buffs have and the self buffs lack is the
+    /// rectangle the client draws the cast's area from - Rage and both Hastes carry `ltX
+    /// -250, rbX 250` (widening at higher levels) plus `processtype 17`; Iron Body, Focus,
+    /// Magic Armor and **Iron Will** carry no rectangle and `processtype 6`, the timed
+    /// self-grant. Iron Will being self-only in *this* client's data is worth knowing before
+    /// anyone reports it as a bug: the tooltip says only "Weapon Def. +N", no party wording.
+    /// **[L]** for the columns, **[I]** that the rectangle is the party discriminator - it
+    /// is the reading every reference server makes, and it is one row in a table to change.
+    pub party_rect: bool,
     /// The raw `weapon`..`weapon4` codes present, in column order. **Empty means ungated.**
     weapon_codes: Vec<u32>,
     /// Indexed by `level - 1`. Private so the off-by-one lives in [`SkillCombat::level`] only.
@@ -1179,6 +1212,27 @@ const WANTED: [&str; 19] = [
 /// The rest, kept separate only so [`WANTED`] stays under a readable width.
 const WANTED_MORE: [&str; 3] = ["attackCount", "mobCount", "bulletCount"];
 
+/// Columns read **when present**, and silently `None` when the header lacks them.
+///
+/// Unlike [`WANTED`], a missing one does not refuse the whole file: they were added to the
+/// generator on 2026-09-06 for the second-job buffs, and a `skills.txt` generated before
+/// that - or the hand-written header in this module's own tests - must still load its
+/// combat numbers. The cost of that leniency is bounded: a missing column reads as "the
+/// skill grants no such stat", which turns a party buff into a chat notice rather than into
+/// a wrong number.
+const OPTIONAL: [&str; 7] =
+    ["indieSpeed", "indieJump", "indiePad", "indieMad", "indiePdd", "indieMdd", "ltX"];
+
+/// Resolve the [`OPTIONAL`] columns that this header actually has.
+fn optional_columns(header: &str) -> BTreeMap<&'static str, usize> {
+    let names: Vec<&str> =
+        header.trim_start_matches('#').split(',').map(str::trim).collect();
+    OPTIONAL
+        .iter()
+        .filter_map(|want| names.iter().position(|n| n == want).map(|i| (*want, i)))
+        .collect()
+}
+
 /// A bound on the level vector one row may ask for.
 ///
 /// **An allocation guard, not a claim about the game** — the highest level in the client's data
@@ -1232,6 +1286,7 @@ impl CombatTable {
             return out;
         };
         let Some(col) = resolve_columns(header) else { return out };
+        let opt = optional_columns(header);
         out.header_ok = true;
         // **The row width comes from the header itself**, not from a literal, so a generator
         // that adds a column does not turn every row into a dropped one.
@@ -1263,10 +1318,12 @@ impl CombatTable {
                 out.problems += 1;
                 continue;
             }
-            let Ok(row) = parse_cast(&f, &col, level) else {
+            let Ok(row) = parse_cast(&f, &col, &opt, level) else {
                 out.problems += 1;
                 continue;
             };
+            // A rectangle on any level marks the whole skill; see `SkillCombat::party_rect`.
+            let has_rect = opt.get("ltX").is_some_and(|i| !f[*i].trim().is_empty());
             let (Ok(wz_type), Ok(psd_raw), Ok(processtype)) = (
                 cell::<u32>(at("type")),
                 cell::<u32>(at("psd")),
@@ -1299,6 +1356,7 @@ impl CombatTable {
                 // `psd` is `1` or absent in this archive. Any other value is treated as set
                 // and the raw number is not kept, because nothing here reads it as a number.
                 psd: psd_raw.is_some(),
+                party_rect: false,
                 weapon_codes: weapon_codes.clone(),
                 levels: Vec::new(),
             });
@@ -1324,6 +1382,7 @@ impl CombatTable {
                 continue;
             }
             skill.levels[idx] = Some(row);
+            skill.party_rect |= has_rect;
             out.level_rows += 1;
         }
         out
@@ -1397,9 +1456,17 @@ impl CombatTable {
 fn parse_cast(
     f: &[&str],
     col: &BTreeMap<&'static str, usize>,
+    opt: &BTreeMap<&'static str, usize>,
     level: u32,
 ) -> Result<CastNumbers, ()> {
     let at = |name: &str| f[col[name]];
+    // An optional column the header lacks reads as an empty cell, never as an error.
+    let at_opt = |name: &str| -> Result<Option<i32>, ()> {
+        match opt.get(name) {
+            Some(i) => cell(f[*i]),
+            None => Ok(None),
+        }
+    };
     Ok(CastNumbers {
         level,
         mp_con: cell(at("mpCon"))?,
@@ -1412,6 +1479,12 @@ fn parse_cast(
         bullet_consume: cell(at("bulletConsume"))?,
         time_seconds: cell(at("time"))?,
         cooltime_seconds: cell(at("cooltime"))?,
+        indie_speed: at_opt("indieSpeed")?,
+        indie_jump: at_opt("indieJump")?,
+        indie_pad: at_opt("indiePad")?,
+        indie_mad: at_opt("indieMad")?,
+        indie_pdd: at_opt("indiePdd")?,
+        indie_mdd: at_opt("indieMdd")?,
     })
 }
 
@@ -1433,6 +1506,48 @@ mod tests {
         assert!(t.header_ok(), "the generated file has a header naming every wanted column");
         assert_eq!(t.problems(), 0, "every row parses: {}", t.banner());
         Some(t)
+    }
+
+    /// **The second-job buffs read their grants and their party rectangle from the table.**
+    ///
+    /// The owner, 2026-09-06. Positive control first - a first-job row still carries its combat
+    /// numbers through the widened parser - then Haste, Rage and Iron Will as the file has
+    /// them. **Iron Will's `party_rect` being false is a finding, not a bug**: in this
+    /// client's data it has no `lt`/`rb` and `processtype 6`, the self-buff shape that Iron
+    /// Body and Focus have. And a percent column is not a flat grant: Iron Body's `indiePddR`
+    /// must not surface as `indie_pdd`, or it would be sent as 5 flat W.Def.
+    #[test]
+    fn the_second_job_buffs_read_their_grants_and_rectangles_from_the_table() {
+        let Some(t) = real_table() else { return };
+        assert_eq!(t.level(1_001_002, 1).and_then(|l| l.hp_con), Some(3), "positive control: Slash Blast");
+
+        let haste = t.get(4_101_001).expect("Haste (Assassin)");
+        assert!(haste.party_rect, "Haste carries lt/rb");
+        let l1 = haste.level(1).unwrap();
+        assert_eq!(
+            (l1.indie_speed, l1.indie_jump, l1.time_seconds, l1.mp_con),
+            (Some(10), Some(1), Some(100), Some(15))
+        );
+        let l20 = haste.level(20).unwrap();
+        assert_eq!((l20.indie_speed, l20.indie_jump, l20.time_seconds), (Some(30), Some(10), Some(300)));
+        assert!(t.get(4_201_001).is_some_and(|s| s.party_rect), "and the Bandit's twin");
+
+        let rage = t.get(1_101_004).expect("Rage");
+        assert!(rage.party_rect);
+        let l1 = rage.level(1).unwrap();
+        assert_eq!(
+            (l1.indie_pad, l1.indie_pdd, l1.time_seconds),
+            (Some(10), Some(-10), Some(150)),
+            "attack up, defence DOWN - the sign is in the data"
+        );
+
+        let iron_will = t.get(1_301_004).expect("Iron Will");
+        assert!(!iron_will.party_rect, "no rectangle in this client's data: self only");
+        assert_eq!(iron_will.level(1).unwrap().indie_pdd, Some(20));
+
+        let iron_body = t.level(1_001_000, 1).unwrap();
+        assert_eq!((iron_body.indie_pdd, iron_body.indie_speed), (None, None), "indiePddR is a percent, not a grant");
+        assert!(!t.get(1_001_000).unwrap().party_rect, "a self buff");
     }
 
     /// **The static table is the client's own book, not a memory of MapleStory.**

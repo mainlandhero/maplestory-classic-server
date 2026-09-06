@@ -37,6 +37,27 @@ like a server that is not running. It cost one of the owner's manual launches on
 and stakes a login claim the login server matches to the process that owns the socket; the
 game socket itself carries no credential and never has. Say so in every progress report.
 
+**2026-09-06: Thief and Warrior audit - built, unit-tested, NOT yet on a screen.** Details in
+`research/thief-warrior-audit-2026-09-06.md`; the plan is T16 / 0f-0h in `tools/test-server.ps1`.
+
+* **Stars** leave the Use tab per throw with a claw (1; Lucky Seven 2, **[I]**), the same path
+  as arrows. **One caveat that covers yesterday's arrows too: no `0x00E0` shoot body has ever
+  been captured**, and the shared parser was decoded from melee. A shot that fails to parse
+  now logs `SHOOT body did not parse` instead of taking nothing silently - look for that line
+  first if a throw takes nothing.
+* **Recharge** works at every Grocer: the star row carries `info/unitPrice` (measured: Subi 0.3
+  ... Hwabi 1.0, now column six of `itemdata.txt`) in the eight bytes the client reads as the
+  recharge double. Cost is `ceil(missing x unitPrice)`; ceil-vs-truncate is the client's and a
+  run decides it.
+* **Slash Blast costs HP** (3..8) as well as MP - `hpCon` had been in the table since 08-28 and
+  unread. Floors at 1.
+* **Party buffs** - Haste and Rage - reach every party member on the caster's map via
+  `Event::PartyBuff`; each recipient builds and expires its own `0x007D`. Bits: Jump **93 [D]**,
+  Weapon Attack **84 [D]** (name table + identical decoder blocks to Speed's); the buff levels
+  come from the generated table's `indie*` columns. **Iron Will is self-only in this client's
+  data** (no `lt`/`rb`). `!buff` consults the same tables, so a GM can see the bits without a
+  second job.
+
 **2026-09-05: the server is ready to leave this machine.** Two changes for the homelab move,
 both built, tested, and exercised against the shipped binaries:
 

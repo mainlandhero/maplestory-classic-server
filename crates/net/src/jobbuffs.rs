@@ -129,6 +129,43 @@ pub const CTS_ACCURACY: u32 = 88;
 /// > which Focus moves Accuracy but not Avoidability would say the pair is off by one.
 pub const CTS_AVOIDABILITY: u32 = 89;
 
+/// The character-temporary-stat bit for **Weapon Attack** (the client's `PAD`). Rage's
+/// `indiePad` lands here.
+///
+/// **[D]**, the same standing as [`CTS_AVOIDABILITY`] and for the same reasons. The
+/// re-derived name table (module docs: 408 names, five controls) says `84 -> PAD`, one
+/// before `85 MAD`, and the whole run `83 WAT, 84 PAD, 85 MAD, 86 PDD, 87 MDD, 88 ACC,
+/// 89 EVA` is the client's own stat order with the two bits already promoted to [L]
+/// sitting where the table puts them.
+///
+/// The decoder is safe to hand it: in `FUN_140a165f0`'s census
+/// (`research/msexe-secondarystat-140a165f0.txt`) bit 84's block is the standard
+/// 87-instruction shape, `reads=u32,u16,u32,u32` - byte-identical in form to bit 92's, which
+/// a client has run. No extras, so a two-stat Rage packet is the Magic Armor shape.
+///
+/// > **Blind spot.** No reader has been traced that takes bit 84's `secStat` slot into a
+/// > damage roll. `research/magic-damage.md` §7.3 names `totals+0x00` the physical
+/// > multiplier under the OLDER 323-name table's "83 = PAD", which this table disagrees
+/// > with by one - so that row corroborates nothing either way. One run decides it: Rage's
+/// > number appearing on the stat window's attack line says 84; the icon drawing while the
+/// > attack line stays put says the pair is off by one, and 83 is the next candidate.
+pub const CTS_WEAPON_ATTACK: u32 = 84;
+
+/// The character-temporary-stat bit for **Magic Attack** (`MAD`). Name table `85 -> MAD`,
+/// standard block shape, no consumer traced - exactly [`CTS_WEAPON_ATTACK`]'s standing.
+/// Nothing this server grants uses it today; it is here so the `indie*` column mapping in
+/// `world::session::buff` is complete rather than because a skill needs it yet.
+pub const CTS_MAGIC_ATTACK: u32 = 85;
+
+/// The character-temporary-stat bit for **Jump**. Haste's `indieJump` lands here, beside
+/// its `indieSpeed` on [`crate::buff::CTS_SPEED`].
+///
+/// **[D]**: name table `93 -> Jump`, one after `92 Speed` (which is [L] - the client's own
+/// refusal string reads it), and the census gives bit 93 the same standard block as 92.
+/// A run in which Haste raises the jump height as well as the walk says 93; a walk that
+/// speeds up under an icon while the jump does not says this half is wrong.
+pub const CTS_JUMP: u32 = 93;
+
 /// The character-temporary-stat bit for **Dark Sight**'s invisibility.
 ///
 /// **[L]**, and it does not rest on the name table alone. `FUN_14276e0e0` is forty-two

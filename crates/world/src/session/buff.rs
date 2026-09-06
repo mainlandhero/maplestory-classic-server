@@ -154,9 +154,102 @@ impl Session {
         // this last step differs.
         match &recovery_row {
             Some(row) => out.extend(self.start_recovery(row, asked)),
-            None => out.extend(self.grant_buff(skill_id, level, now)),
+            None => {
+                out.extend(self.grant_buff(skill_id, level, now));
+                // A party buff reaches the rest of the party on this field. Hung off the
+                // same transition as the caster's own grant: a refused cast shares nothing.
+                self.share_party_buff(skill_id, asked);
+            }
         }
         out
+    }
+
+    /// **Send a party buff to every other party member standing on this field.**
+    ///
+    /// The owner, 2026-09-06: *"party buffs should apply to everyone in the party who is in the
+    /// same map."* Which skills are party buffs is the generated table's business -
+    /// `SkillCombat::party_rect`, the `lt`/`rb` rectangle that Rage and Haste carry and the
+    /// self buffs do not. What crosses is the fact (`Event::PartyBuff`), not the packet: each
+    /// recipient builds its own `0x007D` and owns its own expiry, so the `0x007E` comes from
+    /// the session that can actually send it to that client.
+    ///
+    /// "Same map" is the owner's rule and it is what is checked. The rectangle's size is not: the
+    /// client draws the cast's area from it, but a member across the map still gets the buff
+    /// here. That is a decision, written down so it can be reversed rather than discovered.
+    fn share_party_buff(&mut self, skill_id: u32, level: u32) {
+        let Some(chr) = self.claimed_character() else { return };
+        if !self.config.firstjob.get(skill_id).is_some_and(|s| s.party_rect) {
+            return;
+        }
+        // Bound and dropped before the bus is touched: the parties guard must not be held
+        // across another lock.
+        let members: Vec<u32> = self
+            .fields
+            .parties()
+            .party_of(chr.id)
+            .map(|p| p.members.clone())
+            .unwrap_or_default();
+        if members.is_empty() {
+            crate::server::log(&format!(
+                "   party buff: skill {skill_id} is a party buff, but {} ({}) is in no party - self only",
+                chr.name, chr.id
+            ));
+            return;
+        }
+        let Some(map) = self.bus().map_of(self.subscriber) else { return };
+        let here = self.bus().characters_on(map, &members);
+        let mut sent = Vec::new();
+        for member in here.into_iter().filter(|m| *m != chr.id) {
+            let delivered = self.bus().send_to_character(
+                member,
+                crate::broadcast::Event::PartyBuff { skill_id, level, caster: chr.id },
+            );
+            if delivered {
+                sent.push(member.to_string());
+            } else {
+                crate::server::log(&format!(
+                    "   party buff: character {member} is on map {map} per the party roster but nobody on this channel is playing them"
+                ));
+            }
+        }
+        crate::server::log(&format!(
+            "   party buff: skill {skill_id} level {level} from {} ({}) shared with {} member(s) on map {map}{} - {} in the party, {} elsewhere or offline",
+            chr.name,
+            chr.id,
+            sent.len(),
+            if sent.is_empty() { String::new() } else { format!(" [{}]", sent.join(", ")) },
+            members.len(),
+            members.len().saturating_sub(sent.len() + 1),
+        ));
+    }
+
+    /// **Receive a party buff another member cast** - `Event::PartyBuff` arriving over the
+    /// bus. No skill check, no MP, no cooldown: those were the caster's. The level is
+    /// resolved through the same three tables the keypress uses, so what the recipient
+    /// gets is exactly what the caster got, computed against the recipient's own record
+    /// where a value depends on the wearer.
+    pub(super) fn receive_party_buff(&mut self, skill_id: u32, level: u32, caster: u32) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else { return Vec::new() };
+        let Some(bl) = self.buff_level_for(skill_id, level, &chr) else {
+            // The caster's table granted it, so this cannot happen unless the two sessions
+            // load different tables. Said out loud rather than dropped.
+            crate::server::log(&format!(
+                "   party buff: skill {skill_id} level {level} from {caster} reached {} ({}) but no table here grants it",
+                chr.name, chr.id
+            ));
+            return Vec::new();
+        };
+        let now = self.clock_ms;
+        crate::server::log(&format!(
+            "   party buff: {} ({}) receives skill {skill_id} level {level} from character {caster} - CTS bit {} = {}{} for {} s",
+            chr.name,
+            chr.id,
+            bl.bit,
+            bl.value,
+            bl.second.map(|s| format!(" and bit {} = {}", s.bit, s.value)).unwrap_or_default(),
+            bl.seconds
+        ));
+        self.grant_buff(skill_id, bl, now)
     }
 
     /// **Every buff this server can grant, from either table.**
@@ -172,10 +265,16 @@ impl Session {
     /// skill ids are disjoint and `jobbuffs::buff_level` returns `None` for everything outside
     /// its four.
     ///
-    /// Disorder returns `None` from both, on purpose. It is a debuff on the **mob**, and this
-    /// server has no packet for that - `research/first-job-buffs.md` §5. A `0x013C` for it is
-    /// still answered, with the chat line above; the alternative is the frozen UI.
-    fn buff_level_for(
+    /// **A third source since 2026-09-06: the generated skill table itself**, for the buffs
+    /// whose grants are flat `indie*` columns - Haste, Rage, Iron Will and whatever else in
+    /// `Skill.wz` is written that way. Consulted last, so the two hand-checked tables keep
+    /// their say over every skill they name; see [`Self::table_buff_level`] for what it will
+    /// and will not build.
+    ///
+    /// Disorder returns `None` from all three, on purpose. It is a debuff on the **mob**, and
+    /// this server has no packet for that - `research/first-job-buffs.md` §5. A `0x013C` for
+    /// it is still answered, with the chat line above; the alternative is the frozen UI.
+    pub(super) fn buff_level_for(
         &self,
         skill_id: u32,
         level: u32,
@@ -183,6 +282,67 @@ impl Session {
     ) -> Option<net::buff::BuffLevel> {
         net::buff::buff_level(skill_id, level)
             .or_else(|| net::jobbuffs::buff_level(skill_id, level, self.weapon_defence(chr)))
+            .or_else(|| self.table_buff_level(skill_id, level))
+    }
+
+    /// A buff level read straight out of `gm-handbook/skills.txt`'s `indie*` columns.
+    ///
+    /// Built when the row has a `time` and one or two flat grants this server knows a CTS bit
+    /// for; `None` otherwise, which lands the keypress on the "does not grant" notice rather
+    /// than on a guess. The bit for each column:
+    ///
+    /// | column | bit | standing |
+    /// |---|---|---|
+    /// | `indieSpeed` | 92 | [L] - Nimble Feet, on a client |
+    /// | `indieJump` | 93 | [D] - `net::jobbuffs::CTS_JUMP` |
+    /// | `indiePad` | 84 | [D] - `net::jobbuffs::CTS_WEAPON_ATTACK` |
+    /// | `indieMad` | 85 | [D] - `net::jobbuffs::CTS_MAGIC_ATTACK` |
+    /// | `indiePdd` | 86 | [D]/[L] - Iron Body's bit, drawn on a client |
+    /// | `indieMdd` | 87 | [D] - Magic Armor's second bit |
+    ///
+    /// **More than two grants is refused, not truncated.** `BuffLevel` carries two, and
+    /// Bless-shaped skills carry six; granting the first two of six would be the half-a-buff
+    /// failure `BuffLevel::second`'s doc describes. Nothing in the Warrior, Archer or Rogue
+    /// books has more than two, so this refuses nothing the owner has asked for.
+    ///
+    /// A percent column (`indiePddR`, Iron Body) is not a grant and is not read here; the
+    /// `jobbuffs` table resolves that one against the wearer's own defence and runs first.
+    fn table_buff_level(&self, skill_id: u32, level: u32) -> Option<net::buff::BuffLevel> {
+        let row = self.config.firstjob.level(skill_id, level)?;
+        // No `time` means a toggle or a passive; neither is a timed stat this can build.
+        let seconds = row.time_seconds.filter(|s| *s > 0)?;
+        let grants: Vec<net::buff::StatGrant> = [
+            (row.indie_speed, net::buff::CTS_SPEED),
+            (row.indie_jump, net::jobbuffs::CTS_JUMP),
+            (row.indie_pad, net::jobbuffs::CTS_WEAPON_ATTACK),
+            (row.indie_mad, net::jobbuffs::CTS_MAGIC_ATTACK),
+            (row.indie_pdd, net::buff::CTS_WEAPON_DEFENCE),
+            (row.indie_mdd, net::buff::CTS_MAGIC_DEFENCE),
+        ]
+        .into_iter()
+        .filter_map(|(value, bit)| {
+            let value = value.filter(|v| *v != 0)?;
+            Some(net::buff::StatGrant { bit, value: i16::try_from(value).unwrap_or(i16::MAX) })
+        })
+        .collect();
+        let (first, rest) = grants.split_first()?;
+        if rest.len() > 1 {
+            crate::server::log(&format!(
+                "   buff: skill {skill_id} level {level} grants {} stats and BuffLevel carries two - refused rather than halved",
+                grants.len()
+            ));
+            return None;
+        }
+        let duration = net::buff::BuffDuration::Seconds(seconds);
+        Some(net::buff::BuffLevel {
+            mp_cost: u16::try_from(row.mp_con.unwrap_or(0)).unwrap_or(u16::MAX),
+            seconds: duration.seconds(),
+            cooldown_seconds: row.cooltime_seconds.unwrap_or(0),
+            bit: first.bit,
+            value: first.value,
+            second: rest.first().copied(),
+            duration,
+        })
     }
 
     /// The character's Weapon Defence, which **Iron Body alone** reads.

@@ -146,6 +146,15 @@ pub struct ItemData {
     /// (equips do not stack) and most consumables in this client - 290 of 2785 items carry
     /// one. 0 is not "cannot hold any".
     pub slot_max: u16,
+    /// `info/unitPrice`, in **thousandths of a meso per unit** - the recharge price of a
+    /// throwing star or bullet. `0` for everything that is not rechargeable, which is every
+    /// item outside `207xxxx` and `233xxxx`.
+    ///
+    /// **[L]**, read out of `Item/Consume/0207.img` on 2026-09-06: Subi 0.3, Wolbi 0.4,
+    /// Mokbi 0.5, Kumbi 0.6, Tobi 0.7, Steely 0.8, Ilbi 0.9, Hwabi 1.0, and 1.0 for the
+    /// three event stars. Kept as an integer so this struct stays `Eq`; the wire wants an
+    /// IEEE double and `net::classicshop` converts at the one place it is written.
+    pub unit_price_milli: u32,
 }
 
 impl ItemData {
@@ -250,14 +259,26 @@ pub fn load_item_data(path: &Path) -> HashMap<u32, ItemData> {
             continue;
         }
         let f: Vec<&str> = line.split(',').map(str::trim).collect();
-        if f.len() != 5 {
+        // Five columns until 2026-09-06, six since (`unitPrice`, a float). A five-column
+        // file is an older generation and still loads; its stars simply cannot be recharged,
+        // which the shop log says per row.
+        if f.len() < 5 {
             continue;
         }
-        let n: Vec<Option<u32>> = f.iter().map(|x| x.parse::<u32>().ok()).collect();
+        let n: Vec<Option<u32>> = f[..5].iter().map(|x| x.parse::<u32>().ok()).collect();
         if n.iter().any(Option::is_none) {
             continue;
         }
         let v: Vec<u32> = n.into_iter().map(Option::unwrap).collect();
+        // `0.3` -> 300. Rounded, not truncated: 0.3 is not exactly representable and
+        // `(0.3 * 1000.0) as u32` is 299 on some paths, which would be the "unit, not the
+        // arithmetic" class of error one notch down.
+        let unit_price_milli = f
+            .get(5)
+            .and_then(|x| x.parse::<f64>().ok())
+            .filter(|p| p.is_finite() && *p >= 0.0)
+            .map(|p| (p * 1000.0).round() as u32)
+            .unwrap_or(0);
         out.insert(
             v[0],
             ItemData {
@@ -265,6 +286,7 @@ pub fn load_item_data(path: &Path) -> HashMap<u32, ItemData> {
                 quest: v[2] != 0,
                 trade_block: v[3] != 0,
                 slot_max: u16::try_from(v[4]).unwrap_or(u16::MAX),
+                unit_price_milli,
             },
         );
     }

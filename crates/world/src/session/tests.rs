@@ -773,6 +773,16 @@ fn changing_to_the_current_channel_is_refused_and_still_answered() {
 
 /// A session standing next to a shopkeeper, with one buyable row and one quest item.
 fn shop_session() -> (Session, Arc<Store>, u32) {
+    shop_session_with(Vec::new(), Vec::new())
+}
+
+/// [`shop_session`] with `extra` rows APPENDED to Lucy's counter and `extra_data` added to
+/// the item table. Appended, so the row indices the older shop tests buy by do not move;
+/// the recharge tests stock a star this way.
+fn shop_session_with(
+    extra: Vec<crate::shops::ShopItem>,
+    extra_data: Vec<(u32, crate::shops::ItemData)>,
+) -> (Session, Arc<Store>, u32) {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
     // Every `!` command is gated on the account's GM flag, and these helpers exist to
@@ -791,11 +801,13 @@ fn shop_session() -> (Session, Arc<Store>, u32) {
         quest_item: quest,
         trade_blocked: false,
     };
+    let mut items = vec![plain(2000000, 50, 5, false), plain(4031507, 20, 1, true)];
+    items.extend(extra);
     let shop = crate::shops::Shop {
         npc: "Lucy".to_string(),
         role: "Grocer".to_string(),
         map_label: "Maple Road".to_string(),
-        items: vec![plain(2000000, 50, 5, false), plain(4031507, 20, 1, true)],
+        items,
     };
     let mut item_data = std::collections::HashMap::new();
     item_data.insert(
@@ -806,6 +818,9 @@ fn shop_session() -> (Session, Arc<Store>, u32) {
         4031507u32,
         crate::shops::ItemData { price: 1, quest: true, ..Default::default() },
     );
+    for (item_id, data) in extra_data {
+        item_data.insert(item_id, data);
+    }
     let table = crate::shops::ShopTable { shops: vec![shop], item_data, problems: Vec::new() };
 
     let mut npcs = std::collections::HashMap::new();
@@ -872,6 +887,126 @@ fn classic_sell(slot: u16, item_id: u32, quantity: u16) -> Vec<u8> {
     b.extend_from_slice(&item_id.to_le_bytes());
     b.extend_from_slice(&quantity.to_le_bytes());
     b
+}
+
+/// A classic-shop RECHARGE, `0x00F5`: u8 2, u16 slot. The slot is all the client sends.
+fn classic_recharge(slot: u16) -> Vec<u8> {
+    let mut b = net::classicshop::CLIENT_CLASSIC_SHOP_REQUEST.to_le_bytes().to_vec();
+    b.push(2);
+    b.extend_from_slice(&slot.to_le_bytes());
+    b
+}
+
+// ---------------------------------------------------------------------------------------
+// Recharging stars. The owner, 2026-09-06: "they should be able to recharge stars at general
+// merchants." Lucy is a Grocer and every Grocer in data/shops.txt lists Subi at 500.
+// ---------------------------------------------------------------------------------------
+
+/// `shop_session` with Lucy stocking **Subi Throwing Stars** (unitPrice 0.3, slotMax 500)
+/// beside the Red Potion, the player holding `held` Subi in Use slot 1 and `mesos` mesos.
+fn recharge_session(held: u16, mesos: u32) -> (Session, Arc<Store>, u32) {
+    let subi = crate::shops::ShopItem {
+        item_id: 2_070_000,
+        name: "Subi Throwing Stars".to_string(),
+        buy_price: 500,
+        sell_price: 250,
+        min_grade: None,
+        quest_item: false,
+        trade_blocked: false,
+    };
+    let subi_data = crate::shops::ItemData { price: 250, slot_max: 500, unit_price_milli: 300, ..Default::default() };
+    let (s, store, id) = shop_session_with(vec![subi], vec![(2_070_000, subi_data)]);
+    store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_070_000, held), 500).unwrap();
+    store.set_mesos(id, mesos).unwrap();
+    (s, store, id)
+}
+
+fn use_slot(store: &Arc<Store>, id: u32, slot: u16) -> u16 {
+    store
+        .bag_items(id, store::InventoryType::Use)
+        .unwrap()
+        .iter()
+        .find(|r| r.slot == slot)
+        .map(|r| r.item.kind.quantity())
+        .unwrap_or(0)
+}
+
+/// The Grocer's Subi rows go out with the unit price in the eight bytes the client reads as
+/// the recharge double - both the Buy row and its Sell twin - and the potion row is unchanged.
+#[test]
+fn a_grocers_star_rows_carry_the_recharge_price_and_the_potion_row_does_not() {
+    let (mut s, _store, id) = recharge_session(480, 1_000);
+    let out = s.open_shop_for(21, id).expect("Lucy keeps a shop");
+    let body = &out[0].body;
+    let (_, rows) = s.open_shop.clone().expect("the rows we sent are kept for the buy");
+    // Buy rows first (potion, quest item, subi), then the Sell rows for whatever may be sold.
+    let mut at = net::classicshop::CLASSIC_HEAD_LEN;
+    let mut priced = 0;
+    for row in &rows {
+        let len = row.wire_len();
+        if net::bag::bundle_has_serial(row.item_id) {
+            let bits = u64::from_le_bytes(body[at + len - 12..at + len - 4].try_into().unwrap());
+            assert_eq!(f64::from_bits(bits), 0.3, "Subi's unitPrice, on the {} row", if row.sell { "Sell" } else { "Buy" });
+            priced += 1;
+        }
+        at += len;
+    }
+    assert_eq!(at, body.len(), "walked every row by its own width");
+    assert_eq!(priced, 2, "the Buy row and its Sell twin both carry it");
+    assert!(out[0].what.contains("2 rechargeable with a unit price"), "{}", out[0].what);
+}
+
+#[test]
+fn recharging_tops_the_stack_to_slotmax_and_charges_ceil_of_units_times_unit_price() {
+    // 480 of 500: 20 units x 0.3 = 6.0 mesos exactly.
+    let (mut s, store, id) = recharge_session(480, 1_000);
+    s.open_shop_for(21, id).unwrap();
+    let out = s.handle(&classic_recharge(1));
+    assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT);
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    assert_eq!(use_slot(&store, id, 1), 500, "the stack is full");
+    assert_eq!(store.mesos(id).unwrap(), 994);
+    assert!(out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION), "the result moves nothing by itself");
+    assert!(out.iter().any(|r| r.opcode == net::combat::STAT_CHANGED), "and the meso count is told");
+
+    // 483 of 500: 17 x 0.3 = 5.1, rounded UP to 6 whole mesos - never a fraction, never free.
+    let (mut s, store, id) = recharge_session(483, 1_000);
+    s.open_shop_for(21, id).unwrap();
+    let out = s.handle(&classic_recharge(1));
+    assert_eq!(out[0].body[0], net::classicshop::RESULT_SUCCESS, "{}", out[0].what);
+    assert_eq!(use_slot(&store, id, 1), 500);
+    assert_eq!(store.mesos(id).unwrap(), 994, "5.1 mesos is 6, not 5");
+}
+
+#[test]
+fn a_recharge_the_player_cannot_afford_is_refused_and_moves_nothing() {
+    let (mut s, store, id) = recharge_session(100, 5); // 400 x 0.3 = 120 mesos wanted, 5 held
+    s.open_shop_for(21, id).unwrap();
+    let out = s.handle(&classic_recharge(1));
+    assert_eq!(out.len(), 1, "a refusal and nothing else: {out:?}");
+    assert_eq!(out[0].body, vec![net::classicshop::RESULT_NOT_ENOUGH_MESOS]);
+    assert_eq!(use_slot(&store, id, 1), 100);
+    assert_eq!(store.mesos(id).unwrap(), 5);
+}
+
+/// Every refusal path is a `0x055E`, because the window latched on send: a potion, a star this
+/// counter does not stock (Wolbi, when Lucy lists only Subi), a stack already full, and an
+/// empty slot. **None of them moves an item or a meso.**
+#[test]
+fn recharging_anything_but_a_stocked_star_with_room_is_refused_with_a_result() {
+    let (mut s, store, id) = recharge_session(500, 1_000);
+    store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_000_000, 3), 200).unwrap(); // slot 2
+    store.add_item(id, store::InventoryType::Use, &store::Item::bundle(2_070_001, 10), 500).unwrap(); // slot 3
+    s.open_shop_for(21, id).unwrap();
+    for (slot, why) in [(1u16, "a full stack"), (2, "a potion"), (3, "a star this counter does not list"), (7, "an empty slot")] {
+        let out = s.handle(&classic_recharge(slot));
+        assert_eq!(out.len(), 1, "{why}: one refusal, nothing else - {out:?}");
+        assert_eq!(out[0].opcode, net::classicshop::CLASSIC_SHOP_RESULT, "{why}");
+        assert_eq!(out[0].body, vec![net::classicshop::RESULT_NOT_ENOUGH_MESOS], "{why}: {}", out[0].what);
+    }
+    assert_eq!(use_slot(&store, id, 1), 500);
+    assert_eq!(use_slot(&store, id, 3), 10);
+    assert_eq!(store.mesos(id).unwrap(), 1_000);
 }
 
 /// The `0x00F2` body: u32 npcObjectId, i16 x, i16 y, u32 tail.
@@ -1410,20 +1545,42 @@ fn a_row_index_naming_the_wrong_item_is_refused() {
 /// A level-1 archer holding `weapon` with `arrows` x `count` in Use slot 1, and the skills of
 /// the Bowman book granted. `None` when the generated skill table is absent (gitignored).
 fn archer_with(weapon: u32, arrows: u32, count: u16) -> Option<(Arc<Store>, Session, u32)> {
-    let skills = std::path::Path::new("../../gm-handbook/skills.txt");
-    if !skills.exists() {
+    first_job_with(300, weapon, &[3_001_001, 3_001_002, 3_001_003], arrows, count, 1000)
+}
+
+/// A level-1 rogue holding `weapon` with `stars` x `count` in Use slot 1, and the Rogue book
+/// (Double Stab, Lucky Seven) granted at level 1.
+fn rogue_with(weapon: u32, stars: u32, count: u16) -> Option<(Arc<Store>, Session, u32)> {
+    first_job_with(400, weapon, &[4_001_002, 4_001_003], stars, count, 800)
+}
+
+/// A level-1 character of `job` holding `weapon`, with `skills` at level 1, `count` of
+/// `ammo` in Use slot 1 when `count > 0`, **50/50 HP and 200/200 MP**, claimed. `None` when
+/// the generated skill table is absent (gitignored) - every caller returns early then.
+fn first_job_with(
+    job: u16,
+    weapon: u32,
+    skills: &[u32],
+    ammo: u32,
+    count: u16,
+    max_stack: u16,
+) -> Option<(Arc<Store>, Session, u32)> {
+    let table = std::path::Path::new("../../gm-handbook/skills.txt");
+    if !table.exists() {
         return None; // python tools/dump_skills.py
     }
     let store = Arc::new(Store::open_in_memory().unwrap());
     let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
     let chr = net::opcode::Character { name: "Robin".to_string(), ..Default::default() };
     let mut made = store.create_character(account_id, 0, &chr).unwrap();
-    made.job = 300;
+    made.job = job;
+    made.hp = 50;
+    made.max_hp = 50;
     made.mp = 200;
     made.max_mp = 200;
     store.save_character_progress(&made).unwrap();
-    for skill in [3_001_001u32, 3_001_002, 3_001_003] {
-        store.set_skill_level(made.id, skill, 1).unwrap();
+    for skill in skills {
+        store.set_skill_level(made.id, *skill, 1).unwrap();
     }
     // The weapon goes into the Equip bag and then onto the weapon slot (11), the way the
     // client's drag does it; nothing here auto-equips.
@@ -1431,13 +1588,13 @@ fn archer_with(weapon: u32, arrows: u32, count: u16) -> Option<(Arc<Store>, Sess
     store.equip_from_bag(made.id, 1, 11).unwrap();
     if count > 0 {
         store
-            .add_item(made.id, store::InventoryType::Use, &store::Item::bundle(arrows, count), 1000)
+            .add_item(made.id, store::InventoryType::Use, &store::Item::bundle(ammo, count), max_stack)
             .unwrap();
     }
     store.create_migration(account_id, made.id, 0, 0).unwrap();
     let config = Config {
         set_field_probe: true,
-        firstjob: crate::firstjob::CombatTable::load(skills),
+        firstjob: crate::firstjob::CombatTable::load(table),
         ..Config::default()
     };
     let mut s = Session::new(store.clone(), Arc::new(config));
@@ -1545,6 +1702,105 @@ fn a_sword_never_costs_an_arrow_however_the_packet_is_labelled() {
     s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
     s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 3_001_002));
     assert_eq!(arrows_in_slot_1(&store, id), 50);
+}
+
+// ---------------------------------------------------------------------------------------
+// Stars. The owner, 2026-09-06: "Thief skills/basic attack should consume stars similar to bowman
+// with arrows." A claw draws from the 207 family; Lucky Seven throws two.
+// ---------------------------------------------------------------------------------------
+
+const CLAW: u32 = 1_472_000; // Garnier
+const DAGGER: u32 = 1_332_000; // the Rogue's other weapon - Double Stab wants it
+const SUBI: u32 = 2_070_000;
+const HWABI: u32 = 2_070_007;
+
+#[test]
+fn a_plain_throw_with_a_claw_takes_one_star_and_tells_the_client() {
+    let Some((store, mut s, id)) = rogue_with(CLAW, SUBI, 50) else { return };
+    let out = s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 49);
+    let qty = out
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+        .expect("a 0x0070 must carry the new stack size, or the client's count drifts");
+    assert_eq!(qty.body[7], net::inventory::MODE_QUANTITY);
+}
+
+/// Lucky Seven: `bulletCount 2`, no `bulletConsume` column - one star per projectile, which
+/// is the owner's "depending on the attack amount" rule and **[I]** until a client run counts it.
+#[test]
+fn lucky_seven_takes_two_stars_one_per_projectile() {
+    let Some((store, mut s, id)) = rogue_with(CLAW, SUBI, 50) else { return };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 4_001_003));
+    assert_eq!(arrows_in_slot_1(&store, id), 48, "Lucky Seven: bulletCount 2, charged 2");
+}
+
+#[test]
+fn double_stab_with_a_dagger_takes_no_star_and_a_claw_never_touches_arrows() {
+    // A dagger is not a throwing weapon: neither its skill nor a mislabelled shot costs a star.
+    let Some((store, mut s, id)) = rogue_with(DAGGER, SUBI, 50) else { return };
+    s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 4_001_002));
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 50);
+    // And a claw draws from 207xxxx only - a quiver of bow arrows is not ammunition for it.
+    let Some((store, mut s, id)) = rogue_with(CLAW, BOW_ARROWS, 50) else { return };
+    s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 50);
+}
+
+/// The whole `207xxxx` family counts - Hwabi as much as Subi - and the last star empties the
+/// slot with a REMOVE rather than a count of zero.
+#[test]
+fn every_star_in_the_family_counts_and_the_last_one_empties_the_slot() {
+    let Some((store, mut s, id)) = rogue_with(CLAW, HWABI, 1) else { return };
+    let out = s.handle(&swing_packet(net::combat::USER_SHOOT_ATTACK, 0));
+    assert_eq!(arrows_in_slot_1(&store, id), 0);
+    let op = out
+        .iter()
+        .find(|r| r.opcode == net::inventory::INVENTORY_OPERATION)
+        .expect("the emptied slot must be reported");
+    assert_eq!(op.body[7], net::inventory::MODE_REMOVE);
+}
+
+// ---------------------------------------------------------------------------------------
+// The Warrior's one HP-costing skill. `Obligation::deduct_hp` had said so since 08-28 and
+// `on_attack` never read it - found by the 2026-09-06 audit.
+// ---------------------------------------------------------------------------------------
+
+fn stored_hp_mp(store: &Arc<Store>, id: u32) -> (u32, u32) {
+    let c = store
+        .characters_for(1, 0)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == id)
+        .expect("the character is in the store");
+    (c.hp, c.mp)
+}
+
+#[test]
+fn slash_blast_costs_hp_as_well_as_mp_and_power_strike_costs_only_mp() {
+    let Some((store, mut s, id)) = first_job_with(100, 1_302_000, &[1_001_001, 1_001_002], 0, 0, 1) else {
+        return;
+    };
+    let out = s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 1_001_002));
+    assert_eq!(stored_hp_mp(&store, id), (47, 196), "Slash Blast level 1: hpCon 3, mpCon 4");
+    assert!(
+        out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
+        "the 0x007C carries the new HP and MP, or the client keeps its own idea of both"
+    );
+    s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 1_001_001));
+    assert_eq!(stored_hp_mp(&store, id), (47, 192), "Power Strike has no hpCon; only the MP moved");
+}
+
+/// A skill's own cost floors HP at 1 - it never kills its caster, and the log says SHORT.
+#[test]
+fn a_skills_own_hp_cost_never_kills_its_caster() {
+    let Some((store, mut s, id)) = first_job_with(100, 1_302_000, &[1_001_002], 0, 0, 1) else { return };
+    let mut c = store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+    c.hp = 2;
+    store.save_character_progress(&c).unwrap();
+    s.handle(&swing_packet(net::combat::USER_MELEE_ATTACK, 1_001_002));
+    assert_eq!(stored_hp_mp(&store, id).0, 1, "2 - 3 floors at 1, not 0");
 }
 
 fn stored_mp(store: &Arc<Store>, id: u32) -> u32 {

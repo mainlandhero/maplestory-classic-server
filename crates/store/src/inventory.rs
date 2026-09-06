@@ -2195,10 +2195,12 @@ mod tests {
                 continue;
             }
             let f: Vec<&str> = line.split(',').map(str::trim).collect();
-            if f.len() != 5 {
+            // Five columns until 2026-09-06, six since (`unitPrice`, a float this test does
+            // not read). Only the first five are integers.
+            if f.len() < 5 {
                 continue;
             }
-            let n: Vec<u32> = match f.iter().map(|x| x.parse::<u32>()).collect() {
+            let n: Vec<u32> = match f[..5].iter().map(|x| x.parse::<u32>()).collect() {
                 Ok(v) => v,
                 Err(_) => continue,
             };

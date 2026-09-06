@@ -645,10 +645,15 @@ impl Session {
                 Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a tail length.")),
             },
         };
-        let Some(bl) = net::buff::buff_level(skill_id, level) else {
+        // Every table the keypress consults, not just the first one - so a GM on a
+        // first-job character can trial Haste or Rage without a second job, which is how
+        // the bits behind them get promoted from [D] on a run that costs no advancement.
+        let chr = self.claimed_character().expect("checked above");
+        let Some(bl) = self.buff_level_for(skill_id, level, &chr) else {
             return self.gm_ack(format!(
                 "!buff: skill {skill_id} level {level} grants no temporary stat this server \
-                 knows. Today that table is Nimble Feet (1002) at levels 1-3."
+                 knows - not in net::buff, net::jobbuffs, or the generated skill table's \
+                 indie columns."
             ));
         };
 

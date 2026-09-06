@@ -1307,7 +1307,8 @@ mod tests {
         let mut slot_max = std::collections::HashMap::new();
         for line in text.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
             let f: Vec<&str> = line.split(',').map(str::trim).collect();
-            assert_eq!(f.len(), 5, "itemdata.txt row: {line}");
+            // Five columns until 2026-09-06, six since (`unitPrice`); both are this file.
+            assert!(f.len() >= 5, "itemdata.txt row: {line}");
             if let (Ok(id), Ok(m)) = (f[0].parse::<u32>(), f[4].parse::<u16>()) {
                 slot_max.insert(id, m);
             }
