@@ -86,10 +86,34 @@ no database at $db - create an account first:
 if ($Account) {
     Write-Host '-Account no longer selects a fallback. Login is enforced; use -FallbackAccount <name> to serve unattributable connections as one account (dev/test only).' -ForegroundColor Yellow
 }
-$listing = & (Join-Path $bin 'maplecw-useradd.exe') --db "$db" --list 2>&1 | Out-String
-if (-not ($listing -match '^\s*\d+\s+\S+')) {
+# Read the account list as LINES and test each one. It used to join them with Out-String
+# and run `$listing -match '^\s*\d+\s+\S+'` over the blob - and PowerShell's -match is not
+# multiline, so `^` anchors at the start of the WHOLE string. The first line of --list is
+# always the header ("id  name  email ..."), so that test returned false for every database
+# that has ever existed, empty or not, and the server refused to start with the message
+# "no accounts in ..." while the accounts sat right there. Found on a fresh server box on
+# 2026-09-06, twice - once after creating an account, once after copying a database across.
+#
+# The exit code is checked separately. With 2>&1 folding stderr into the same variable, a
+# useradd that FAILED produced no matching row either, and was reported as "no accounts" -
+# the wrong diagnosis for a completely different fault.
+$listing = & (Join-Path $bin 'maplecw-useradd.exe') --db "$db" --list 2>&1
+$listExit = $LASTEXITCODE
+if ($listExit -ne 0) {
+    # ${listExit} rather than $listExit - a colon straight after a variable name makes
+    # PowerShell read it as a drive qualifier ("$listExit:" -> drive 'listExit'), which is
+    # a PARSE error and takes the whole script with it. Caught by running this script for
+    # real against a test database; a syntax-free reading of it would not have shown it.
+    throw @"
+could not read the accounts in $db - maplecw-useradd --list exited ${listExit}:
+$($listing | Out-String)
+"@
+}
+$accounts = @($listing | Where-Object { "$_" -match '^\s*\d+\s+\S+' })
+if ($accounts.Count -eq 0) {
     throw "no accounts in $db - create your own (and make it GM) with maplecw-useradd before starting the servers; players then register with codes you mint"
 }
+Write-Host "accounts      $($accounts.Count) in $db"
 
 Stop-All
 Start-Sleep -Milliseconds 300
