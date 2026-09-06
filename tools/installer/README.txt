@@ -22,7 +22,12 @@ hashed with argon2id and stored salted; nothing keeps it in plain text.
 Options worth knowing:
 
     -InstallDir "D:\Games\MapleCW"   somewhere other than C:\MapleCW
-    -ServerIp   192.168.1.20         the machine running the servers, if not this one
+    -ServerIp   192.168.1.20         the machine running the servers, if not this one.
+                                     THIS ALSO SHAPES THE FIREWALL RULE: a LAN address
+                                     leaves private addresses reachable, a public address
+                                     leaves exactly that address reachable, and the
+                                     default (this machine) blocks everything else. Get
+                                     it wrong and the client sits on "Connecting..."
     -AuthFingerprint sha256:...      the sign-in server's certificate fingerprint. Its
                                      window prints it at startup. REQUIRED to sign in:
                                      the launcher will not send a password to a server

@@ -131,12 +131,20 @@ forever - and neither says anything about itself.
 
    An "allow" rule alongside does not help: Windows evaluates block before
    allow. The block itself has to be narrowed. On each CLIENT machine, from an
-   elevated window:
+   elevated window - for a server on the LAN:
 
-     powershell -ExecutionPolicy Bypass -File "<repo>\tools\firewall.ps1" -AllowLan
+     powershell -ExecutionPolicy Bypass -File "<repo>\tools\firewall.ps1" -Add -AllowLan
 
    That blocks the public internet and permits private addresses. Nexon is
-   public and stays blocked.
+   public and stays blocked. For a server reached over the INTERNET - this
+   box's public address behind forwarded ports - -AllowLan is NOT enough,
+   because that address is inside the ranges it blocks:
+
+     powershell -ExecutionPolicy Bypass -File "<repo>\tools\firewall.ps1" -Add -AllowServer <public ip>
+
+   That blocks everything except the server. The shipped install.ps1 derives
+   the same shape from its -ServerIp, so a client installed with the right
+   address needs neither. -Status prints the rule's RemoteIP line either way.
 
 
 BRINGING AN EXISTING DATABASE

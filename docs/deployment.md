@@ -29,8 +29,13 @@ remoteip=0.0.0.0-<server-1>,<server+1>-255.255.255.255
 ```
 
 Ugly, but exact, and `netsh advfirewall firewall show rule ... verbose` prints it back so it
-can be read and checked. `firewall.ps1` should grow a `-AllowServer <ip>` parameter that
-generates this, and `-Status` should print which address is carved out.
+can be read and checked. **Built 2026-09-06:** `firewall.ps1 -Add -AllowServer <ip>` generates
+exactly this (combined with `-AllowLan` it also opens the private ranges), `-Status` prints the
+`RemoteIP` line so the carve-out can be read back, and the shipped `install.ps1` derives the
+same shape from its `-ServerIp` - loopback blocks everything, a private address blocks the
+public internet only, a public address blocks everything but that one address. The two
+checklists, `docs/server-machine-checklist.md` and `docs/client-machine-checklist.md`, say
+which to run.
 
 **The twenty Nexon addresses stay blocked**, which is the point - and which means
 `-SkipNetCheck` is still required. See `STATUS.md`: the client `__fastfail`s when its

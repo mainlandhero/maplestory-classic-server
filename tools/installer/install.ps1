@@ -189,11 +189,53 @@ if ($NoFirewall) {
     if ($LASTEXITCODE -eq 0) {
         netsh advfirewall firewall delete rule name="$ruleName" | Out-Null
     }
-    netsh advfirewall firewall add rule name="$ruleName" dir=out action=block `
-        program="$clientExe" enable=yes profile=any | Out-Null
+    # **The block must leave the server reachable, and -ServerIp says where the server is.**
+    # Windows evaluates block rules before allow rules, so an allow alongside would not help;
+    # the block itself is narrowed to "everything except the server". Loopback needs no
+    # carve-out (Windows Firewall does not filter it); a private server address opens the
+    # three private ranges (the machines on your own network, Nexon is not among them); a
+    # public address opens exactly that one address. netsh has no negation, so the remote
+    # set is written as the gaps around what is allowed.
+    function ConvertTo-IpNumber([string]$ip) {
+        $o = $ip.Split('.') | ForEach-Object { [uint32]$_ }
+        return ([uint32]$o[0] -shl 24) -bor ([uint32]$o[1] -shl 16) -bor ([uint32]$o[2] -shl 8) -bor [uint32]$o[3]
+    }
+    function ConvertFrom-IpNumber([uint32]$n) {
+        return ('{0}.{1}.{2}.{3}' -f (($n -shr 24) -band 255), (($n -shr 16) -band 255), (($n -shr 8) -band 255), ($n -band 255))
+    }
+    $ip = $ServerIp.Trim()
+    $isLoopback = $ip -like '127.*'
+    $isPrivate = ($ip -like '10.*') -or ($ip -like '192.168.*') -or
+        ($ip -match '^172\.(1[6-9]|2[0-9]|3[01])\.')
+    $remote = $null
+    if ($isLoopback) {
+        $remote = $null
+        $shape = 'ALL remote addresses (loopback is never filtered, so a local server works)'
+    } elseif ($isPrivate) {
+        $remote = '1.0.0.0-9.255.255.255,11.0.0.0-126.255.255.255,128.0.0.0-172.15.255.255,' +
+                  '172.32.0.0-192.167.255.255,192.169.0.0-223.255.255.255'
+        $shape = "the public internet only - private addresses such as $ip are reachable"
+    } elseif ($ip -match '^\d+\.\d+\.\d+\.\d+$') {
+        $n = ConvertTo-IpNumber $ip
+        $parts = @()
+        if ($n -gt 0) { $parts += ('0.0.0.0-' + (ConvertFrom-IpNumber ($n - 1))) }
+        if ($n -lt [uint32]::MaxValue) { $parts += ((ConvertFrom-IpNumber ($n + 1)) + '-255.255.255.255') }
+        $remote = $parts -join ','
+        $shape = "everything except the server at $ip"
+    } else {
+        throw "-ServerIp '$ServerIp' is not a dotted IPv4 address; the firewall rule cannot be scoped to it"
+    }
+    if ($remote) {
+        netsh advfirewall firewall add rule name="$ruleName" dir=out action=block `
+            program="$clientExe" enable=yes profile=any remoteip="$remote" | Out-Null
+    } else {
+        netsh advfirewall firewall add rule name="$ruleName" dir=out action=block `
+            program="$clientExe" enable=yes profile=any | Out-Null
+    }
     if ($LASTEXITCODE -ne 0) { throw 'could not add the firewall rule' }
     Write-Host "firewall rule added, scoped to $clientExe" -ForegroundColor Green
-    Write-Host '  loopback is not filtered by Windows Firewall, so a local server still works.'
+    Write-Host "  it blocks $shape."
+    Write-Host '  If the server moves, re-run this with the new -ServerIp, or tools\firewall.ps1 -Add -AllowServer <ip>.'
 }
 
 # ---------------------------------------------------------------- shortcut

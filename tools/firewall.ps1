@@ -42,7 +42,16 @@ param(
     # It is a real widening and it is not the default. The client can now reach any private
     # address, which on a home network is a handful of machines you own. Nexon is on the
     # public internet and stays blocked, which is the property that matters.
-    [switch]$AllowLan
+    [switch]$AllowLan,
+    # Let the client reach ONE public address - the server, when it is out on the internet
+    # behind forwarded ports - and keep blocking everything else.
+    #
+    # -AllowLan is not enough for that case: the server's public address is inside the very
+    # ranges it blocks, so an internet client would sit on "Connecting..." exactly as a LAN
+    # client did before -AllowLan existed. netsh has no negation, so the remote set is the
+    # two ranges on either side of the address (and, with -AllowLan as well, the private
+    # gaps too). `-Status` prints the RemoteIP line so the carve-out can be read back.
+    [string]$AllowServer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,8 +81,34 @@ function Show-Status {
         Write-Host "rule '$RuleName': NOT PRESENT - client is NOT blocked"
         return
     }
-    $keep = 'Rule Name|Enabled|Direction|Program|Action|Profiles'
+    # RemoteIP is the line that says what the block leaves reachable: "Any" is the plain
+    # rule, a list of ranges is a LAN or server carve-out. Without it a rule that blocks the
+    # server looks identical to one that does not.
+    $keep = 'Rule Name|Enabled|Direction|Program|Action|Profiles|RemoteIP'
     $out | Where-Object { $_ -match "^($keep):" } | ForEach-Object { Write-Host "  $_" }
+}
+
+# The dotted-quad arithmetic the carve-outs need. netsh takes ranges, not negations, so
+# "everything except X" has to be written as the pieces around X.
+function ConvertTo-IpNumber([string]$ip) {
+    $o = $ip.Split('.') | ForEach-Object { [uint32]$_ }
+    return ([uint32]$o[0] -shl 24) -bor ([uint32]$o[1] -shl 16) -bor ([uint32]$o[2] -shl 8) -bor [uint32]$o[3]
+}
+function ConvertFrom-IpNumber([uint32]$n) {
+    return ('{0}.{1}.{2}.{3}' -f (($n -shr 24) -band 255), (($n -shr 16) -band 255), (($n -shr 8) -band 255), ($n -band 255))
+}
+# Split a list of "a-b" ranges so that $exclude (a single address) is in none of them.
+function Remove-AddressFromRanges([string[]]$ranges, [uint32]$exclude) {
+    $result = @()
+    foreach ($r in $ranges) {
+        $lo, $hi = $r.Split('-')
+        $l = ConvertTo-IpNumber $lo
+        $h = ConvertTo-IpNumber $hi
+        if ($exclude -lt $l -or $exclude -gt $h) { $result += $r; continue }
+        if ($exclude -gt $l) { $result += ($lo + '-' + (ConvertFrom-IpNumber ($exclude - 1))) }
+        if ($exclude -lt $h) { $result += ((ConvertFrom-IpNumber ($exclude + 1)) + '-' + $hi) }
+    }
+    return $result
 }
 
 if ($Status -or (-not $Add -and -not $Remove)) { Show-Status; return }
@@ -112,7 +147,28 @@ if (Test-RuleExists) {
 $PublicOnly = '1.0.0.0-9.255.255.255,11.0.0.0-126.255.255.255,128.0.0.0-172.15.255.255,' +
               '172.32.0.0-192.167.255.255,192.169.0.0-223.255.255.255'
 
-if ($AllowLan) {
+if ($AllowServer) {
+    if ($AllowServer -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        throw "-AllowServer '$AllowServer' is not a dotted IPv4 address"
+    }
+    $server = ConvertTo-IpNumber $AllowServer
+    # Start from "block everything" or, with -AllowLan too, from "block the public internet",
+    # and cut the server's address out of whichever range holds it.
+    $base = if ($AllowLan) { $PublicOnly.Split(',') } else { @('0.0.0.0-255.255.255.255') }
+    $remote = (Remove-AddressFromRanges $base $server) -join ','
+    $desc = "Local RE/testing: blocks the patched MapleStory client from everything except " +
+            "the server at $AllowServer" +
+            $(if ($AllowLan) { ' and private addresses' } else { '' }) + '. Safe to delete.'
+    netsh advfirewall firewall add rule `
+        name="$RuleName" `
+        dir=out `
+        program="$ClientExe" `
+        action=block `
+        enable=yes `
+        profile=any `
+        remoteip="$remote" `
+        description="$desc" | Out-Null
+} elseif ($AllowLan) {
     $desc = 'Local RE/testing: blocks the patched MapleStory client from the public ' +
             'internet, but permits private addresses so it can reach a LAN server. ' +
             'Safe to delete.'
@@ -139,7 +195,10 @@ if ($AllowLan) {
 }
 if ($LASTEXITCODE -ne 0) { throw 'netsh failed to add the rule' }
 
-if ($AllowLan) {
+if ($AllowServer) {
+    Write-Host "added outbound block (everything EXCEPT $AllowServer$(if ($AllowLan) { ' and private addresses' })) for:`n  $ClientExe"
+    Write-Host '  the server is reachable; Nexon and the rest of the internet stay blocked.'
+} elseif ($AllowLan) {
     Write-Host "added outbound block (PUBLIC INTERNET ONLY) for:`n  $ClientExe"
     Write-Host '  private addresses are permitted, so a LAN server is reachable.'
     Write-Host '  Nexon is on the public internet and stays blocked.'
