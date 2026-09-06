@@ -102,6 +102,7 @@ pub fn opcode_name(opcode: u16) -> Option<&'static str> {
         0x00DC => "CLIENT_FIELD_ENTERED (once per SetField, ~420 ms after; empty body)",
         0x00E7 => "CLIENT_CHAT (u32 tick, u16-length text, u8 tab)",
         0x0231 => "USER_CHAT (balloon over the head, and the chat log line)",
+        0x02B2 => "USER_HP_REMOTE (u32 charId, u32 hp, u32 maxHp) - a party member's HUD gauge and over-head bar",
         0x0107 => "CLIENT_INVENTORY_MOVE (u32 tick, u8 invType, i16 src, i16 dst, i16 count)",
         0x00F2 => "CLIENT_NPC_CLICK (u32 npcObjectId, i16 charX, i16 charY, u32; the NO-QUEST click path)",
         0x00F3 => "CLIENT_SCRIPT_REPLY (u32 handle, u8 msgType, u32 echo, str the box's own text, i8 action)",

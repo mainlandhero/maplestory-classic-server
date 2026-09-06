@@ -427,6 +427,67 @@ impl super::Session {
         }
     }
 
+    /// **Broadcast this character's HP to the party members standing on its field.**
+    ///
+    /// The owner, 2026-09-05: *"Party member HP should've been broadcasted to party members on the
+    /// same map when the party is formed, the picture shows that the HP bar is completely blank
+    /// for members that are not the current client."* The packet is `0x02B2`
+    /// (`net::userpool::user_hp_remote`, chain in its doc): the receiving client turns
+    /// `(hp, max)` into the percent its party HUD gauge and over-head bar read.
+    ///
+    /// Called every tick. It sends only when `(hp, max_hp, who is here)` differs from the last
+    /// send, so one comparison covers all three triggers the owner's sentence implies: the party
+    /// forming (recipients go from none to some), a member arriving on this map (recipients
+    /// grow), and HP moving (regen, damage, potions, level-up). A member who leaves the map or
+    /// the party simply drops out of the recipient list; when they come back the list differs
+    /// again and they are sent the current value. Latency is one tick, about 100 ms.
+    ///
+    /// The receiver must hold this character in its user pool - that is what
+    /// `Bus::publish_to_character`'s map match guarantees, and the spawn was posted to the
+    /// same mailbox earlier, so it is read first. A charId the pool does not hold is a clean
+    /// no-op at the client's router, so an ordering slip costs a bar, never a crash.
+    pub(super) fn party_hp_tick(&mut self) {
+        let Some(chr) = self.claimed_character() else {
+            self.last_party_hp = None;
+            return;
+        };
+        let members = match self.fields.parties().party_of(chr.id) {
+            Some(p) if p.members.len() > 1 => p.members.clone(),
+            _ => {
+                self.last_party_hp = None;
+                return;
+            }
+        };
+        let others: Vec<u32> = members.into_iter().filter(|&m| m != chr.id).collect();
+        let here = self.bus().characters_on(chr.map_id, &others);
+        if here.is_empty() {
+            self.last_party_hp = None;
+            return;
+        }
+        let hp = u32::try_from(chr.hp).unwrap_or(0);
+        let max_hp = u32::try_from(chr.max_hp).unwrap_or(0);
+        let now = (hp, max_hp, here);
+        if self.last_party_hp.as_ref() == Some(&now) {
+            return;
+        }
+        for member in &now.2 {
+            let reply = Reply {
+                opcode: net::userpool::USER_HP_REMOTE,
+                body: net::userpool::user_hp_remote(chr.id, hp, max_hp),
+                what: format!(
+                    "UserHP (0x02B2) to character {member}: {} has {hp}/{max_hp} - the party \
+                     HUD gauge and over-head bar for this character on their screen [L chain, \
+                     unseen on a screen]",
+                    chr.id
+                ),
+            };
+            // A member who left the map between the presence read and now is a `false`
+            // here; the next tick's list will differ and they are resent when they return.
+            let _ = self.bus().publish_to_character(*member, chr.map_id, reply);
+        }
+        self.last_party_hp = Some(now);
+    }
+
     /// Who should be told about a change to `party`: its current members, plus `also` when it
     /// is a character no longer in the party who still needs the packet - the one who just
     /// left. Deduplicated, so passing a still-present member changes nothing.

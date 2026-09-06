@@ -103,11 +103,18 @@ pub const USER_POOL_REMOTE_LAST: u16 = 0x02C4;
 ///
 /// `FUN_1429bb720` computes `index = opcode - 0x29e` into the table at `0x1429bbc34`
 /// (`research/level-up.md` §6, corroborated independently in `research/user-hit.md` §5.3).
-/// **[L]** for the base and the table; the eleven opcodes `0x0293..0x029D` between the range
-/// start and the index base are **unexplained** - either the function bails on them before
-/// the table or the range in the routing block is wider than the table it feeds. Nobody has
-/// read that. **Do not reconcile the two numbers by assuming one of them; they are recorded
-/// here disagreeing on purpose.** **[I]** that it matters at all.
+/// **[L]** for the base and the table.
+///
+/// **The eleven opcodes `0x0293..0x029D` below the base, and the default entries above it,
+/// are explained (2026-09-06).** Every stub in that first table, and its default, ends with
+/// `add esi, -0x293` and falls into a **third, compacted switch**: `cmp esi, 0x30` (so
+/// `0x0293..=0x02C3`), a byte index table at `0x1429bbd10` that maps 49 opcodes onto a
+/// 16-entry case table at `0x1429bbcd0`. Thirteen opcodes get a real case there - `0x0293`
+/// (move), `0x02AA`, `0x02AD`, `0x02AE`, `0x02B0..=0x02B6`, `0x02B9`, `0x02BE`, `0x02C2` - and
+/// the rest go to the epilogue. So an opcode can be handled by the first table AND the third
+/// switch in sequence, or by the third alone; [`USER_HP_REMOTE`] (`0x02B2`) is a
+/// third-switch-only one. Between the first and the third sits a compare chain for the four
+/// attacks `0x029E..=0x02A1`. **[L]**, read off the listing and the two tables' bytes.
 pub const USER_POOL_REMOTE_TABLE_BASE: u16 = 0x029E;
 
 /// First opcode routed to the **local** user, `FUN_14289a3a0(ctx->localUser, op, pkt)`, whose
@@ -303,6 +310,65 @@ pub const EFFECT_LEVEL_UP: u8 = crate::stats::EFFECT_LEVEL_UP;
 /// [`crate::stats::the_level_up_animation_is_client_side`] documents why.
 pub fn user_effect_remote(char_id: u32, effect: u8) -> Vec<u8> {
     crate::stats::user_effect_remote(char_id, effect)
+}
+
+/// **`0x02B2` - a remote player's HP, for the party HUD gauge and the bar over their head.**
+///
+/// The owner, 2026-09-05, with a screenshot of a party whose other member's bar was blank: *"Party
+/// member HP should've been broadcasted to party members on the same map when the party is
+/// formed."* Nothing in the research named the packet; this is the chain, read off the
+/// listing on 2026-09-06, every link **[L]**:
+///
+/// * The remote-user router `FUN_1429bb720` reads `u32 charId` at `0x1429bb745` and finds
+///   the user. Opcodes whose entry in the 39-slot table at `0x1429bbc34` is the default stub
+///   fall through to a **third, compacted switch**: `esi = opcode - 0x293`, `cmp esi,0x30`,
+///   a byte index table at `0x1429bbd10` into a 16-entry case table at `0x1429bbcd0`.
+///   `0x02B2` is byte index 6 - the stub at `0x1429bbbbc` - `call FUN_1429d5610`.
+/// * `FUN_1429d5610(user, packet)` reads **`u32 hp`** (`0x1429d562d` -> `user+0x3a28`) and
+///   **`u32 maxHp`** (`0x1429d563b` -> `user+0x3a2c`) and calls `FUN_1427b78e0(user, hp, max)`.
+/// * `FUN_1427b78e0` is `SetRemoteHP`: `min(hp,max)*100/max` -> `user+0x10cc`, and
+///   `min(hp,max)*46/max` -> `user+0x1518`. Its only caller is that handler.
+/// * The party HUD's draw, `FUN_14118bf90`, draws a remote member's gauge as
+///   `[user+0x10cc] * 64 / 100` (`0x14118e4f7`, the `0x51eb851f` divide-by-100), and the local
+///   player's from its own stat block. So a member whose client never received this packet
+///   has `+0x10cc == 0`: **a blank bar**, which is the screenshot.
+///
+/// Twelve bytes, no gate, no optional field. **Send it to every party member on the same
+/// map** - the receiver must have the character in its user pool, and a charId it does not
+/// hold is a clean no-op at the router. Send it when the party forms, when a member arrives
+/// on the field, and whenever hp or max changes; `crate::session::party_hp_tick` does all
+/// three from one comparison.
+pub const USER_HP_REMOTE: u16 = 0x02B2;
+
+/// Build a [`USER_HP_REMOTE`] body: `u32 charId, u32 hp, u32 maxHp`.
+pub fn user_hp_remote(char_id: u32, hp: u32, max_hp: u32) -> Vec<u8> {
+    let mut w = crate::PacketWriter::new();
+    w.u32(char_id);
+    w.u32(hp);
+    w.u32(max_hp);
+    w.into_vec()
+}
+
+#[cfg(test)]
+mod user_hp_remote_tests {
+    use super::*;
+
+    #[test]
+    fn the_body_is_the_id_then_hp_then_max_twelve_bytes() {
+        let body = user_hp_remote(213, 162, 500);
+        assert_eq!(body.len(), 12);
+        assert_eq!(&body[0..4], &213u32.to_le_bytes());
+        assert_eq!(&body[4..8], &162u32.to_le_bytes());
+        assert_eq!(&body[8..12], &500u32.to_le_bytes());
+    }
+
+    #[test]
+    fn the_opcode_falls_through_the_first_table_into_the_third_switch() {
+        // 0x02B2 - 0x29E = 20, a default entry in the 39-slot table; 0x02B2 - 0x293 = 31, in
+        // range of the third switch's `cmp esi, 0x30`. Both facts are what route it.
+        assert!((USER_POOL_REMOTE_FIRST..=USER_POOL_REMOTE_LAST).contains(&USER_HP_REMOTE));
+        assert!(USER_HP_REMOTE - USER_POOL_REMOTE_FIRST <= 0x30);
+    }
 }
 
 /// Build a [`USER_LEAVE_FIELD`] body: **one `u32` character id, and that is the whole claim.**

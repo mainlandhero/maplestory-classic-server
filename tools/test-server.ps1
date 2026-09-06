@@ -110,10 +110,15 @@
     DROPS: a party mob's drops show to all members on the field and any of them may take them;
     a member who then LEAVES loses access while the killer keeps it. GROUND DROP: an item a
     player drops from their bag is broadcast to the whole map and anyone may pick it up
-    (untradeable excepted). Two things are NOT built because their opcode has never been
-    captured, and guessing a packet body has killed this client three times: DROPPING MESOS
-    and the PARTY MEMBER HP push. For each, do the action and read the inbound opcode off
-    world.log (or report that none appears) - that one measurement is all they need.
+    (untradeable excepted). PARTY HP (built 2026-09-06): the packet is 0x02B2, found by
+    walking back from the HUD gauge to the field it reads, to that field's one writer, to the
+    handler, to a compacted third switch in the remote-user router; every link [L]. The other
+    member's bar in the top-right HUD should fill within a second of the party forming and
+    follow their HP under damage and potions; say whether the small bar over their head moves
+    too (it is fed from the same packet, a second field). A blank bar is the finding. One
+    thing is NOT built because its opcode has never been captured, and guessing a packet body
+    has killed this client three times: DROPPING MESOS. Try it and read the inbound opcode off
+    world.log (or report that none appears) - that one measurement is all it needs.
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
@@ -1665,13 +1670,15 @@ function Show-TestPlan {
         Write-Host '       must NOT be able to take those drops (the killer still can).'
         Write-Host '       GROUND DROP: drop an item from your bag - anyone on the map should'
         Write-Host '       see it and be able to pick it up.'
-        Write-Host '    0d. STILL NEEDS A CAPTURE - do these and report the inbound opcode:'
+        Write-Host '       PARTY HP (built 2026-09-06, walked back from the gauge): the other'
+        Write-Host '       member''s bar in the top-right HUD should FILL within a second of the'
+        Write-Host '       party forming, and follow their HP when a mob hits them or they'
+        Write-Host '       drink a potion. Also say whether the small bar OVER THEIR HEAD moves.'
+        Write-Host '       Blank bar = the packet did not draw; that is the finding.'
+        Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'
         Write-Host '       "<- 0x...." appears in world.log when you try (or that none does).'
-        Write-Host '       PARTY HP: let a party member take damage. Their HP bar does not'
-        Write-Host '       update because no HP packet is identified. Note any new inbound'
-        Write-Host '       opcode. Both are one measurement away from being built.'
         Write-Host '    1. THE MOB FLINCH. A non-controller hits a mob: from the'
         Write-Host '       SECOND hit it should flinch and slide. First hit never'
         Write-Host '       will - the grant ships with that swing.'

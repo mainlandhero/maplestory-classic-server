@@ -162,12 +162,23 @@ both built, tested, and exercised against the shipped binaries:
     keeps it (*"unless they were the killer"*).
   - **A player's ground drop is public** - the `0x046E` is broadcast to the whole map and
     anyone on it may pick it up, an untradeable item excepted.
-  **Two need a client measurement and were NOT guessed** (a guessed body has killed this
-  client three times): the **party-HP** push - no packet in the capture carries a member's
-  live HP, the client sends only a one-byte `0x00B8` toggle - and the **meso drop** request,
-  which appears in no capture. Both want one run: the owner dropping mesos, and a party member
-  taking damage, with the inbound opcode read off `world.log`.
-  **Unseen still:** the invite dialog itself, and every one of the six above on a screen. T14.
+  **One needs a client measurement and was NOT guessed** (a guessed body has killed this
+  client three times): the **meso drop** request, which appears in no capture. One run: the owner
+  dropping mesos, with the inbound opcode read off `world.log`.
+
+* **Party member HP is `0x02B2`, found by walking back from the gauge** (2026-09-06). The owner:
+  *"Party member HP should've been broadcasted to party members on the same map when the
+  party is formed ... you need to do some researching in the code."* The earlier note said no
+  packet carried it; that was a search of the wrong tables. Working backwards - the HUD's draw
+  reads a remote member's gauge as `[user+0x10cc]*64/100`, that field's only writer is a
+  `SetRemoteHP(hp, max)` setter, its only caller is a remote-user handler reading `u32 hp,
+  u32 maxHp`, and that handler is reached through a **third, compacted switch** in the
+  remote-user router that the 39-slot table hid - pinned the opcode and the twelve-byte body
+  with every link [L]. `net::userpool::user_hp_remote`; `Session::party_hp_tick` sends it to
+  every party member on the same field whenever `(hp, max, who is here)` changes, one tick
+  after. Two-session test passes. **Unseen on a screen**; the first run says whether the bar
+  fills. Full chain and two decoys: `research/party-result-0x00A5.md` §12.
+  **Unseen still:** the invite dialog itself, and every one of the seven above on a screen. T14.
 
 * **The launcher remembers the game folder.** The owner, 2026-09-05: *"does our launcher save
   whatever the user set it to upon subsequent starts? Setting it every time is going to be
@@ -222,7 +233,7 @@ which on screen is indistinguishable from absent.
 | **the heap corruption** | `0xC0000374`, **17 distinct fault events** across ~16 archived runs (4 with dumps), deduplicated on `(timestamp, code, address)`. The damaged word is the identical `0x0000000100000020` every time. **The writer is still not found.** This is what ends a long session - the 2026-09-03 two-client death was at **371 s** of client life - and it is the one thing standing between "two players can play" and "two players can play for an hour". `research/heap-corruption-2026-08-27.md`. Do **not** pass `-HeapFix`: it armed, it held, the client died anyway, and every dump taken with it on is unusable for the free-list argument. *(Only 3 of the 17 sit in a log carrying an `ARMING` line, so client-age-at-death is measurable for 3; "never under ~192 s" is the 2026-09-03 figure and is `UNVERIFIED 2026-09-04` here - one of the three is a 7.9 s instance-guard experiment.)* |
 | **party invite → a party anyone can join** | not blocked, unseen. The `0x1B` outcome, the `0x03` dialog and the `0x13` join-with-block are all decoded [L] and on the wire; the one wire test of `0x13` (2026-09-05 evening) went out **without** the block and killed both clients, and the fix has been in front of a test but not a client. What is left is a screen: the dialog, Accept refreshing both windows, Decline reading as "denied". `research/party-result-0x00A5.md` §10 |
 | **trade and chat rooms** | both are `CMiniRoom`, a subsystem this server has never touched. The client declines **locally and sends no packet at all** - checked the documented way, by grepping `research/msexe-send-opcodes.txt` for the builder rather than eyeballing the tail. There is nothing here to answer; it is a whole feature that does not exist |
-| party member HP bars | **needs a measured opcode.** No packet in any capture carries a party member's live HP, and the client sends only a one-byte `0x00B8` UI toggle, not its HP. Not guessed. `research/party-result-0x00A5.md` §11 |
+| party member HP bars | **built, 2026-09-06, unseen.** `0x02B2 {u32 charId, u32 hp, u32 maxHp}`, found by walking back from the gauge to its field to its writer to its handler to its dispatch - the remote router's third, compacted switch, which the 39-slot table hid. Sent to party members on the same field on formation, arrival and every HP change. `research/party-result-0x00A5.md` §12 |
 | dropping mesos | **needs a measured opcode.** The client's meso-drop request appears in no capture; a bag item's drop is `0x0107 dst==0`, but mesos are not a bag slot. One run with the owner dropping mesos names it |
 | `0x0183` accept/decline | **settled from the listing, 2026-09-05 evening**, not blocked. The answer byte is the `0x1B` outcome numbering: the `0x03` handler itself sends 0 (dialog opening), 1 (blocking), 2 (busy) or 3 (already invited) before any click, and the buttons send 4 Decline / 5 Accept. The slot order is [L] from the first capture. `net::party::invite_answer`. Unwatched on a screen: a click of each button, and a faded dialog followed by a re-invite (invites lapse server-side after 60 s) |
 | second-job skill casts | none of the 66 has a cast handler. `firstjob.rs` is the shape it wants |

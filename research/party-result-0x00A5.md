@@ -951,8 +951,49 @@ unit-tested; the ones that need a client-measured opcode are called out.
   killer keeps it. A player's own ground drop is public to the whole map.
 
 Still needing a client-measured opcode, and therefore **not built** (guessing a body has
-killed this client three times): the **party member HP** push - no `0x00A5`-adjacent packet
-carries a member's live HP, and the client sends only a one-byte `0x00B8` toggle, not its HP -
-and the **meso drop** request, which does not appear in any capture (the client may send a
-distinct opcode for it, or none). Both want one measurement: the owner dropping mesos, and a party
-member taking damage, with the inbound opcode read off `world.log`.
+killed this client three times): the **meso drop** request, which does not appear in any
+capture (the client may send a distinct opcode for it, or none). One measurement: the owner
+dropping mesos, with the inbound opcode read off `world.log`.
+
+## 12. APPENDED 2026-09-06: the party member HP packet is `0x02B2`, found by working back from the gauge
+
+The owner, on the blank bar: *"Party member HP should've been broadcasted to party members on the
+same map when the party is formed ... If necessary, you need to do some researching in the
+code."* §11 said no packet carried it. That was a search of the wrong tables; the answer was
+reached by starting at the pixels and walking backwards, and every link is **[L]**:
+
+1. The party HUD refresh is `FUN_14118ace0` (it loads `userOn`/`userOff` from `PartyHP.img`,
+   the only code reference to that node name). It rebuilds layout only; **its draw** is
+   `FUN_14118bf90`, which per seat calls `FUN_1413b8e70(i)` (= `member[i].charId`, a leaf:
+   `cmp [party+0], 0 / imul 0xB0 / mov eax, [party+0x10+i*0xB0]`) and `CUserPool::GetUser`
+   (`FUN_1429b6c90`).
+2. For the **local** player the gauge is `min(hp,max)*64/max` off the stat block
+   (`FUN_142cbec90` + the `0xbaadf00d` obfuscated-int reader `FUN_1401ba9d0`). For a **remote**
+   member it is `FUN_1427b7920(user) * 64 / 100` (`0x14118e4f7`, the `0x51eb851f` divide) and
+   `FUN_1427b7920` is `mov eax, [rcx+0x10cc]; ret` - **a percent stored on the remote CUser.**
+3. `user+0x10cc` has exactly one writer in the image: `FUN_1427b78e0(user, hp, max)` =
+   `min(hp,max)*100/max -> +0x10cc` and `min(hp,max)*46/max -> +0x1518` (the 46-px over-head
+   bar). Its only caller is `FUN_1429d5610`, a remote-user packet handler that reads
+   **`u32 hp -> user+0x3a28`, `u32 maxHp -> user+0x3a2c`** and nothing else.
+4. `FUN_1429d5610` is reached from the remote-user router `FUN_1429bb720` - **not through the
+   39-slot table** `userpool.rs` documents (where `0x02B2` is a default entry) but through a
+   third, compacted switch after it: `esi = opcode - 0x293; cmp esi, 0x30`; byte index table
+   at `0x1429bbd10`, case table at `0x1429bbcd0`; byte index 6 is the stub `0x1429bbbbc` ->
+   `call FUN_1429d5610`, and the only opcode with index 6 is **`0x02B2`**. The router reads
+   `u32 charId` first (`0x1429bb745`), so the body is `u32 charId, u32 hp, u32 maxHp`.
+
+That third switch also settles `userpool.rs`'s *"eleven unexplained opcodes"* note: every stub
+of the first table falls into it, and thirteen opcodes have real cases there (list in
+`net::userpool::USER_POOL_REMOTE_TABLE_BASE`).
+
+**Two decoys, recorded so nobody re-walks them.** By-id `0x0258` stores two `u32`s at
+`user+0x5c8/+0x5cc` and nothing reads them for the gauge; remote `0x02A7` caps its first value
+at 38 (an enum). Local-user `0x030A` (`i16 v; if v >= 0: u16 n; n × {u32 charId, u32 value}`)
+feeds a per-party `charId -> value` map and shifts the HUD by 10 px per `v` - a different
+feature, unidentified, and its per-member values have no reader in the HUD draw.
+
+Built as `net::userpool::user_hp_remote` and sent by `Session::party_hp_tick` to every party
+member on the same field whenever `(hp, max, who is here)` changes - which covers the party
+forming, a member arriving, and HP moving. Unit-tested end to end across two sessions; **not
+yet seen on a screen.** The first run says whether the bar fills and whether the over-head bar
+(`+0x1518`) is the same widget or a second one.

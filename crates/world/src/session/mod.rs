@@ -300,6 +300,11 @@ pub struct Session {
     /// put there. It is HP arriving over time, which the server owns outright.
     /// `crate::session::recovery`.
     recovering: Option<recovery::Recovering>,
+    /// What this character's HP was last broadcast as to party members on its field, and to
+    /// whom: `(hp, max_hp, recipients)`. `party_hp_tick` resends when any of the three
+    /// differs, which is how one comparison covers "the party formed", "a member arrived on
+    /// this map" and "my HP changed". `None` when there is nobody to tell.
+    last_party_hp: Option<(u32, u32, Vec<u32>)>,
 
     /// This connection's mailbox on the channel's message bus.
     ///
@@ -505,6 +510,7 @@ impl Session {
             last_activity_ms: 0,
             next_regen_ms: None,
             recovering: None,
+            last_party_hp: None,
         }
     }
 
@@ -595,6 +601,10 @@ impl Session {
         // `0x007C` and a blue number - and after it so that a tick carrying both puts the two
         // stat changes in a stable order.
         out.extend(self.recovery_tick(now_ms));
+        // **Party HP to the members on this field.** After regen and recovery, so a tick that
+        // changed HP broadcasts the value it just saved. Nothing comes back to this
+        // connection; the packets go out over the bus. `crate::session::party::party_hp_tick`.
+        self.party_hp_tick();
         // Buffs whose time is up. After regen so a `0x007C` and a `0x007E` in the same
         // tick arrive in the order the client draws them.
         out.extend(self.buff_tick(now_ms));

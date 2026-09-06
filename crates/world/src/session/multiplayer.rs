@@ -734,6 +734,93 @@ mod tests {
         );
     }
 
+    /// **Party members on one field are told each other's HP, and again when it changes.**
+    ///
+    /// The owner, 2026-09-05, with the screenshot of a blank bar: *"Party member HP should've been
+    /// broadcasted to party members on the same map when the party is formed."* `0x02B2` -
+    /// the chain from the packet to the gauge is in `net::userpool::USER_HP_REMOTE`'s doc.
+    /// Three claims: nothing is sent before the party exists; once it does, each member's
+    /// next tick puts the other's `(id, hp, max)` in their mailbox; and a change to one
+    /// member's HP is sent again, while an unchanged tick sends nothing.
+    #[test]
+    fn party_members_on_one_field_are_told_each_others_hp_and_told_again_when_it_changes() {
+        let (store, config, fields) = channel();
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        let mut ids = Vec::new();
+        for name in ["Cobalt", "Tester2"] {
+            let chr = net::opcode::Character {
+                name: name.to_string(),
+                map_id: 104_040_000,
+                ..Default::default()
+            };
+            let id = store.create_character(account, 0, &chr).unwrap().id;
+            store.create_migration(account, id, 0, 0).unwrap();
+            ids.push(id);
+        }
+        let mut leader = Session::joining(store.clone(), config.clone(), fields.clone());
+        let mut member = Session::joining(store.clone(), config, fields);
+        leader.claim_for_character(ids[0]);
+        member.claim_for_character(ids[1]);
+        leader.on_field_entered();
+        member.on_field_entered();
+
+        let is_hp = |r: &Reply| r.opcode == net::userpool::USER_HP_REMOTE;
+        let hp_of = |r: &Reply| {
+            (
+                u32::from_le_bytes(r.body[0..4].try_into().unwrap()),
+                u32::from_le_bytes(r.body[4..8].try_into().unwrap()),
+                u32::from_le_bytes(r.body[8..12].try_into().unwrap()),
+            )
+        };
+
+        // No party yet: a tick each, and neither mailbox holds an HP packet.
+        let _ = leader.tick(1_000);
+        let _ = member.tick(1_000);
+        assert!(!leader.tick(1_100).iter().any(is_hp), "no party, no HP broadcast");
+        assert!(!member.tick(1_100).iter().any(is_hp));
+
+        // Form the party.
+        let created = leader.run_party_request(
+            ids[0],
+            crate::party::Request::Create { name: "Cobalt's Party".into() },
+        );
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        let _ = leader.run_party_request(ids[0], crate::party::Request::Invite { target: ids[1] });
+        let _ = member.tick(2_000);
+        let _ = member.run_party_request(ids[1], crate::party::Request::Accept { party });
+
+        // Each member's own tick sends; the OTHER's next tick receives. The member's tick
+        // below does both at once - it drains the leader's packet AND sends its own - so it
+        // is the one to inspect. (A discarded tick here is a drained mailbox, which is how
+        // the first version of this test asserted on an empty list.)
+        let _ = leader.tick(3_000);
+        let got = member.tick(3_000);
+        let about_leader: Vec<_> = got.iter().filter(|r| is_hp(r)).map(hp_of).collect();
+        assert_eq!(about_leader.len(), 1, "one HP packet about the leader: {got:?}");
+        let leader_rec = store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == ids[0]).unwrap();
+        assert_eq!(
+            about_leader[0],
+            (ids[0], u32::try_from(leader_rec.hp).unwrap(), u32::try_from(leader_rec.max_hp).unwrap())
+        );
+        let got = leader.tick(3_100);
+        assert!(got.iter().filter(|r| is_hp(r)).any(|r| hp_of(r).0 == ids[1]), "and one about the member: {got:?}");
+
+        // Nothing changed: the next ticks send nothing more.
+        let _ = leader.tick(4_000);
+        let _ = member.tick(4_000);
+        assert!(!member.tick(4_100).iter().any(is_hp), "unchanged HP is not resent");
+
+        // The leader loses HP (a save is what every HP path ends in), and the member is told.
+        let mut hurt = leader_rec.clone();
+        hurt.hp = hurt.hp.saturating_sub(1);
+        store.save_character_progress(&hurt).unwrap();
+        let _ = leader.tick(5_000);
+        let got = member.tick(5_100);
+        let again: Vec<_> = got.iter().filter(|r| is_hp(r)).map(hp_of).collect();
+        assert_eq!(again.len(), 1, "the change is broadcast once: {got:?}");
+        assert_eq!(again[0].1, u32::try_from(hurt.hp).unwrap(), "with the new HP");
+    }
+
     /// Two sessions, one channel, one map - and a **real** `0x0224` crosses
     /// between them. This is the end-to-end claim of the whole feature, and it
     /// is the test that fails if any link in the chain is unhooked: the
