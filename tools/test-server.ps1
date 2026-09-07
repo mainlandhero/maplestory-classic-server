@@ -848,6 +848,15 @@ param(
     # run actually save the character?" without spending a client launch on it.
     [switch]$ListOnly,
     [int]$Port = 8484,
+    # The SIGN-IN service's port - crates\auth, over TLS. A different service from the game
+    # ports, and this harness used to hardcode 8080 while every other script took a flag, so
+    # a dev run and an installed one could not be made to match.
+    #
+    # 8480 is the default on all three sides now (crates\auth DEFAULT_PORT, the launcher's
+    # DEFAULT_AUTH_PORT, and start-server.ps1), because 8080 is contended on Windows and a
+    # collision fails as "received corrupt message of type InvalidContentType" rather than
+    # anything about a busy port. A test in the launcher pins the two Rust constants together.
+    [int]$AuthPort = 8480,
     # The channel server's port. A channel is a separate process: the login server hands
     # the client this address and the client connects to it, so nothing enters the world
     # unless maplecw-world is listening here.
@@ -1722,11 +1731,11 @@ Remove-Item $authLog -Force -ErrorAction SilentlyContinue
 $authExe = Join-Path $root 'target\release\maplecw-auth.exe'
 if (Test-Path $authExe) {
     $authSrv = Start-Process -FilePath $authExe -WorkingDirectory $root -PassThru @spawn `
-        -ArgumentList @('--db', "`"$Database`"", '--bind', '127.0.0.1', '--port', '8080') `
+        -ArgumentList @('--db', "`"$Database`"", '--bind', '127.0.0.1', '--port', "$AuthPort") `
         -RedirectStandardOutput $authLog -RedirectStandardError "$authLog.err"
     # TLS: the service writes auth-cert-fingerprint.txt at the repo root (beside its db), and a
     # dev-layout launcher reads it from there - nothing to copy on this machine.
-    Write-Host "sign-in service on 127.0.0.1:8080 (pid $($authSrv.Id), TLS; the launcher pins auth-cert-fingerprint.txt from the repo root), log $authLog"
+    Write-Host "sign-in service on 127.0.0.1:$AuthPort (pid $($authSrv.Id), TLS; the launcher pins auth-cert-fingerprint.txt from the repo root), log $authLog"
 } else {
     Write-Host "NO SIGN-IN SERVICE at $authExe - the launcher cannot log in." -ForegroundColor Red
     Write-Host "  cargo build --release -p auth" -ForegroundColor Red

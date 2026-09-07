@@ -9,7 +9,7 @@ WHAT IS IN HERE, AND WHAT IS NOT
 
     bin\maplecw-login.exe     login and character select        TCP 8484
     bin\maplecw-world.exe     one channel; one process each     TCP 8485, 8486
-    bin\maplecw-auth.exe      sign-in. The launcher POSTs here  TCP 8080
+    bin\maplecw-auth.exe      sign-in. The launcher POSTs here  TCP 8480
     bin\maplecw-useradd.exe   accounts, GM status, codes
     gm-handbook\              game tables extracted from the client's WZ
     data\                     shops, drops, quest scripts, the EXP curve
@@ -67,9 +67,9 @@ SETUP
    code is replaced, not looked up. Passwords players choose must be at least
    8 characters with a letter and a digit; the launcher says so before sending.
 
-3. Open inbound TCP 8080, 8484, 8485 and 8486 on this machine:
+3. Open inbound TCP 8480, 8484, 8485 and 8486 on this machine:
 
-     netsh advfirewall firewall add rule name="MapleCW server" dir=in action=allow protocol=TCP localport=8080,8484,8485,8486
+     netsh advfirewall firewall add rule name="MapleCW server" dir=in action=allow protocol=TCP localport=8480,8484,8485,8486
 
    8080 IS A POPULAR PORT. If something on this box already holds it - a proxy, a
    dev server, IIS Express - maplecw-auth cannot bind and exits on its own a few
@@ -79,10 +79,10 @@ SETUP
 
    and either set the launcher's "Sign-in port" box to 8090 on each client (it is
    remembered after the first successful Start Game) or put auth_port = "8090" in
-   maplecw-launcher.toml there. Open 8090 instead of 8080 above. To see what
+   maplecw-launcher.toml there. Open 8090 instead of 8480 above. To see what
    holds a port:
 
-     netstat -ano | findstr ":8080 :8484 :8485 :8486"
+     netstat -ano | findstr ":8480 :8484 :8485 :8486"
 
 4. Double-click start-servers.cmd. THAT WINDOW IS THE SERVER - closing it stops
    everything, and there is no stop script to forget.
@@ -174,7 +174,7 @@ Read those lines first; they carry the reason.
 
 The most common one is a port already in use, and it reads as
 
-  server error: could not bind 0.0.0.0:8080: Only one usage of each socket address
+  server error: could not bind 0.0.0.0:8480: Only one usage of each socket address
   (protocol/network address/port) is normally permitted. (os error 10048)
 
 See the -AuthPort note in step 3. Until 2026-09-06 this message always told you to
@@ -208,14 +208,14 @@ On each client machine, in the launcher:
                  re-run there.
     Port         8484   (the game / login server)
 
-The sign-in service is assumed to be on 8080 at the same address. If you moved
+The sign-in service is assumed to be on 8480 at the same address. If you moved
 it, set auth_port in maplecw-launcher.toml beside the launcher.
 
 
 REACHING IT FROM OUTSIDE YOUR NETWORK
 -------------------------------------
 
-On the router, forward TCP 8080, 8484, 8485 and 8486 to this machine - one more
+On the router, forward TCP 8480, 8484, 8485 and 8486 to this machine - one more
 port per extra channel (-Channels). Nothing here uses UDP.
 
 The server advertises the right host on its own: an internet client is told the

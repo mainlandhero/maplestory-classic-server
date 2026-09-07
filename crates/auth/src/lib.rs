@@ -23,8 +23,23 @@ mod register_tests;
 
 pub use register::{RecoverRequest, RecoverResponse, RegisterRequest, RegisterResponse};
 
-/// Default port. Arbitrary, just not one the game itself uses.
-pub const DEFAULT_PORT: u16 = 8080;
+/// Default port.
+///
+/// **8480 since 2026-09-07, and it used to be 8080.** The owner, having found 8080 held by something
+/// else on their own machine: *"Can we also make the sign-in port default on both the server and
+/// client payloads? So the server doesn't have to change anything in start-servers and neither
+/// do the clients in the launcher."* 8080 is one of the most contended ports on a developer
+/// machine - proxies, dev servers, IIS Express - and every collision cost the same two manual
+/// steps, one on the server and one on every client, with a failure in between that reads as
+/// *"received corrupt message of type InvalidContentType"* rather than *"that port is taken"*.
+///
+/// 8480 sits beside the game's 8484-8486 without colliding, so one glance at a firewall rule
+/// covers all of them.
+///
+/// **`launcher::paths::DEFAULT_AUTH_PORT` must equal this**, and a test in the launcher asserts
+/// it against this constant rather than against a literal. The two sides disagreeing is not a
+/// hypothetical: it is exactly what a client sees when only one of them is changed.
+pub const DEFAULT_PORT: u16 = 8480;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {

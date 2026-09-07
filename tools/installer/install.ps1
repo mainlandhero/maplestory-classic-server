@@ -30,10 +30,11 @@ param(
     [string]$ServerIp = '127.0.0.1',
     [int]$Port = 8484,
     # The sign-in service's port on the SERVER. Must match the -AuthPort the server was
-    # started with; 8080 is the default there too. Something else already holding 8080 on
-    # the server box is a real and common case, and the two sides have to agree or the
-    # launcher's sign-in simply never connects.
-    [int]$AuthPort = 8080,
+    # started with; **8480 is the default on both sides since 2026-09-07**, so an ordinary
+    # deployment needs this on neither. It moved off 8080 because that port is contended on
+    # Windows boxes and every collision cost a manual change here AND on the server, with a
+    # failure in between that reads as a TLS error rather than a busy port.
+    [int]$AuthPort = 8480,
     # The sign-in server's certificate fingerprint, as its console prints it:
     # "sha256:<64 hex>". REQUIRED before this machine can sign in - the launcher refuses to
     # send a password to a server it has not been told to trust. Also readable from

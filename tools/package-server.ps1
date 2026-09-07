@@ -36,10 +36,15 @@
     rather than eyeballed - it fails on any name not in it, in either direction, so a new
     dependency cannot slip through the way IPHLPAPI did.
 
-    THE CLIENT SIDE IS A DIFFERENT STORY AND THE DIFFERENCE WAS MISSED. maplecw-launcher.exe
-    and grap64.dll both import VCRUNTIME140.dll, so a client machine DOES need the Visual C++
-    Redistributable. See docs\client-machine-checklist.md; tools\installer\install.ps1
-    refuses to install without it.
+    THE CLIENT SIDE IS A DIFFERENT STORY AND THE DIFFERENCE WAS MISSED, then half-fixed on
+    2026-09-07. `grap64.dll` still imports VCRUNTIME140.dll, so a client machine DOES need the
+    Visual C++ Redistributable - the stub is loaded by MapleStory.exe, which does not import it
+    itself, so a working game elsewhere is not evidence that it is present.
+
+    What changed is who says so. `tools\make-installer.ps1 -ClientOnly` builds the LAUNCHER
+    with the same static CRT used here, so it starts on a bare machine, and it checks for the
+    redistributable itself at Start Game (`crates\launcher\src\stub.rs`). A client payload no
+    longer ships `install.ps1`, so that check had to move somewhere that runs.
 
     Cost: about 120 KB per executable. SQLite was
     never a problem - `rusqlite`'s `bundled` feature compiles it in - and everything else in
@@ -262,9 +267,9 @@ Write-Host '  1. Unzip anywhere. No Rust, no runtime, no redistributable.'
 Write-Host '  2. Create an account:'
 Write-Host '       & ".\bin\maplecw-useradd.exe" --db ".\maplecw.db" <name> --email <addr>'
 Write-Host '       & ".\bin\maplecw-useradd.exe" --db ".\maplecw.db" --gm <name>'
-Write-Host '  3. Open inbound TCP 8080, 8484, 8485 and 8486 in its firewall.'
-Write-Host '     8080 is the SIGN-IN port. If it is taken, start-servers.cmd takes'
-Write-Host '     -AuthPort <n> and the launcher has a "Sign-in port" box to match.'
+Write-Host '  3. Open inbound TCP 8480, 8484, 8485 and 8486 in its firewall.'
+Write-Host '     8480 is the SIGN-IN port, and the default on both sides - nothing to'
+Write-Host '     set. If it is taken, start-servers.cmd takes -AuthPort <n> and the'
 Write-Host '  4. Double-click start-servers.cmd. THAT WINDOW IS THE SERVER.'
 Write-Host '     It binds 0.0.0.0 and works out the host each client must dial on its'
 Write-Host '     own - LAN address for LAN clients, the discovered public address for'

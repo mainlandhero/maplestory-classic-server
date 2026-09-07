@@ -95,8 +95,3 @@ scratchpad/
 # scratch directory and flakes under concurrent `cargo test`; a killed run leaves a
 # dump beside the crate. They are up to 1.3 GB and none of them belongs in git.
 crates/**/*.dmp
-
-# The static-CRT build tree for a -ClientOnly launcher (tools/make-installer.ps1). Separate
-# from target/ on purpose: RUSTFLAGS is part of cargo fingerprints, so sharing would rebuild
-# the world on every switch and leave a statically linked launcher where dev scripts run it.
-target-static/

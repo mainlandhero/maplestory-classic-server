@@ -349,6 +349,24 @@ mod tests {
         assert!(!reads.is_empty(), "prepare.rs is expected to register the launch");
     }
 
+    /// **The launcher and the sign-in service must default to the same port.**
+    ///
+    /// Asserted against `auth::DEFAULT_PORT` rather than a literal, so changing one and not the
+    /// other fails here instead of on a client machine. What it looks like there is not
+    /// obvious: the launcher reports *"received corrupt message of type InvalidContentType"*,
+    /// because something that is not the sign-in service answered on the port it tried.
+    ///
+    /// `auth` is a dev-dependency of this crate, so this costs a test rather than a runtime
+    /// dependency on the whole sign-in service.
+    #[test]
+    fn the_launcher_and_the_sign_in_service_agree_on_the_default_port() {
+        assert_eq!(
+            crate::paths::DEFAULT_AUTH_PORT,
+            auth::DEFAULT_PORT,
+            "the launcher would dial a port the service is not on"
+        );
+    }
+
     #[test]
     fn the_description_says_what_was_done() {
         let exe = std::path::Path::new(r"C:\MapleCW\client\MapleStory.exe");

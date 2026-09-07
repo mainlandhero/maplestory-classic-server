@@ -64,7 +64,10 @@ pub const DEFAULT_PORT: u16 = 8484;
 /// A second number rather than a derived one, because the two services are separate
 /// processes: a machine can reach the game port and not the sign-in port, or the reverse, and
 /// folding them together would make "wrong port" and "server down" the same report.
-pub const DEFAULT_AUTH_PORT: u16 = 8080;
+/// **Must equal `auth::DEFAULT_PORT`**, which is where the reasoning for the number lives.
+/// A test asserts the two against each other; `auth` is a dev-dependency here, so the check
+/// costs a test rather than pulling the whole sign-in service into the launcher.
+pub const DEFAULT_AUTH_PORT: u16 = 8480;
 
 /// How far up from the executable the dev-layout walk goes. `target\debug\` is two, and a
 /// few more cover `target\<triple>\debug\` and an examples subdirectory.
@@ -126,7 +129,7 @@ pub struct Layout {
     /// in the config file turns it off: forgetting a key must not be a way to lose the rule
     /// that keeps a modified client off the internet. See `crate::firewall`.
     pub firewall: bool,
-    /// Where the sign-in service listens - `crates/auth`, default 8080.
+    /// Where the sign-in service listens - `crates/auth`, default 8480.
     ///
     /// Separate from `port`, which is the GAME port the client is handed. They are two
     /// different services and a machine can legitimately reach one and not the other; folding

@@ -700,7 +700,7 @@ impl eframe::App for LauncherApp {
                         !busy,
                         egui::TextEdit::singleline(&mut self.auth_port_text)
                             .desired_width(90.0)
-                            .hint_text("8080"),
+                            .hint_text("8480"),
                     );
                     ui.end_row();
 

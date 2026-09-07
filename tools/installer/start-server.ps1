@@ -45,12 +45,18 @@ param(
     [int]$Port = 8484,
     [int]$ChannelPort = 8485,
     [int]$Channels = 2,
-    # The sign-in service's port. 8080 is a popular port and something else may already hold
-    # it - a proxy, a dev server, IIS Express - in which case maplecw-auth cannot bind and
-    # exits on its own seconds after starting, which is what a server box did on 2026-09-06.
-    # Move it here rather than fighting for 8080, and set auth_port to match in
-    # maplecw-launcher.toml on every client.
-    [int]$AuthPort = 8080,
+    # The sign-in service's port. **8480 since 2026-09-07, and it was 8080.**
+    #
+    # 8080 is one of the most contended ports on a Windows box - a proxy, a dev server, IIS
+    # Express - and when something holds it maplecw-auth cannot bind and exits on its own
+    # seconds after starting, which is what a server box did on 2026-09-06. Moving it then cost
+    # two manual steps, one here and one on every client, and the failure in between reads as
+    # "received corrupt message of type InvalidContentType" rather than "that port is taken".
+    #
+    # So the default moved instead. 8480 sits beside the game's 8484-8486 without colliding.
+    # It must match crates\auth\src\lib.rs DEFAULT_PORT and the launcher's DEFAULT_AUTH_PORT,
+    # which a test in the launcher pins against each other.
+    [int]$AuthPort = 8480,
     # Kept so an old command line is told what changed rather than silently ignored.
     [string]$Account,
     # Serve a connection that cannot be tied to a launcher sign-in as THIS account instead of
@@ -182,8 +188,9 @@ $auth = Start-Process -FilePath (Join-Path $bin 'maplecw-auth.exe') -WorkingDire
     -RedirectStandardOutput (Join-Path $root 'auth.log') `
     -RedirectStandardError  (Join-Path $root 'auth.log.err')
 Write-Host "sign-in       pid $($auth.Id)  $($Bind):$AuthPort  <- the launcher signs in here (TLS)"
-if ($AuthPort -ne 8080) {
-    Write-Host "              NOT the default 8080 - every client needs auth_port = `"$AuthPort`" in maplecw-launcher.toml" -ForegroundColor Yellow
+if ($AuthPort -ne 8480) {
+    Write-Host "              NOT the default 8480 - every client needs this in the launcher's" -ForegroundColor Yellow
+    Write-Host "              Sign-in port box, or auth_port in maplecw-launcher.toml" -ForegroundColor Yellow
 }
 Add-Watched 'sign-in' $auth 'auth.log'
 
@@ -283,7 +290,7 @@ try {
             Write-Host ''
             Write-Host '  Common causes, in the order they actually happen:' -ForegroundColor Red
             Write-Host '    - the port is already taken by something else on this machine' -ForegroundColor Red
-            Write-Host '      (netstat -ano | findstr ":8080 :8484 :8485 :8486")' -ForegroundColor Red
+            Write-Host '      (netstat -ano | findstr ":8480 :8484 :8485 :8486")' -ForegroundColor Red
             Write-Host '    - the database is not readable, or is on a drive that went away' -ForegroundColor Red
             Write-Host '    - -FallbackAccount naming an account that does not exist' -ForegroundColor Red
             Write-Host ("  Full logs are in {0}" -f $root) -ForegroundColor Red
