@@ -987,7 +987,31 @@ pub(crate) struct Config {
     /// [`Config::interval`] the whole time, which is the behaviour every measurement to date
     /// was taken with. See [`nap_for`].
     pub coarse: Option<Duration>,
+    /// Arm [`crate::writewatch`] around each predicted firing, so the store that damages the
+    /// header faults at the writing instruction. Off by default: it protects the client's
+    /// hottest size class read-only for [`Config::write_window`] every three minutes.
+    pub write: bool,
+    /// How far BEFORE the predicted firing the window opens.
+    pub write_lead: Duration,
+    /// How long the window stays open.
+    pub write_window: Duration,
+    /// How often pages that have been written are protected again inside the window.
+    pub write_burst: Duration,
 }
+
+/// The period six catches across three sessions measured, used to place the write window
+/// after the FIRST finding instead of the second.
+///
+/// This is the file asserting a conclusion of its own, so it is confined to one thing: where
+/// to point a watch that costs a stutter if it is wrong. [`nap_for`], which decides whether
+/// to walk at all and can therefore miss a catch, still uses only the period this session
+/// measured for itself.
+const ASSUMED_PERIOD: Duration = Duration::from_secs(180);
+
+/// How long to wait for the write window to close before a repair. The window's own burst is
+/// 5 ms, so this is twenty of them, and the corrupt-to-free race it has to fit inside is
+/// 720 ms.
+const WRITE_STOP_WAIT: Duration = Duration::from_millis(60);
 
 /// How far either side of a predicted firing the sentry stays at the fine interval.
 ///
@@ -1039,6 +1063,23 @@ fn nap_for(cfg: &Config, last_fire: Option<Instant>, period: Option<Duration>) -
     }
 }
 
+/// Which firing of a `period` clock, counted from `last`, has been reached by `at`.
+///
+/// Returns `0` before the first one. [`run`] arms the write window when this steps up, with
+/// `at = now + lead`, so the window opens exactly `lead` before the predicted firing and once
+/// per firing rather than once per walk.
+fn firing_index(last: Instant, period: Duration, at: Instant) -> u64 {
+    let p = period.as_secs_f64();
+    if p <= 0.0 {
+        return 0;
+    }
+    let elapsed = at.saturating_duration_since(last).as_secs_f64();
+    if elapsed <= 0.0 {
+        return 0;
+    }
+    (elapsed / p).floor() as u64
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -1049,6 +1090,10 @@ impl Default for Config {
             stacks: true,
             repair: false,
             coarse: None,
+            write: false,
+            write_lead: Duration::from_millis(500),
+            write_window: Duration::from_millis(1200),
+            write_burst: Duration::from_millis(5),
         }
     }
 }
@@ -1089,6 +1134,29 @@ pub(crate) fn parse_config(text: &str) -> Option<Config> {
             cfg.stacks = false;
         } else if token == "repair=on" {
             cfg.repair = true;
+        } else if token == "write=on" {
+            cfg.write = true;
+        } else if let Some(v) = token.strip_prefix("writelead=") {
+            if let Ok(ms) = v.parse::<u64>() {
+                if ms <= 5_000 {
+                    cfg.write_lead = Duration::from_millis(ms);
+                }
+            }
+        } else if let Some(v) = token.strip_prefix("writewindow=") {
+            if let Ok(ms) = v.parse::<u64>() {
+                // Capped hard. This window protects the client's hottest size class, and a
+                // marker typo asking for a minute of it would be indistinguishable from the
+                // client having become unplayable.
+                if (50..=5_000).contains(&ms) {
+                    cfg.write_window = Duration::from_millis(ms);
+                }
+            }
+        } else if let Some(v) = token.strip_prefix("writeburst=") {
+            if let Ok(ms) = v.parse::<u64>() {
+                if (1..=500).contains(&ms) {
+                    cfg.write_burst = Duration::from_millis(ms);
+                }
+            }
         } else if let Some(v) = token.strip_prefix("coarse=") {
             // Held aside and validated after the loop: it is compared against `interval`, and
             // comparing here would make the answer depend on which token came first.
@@ -1207,6 +1275,14 @@ unsafe fn run(cfg: Config) {
             "It READS ONLY - no client byte is written."
         },
     ));
+    if cfg.write {
+        log(&format!(
+            "***** POOL WRITE WATCH ARMED: {} ms before each predicted firing, bucket              {DAMAGE_CLASS}'s pages go PAGE_READONLY for {} ms, re-protected every {} ms.              Reads are untouched. A write into that memory faults, the handler records RIP              and the exact address, makes the page writable and re-executes the instruction,              so the client continues. This is what turns a *when* into a *who*: no window can              open until the first finding gives it a phase, so the first six minutes look              exactly like an ordinary sentry run. It writes nothing to the client -              VirtualProtect is a permission change, not an edit *****",
+            cfg.write_lead.as_millis(),
+            cfg.write_window.as_millis(),
+            cfg.write_burst.as_millis(),
+        ));
+    }
 
     let mut tick: usize = 0;
     let mut last_beat = Instant::now();
@@ -1218,14 +1294,87 @@ unsafe fn run(cfg: Config) {
     // rather than assumed: a hard-coded 180 s would be this file asserting its own conclusion.
     let mut last_fire: Option<Instant> = None;
     let mut period: Option<Duration> = None;
+    // Which predicted firing the write window has already been opened for, so one firing
+    // arms one window however many walks fall inside the lead.
+    let mut write_armed_for: u64 = 0;
 
     loop {
-        let nap = nap_for(&cfg, last_fire, period);
+        let mut nap = nap_for(&cfg, last_fire, period);
+        // Never sleep past the moment a write window should open. `nap_for` walks coarse
+        // outside its own FIRE_WINDOW and knows nothing about the write watch, so without
+        // this a 2 s coarse nap would place the window up to 2 s late - which is the entire
+        // budget it has.
+        if cfg.write {
+            if let (Some(last), Some(p)) = (last_fire, period.or(Some(ASSUMED_PERIOD))) {
+                let now = Instant::now();
+                let next = firing_index(last, p, now) + 1;
+                if let Some(open) = (last + p.mul_f64(next as f64)).checked_sub(cfg.write_lead) {
+                    if open > now {
+                        nap = nap.min(open.duration_since(now));
+                    }
+                }
+            }
+        }
         let was_coarse = nap > cfg.interval;
         std::thread::sleep(nap);
         tick += 1;
         let full = cfg.full_every > 0 && tick as u32 % cfg.full_every == 0;
         let started = Instant::now();
+
+        // Open the write window `write_lead` before the next predicted firing. It needs the
+        // chunk bases, which only this thread has, and it must NOT block: the whole design is
+        // that the walk keeps running while the pages are protected, because the walk is what
+        // notices the damage the fault let through.
+        if cfg.write {
+            if let (Some(last), Some(p)) = (last_fire, period.or(Some(ASSUMED_PERIOD))) {
+                let idx = firing_index(last, p, started + cfg.write_lead);
+                if idx >= 1 && idx != write_armed_for {
+                    write_armed_for = idx;
+                    let bases = walks[DAMAGE_CLASS].sorted_bases();
+                    let chunks = bases.len();
+                    match crate::writewatch::arm_for(bases, cfg.write_window, cfg.write_burst) {
+                        Some(a) => log(&format!(
+                            "***** POOL WRITE WATCH: window #{} open for {} ms over {} run(s)                              ({} page(s), {} protected) covering {chunks} bucket-{DAMAGE_CLASS}                              chunks, {} ms before the predicted firing ({} period, {:.3} s).                              Reads are untouched; a WRITE into this memory now faults at the                              instruction that made it.{}{} *****",
+                            crate::writewatch::armed_windows(),
+                            cfg.write_window.as_millis(),
+                            a.runs,
+                            a.pages,
+                            a.protected,
+                            cfg.write_lead.as_millis(),
+                            if period.is_some() { "measured" } else { "ASSUMED" },
+                            p.as_secs_f64(),
+                            a.note.map(|n| format!(" {n}.")).unwrap_or_default(),
+                            if a.protected == 0 {
+                                " NOTHING WAS PROTECTED - this window can only report silence."
+                            } else {
+                                ""
+                            },
+                        )),
+                        None => log(
+                            "***** POOL WRITE WATCH: a window was still open when the next one                              came due - skipped rather than overlapped *****",
+                        ),
+                    }
+                }
+            }
+            for line in crate::writewatch::drain() {
+                log(&line);
+            }
+            if crate::writewatch::wants_dump() {
+                let n = DUMPS_WRITTEN.fetch_add(1, Ordering::SeqCst);
+                if n < cfg.max_dumps {
+                    let began = Instant::now();
+                    match write_pool_dump(&dump_dir(), "writer") {
+                        Ok((path, size)) => log(&format!(
+                            "***** POOL WRITE WATCH: wrote {path}, {size} bytes in {} ms - the                              pool as it stood within milliseconds of the write *****",
+                            began.elapsed().as_millis()
+                        )),
+                        Err(why) => log(&format!(
+                            "***** POOL WRITE WATCH: NO DUMP after a header write - {why}. The                              RIP logged above is still the answer *****"
+                        )),
+                    }
+                }
+            }
+        }
 
         for i in 0..BUCKETS.len() {
             if i != DAMAGE_CLASS && !full {
@@ -1291,6 +1440,15 @@ unsafe fn run(cfg: Config) {
                 // because the FINDING block below records the value as read, and five dumps
                 // of the damage already exist.
                 if cfg.repair {
+                    // The repair stores into a slot header, and `session::can_write` refuses
+                    // a PAGE_READONLY page - so an open write window would turn every repair
+                    // into a refusal. Close it first and wait for the pages to come back.
+                    if cfg.write && !crate::writewatch::stop_and_wait(WRITE_STOP_WAIT) {
+                        log(&format!(
+                            "***** POOL WRITE WATCH: the window did not close within {} ms, so                              the repair below may be refused for a read-only page. That is the                              instrument standing in the way of the mitigation, not new damage                              *****",
+                            WRITE_STOP_WAIT.as_millis()
+                        ));
+                    }
                     match repair_header(&confirmed) {
                         Ok(now) => {
                             REPAIRS.fetch_add(1, Ordering::SeqCst);
@@ -1336,6 +1494,26 @@ unsafe fn run(cfg: Config) {
             let repaired = REPAIRS.load(Ordering::SeqCst);
             let line = if cfg.repair {
                 format!("{line} | {repaired} header(s) repaired")
+            } else {
+                line
+            };
+            // The write watch's own counters. `faults` is the liveness control: a window
+            // that protected pages and then saw zero writes did not watch anything, and that
+            // is a different result from "the writer did not fire".
+            let line = if cfg.write {
+                let (faults, header, body, edge) = crate::writewatch::counters();
+                let off = crate::writewatch::backed_off();
+                format!(
+                    "{line} | write watch: {} window(s), {faults} write fault(s)                      ({header} on a slot HEADER, {body} body, {edge} edge){}",
+                    crate::writewatch::armed_windows(),
+                    if off > 0 {
+                        format!(
+                            " | {off} window(s) BACKED OFF at the fault cap and were blind for                              part of their window - the 0x20 class is written harder than                              assumed"
+                        )
+                    } else {
+                        String::new()
+                    }
+                )
             } else {
                 line
             };

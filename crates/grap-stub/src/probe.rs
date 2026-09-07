@@ -1093,6 +1093,18 @@ unsafe extern "system" fn veh(info: *mut ExceptionPointers) -> i32 {
     }
 
     if !IN_CALL.load(Ordering::SeqCst) {
+        // **A benign write fault the pool write watch armed is not a client crash.**
+        //
+        // `writewatch` protects bucket 1's pages read-only for under a second around a
+        // predicted firing of the 180 s clock, so ordinary client writes into that memory
+        // arrive here as `0xC000_0005`. Its own handler returns
+        // `EXCEPTION_CONTINUE_EXECUTION`, and a first-chance handler registered later is
+        // called first, so in practice this branch is never reached for one of them - but
+        // vectored handler order is a property of registration, not a guarantee written
+        // down anywhere, and getting it wrong here would write a 1.3 GB dump per write.
+        if crate::writewatch::suppresses(info.cast::<c_void>()) {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
         // Not our walk, so this exception belongs to the client - but say so before
         // handing it back.
         //

@@ -31,6 +31,7 @@ pub mod netwatch;
 pub mod poolsentry;
 pub mod probe;
 pub mod session;
+pub mod writewatch;
 
 use std::ffi::c_void;
 use std::fs::OpenOptions;

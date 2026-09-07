@@ -185,11 +185,12 @@
     catch outside the predicted window drops it and goes back to fine. The repair stays on.
     Use -PoolSentry alone when the run is a MEASUREMENT rather than play.
 
-    STILL UNTESTED: whether the ticker family is the writer. It needs FIFTEEN IDLE MINUTES -
-    the last attempt was an enter-and-exit, so its only two allocator hits were the login-stage
-    channel list (rdx=2), not a ticker (rdx=6). start-servers.cmd with these, then the launcher:
+    T18 (NEW 2026-09-07). NAME THE WRITER, and it is THE run. -SentryWriteWatch, below at
+    (C). The ticker probe rides along on the same launch. FIFTEEN IDLE MINUTES standing still
+    on a map with mobs, then CLOSE THE CLIENT YOURSELF - the death is not needed and a
+    deliberate end keeps the sample unbiased. start-servers.cmd with these, then the launcher:
 
-      -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -PinPatches
+      -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -SentryWriteWatch -PinPatches
       -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"
 
     (A) -SentryRepair writes a confirmed damaged header back to the slot size, so the pool's
@@ -215,16 +216,39 @@
     world, so its patch set was in practice the only one the client could ever run. A pin
     overrides it for ONE launch; the launcher deletes it on read and prints OVERRIDES.
 
-    NAMING THE WRITER OUTRIGHT is still the guard-page build, and the period makes it cheap -
-    about six minutes to catch two (heap-corruption-2026-09-06.md 3.2). Four of the seven
-    frame-tick tickers jump into .themida, rawsize 0, so if (B) comes back empty that is where
-    they went and static analysis stops there.
+    (C) -SentryWriteWatch IS THE POINT OF THIS RUN. Every instrument before it could say
+    WHEN. This makes the store fault at the instruction that makes it. For ~900 ms around each
+    PREDICTED firing, bucket 1's pages go PAGE_READONLY. Reads are untouched, so the walk and
+    the client's own strings carry on; a WRITE faults, the handler records RIP and the exact
+    address, makes the page writable and re-executes, and the client keeps running. It writes
+    NOTHING to the client - VirtualProtect is a permission change, not an edit. Nothing can arm
+    until the FIRST catch gives it a phase, so the opening minutes are an ordinary sentry run.
 
-    STILL OPEN, and it is NOT answerable by any run: whether any of this is OURS. 75 of 75
-    archived client runs carried our hook. That control needs the LAUNCHER to write a smaller
-    patch set - a change to crates/launcher/src/client.rs, not a command line. DO NOT retry
+    This is NOT the guard-page build of heap-corruption-2026-09-06.md 3.2, and the reason is a
+    measurement: TWO of the four catches on 2026-09-07 were LIVE slots, and a decommit-on-free
+    scheme is blind to those by construction. It also replaces no allocator and hooks nothing.
+
+    In client-patched\maplecw-hook.log, in order of value:
+      "THE WRITER: a store to slot header X at +4 ... from RIP R"  -> THE ANSWER. R is the
+                 instruction. Whose module R is in also answers "is any of this OURS".
+      "POOL WRITE WATCH saw a write into a watched page"  -> the liveness control: pages are
+                 really protected and faults really reach us. Expect several.
+      "window #N open ... control PASS"  -> armed, and its own EXCEPTION_RECORD self-test
+                 passed. "control FAIL" means it stood itself down rather than report silence.
+      windows opened, ZERO write faults  -> report exactly that. It is a property of the
+                 instrument, NOT evidence that the client did not write.
+      no window at all  -> no catch happened, so there was never a phase to predict from.
+    Cost: a stutter under a second every three minutes, on top of the repair's own.
+
+    Four of the seven frame-tick tickers jump into .themida, rawsize 0, so if (B) comes back
+    empty that is where they went and static analysis stops there. (C) does not care.
+
+    WHETHER ANY OF THIS IS OURS is still open, and (C) is the first instrument that can
+    answer it - the faulting RIP names a module. 75 of 75 archived client runs carried our
+    hook, so the archive cannot. The patch-set control needs the LAUNCHER to write a smaller
+    set - a change to crates/launcher/src/client.rs, not a command line. DO NOT retry
     -DirectClient for it: three launches on 2026-09-06, none reached the world, and one
-    produced a retraction. research/is-the-corruption-ours-2026-09-06.md §5.
+    produced a retraction. research/is-the-corruption-ours-2026-09-06.md 5.
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
@@ -1051,6 +1075,15 @@ param(
     #
     # Off by default because it writes. Say so in any result that depends on it.
     [switch]$SentryRepair,
+    # NAME the writer instead of timing it. For ~900 ms around each PREDICTED firing of the
+    # 180 s clock, bucket 1's pages go PAGE_READONLY: reads are untouched, so the sentry walk
+    # and the client's own string reads carry on, and a WRITE faults at the instruction that
+    # made it. The handler records RIP and the exact address, makes the page writable and
+    # re-executes, so the client keeps going. Nothing is written to the client - VirtualProtect
+    # is a permission change, not an edit. It cannot arm until the first catch gives it a
+    # phase, so it costs nothing for the first few minutes.
+    # crates/grap-stub/src/writewatch.rs. Implies -PoolSentry.
+    [switch]$SentryWriteWatch,
     # PLAY MODE: keep the repair, drop everything that makes the client hitch.
     #
     # The owner, 2026-09-07: "it lags/freezes the client every time it runs, which is undesirable."
@@ -1909,10 +1942,24 @@ function Show-TestPlan {
         Write-Host '       except within 5s of a predicted firing. The 180s period is LEARNED'
         Write-Host '       from the first two catches, so nothing is assumed, and a catch'
         Write-Host '       outside the window resets it. Keep the repair either way.'
-        Write-Host '       STILL UNTESTED: is the ticker family the writer? Needs -PinPatches'
-        Write-Host '         -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"'
-        Write-Host '       AND fifteen idle minutes - last run was enter-and-exit, so the only'
-        Write-Host '       two hits were the login channel list (rdx=2), not a ticker (rdx=6).'
+        Write-Host '    0j. NAME THE WRITER. THIS IS THE RUN. -SentryWriteWatch.' -ForegroundColor Yellow
+        Write-Host '       Everything so far could say WHEN. This makes the STORE fault at the'
+        Write-Host '       instruction that makes it: around each PREDICTED firing, bucket 1'
+        Write-Host '       goes read-only for ~900ms. Reads are untouched. A write faults, we'
+        Write-Host '       log RIP and the address, unprotect, and the write RE-EXECUTES - so'
+        Write-Host '       the client keeps running, and we write nothing to it.'
+        Write-Host '       Stand still on a map with mobs for FIFTEEN MINUTES, then close the'
+        Write-Host '       client yourself. Nothing arms until the FIRST catch, ~5 min in.'
+        Write-Host '         "THE WRITER: ... from RIP R"  -> THE ANSWER. R is the instruction,'
+        Write-Host '                    and the module it sits in also settles "is this OURS"'
+        Write-Host '         "saw a write into a watched page" -> liveness. Expect several'
+        Write-Host '         "window #N open ... control PASS" -> armed and self-tested'
+        Write-Host '         windows but ZERO write faults -> say exactly that. It is the'
+        Write-Host '                    instrument, NOT evidence the client did not write'
+        Write-Host '         no window at all -> no catch, so there was no phase to predict'
+        Write-Host '       Same launch also answers: is the ticker family the writer?'
+        Write-Host '         -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"'
+        Write-Host '         a ticker allocates with rdx=6; the login channel list is rdx=2.'
         Write-Host '       research/the-180-second-clock-2026-09-07.md'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
@@ -2252,11 +2299,20 @@ function Show-TestPlan {
 # The `else` is not optional: a stale marker arms a 100 ms allocator walk on an unrelated run,
 # a confound invisible in the logs of whatever that run was measuring. The hook also deletes
 # the marker once it has read it, so this is belt and braces.
+if ($SentryWriteWatch -and -not $PoolSentry) {
+    # The write watch lives inside the sentry - it needs the sentry's chunk list to know which
+    # pages to protect, and its phase to know when. A run that passed only this flag would arm
+    # nothing at all and look identical to one that armed and saw nothing, which is the exact
+    # failure mode CLAUDE.md keeps cataloguing.
+    Write-Host '-SentryWriteWatch implies -PoolSentry; arming both.' -ForegroundColor Cyan
+    $PoolSentry = $true
+}
 if ($PoolSentry) {
     if ($SentryDumps -lt 0) { $SentryDumps = 0 }
     $sentryCfg = "dumps=${SentryDumps}"
     if ($SentryQuiet) { $sentryCfg = 'dumps=0,stacks=off,coarse=2000' }
     if ($SentryRepair) { $sentryCfg = "${sentryCfg},repair=on" }
+    if ($SentryWriteWatch) { $sentryCfg = "${sentryCfg},write=on" }
     Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value $sentryCfg -Encoding ascii
     Write-Host "POOL SENTRY ARMED ($sentryCfg) - a heartbeat every 60s in the hook log, findings when they happen" -ForegroundColor Cyan
     if ($SentryQuiet) {
@@ -2266,6 +2322,13 @@ if ($PoolSentry) {
         Write-Host '  The period is LEARNED, so the first two catches are still at 100ms and' -ForegroundColor Cyan
         Write-Host '  a catch outside the predicted window resets it. This is a PLAY setting -' -ForegroundColor Cyan
         Write-Host '  use -PoolSentry on its own when the run is a measurement.' -ForegroundColor Cyan
+    }
+    if ($SentryWriteWatch) {
+        Write-Host '  WRITE WATCH IS ON. Around each PREDICTED firing, bucket 1 goes read-only' -ForegroundColor Yellow
+        Write-Host '  for ~900ms so the damaging STORE faults at its own instruction. Nothing is' -ForegroundColor Yellow
+        Write-Host '  written to the client. It cannot arm until the FIRST catch gives it a phase.' -ForegroundColor Yellow
+        Write-Host '  Look for: "control PASS" (armed), "saw a write into a watched page"' -ForegroundColor Yellow
+        Write-Host '  (liveness), and "THE WRITER: ... from RIP" (the answer).' -ForegroundColor Yellow
     }
     if ($SentryRepair) {
         Write-Host '  REPAIR IS ON. The sentry will WRITE to the client: a confirmed damaged' -ForegroundColor Yellow
