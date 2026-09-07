@@ -77,24 +77,31 @@ SETUP
 
      powershell -ExecutionPolicy Bypass -File ".\start-server.ps1" -AuthPort 8090
 
-   and put auth_port = "8090" in maplecw-launcher.toml on every client, and open
-   8090 instead of 8080 above. To see what holds a port:
+   and either set the launcher's "Sign-in port" box to 8090 on each client (it is
+   remembered after the first successful Start Game) or put auth_port = "8090" in
+   maplecw-launcher.toml there. Open 8090 instead of 8080 above. To see what
+   holds a port:
 
      netstat -ano | findstr ":8080 :8484 :8485 :8486"
 
 4. Double-click start-servers.cmd. THAT WINDOW IS THE SERVER - closing it stops
    everything, and there is no stop script to forget.
 
-5. Copy the sign-in certificate's fingerprint to every client machine. The
-   server window prints it:
+5. NOTHING TO DO ABOUT THE CERTIFICATE, as long as this package's auth-cert.pem
+   and auth-key.pem are the ones beside the server. Every launcher built from
+   the same checkout has that certificate's fingerprint COMPILED IN, so a client
+   machine needs no certificate configuration at all.
+
+   The server window still prints it, and it is still in auth-cert-fingerprint.txt
+   beside the database:
 
      TLS: fingerprint sha256:<64 hex characters>
 
-   (it is also in auth-cert-fingerprint.txt beside maplecw.db). On each client,
-   either install with `install.ps1 -AuthFingerprint <that value>`, or set
-   `auth_fingerprint = "sha256:..."` in maplecw-launcher.toml beside the
-   launcher, or copy the .txt file beside the launcher. A launcher with no
-   fingerprint refuses to sign in rather than sending the password anywhere.
+   You only need that value if the server is using a DIFFERENT certificate from
+   the one the launchers were built against - then `install.ps1 -AuthFingerprint
+   <value>` or `auth_fingerprint = "sha256:..."` in maplecw-launcher.toml on each
+   client. A launcher with no fingerprint at all refuses to sign in rather than
+   sending the password anywhere.
 
    The certificate is generated on the FIRST start and kept in auth-cert.pem
    and auth-key.pem beside the database. Delete them and the next start makes
