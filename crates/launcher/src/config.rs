@@ -37,6 +37,7 @@ pub const KNOWN_KEYS: &[&str] = &[
     "auth_port",
     "auth_fingerprint",
     "identity",
+    "firewall",
 ];
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -52,6 +53,10 @@ pub struct LauncherConfig {
     /// The account name or email to put in the sign-in box. **Never a password** - see
     /// `crate::remembered`, which is what writes this in practice.
     pub identity: Option<String>,
+    /// `off` stops the launcher writing the outbound block at Start Game. **Absent means ON**:
+    /// the rule is what keeps a modified client off the internet, so it is not something to
+    /// lose by forgetting a key. See `crate::firewall`.
+    pub firewall: Option<bool>,
     /// Lines that could not be used, with a reason. Surfaced in the UI; never fatal.
     pub problems: Vec<String>,
 }
@@ -109,6 +114,14 @@ pub fn parse(text: &str) -> LauncherConfig {
         match key.as_str() {
             "client_dir" => cfg.client_dir = Some(value),
             "identity" => cfg.identity = Some(value),
+            "firewall" => match value.to_ascii_lowercase().as_str() {
+                "off" | "false" | "no" | "0" => cfg.firewall = Some(false),
+                "on" | "true" | "yes" | "1" => cfg.firewall = Some(true),
+                _ => cfg.problems.push(format!(
+                    "line {line_no}: `firewall` takes on or off, not {value:?} - leaving the \
+                     rule ON, because that is the safe way to misread it"
+                )),
+            },
             // Accepted and IGNORED rather than rejected. Every installer written before
             // 2026-08-29 writes this key, and answering an old config file with "unknown
             // key" would read as the file being wrong when it is merely out of date.

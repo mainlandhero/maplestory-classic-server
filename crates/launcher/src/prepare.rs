@@ -248,6 +248,40 @@ pub fn prepare_and_launch(
     })?;
     log(Level::Good, "a server is answering".into());
 
+    // **The outbound block, scoped to the address this launch actually resolved.**
+    //
+    // The owner, 2026-09-07: *"Could it enforce a firewall rule so that it can only connect to a
+    // specific IP that is given by the launcher?"* Here rather than in `install.ps1` for the
+    // reason they named in the same breath: a CNAME is resolved on **every** launch, so a rule
+    // computed from `plan.ip` follows the name, where the installer's is pinned to whatever
+    // the name meant on the day it ran.
+    //
+    // Placed after the reachability probe on purpose. The probe is what proves this address is
+    // the server; writing a rule around an address that answers nothing would be a firewall
+    // change bought with no information, and on a typo it would block the real server.
+    //
+    // A failure is a WARNING and the launch continues - see `firewall::apply`.
+    if layout.firewall {
+        match plan.ip.parse::<std::net::Ipv4Addr>() {
+            Ok(addr) => match crate::firewall::apply(&layout.client_exe(), &[addr]) {
+                Ok(line) => log(Level::Info, line),
+                Err(why) => log(Level::Warn, why),
+            },
+            // `resolved()` guarantees a literal IPv4, so this is unreachable rather than
+            // expected - and it says so instead of silently skipping the rule.
+            Err(e) => log(
+                Level::Warn,
+                format!("firewall NOT applied: {:?} is not an IPv4 literal after resolving ({e})", plan.ip),
+            ),
+        }
+    } else {
+        log(
+            Level::Warn,
+            "firewall rule skipped (firewall = \"off\") - this client can reach the internet"
+                .into(),
+        );
+    }
+
     let args = launch_args(plan);
     log(
         Level::Info,

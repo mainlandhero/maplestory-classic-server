@@ -122,6 +122,10 @@ pub struct Layout {
     /// The account name to pre-fill in the sign-in box, from a successful Start Game or from
     /// `identity` in the config file. **Never a password**; see `crate::remembered`.
     pub identity: Option<String>,
+    /// Write the outbound block at Start Game. **Defaults to true** and only `firewall = "off"`
+    /// in the config file turns it off: forgetting a key must not be a way to lose the rule
+    /// that keeps a modified client off the internet. See `crate::firewall`.
+    pub firewall: bool,
     /// Where the sign-in service listens - `crates/auth`, default 8080.
     ///
     /// Separate from `port`, which is the GAME port the client is handed. They are two
@@ -286,6 +290,7 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
         server_ip: DEFAULT_SERVER_IP.to_string(),
         port: DEFAULT_PORT,
         identity: None,
+        firewall: true,
         auth_port: DEFAULT_AUTH_PORT,
         auth_fingerprint: None,
         auth_fingerprint_from: String::new(),
@@ -479,6 +484,10 @@ fn apply_config(layout: &mut Layout, cfg: &LauncherConfig, exe_dir: &Path) {
     if let Some(v) = &cfg.identity {
         layout.identity = Some(v.clone());
         layout.config_applied.push("identity".into());
+    }
+    if let Some(v) = cfg.firewall {
+        layout.firewall = v;
+        layout.config_applied.push(format!("firewall = {}", if v { "on" } else { "off" }));
     }
 }
 

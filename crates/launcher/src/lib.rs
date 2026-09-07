@@ -27,6 +27,7 @@
 mod app;
 mod client;
 mod config;
+mod firewall;
 mod http;
 mod launch;
 mod paths;
