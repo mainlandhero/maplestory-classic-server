@@ -10,13 +10,15 @@
 //! **[D]** derived from two or more [L] facts, **[I]** inferred - a policy nothing on this
 //! machine can confirm.
 //!
-//! # THIS MODULE IS NOT WIRED
+//! # Wired since 2026-08-31 - this heading used to say the opposite
 //!
-//! `crates/world/src/session/` belongs to the coordinator and was not touched. **Nothing
-//! calls anything in this file.** `research/item-recovery.md` §7 is the "WIRE IT LIKE THIS"
-//! and it names one function and two lines. Saying this out loud is `CLAUDE.md`'s *"built is
-//! not wired"* rule, which has already caught two subsystems that `STATUS.md` listed as done
-//! while nothing called them.
+//! `session/consume.rs` reads both skill levels and calls [`restored`] before it caps the
+//! restore, exactly as `research/item-recovery.md` §7 asked. The heading above said *"THIS
+//! MODULE IS NOT WIRED"* for six days after that landed, which is the mirror of the
+//! `CLAUDE.md` failure it was written to prevent: a loud "unwired" that outlives the wiring
+//! sends the next reader to re-do finished work. Corrected 2026-09-06 while answering
+//! whether the passives work. **Not yet confirmed on a screen** - the 08-30 report that
+//! found it missing is the last time a potion's bonus was watched.
 //!
 //! It is the **pure decision**, the same shape as [`crate::secondjob`]: given what the
 //! character has learned and what the item restores, how much lands. It sends no packets,
