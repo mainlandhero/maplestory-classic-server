@@ -162,16 +162,44 @@
     line (bit 84, [D] - icon without the number means 83 is next). Iron Will is SELF-ONLY in
     this client's data (no lt/rb rectangle) - report it as expected, not as a bug.
 
-    T17 (2026-09-06) - DONE THE SAME EVENING, AND IT WORKED. The idle sentry run caught the
-    write TWICE in six minutes (22:34:34, 22:37:34) and the second slot was freed 720 ms later
-    for the 0xC0000374 death - the whole chain watched live: research/heap-corruption-2026-09-06.md
-    §5. What it settled: one slot was LIVE and one FREE with the same value, so the writer holds
-    its own pointer; the offset is (body+4)-8 - a refcount written through a BSTR data pointer as
-    if it had an 8-byte cookie [D]. What it CANNOT do: name the instruction - every thread was
-    asleep by the time a 100 ms walk found the slot. IF YOU RUN IT AGAIN, put dumps=4 in the
-    marker (the cap of 1 spent the only dump on the first catch): the file is still
-    maplecw-hook.sentry in the client folder, content "dumps=4". Naming the writer is a BUILD
-    (§3.2: freed 0x20 slots become guard pages, the stale write faults at the writer), not a run.
+    T17 (2026-09-06) - IS THE CORRUPTION OURS? The control that has NEVER been run, and it is
+    the one the owner asked for: "there must be something we're doing that's causing this".
+    research/is-the-corruption-ours-2026-09-06.md. The background: the sentry run that same
+    evening caught the write TWICE in six minutes and the second slot was freed 720 ms later
+    for the 0xC0000374 death - chain watched live, offset localised to (body+4)-8, a refcount
+    through a BSTR data pointer [D]. But EVERY archived client run - 75 of 75 - carried our
+    hook, so nothing on disk separates "this client corrupts its heap" from "it corrupts its
+    heap while we are inside it".
+
+    THE RUN. One launch, servers and client together, with every OPTIONAL patch off:
+
+      powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+        -DirectClient -FallbackAccount maplecw -PoolSentry
+        -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
+
+    -DirectClient is the point: the LAUNCHER writes the probe and session markers with its own
+    defaults, so the launcher path cannot run this control. This drops four things at once - the
+    two extra int3 watches, create=on, the identity write (which pins a refcount at 2 in a
+    client pool block) and the multiclient hooks - which is correct for a CONTROL: if catches
+    continue, all four are cleared in one launch. 1415db360:ret and 141b2a280:rdx=0 STAY; without
+    the first the client __fastfails at ~37 s on a reachability check that overruns its own stack
+    buffer, and without the second the login dialog blocks the tick.
+
+    Then: Cobalt, one map with mobs, STAND STILL fifteen minutes, and CLOSE THE CLIENT YOURSELF.
+
+      catches at ~1 per 3 min   our optional patches are innocent; the bug is the client's own
+                                in our network environment. Then the only route left is the
+                                guard-page BUILD (heap-corruption-2026-09-06.md §3.2)
+      no catch in 15 minutes    one of the four dropped patches is implicated. Bisecting them is
+                                three more launches, and it would be the first time anything we
+                                do has been tied to this
+      each catch within ~300 ms BEFORE a 0x013D in world.log
+                                §4's lead becomes a finding - both 2026-09-06 catches did this
+                                and were exactly six 30 s census intervals apart. TWO SAMPLES
+                                ARE NOT A PERIOD; a third settles it
+
+    The dump cap is now -SentryDumps, default 4. Last run's cap of 1 spent its only dump on the
+    first catch and the second - the one that killed the client - left only its log block.
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
@@ -946,6 +974,12 @@ param(
     # tens of thousands of allocations later. Off by default because it is an instrument,
     # not a fix - it prevents nothing. See crates/grap-stub/src/poolsentry.rs.
     [switch]$PoolSentry,
+    # How many dumps a sentry run may write. The 2026-09-06 run caught the write TWICE and
+    # could only dump the FIRST - the cap was 1, and the second catch, the one whose slot was
+    # freed 720 ms later into the 0xC0000374, left nothing but its log block. A dump is ~1.3 GB
+    # and the client freezes for about a second while each one is written, so this is not free;
+    # 4 is enough for a fifteen-minute run at the observed rate of one catch per ~3 minutes.
+    [int]$SentryDumps = 4,
     [switch]$HeapFix,
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
@@ -1763,13 +1797,22 @@ function Show-TestPlan {
         Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
-        Write-Host '    0i. THE IDLE SENTRY RUN - DONE 2026-09-06 evening, caught the write TWICE'
-        Write-Host '       in 6 min; the 2nd slot was freed 720 ms later = the 0xC0000374 death,'
-        Write-Host '       watched live. One slot live, one free, same value: the writer holds'
-        Write-Host '       its own pointer; offset (body+4)-8 = a refcount through a BSTR pointer'
-        Write-Host '       [D]. The sentry cannot name the instruction (threads asleep by then).'
-        Write-Host '       Re-run only with dumps=4 in maplecw-hook.sentry. Next is a BUILD, not'
-        Write-Host '       a run: guard pages on freed 0x20 slots so the write faults at the writer.'
+        Write-Host '    0i. IS THE CORRUPTION OURS? The control that has NEVER been run.'
+        Write-Host '       75 of 75 archived client runs carried our hook, so no measurement here'
+        Write-Host '       separates "this client corrupts its heap" from "it corrupts it while'
+        Write-Host '       we are inside it". This run is the separation. It needs -DirectClient:'
+        Write-Host '       the LAUNCHER writes the probe/session markers with its own defaults.'
+        Write-Host '         -DirectClient -FallbackAccount maplecw -PoolSentry'
+        Write-Host '         -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"'
+        Write-Host '       Drops 4 things at once (2 watches, create=on, the identity write, the'
+        Write-Host '       multiclient hooks); correct for a control - if catches continue, all'
+        Write-Host '       four are cleared in one launch. Cobalt, a map with mobs, STAND STILL'
+        Write-Host '       15 min, close the client yourself. Then read the hook log:'
+        Write-Host '         catches at ~1/3 min  our patches are innocent; next is the guard-page'
+        Write-Host '                              BUILD, the only thing that can name the writer'
+        Write-Host '         no catch in 15 min   one of the 4 is implicated - bisect, 3 launches'
+        Write-Host '         catch <300 ms before a 0x013D in world.log  the census lead becomes a'
+        Write-Host '                              finding (both 9-06 catches did, 6 intervals apart)'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'
@@ -2109,8 +2152,9 @@ function Show-TestPlan {
 # a confound invisible in the logs of whatever that run was measuring. The hook also deletes
 # the marker once it has read it, so this is belt and braces.
 if ($PoolSentry) {
-    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value 'on' -Encoding ascii
-    Write-Host 'POOL SENTRY ARMED - a heartbeat every 60s in the hook log, findings when they happen' -ForegroundColor Cyan
+    if ($SentryDumps -lt 0) { $SentryDumps = 0 }
+    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value "dumps=${SentryDumps}" -Encoding ascii
+    Write-Host "POOL SENTRY ARMED (up to $SentryDumps dump(s)) - a heartbeat every 60s in the hook log, findings when they happen" -ForegroundColor Cyan
 } else {
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
 }
@@ -2294,6 +2338,16 @@ Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session 
 # path is a direct run, so clear any leftover: presenting a stale token is refused, and a
 # refusal downgrades the connection to the --account fallback silently.
 Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
+# **And the multiclient marker, for the same reason and a sharper one.** The launcher writes
+# it on every launch and NOTHING deletes it - the copy in client-patched\ dated from a launcher
+# run twelve days earlier - so a -DirectClient run silently inherited the FindWindow and
+# CreateMutex hooks from whenever the launcher last ran. That is exactly the stale-marker
+# confound this script already guards against for the sentry, and it matters now: -DirectClient
+# is the minimal-patch path, and research/is-the-corruption-ours-2026-09-06.md §5 uses it as the
+# control that decides whether any of our patches touch the heap corruption. A control that
+# quietly carries one of the things it is meant to exclude is not a control. The launcher
+# rewrites this marker on its own next run, so removing it here costs that path nothing.
+Remove-Item (Join-Path $ClientDir 'maplecw-hook.multiclient') -ErrorAction SilentlyContinue
 Write-Host "client patches: $Probe"
 Write-Host "session patches: $Session"
 if ($SetFieldProbe) {
