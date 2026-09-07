@@ -164,10 +164,11 @@ if (-not $hasServers) {
     # launcher signs in over the network to the one on the server. Creating an account here
     # would make a database nothing reads and a login that looks real and is not.
     Write-Host ''
-    Write-Host 'No account is created on a client machine.' -ForegroundColor Cyan
-    Write-Host '  Accounts live on the SERVER. Create this player one there:'
-    Write-Host '    & "<server install>\bin\maplecw-useradd.exe" --db "<server install>\maplecw.db" <name>'
-    Write-Host '  then sign in with it from the launcher on this machine.'
+    Write-Host 'No account is created here - you make your own in the launcher.' -ForegroundColor Cyan
+    Write-Host '  Open the launcher and use the REGISTER tab: username, email, password, and a'
+    Write-Host '  single-use registration code the administrator gives you (they mint it in game'
+    Write-Host '  with !registrationcode). Passwords need 8+ characters with letters and digits.'
+    Write-Host '  Forgot one later? The FORGOT PASSWORD tab takes a recovery code the same way.'
 } elseif (-not $NoAccount) {
     Write-Host ''
     Write-Host '--- first account ---' -ForegroundColor Cyan
@@ -232,6 +233,11 @@ auth_port  = "$AuthPort"
 $pinLine
 "@
 Set-Content -Path (Join-Path $InstallDir 'maplecw-launcher.toml') -Value $toml -Encoding ascii
+# **A re-install is a deliberate reconfiguration, so the remembered file goes.** The launcher
+# writes maplecw-launcher.remembered.toml after a successful Start Game and reads it AHEAD of
+# the config written above - which is what stops a player retyping the server every launch.
+# Leaving it in place would mean re-running this with a new -ServerIp silently changed nothing.
+Remove-Item (Join-Path $InstallDir 'maplecw-launcher.remembered.toml') -ErrorAction SilentlyContinue
 Write-Host ''
 Write-Host "wrote $InstallDir\maplecw-launcher.toml"
 if (-not $AuthFingerprint) {

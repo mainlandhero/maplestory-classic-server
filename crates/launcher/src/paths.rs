@@ -119,6 +119,9 @@ pub struct Layout {
 
     pub server_ip: String,
     pub port: u16,
+    /// The account name to pre-fill in the sign-in box, from a successful Start Game or from
+    /// `identity` in the config file. **Never a password**; see `crate::remembered`.
+    pub identity: Option<String>,
     /// Where the sign-in service listens - `crates/auth`, default 8080.
     ///
     /// Separate from `port`, which is the GAME port the client is handed. They are two
@@ -282,6 +285,7 @@ pub fn resolve_from(exe_dir: &Path) -> Layout {
         data_root,
         server_ip: DEFAULT_SERVER_IP.to_string(),
         port: DEFAULT_PORT,
+        identity: None,
         auth_port: DEFAULT_AUTH_PORT,
         auth_fingerprint: None,
         auth_fingerprint_from: String::new(),
@@ -330,17 +334,38 @@ fn apply_remembered(layout: &mut Layout, exe_dir: &Path) {
             .config_problems
             .push(format!("{}: {problem}", crate::remembered::FILE_NAME));
     }
-    match remembered.client_dir {
-        Some(v) => {
-            layout.client_dir = absolutise(exe_dir, &v);
-            layout.client_dir_from =
-                format!("the folder chosen last time, remembered in {}", path.display());
-        }
-        None if remembered.problems.is_empty() => layout.config_problems.push(format!(
+    let mut used_something = false;
+    if let Some(v) = &remembered.client_dir {
+        layout.client_dir = absolutise(exe_dir, v);
+        layout.client_dir_from =
+            format!("the folder chosen last time, remembered in {}", path.display());
+        used_something = true;
+    }
+    // **The rest of what a successful Start Game saved.** These outrank the config file for
+    // the same reason `client_dir` does: the file is written only after a launch that worked,
+    // so it records settings that are known to reach a server, and re-running `install.ps1`
+    // is a deliberate reconfiguration that removes it.
+    if let Some(v) = &remembered.server_ip {
+        layout.server_ip = v.clone();
+        used_something = true;
+    }
+    if let Some(v) = remembered.port {
+        layout.port = v;
+        used_something = true;
+    }
+    if let Some(v) = &remembered.identity {
+        layout.identity = Some(v.clone());
+        used_something = true;
+    }
+    if used_something {
+        layout
+            .config_applied
+            .push(format!("remembered from the last successful Start Game ({})", path.display()));
+    } else if remembered.problems.is_empty() {
+        layout.config_problems.push(format!(
             "{} is present but remembers nothing",
             crate::remembered::FILE_NAME
-        )),
-        None => {}
+        ));
     }
 }
 
@@ -450,6 +475,10 @@ fn apply_config(layout: &mut Layout, cfg: &LauncherConfig, exe_dir: &Path) {
     if let Some(v) = cfg.port {
         layout.port = v;
         layout.config_applied.push("port".into());
+    }
+    if let Some(v) = &cfg.identity {
+        layout.identity = Some(v.clone());
+        layout.config_applied.push("identity".into());
     }
 }
 

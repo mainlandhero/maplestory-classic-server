@@ -107,9 +107,11 @@ impl LauncherApp {
             server_ip: layout.server_ip.clone(),
             port_text: layout.port.to_string(),
             client_dir_text: layout.client_dir.display().to_string(),
+            // Pre-filled from the last successful Start Game. The password box stays empty
+            // and always will - `crate::remembered` explains why.
+            identity: layout.identity.clone().unwrap_or_default(),
             layout,
             screen: Screen::SignIn,
-            identity: String::new(),
             password: String::new(),
             reg_username: String::new(),
             reg_email: String::new(),
@@ -362,6 +364,47 @@ impl LauncherApp {
         self.remember_client_dir();
     }
 
+    /// Save everything the window lets a player set, after a launch that worked.
+    ///
+    /// The owner, 2026-09-07: *"if the Start Game is successful, it should automatically save all
+    /// of the settings in a file so it will remember."*
+    ///
+    /// Called only from the `Ok` arm of `LaunchFinished`, which is the point at which these
+    /// settings are known to have reached a server and started a client. Saving on every
+    /// keystroke, or on a failure, would remember exactly the values somebody is in the middle
+    /// of correcting.
+    ///
+    /// The password is not among them and must never be: `CLAUDE.md`'s first standing
+    /// constraint, and this file is plain text beside the executable.
+    fn remember_settings(&mut self) {
+        let port = self.port_text.trim().parse::<u16>().unwrap_or(self.layout.port);
+        match crate::remembered::save(
+            &self.layout.exe_dir,
+            &self.layout.client_dir,
+            &self.server_ip,
+            port,
+            &self.identity,
+        ) {
+            Ok(path) => self.push(
+                Level::Info,
+                format!(
+                    "settings remembered for next time in {} (not the password)",
+                    path.display()
+                ),
+            ),
+            // A read-only install directory, most likely. The client is already starting, so
+            // this costs the player nothing but retyping next time, and the line says so
+            // rather than the next start looking as though it forgot for no reason.
+            Err(e) => self.push(
+                Level::Warn,
+                format!(
+                    "could not remember these settings - {} is not writable: {e}",
+                    self.layout.exe_dir.join(crate::remembered::FILE_NAME).display()
+                ),
+            ),
+        }
+    }
+
     /// Save the chosen folder beside the executable, so the next start opens on it.
     ///
     /// The owner, 2026-09-05: *"Setting it every time is going to be very frustrating for users."*
@@ -489,6 +532,7 @@ impl LauncherApp {
                     match result {
                         Ok(()) => {
                             self.status = Some((Level::Good, "the client is starting".into()));
+                            self.remember_settings();
                         }
                         Err(e) => self.fail(e),
                     }

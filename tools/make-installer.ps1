@@ -228,7 +228,12 @@ if ($ClientOnly) {
     # would start a second server on their machine.
     Remove-Item (Join-Path $stage 'bin') -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $here 'installer\install.ps1') $stage -Force
-    Copy-Item (Join-Path $here 'installer\README.txt')  $stage -Force
+    # **A player gets a different README, not the full one.** The full text tells them to
+    # double-click start-servers.cmd, which is not in this payload, and says install.ps1 will
+    # ask for an account name and password, which it no longer does on a client - accounts are
+    # made in the launcher's REGISTER tab against the server. Shipping instructions for the
+    # wrong shape is how a working install looks broken to the person holding it.
+    Copy-Item (Join-Path $here 'installer\README-client.txt') (Join-Path $stage 'README.txt') -Force
     Write-Host 'CLIENT-ONLY payload: no server binaries, no gm-handbook, no data\' -ForegroundColor Cyan
 } else {
     Copy-Item $handbook (Join-Path $stage 'gm-handbook') -Recurse -Force

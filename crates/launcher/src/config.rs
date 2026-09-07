@@ -29,8 +29,15 @@ pub const CONFIG_FILE_NAME: &str = "maplecw-launcher.toml";
 
 /// Every key this reader understands. Anything else is reported rather than ignored, because
 /// a typo'd key that silently does nothing is the same failure mode as a stale instrument.
-pub const KNOWN_KEYS: &[&str] =
-    &["client_dir", "stub_path", "server_ip", "port", "auth_port", "auth_fingerprint"];
+pub const KNOWN_KEYS: &[&str] = &[
+    "client_dir",
+    "stub_path",
+    "server_ip",
+    "port",
+    "auth_port",
+    "auth_fingerprint",
+    "identity",
+];
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LauncherConfig {
@@ -42,6 +49,9 @@ pub struct LauncherConfig {
     /// The sign-in service's certificate fingerprint, as pasted. Parsed and validated in
     /// `crate::paths`, where a bad value becomes a problem line rather than a silent absence.
     pub auth_fingerprint: Option<String>,
+    /// The account name or email to put in the sign-in box. **Never a password** - see
+    /// `crate::remembered`, which is what writes this in practice.
+    pub identity: Option<String>,
     /// Lines that could not be used, with a reason. Surfaced in the UI; never fatal.
     pub problems: Vec<String>,
 }
@@ -98,6 +108,7 @@ pub fn parse(text: &str) -> LauncherConfig {
         }
         match key.as_str() {
             "client_dir" => cfg.client_dir = Some(value),
+            "identity" => cfg.identity = Some(value),
             // Accepted and IGNORED rather than rejected. Every installer written before
             // 2026-08-29 writes this key, and answering an old config file with "unknown
             // key" would read as the file being wrong when it is merely out of date.
