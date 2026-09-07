@@ -64,12 +64,27 @@ Write-Host "target   $InstallDir"
 Write-Host ''
 
 # ---------------------------------------------------------------- preflight
-foreach ($needed in @('maplecw-launcher.exe', 'grap64.dll',
-                      'bin\maplecw-login.exe', 'bin\maplecw-world.exe',
-                      'bin\maplecw-useradd.exe', 'bin\maplecw-auth.exe', 'gm-handbook', 'data')) {
+# **Two payload shapes, and the difference is deliberate rather than a missing file.**
+# make-installer.ps1 -ClientOnly builds a player's payload: the launcher, the stub and the
+# client, with no server executables, no gm-handbook and no authored data - a player is not a
+# GM and runs none of it. The full payload is for a machine that runs both halves.
+#
+# Detected rather than declared, so an operator cannot get the flag wrong: the login server's
+# presence decides it. Everything the CLIENT needs is required in both shapes.
+$hasServers = Test-Path (Join-Path $payload 'bin\maplecw-login.exe')
+
+$needClient = @('maplecw-launcher.exe', 'grap64.dll')
+$needServer = @('bin\maplecw-world.exe', 'bin\maplecw-useradd.exe', 'bin\maplecw-auth.exe',
+                'gm-handbook', 'data')
+foreach ($needed in $needClient + $(if ($hasServers) { $needServer } else { @() })) {
     if (-not (Test-Path (Join-Path $payload $needed))) {
         throw "the payload is incomplete - $needed is missing. Re-run tools\make-installer.ps1."
     }
+}
+if (-not $hasServers) {
+    Write-Host 'CLIENT-ONLY payload: launcher, stub and client. No servers, no gm-handbook.' -ForegroundColor Cyan
+    Write-Host '  This machine plays; it does not host. Accounts are created on the SERVER.'
+    Write-Host ''
 }
 $hasClient = Test-Path (Join-Path $payload 'client\MapleStory.exe')
 if (-not $hasClient) {
@@ -143,7 +158,17 @@ $launcher = Join-Path $InstallDir 'maplecw-launcher.exe'
 # Created by prompting, never by inventing one: an account with a password nobody chose is
 # a login that looks real and is not. `maplecw-useradd` reads the password from a hidden
 # prompt and refuses to take one as an argument, so it cannot end up in shell history.
-if (-not $NoAccount) {
+if (-not $hasServers) {
+    # **Account creation is a SERVER step and this machine has no server.** maplecw-useradd
+    # writes into a local maplecw.db; on a player's machine there is no such database and the
+    # launcher signs in over the network to the one on the server. Creating an account here
+    # would make a database nothing reads and a login that looks real and is not.
+    Write-Host ''
+    Write-Host 'No account is created on a client machine.' -ForegroundColor Cyan
+    Write-Host '  Accounts live on the SERVER. Create this player one there:'
+    Write-Host '    & "<server install>\bin\maplecw-useradd.exe" --db "<server install>\maplecw.db" <name>'
+    Write-Host '  then sign in with it from the launcher on this machine.'
+} elseif (-not $NoAccount) {
     Write-Host ''
     Write-Host '--- first account ---' -ForegroundColor Cyan
     if (-not $Account) {
@@ -330,10 +355,16 @@ if (-not $NoShortcut) {
 Write-Host ''
 Write-Host '=== installed ===' -ForegroundColor Green
 Write-Host ''
-Write-Host 'Start the servers (leave this window open):' -ForegroundColor Cyan
-Write-Host "  powershell -ExecutionPolicy Bypass -File `"$InstallDir\start-server.ps1`""
-Write-Host ''
-Write-Host 'Then run the launcher, sign in, and press Start Game:' -ForegroundColor Cyan
+if ($hasServers) {
+    Write-Host 'Start the servers (leave this window open):' -ForegroundColor Cyan
+    Write-Host "  powershell -ExecutionPolicy Bypass -File `"$InstallDir\start-server.ps1`""
+    Write-Host ''
+    Write-Host 'Then run the launcher, sign in, and press Start Game:' -ForegroundColor Cyan
+} else {
+    # No start-server.ps1 was shipped, so pointing at one would be a command that fails.
+    Write-Host "This machine has no server. Make sure the one at $ServerIp is running, then" -ForegroundColor Cyan
+    Write-Host 'run the launcher, sign in, and press Start Game:' -ForegroundColor Cyan
+}
 Write-Host "  `"$launcher`""
 Write-Host ''
 Write-Host 'The launcher signs you in against the database and marks which account is'

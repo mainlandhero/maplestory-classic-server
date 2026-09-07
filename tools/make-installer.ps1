@@ -15,6 +15,16 @@
     Map is 128 MB - and both are already-compressed formats, so do not expect the zip to be
     much smaller than the folder.
 
+    TWO SHAPES. The default carries BOTH halves - it is what a bare machine that runs the
+    servers AND plays needs, which is the case this script was written for. `-ClientOnly`
+    builds a PLAYER's payload instead: the launcher, the stub and the client, and none of the
+    server executables, the gm-handbook or the authored data. The owner, 2026-09-07: "since the
+    clients themselves are not GMs, I don't think they need the gm-handbook or any of the
+    maplecw-auth, login, useradd, or world exes." Nothing in `crates/launcher` references
+    gm-handbook or data\ at all, so that is a removal rather than a gamble. install.ps1
+    detects which shape it was given and skips account creation for a client, because
+    `maplecw-useradd` writes to a LOCAL database and a player's accounts live on the server.
+
     WHAT GOES IN THE PAYLOAD, AND WHAT DOES NOT
 
       maplecw-launcher.exe    at the ROOT, and that is not cosmetic - see below
@@ -68,7 +78,12 @@ param(
     [string]$OutDir,
     [switch]$SkipBuild,
     [switch]$NoZip,
-    [switch]$NoClient
+    [switch]$NoClient,
+    # A payload for a PLAYER's machine: the launcher, the stub and the client, and nothing
+    # else. No server executables, no gm-handbook, no authored server data - see the comment
+    # on $binaries. install.ps1 detects the difference and skips account creation, which is a
+    # server-side step. Roughly 470 MB rather than 900 MB, almost all of it the client's WZ.
+    [switch]$ClientOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +113,9 @@ if (-not $NoClient) {
     }
 }
 
+# **The handbook and data\ are the WORLD SERVER's, so a -ClientOnly payload needs neither**
+# and must not fail for their absence. Nothing in crates/launcher reads either one.
+if (-not $ClientOnly) {
 $handbook = Join-Path $repo 'gm-handbook'
 if (-not (Test-Path $handbook)) {
     Fail @"
@@ -116,6 +134,7 @@ foreach ($needed in @('maps.txt', 'mobtemplates.txt', 'skills.txt', 'footholds.t
 
 $dataDir = Join-Path $repo 'data'
 if (-not (Test-Path $dataDir)) { Fail "no data\ - shops, drops and quest scripts live there" }
+}
 
 # ---------------------------------------------------------------- build
 # A running server holds its own executable open, and cargo cannot replace a file Windows has
@@ -168,6 +187,20 @@ $binaries = @(
     @{ From = 'maplecw-useradd.exe';  To = 'bin';  Why = 'creates the first account' },
     @{ From = 'maplecw-auth.exe';     To = 'bin';  Why = 'the sign-in service the launcher posts to' }
 )
+# **-ClientOnly drops everything a player has no use for.** The owner, 2026-09-07: "since the
+# clients themselves are not GMs, I don't think they need the gm-handbook or any of the
+# maplecw-auth, login, useradd, or world exes."
+#
+# They are right, and the launcher agrees: nothing in crates/launcher references gm-handbook or
+# data\ at all - it needs client\, grap64.dll and a server to reach. What goes with them is
+# account creation, because that runs maplecw-useradd against a LOCAL maplecw.db, and on a
+# client machine there is no database: accounts live on the server.
+#
+# The full payload stays the default. It is what a bare machine that runs BOTH halves needs,
+# which is the case this script was written for and the one the owner's own test box is.
+if ($ClientOnly) {
+    $binaries = $binaries | Where-Object { $_.To -eq '.' }
+}
 foreach ($b in $binaries) {
     if (-not (Test-Path (Join-Path $rel $b.From))) {
         Fail ("target\release\{0} is missing ({1}). Build without -SkipBuild." -f $b.From, $b.Why)
@@ -189,10 +222,20 @@ foreach ($b in $binaries) {
 }
 Write-Host ("staged {0} binaries" -f $binaries.Count)
 
-Copy-Item $handbook (Join-Path $stage 'gm-handbook') -Recurse -Force
-Copy-Item $dataDir  (Join-Path $stage 'data')        -Recurse -Force
-foreach ($f in @('install.ps1', 'start-server.ps1', 'start-servers.cmd', 'README.txt')) {
-    Copy-Item (Join-Path $here "installer\$f") $stage -Force
+if ($ClientOnly) {
+    # No gm-handbook, no data\, and no server-start scripts: all three are the world server's,
+    # and shipping them to a player is 400 MB of game tables they cannot use and a script that
+    # would start a second server on their machine.
+    Remove-Item (Join-Path $stage 'bin') -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item (Join-Path $here 'installer\install.ps1') $stage -Force
+    Copy-Item (Join-Path $here 'installer\README.txt')  $stage -Force
+    Write-Host 'CLIENT-ONLY payload: no server binaries, no gm-handbook, no data\' -ForegroundColor Cyan
+} else {
+    Copy-Item $handbook (Join-Path $stage 'gm-handbook') -Recurse -Force
+    Copy-Item $dataDir  (Join-Path $stage 'data')        -Recurse -Force
+    foreach ($f in @('install.ps1', 'start-server.ps1', 'start-servers.cmd', 'README.txt')) {
+        Copy-Item (Join-Path $here "installer\$f") $stage -Force
+    }
 }
 
 if ($NoClient) {
