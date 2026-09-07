@@ -2348,6 +2348,60 @@ mod tests {
     /// The marker parser. `off` must win, and an unrecognised token must not disable the ones
     /// beside it.
     #[test]
+    fn the_exact_marker_test_server_writes_arms_what_it_says_it_arms() {
+        // `tools/test-server.ps1` composes this string from -SentryDumps, -SentryRepair and
+        // -SentryWriteWatch. The two halves are in different languages and neither can fail
+        // loudly: an unknown token here is ignored in silence, exactly as every other bad
+        // token is, so a rename on one side would produce a run that armed nothing and looked
+        // identical to a quiet client. That is the failure `CLAUDE.md` calls "count the same
+        // event in two logs" - so this test IS the second log.
+        let c = parse_config("dumps=4,repair=on,write=on").unwrap();
+        assert_eq!(c.max_dumps, 4);
+        assert!(c.repair, "-SentryRepair");
+        assert!(c.write, "-SentryWriteWatch");
+        // And the shipping default `crates/launcher/src/client.rs::SHIPPED_SENTRY`, which must
+        // NOT turn the write watch on for an ordinary player.
+        let shipped = parse_config("dumps=0,stacks=off,coarse=2000,repair=on").unwrap();
+        assert!(shipped.repair);
+        assert!(!shipped.write, "an ordinary launch must not protect the client's pool");
+        assert!(!parse_config("").unwrap().write, "off by default");
+        assert!(!parse_config("write").unwrap().write, "bare `write` is not `write=on`");
+    }
+
+    #[test]
+    fn the_write_window_refuses_a_marker_typo_that_would_freeze_the_client() {
+        // The window protects the hottest size class in the client. A marker asking for a
+        // minute of that is a typo, and honouring it would be indistinguishable from the
+        // client having become unplayable.
+        let d = parse_config("").unwrap();
+        assert_eq!(parse_config("writewindow=60000").unwrap().write_window, d.write_window);
+        assert_eq!(parse_config("writewindow=0").unwrap().write_window, d.write_window);
+        assert_eq!(parse_config("writewindow=wat").unwrap().write_window, d.write_window);
+        assert_eq!(
+            parse_config("writewindow=1500").unwrap().write_window,
+            Duration::from_millis(1500)
+        );
+        assert_eq!(parse_config("writeburst=0").unwrap().write_burst, d.write_burst);
+        assert_eq!(parse_config("writelead=99999").unwrap().write_lead, d.write_lead);
+    }
+
+    #[test]
+    fn the_write_window_opens_once_per_firing_and_only_after_one_is_known() {
+        let last = Instant::now() - Duration::from_secs(600);
+        let p = Duration::from_secs(180);
+        // Before the first firing, nothing. `run` requires an index of 1 or more.
+        assert_eq!(firing_index(last, p, last), 0);
+        assert_eq!(firing_index(last, p, last + Duration::from_secs(179)), 0);
+        // One step per period, and it does not step twice inside one.
+        assert_eq!(firing_index(last, p, last + Duration::from_secs(180)), 1);
+        assert_eq!(firing_index(last, p, last + Duration::from_secs(359)), 1);
+        assert_eq!(firing_index(last, p, last + Duration::from_secs(360)), 2);
+        // A moment BEFORE the anchor cannot produce a window.
+        assert_eq!(firing_index(last + Duration::from_secs(10), p, last), 0);
+        assert_eq!(firing_index(last, Duration::ZERO, last + p), 0);
+    }
+
+    #[test]
     fn the_marker_parses_and_off_wins() {
         assert!(parse_config("").is_some());
         assert!(parse_config("on").is_some());
