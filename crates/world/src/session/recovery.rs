@@ -149,7 +149,8 @@ impl Session {
             ..plan
         });
 
-        let hp = chr.hp.saturating_add(plan.per_tick).min(chr.max_hp);
+        // Capped at the ceiling the client draws (base plus Max HP Increase), not the base.
+        let hp = chr.hp.saturating_add(plan.per_tick).min(self.pools(&chr).max_hp);
         let healed = hp - chr.hp;
         if healed == 0 {
             // Full bar: send nothing. Restating an unmoved value is exactly what `regen_tick`

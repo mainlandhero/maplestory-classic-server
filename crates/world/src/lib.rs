@@ -41,7 +41,6 @@ pub mod footholds;
 pub mod itemrecovery;
 pub mod jobguide;
 pub mod jobs;
-pub mod loadout;
 pub mod magic;
 pub mod mobattack;
 pub mod mobshare;

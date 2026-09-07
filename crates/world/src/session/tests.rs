@@ -359,47 +359,6 @@ fn the_item_command_adds_an_equip_and_announces_it() {
     );
 }
 
-/// `!exp` awards experience, persists it, and says so.
-///
-/// The persistence half is the point. Experience that is announced but not written down
-/// would look identical on the ack line and be gone at the next field entry, which is the
-/// exact shape of the unequip bug that goal I existed to fix.
-/// `!npcfx off` must actually reach the wire as `0x0452`, and with the INVERTED value.
-///
-/// The polarity is pinned in `net::opcode`; what this adds is the dispatch, because the
-/// command was wired by hand into a match arm and a typo there fails silently as "unknown
-/// command" - which reads on screen exactly like a packet that did nothing.
-#[test]
-fn the_npcfx_command_sends_the_appear_effect_switch() {
-    let (mut s, _store, _id) = gm_session();
-
-    let off = s.handle(&gm_chat("!npcfx off"));
-    let sent = off
-        .iter()
-        .find(|r| r.opcode == net::opcode::NPC_APPEAR_EFFECT)
-        .expect("!npcfx off sends 0x0452");
-    assert_eq!(sent.body, net::opcode::npc_appear_effect(false));
-    assert_eq!(sent.body, vec![1, 0, 0, 0], "disabled is v=1 on the wire");
-
-    let on = s.handle(&gm_chat("!npcfx on"));
-    let back = on
-        .iter()
-        .find(|r| r.opcode == net::opcode::NPC_APPEAR_EFFECT)
-        .expect("!npcfx on sends it too");
-    assert_eq!(back.body, vec![0, 0, 0, 0], "enabled is v=0");
-
-    // A bare or unknown argument must be refused rather than guessed at: picking a default
-    // here would toggle the client's global on a typo.
-    for bad in ["!npcfx", "!npcfx maybe"] {
-        let out = s.handle(&gm_chat(bad));
-        assert!(
-            !out.iter().any(|r| r.opcode == net::opcode::NPC_APPEAR_EFFECT),
-            "{bad} must send no packet"
-        );
-        assert!(!out.is_empty(), "{bad} still answers - it is a chat command");
-    }
-}
-
 #[test]
 fn the_exp_command_awards_and_persists_experience() {
     let (mut s, store, id) = gm_session();
@@ -1875,7 +1834,9 @@ fn a_skill_point_is_charged_and_only_a_forget_gives_it_back() {
     let out = s.handle(&gm_chat("!resetsp"));
     assert_eq!(store.skill_points_spent(made.id, 1).unwrap(), 0, "the refund happened");
     assert_eq!(store.skill_level(made.id, MAGIC_CLAW).unwrap_or(0), 0, "and the skill is gone");
-    assert!(notice_text(&out[0]).contains("Refunded 3 skill point(s)"), "{}", notice_text(&out[0]));
+    // One line in chat since 2026-09-06 (the owner); the refund count is asserted from the store
+    // above and printed to the log, not to the player.
+    assert_eq!(notice_text(&out[0]), "Skill Point successfully reset for Mage");
     assert!(
         out.iter().any(|r| r.opcode == net::stats::STAT_CHANGED),
         "and the refilled pool reaches the screen"
@@ -4096,9 +4057,9 @@ fn banners(out: &[Reply]) -> Vec<Option<String>> {
 
 /// `!exprate 2` stores the rate and puts the banner up **immediately**, with the owner's wording.
 #[test]
-fn the_exp_rate_command_sets_the_rate_and_announces_it() {
+fn setrates_stores_the_rate_and_announces_it_at_once() {
     let (mut s, store, _) = gm_session();
-    let out = s.handle(&gm_chat("!exprate 2"));
+    let out = s.handle(&gm_chat("!setrates 2 1 1"));
 
     assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 200, "stored as hundredths");
     assert_eq!(
@@ -4113,8 +4074,8 @@ fn the_exp_rate_command_sets_the_rate_and_announces_it() {
 #[test]
 fn two_rates_produce_one_banner_carrying_both() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
-    let out = s.handle(&gm_chat("!mesorate 3"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
+    let out = s.handle(&gm_chat("!setrates 2 3 1"));
 
     assert_eq!(
         banners(&out),
@@ -4132,8 +4093,8 @@ fn two_rates_produce_one_banner_carrying_both() {
 #[test]
 fn returning_to_normal_announces_the_end() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
-    let out = s.handle(&gm_chat("!exprate 1"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
+    let out = s.handle(&gm_chat("!setrates 1 1 1"));
 
     assert_eq!(store.rates().unwrap().exp.rate, store::rates::Rate::NORMAL);
     assert_eq!(
@@ -4149,7 +4110,7 @@ fn returning_to_normal_announces_the_end() {
 #[test]
 fn ending_an_event_that_never_started_says_nothing() {
     let (mut s, _, _) = gm_session();
-    let out = s.handle(&gm_chat("!exprate 1"));
+    let out = s.handle(&gm_chat("!setrates 1 1 1"));
     assert!(banners(&out).is_empty(), "{out:?}");
     assert!(notice_text(&out[0]).contains("already"), "{out:?}");
 }
@@ -4159,9 +4120,9 @@ fn ending_an_event_that_never_started_says_nothing() {
 #[test]
 fn an_ending_and_a_survivor_share_the_banner() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
-    s.handle(&gm_chat("!mesorate 3"));
-    let out = s.handle(&gm_chat("!exprate 1"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
+    s.handle(&gm_chat("!setrates 2 3 1"));
+    let out = s.handle(&gm_chat("!setrates 1 3 1"));
 
     assert_eq!(
         banners(&out),
@@ -4176,7 +4137,7 @@ fn an_ending_and_a_survivor_share_the_banner() {
 #[test]
 fn a_tick_with_nothing_new_sends_no_banner() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
     for tick in 1..=6u64 {
         let out = s.tick(tick * 500);
         assert!(
@@ -4186,50 +4147,25 @@ fn a_tick_with_nothing_new_sends_no_banner() {
     }
 }
 
-/// `!meso rate 2` - the two-word spelling the owner used - is the same command.
-#[test]
-fn the_two_word_spellings_work() {
-    let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!meso rate 2"));
-    assert_eq!(store.rates().unwrap().meso.rate.per_cent(), 200);
-    s.handle(&gm_chat("!exp rate 1.5"));
-    assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 150);
-}
-
 /// A bad argument is refused **and changes nothing**. The dangerous failure here is a
 /// command that says something plausible and leaves the rate half-set.
 #[test]
 fn a_bad_multiplier_changes_nothing() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
     for bad in ["fast", "0", "1000", "1.234", "-2"] {
-        let out = s.handle(&gm_chat(&format!("!exprate {bad}")));
+        let out = s.handle(&gm_chat(&format!("!setrates {bad} 1 1")));
         assert!(banners(&out).is_empty(), "{bad} moved the banner: {out:?}");
         assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 200, "{bad} changed the rate");
     }
-}
-
-/// With no argument a setter reports, because "the multiplier is applied" and "the
-/// multiplier was never stored" look identical from inside the game. It reports through the
-/// same path as `!rates`, so the two can never disagree.
-#[test]
-fn the_rate_commands_report_when_given_nothing() {
-    let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
-    let out = s.handle(&gm_chat("!exprate"));
-    let said = notice_text(&out[0]);
-    assert!(said.contains("EXP 2x"), "{said}");
-    assert!(said.contains("Meso 1x"), "{said}");
-    assert!(said.contains("Drop 1x"), "{said}");
-    assert!(banners(&out).is_empty(), "reporting is not a change");
 }
 
 /// Setting a rate to what it already is does not restart the five-minute cycle.
 #[test]
 fn setting_the_same_rate_again_is_a_no_op() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
-    let out = s.handle(&gm_chat("!exprate 2"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
+    let out = s.handle(&gm_chat("!setrates 2 1 1"));
     assert!(banners(&out).is_empty(), "it would have restarted the scroll: {out:?}");
     assert!(notice_text(&out[0]).contains("already"), "{out:?}");
 }
@@ -4243,9 +4179,9 @@ fn the_exp_rate_multiplies_a_kill() {
     s.config = Arc::new(Config { mob_exp, ..(*s.config).clone() });
 
     assert_eq!(s.exp_for_kill(2).0, 15, "1x by default");
-    s.handle(&gm_chat("!exprate 2"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
     assert_eq!(s.exp_for_kill(2).0, 30);
-    s.handle(&gm_chat("!exprate 1.5"));
+    s.handle(&gm_chat("!setrates 1.5 1 1"));
     assert_eq!(s.exp_for_kill(2).0, 22, "truncated, not rounded");
     assert!(s.exp_for_kill(2).1.contains("1.5x"), "and the log says why");
 }
@@ -4254,7 +4190,7 @@ fn the_exp_rate_multiplies_a_kill() {
 #[test]
 fn the_exp_command_is_not_multiplied() {
     let (mut s, store, id) = gm_session();
-    s.handle(&gm_chat("!exprate 10"));
+    s.handle(&gm_chat("!setrates 10 1 1"));
     let exp_now = |store: &Arc<Store>| {
         store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp
     };
@@ -4276,7 +4212,7 @@ fn the_meso_rate_multiplies_a_drop() {
     s.last_position = Some((520, 395));
     let map = net::opcode::START_MAP_ID;
 
-    s.handle(&gm_chat("!mesorate 3"));
+    s.handle(&gm_chat("!setrates 1 3 1"));
     s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
 
     let mesos: Vec<u32> =
@@ -4295,7 +4231,7 @@ fn the_rates_command_lists_all_three() {
     assert!(quiet.contains("Drop 1x"), "{quiet}");
     assert!(quiet.contains("No event is running"), "{quiet}");
 
-    s.handle(&gm_chat("!droprate 2.5"));
+    s.handle(&gm_chat("!setrates 1 1 2.5"));
     let loud = notice_text(&s.handle(&gm_chat("!rates"))[0]);
     assert!(loud.contains("Drop 2.5x"), "{loud}");
     assert!(!loud.contains("No event is running"), "{loud}");
@@ -4305,7 +4241,7 @@ fn the_rates_command_lists_all_three() {
 #[test]
 fn the_rates_command_is_read_only() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
     let before = store.rates().unwrap();
     let out = s.handle(&gm_chat("!rates"));
     assert!(banners(&out).is_empty(), "reporting is not a change: {out:?}");
@@ -4318,26 +4254,24 @@ fn the_rates_command_is_read_only() {
 
 /// `!droprate` announces itself like the other two, and `!drop rate` is the same command.
 #[test]
-fn the_drop_rate_command_sets_and_announces() {
+fn the_drop_rate_announces_through_setrates() {
     let (mut s, store, _) = gm_session();
-    let out = s.handle(&gm_chat("!droprate 4"));
+    let out = s.handle(&gm_chat("!setrates 1 1 4"));
     assert_eq!(store.rates().unwrap().drop.rate.per_cent(), 400);
     assert_eq!(
         banners(&out),
         vec![Some("[Event] The Server's Drop rate has been set to 4x".to_string())]
     );
 
-    s.handle(&gm_chat("!drop rate 2"));
-    assert_eq!(store.rates().unwrap().drop.rate.per_cent(), 200, "the two-word spelling");
 }
 
 /// All three at once share one banner, in a fixed order.
 #[test]
 fn three_events_share_one_banner() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!exprate 2"));
-    s.handle(&gm_chat("!mesorate 3"));
-    let out = s.handle(&gm_chat("!droprate 4"));
+    s.handle(&gm_chat("!setrates 2 1 1"));
+    s.handle(&gm_chat("!setrates 2 3 1"));
+    let out = s.handle(&gm_chat("!setrates 2 3 4"));
     assert_eq!(
         banners(&out),
         vec![Some(
@@ -4365,7 +4299,7 @@ fn the_drop_rate_multiplies_the_chance() {
         "10x makes a 10% row certain"
     );
 
-    s.handle(&gm_chat("!droprate 10"));
+    s.handle(&gm_chat("!setrates 1 1 10"));
     s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
     assert_eq!(
         s.fields.with_drops(map, |d| d.len()),
@@ -4765,17 +4699,21 @@ fn setrates_wants_exactly_three() {
 }
 
 
-/// **Every rate command refuses below 1x, not just `!setrates`.** The owner, 2026-08-20: *"The
-/// individual rate setters should also behave the same way and only accept 1 or above"*.
+/// **`!setrates` refuses below 1x in every position, and writes nothing when it does.** The owner,
+/// 2026-08-20: *"only accept 1 or above"* - and since the per-kind setters were removed on
+/// 2026-09-06 this is the one place the floor lives, so it is checked for each of the three.
 #[test]
-fn every_rate_setter_refuses_below_one() {
+fn setrates_refuses_below_one_in_every_position() {
     let (mut s, store, _) = gm_session();
-    for cmd in ["exprate", "mesorate", "droprate"] {
+    for position in 0..3 {
         for bad in ["0.5", "0.99", "0.01"] {
-            let out = s.handle(&gm_chat(&format!("!{cmd} {bad}")));
+            let mut words = ["1", "1", "1"];
+            words[position] = bad;
+            let cmd = format!("!setrates {}", words.join(" "));
+            let out = s.handle(&gm_chat(&cmd));
             let said = notice_text(&out[0]);
-            assert!(said.contains("below 1x"), "!{cmd} {bad}: {said}");
-            assert!(banners(&out).is_empty(), "!{cmd} {bad} moved the banner");
+            assert!(said.contains("below 1x"), "{cmd}: {said}");
+            assert!(banners(&out).is_empty(), "{cmd} moved the banner");
         }
     }
     assert!(store.rates().unwrap().all_normal(), "a refused rate must write nothing");
@@ -4783,11 +4721,9 @@ fn every_rate_setter_refuses_below_one() {
 
 /// 1 and above still work on every setter - the floor is inclusive.
 #[test]
-fn every_rate_setter_accepts_one_and_above() {
+fn setrates_accepts_one_and_above_on_every_kind() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!exprate 1.5"));
-    s.handle(&gm_chat("!mesorate 2"));
-    s.handle(&gm_chat("!droprate 1"));
+    s.handle(&gm_chat("!setrates 1.5 2 1"));
     let r = store.rates().unwrap();
     assert_eq!(
         (r.exp.rate.per_cent(), r.meso.rate.per_cent(), r.drop.rate.per_cent()),
@@ -5787,7 +5723,6 @@ fn the_expiry_sends_the_reset_because_the_client_will_not_self_expire() {
 
     assert!(s.buffs.is_empty(), "and the table dropped it");
     assert_eq!(resets(&s.buff_tick(40_000)), 0, "not a second time");
-    assert!(s.clear_buffs(net::buff::TAIL_LEN).is_empty(), "and nothing left to clear");
 }
 
 /// A `0x013F` body: `u32 skillId`, five bytes, then the 124-byte mask.
@@ -5841,86 +5776,6 @@ fn a_cancel_for_a_bit_we_do_not_hold_is_refused_and_leaves_the_buff_alone() {
     // An unreadable body is answered with a line rather than dropped.
     let out = s.on_skill_cancel(&[0u8; 8]);
     assert!(out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE));
-}
-
-/// **`!unbuff` is the only thing that sends `0x007E`, and it clears the length that threw.**
-///
-/// Early removal - dispel, death, logout - will need the packet, so it stays built and stays
-/// testable. What changed is that it no longer fires on a timer, which is the one path every
-/// buff takes.
-#[test]
-fn unbuff_sends_the_reset_and_refuses_the_length_that_threw() {
-    let (mut s, _store, _id) = session_with_nimble_feet();
-    s.clock_ms = 1_000;
-    s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
-
-    let out = s.gm_unbuff("");
-    let reset = out
-        .iter()
-        .find(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET)
-        .expect("!unbuff sends it");
-    assert_eq!(reset.body.len(), net::buff::TEMPORARY_STAT_RESET_LEN);
-    assert!(reset.body.len() > net::buff::RESET_KNOWN_TOO_SHORT, "127 threw");
-    assert_eq!(reset.body[3 + 8], 0x08, "bit 92");
-    assert!(s.buffs.is_empty(), "and the table is cleared");
-
-    // Nothing held: it says so rather than sending an empty mask.
-    let out = s.gm_unbuff("");
-    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET));
-
-    // A tail that would recreate the 127-byte body is refused.
-    s.on_skill_use(&skill_use_body(net::buff::NIMBLE_FEET, 3));
-    let out = s.gm_unbuff("0");
-    assert!(
-        !out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET),
-        "a zero tail is the 127 bytes that already killed a client"
-    );
-}
-
-/// `!buff` sends the same bytes with none of the four gates in the way.
-///
-/// That is the point of it: a `!buff` that works while the keypress does not is a statement
-/// about the skill check, the MP, or the 180-second cooldown - not about the packet.
-#[test]
-fn the_buff_command_skips_every_gate_and_sends_the_same_packet() {
-    let (mut s, _store, _id) = gm_session(); // no skill, and whatever MP a new character has
-    let before = mp_of(&s);
-
-    let out = s.gm_buff("");
-    let set = out
-        .iter()
-        .find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET)
-        .expect("!buff with no arguments is Nimble Feet at level 3");
-    assert_eq!(set.body.len(), net::buff::temporary_stat_set_len(1), "the default tail");
-    assert_eq!(&set.body[124..134], &[0x0a, 0x00, 0xea, 0x03, 0x00, 0x00, 0x30, 0x75, 0x00, 0x00]);
-    assert_eq!(mp_of(&s), before, "and it costs no MP");
-
-    // It still records the expiry, so the reset goes out on time.
-    assert_eq!(s.buffs.len(), 1);
-    assert_eq!(
-        s.buff_tick(31_000).iter().filter(|r| r.opcode == net::buff::TEMPORARY_STAT_RESET).count(),
-        1
-    );
-    assert!(s.buffs.is_empty(), "the table expired it on time");
-
-    // A skill with no entry says so rather than sending an empty mask.
-    let out = s.gm_buff("1000 1");
-    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET));
-
-    // **The third argument sets the tail, and a length already known to kill is refused.**
-    // 18 bytes threw an unhandled C++ exception in the client on 2026-08-22; costing a
-    // launch to re-learn that is the failure this repo's rules exist to prevent.
-    let out = s.gm_buff("1002 3 200");
-    let long = out.iter().find(|r| r.opcode == net::buff::TEMPORARY_STAT_SET).unwrap();
-    assert_eq!(long.body.len(), net::buff::MASK_LEN + 10 + 200);
-
-    let out = s.gm_buff("1002 3 18");
-    assert!(
-        !out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET),
-        "a tail at the length that already killed a client is refused, not sent"
-    );
-    let out = s.gm_buff("1002 3 4");
-    assert!(!out.iter().any(|r| r.opcode == net::buff::TEMPORARY_STAT_SET), "and below it");
 }
 
 /// **"Organize Item" organises.**
@@ -6288,66 +6143,6 @@ fn a_purchase_that_cannot_be_placed_leaves_the_wallet_alone() {
     assert_eq!(store.cash_wallet(1).unwrap().maple_points, before, "not a leaf point taken");
 }
 
-/// **`!nx`, `!buy`, `!locker` is the whole transaction**, and each step moves the number it is
-/// supposed to move.
-///
-/// Both sides of every step are asserted - balance and locker, locker and bag - because a
-/// test that checks one of several effects gives false confidence about the rest. That is the
-/// quest turn-in test that counted fanfares while the experience doubled beside it.
-#[test]
-fn the_gm_path_buys_debits_and_hands_the_item_over() {
-    let (mut s, store, id) = cash_shop_session();
-
-    s.handle(&gm_chat("!lp 1000"));
-    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 1_000);
-    // A full NX balance must not be able to stand in for it. Every price tag reads LP.
-    s.handle(&gm_chat("!nx 999999"));
-
-    // An SN, not an item id - and the refusal says so rather than buying something else.
-    let out = s.handle(&gm_chat("!buy 5070000"));
-    assert!(notice_text(&out[0]).contains("not a sale row"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 1_000, "a refusal costs nothing");
-
-    // The 100 NX row, not the 1000 NX one, even though they share an item id.
-    let out = s.handle(&gm_chat("!buy 130200000"));
-    assert!(notice_text(&out[0]).contains("Bought SN 130200000"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 900, "100 LP came out");
-    assert_eq!(store.cash_wallet(1).unwrap().nx, 999_999, "and NX paid for none of it");
-    let locker = store.cash_locker(1).unwrap();
-    assert_eq!(locker.len(), 1);
-    assert_eq!(locker[0].item.item_id, 5070000);
-    assert_eq!(locker[0].item.kind.quantity(), 1, "one, not eleven");
-
-    // 900 will not cover the 1000 row. The refusal must not clamp, and must not half-place.
-    let out = s.handle(&gm_chat("!buy 130200001"));
-    assert!(notice_text(&out[0]).contains("NOTHING changed"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 900, "not clamped to zero");
-    assert_eq!(store.cash_locker(1).unwrap().len(), 1, "and nothing was placed");
-
-    // Now it is affordable, and the SAME item id arrives at the other count.
-    s.handle(&gm_chat("!lp 200"));
-    s.handle(&gm_chat("!buy 130200001"));
-    let locker = store.cash_locker(1).unwrap();
-    assert_eq!(locker.len(), 2);
-    assert_eq!(locker[1].item.kind.quantity(), 11, "the bundle row, chosen by its SN");
-    assert_eq!(store.cash_wallet(1).unwrap().maple_points, 100, "1100 - 1000");
-
-    // Hand one over. The locker loses it and the bag gains it - both sides, one command.
-    let out = s.handle(&gm_chat("!locker 1"));
-    assert!(notice_text(&out[0]).contains("Took locker slot 1"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_locker(1).unwrap().len(), 1, "the locker gave it up");
-    let placed = store
-        .inventory_slot(id, store::InventoryType::Cash, 1)
-        .unwrap()
-        .expect("and the Cash tab has it");
-    assert_eq!(placed.item_id, 5070000);
-
-    // Taking the same slot twice is refused, not duplicated.
-    let out = s.handle(&gm_chat("!locker 1"));
-    assert!(notice_text(&out[0]).contains("nothing moved"), "{}", notice_text(&out[0]));
-    assert_eq!(store.cash_locker(1).unwrap().len(), 1);
-}
-
 /// **A Magician can put points in Magic Claw, and a beginner cannot.**
 ///
 /// The owner, 2026-08-27: *"I want to verify that all Magician 1st job skills are working first."*
@@ -6704,13 +6499,23 @@ fn a_non_gm_can_still_talk() {
     );
 }
 
-/// Every command, not a list of the dangerous ones. "All commands should have this gate for
-/// now until otherwise specified" - including `!help` and the read-only `!rates`.
+/// **`!help` and `!rates` are the two public commands; everything else a player types with a
+/// bang is chat.** The owner, 2026-08-29: *"All commands should have this gate for now until
+/// otherwise specified"*; the owner, 2026-09-06: `!rates` is public and `!help` shows a player
+/// only what they may run. So the two are answered with a notice and nothing else, and
+/// `!item` / `!map` are still said out loud with no notice, no stat change and no item.
 #[test]
-fn even_help_and_rates_are_gated() {
+fn help_and_rates_are_public_and_everything_else_is_said_out_loud() {
     let (mut s, store, _id) = gm_session();
     store.set_gm("maplecw", false).unwrap();
-    for command in ["!help", "!rates", "!item 1302000", "!map 1"] {
+    for command in ["!help", "!rates"] {
+        let out = s.handle(&gm_chat(command));
+        assert_eq!(out.len(), 1, "{command}: one notice and nothing else: {out:?}");
+        assert_eq!(out[0].opcode, net::notice::CHAT_NOTICE, "{command}");
+    }
+    let help = notice_text(&s.handle(&gm_chat("!help"))[0]);
+    assert!(help.contains("!rates") && !help.contains("!item"), "a player's help: {help}");
+    for command in ["!item 1302000", "!map 1"] {
         let out = s.handle(&gm_chat(command));
         // Said out loud, and nothing else. No notice, no stat change, no item.
         assert!(
@@ -6849,134 +6654,6 @@ fn buffed_session(job: u16, skill_id: u32, level: u32) -> (Session, Arc<Store>, 
     let mut s = Session::new(store.clone(), Arc::new(config));
     s.claim_for_character(made.id);
     (s, store, made.id)
-}
-
-/// **`!kit` hands over a whole branch's gear, and every id it names is real.**
-///
-/// The test plan tells the owner to type `!kit` for three of its six steps. `give_item` refuses any
-/// id that is not in this client's `Item.wz`, so a loadout naming an id that does not exist
-/// would produce a run where three branches silently have no weapon - and each of those reads
-/// on screen as the skill being broken, which is the exact failure this whole session started
-/// from.
-///
-/// So this asserts against **the real `gm-handbook/items.txt`**, not a fixture: the ids have to
-/// survive the same lookup `!item` does.
-#[test]
-fn kit_gives_every_branch_gear_that_actually_exists() {
-    let names = crate::config::Config::load_id_names(std::path::Path::new(
-        "../../gm-handbook/items.txt",
-    ));
-    if names.is_empty() {
-        return; // generated, gitignored - python tools/dump_names.py
-    }
-    // The instrument first: a known-good id must be findable, or an empty result below would
-    // be a property of the loader rather than of the loadout.
-    assert!(names.contains_key(&1_302_000), "the loader cannot even see the Sword");
-
-    for job in [100u16, 200, 300, 400] {
-        let kit = crate::loadout::loadout_for(job).expect("all four first jobs have a loadout");
-        for piece in kit.pieces.iter().chain(kit.alternative.iter()) {
-            assert!(
-                names.contains_key(&piece.item_id),
-                "job {job}: {} ({}) is not in this client's Item.wz, so !item would refuse it",
-                piece.name,
-                piece.item_id
-            );
-        }
-
-        let store = Arc::new(Store::open_in_memory().unwrap());
-        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
-    // Every `!` command is gated on the account's GM flag, and these helpers exist to
-    // drive them. `maplecw` is the GM account on the owner's machine too.
-    store.set_gm("maplecw", true).unwrap();
-        let chr = net::opcode::Character { name: "Kitted".to_string(), ..Default::default() };
-        let mut made = store.create_character(account_id, 0, &chr).unwrap();
-        made.job = job;
-        made.level = 10;
-        store.save_character_progress(&made).unwrap();
-        store.create_migration(account_id, made.id, 0, 0).unwrap();
-        let config = Config {
-            set_field_probe: true,
-            item_names: names.clone(),
-            ..Config::default()
-        };
-        let mut s = Session::new(store.clone(), Arc::new(config));
-        s.claim_for_character(made.id);
-
-        let out = s.handle(&gm_chat("!kit"));
-        let said = notice_text(&out[0]);
-        if kit.needs_nothing() {
-            // The Magician's empty kit is a MEASUREMENT - no Magician skill carries a weapon
-            // column - so it has to say so rather than look like a table nobody filled in.
-            assert!(said.contains("NOTHING"), "job {job}: {said}");
-            let any = [store::InventoryType::Equip, store::InventoryType::Use]
-                .iter()
-                .any(|t| !store.bag_items(made.id, *t).unwrap_or_default().is_empty());
-            assert!(!any, "job {job} needs nothing, so nothing may be handed over");
-            continue;
-        }
-        // Every piece reached the database. A count is the check here: a loop that gives up
-        // after the first failure looks identical to one that worked.
-        let mut held = Vec::new();
-        for tab in [store::InventoryType::Equip, store::InventoryType::Use] {
-            held.extend(store.bag_items(made.id, tab).unwrap_or_default());
-        }
-        for piece in kit.pieces {
-            assert!(
-                held.iter().any(|i| i.item.item_id == piece.item_id),
-                "job {job}: {} never reached the inventory. Said: {said}",
-                piece.name
-            );
-        }
-        assert!(
-            !said.contains("REFUSED"),
-            "job {job} kit was refused: {said}"
-        );
-    }
-}
-
-/// **`!kit` warns when the character cannot equip what it just handed over.**
-///
-/// There is no free bow, crossbow or claw in this client - all 230 weapon images were read to
-/// establish that. `jobs::advancement_for` would have refused a character who could not meet
-/// those requirements, but **`!job` bypasses it**, and `!job` is how these branches get
-/// reached. A bow in the bag that cannot go in the hand looks exactly like a broken skill.
-#[test]
-fn kit_warns_when_the_weapon_cannot_be_equipped() {
-    let names = crate::config::Config::load_id_names(std::path::Path::new(
-        "../../gm-handbook/items.txt",
-    ));
-    if names.is_empty() {
-        return;
-    }
-    let store = Arc::new(Store::open_in_memory().unwrap());
-    let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
-    // Every `!` command is gated on the account's GM flag, and these helpers exist to
-    // drive them. `maplecw` is the GM account on the owner's machine too.
-    store.set_gm("maplecw", true).unwrap();
-    let chr = net::opcode::Character { name: "Weakling".to_string(), ..Default::default() };
-    let mut made = store.create_character(account_id, 0, &chr).unwrap();
-    made.job = 300; // a Bowman by fiat, with a fresh character's DEX
-    made.level = 1;
-    store.save_character_progress(&made).unwrap();
-    store.create_migration(account_id, made.id, 0, 0).unwrap();
-    let config =
-        Config { set_field_probe: true, item_names: names, ..Config::default() };
-    let mut s = Session::new(store.clone(), Arc::new(config));
-    s.claim_for_character(made.id);
-
-    let out = s.handle(&gm_chat("!kit"));
-    assert!(
-        out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE
-            && notice_text(r).contains("WARNING")),
-        "a level-1 Bowman must be told the bow will not go in their hand"
-    );
-    // The items are still handed over. A refusal would be wrong: the stat can be raised
-    // afterwards, and !resetap is right there.
-    assert!(
-        !store.bag_items(made.id, store::InventoryType::Equip).unwrap_or_default().is_empty(),
-        "the kit is still given - the warning is advice, not a refusal"
-    );
 }
 
 /// **The three first-job buffs of the other branches now cast at all.**
@@ -7442,59 +7119,6 @@ fn magic_guard_splits_incoming_damage_between_hp_and_mp() {
     let stats: Vec<_> = out.iter().filter(|r| r.opcode == net::stats::STAT_CHANGED).collect();
     assert_eq!(stats.len(), 1, "HP and MP travel together");
     assert!(stats[0].what.contains("MAGIC GUARD"), "and the log says so: {}", stats[0].what);
-}
-
-/// **A pet is refused rather than handed over, and it goes back in the locker.**
-///
-/// The owner's `!locker 1` moved a Brown Puppy (`5000001`) into the Cash tab on 2026-08-26 and the
-/// client died 3.4 seconds later: the factory believes the wire's type byte and allocated a
-/// 126-byte bundle, while the tooltip re-derives the class from the ITEM ID, decided it was a
-/// pet, and read its checksum four bytes past the end of that allocation.
-///
-/// Both halves are asserted. A test that only checked the refusal would pass while the item
-/// quietly vanished - and vanishing is worse than the crash, because it is silent.
-#[test]
-fn a_pet_is_refused_and_stays_in_the_locker() {
-    let (mut s, store, id) = cash_shop_session();
-    store.add_maple_points(1, 1_000).unwrap();
-    // 92000000 sells item 5000054 - a pet, and one of the four pet rows in the real data.
-    store.buy_cash_item(1, &store::Item::bundle(5_000_054, 1), 0).unwrap();
-    assert_eq!(store.cash_locker(1).unwrap().len(), 1);
-
-    let out = s.handle(&gm_chat("!locker 1"));
-    let text = notice_text(&out[0]);
-    assert!(text.contains("PET"), "{text}");
-    assert!(text.contains("back in the locker"), "{text}");
-    assert_eq!(store.cash_locker(1).unwrap().len(), 1, "AND IT IS STILL THERE");
-    assert!(
-        store.inventory_slot(id, store::InventoryType::Cash, 1).unwrap().is_none(),
-        "and nothing reached the bag"
-    );
-    // No 0x0070 went out either - that is the packet that kills the client.
-    assert!(
-        !out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION),
-        "no inventory add may be sent for a pet"
-    );
-
-    // The same guard on the other way in.
-    let out = s.handle(&gm_chat("!item 5000001"));
-    assert!(notice_text(&out[0]).contains("PET"), "{}", notice_text(&out[0]));
-
-    // And a NON-pet cash item still works, or the guard is too wide.
-    store.buy_cash_item(1, &store::Item::bundle(5_070_000, 1), 0).unwrap();
-    let slot = store.cash_locker(1).unwrap().iter().map(|l| l.slot).max().unwrap();
-    let out = s.handle(&gm_chat(&format!("!locker {slot}")));
-    assert!(notice_text(&out[0]).contains("Took locker slot"), "{}", notice_text(&out[0]));
-}
-
-/// `!locker` with no argument lists what is in it, and says so plainly when it is empty.
-#[test]
-fn an_empty_locker_says_so_and_points_at_the_two_commands_that_fill_it() {
-    let (mut s, _store, _id) = cash_shop_session();
-    let out = s.handle(&gm_chat("!locker"));
-    let text = notice_text(&out[0]);
-    assert!(text.contains("empty"), "{text}");
-    assert!(text.contains("!nx") && text.contains("!buy"), "and how to fill it: {text}");
 }
 
 /// An unreadable body still gets a `0x0572`, because the client's latch is cleared by nothing

@@ -26,9 +26,17 @@ use crate::config::Config;
 /// What `!help` prints, and what an unknown command is told.
 ///
 /// One string so the two cannot drift - a help text that lists a command the dispatcher
-/// does not have is worse than no help text.
+/// does not have is worse than no help text. `session::gm::tests` checks every word here
+/// against the dispatcher.
+///
+/// Pruned 2026-09-06 on the owner's instruction: the per-kind rate setters, `!migsweep`,
+/// `!npcfx`, `!buff`, `!unbuff`, `!buy`, `!locker` and `!kit` are gone.
 const GM_COMMANDS: &str =
-    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !exprate <multiplier>, !mesorate <multiplier>, !droprate <multiplier>, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !migsweep [first] [last], !npcecho [dx], !npcfx on|off, !buff [skillId] [level] [tailBytes], !unbuff [tailBytes], !nx [amount], !lp [amount], !buy <commoditySN>, !locker [slot], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !kit, !npcreload [templateId], !registrationcode, !recoverycode <email|username>, !help";
+    "GM commands: !map <mapId>, !item <itemId> [count], !exp <amount>, !heal, !setrates <exp> <meso> <drop>, !rates, !job <jobId>, !npcecho [dx], !nx [amount], !lp [amount], !resetap, !resetsp, !learn [level] | !learn <skillId> <level>, !npcreload [templateId], !registrationcode, !recoverycode <email|username>, !help";
+
+/// What a player who is not a GM is shown by `!help`, and all they may run. The owner,
+/// 2026-09-06: *"A player should only be shown commands that they are allowed to execute."*
+const PLAYER_COMMANDS: &str = "Commands: !rates, !help";
 
 /// One packet to send, plus what it is - the label goes in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -459,6 +467,7 @@ mod inventory;
 mod multiplayer;
 mod npc;
 mod party;
+mod pools;
 mod rates;
 mod recovery;
 mod regen;

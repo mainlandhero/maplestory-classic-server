@@ -145,11 +145,17 @@
     the window showed next to "Recharge:" and the number the mesos moved by - if they differ
     the rounding direction is the client's and ours is wrong by that much. A star Lucy does not
     list (Wolbi and up) is refused with the not-enough-mesos message; that is deliberate. SLASH
-    BLAST now costs HP (3 at level 1) as well as MP; Power Strike does not. PARTY BUFFS: Haste
+    BLAST now costs HP (3 at level 1) as well as MP; Power Strike does not. MAX HP INCREASE:
+    The owner's 358/447 screenshot settled experiment A - the CLIENT adds the percent on top of the
+    server's max, and the server was calling 358 full. Every ceiling the server enforces is now
+    base plus the percent (session::pools): idle regen must climb past 358 to 447, a potion
+    drunk above 358 must NOT cut HP back to 358, a level-up refills to 447, and the party bar
+    shows 447. Max MP Increase is the same code and is INFERRED - a Magician's MP number under
+    the same three checks is the measurement. Also: no "A skill has been activated." line on
+    a skill-up (0x0081 byte 1 is off, as in the real game). PARTY BUFFS: Haste
     (Assassin/Bandit) and Rage (Fighter) reach every party member ON THE SAME MAP; a member on
-    another map and a non-member beside you get nothing. No second job needed to see the bits:
-    as the GM, `!buff 4101001 1` puts Haste on YOU only (it is the table check, not a cast);
-    the party path needs a character that actually has the skill. What to watch: the buff icon
+    another map and a non-member beside you get nothing. A character must actually have the
+    skill (!job 410 then !learn on an Assassin, or !job 110 for Rage). What to watch: the buff icon
     on BOTH screens, the recipient's walk AND jump for Haste (jump is bit 93, [D] - a faster
     walk with the same jump means the pair is off), Rage's number on the stat window's attack
     line (bit 84, [D] - icon without the number means 83 is next). Iron Will is SELF-ONLY in
@@ -336,7 +342,7 @@
           that is a bug.
 
      T10. THE SECOND JOB ADVANCEMENT. ALSO NEW. Set yourself up first:
-              !job 100   !kit   !exp 548637   !map 10004023
+              !job 100   !item 1302000   !exp 548637   !map 10004023
           548 637 is the exp curve summed from level 1 to 30 and one !exp crosses as many
           levels as it is worth, so that is a single command. THERE IS NO !level - it was
           in an earlier draft of this plan and it does not exist.
@@ -675,7 +681,7 @@
       - BUYING FROM THE CASH SHOP WINDOW is BUILT and awaiting step 6. The old note here
         said no packet could report a purchase without a message; that was a known-list
         search over the six INLINE arms and it missed the two that delegate. 0x05AE sub-op
-        0x0C is the one. !buy from the field still works as the control.
+        0x0C is the one. (The field-side !buy control was removed on 2026-09-06.)
       - The Shop2 window (0x0560) can no longer be sent at all: its art is not in this
         client, which is what killed the client twice. `--shop` is a no-op that says so.
         The CLASSIC counter (0x055D) replaced it and is step 7.
@@ -689,21 +695,18 @@
       - Two refusal paths still answer 0x00D2 with 0x0011, which a channel socket cannot
         dispatch. Nothing decoded can.
 
-    COMMANDS: !map, !item, !exp, !heal, !job, !learn, !kit, !buff, !unbuff, !nx, !lp,
-    !buy, !locker, !resetap, !resetsp,
-    !npcecho, !npcfx,
-    !migsweep, !exprate, !mesorate, !droprate, !setrates, !rates. !help lists them all.
-      !buff [skillId] [level] [tailBytes]   cast with no skill check, MP or cooldown
-      !unbuff [tailBytes]                   send the 0x007E that removes a held stat
+    COMMANDS (GM): !map, !item, !exp, !heal, !job, !learn, !nx, !lp, !resetap, !resetsp,
+    !npcecho, !setrates, !npcreload, !registrationcode, !recoverycode. EVERYONE: !rates and
+    !help - a player's !help shows only those two. PRUNED 2026-09-06 on the owner's instruction:
+    !kit, !buff, !unbuff, !npcfx, !migsweep, !buy, !locker and the per-kind rate setters
+    (!exprate !mesorate !droprate) are GONE; !setrates <exp> <meso> <drop> is the one rate
+    command, and it writes only the kinds that changed. !job, !resetap and !resetsp answer in
+    ONE line now ("Cobalt is now a Swordsman", "Skill Point successfully reset for Cobalt");
+    the working is in world.log.
       !nx [amount]                          grant NX. Real and displayed, but it buys
                                             NOTHING - every price tag reads LP
       !lp [amount]                          grant LEAF POINTS, the currency the shop
                                             actually charges. This is the one that buys
-      !buy <commoditySN>                    buy a cash-shop sale row for real: debits NX and
-                                            puts the item in the cash locker. An SN, NOT an
-                                            item id - gm-handbook/commodity.txt lists all 159
-      !locker [slot]                        list the cash locker, or move one slot into the
-                                            Cash tab
       !resetap                              put every spent ability point back in the pool.
                                             Conserves the total - it refunds the difference
                                             from a fresh character rather than recomputing a
@@ -711,21 +714,15 @@
       !resetsp                              forget every skill. The points come back on their
                                             own: the pool is computed from your LEVEL, so a
                                             forgotten skill IS the refund
-      !learn [level]                        NEW. Learn every skill of your current job, each
+      !learn [level]                        Learn every skill of your current job, each
                                             clamped to ITS OWN maximum - the Magician book
                                             runs to 15 and 20, so one constant is wrong for
                                             half of it. No skill points spent. !learn 5 caps
-                                            them; !learn <skillId> <level> does one
-      !kit                                  NEW. Hand over the weapon and ammunition this
-                                            job needs, and WARN about anything the character
-                                            cannot equip. Five of the 24 first-job skills
-                                            carry a weapon column: 45/46 bow or crossbow,
-                                            33 dagger, 47 claw. The Magician is gated on
-                                            NOTHING and still needs a wand: MagicTotal is
-                                            floor(INT/2) + equipment incMAD, and the
-                                            Wooden Wand's incMAD is 27. No weapon
-                                            column and no weapon needed are different
-                                            claims - this row had them confused
+                                            them; !learn <skillId> <level> does one. The
+                                            weapon is yours to !item: five of the 24 first-job
+                                            skills carry a weapon column (45/46 bow or
+                                            crossbow, 33 dagger, 47 claw), and a Magician
+                                            still needs a wand for its incMAD
 
     THE FREE MEASUREMENT NOBODY HAS TAKEN
     -------------------------------------
@@ -1730,13 +1727,19 @@ function Show-TestPlan {
         Write-Host '       Wolbi and up at Lucy is refused (they list only Subi): deliberate.'
         Write-Host '    0g. WARRIOR AUDIT. SLASH BLAST costs HP (3 at level 1) AND MP now;'
         Write-Host '       Power Strike only MP. Watch the HP bar tick down per swing.'
+        Write-Host '       MAX HP INCREASE (found from your 358/447 screenshot: the CLIENT adds'
+        Write-Host '       the 25%, the server called 358 full). Now: idle regen must climb'
+        Write-Host '       PAST 358 to 447; a potion drunk above 358 must NOT drop you to 358;'
+        Write-Host '       a level-up refills to 447. Same for Max MP Increase on a Magician,'
+        Write-Host '       which is inferred, not seen - say what the MP number does.'
+        Write-Host '       NO "A skill has been activated." line on a skill-up any more.'
         Write-Host '    0h. PARTY BUFFS. Haste (4101001/4201001) and Rage (1101004) reach'
         Write-Host '       every party member ON THE SAME MAP: icon on BOTH screens. A member'
         Write-Host '       on another map, or a stranger beside you, gets nothing. Haste: the'
         Write-Host '       recipient walks AND jumps higher (jump = bit 93, [D]; faster walk'
         Write-Host '       with the same jump = pair off by one). Rage: the number on the'
         Write-Host '       stat window''s attack line (bit 84, [D]; icon and no number = try'
-        Write-Host '       83). GM shortcut: !buff 4101001 1 buffs YOU only (table check).'
+        Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
@@ -1885,7 +1888,7 @@ function Show-TestPlan {
         Write-Host '       no marbles. Level 70 + the right 2nd job IS the gate.' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '  T10. THE SECOND JOB ADVANCEMENT. ALSO NEW. Set up with:' -ForegroundColor Yellow
-        Write-Host '         !job 100   !kit   !exp 548637   !map 10004023'
+        Write-Host '         !job 100   !item 1302000   !exp 548637   !map 10004023'
         Write-Host '       (548637 is the curve summed 1->30; one !exp crosses all of'
         Write-Host '        them. THERE IS NO !level.) Then PUT YOUR AP INTO STR - !job'
         Write-Host '        does not move it, and those mobs hit for ~204.'
@@ -2032,15 +2035,17 @@ function Show-TestPlan {
         Write-Host '     session was long and the command is innocent.'
         Write-Host '     Bowman, Thief and Magician branches. Shop buying. The cash purchase.'
         Write-Host ''
-        Write-Host '  COMMANDS: !map !item !exp !heal !job !learn !kit !buff !unbuff'
-        Write-Host '  !npcecho !npcfx !migsweep !exprate !mesorate !droprate !setrates'
-        Write-Host '  !rates !nx !lp !buy !locker !resetap !resetsp.'
+        Write-Host '  COMMANDS (GM): !map !item !exp !heal !job !learn !npcecho !setrates'
+        Write-Host '  !nx !lp !resetap !resetsp !npcreload !registrationcode !recoverycode.'
+        Write-Host '  EVERYONE: !rates and !help - a player''s !help shows only those two.'
+        Write-Host '  Pruned 2026-09-06: !kit !buff !unbuff !npcfx !migsweep !buy !locker and'
+        Write-Host '  the per-kind rate setters are GONE; !setrates <exp> <meso> <drop> is it.'
         Write-Host '  gm-handbook/equips.txt NOW HAS NAMES - and reqLevel, reqSTR, reqDEX,'
         Write-Host '  reqINT, reqLUK and reqJob. 1759 rows, name is the LAST column. That is'
         Write-Host '  the file to read when picking something to !item in.'
-        Write-Host '  !learn and !kit are NEW and do this run setup for you. !lp grants'
-        Write-Host '  LEAF POINTS and is the one that BUYS; !nx buys nothing. !help'
-        Write-Host '  lists them all.'
+        Write-Host '  !learn does this run''s skill setup for you; !item the weapon. !lp'
+        Write-Host '  grants LEAF POINTS, the currency the cash shop charges; !nx buys'
+        Write-Host '  nothing. !help lists them all.'
     } else {
         # THIS BRANCH IS A TRAP UNLESS IT SAYS SO. Without -SetFieldProbe the LOGIN server is
         # fine - character list, create, delete all work - but the CHANNEL answers nothing at

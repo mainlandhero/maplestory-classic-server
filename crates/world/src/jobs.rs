@@ -207,6 +207,25 @@ pub const FIRST_JOBS: [FirstJob; 4] = [
     },
 ];
 
+/// What to call a character of `job`, or `None` for an id no table here knows.
+///
+/// The owner, 2026-09-06: *"!job <id> should just say Cobalt is now a <Job Name>, such as Cobalt is
+/// now a Swordsman."* Beginner is `0`; the first jobs come from [`FIRST_JOBS`], the second
+/// from `secondjob::second_job` and the third from `thirdjob::all` - each carries its own
+/// provenance note on the `job_name` field, and a second-job name is the client's **book**
+/// name ("Fighter" from "Fighter Techniques") rather than a job string this client ships.
+pub fn job_name(job: u16) -> Option<&'static str> {
+    if job == 0 {
+        return Some("Beginner");
+    }
+    FIRST_JOBS
+        .iter()
+        .find(|j| j.job == job)
+        .map(|j| j.job_name)
+        .or_else(|| crate::secondjob::second_job(job).map(|j| j.job_name))
+        .or_else(|| crate::thirdjob::all().find(|j| j.job == job).map(|j| j.job_name))
+}
+
 /// The advancement an NPC template grants, if it grants one.
 ///
 /// **The four `<Job> Job Instructor` NPCs - 514, 319, 227, 424 - are deliberately absent.**

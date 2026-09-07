@@ -90,21 +90,6 @@ fn below_normal(kind: RateKind, rate: Rate) -> Option<String> {
 }
 
 impl Session {
-    /// `!exprate <multiplier>`.
-    pub(super) fn gm_exp_rate(&mut self, arg: &str) -> Vec<Reply> {
-        self.gm_rate(RateKind::Exp, arg)
-    }
-
-    /// `!mesorate <multiplier>`.
-    pub(super) fn gm_meso_rate(&mut self, arg: &str) -> Vec<Reply> {
-        self.gm_rate(RateKind::Meso, arg)
-    }
-
-    /// `!droprate <multiplier>`.
-    pub(super) fn gm_drop_rate(&mut self, arg: &str) -> Vec<Reply> {
-        self.gm_rate(RateKind::Drop, arg)
-    }
-
     /// `!rates` - what the server is running at.
     ///
     /// **The owner asked for this as a "non-privileged" command, and on this server that
@@ -163,72 +148,35 @@ impl Session {
             wanted.push((*kind, rate));
         }
 
-        // One timestamp for all three, so `Rates::anchor` is a single moment and the banner
-        // shows the whole event rather than the last third of it.
+        // **Only the kinds that actually change are written.** Since 2026-09-06 this is the
+        // one rate command (the per-kind setters are gone on the owner's instruction), so it
+        // inherits their rule: storing an unchanged rate would restart its five-minute banner
+        // cycle and re-announce an event that is already announced - and stamping a still-
+        // normal rate with a fresh time would announce the END of an event that never ran.
+        let current = match self.store.rates() {
+            Ok(r) => r,
+            Err(e) => return self.gm_ack(format!("!setrates: could not read the rates: {e}")),
+        };
+        let listed: Vec<String> =
+            wanted.iter().map(|(k, r)| format!("{} {r}x", k.label())).collect();
+        let changed: Vec<(RateKind, Rate)> =
+            wanted.iter().copied().filter(|(k, r)| *r != current.get(*k)).collect();
+        if changed.is_empty() {
+            return self.gm_ack(format!("!setrates: already {}. Nothing changed.", listed.join(", ")));
+        }
+        // One timestamp for everything that moved, so `Rates::anchor` is a single moment and
+        // the banner shows the whole event rather than the last third of it.
         let now = now_unix();
-        for (kind, rate) in &wanted {
+        for (kind, rate) in &changed {
             if let Err(e) = self.store.set_rate(*kind, *rate, now) {
                 return self.gm_ack(format!("!setrates: could not save the {} rate: {e}", kind.label()));
             }
         }
-        let listed: Vec<String> =
-            wanted.iter().map(|(k, r)| format!("{} {r}x", k.label())).collect();
         let mut out = self.gm_ack(format!("!setrates: {}.", listed.join(", ")));
         out.extend(self.banner_replies(now));
         out
     }
 
-
-    /// All three setters. They differ only in which row they write.
-    fn gm_rate(&mut self, kind: RateKind, arg: &str) -> Vec<Reply> {
-        let command = kind.command();
-        let current = match self.store.rates() {
-            Ok(r) => r,
-            Err(e) => return self.gm_ack(format!("!{command}: could not read the rates: {e}")),
-        };
-        // No argument reports rather than refusing. Reading the rate back is the only way to
-        // tell "the multiplier is applied" apart from "the multiplier was never stored", and
-        // those two look identical from inside the game.
-        if arg.is_empty() {
-            return self.gm_rates();
-        }
-        let rate = match Rate::parse(arg) {
-            Ok(r) => r,
-            Err(e) => return self.gm_ack(format!("!{command}: {e}")),
-        };
-        if let Some(why) = below_normal(kind, rate) {
-            return self.gm_ack(format!("!{command}: {why}"));
-        }
-        if rate == current.get(kind) {
-            // Storing it anyway would restart the five-minute cycle and re-show a banner
-            // that is already saying the right thing.
-            return self.gm_ack(format!(
-                "!{command}: the {} rate is already {rate}x. Nothing changed.",
-                kind.label()
-            ));
-        }
-        let now = now_unix();
-        if let Err(e) = self.store.set_rate(kind, rate, now) {
-            return self.gm_ack(format!("!{command}: could not save the rate: {e}"));
-        }
-        let mut out = self.gm_ack(if rate.is_normal() {
-            format!(
-                "!{command}: the {} rate is back to normal (1x). The end of the event is on \
-                 the banner now.",
-                kind.label()
-            )
-        } else {
-            format!(
-                "!{command}: the {} rate is now {rate}x, for everyone on every channel. The \
-                 banner goes up now and comes back for 2 minutes out of every 5 until it is \
-                 1x again.",
-                kind.label()
-            )
-        });
-        // Straight away, not on the next tick: the change is supposed to announce itself.
-        out.extend(self.banner_replies(now));
-        out
-    }
 
     /// The banner as it should be right now. [`Session::tick`]'s entry point.
     ///

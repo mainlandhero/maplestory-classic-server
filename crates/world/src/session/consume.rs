@@ -107,10 +107,15 @@ impl Session {
                 .skill_level(chr.id, crate::itemrecovery::IMPROVED_MP_RECOVERY)
                 .unwrap_or(0),
         };
-        let gained = crate::itemrecovery::restored(&restores, chr.max_hp, chr.max_mp, learned);
-        let (hp_gain, mp_gain) = gained.capped(chr.hp, chr.max_hp, chr.mp, chr.max_mp);
-        chr.hp = chr.hp.saturating_add(hp_gain).min(chr.max_hp);
-        chr.mp = chr.mp.saturating_add(mp_gain).min(chr.max_mp);
+        // **Every maximum here is the one the client draws** - base plus a learned Max HP/MP
+        // Increase (`Session::pools`) - both for a percent-of-max potion and for the cap.
+        // Against the base, a Max HP Increase character drinking at 400/447 was CUT to 358:
+        // the `.min` below is a clamp, and a clamp to the wrong ceiling takes health away.
+        let pools = self.pools(&chr);
+        let gained = crate::itemrecovery::restored(&restores, pools.max_hp, pools.max_mp, learned);
+        let (hp_gain, mp_gain) = gained.capped(chr.hp, pools.max_hp, chr.mp, pools.max_mp);
+        chr.hp = chr.hp.saturating_add(hp_gain).min(pools.max_hp.max(chr.hp));
+        chr.mp = chr.mp.saturating_add(mp_gain).min(pools.max_mp.max(chr.mp));
 
         // The item is consumed whether or not it healed anything: drinking a potion at full
         // health still drinks the potion, and refusing here would let a player at full HP
@@ -575,6 +580,39 @@ mod scroll_tests {
         assert!(!has(&out, net::opcode::SET_FIELD));
         assert_eq!(held(&s, id), Some(1));
         assert!(has(&out, net::stats::STAT_CHANGED), "still answered");
+    }
+
+    /// **A potion above the base maximum must never LOWER health.**
+    ///
+    /// The owner's Cobalt stands at 447 with a base of 358 because the client applies Max HP
+    /// Increase itself. Before `Session::pools`, a Red Potion drunk at 400 hit
+    /// `.min(chr.max_hp)` and CUT them to 358 - a clamp to the wrong ceiling takes health
+    /// away. Now: base 358, skill 15, at 400 the potion lands +47 to the 447 ceiling and not
+    /// one point past it, and the base in the record stays 358.
+    #[test]
+    fn a_potion_heals_up_to_the_boosted_ceiling_and_never_cuts_health_to_the_base() {
+        if !std::path::Path::new("../../gm-handbook/skills.txt").exists() {
+            return; // generated, gitignored
+        }
+        let (mut s, acct, id) = session_with_scroll(2_000_000, 2, 40);
+        let mut cfg = (*s.config).clone();
+        cfg.firstjob = crate::firstjob::CombatTable::load(std::path::Path::new("../../gm-handbook/skills.txt"));
+        s.config = Arc::new(cfg);
+        let mut chr = s.claimed_character().unwrap();
+        chr.max_hp = 358;
+        chr.hp = 400;
+        s.store.save_character_progress(&chr).unwrap();
+        s.store.set_skill_level(id, super::super::pools::MAX_HP_INCREASE, 15).unwrap();
+
+        s.on_use_item(&net::useitem::use_item(0, 1, 2_000_000, 1));
+        let after = s.store.characters_for(acct, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+        assert_eq!(after.hp, 447, "400 + 100 capped at 358 + 89, not cut to 358");
+        assert_eq!(after.max_hp, 358, "the base is the client's input and stays put");
+
+        // And a second one at the ceiling changes nothing but the stack.
+        s.on_use_item(&net::useitem::use_item(0, 1, 2_000_000, 1));
+        let after = s.store.characters_for(acct, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+        assert_eq!(after.hp, 447);
     }
 
     /// **The regression this branch could most easily cause.** The scroll check runs before

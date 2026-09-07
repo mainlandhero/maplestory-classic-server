@@ -118,10 +118,10 @@ impl Session {
                 let left = (ready - now).div_ceil(1000);
                 // Loud on purpose. The cooldown is 180 s out of `Skill.wz`, and a silent
                 // refusal here would be indistinguishable from the bug being fixed - which
-                // is exactly what this run is trying to tell apart. `!buff` skips it.
+                // is exactly what this run is trying to tell apart.
                 return self.notice(format!(
                     "Skill {skill_id} is on cooldown for another {left}s (cooltime is {}s in \
-                     Skill.wz). !buff casts it anyway.",
+                     Skill.wz).",
                     level.cooldown_seconds
                 ));
             }
@@ -590,20 +590,6 @@ impl Session {
                 3 + net::buff::MASK_LEN + tail
             ),
         }]
-    }
-
-    /// Send `0x007E` for everything held, and drop it from the table. `!unbuff`.
-    ///
-    /// Kept beside the expiry and the right-click because it is the only one whose tail
-    /// length is typeable, which is how the 191 gets bisected without a launch per attempt.
-    pub(super) fn clear_buffs(&mut self, tail: usize) -> Vec<Reply> {
-        if self.buffs.is_empty() {
-            return Vec::new();
-        }
-        let bits: Vec<u32> = self.buffs.iter().map(|b| b.bit).collect();
-        let skills: Vec<u32> = self.buffs.iter().map(|b| b.skill_id).collect();
-        self.buffs.clear();
-        self.reset_reply(&bits, tail, format!("cleared by !unbuff (from skill(s) {skills:?})"))
     }
 
 }

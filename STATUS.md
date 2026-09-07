@@ -55,8 +55,19 @@ game socket itself carries no credential and never has. Say so in every progress
   `Event::PartyBuff`; each recipient builds and expires its own `0x007D`. Bits: Jump **93 [D]**,
   Weapon Attack **84 [D]** (name table + identical decoder blocks to Speed's); the buff levels
   come from the generated table's `indie*` columns. **Iron Will is self-only in this client's
-  data** (no `lt`/`rb`). `!buff` consults the same tables, so a GM can see the bits without a
-  second job.
+  data** (no `lt`/`rb`). (`!buff` was removed later the same day on the owner's instruction, so
+  the bits are seen through a character that has the skill.)
+* **Max HP Increase: the CLIENT applies it, measured.** The owner's screenshot: Cobalt `358/447`
+  with the database at `358/358` and Max HP Increase 15 - `447 = 358 + ⌊358×25/100⌋`, and the
+  server was calling them full. Experiment A answered. The server now sends the base and raises
+  every ceiling it enforces to the same expression (`session::pools`: regen, potions,
+  Recovery, level-up refill, `!heal`, quest set-HP, `!resetap`, the party bar). A potion
+  drunk above the base used to CUT health to the base. Max MP Increase is the same code, `[D]`.
+* **GM commands pruned and two made public** (the owner, 2026-09-06): gone are the per-kind rate
+  setters, `!migsweep`, `!npcfx`, `!buff`, `!unbuff`, `!buy`, `!locker`, `!kit` (and
+  `crates/world/src/loadout.rs` with it). `!rates` and `!help` answer for everyone; `!help`
+  shows a player only `!rates` and `!help`. `!job`, `!resetap`, `!resetsp` reply in one line;
+  the working moved to the log. No "A skill has been activated." line on a skill-up.
 
 **2026-09-05: the server is ready to leave this machine.** Two changes for the homelab move,
 both built, tested, and exercised against the shipped binaries:

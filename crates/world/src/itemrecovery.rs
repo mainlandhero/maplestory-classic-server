@@ -363,6 +363,41 @@ pub fn regen_of_max(max_mp: u32, percent: u32) -> u32 {
     u32::try_from(u64::from(max_mp) * u64::from(percent) / 100).unwrap_or(u32::MAX)
 }
 
+/// The maximum the **client draws** when a max-pool passive is learned: `base` plus
+/// `percent` percent of it, **rounded down**.
+///
+/// The owner, 2026-09-06, with a screenshot: *"Max HP Increase results in Cobalt having more HP on
+/// client side, but natural regeneration does not regenerate that amount, which seems to be
+/// meaning that the server thinks that Cobalt is at max HP already."* They are right on every
+/// clause, and the screenshot is the measurement `research/magician-first-job.md` §8
+/// experiment A had been waiting for:
+///
+/// ```text
+///   maplecw.db      Cobalt  hp 358  max_hp 358   skill 1000001 at level 15 (mhpR 25)
+///   world.log       "idle regen +0 hp ... 358/358 hp - HP is full"
+///   the screen      HP 358 / 447
+///
+///   358 + 358 * 25 / 100 = 358 + 89.5 -> 447     (447.5 would be 448: the client FLOORS)
+/// ```
+///
+/// **[L]**: the client applies the percent itself, on top of the maximum this server sends.
+/// Two consequences, both enforced through this one function: the server must **never** fold
+/// the percent into `max_hp`/`max_mp` on the wire (the client would apply it again), and it
+/// must raise every ceiling it caps HP or MP against - regen, potions, Recovery, the level-up
+/// refill, `!heal`, a quest's set-HP, the party bar - or it keeps a 358/447 character "full"
+/// and, worse, a potion drunk at 400 would *lower* them to 358. `session::pools` is the one
+/// place those ceilings come from.
+///
+/// Truncation rather than rounding is what 447 says; one data point at one level, so **[L]**
+/// for 25% and **[D]** that the same expression holds at the other fourteen.
+pub fn boosted_max(base: u32, percent: u32) -> u32 {
+    if percent == 0 {
+        return base;
+    }
+    let bonus = u64::from(base) * u64::from(percent) / 100;
+    u32::try_from(u64::from(base) + bonus).unwrap_or(u32::MAX)
+}
+
 /// `amount` increased by `percent` percent, **rounded down**.
 ///
 /// `u64` throughout: `u32::MAX * 120` overflows a `u32` and the wrap would hand a player a

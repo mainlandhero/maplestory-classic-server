@@ -591,17 +591,25 @@ pub fn disorder_debuff(level: u32) -> Option<DisorderDebuff> {
 /// the **server** owns: `research/user-hit.md` establishes that the client computes damage
 /// and never writes HP, and the max values arrive in this server's own stat packet. A
 /// percentage the client folds in locally on top of a max the server already sent would be
-/// visible as a mismatch, and one the server folds in would not - so the two readings are
-/// distinguishable and neither is safe to assume.
-/// `research/magician-first-job.md` §8 experiment A is that measurement and it is still
-/// unrun. **[D]** that these two are the exception; **not established** which way they go.
+/// visible as a mismatch, and one the server folds in would not - so the two readings were
+/// distinguishable, and `research/magician-first-job.md` §8 experiment A was the test.
+///
+/// **Measured 2026-09-06, on the HP twin: the client folds it in locally.** Cobalt, base
+/// `max_hp` 358 in the database and in every stat packet, Max HP Increase at 15 (`mhpR` 25),
+/// drew **358 / 447** - and 447 is `358 + ⌊358 × 25 / 100⌋`. So the client applies the
+/// percent to the number the server sent. The server's job is therefore the opposite of
+/// folding it in: send the base, and **raise its own ceilings** by the same expression, or it
+/// calls a 358/447 character full and stops regenerating them - which is exactly what the owner
+/// saw. `world::itemrecovery::boosted_max` is the expression and `world::session::pools`
+/// applies it everywhere the server caps HP or MP. The MP twin is **[D]** by symmetry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassiveOwner {
     /// The client resolves it from the skill level the server already sent. Send nothing.
     Client,
-    /// It changes a number this server owns, and which side applies the percentage has not
-    /// been measured. See the enum's docs.
-    Unmeasured,
+    /// The client applies the percent **on top of the base the server sends**, so the
+    /// server sends the base unchanged and raises every ceiling it enforces to match.
+    /// See the enum's docs.
+    ClientOnTopOfServerBase,
 }
 
 /// Every `type 50` first-job passive, with who applies it.
@@ -618,7 +626,7 @@ pub fn passive_owner(skill_id: u32) -> Option<PassiveOwner> {
         | 4_000_000 // Nimble Body - `accX`, `evaX`
         | 4_000_001 // Keen Eyes - `range`; FUN_1407b4c10 adds it
         => Some(PassiveOwner::Client),
-        1_000_001 | 2_000_001 => Some(PassiveOwner::Unmeasured),
+        1_000_001 | 2_000_001 => Some(PassiveOwner::ClientOnTopOfServerBase),
         _ => None,
     }
 }
@@ -1189,11 +1197,12 @@ mod tests {
         assert_ne!(buff_level(IRON_BODY, 20, 0), buff_level(IRON_BODY, 20, 400));
     }
 
-    /// **The nine passives, and which two are not settled.**
+    /// **The nine passives, and the two the server has to keep pace with.**
     ///
     /// Seven are `Client` because three client functions were disassembled that resolve a
     /// passive from the client's own record with no packet in the path; the two max-pool
-    /// skills are `Unmeasured` because the number they change is one this server owns.
+    /// skills are applied by the client ON TOP of the base the server sends (measured
+    /// 2026-09-06), so the server raises its ceilings rather than its packet.
     #[test]
     fn the_passives_are_the_clients_job_except_the_two_that_change_a_server_owned_number() {
         for id in [1_000_000u32, 1_000_002, 2_000_000, 3_000_000, 3_000_001, 4_000_000, 4_000_001]
@@ -1202,7 +1211,7 @@ mod tests {
             assert!(buff_level(id, 1, 200).is_none(), "and it is not a buff packet");
         }
         for id in [1_000_001u32, 2_000_001] {
-            assert_eq!(passive_owner(id), Some(PassiveOwner::Unmeasured), "skill {id}");
+            assert_eq!(passive_owner(id), Some(PassiveOwner::ClientOnTopOfServerBase), "skill {id}");
         }
         // Nine, and nine only - a castable skill is not a passive.
         for id in [IRON_BODY, FOCUS, DISORDER, DARK_SIGHT, 1002, 2_001_000, 0, u32::MAX] {

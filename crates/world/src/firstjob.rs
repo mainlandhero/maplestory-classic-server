@@ -163,7 +163,7 @@
 //! | Nimble Body | `accX`, `evaX` | same path |
 //! | The Eye of Amazon, Keen Eyes | `range`, in client pixels | the client picks its own targets and sends them |
 //! | Improved HP/MP Recovery | regen per tick, plus a percent bonus to recovery **from items** | the tick period is **not in the WZ at all** — it is only in the tooltip prose. **[L]** |
-//! | **Max HP Increase, Max MP Increase** | `mhpR`, `mmpR` — **percent** of the maximum | **the server.** `max_hp`/`max_mp` are fields this server puts in its own stat packet |
+//! | **Max HP Increase, Max MP Increase** | `mhpR`, `mmpR` — **percent** of the maximum | **the client, on top of the server's number** - measured 2026-09-06, Cobalt at 358 base drawing 447. So the server never folds it into the stat packet, and instead raises every ceiling it caps HP/MP against (`session::pools`) or it thinks a 358/447 character is full |
 //!
 //! `crates/world/src/session/combat.rs` applies `target.total_damage()` — the client's number —
 //! and never computes an outgoing hit, a miss or a critical. **[L]** So for seven of the nine
@@ -1070,6 +1070,14 @@ pub struct CastNumbers {
     pub indie_pdd: Option<i32>,
     /// `indieMdd` — flat Magic Defence.
     pub indie_mdd: Option<i32>,
+    /// `mhpR` — Max HP Increase's **percent of maximum HP**, 10..25. **The client applies
+    /// it on top of the maximum this server sends** (measured 2026-09-06: server 358, screen
+    /// 447 = 358 + ⌊358 × 25 / 100⌋), so the server must never fold it into `max_hp` and
+    /// must raise every ceiling it caps HP against by the same amount - `session::pools`.
+    pub max_hp_percent: Option<u32>,
+    /// `mmpR` — Max MP Increase's percent of maximum MP. Same handling as
+    /// [`CastNumbers::max_hp_percent`]; **[D]** by symmetry, the MP twin has not been watched.
+    pub max_mp_percent: Option<u32>,
 }
 
 /// One skill's rows, plus the columns that are constant across them.
@@ -1220,8 +1228,9 @@ const WANTED_MORE: [&str; 3] = ["attackCount", "mobCount", "bulletCount"];
 /// combat numbers. The cost of that leniency is bounded: a missing column reads as "the
 /// skill grants no such stat", which turns a party buff into a chat notice rather than into
 /// a wrong number.
-const OPTIONAL: [&str; 7] =
-    ["indieSpeed", "indieJump", "indiePad", "indieMad", "indiePdd", "indieMdd", "ltX"];
+const OPTIONAL: [&str; 9] = [
+    "indieSpeed", "indieJump", "indiePad", "indieMad", "indiePdd", "indieMdd", "ltX", "mhpR", "mmpR",
+];
 
 /// Resolve the [`OPTIONAL`] columns that this header actually has.
 fn optional_columns(header: &str) -> BTreeMap<&'static str, usize> {
@@ -1485,6 +1494,8 @@ fn parse_cast(
         indie_mad: at_opt("indieMad")?,
         indie_pdd: at_opt("indiePdd")?,
         indie_mdd: at_opt("indieMdd")?,
+        max_hp_percent: at_opt("mhpR")?.map(|v| u32::try_from(v).unwrap_or(0)),
+        max_mp_percent: at_opt("mmpR")?.map(|v| u32::try_from(v).unwrap_or(0)),
     })
 }
 
@@ -1548,6 +1559,13 @@ mod tests {
         let iron_body = t.level(1_001_000, 1).unwrap();
         assert_eq!((iron_body.indie_pdd, iron_body.indie_speed), (None, None), "indiePddR is a percent, not a grant");
         assert!(!t.get(1_001_000).unwrap().party_rect, "a self buff");
+
+        // The two max-pool passives, as percents - 15 levels of 10..25 on each.
+        assert_eq!(t.level(1_000_001, 1).unwrap().max_hp_percent, Some(10), "Max HP Increase L1");
+        assert_eq!(t.level(1_000_001, 15).unwrap().max_hp_percent, Some(25), "Max HP Increase L15 - Cobalt's");
+        assert_eq!(t.level(2_000_001, 15).unwrap().max_mp_percent, Some(25), "Max MP Increase L15");
+        assert_eq!(t.level(1_000_001, 15).unwrap().max_mp_percent, None, "HP skill carries no mmpR");
+        assert_eq!(t.level(1_001_002, 1).unwrap().max_hp_percent, None, "an attack carries neither");
     }
 
     /// **The static table is the client's own book, not a memory of MapleStory.**

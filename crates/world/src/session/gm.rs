@@ -78,26 +78,24 @@ impl Session {
             Some((n, a)) => (n, a.trim()),
             None => (command, ""),
         };
-        // `!meso rate 2` is how the owner wrote it, and it splits into a name of "meso" with
-        // "rate 2" left in the argument. Fold the two-word spellings onto the one-word ones
-        // rather than answering `!exp rate 2` with a complaint that "rate 2" is not a number,
-        // which is a true statement about the wrong question.
-        let (name, arg) = match name {
-            "exp" | "meso" | "drop" if arg == "rate" || arg.starts_with("rate ") => {
-                let one_word = match name {
-                    "exp" => "exprate",
-                    "meso" => "mesorate",
-                    _ => "droprate",
-                };
-                (one_word, arg["rate".len()..].trim())
+        // **Two commands are for everyone.** The owner, 2026-09-06: *"`!rates` should be kept
+        // because it should be a public command that anyone can execute"*, and *"`!help`
+        // should also display the commands that the player/GM can execute. A player should
+        // only be shown commands that they are allowed to execute."* So these two are
+        // answered before the gate, and `!help` answers from the list that matches the
+        // caller - a player is never told which GM words exist.
+        let is_gm = self.account_is_gm();
+        match name {
+            "rates" => return self.gm_rates(),
+            "help" => {
+                return self.gm_ack(if is_gm { GM_COMMANDS.to_string() } else { PLAYER_COMMANDS.to_string() })
             }
-            _ => (name, arg),
-        };
-        // **Every command is gated on the account's GM flag.** The owner, 2026-08-29: *"can you
-        // please make GM commands only available to accounts with GM status? All commands
-        // should have this gate for now until otherwise specified."* All of them, including
-        // `!help` and the read-only `!rates` - "until otherwise specified" is the instruction,
-        // and a gate with quiet exceptions is the shape that gets found by accident later.
+            _ => {}
+        }
+        // **Every other command is gated on the account's GM flag.** The owner, 2026-08-29: *"can
+        // you please make GM commands only available to accounts with GM status? All commands
+        // should have this gate for now until otherwise specified."* The two exceptions above
+        // are the "otherwise specified", dated.
         //
         // **This is authorisation, not authentication, and the difference is the whole
         // caveat.** The game socket carries no credentials: which account this connection is
@@ -120,46 +118,36 @@ impl Session {
         // here would be the failure - the client draws nothing for its own chat, so a
         // dropped line is invisible, which is what the owner hit with "Hello", "Hello2" and
         // "Hello3" on 2026-08-19.
-        if !self.account_is_gm() {
+        if !is_gm {
             return self.say_out_loud(text);
         }
 
+        // **Pruned 2026-09-06 on the owner's instruction.** Gone: the per-kind rate setters
+        // (`!setrates` covers all three), `!migsweep`, `!npcfx`, `!buff`, `!unbuff`, and
+        // `!buy`, `!locker`, `!kit` - *"quite useless when I can spawn items"*. `!heal` stays
+        // as the one instant refill for damage tests.
         match name {
             "map" => self.gm_map(arg),
             "item" => self.gm_item(arg),
             "exp" => self.gm_exp(arg),
             "heal" => self.gm_heal(),
-            "exprate" => self.gm_exp_rate(arg),
-            "mesorate" => self.gm_meso_rate(arg),
-            "droprate" => self.gm_drop_rate(arg),
             "setrates" => self.gm_set_rates(arg),
-            // Reads and changes nothing, which is why it is the one command here that would
-            // survive a permission check if this server ever grew one.
-            "rates" => self.gm_rates(),
             "job" => self.gm_job(arg),
-            "migsweep" => self.gm_mig_sweep(arg),
             "npcecho" => self.gm_npc_echo(arg),
-            "npcfx" => self.gm_npc_effect(arg),
-            "buff" => self.gm_buff(arg),
-            "unbuff" => self.gm_unbuff(arg),
             "nx" => self.gm_nx(arg),
-            // The shop prices in LP, so this is the one that buys. See gm_lp.
+            // The shop prices in LP, so this is the one that funds it. See gm_lp.
             "lp" | "leafpoints" => self.gm_lp(arg),
             // Put spent points back in the pool. See gm_reset_ap for why the AP one
             // conserves the total rather than recomputing it from the level.
             "resetap" => self.gm_reset_ap(),
             "resetsp" => self.gm_reset_sp(),
             "learn" => self.gm_learn(arg),
-            "kit" => self.gm_kit(arg),
-            "buy" => self.gm_buy(arg),
-            "locker" => self.gm_locker(arg),
             // Re-read `data/npc-dialogue.txt` without restarting. See `gm_npc_reload`.
             "npcreload" => self.gm_npc_reload(arg),
             // Account administration from inside the game. The owner, 2026-09-05. The codes are
             // credentials and go to the GM's screen ONLY - see the two functions.
             "registrationcode" | "regcode" | "invite" => self.gm_registration_code(),
             "recoverycode" => self.gm_recovery_code(arg),
-            "help" => self.gm_ack(GM_COMMANDS.to_string()),
             "" => self.gm_ack(format!("Not a command. {GM_COMMANDS}")),
             other => self.gm_ack(format!("!{other} is not a command. {GM_COMMANDS}")),
         }
@@ -223,18 +211,22 @@ impl Session {
             .find(|j| j.job == job)
             .map(|j| (j.stat, j.stat.of(&chr)))
             .filter(|(_, have)| *have < crate::jobs::STAT_MINIMUM);
-        let warning = match mismatch {
-            Some((stat, have)) => format!(
-                " *** WARNING: you have {have} {} and this job wants {}. !job does NOT move                  ability points, so its skills will compute almost no damage - a magic attack                  with {have} INT lands on the damage floor of 1 whatever level the skill is.                  That is the formula being right, not a bug. ***",
+        // The warning goes to the LOG since 2026-09-06 - the owner: *"!job <id> should just say
+        // Cobalt is now a <Job Name>"*. It is still worth having where a puzzled damage number
+        // gets investigated, which is the log and not the chat.
+        if let Some((stat, have)) = mismatch {
+            crate::server::log(&format!(
+                "!job {job} for {}: has {have} {} and this job wants {} - !job does not move ability points, so its skills will compute almost no damage (a magic attack with {have} INT lands on the damage floor of 1). The formula being right, not a bug.",
+                chr.name,
                 stat.label(),
                 crate::jobs::STAT_MINIMUM
-            ),
-            None => String::new(),
-        };
-        let mut out = self.gm_ack(format!(
-            "{} is now job {job} (was {was}). Expect the JobChanged effect AND its sound - unless job is 0, which the client's own gate suppresses.{warning}",
-            chr.name
-        ));
+            ));
+        }
+        crate::server::log(&format!("!job: {} is now job {job} (was {was})", chr.name));
+        let mut out = self.gm_ack(match crate::jobs::job_name(job) {
+            Some(name) => format!("{} is now a {name}", chr.name),
+            None => format!("{} is now job {job}", chr.name),
+        });
         // **The skill points, in the same packet as the job.**
         //
         // The owner, 2026-08-27: *"Once I became a Magician (or any job at level 10), I should
@@ -261,152 +253,6 @@ impl Session {
     }
 
 
-    /// `!migsweep [first] [last]` - find the channel stage's migrate opcode, in one run.
-    ///
-    /// **The one thing about Change Channel that cannot be read statically.** The reply is
-    /// not a case of the stage switch at all: it is `FUN_1415d8c00`, a *socket-level*
-    /// handler dispatched from the Themida VM, and `.themida` has `SizeOfRawData = 0`. It has
-    /// zero callers of every kind and zero 4-byte RVA references, so no scan can name its
-    /// opcode. `research/change-channel-reply.md`.
-    ///
-    /// Everything else about it *is* measured. The body is **seven bytes** - `u8 ok`,
-    /// `u32 ip` in **network** order straight into `sin_addr`, and `u16 port`
-    /// **little-endian**, because the client `htons`es it itself. The read count was
-    /// cross-checked two ways, by `tools/listing.py` and `tools/reads.py --depth 2`, and they
-    /// agree exactly.
-    ///
-    /// So the opcode is swept. `0x0019..0x0022` are the ten slots the login switch has no
-    /// case for, and they line up against the reference's socket opcodes at a constant
-    /// `+0x0A`. **[I]** - which is precisely why this is an experiment and not a fix.
-    ///
-    /// # Why one batch is enough, and how the winner is identified
-    ///
-    /// The hook writes one dispatch line per inbound packet **naming the opcode**, on handler
-    /// return. So the hook log shows exactly which of these the client dispatched, and the
-    /// migrate one is the last line before the socket closes. That is the same instrument
-    /// that settled the equip crash, and it means the owner has to time nothing.
-    ///
-    /// **The 64 zero bytes of padding are not decoration.** An over-read in the client throws
-    /// (`1406e8b51` -> `_CxxThrowException` -> `int3`), so a wrong guess landing on a handler
-    /// that wants a longer body would kill the client rather than be ignored. Padding makes a
-    /// wrong guess *inert*.
-    ///
-    /// **The server must not close the socket.** `FUN_142caa360`'s first act is to tear the
-    /// connection down client-side. Measured corroboration: after the login `0x0011` the
-    /// client closed 8 ms later; after the failed channel `0x0011` it stayed open six seconds.
-    pub(super) fn gm_mig_sweep(&mut self, arg: &str) -> Vec<Reply> {
-        let mut parts = arg.split_whitespace();
-        let parse_one = |t: Option<&str>, fallback: u16| -> u16 {
-            t.and_then(|t| {
-                let t = t.trim_start_matches("0x").trim_start_matches("0X");
-                u16::from_str_radix(t, 16).ok()
-            })
-            .unwrap_or(fallback)
-        };
-        let first = parse_one(parts.next(), 0x0019);
-        let last = parse_one(parts.next(), 0x0022);
-        if last < first || usize::from(last - first) >= 32 {
-            return self.gm_ack(format!(
-                "!migsweep: {first:#06x}..{last:#06x} is not a sensible range. Try !migsweep (defaults to 19 22) or !migsweep 24 33."
-            ));
-        }
-
-        // The channel we are NOT on. With the usual two channels that is the other one.
-        let target = if self.config.channel_id == 0 { 1 } else { 0 };
-        let Some(addr) = self.config.channels.get(target as usize).copied() else {
-            return self.gm_ack(format!(
-                "!migsweep REFUSED: this world has no address for channel {target} - pass --channels to the world server."
-            ));
-        };
-        let Some(claimed) = self.claimed.clone() else {
-            return self.gm_ack("!migsweep REFUSED: no character is claimed.".to_string());
-        };
-        // Mint a real migration, so a channel that DOES accept the packet can be entered
-        // rather than bouncing on arrival. `on_change_channel` was always right about this
-        // half - only the opcode and the body were wrong.
-        let seed = match self.store.create_migration(
-            claimed.account_id,
-            claimed.character_id,
-            self.config.world_id,
-            target,
-        ) {
-            Ok(seed) => seed,
-            Err(e) => return self.gm_ack(format!("!migsweep FAILED to mint a migration: {e}")),
-        };
-
-        // `SocketAddrV4`, so there is no IPv6 case to refuse - which is right, because the
-        // client's `sin_addr` is a 4-byte IPv4 field and nothing else would fit.
-        let mut out = self.gm_ack(format!(
-            "!migsweep: sending {first:#06x}..{last:#06x} to channel {target} at {addr}. Read the hook log: the LAST dispatch line before the socket closes names the opcode. The Change Channel button now sends the same sweep on its own."
-        ));
-        out.extend(self.migrate_candidates(target, addr, seed, first, last));
-        out
-    }
-
-
-    /// `!npcfx on|off` - the NPC **appear-effect switch**, `0x0452`.
-    ///
-    /// # The lever two passes and one measurement all missed
-    ///
-    /// The owner, after `!npcecho`: *"The copy that was spawned in additionally faded in as well
-    /// after !npcecho was executed. The original Heena stayed on the screen."* That looked
-    /// like the end of the road - both creation packets fade, so the packet is not the
-    /// variable. It is not the end of the road, and the reason the echo could never have
-    /// answered it is that **`0x044F` and `0x0451` run the same decoder body**,
-    /// `FUN_141e36b20`. Comparing them was comparing a thing with itself.
-    ///
-    /// Inside that shared body sits a block gated on `DAT_143ad2d30 == 0` which allocates a
-    /// `0x90`-byte object, constructs it against the NPC, stamps it with a clock value and
-    /// starts it. `0x0452` is the packet that sets that global, and its two branches are what
-    /// make the identification more than a guess: `v == 0` runs the **identical** allocate /
-    /// construct / stamp sequence on every NPC already in the pool, and `v != 0` calls
-    /// `FUN_141e64690` to tear it down. One packet creates and destroys exactly the thing
-    /// creation creates. `research/npc-spawn.md` §3.1 named `0x0452` "a global show/hide
-    /// toggle" from a quick read; the listing says it is narrower and more useful than that.
-    ///
-    /// # How to test it, and why it is a command rather than a change to field entry
-    ///
-    /// `!npcfx off` then `!npcecho`, on a map whose NPCs have already faded in. The switch is
-    /// global and sticky, so the echoes are created with the global already set:
-    ///
-    /// | on screen | what it says |
-    /// |---|---|
-    /// | the echoes **pop in solid** | that object is the fade, and field entry should send `0x0452` before its `0x044F`s |
-    /// | the echoes **still fade** | the object is not the fade. It is a real elimination rather than another absence, because this is the only creation-time branch left in `FUN_141e36b20` |
-    /// | **existing NPCs change** when the command runs | the walk does more than tear down an animation - say what changed |
-    /// | **NPCs vanish** | `research/npc-spawn.md`'s "show/hide toggle" reading was right after all. `!npcfx on` puts it back, and so does a map change |
-    ///
-    /// Field entry is deliberately **not** changed: this way one run compares faded NPCs and
-    /// popped ones on the same map, and nothing needs undoing if it does nothing.
-    pub(super) fn gm_npc_effect(&mut self, arg: &str) -> Vec<Reply> {
-        let enabled = match arg.trim().to_ascii_lowercase().as_str() {
-            "on" | "1" | "true" => true,
-            "off" | "0" | "false" => false,
-            "" => {
-                return self.gm_ack(
-                    "!npcfx wants on or off. `!npcfx off` disables the NPC appear animation, then `!npcecho` shows whether that was the fade.".to_string(),
-                )
-            }
-            other => {
-                return self.gm_ack(format!("!npcfx: {other:?} is not on or off."));
-            }
-        };
-        let mut out = self.gm_ack(format!(
-            "!npcfx {}: sending 0x0452 with v={} - the appear-effect switch. The wire value is INVERTED (v=0 leaves it on). Now run !npcecho and say whether the copies POP or FADE.",
-            if enabled { "on" } else { "off" },
-            u32::from(!enabled)
-        ));
-        out.push(Reply {
-            opcode: net::opcode::NPC_APPEAR_EFFECT,
-            body: net::opcode::npc_appear_effect(enabled),
-            what: format!(
-                "NpcAppearEffect: {} - 0x0452 sets DAT_143ad2d30 = {}, and the creation path in FUN_141e36b20 builds the 0x90-byte appear object ONLY while that global is 0. Also walks every NPC already in the pool: v=0 rebuilds the object on each, v!=0 tears it down",
-                if enabled { "ENABLED" } else { "DISABLED" },
-                u32::from(!enabled)
-            ),
-        });
-        out
-    }
 
     /// `!npcecho [dx]` - spawn a second copy of every NPC on this map, the OTHER way.
     ///
@@ -569,12 +415,15 @@ impl Session {
         let Some(mut chr) = self.claimed_character() else {
             return self.gm_ack("!heal REFUSED: no character is claimed on this connection.".to_string());
         };
-        chr.hp = chr.max_hp;
-        chr.mp = chr.max_mp;
+        // To the ceiling the client draws, not the base: a Max HP Increase character healed
+        // to `max_hp` would stand at 358/447 and call that a bug.
+        let pools = self.pools(&chr);
+        chr.hp = pools.max_hp;
+        chr.mp = pools.max_mp;
         if let Err(e) = self.store.save_character_progress(&chr) {
             return self.gm_ack(format!("!heal FAILED: {e}"));
         }
-        let mut out = self.gm_ack(format!("{} is restored to {} HP.", chr.name, chr.max_hp));
+        let mut out = self.gm_ack(format!("{} is restored to {} HP.", chr.name, pools.max_hp));
         out.push(Reply {
             opcode: net::stats::STAT_CHANGED,
             body: net::stats::StatChange { hp: Some(chr.hp), mp: Some(chr.mp), ..Default::default() }
@@ -584,138 +433,6 @@ impl Session {
         out
     }
 
-
-    /// `!buff [skillId] [level] [tailBytes]` - send the temporary-stat packet with no skill,
-    /// MP or cooldown in the way. Defaults to Nimble Feet at level 3 with the safe tail.
-    ///
-    /// # This is the single-variant test `research/buffs.md` §7.3 asked for
-    ///
-    /// The cast path checks four things before it sends anything - the skill is a buff, the
-    /// character owns it at that level, the cooldown has run, and there is MP - and any of
-    /// those refusing looks on screen exactly like the packet being wrong. `Skill.wz` puts
-    /// Nimble Feet's `cooltime` at **180 seconds**, so a second cast to check something is
-    /// three minutes away. This command skips all four and sends the same bytes through the
-    /// same builder, so a `!buff` that works and a keypress that does not is a statement
-    /// about the *gates*, not about the packet.
-    ///
-    /// It does still record the expiry, so the `0x007E` goes out on time and the buff can be
-    /// watched all the way through.
-    ///
-    /// # The third argument is what makes the unknown measurable
-    ///
-    /// `net::buff::TAIL_LEN` is **slack around a length nobody has derived** - the 18-byte
-    /// version threw an unhandled C++ exception in the client and killed it, while four
-    /// static instruments say 18 should have been ample. A rebuild per attempt costs a manual
-    /// launch; a chat line costs nothing, so the tail length is typeable.
-    ///
-    /// **Bisect downwards from a length that worked**, never upwards from one that did not:
-    /// too short ends the session outright. Anything at or below the 18 that has already
-    /// killed a client is refused here rather than re-learned.
-    pub(super) fn gm_buff(&mut self, arg: &str) -> Vec<Reply> {
-        if self.claimed_character().is_none() {
-            return self.gm_ack("!buff REFUSED: no character is claimed on this connection.".to_string());
-        }
-        let mut parts = arg.split_whitespace();
-        let skill_id = match parts.next() {
-            None => net::buff::NIMBLE_FEET,
-            Some(t) => match t.parse::<u32>() {
-                Ok(v) => v,
-                Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a skill id.")),
-            },
-        };
-        let level = match parts.next() {
-            None => 3,
-            Some(t) => match t.parse::<u32>() {
-                Ok(v) => v,
-                Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a level.")),
-            },
-        };
-        let tail = match parts.next() {
-            None => net::buff::TAIL_LEN,
-            Some(t) => match t.parse::<usize>() {
-                Ok(v) if v <= net::buff::TAIL_KNOWN_TOO_SHORT => {
-                    return self.gm_ack(format!(
-                        "!buff: a {v}-byte tail is at or below the {} that already killed a \
-                         client on 2026-08-22 - it would end this session and teach nothing. \
-                         Bisect DOWNWARDS from a length that worked.",
-                        net::buff::TAIL_KNOWN_TOO_SHORT
-                    ))
-                }
-                Ok(v) => v,
-                Err(_) => return self.gm_ack(format!("!buff: {t:?} is not a tail length.")),
-            },
-        };
-        // Every table the keypress consults, not just the first one - so a GM on a
-        // first-job character can trial Haste or Rage without a second job, which is how
-        // the bits behind them get promoted from [D] on a run that costs no advancement.
-        let chr = self.claimed_character().expect("checked above");
-        let Some(bl) = self.buff_level_for(skill_id, level, &chr) else {
-            return self.gm_ack(format!(
-                "!buff: skill {skill_id} level {level} grants no temporary stat this server \
-                 knows - not in net::buff, net::jobbuffs, or the generated skill table's \
-                 indie columns."
-            ));
-        };
-
-        let now = self.clock_ms;
-        let mut out = self.gm_ack(format!(
-            "Casting skill {skill_id} level {level}: CTS bit {} = +{} for {} s, {tail}-byte \
-             tail ({} bytes total). No skill check, no MP, no cooldown - if this works and the \
-             keypress does not, the difference is a gate and not the packet.",
-            bl.bit,
-            bl.value,
-            bl.seconds,
-            net::buff::MASK_LEN + 10 + tail
-        ));
-        out.extend(self.grant_buff_with_tail(skill_id, bl, now, tail));
-        out
-    }
-
-    /// `!unbuff [tailBytes]` - send `0x007E` for whatever buffs are held.
-    ///
-    /// # Why this is a command and not a timer
-    ///
-    /// The natural expiry does not send `0x007E` any more: the client holds its own
-    /// `tExpire` and drops the stat on schedule, and a 127-byte `0x007E` killed the client
-    /// thirty seconds after a working grant on 2026-08-22. Early removal - dispel, death,
-    /// logout - will need the packet, so it stays built and stays testable, but it fires only
-    /// when someone asks for it.
-    ///
-    /// The optional argument is the tail length, for the same downward bisect `!buff`
-    /// supports. 127 total - the length that already threw - is refused.
-    pub(super) fn gm_unbuff(&mut self, arg: &str) -> Vec<Reply> {
-        if self.claimed_character().is_none() {
-            return self.gm_ack("!unbuff REFUSED: no character is claimed.".to_string());
-        }
-        let tail = match arg.split_whitespace().next() {
-            None => net::buff::TAIL_LEN,
-            Some(t) => match t.parse::<usize>() {
-                Ok(v) if 3 + net::buff::MASK_LEN + v <= net::buff::RESET_KNOWN_TOO_SHORT => {
-                    return self.gm_ack(format!(
-                        "!unbuff: a {v}-byte tail makes {} bytes, at or below the {} that \
-                         already threw in the client. Bisect DOWNWARDS from a length that worked.",
-                        3 + net::buff::MASK_LEN + v,
-                        net::buff::RESET_KNOWN_TOO_SHORT
-                    ))
-                }
-                Ok(v) => v,
-                Err(_) => return self.gm_ack(format!("!unbuff: {t:?} is not a tail length.")),
-            },
-        };
-        let mut out = self.clear_buffs(tail);
-        if out.is_empty() {
-            return self.gm_ack("!unbuff: nothing is buffed right now.".to_string());
-        }
-        let len = 3 + net::buff::MASK_LEN + tail;
-        out.splice(
-            0..0,
-            self.gm_ack(format!(
-                "Clearing held buffs with a {len}-byte 0x007E ({tail}-byte tail). The reads \
-                 enumerate to 129, or 133 if the gated u32 fires; 127 threw."
-            )),
-        );
-        out
-    }
 
     /// `!nx [amount]` - grant NX to this account, or report the balance with no argument.
     ///
@@ -898,9 +615,12 @@ impl Session {
         chr.max_mp = chr
             .max_mp
             .saturating_sub(hpmp.mp.saturating_mul(net::abilityup::policy::MAX_MP_PER_AP));
-        // Current cannot exceed maximum, or the bar draws past its own end.
-        chr.hp = chr.hp.min(chr.max_hp);
-        chr.mp = chr.mp.min(chr.max_mp);
+        // Current cannot exceed the maximum THE CLIENT DRAWS, or the bar draws past its own
+        // end - and that ceiling includes a learned Max HP/MP Increase on top of the base
+        // just recomputed, so it is read after the base moved.
+        let pools = self.pools(&chr);
+        chr.hp = chr.hp.min(pools.max_hp);
+        chr.mp = chr.mp.min(pools.max_mp);
         chr.ap = chr.ap.saturating_add(refund);
 
         if let Err(e) = self.store.save_character_progress(&chr) {
@@ -916,12 +636,14 @@ impl Session {
         } else {
             String::new()
         };
-        let mut out = self.gm_ack(format!(
-            "Ability points reset. STR {was_str}->{}, DEX {was_dex}->{}, INT {was_int}->{}, \
-             LUK {was_luk}->{}{hpmp_note} - {refund} points back, {} to spend. The totals \
-             match by construction: nothing was created or destroyed.",
-            chr.strength, chr.dexterity, chr.intelligence, chr.luck, chr.ap
+        // The owner, 2026-09-06: *"resetap and resetsp should just respond with the message
+        // 'Ability Point/Skill Point successfully reset for <character name>'"*. The working
+        // goes to the log, where it is still readable after the fact; the chat gets one line.
+        crate::server::log(&format!(
+            "!resetap {}: STR {was_str}->{}, DEX {was_dex}->{}, INT {was_int}->{}, LUK {was_luk}->{}{hpmp_note} - {refund} points back, {} to spend",
+            chr.name, chr.strength, chr.dexterity, chr.intelligence, chr.luck, chr.ap
         ));
+        let mut out = self.gm_ack(format!("Ability Point successfully reset for {}", chr.name));
         // **One packet with all five fields.** The stat window reads them together, and five
         // packets would let it redraw against a half-applied state.
         out.push(Reply {
@@ -999,21 +721,24 @@ impl Session {
             .iter()
             .map(|s| format!("{} lv{}", self.skill_name(s.id), s.level))
             .collect();
-        let mut out = self.gm_ack(format!(
-            "Forgot {} skill(s): {}. Refunded {} skill point(s) - the forget and the refund are \
-             ONE transaction, so a forgotten skill IS the whole refund.{}",
+        // One line in chat (the owner, 2026-09-06); the roster of what was forgotten goes to the log.
+        crate::server::log(&format!(
+            "!resetsp {}: forgot {} skill(s) [{}], refunded {} skill point(s){}",
+            chr.name,
             forgotten.len(),
             named.join(", "),
             refunded.points,
             if failed.is_empty() {
                 String::new()
             } else {
-                format!(" *** BUT THESE FAILED and are still learned: {} ***", failed.join(", "))
+                format!(" - BUT THESE FAILED and are still learned: {}", failed.join(", "))
             }
         ));
+        let mut out = self.gm_ack(format!("Skill Point successfully reset for {}", chr.name));
         if !forgotten.is_empty() {
             out.push(self.skill_reply(
-                net::skills::change_skill_record_result(true, true, &forgotten),
+                // No "A skill has been activated." line - see `session/skills.rs`.
+                net::skills::change_skill_record_result(true, false, &forgotten),
                 format!("!resetsp forgot {} skill(s)", forgotten.len()),
             ));
         }
@@ -1195,108 +920,14 @@ impl Session {
             warning
         ));
         out.push(self.skill_reply(
-            net::skills::change_skill_record_result(true, true, &changes),
+            // No "A skill has been activated." line per skill - see `session/skills.rs`.
+            net::skills::change_skill_record_result(true, false, &changes),
             format!("!learn granted {} skill(s) to job {}", changes.len(), chr.job),
         ));
         if !warning.is_empty() {
             out.extend(self.notice(warning.trim().trim_matches('*').trim().to_string()));
         }
         out
-    }
-
-    /// `!kit` - hand over everything this job needs to cast its own skills.
-    ///
-    /// # Why a command and not a note in the test plan
-    ///
-    /// Five of the 24 first-job skills carry a **weapon gate** in this client's `Skill.wz`,
-    /// measured over all four `weapon` columns: Arrow Blow, Double Shot and Power Knockback
-    /// want 45 or 46 (bow or crossbow), Double Stab wants 33 (dagger), Lucky Seven wants 47
-    /// (claw). Without the right item in hand the client refuses the cast itself, and on
-    /// screen that is indistinguishable from a server that never implemented the skill.
-    ///
-    /// A run that discovers this costs the owner a manual launch. Typing four `!item` lines off a
-    /// plan costs a transcription error.
-    ///
-    /// # It warns about what cannot be equipped, which is the half that matters
-    ///
-    /// **There is no zero-requirement bow, crossbow or claw in this client, and no free
-    /// throwing star** - `crate::loadout` read all 230 weapon images from the WZ to establish
-    /// that, because `gm-handbook/equips.txt` is missing the requirement columns entirely.
-    /// Anything advanced through `jobs::advancement_for` clears its own kit, since
-    /// `LEVEL_MINIMUM` is 10 and `STAT_MINIMUM` is 35 against the bow's 25.
-    ///
-    /// **`!job` bypasses that check**, and `!job` is how these branches will be reached. So a
-    /// character can end up holding a bow it cannot equip, which reads on screen as the skill
-    /// being broken. `Loadout::unequippable` names the failing clause instead.
-    pub(super) fn gm_kit(&mut self, _arg: &str) -> Vec<Reply> {
-        let Some(chr) = self.claimed_character() else {
-            return self
-                .gm_ack("!kit REFUSED: no character is claimed on this connection.".to_string());
-        };
-        let Some(kit) = crate::loadout::loadout_for(chr.job) else {
-            return self.gm_ack(format!(
-                "!kit: job {} has no loadout. The four first jobs are 100 (Warrior), 200 \
-                 (Magician), 300 (Bowman) and 400 (Thief) - try !job 300 first.",
-                chr.job
-            ));
-        };
-        // **An empty kit is a measurement, not a failure.** No Magician skill carries a
-        // `weapon` column at all - confirmed over all four columns on all six skills - so the
-        // honest answer is "nothing", said out loud.
-        if kit.needs_nothing() {
-            return self.gm_ack(format!(
-                "!kit: {} needs NOTHING. None of its six skills carries a weapon column in \
-                 this client's Skill.wz, so every one of them casts bare-handed. That is \
-                 measured, not an empty table.",
-                kit.job_name
-            ));
-        }
-
-        let mut out = Vec::new();
-        let mut lines = Vec::new();
-        for piece in kit.pieces {
-            match self.give_item(piece.item_id, piece.quantity, "GM !kit") {
-                Ok((line, replies)) => {
-                    lines.push(format!("{line} - {}", piece.why));
-                    out.extend(replies);
-                }
-                // Reported, never swallowed. A half-delivered kit that says nothing is how a
-                // missing arrow becomes "Double Shot is broken".
-                Err(why) => lines.push(format!("{} ({}) {why}", piece.name, piece.item_id)),
-            }
-        }
-
-        // The equip check runs on the character as it is now, after the grants.
-        let now = self.claimed_character().unwrap_or(chr);
-        let blocked = kit.unequippable(&now);
-        let warning = if blocked.is_empty() {
-            String::new()
-        } else {
-            let each: Vec<String> = blocked
-                .iter()
-                .map(|(p, unmet)| format!("{} needs {}", p.name, unmet.join(" and ")))
-                .collect();
-            format!(
-                " *** WARNING: you cannot EQUIP {}. !job does not move ability points, so the \
-                 skills these gate will refuse to cast and it will look like the server. Use \
-                 !resetap and raise the stat. ***",
-                each.join("; ")
-            )
-        };
-
-        let mut replies = self.gm_ack(format!(
-            "!kit for {} (job {}): {}.{}{}",
-            kit.job_name,
-            kit.job,
-            lines.join(" | "),
-            kit.caveat.map(|c| format!(" NOTE: {c}")).unwrap_or_default(),
-            warning
-        ));
-        replies.extend(out);
-        if !warning.is_empty() {
-            replies.extend(self.notice(warning.trim().trim_matches('*').trim().to_string()));
-        }
-        replies
     }
 
     /// **The one packet that changes a job**, shared by `!job` and the NPC instructors.
@@ -1372,209 +1003,6 @@ impl Session {
             .get(skill_id)
             .map(|s| s.name.clone())
             .unwrap_or_else(|| format!("skill {skill_id}"))
-    }
-
-    /// `!buy <sn>` - **perform a real cash-shop purchase from the field.**
-    ///
-    /// # Why this exists at all
-    ///
-    /// The owner, 2026-08-24: *"we need a way to add Leaf Points (NX) in our server so we can
-    /// attempt to make purchases in the Cash Shop so we can finish that entire transaction
-    /// flow."* `!nx` is the first half. This is the second, and it is here rather than on the
-    /// `0x03E1` path for one reason: **inside the shop there is no way to report a success.**
-    /// Every `0x05AE` arm that clears the client's in-flight latch also puts a message on
-    /// screen, and the wallet packet re-triggers the purchase. `session/cashshop.rs` has the
-    /// addresses. So the shop refuses, and the sale happens here, where the answer is a chat
-    /// line that has been on a wire hundreds of times.
-    ///
-    /// # The argument is an SN, not an item id, and that is not pedantry
-    ///
-    /// `Commodity.img` sells the same item at several counts and prices - `130200000` is one
-    /// Megaphone for 100 NX and `130200001` is eleven for 1000, both item `5070000`. An item
-    /// id cannot name a sale. `gm-handbook/commodity.txt` lists all 159.
-    ///
-    /// **Every effect hangs off the transition.** `store::buy_cash_item` checks the balance,
-    /// debits it and places the item in one transaction; nothing here reports success unless
-    /// that returns `Ok`, and nothing here reports a price that was not actually taken.
-    pub(super) fn gm_buy(&mut self, arg: &str) -> Vec<Reply> {
-        let Some(claimed) = self.claimed() else {
-            return self
-                .gm_ack("!buy REFUSED: no character is claimed on this connection.".to_string());
-        };
-        let account_id = claimed.account_id;
-
-        let Some(Ok(sn)) = arg.split_whitespace().next().map(str::parse::<u32>) else {
-            return self.gm_ack(format!(
-                "!buy: {arg:?} is not a commodity serial. It is an SN, NOT an item id - the \
-                 same item is sold at several prices. gm-handbook/commodity.txt has all {}. \
-                 Try !buy 130200000 (1 Megaphone, 100 NX).",
-                self.config.commodity.len()
-            ));
-        };
-
-        let Some(row) = self.config.commodity.get(sn).cloned() else {
-            return self.gm_ack(format!(
-                "!buy REFUSED: SN {sn} is not a sale row. {} rows are loaded{}",
-                self.config.commodity.len(),
-                if self.config.commodity.is_empty() {
-                    " - regenerate with: python tools/dump_commodity.py"
-                } else {
-                    ""
-                }
-            ));
-        };
-        if !row.on_sale {
-            return self.gm_ack(format!(
-                "!buy REFUSED: SN {sn} ({}) has onSale 0 in the client's own data.",
-                row.name
-            ));
-        }
-        let Some(inv) = store::InventoryType::for_item(row.item_id) else {
-            return self.gm_ack(format!(
-                "!buy REFUSED: item {} is in no inventory tab, so nothing could hold it.",
-                row.item_id
-            ));
-        };
-
-        let item = if inv == store::InventoryType::Equip {
-            store::Item::equip(row.item_id)
-        } else {
-            store::Item::bundle(row.item_id, row.count)
-        };
-
-        match self.store.buy_cash_item(account_id, &item, row.price) {
-            Ok(placed) => {
-                // **Leaf Points, not NX.** This line said "for 100 NX ... 10000 NX left" on
-                // 2026-08-26 while the database correctly went 99,000 -> 98,900 LP. The
-                // purchase was right and only the sentence was wrong, which is the worst
-                // direction: a reader would have concluded the debit had not happened.
-                let lp = self.store.cash_wallet(account_id).unwrap_or_default().maple_points;
-                self.gm_ack(format!(
-                    "Bought SN {sn}: {}x {} ({}) for {} LP. Locker slot {}, {lp} LP left. \
-                     Period {} day(s). `!locker` lists it, `!locker {}` moves it into the \
-                     {inv:?} tab.",
-                    row.count,
-                    row.name,
-                    row.item_id,
-                    row.price,
-                    placed.slot,
-                    row.period_days,
-                    placed.slot
-                ))
-            }
-            // The refusal is reported rather than swallowed. `add_nx` and `buy_cash_item`
-            // both refuse instead of clamping, and a refusal nobody is told about is the
-            // exact shape of the repeated-quest bug.
-            Err(e) => self.gm_ack(format!(
-                "!buy FAILED and NOTHING changed - no NX taken, no item placed: {e}"
-            )),
-        }
-    }
-
-    /// `!locker` - list the cash locker. `!locker <slot>` - move that slot into the bag.
-    ///
-    /// # The move is two transactions, so it needs an undo
-    ///
-    /// The locker and the bag are separate stores. Taking an item out of one and failing to
-    /// put it in the other would simply destroy it, so the failure path puts it back with
-    /// `store::put_cash_item`, which costs nothing. If **that** fails too the item really is
-    /// gone, and the message says so in those words rather than reporting a tidy error - a
-    /// player who loses an item needs to know immediately, not on the next login.
-    pub(super) fn gm_locker(&mut self, arg: &str) -> Vec<Reply> {
-        let Some(claimed) = self.claimed() else {
-            return self
-                .gm_ack("!locker REFUSED: no character is claimed on this connection.".to_string());
-        };
-        let account_id = claimed.account_id;
-        let Some(chr) = self.claimed_character() else {
-            return self.gm_ack("!locker REFUSED: no character is claimed.".to_string());
-        };
-
-        let held = self.store.cash_locker(account_id).unwrap_or_default();
-        let Some(token) = arg.split_whitespace().next() else {
-            if held.is_empty() {
-                return self.gm_ack(
-                    "The cash locker is empty. `!nx 10000` then `!buy 130200000` puts \
-                     something in it."
-                        .to_string(),
-                );
-            }
-            let list = held
-                .iter()
-                .map(|l| {
-                    format!(
-                        "{}: {}x {} ({})",
-                        l.slot,
-                        l.item.kind.quantity(),
-                        self.item_name(l.item.item_id),
-                        l.item.item_id
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            let lp = self.store.cash_wallet(account_id).unwrap_or_default().maple_points;
-            return self.gm_ack(format!("Cash locker ({lp} LP): {list}. `!locker <slot>` takes one."));
-        };
-        let Ok(slot) = token.parse::<u16>() else {
-            return self.gm_ack(format!("!locker: {token:?} is not a slot number."));
-        };
-
-        let item = match self.store.take_cash_item(account_id, slot) {
-            Ok(i) => i,
-            Err(e) => return self.gm_ack(format!("!locker REFUSED and nothing moved: {e}")),
-        };
-        // **The guard that would have saved a client launch.** A pet id sent as a bundle
-        // kills this client - see net::inventory::is_pet. Put it back rather than hand it
-        // over; the locker is server-side and the client never sees what is in it.
-        if net::inventory::is_pet(item.item_id) {
-            let back = self.store.put_cash_item(account_id, &item);
-            return self.gm_ack(format!(
-                "!locker REFUSED: {} is a PET, and this server cannot build a pet item body                  yet - sending one as a bundle kills the client (it did, on 2026-08-26).                  It is back in the locker{}.",
-                item.item_id,
-                match back {
-                    Ok(l) => format!(", slot {}", l.slot),
-                    Err(e) => format!(" - EXCEPT IT WOULD NOT GO BACK: {e}. Say so"),
-                }
-            ));
-        }
-        let Some(inv) = store::InventoryType::for_item(item.item_id) else {
-            // Cannot happen for anything `!buy` placed, but the undo runs anyway rather than
-            // leaving the item in a variable that is about to go out of scope.
-            let _ = self.store.put_cash_item(account_id, &item);
-            return self.gm_ack(format!(
-                "!locker REFUSED: item {} is in no inventory tab. Put back in the locker.",
-                item.item_id
-            ));
-        };
-        let max_stack = self.config.shops.max_stack(item.item_id);
-
-        let placed = match self.store.add_item(chr.id, inv, &item, max_stack) {
-            Ok(rows) => rows,
-            Err(e) => {
-                return match self.store.put_cash_item(account_id, &item) {
-                    Ok(back) => self.gm_ack(format!(
-                        "!locker REFUSED: the {inv:?} tab would not take it ({e}). It is back \
-                         in the locker, slot {}.",
-                        back.slot
-                    )),
-                    Err(worse) => self.gm_ack(format!(
-                        "!locker: the bag refused it ({e}) AND THE LOCKER WOULD NOT TAKE IT \
-                         BACK ({worse}). ITEM {} IS LOST - say so.",
-                        item.item_id
-                    )),
-                };
-            }
-        };
-
-        let name = self.item_name(item.item_id);
-        let mut out = self.gm_ack(format!(
-            "Took locker slot {slot}: {}x {name} ({}) -> {inv:?} tab, slot {}",
-            item.kind.quantity(),
-            item.item_id,
-            placed.iter().map(|r| r.slot.to_string()).collect::<Vec<_>>().join(", ")
-        ));
-        out.extend(self.inventory_added_replies(inv, &placed, "GM !locker"));
-        out
     }
 
     /// `!item <itemId> [count]` - put an item in the bag, in the tab its id belongs to.
@@ -2181,24 +1609,78 @@ mod npc_reload_tests {
         let refused = notice_text(&out[1]);
         assert!(!counts.contains("REFUSED"), "the summary stays about the counts: {counts}");
         assert!(refused.contains("2 overlay row(s) REFUSED"), "{refused}");
-        assert!(counts.len() <= GM_COMMANDS.len(), "{} chars: {counts}", counts.len());
-        assert!(refused.len() <= GM_COMMANDS.len(), "{} chars: {refused}", refused.len());
+        // The bound used to be `GM_COMMANDS.len()` - "no longer than a notice known to draw".
+        // The help text was pruned to a third of its length on 2026-09-06, which would have
+        // made this test fail for a reason unrelated to the reload. The number it stood in for
+        // is kept instead: the pre-pruning help text, **525 characters**, drew in full in
+        // The owner's own screenshot that day, so that is the longest notice measured on a screen.
+        const LONGEST_NOTICE_SEEN_ON_SCREEN: usize = 525;
+        assert!(counts.len() <= LONGEST_NOTICE_SEEN_ON_SCREEN, "{} chars: {counts}", counts.len());
+        assert!(refused.len() <= LONGEST_NOTICE_SEEN_ON_SCREEN, "{} chars: {refused}", refused.len());
 
         // And the one good row was still applied - a refusal is per row, not per file.
         assert!(body_carries(&bystander.handle(&npc_click(1000))[0], "THE GOOD ROW"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `!help` and the dispatcher must agree. A help text missing a real command is the same
-    /// drift `GM_COMMANDS`' own doc warns about, in the other direction.
+    /// `!help` and the dispatcher must agree, **in both directions and for both lists**: every
+    /// word `!help` names is a command the dispatcher takes, and every command the owner asked to
+    /// remove on 2026-09-06 is neither listed nor dispatched.
     #[test]
-    fn the_help_text_lists_the_command_the_dispatcher_has() {
-        assert!(GM_COMMANDS.contains("!npcreload"), "{GM_COMMANDS}");
+    fn the_help_text_lists_exactly_the_commands_the_dispatcher_has() {
         let dir = scratch("help");
         let file = dir.join("npc-dialogue.txt");
         let (mut gm, _b, _config, _) = two_players(&file, false);
-        let ack = notice_text(&gm.handle(&gm_chat("!npcreload"))[0]);
-        assert!(!ack.contains("is not a command"), "{ack}");
+        let names = |text: &str| -> Vec<String> {
+            text.split_whitespace()
+                .filter_map(|w| w.strip_prefix('!'))
+                .map(|w| w.trim_end_matches(',').to_string())
+                .collect()
+        };
+        for word in names(GM_COMMANDS).into_iter().chain(names(PLAYER_COMMANDS)) {
+            // A command with a required argument answers with its own complaint; only the
+            // dispatcher's "is not a command" would mean the help text is lying.
+            let ack = gm.handle(&gm_chat(&format!("!{word}")));
+            // Only the notices: `!heal` also sends a stat change, and that is not text.
+            let said = ack
+                .iter()
+                .filter(|r| r.opcode == net::notice::CHAT_NOTICE)
+                .map(notice_text)
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(!said.contains("is not a command"), "!{word} is in the help text but not the dispatcher: {said}");
+        }
+        for gone in ["exprate", "mesorate", "droprate", "migsweep", "npcfx", "buff", "unbuff", "buy", "locker", "kit"] {
+            assert!(!GM_COMMANDS.contains(&format!("!{gone}")), "!{gone} was removed on 2026-09-06");
+            let said = notice_text(&gm.handle(&gm_chat(&format!("!{gone}")))[0]);
+            assert!(said.contains("is not a command"), "!{gone} still dispatches: {said}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **`!rates` and `!help` are for everyone; `!help` shows a player only what they may
+    /// run.** The owner, 2026-09-06. A player's `!help` names `!rates` and nothing a GM has, and a
+    /// player's `!item` is still said out loud like any other typed line.
+    #[test]
+    fn a_player_gets_rates_and_a_help_that_names_no_gm_command() {
+        let dir = scratch("public");
+        let file = dir.join("npc-dialogue.txt");
+        let (mut gm, mut player, _config, _) = two_players(&file, false);
+
+        let rates = notice_text(&player.handle(&gm_chat("!rates"))[0]);
+        assert!(rates.contains("EXP 1x"), "a player reads the rates: {rates}");
+
+        let help = notice_text(&player.handle(&gm_chat("!help"))[0]);
+        assert_eq!(help, PLAYER_COMMANDS);
+        assert!(!help.contains("!item") && !help.contains("!map"), "no GM word leaks: {help}");
+
+        let gm_help = notice_text(&gm.handle(&gm_chat("!help"))[0]);
+        assert_eq!(gm_help, GM_COMMANDS);
+
+        // Everything else a player types with a bang is chat, exactly as before.
+        let out = player.handle(&gm_chat("!item 2000000"));
+        assert!(out.iter().any(|r| r.opcode == net::userchat::USER_CHAT), "said out loud: {out:?}");
+        assert!(!out.iter().any(|r| r.opcode == net::notice::CHAT_NOTICE), "and no notice of any kind: {out:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1253,8 +1253,12 @@ impl Session {
             // above their own maximum.
             chr.max_hp += a.max_hp;
             chr.max_mp += a.max_mp;
-            chr.hp = chr.max_hp;
-            chr.mp = chr.max_mp;
+            // The refill goes to the ceiling the client draws, which is the base just
+            // raised PLUS a learned Max HP/MP Increase - `Session::pools`. The stat packet
+            // below still carries the base, because the client adds the percent itself.
+            let pools = self.pools(&chr);
+            chr.hp = pools.max_hp;
+            chr.mp = pools.max_mp;
             chr.ap += a.ap;
         }
         if let Err(e) = self.store.save_character_progress(&chr) {

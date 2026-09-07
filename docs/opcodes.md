@@ -655,8 +655,8 @@ the NPC, stamps it with a clock value and starts it. The packet's two branches i
 object because they are asymmetric: `v == 0` runs the identical allocate/construct/stamp
 sequence on every NPC already in the pool, and `v != 0` tears it down.
 
-Wired as `!npcfx on|off` and **tested: it is not the NPC appearance delay.** Decoded, wired,
-eliminated.
+Was wired as `!npcfx on|off` and **tested: it is not the NPC appearance delay.** Decoded, wired,
+eliminated - and the command itself was removed on 2026-09-06 once it had answered its question.
 
 ### `0x0467` — `SetNpcScriptable`, and `research/npc-spawn.md` misread it
 

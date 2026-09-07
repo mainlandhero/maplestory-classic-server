@@ -465,7 +465,10 @@ impl super::Session {
             return;
         }
         let hp = u32::try_from(chr.hp).unwrap_or(0);
-        let max_hp = u32::try_from(chr.max_hp).unwrap_or(0);
+        // The maximum the OTHER client should draw the bar against is the one this client
+        // draws for itself - base plus Max HP Increase - or a 447/447 member shows as
+        // over-full on a partner's screen. `Session::pools`.
+        let max_hp = self.pools(&chr).max_hp;
         let now = (hp, max_hp, here);
         if self.last_party_hp.as_ref() == Some(&now) {
             return;

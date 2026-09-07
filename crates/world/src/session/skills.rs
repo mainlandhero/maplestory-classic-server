@@ -186,8 +186,18 @@ impl Session {
             req.skill_id,
             next,
         ));
+        // `show_effect` is FALSE. The owner, 2026-09-06, with four of them stacked in their chat:
+        // *"Please also remove the 'skill has been activated' message, this behavior is not
+        // present in MapleStory."* Byte 1 of `0x0081` is what asks the client for that line
+        // ("<name> A skill has been activated.", strings 0xf6e/0xf6f) and for the level-up
+        // flourish; a point spent from the skill window gets neither in the real game.
+        //
+        // A passive raised here - Max HP Increase, say - needs nothing else from this
+        // handler: the server never carried the percent in a field, it reads the skill's
+        // level wherever it caps HP or MP (`Session::pools`), so the new ceiling is in force
+        // on the very next regen tick and the next potion.
         let mut out = vec![self.skill_reply(
-            net::skills::change_skill_record_result(true, true, &[change]),
+            net::skills::change_skill_record_result(true, false, &[change]),
             format!(
                 "skill {} raised {level} -> {next} (asked for {}, granted {granted}{}){scaling_warning}",
                 req.skill_id,

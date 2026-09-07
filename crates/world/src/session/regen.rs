@@ -191,7 +191,12 @@ impl Session {
         }
         // Nothing to restore: do not send, and do not arm a timer. A player who sits at full
         // health for an hour should cost exactly nothing.
-        if chr.hp >= chr.max_hp && chr.mp >= chr.max_mp {
+        //
+        // **"Full" is measured against the ceiling the CLIENT draws**, not the base in the
+        // record. The owner, 2026-09-06: a Swordsman with Max HP Increase at 15 stood at 358/447
+        // on screen while this line read `358 >= 358` and called them full - `session::pools`.
+        let pools = self.pools(&chr);
+        if chr.hp >= pools.max_hp && chr.mp >= pools.max_mp {
             self.next_regen_ms = None;
             return Vec::new();
         }
@@ -209,9 +214,11 @@ impl Session {
         // regeneration amount in this client's data to apply. Inventing one is the thing the
         // symmetry with MP most invites; `itemrecovery::mp_regen_percent` refuses the HP id
         // for the same reason.
-        let hp = chr.hp.saturating_add(REGEN_AMOUNT).min(chr.max_hp);
-        let mp_regen = self.mp_regen(chr.id, chr.max_mp);
-        let mp = chr.mp.saturating_add(mp_regen.amount).min(chr.max_mp);
+        let hp = chr.hp.saturating_add(REGEN_AMOUNT).min(pools.max_hp.max(chr.hp));
+        // The 1% is of the max the client shows, which is the one a learned Max MP Increase
+        // has already raised - the tooltip says "of Max MP", and that is the number on screen.
+        let mp_regen = self.mp_regen(chr.id, pools.max_mp);
+        let mp = chr.mp.saturating_add(mp_regen.amount).min(pools.max_mp.max(chr.mp));
         let healed_hp = hp - chr.hp;
         let healed_mp = mp - chr.mp;
         chr.hp = hp;
@@ -272,7 +279,7 @@ impl Session {
             .build(),
             what: format!(
                 "StatChanged: idle regen +{healed_hp} hp +{healed_mp} mp -> {}/{} hp, {}/{} mp{}{}",
-                chr.hp, chr.max_hp, chr.mp, chr.max_mp,
+                chr.hp, pools.max_hp, chr.mp, pools.max_mp,
                 match (healed_hp > 0, healed_mp > 0) {
                     (true, true) => "",
                     (true, false) => " - MP is full, so the packet does not mention it",
@@ -287,12 +294,12 @@ impl Session {
                 if mp_regen.bonus > 0 {
                     format!(
                         " [Improved MP Recovery: +{} MP on top of the flat {REGEN_AMOUNT}, {}% of {} max MP]",
-                        mp_regen.bonus, mp_regen.percent, chr.max_mp
+                        mp_regen.bonus, mp_regen.percent, pools.max_mp
                     )
                 } else if mp_regen.percent > 0 {
                     format!(
                         " [Improved MP Recovery is learned but {}% of {} max MP floors to 0 - the flat {REGEN_AMOUNT} is the whole tick]",
-                        mp_regen.percent, chr.max_mp
+                        mp_regen.percent, pools.max_mp
                     )
                 } else {
                     String::new()
@@ -566,6 +573,48 @@ mod tests {
         // assertion below would read as "the bonus is absent" and pass for the wrong reason.
         assert_eq!(store.skill_level(chr.id, skill_id).unwrap(), level, "the skill row is set");
         (s, store, chr.id)
+    }
+
+    /// **Max HP Increase raises the ceiling the server regenerates TO, not the amount.**
+    ///
+    /// The owner, 2026-09-06: Cobalt at 358/447 was not regenerating because the server compared
+    /// 358 against its own 358. Base 100, skill at 15 (+25%): a character at 100 is NOT full,
+    /// ticks to 110, and stops at 125 - while the `0x007C` carries the HP past the base, and
+    /// the record's `max_hp` stays 100 because the client adds the percent itself.
+    #[test]
+    fn max_hp_increase_raises_the_ceiling_the_server_regenerates_to() {
+        if !std::path::Path::new("../../gm-handbook/skills.txt").exists() {
+            return; // generated, gitignored
+        }
+        let (mut s, store) = hurt_session();
+        let mut cfg = (*s.config).clone();
+        cfg.firstjob = crate::firstjob::CombatTable::load(std::path::Path::new("../../gm-handbook/skills.txt"));
+        s.config = Arc::new(cfg);
+        let mut chr = s.claimed_character().unwrap();
+        chr.hp = 100; // at the BASE maximum
+        chr.mp = 100;
+        store.save_character_progress(&chr).unwrap();
+        let id = chr.id;
+
+        // Unlearned: 100/100 is full and nothing ticks.
+        s.clock_ms = 10_000;
+        assert!(!ticked(&s.regen_tick(10_000)), "full against the base: no tick");
+
+        store.set_skill_level(id, super::super::pools::MAX_HP_INCREASE, 15).unwrap();
+        s.note_activity(); // restart the idle clock so the first tick is one interval out
+        s.clock_ms = 10_000;
+        let out = s.regen_tick(20_000);
+        assert!(ticked(&out), "learned: 100 of 125 is not full - {out:?}");
+        let rec = |store: &Arc<Store>| store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap();
+        assert_eq!(rec(&store).hp, 110, "past the base maximum");
+        assert_eq!(rec(&store).max_hp, 100, "the base is untouched - the client adds the 25%");
+
+        // Up to the ceiling and no further.
+        for t in [30_000u64, 40_000, 50_000] {
+            let _ = s.regen_tick(t);
+        }
+        assert_eq!(rec(&store).hp, 125, "capped at 100 + 25");
+        assert!(!ticked(&s.regen_tick(60_000)), "and 125/125 is full");
     }
 
     /// **An unlearned character regenerates exactly the flat amount, unchanged.**

@@ -439,6 +439,17 @@ screen against the `max_mp` this server put in its own stat packet in `world.log
 Both outcomes are actionable and they point opposite ways, which is what makes it worth a
 launch.
 
+> **ANSWERED 2026-09-06, on the HP twin, by the owner's screenshot.** Cobalt (job 100, level 18)
+> with `1000001` Max HP Increase at 15: `maplecw.db` held `hp 358, max_hp 358`, `world.log`
+> read *"idle regen +0 hp ... 358/358 hp - HP is full"*, and the screen drew **358 / 447**.
+> `358 + ⌊358 × 25 / 100⌋ = 447` (447.5 would be 448, so the client **floors**). **The client
+> applies it locally**, the second outcome - and the server, which had been comparing HP
+> against its own 358, was calling them full and not regenerating. Fixed the same day:
+> `world::itemrecovery::boosted_max` is the expression, `world::session::pools` applies it to
+> every ceiling the server caps against (regen, potions, Recovery, level-up refill, `!heal`,
+> quest set-HP, `!resetap`, the party bar), and the stat packet keeps sending the base. The
+> MP twin is **[D]** by symmetry and has not been watched.
+
 **B. Is `processtype 113` really a toggle on screen?** Once Magic Guard has a stat bit, cast it
 twice. If the second cast turns the icon off rather than refusing or re-granting, the toggle
 reading is confirmed and `buff_level`'s `seconds` field needs a "no duration" case rather than
