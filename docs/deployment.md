@@ -155,7 +155,7 @@ machine versus server machine, not service versus service:
 ```text
   The owner's PC                          homelab
   ---------                          -------
-  launcher  ── TLS, pinned cert ───▶ auth        (crates/auth,   TCP 8080)
+  launcher  ── TLS, pinned cert ───▶ auth        (crates/auth,   TCP 8480)
   client    ── Maple protocol ─────▶ login       (crates/login,  TCP 8484)
                                      channel     (crates/channel, later)
                                      store       (crates/store, SQLite file)

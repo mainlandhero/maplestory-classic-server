@@ -20,7 +20,7 @@ powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1" -Set
 ```
 
 It builds, installs the hook into `client-patched/`, starts **the servers** - `maplecw-login`
-on 8484, `maplecw-world` on 8485 and 8486, `maplecw-auth` on 8080 - and starts **the
+on 8484, `maplecw-world` on 8485 and 8486, `maplecw-auth` on 8480 - and starts **the
 launcher**. Sign in there, press Start Game. **Login is enforced since 2026-09-05**: a client
 that did not come through a launcher sign-in is refused at the login screen (the
 `notRegisteredID` notice), not served a fallback account - the old default, which opened the
@@ -278,7 +278,7 @@ What did **not** change: the game socket still carries no credential. What chang
 exposure: forwarded to the internet, a stranger reaching 8484 is no longer served as anyone
 by default - only a connection attributed to a live sign-in is served, and attribution by
 address is the weakest of the three rules. `SERVER-README.txt` says so where the ports are
-listed. Ports, all TCP: 8080 (sign-in, TLS), 8484 (login), 8485 and up (one per channel).
+listed. Ports, all TCP: 8480 (sign-in, TLS), 8484 (login), 8485 and up (one per channel).
 
 ### What works — seen on a screen
 

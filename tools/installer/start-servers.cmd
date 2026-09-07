@@ -13,16 +13,22 @@ rem  elevation instead of raising a second prompt of its own.
 rem ===========================================================================
 
 rem  ---- SETTINGS -----------------------------------------------------------
-rem  The sign-in service's port. 8080 is a popular port and something else on
-rem  this machine may already hold it - a proxy, a dev server, IIS Express. When
-rem  that happens maplecw-auth cannot bind, exits a few seconds after starting,
-rem  and the window says so in red with the bind error from auth.log.err.
+rem  The sign-in service's port. 8480 since 2026-09-07, and it was 8080.
 rem
-rem  Change the number here, and then BOTH of these must match it:
-rem    - auth_port = "<port>" in maplecw-launcher.toml on every client machine
-rem      (or install.ps1 -AuthPort <port>)
+rem  8080 is one of the most contended ports on a Windows box - a proxy, a dev
+rem  server, IIS Express - and when something holds it maplecw-auth cannot bind,
+rem  exits a few seconds after starting, and the window says so in red with the
+rem  bind error from auth.log.err. Moving it then cost a change here AND on every
+rem  client, so the DEFAULT moved instead: 8480 is now what crates\auth,
+rem  start-server.ps1 and the launcher all use with nothing set anywhere.
+rem
+rem  Leave this alone unless 8480 is taken too. If you do change it, BOTH of
+rem  these must match:
+rem    - the launcher's "Sign-in port" box on every client (it is remembered
+rem      after the first successful Start Game), or auth_port in
+rem      maplecw-launcher.toml
 rem    - the inbound firewall rule on this machine
-set "AUTHPORT=8080"
+set "AUTHPORT=8480"
 rem  --------------------------------------------------------------------------
 
 set "HERE=%~dp0"

@@ -16,7 +16,7 @@ produces **`out\MapleCW-server.zip`** (about 8 MB). Copy that one file. Its cont
 |---|---|
 | `bin\maplecw-login.exe` | login and character select, listens on **TCP 8484** |
 | `bin\maplecw-world.exe` | one channel per process, **TCP 8485, 8486** (two channels by default; `-Channels N` adds one port each) |
-| `bin\maplecw-auth.exe` | sign-in over TLS, **TCP 8080**; the launcher talks to this |
+| `bin\maplecw-auth.exe` | sign-in over TLS, **TCP 8480**; the launcher talks to this |
 | `bin\maplecw-useradd.exe` | accounts, GM flag, registration and recovery codes from the console |
 | `gm-handbook\` | game tables generated from the client's WZ (maps, mobs, items, portals, footholds, quests). The world server reads these by relative path |
 | `data\` | authored server data: `drops.txt`, `exp-curve.txt`, `npc-dialogue.txt`, `quest-scripts.txt`, `shops.txt` |
@@ -53,7 +53,7 @@ do need the Visual C++ Redistributable - see [the client checklist](client-machi
    (`!registrationcode`) or here (`--registration-code`).
 3. Open the inbound ports on the server's own Windows Firewall:
    ```
-   netsh advfirewall firewall add rule name="MapleCW server" dir=in action=allow protocol=TCP localport=8080,8484,8485,8486
+   netsh advfirewall firewall add rule name="MapleCW server" dir=in action=allow protocol=TCP localport=8480,8484,8485,8486
    ```
 4. Double-click `start-servers.cmd`. Leave the window open; closing it stops everything.
 5. Read the fingerprint the window prints on the first start:
@@ -63,7 +63,7 @@ do need the Visual C++ Redistributable - see [the client checklist](client-machi
    It is also in `auth-cert-fingerprint.txt` beside the database. **Every client needs this
    value** (see the client checklist). Delete the two `.pem` files and the next start mints a
    new pair, and every client's pin stops matching until it is updated.
-6. On the router, forward **TCP 8080, 8484, 8485 and 8486** to the server (one more per extra
+6. On the router, forward **TCP 8480, 8484, 8485 and 8486** to the server (one more per extra
    channel). Nothing uses UDP.
 
 The server needs no address configured. It binds `0.0.0.0` and decides **per connection**

@@ -55,7 +55,7 @@ Beside the launcher. `install.ps1` writes it; by hand it is four lines:
 ```
 server_ip        = "203.0.113.5"        the server's LAN address, its public one, OR A DNS NAME
 port             = "8484"               the login server
-auth_port        = "8080"               the sign-in service - MUST match the server
+auth_port        = "8480"               the sign-in service - MUST match the server
 auth_fingerprint = "sha256:<64 hex>"    REQUIRED - see below
 ```
 
@@ -111,7 +111,7 @@ a recovery code (`!recoverycode <email or name>`).
 
 ## 5. Ports the client must be able to reach
 
-All TCP, all outbound from the client: **8080** (sign-in), **8484** (login), **8485, 8486**
+All TCP, all outbound from the client: **8480** (sign-in), **8484** (login), **8485, 8486**
 (the two default channels; one more per extra channel). Nothing uses UDP. On a home router
 nothing needs opening on the client's side.
 
