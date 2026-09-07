@@ -162,67 +162,38 @@
     line (bit 84, [D] - icon without the number means 83 is next). Iron Will is SELF-ONLY in
     this client's data (no lt/rb rectangle) - report it as expected, not as a bug.
 
-    T17 (2026-09-06) - IS THE CORRUPTION OURS? The control that has NEVER been run, and it is
-    the one the owner asked for: "there must be something we're doing that's causing this".
-    research/is-the-corruption-ours-2026-09-06.md. The background: the sentry run that same
-    evening caught the write TWICE in six minutes and the second slot was freed 720 ms later
-    for the 0xC0000374 death - chain watched live, offset localised to (body+4)-8, a refcount
-    through a BSTR data pointer [D]. But EVERY archived client run - 75 of 75 - carried our
-    hook, so nothing on disk separates "this client corrupts its heap" from "it corrupts its
-    heap while we are inside it".
+    T17 (2026-09-06). THE SENTRY RUN, AND A CONTROL THAT IS BLOCKED. Just double-click
+    start-servers.cmd - it already passes -SetFieldProbe -ServersOnly -PoolSentry - then
+    maplecw-launcher.exe, sign in, Start Game. Cobalt, one map with mobs, STAND STILL fifteen
+    minutes, CLOSE THE CLIENT YOURSELF. The dump cap is -SentryDumps, now 4: the 2026-09-06
+    run caught the write TWICE and its cap of 1 spent the only dump on the first catch, so the
+    catch that was freed 720 ms later into the 0xC0000374 left nothing but a log block.
 
-    THE RUN. One launch, servers and client together, with every OPTIONAL patch off:
+    WHAT THAT RUN SETTLES, and it is worth the launch on its own: both catches landed a few
+    hundred ms BEFORE a 0x013D census send and were exactly six 30 s census intervals apart.
+    Two samples are not a period. A THIRD CATCH SETTLES IT. So for each catch, open world.log
+    at its time and read the gap to the next 0x013D.
 
-      powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
-        -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry
-        -ClientToken AAAAAAAAAAAAAAAAAAAAAAAAAA
-        -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
+      three catches, each <300 ms before a 0x013D   the census path is where to look next
+      catches with no 0x013D near them              coincidence; the guard-page BUILD
+                                                    (heap-corruption-2026-09-06.md §3.2) is
+                                                    then the only route to a WHO
 
-    **-ClientToken is why the first two attempts hung on "Connecting to server".** Enumerated
-    over 15 archived login logs: 9 of 9 runs whose client carried a token sent 0x0078 and got a
-    migrate; 3 of 3 runs without one sent 0x00C0 CLIENT_AUTH_FAILURE_REPORT instead and never
-    sent 0x0078 at all. Only the launcher can mint a token the server accepts, so this one is
-    wrong by construction - and a wrong token DOWNGRADES to -FallbackAccount rather than being
-    refused, so the account served is the same either way. It fills the CLIENT's field, which
-    is the thing under test. If the client still hangs with it, the token is not the cause and
-    the direct path differs some other way - say which, that is a result too.
+    WHAT THAT RUN DOES NOT SETTLE: whether any of this is OUR fault. Every archived client run,
+    75 of 75, carried our hook, so nothing on disk separates "this client corrupts its heap"
+    from "it corrupts it while we are inside it". The control for that needs the launcher's
+    patch set reduced, and the LAUNCHER writes the probe and session markers with its own
+    defaults - so it is a change to crates/launcher/src/client.rs, not a command line.
 
-    It also means the identity write is back in this run. That does NOT weaken the control:
-    identity.rs was added 2026-08-30 and the family's first death is 2026-08-19, so it was
-    already exonerated by eleven days (research/is-the-corruption-ours-2026-09-06.md §2). What
-    the run still tests is create=on, the two extra watches and the multiclient hooks.
-
-    **-SetFieldProbe is in that line because it is NOT optional and it is NOT a client patch.**
-    It is a WORLD-SERVER flag: without it Session::handle returns nothing for every packet and
-    the client hangs on "Connecting..." after you pick a character - which is exactly what
-    happened on the first attempt at this run, 2026-09-06 23:27, because the command handed over
-    left it out. It does not weaken the control: -SetFieldProbe only substitutes the default
-    watch set when -Probe was NOT passed explicitly (line ~1173), and this line passes it.
-
-    -DirectClient is the point: the LAUNCHER writes the probe and session markers with its own
-    defaults, so the launcher path cannot run this control. This drops three things at once -
-    the two extra int3 watches, create=on and the multiclient hooks - which is correct for a
-    CONTROL: if catches continue, all three are cleared in one launch. The identity write stays,
-    because without a token the client will not select a character at all, and it was already
-    exonerated by date. 1415db360:ret and 141b2a280:rdx=0 STAY; without
-    the first the client __fastfails at ~37 s on a reachability check that overruns its own stack
-    buffer, and without the second the login dialog blocks the tick.
-
-    Then: Cobalt, one map with mobs, STAND STILL fifteen minutes, and CLOSE THE CLIENT YOURSELF.
-
-      catches at ~1 per 3 min   our optional patches are innocent; the bug is the client's own
-                                in our network environment. Then the only route left is the
-                                guard-page BUILD (heap-corruption-2026-09-06.md §3.2)
-      no catch in 15 minutes    one of the four dropped patches is implicated. Bisecting them is
-                                three more launches, and it would be the first time anything we
-                                do has been tied to this
-      each catch within ~300 ms BEFORE a 0x013D in world.log
-                                §4's lead becomes a finding - both 2026-09-06 catches did this
-                                and were exactly six 30 s census intervals apart. TWO SAMPLES
-                                ARE NOT A PERIOD; a third settles it
-
-    The dump cap is now -SentryDumps, default 4. Last run's cap of 1 spent its only dump on the
-    first catch and the second - the one that killed the client - left only its log block.
+    DO NOT retry -DirectClient for this. It cost three launches on 2026-09-06 and never
+    reached the world; research/is-the-corruption-ours-2026-09-06.md §5 has the table. Two of
+    those were my errors (-SetFieldProbe is a WORLD flag, not a client patch, and leaving it
+    out hangs the client on "Connecting to server"), and the third was a RETRACTION: I read a
+    9-of-9 correlation between the client token and character selection off the fifteen most
+    recent login logs, and the whole 2026-08-19..21 archive breaks it - dozens of runs with no
+    token, sending 0x00C0, selected characters fine. Worse, 0x0078=0 also means "nobody clicked
+    a character", so the count could not tell a refusal from an idle screen. CLAUDE.md's "the
+    filter was a timestamp" and "a summary line is not a check", in one mistake.
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
@@ -1842,34 +1813,23 @@ function Show-TestPlan {
         Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
-        Write-Host '    0i. IS THE CORRUPTION OURS? The control that has NEVER been run.'
-        Write-Host '       75 of 75 archived client runs carried our hook, so no measurement here'
-        Write-Host '       separates "this client corrupts its heap" from "it corrupts it while'
-        Write-Host '       we are inside it". This run is the separation. It needs -DirectClient:'
-        Write-Host '       the LAUNCHER writes the probe/session markers with its own defaults.'
-        Write-Host '         -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry'
-        Write-Host '         -ClientToken AAAAAAAAAAAAAAAAAAAAAAAAAA'
-        Write-Host '         -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"'
-        Write-Host '       Two flags there are NOT client patches and are NOT optional, and'
-        Write-Host '       leaving either out hangs the client on "Connecting to server":'
-        Write-Host '        -SetFieldProbe is a WORLD flag; without it the channel answers'
-        Write-Host '          nothing at all. It leaves -Probe alone when -Probe is passed.'
-        Write-Host '        -ClientToken fills the CLIENT identity field. 9 of 9 archived runs'
-        Write-Host '          carrying a token sent 0x0078; 3 of 3 without one sent 0x00C0'
-        Write-Host '          AUTH_FAILURE instead and never selected. The token is wrong by'
-        Write-Host '          construction and downgrades to -FallbackAccount, so the account'
-        Write-Host '          served is unchanged. If it STILL hangs, the token is not the'
-        Write-Host '          cause and the direct path differs some other way - a result.'
-        Write-Host '       Drops 3 things (2 watches, create=on, the multiclient hooks); the'
-        Write-Host '       identity write stays and was already exonerated by date. Correct'
-        Write-Host '       for a control - if catches continue, all three are cleared in one'
-        Write-Host '       launch. Cobalt, a map with mobs, STAND STILL'
-        Write-Host '       15 min, close the client yourself. Then read the hook log:'
-        Write-Host '         catches at ~1/3 min  our patches are innocent; next is the guard-page'
-        Write-Host '                              BUILD, the only thing that can name the writer'
-        Write-Host '         no catch in 15 min   one of the 3 is implicated - bisect, 2 launches'
-        Write-Host '         catch <300 ms before a 0x013D in world.log  the census lead becomes a'
-        Write-Host '                              finding (both 9-06 catches did, 6 intervals apart)'
+        Write-Host '    0i. THE SENTRY RUN. start-servers.cmd already arms it, so this run IS'
+        Write-Host '       it - the dump cap is 4 now, up from the 1 that spent its only dump'
+        Write-Host '       on the first of two catches on 9-06. Cobalt, a map with mobs, STAND'
+        Write-Host '       STILL 15 min, close the client yourself.'
+        Write-Host '       THE QUESTION A THIRD CATCH ANSWERS: both 9-06 catches landed a few'
+        Write-Host '       hundred ms BEFORE a 0x013D census send, exactly six 30 s intervals'
+        Write-Host '       apart. Two samples are not a period. For each catch in the hook log,'
+        Write-Host '       open world.log at that time and read the gap to the next 0x013D.'
+        Write-Host '         3 catches, each <300 ms before one  look at the census path next'
+        Write-Host '         catches with no 0x013D near them    coincidence; the guard-page'
+        Write-Host '                                            BUILD is the only route to a WHO'
+        Write-Host '       WHAT IT CANNOT ANSWER: whether any of this is OURS. 75 of 75 archived'
+        Write-Host '       runs carried the hook. That control needs the LAUNCHER to write a'
+        Write-Host '       smaller patch set - a change to crates/launcher/src/client.rs, not a'
+        Write-Host '       command line. DO NOT retry -DirectClient: 3 launches on 9-06, never'
+        Write-Host '       reached the world, and one of the three produced a RETRACTION.'
+        Write-Host '       research/is-the-corruption-ours-2026-09-06.md section 5.'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'

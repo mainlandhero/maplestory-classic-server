@@ -184,92 +184,89 @@ sitting this close to any given moment. `CLAUDE.md`'s whole section on burst-as-
 this is a set to enumerate on the next run, not a conclusion. The prediction it makes is sharp
 and cheap - **if the mechanism is census-adjacent, catches will keep landing in the few hundred
 ms before a `0x013D`** - and three catches would settle it.
+## 5. The experiment, three failed launches, and a retraction
 
-## 5. The experiment that answers the owner's question
+The control in §1 is still the run worth doing. Getting it launched cost the owner **three client
+runs on 2026-09-06** and it has not been launched yet. What those three establish is written
+down here because two of them are my errors and one of them is a retraction.
 
-One launch, and it is the control that has never been run.
+### 5.1 Attempts 1 and 2: a world-server flag that reads like a client patch
+
+The command was assembled from *"which client patches do we drop"* and therefore omitted
+**`-SetFieldProbe`**, which is not a client patch at all. It is a world-server flag, and
+without it `Session::handle` returns nothing for every packet, so the channel answers nothing
+and picking a character hangs on "Connecting to server". `[L]` - `login.log` 03:26:56 and
+03:31:29 both show the character list going out and no `0x0078
+CLIENT_SELECT_CHARACTER_REQUEST` ever arriving; `world.log` is 35 lines of startup banner.
+
+The script's own `.NOTES` says *"-SetFieldProbe is NOT optional"* at line 42 and the branch
+without it prints six red lines naming this exact symptom. Adding it did **not** fix the hang.
+
+### 5.2 Attempt 3, and the retraction: the client token was not it
+
+Between attempts 2 and 3 I counted `0x0078` against the client token over **the 15 most recent
+archived login logs** and reported a perfect correlation: 9 of 9 runs carrying a token selected
+a character, 3 of 3 without one sent `0x00C0 CLIENT_AUTH_FAILURE_REPORT` instead and never
+selected. `-ClientToken` was added to test it.
+
+**Attempt 3 carried the token and hung in exactly the same place.** `[L]` - `login.log`
+03:38:49 logs `identity="AAAAAAAAAAAAAAAAAAAAAAAAAA" (26 bytes)`, the `0x00C0` is gone, and
+`0x0078` is still absent.
+
+**The correlation was an artifact of the window, and widening it destroys it.** Over every
+archived login log rather than the newest fifteen: `[L]`
 
 ```text
-powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
-  -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry
-  -ClientToken AAAAAAAAAAAAAAAAAAAAAAAAAA
-  -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
+login-20260819-220418 .. login-20260821-*   token=0  0x00C0=1  0x0078=1  0x0011=1
 ```
 
-### 5.1 Two flags in that line are not client patches, and leaving either out hangs the client
+Dozens of runs from 2026-08-19 to 2026-08-21 carried **no token**, sent **`0x00C0`**, and
+selected a character perfectly well - and they were direct-client runs, because the launcher
+did not exist yet. So neither the missing token nor the auth-failure report blocks selection.
 
-Both were found by handing the owner a command that did not work, twice.
+**And the instrument was worse than wrong, it was ambiguous.** `0x0078 = 0` does not mean the
+client refused; it also means **nobody clicked a character**. `login-20260901-015404` carries a
+token *and* has `0x0078 = 0`. Most of the zero rows are short probe runs. The count I built the
+finding on cannot distinguish a refusal from an idle character screen, and I did not check that
+before reporting it as 10 for 10.
 
-**`-SetFieldProbe`** is a world-server flag. Without it `Session::handle` returns nothing for
-every packet and the channel answers nothing at all. The script's `.NOTES` says *"NOT
-optional"* and the branch without it prints six red lines naming this exact symptom.
+This is `CLAUDE.md`'s *"the filter was a timestamp"* rule, and its *"a summary line is not a
+check"* rule, in one mistake. The fix was there for the cost of one wider `ls`.
 
-**`-ClientToken`** fills the client's own identity field. This one was not documented anywhere,
-and it is the more interesting of the two. Counted over 15 archived login logs: `[L]`
+### 5.3 What is actually known about the direct path
 
-| | carried a token | sent `0x0078` select | got `0x0011` migrate |
-|---|---:|---:|---:|
-| 9 runs, all through the launcher | 9 | 9 | 9 |
-| 3 runs, no token, each sending `0x00C0 CLIENT_AUTH_FAILURE_REPORT` | 0 | **0** | **0** |
-| 2 runs that never reached a character list | 0 | 0 | 0 - say nothing either way |
+| | create=on | multiclient | token | full probe | selected? |
+|---|---|---|---|---|---|
+| 2026-08-19 .. 08-21, many runs | n/a | n/a | no | yes | **yes** |
+| 2026-09-05 21:10 | yes | yes (stale marker) | no | yes | **no** |
+| 2026-09-06 23:27 | no | no | no | minimal | **no** |
+| 2026-09-06 23:31 | no | no | no | minimal | **no** |
+| 2026-09-06 23:38 | no | no | **yes** | minimal | **no** |
+| every launcher run | yes | yes | yes | yes | **yes** |
 
-Ten for ten among the runs that reached a character list. The failure is not new: 2026-09-05
-21:10 is the same shape as both attempts on 2026-09-06 - character list drawn, Cobalt picked,
-`0x00C0` sent instead of `0x0078`, `world.log` never touched. `[L]`
+`[L]` for the rows. Direct runs **used to work** and stopped somewhere between 2026-08-21 and
+2026-09-05; login enforcement landed 2026-09-05. The 2026-09-05 21:10 run had everything except
+the token and failed, and attempt 3 had the token and nothing else and failed, so **no single
+one of these four is sufficient on its own** and the combination has not been tried. `[D]`
 
-**It is confounded and the flag is the discriminator.** Every token run is a launcher run, so
-"no token" and "direct client" cannot be separated by counting. Only the launcher can mint a
-token the server accepts, so `-ClientToken` writes one that is **wrong by construction** - and
-the login server's own rule is that a wrong token *downgrades* to the fallback account rather
-than being refused, so the account served is unchanged. `[L]` If the client then selects a
-character, what it checks is its own field. If it still hangs, the token is not the cause and
-the direct path differs some other way, which is also a result.
+**I am not spending a fourth launch on it.** The direct path is a means, not the question, and
+three launches have bought one retraction and one flag.
 
-**The identity write is therefore back in the run, and that does not weaken the control.** §2
-already cleared it by date: `identity.rs` is eleven days younger than the family's first death.
-What this run still tests is `create=on`, the two extra watches and the multiclient hooks.
+### 5.4 What to run instead, and it needs no new configuration
 
-**`-SetFieldProbe` is not a client patch and is not optional.** It is a world-server flag;
-without it `Session::handle` returns nothing for every packet and the client hangs on
-"Connecting..." after a character is picked. The first attempt at this run, 2026-09-06 23:27,
-did exactly that, because the command written into both plan copies and into this section left
-it out. `[L]` - `login.log` shows the character list going out at `03:26:56.690` and then no
-`0x0078 CLIENT_SELECT_CHARACTER_REQUEST` at all, against the archived working sequence
-`0x0078 -> 0x0011 MIGRATE_COMMAND`, and `world.log` has 35 lines, all of them startup banner.
+`start-servers.cmd` already passes `-SetFieldProbe -ServersOnly -PoolSentry`, so the ordinary
+path arms the sentry: **double-click it, then `maplecw-launcher.exe`, sign in, Start Game.**
+`[L]` With `-SentryDumps` now defaulting to 4 that is a full sentry run on the path that
+demonstrably works.
 
-It does not weaken the control. `-SetFieldProbe` substitutes the default four-watch probe set
-**only when `-Probe` was not passed explicitly**, and this command passes it, so the client
-still runs with just the two mandatory patches. Everything else the flag touches is the world
-server's own arguments and what the plan prints.
+It is **not** the patch control - it carries the launcher's whole patch set - so it does not
+answer §0's question. What it does answer is §4, for free: **three catches settle whether the
+damage lands beside the 30-second census**, and that is the only lead in this file that a
+single ordinary run can turn into a finding.
 
-The lesson is the file's own: this script's `.NOTES` said *"-SetFieldProbe is NOT optional"* at
-line 42 and prints a red six-line warning on the branch without it. A command assembled from
-the patch list rather than from the run's requirements dropped it anyway, and cost a launch.
-
-`-DirectClient` is not a detail: **the launcher writes the probe and session markers with its
-own defaults**, so the ordinary launcher path cannot run this control at all. That one switch
-drops the two extra `int3` watches, `create=on`, the identity write and - after the fix
-committed alongside this file - the multiclient hooks. `1415db360:ret` and `141b2a280:rdx=0`
-stay; without them the client dies at 37 s and the login dialog blocks. `-PoolSentry` now
-writes `dumps=4` rather than the cap of 1 that spent last run's only dump on the first of two
-catches.
-
-Then Cobalt, one map with mobs, stand still for fifteen minutes, and **close the client
-yourself** - a deliberate end keeps the sample unbiased.
-
-**One stale marker nearly ruined this before it ran.** `maplecw-hook.multiclient` is written by
-the launcher and deleted by nothing; the copy in `client-patched\` was twelve days old, so a
-`-DirectClient` run would have inherited the `FindWindow` and `CreateMutex` hooks it is supposed
-to exclude. `[L]` The script now removes it on that path. A control that quietly carries one of
-the things it excludes is not a control, and this one would have looked clean doing it.
-
-| outcome | reading |
-|---|---|
-| catches at the same rate (~1 per 3 min) | our optional patches are innocent and the bug is the client's own, in our environment. The guard-page build is the only way forward |
-| no catches in 15 min | one of the three dropped patches is implicated, and bisecting them is two more launches |
-| catches, and each within ~300 ms before a `0x013D` | §4 becomes a finding and the search narrows to the census path |
-
-What it still cannot do is compare against retail. Nothing available here can.
+Running the patch control at all needs the launcher to stop writing the probe and session
+markers with its own defaults. That is a change to `crates/launcher/src/client.rs`, not a
+command line, and it should be made deliberately rather than worked around a fourth time.
 
 ## 6. What could not be established
 
