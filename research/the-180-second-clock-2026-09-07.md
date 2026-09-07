@@ -79,6 +79,31 @@ At all four moments, in the same logs: `[L]`
 * **no socket event** - one `SOCKET` line at connect and one at close, nothing between;
 * **every thread parked in `ntdll`** at the moment of confirmation, as before.
 
+## 3a. The repair works: 26 minutes, seven catches, seven repairs, no death
+
+First run with `-SentryRepair` (process 249464, 2026-09-07 00:40 to 01:06). `[L]`
+
+```text
+#1 00:46:52.671                    #5 00:58:52.744  +179.965
+#2 00:49:52.714  +180.043          #6 01:01:53.763  +181.019
+#3 00:52:52.715  +180.001          #7 01:04:53.740  +179.977
+#4 00:55:52.779  +180.064
+POOL SENTRY alive 1561s: 7 confirmed finding(s) ... 7 header(s) repaired
+CLIENT FAULT: none.   REPAIR REFUSED: none.   Closed by hand.
+```
+
+**Seven repairs, zero refusals, no `0xC0000374`, and the client closed cleanly.** The
+comparable session the night before - same map, same idle, same client, no repair - died at 23
+minutes on exactly the shutdown free this is meant to survive. `[L]` One session is not proof
+that the mitigation always holds, and it is a race by construction, but the prediction it made
+came back true on its first outing.
+
+**The one long interval is evidence *for* the mechanism, not against it.** Five of the six gaps
+sit within 0.07 s of 180.000; #6 is 1.019 s late and **the phase stays shifted afterwards**
+(#7 is 179.977 after it, not 178.96 back onto the old grid). That is exactly what §5a's template
+does: the gate re-arms `LAST := now` at the *firing* instant, so a frame the client was late to
+run moves every subsequent firing with it. A fixed-origin timer could not do that. `[D]`
+
 ## 4a. Is it our scrolling banner? No, and the test is worth keeping
 
 The owner, 2026-09-07: *"Does this have anything to do with our scrolling message? Since that's the
