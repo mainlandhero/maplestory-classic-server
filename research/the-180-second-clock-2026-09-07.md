@@ -79,6 +79,57 @@ At all four moments, in the same logs: `[L]`
 * **no socket event** - one `SOCKET` line at connect and one at close, nothing between;
 * **every thread parked in `ntdll`** at the moment of confirmation, as before.
 
+## 4a. Is it our scrolling banner? No, and the test is worth keeping
+
+The owner, 2026-09-07: *"Does this have anything to do with our scrolling message? Since that's the
+only component of our server that seems to be on a 180 second timer."*
+
+The right question, and it nearly passes. Measured from `world.log` of the run in progress: `[L]`
+
+```text
+04:42:52.117   04:44:52.017  +119.900   04:47:52.171  +180.154   04:49:52.059  +119.888
+04:52:52.398  +180.339       04:54:52.268 +119.870    04:57:52.029 +179.761
+```
+
+So the banner alternates **120 s and 180 s** - a 300-second cycle with two sends in it - and in
+*this* session every event, banner and catch alike, lands on `:52`. Two of the four catches sit
+within 0.3 to 0.6 s of a banner send. On this session alone it looks like a hit.
+
+**Three things kill it, and the first is sufficient.**
+
+1. **The banner's cycle contains a 120-second leg, and no catch interval has ever been 120 s.**
+   Seven measured intervals across three sessions: 180.038, 180.002, 180.115, 180.020, 180.045,
+   180.003, 180.066. `[L]` If the banner were the trigger, roughly half of those would be 120.
+   None is.
+
+2. **The phase relationship is different in a different session, which is what "unrelated
+   clocks" looks like.** In the four-catch session the banners are at `:52.0`–`:52.2` and the
+   catches at `:43.5`–`:43.7`: `[L]`
+
+   ```text
+   catch 03:59:43.551   nearest banner 03:59:52.154   +8.60 s
+   catch 04:02:43.553   nearest banner 04:02:52.058   +8.51 s
+   catch 04:05:43.668   nearest banner 04:04:52.120   -51.5 s   (none closer)
+   catch 04:08:43.688   nearest banner 04:07:52.090   -51.6 s   (none closer)
+   ```
+
+   Two catches with no banner inside fifty seconds, and a fixed 8.5 s offset on the other two.
+   Coincidence in one session and an 8.5 s offset in another is two clocks that share a rough
+   origin and then drift, not cause and effect.
+
+3. **The period is generated inside the client.** §5a reads the gate: the ticker re-arms its own
+   timestamp on the firing branch, which is what makes the interval exactly 180 000 ms. Nothing
+   we send participates in that. `[D]`
+
+**Why both sessions still put everything near the same second** is the common origin, not a
+link: our banner is computed per session from the session's own anchor, and the client's ticker
+seeds its timestamp on its first call, which is a second or two after the same world entry. Two
+clocks started by one event look aligned until they are measured across sessions.
+
+**This is the second time a periodic thing of ours has lined up by construction** - the
+`0x013D` census was the first, in §4 - and the falsification was the same both times: *find a
+session where the phase differs.* Worth doing before the next correlation is believed.
+
 ## 5a. The clock has a name: a family of fifteen tickers, and the period is exact by construction
 
 A static enumeration of every `0x2bf20` in `.text` (agent pass, 2026-09-07; its instrument
