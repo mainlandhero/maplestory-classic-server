@@ -375,5 +375,16 @@ if (-not $NoZip) {
 }
 
 Write-Host ''
-Write-Host 'On the target machine: unzip, then from an ELEVATED PowerShell window run' -ForegroundColor Cyan
-Write-Host '  powershell -ExecutionPolicy Bypass -File "<unzipped path>\MapleCW\install.ps1"' -ForegroundColor Cyan
+if ($ClientOnly) {
+    # There is no install.ps1 in a client payload any more, so telling somebody to run one
+    # would be a command that fails on a file that is not there.
+    Write-Host 'On the player''s machine: unzip anywhere, then run maplecw-launcher.exe.' -ForegroundColor Cyan
+    Write-Host '  Nothing to install. It asks for administrator (the client requires it),' -ForegroundColor Cyan
+    Write-Host '  writes the outbound firewall rule itself, and remembers the server address,' -ForegroundColor Cyan
+    Write-Host '  both ports and the account name after the first successful Start Game.' -ForegroundColor Cyan
+    Write-Host '  Accounts are made in its REGISTER tab with a code a GM mints (!registrationcode).' -ForegroundColor Cyan
+    Write-Host '  If the Visual C++ redistributable is missing it says so in words at Start Game.' -ForegroundColor Cyan
+} else {
+    Write-Host 'On the target machine: unzip, then from an ELEVATED PowerShell window run' -ForegroundColor Cyan
+    Write-Host '  powershell -ExecutionPolicy Bypass -File "<unzipped path>\MapleCW\install.ps1"' -ForegroundColor Cyan
+}
