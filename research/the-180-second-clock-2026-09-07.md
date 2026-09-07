@@ -318,6 +318,18 @@ branch cannot produce a 180.00 s period. So either the field is non-zero during 
 dumps caught it in an unusual state, or the timer is one of the other 41 sites. **Not
 established either way, and 42 sites is a list to enumerate, not a candidate to assume.**
 
+## 5b. The same writer has a second lethal surface, and the repair cannot reach it
+
+2026-09-07, from a field crash dump with the repair shipping:
+`research/second-crash-family-2026-09-07.md`. The pool repair keeps the client's own pooled
+free alive, and once that surface is closed the same family of dangling pointer surfaces at a
+**different** free - the WZ property/VARIANT teardown during a map change - where it frees a
+pool chunk as if it were an NT-heap block and dies `0xC0000374` anyway. The freed block carried
+the `0x0000000100000020` signature, off the live chunk chain where neither `poolchain` nor the
+repair walks. It is the same disease (a stale pointer into freed-and-reused Ztl memory), used
+once for a write and once for a free. It does not change the plan below; it removes any idea
+that the repair is a fix.
+
 ## 6. What to do with a period
 
 A predictable event is a much easier target than a random one, and it changes what the next
