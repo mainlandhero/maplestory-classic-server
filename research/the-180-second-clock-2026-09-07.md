@@ -79,6 +79,58 @@ At all four moments, in the same logs: `[L]`
 * **no socket event** - one `SOCKET` line at connect and one at close, nothing between;
 * **every thread parked in `ntdll`** at the moment of confirmation, as before.
 
+## 5a. The clock has a name: a family of fifteen tickers, and the period is exact by construction
+
+A static enumeration of every `0x2bf20` in `.text` (agent pass, 2026-09-07; its instrument
+controls, its one byte-scan false positive at `0x141b5d7a1`, and its own mid-pass correction of
+a wrong free entry point are all in its report) found **fifteen near-identical functions in
+`0x140c93530..0x140c95095`** sharing one template. `FUN_140c93930`, re-read here rather than
+taken on trust: `[L]`
+
+```text
+140c93938  cmp   dword [rip+LAST], 0
+140c9393f  jne   +0xc
+140c93945  mov   [rip+LAST], eax        ; FIRST CALL ONLY: seed
+140c9394b  mov   r8d, now
+140c93950  mov   edx, 0x2bf20           ; 180 000
+140c93955  mov   ecx, dword [rip+LAST]
+140c9395b  call  0x1408fcaa0            ; (now - LAST) > 180000 ?
+140c93965  je    end
+140c9396f  mov   [rip+LAST], eax        ; TRUE BRANCH RE-ARMS  <-- exact period
+```
+
+**The re-arm on the firing branch is the whole thing.** A gate that reloads its own timestamp
+from the firing instant produces exactly 180 000 ms between firings rather than a drifting
+cadence, which is what 180.002 / 180.115 / 180.020 / 180.038 is. `[D]` And the seed is on
+*first call*, not process start, which is why §6's phase origins differ between sessions.
+
+**Seven are called directly from the per-frame game-stage tick `FUN_142ce0130`.** Six of the
+fifteen call `FUN_140ca61d0(out, n)`, re-read here: `[L]`
+
+```text
+140ca61f2  lea rdx, [rdi*4 + 8]        ; size = n*4 + 8
+140ca61fa  call 0x14019b780            ; the pooled allocator
+140ca6204  add rax, 8
+140ca620d  mov qword ptr [rax - 8], rdi ; element count below the returned pointer
+```
+
+`callers.py` on it returns exactly the six tickers plus `FUN_141b2c7c0`. `[L]` **Two of them
+pass `n = 6`, which is `6*4+8 = 32` bytes - the `0x20` class, the only class that has ever been
+damaged**, allocated and freed on every firing. `[D]`
+
+That is the strongest candidate the investigation has: right clock, right period mechanism,
+right size class, on the frame tick, allocating and freeing into `0x143AD68A0` itself. It is
+**not** established that one of them writes the damage - four of the seven frame-tick tickers
+jump straight into `.themida` (rawsize 0, unreadable), and every one has inner feature gates
+that can be read but not evaluated statically.
+
+**It also closes out §5 below.** `fieldrefs.py` over the whole image returns exactly four
+references to `[ctx+0x39ec]`: three writers, one reader, and the reader is `FUN_142e0f9e0`'s own
+comparison. Nothing on its elapsed-true path re-arms the field - that path stamps `[+0x3b18]`
+and returns. **A branch that cannot re-arm its own gate cannot produce a 180 s period**, which
+is a cleaner reason to drop that lead than the "it read zero in the dumps" one below, and it
+agrees with it. `[D]`
+
 ## 5. Where this points, and what is not yet claimed
 
 `0x2bf20` is 180000, and it appears **42 times in `.text`** (`tools/pe_packing`-style literal

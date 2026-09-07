@@ -173,24 +173,39 @@
     of it, so a census lands beside every catch and five out of six censuses produce nothing.
     Two grids sharing a wall clock, not cause.
 
-    THE MITIGATION IS BUILT: -PoolSentry -SentryRepair. On a confirmed damaged header the
-    sentry writes the high dword back to zero - the value the carve wrote and the only legal
-    one - so the pool's free recognises the slot as the 0x20 slot it still is and puts it on
-    its own list instead of handing it to HeapFree. That removes the 0xC0000374 death.
+    THE MITIGATION IS BUILT and there is now ONE run that tests it AND the best candidate for
+    the writer. start-servers.cmd with these, then the launcher as usual:
 
-    It is OFF by default because it is the only client byte this hook writes, and three things
-    it cannot do are in repair_header's doc block: it is a RACE (a write and a free inside one
-    100 ms walk still dies), it only sees damage shaped like a pool header (the 0xC0000005
-    death of 2026-09-06 was a -1 in a map-node pointer), and if that dword is a refcount
-    reached through a stale pointer then zeroing it changes what the writer sees next time.
-    Expect FOUR 'header(s) repaired' in a 15-minute idle run; the heartbeat prints the count.
-    Say the flag was on in any result that depends on the client having stayed alive.
+      -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -PinPatches
+      -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"
 
-    NAMING THE WRITER is still a BUILD, and the period makes it cheap - a guard-page run needs
-    to survive about six minutes to catch two events (heap-corruption-2026-09-06.md 3.2). A
-    cheaper half-step first: the sentry walks every 100 ms, so a catch is up to 106 ms stale
-    and every thread has parked by then; with the period known it can drop to 5-10 ms around
-    the predicted time and sample threads on the tick it fires.
+    (A) -SentryRepair writes a confirmed damaged header back to the slot size, so the pool's
+    free recognises the slot as the 0x20 slot it still is and puts it on its own list instead
+    of handing it to HeapFree. That removes the 0xC0000374 death. OFF by default because it is
+    the only client byte this hook writes. Three things it cannot do, all in repair_header's
+    doc block: it is a RACE (a write and a free inside one 100 ms walk still dies), it only
+    sees damage shaped like a pool header (the 0xC0000005 death of 2026-09-06 was a -1 in a
+    map-node pointer), and if that dword is a refcount reached through a stale pointer then
+    zeroing it changes what the writer sees next. Expect FOUR repairs; the heartbeat counts
+    them. Say the flag was on in any result that depends on the client having stayed alive.
+
+    (B) The 180 s clock is a FAMILY OF FIFTEEN near-identical tickers at 0x140c93530..95095,
+    seven of them called straight from the frame tick 0x142ce0130. Each seeds a timestamp on
+    its first call and RE-ARMS IT ON THE FIRING BRANCH, which is what makes the period exact
+    rather than drifting - verified in the listing, not taken on trust. Six of them call
+    FUN_140ca61d0(out, n), which allocates n*4+8 bytes from the pool and frees it again; two
+    pass n=6, i.e. EXACTLY 32 bytes, the only size class that has ever been damaged. Watching
+    140ca61d0 costs one probe slot and says whether that family runs on the catch clock.
+
+    -PinPatches is what makes (B) possible at all. The LAUNCHER writes the probe and session
+    markers with its own defaults on every launch, and it is the only path that reaches the
+    world, so its patch set was in practice the only one the client could ever run. A pin
+    overrides it for ONE launch; the launcher deletes it on read and prints OVERRIDES.
+
+    NAMING THE WRITER OUTRIGHT is still the guard-page build, and the period makes it cheap -
+    about six minutes to catch two (heap-corruption-2026-09-06.md 3.2). Four of the seven
+    frame-tick tickers jump into .themida, rawsize 0, so if (B) comes back empty that is where
+    they went and static analysis stops there.
 
     STILL OPEN, and it is NOT answerable by any run: whether any of this is OURS. 75 of 75
     archived client runs carried our hook. That control needs the LAUNCHER to write a smaller
@@ -1014,6 +1029,20 @@ param(
     #
     # Off by default because it writes. Say so in any result that depends on it.
     [switch]$SentryRepair,
+    # Make the LAUNCHER use this -Probe / -Session for its next launch instead of its own
+    # defaults, by writing maplecw-hook.probe.pin / .session.pin beside the client.
+    #
+    # Why this exists: the launcher is the only path that reaches the world - a direct client
+    # has not got past character select since 2026-09-05 and three launches went into finding
+    # that out - and it overwrites the probe and session markers on every launch. So the
+    # launcher's defaults were in practice the only patch set the client could ever run, which
+    # blocked two separate measurements: the heap patch control, and a probe slot for
+    # 140ca61d0 (the 32-byte array allocator the 180-second ticker family calls).
+    #
+    # The launcher DELETES a pin before using it, so it is one launch only and the substitution
+    # is printed in the launcher's log pane. Use with -ServersOnly: this writes the pin, you
+    # start the launcher, the launcher consumes it.
+    [switch]$PinPatches,
     [switch]$HeapFix,
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
@@ -1831,30 +1860,32 @@ function Show-TestPlan {
         Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
-        Write-Host '    0i. THE FIX IS BUILT AND UNTESTED ON A CLIENT: -PoolSentry -SentryRepair.'
-        Write-Host '       On a confirmed damaged header the sentry now writes the high dword'
-        Write-Host '       back to zero, so the next free of that slot goes on the pool list'
-        Write-Host '       instead of to HeapFree. That is the 0xC0000374 death, removed.'
-        Write-Host '       IT DOES NOT STOP THE WRITER and it is a RACE: a write and a free'
-        Write-Host '       inside one 100ms walk still dies. Read the heartbeats for'
-        Write-Host '       "header(s) repaired" and expect FOUR in a 15-minute idle run.'
-        Write-Host '         4 repairs, client survives, closed by you   the mitigation works'
-        Write-Host '         a 0xC0000374 anyway                         the race, or a second'
-        Write-Host '                                                     damage shape. Keep the'
-        Write-Host '                                                     dump either way'
-        Write-Host '         REPAIR REFUSED lines                        read the reason; each'
-        Write-Host '                                                     one is a guard doing'
-        Write-Host '                                                     its job, not a bug'
-        Write-Host '       WHY FOUR: the writer runs on a 180-SECOND CLOCK. Six catches, four'
-        Write-Host '       intervals, all 180.0s within 0.12s. It is a timer, not traffic - no'
-        Write-Host '       packet, no exception, no socket, every thread parked. That RETRACTS'
-        Write-Host '       the census lead this plan used to carry (0x013D is on a 30s grid, so'
-        Write-Host '       one sits beside every catch while 5 of 6 produce nothing).'
+        Write-Host '    0i. ONE RUN, TWO ANSWERS. Start-servers with these, then the launcher:'
+        Write-Host '         -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -PinPatches'
+        Write-Host '         -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"'
+        Write-Host '       Stand idle 15 min on a map with mobs, close the client yourself.'
+        Write-Host '       (A) DOES THE FIX HOLD? -SentryRepair puts a damaged header back, so'
+        Write-Host '           the next free of that slot goes on the pool list instead of to'
+        Write-Host '           HeapFree. Expect FOUR "header(s) repaired" in the heartbeats.'
+        Write-Host '             4 repairs and you close it yourself   the mitigation works'
+        Write-Host '             0xC0000374 anyway                     the race, or a second'
+        Write-Host '                                                   damage shape. Keep the dump'
+        Write-Host '           It does NOT stop the writer and it IS a race: a write and a free'
+        Write-Host '           inside one 100ms walk still dies.'
+        Write-Host '       (B) IS THE TICKER FAMILY THE WRITER? 140ca61d0 is the array allocator'
+        Write-Host '           six 180-second tickers call; two of them ask it for exactly 32'
+        Write-Host '           bytes, the damaged size class, and free it again each firing.'
+        Write-Host '             WATCH lines at the catch times, rdx=6   the family is running'
+        Write-Host '                                                     on the clock. Named.'
+        Write-Host '             no WATCH lines near a catch             it is not this family;'
+        Write-Host '                                                     4 of the 7 tickers jump'
+        Write-Host '                                                     into .themida, unreadable'
+        Write-Host '       -PinPatches is what makes (B) possible at all: the LAUNCHER writes the'
+        Write-Host '       probe marker with its own defaults, so until now its patch set was the'
+        Write-Host '       only one the client could ever run. A pin overrides it for ONE launch'
+        Write-Host '       and the launcher deletes it on read - look for OVERRIDES in its log'
+        Write-Host '       pane, and if it is absent say so rather than assuming.'
         Write-Host '       research/the-180-second-clock-2026-09-07.md'
-        Write-Host '       STILL OPEN and not answerable by a run: whether any of it is OURS.'
-        Write-Host '       75 of 75 runs carried the hook; that control needs the LAUNCHER to'
-        Write-Host '       write a smaller patch set. DO NOT retry -DirectClient (3 launches,'
-        Write-Host '       none reached the world, one retraction).'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'
@@ -2209,6 +2240,24 @@ if ($PoolSentry) {
     }
 } else {
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
+}
+
+# The launcher pins. Same `else` and the same reason as the sentry marker above: a pin left
+# behind by one run would silently change which bytes of the client the NEXT run patches, and
+# that is the highest-consequence stale marker this project could leave lying about. The
+# launcher deletes a pin as it reads it; this clears one that was never consumed.
+if ($PinPatches) {
+    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe.pin') -Value $Probe -Encoding ascii -NoNewline
+    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session.pin') -Value $Session -Encoding ascii -NoNewline
+    Write-Host 'LAUNCHER PATCHES PINNED for the NEXT launch only:' -ForegroundColor Cyan
+    Write-Host "  probe:   $Probe" -ForegroundColor Cyan
+    Write-Host "  session: $Session" -ForegroundColor Cyan
+    Write-Host '  The launcher deletes each pin as it reads it and prints OVERRIDES in its log' -ForegroundColor Cyan
+    Write-Host '  pane. If you do not see that line, the pin was not picked up - say so rather' -ForegroundColor Cyan
+    Write-Host '  than assuming the run was instrumented.' -ForegroundColor Cyan
+} else {
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.probe.pin') -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.session.pin') -ErrorAction SilentlyContinue
 }
 
 if ($ServersOnly) {

@@ -246,6 +246,64 @@ pub fn stub_gameguard(client_dir: &Path, stub: &Path) -> Result<Steps, String> {
 /// reads, so a newline would be harmless, but a BOM would not - `read_to_string` keeps it and
 /// `trim` does not remove it, so `"\u{feff}watch@..."` would fail every prefix test in
 /// `probe.rs` silently.
+/// A one-launch override for [`HOOK_PROBE_MARKER`], written by `tools/test-server.ps1`.
+pub const HOOK_PROBE_PIN: &str = "maplecw-hook.probe.pin";
+/// The same for [`HOOK_SESSION_MARKER`].
+pub const HOOK_SESSION_PIN: &str = "maplecw-hook.session.pin";
+
+/// Read a pin, delete it, and return its contents in place of this launch's default.
+///
+/// # Why this exists, and it is not a convenience
+///
+/// The launcher writes the probe and session markers with [`DEFAULT_PROBE`] and
+/// [`DEFAULT_SESSION`] on every launch, and it is the only path that reaches the world - a
+/// direct client has not got past character select since 2026-09-05 and three launches went
+/// into finding that out (`research/is-the-corruption-ours-2026-09-06.md` §5). So **the
+/// launcher's defaults were, in practice, the only patch set the client could ever run**, and
+/// two separate measurements were blocked on that:
+///
+/// * the heap-corruption patch control - 75 of 75 archived runs carried the full hook, so
+///   nothing on disk separates "this client corrupts its heap" from "it does so while we are
+///   inside it";
+/// * a watch on `FUN_140ca61d0`, the 32-byte array allocator the 180-second ticker family
+///   calls (`research/the-180-second-clock-2026-09-07.md`), which needs a probe slot the
+///   default set does not leave free.
+///
+/// # It is deleted on read, and that is the guard
+///
+/// Every marker convention in this project is read-once, for the reason
+/// `crates/grap-stub/src/identity.rs` and the sentry block both give: a marker left behind by
+/// one run silently turns the *next* one into an instrumented run whose logs nobody would
+/// think to distrust. A pin is the highest-consequence marker of the lot - it changes which
+/// bytes of the client are patched - so it is deleted before it is used, not after, and the
+/// substitution is announced in the launcher's own step log.
+///
+/// An unreadable or empty pin is ignored and the default stands. A pin that cannot be deleted
+/// is **refused**, because leaving one on disk is exactly the failure this is guarding.
+fn take_pin(client_dir: &Path, name: &str, default: &str, steps: &mut Steps) -> String {
+    let path = client_dir.join(name);
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return default.to_string();
+    };
+    let body = body.trim().to_string();
+    if let Err(e) = std::fs::remove_file(&path) {
+        steps.push(format!(
+            "WARNING: {name} could not be deleted ({e}) - IGNORING it and using the default, \
+             because a pin that survives this launch would silently instrument the next one"
+        ));
+        return default.to_string();
+    }
+    if body.is_empty() {
+        steps.push(format!("{name} was empty - deleted, default kept"));
+        return default.to_string();
+    }
+    steps.push(format!(
+        "{name} OVERRIDES this launch's default and has been deleted - one launch only. \
+         Default was {default:?}"
+    ));
+    body
+}
+
 pub fn write_markers(
     client_dir: &Path,
     probe: &str,
@@ -259,6 +317,12 @@ pub fn write_markers(
         std::fs::write(&path, body.as_bytes())
             .map_err(|e| format!("could not write {}: {e}", path.display()))
     };
+
+    // **A pin overrides this launch's defaults, once.** See [`take_pin`].
+    let probe = take_pin(client_dir, HOOK_PROBE_PIN, probe, &mut steps);
+    let session = take_pin(client_dir, HOOK_SESSION_PIN, session, &mut steps);
+    let probe = probe.as_str();
+    let session = session.as_str();
 
     write(HOOK_ENABLE_MARKER, "")?;
     write(HOOK_PROBE_MARKER, probe)?;
@@ -756,6 +820,72 @@ mod tests {
     }
 
     // -- the marker files ---------------------------------------------------------------
+
+    /// **A pin replaces the default for exactly one launch and is gone afterwards.**
+    ///
+    /// The read-once half is the part that matters and it is asserted in both directions: the
+    /// first launch takes the pin, and a second `write_markers` against the same directory
+    /// gets the default back. A pin that survived would silently instrument the next run, and
+    /// this project has already been bitten by a stale marker twice - the multiclient marker
+    /// on 2026-09-06 and, before it, a probe marker turning an ordinary run into a watched one.
+    #[test]
+    fn a_pin_overrides_one_launch_and_then_is_gone() {
+        let t = TempDir::new("pin");
+        let client = t.dir("client");
+        let dumps = t.dir("dumps");
+        let mine = "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40";
+
+        std::fs::write(client.join(HOOK_PROBE_PIN), mine).unwrap();
+        std::fs::write(client.join(HOOK_SESSION_PIN), "mode=2").unwrap();
+
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("first");
+        assert_eq!(
+            std::fs::read_to_string(client.join(HOOK_PROBE_MARKER)).unwrap(),
+            mine,
+            "the pin must reach the marker the hook actually reads"
+        );
+        assert_eq!(
+            std::fs::read_to_string(client.join(HOOK_SESSION_MARKER)).unwrap(),
+            "mode=2"
+        );
+        assert!(
+            !client.join(HOOK_PROBE_PIN).exists() && !client.join(HOOK_SESSION_PIN).exists(),
+            "a pin that survives its launch is the whole failure mode this guards"
+        );
+        assert!(
+            steps.iter().any(|s| s.contains("OVERRIDES")),
+            "the substitution must be announced, not silent: {steps:?}"
+        );
+
+        // The second launch, same directory, no pin: the defaults come back.
+        write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("second");
+        assert_eq!(
+            std::fs::read_to_string(client.join(HOOK_PROBE_MARKER)).unwrap(),
+            DEFAULT_PROBE
+        );
+        assert_eq!(
+            std::fs::read_to_string(client.join(HOOK_SESSION_MARKER)).unwrap(),
+            DEFAULT_SESSION
+        );
+    }
+
+    /// An empty or whitespace-only pin is a mistake, not an instruction to patch nothing.
+    #[test]
+    fn an_empty_pin_is_deleted_and_the_default_stands() {
+        let t = TempDir::new("pin-empty");
+        let client = t.dir("client");
+        let dumps = t.dir("dumps");
+        std::fs::write(client.join(HOOK_PROBE_PIN), "   \r\n  ").unwrap();
+
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("markers");
+        assert_eq!(
+            std::fs::read_to_string(client.join(HOOK_PROBE_MARKER)).unwrap(),
+            DEFAULT_PROBE,
+            "an empty pin must not disarm the two patches the client cannot live without"
+        );
+        assert!(!client.join(HOOK_PROBE_PIN).exists());
+        assert!(steps.iter().any(|s| s.contains("was empty")), "{steps:?}");
+    }
 
     #[test]
     fn the_four_markers_are_written_with_no_bom_and_no_newline() {
