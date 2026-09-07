@@ -79,6 +79,16 @@ game socket itself carries no credential and never has. Say so in every progress
   text) drew fine. Reads as the long-session corruption with `!rates` as the first messenger;
   **`!rates` at ~40 s of client life is the discriminator** and is in the plan. Dump:
   `dumps\maplecw-crash-179092-c0000005-1.dmp`.
+* **The heap corruption: eight damaged slots in an idle session, and the value is not always
+  1.** The same dump, walked: 8 damaged `0x20` slots in 3069 s - **three read
+  `0x0000000200000020`**, the "single different value" `heap-wild-write.md` §10 said would
+  change the reading. `1`, `2` and the map node's `-1` are all 32-bit stores at `+4`: a
+  counter, not an initialiser. The session was idle - 34 k mob acks, 1 317 chatter lines, 21
+  banners, 0 hits - so the writer runs on idle traffic, which `heap-corruption-2026-08-27.md`
+  §7 asked about. **The pool sentry has run for nineteen seconds in its life**; T17 / 0i is the
+  idle run that arms it (the launcher does not - the marker file does), and
+  `research/heap-corruption-2026-09-06.md` §3.2 is the guard-page build that would name the
+  writer if the sentry's timing does not name the packet.
 
 **2026-09-05: the server is ready to leave this machine.** Two changes for the homelab move,
 both built, tested, and exercised against the shipped binaries:
