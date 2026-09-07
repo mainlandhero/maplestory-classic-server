@@ -248,6 +248,22 @@ pub fn prepare_and_launch(
     })?;
     log(Level::Good, "a server is answering".into());
 
+    // **The Visual C++ runtime, checked here because nothing else can check it.**
+    //
+    // `grap64.dll` imports `VCRUNTIME140.dll`, and `MapleStory.exe` statically imports
+    // `grap64.dll` - so on a machine without the redistributable the CLIENT dies at startup
+    // with a missing-DLL dialog naming a file nobody has heard of. `install.ps1` used to
+    // refuse to install for this reason; a client payload no longer ships one, so the check
+    // has to live where the launch does.
+    //
+    // The launcher itself is built with a static CRT for the client payload
+    // (`tools/make-installer.ps1 -ClientOnly`), which is what lets this code run at all on
+    // such a machine: a dynamically linked launcher would have failed to start before
+    // reaching any check of its own.
+    if let Err(why) = crate::stub::runtime_present() {
+        return Err(format!("{why}\n\n(The client was NOT launched.)"));
+    }
+
     // **The outbound block, scoped to the address this launch actually resolved.**
     //
     // The owner, 2026-09-07: *"Could it enforce a firewall rule so that it can only connect to a

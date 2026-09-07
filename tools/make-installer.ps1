@@ -166,17 +166,70 @@ $stopLine
     }
 }
 
+$rel = Join-Path $repo 'target\release'
+# Where a -ClientOnly launcher is built. A SEPARATE target dir, the same reasoning
+# tools\package-server.ps1 gives: RUSTFLAGS is part of cargo's fingerprint, so sharing
+# target\ would make every switch a full rebuild AND would leave target\release holding a
+# statically linked launcher that the dev scripts then run without anyone noticing.
+$staticTarget = Join-Path $repo 'target-static'
+
 if (-not $SkipBuild) {
     Write-Host 'building release binaries...' -ForegroundColor Cyan
     Push-Location $repo
     try {
         & cargo build --release -p login -p world -p auth -p grap-stub -p launcher
         if ($LASTEXITCODE -ne 0) { Fail 'cargo build failed' }
+
+        if ($ClientOnly) {
+            # **The launcher, again, with a STATIC C runtime.**
+            #
+            # A client payload ships no install.ps1, so nothing checks for the Visual C++
+            # redistributable before the launcher runs - the launcher checks it itself, in
+            # crates\launcher\src\stub.rs. That check is only reachable if the launcher does
+            # not need the redistributable to START, which is what this build gives.
+            #
+            # grap64.dll is deliberately NOT built this way. It is injected into
+            # MapleStory.exe, and tools\package-server.ps1's header is explicit that changing
+            # a working hook's CRT linkage is an unforced change that costs a manual client
+            # launch to discover. So the stub still needs the redistributable, and the check
+            # above is what tells a player so in words instead of a missing-DLL dialog.
+            Write-Host '  and the launcher again with a STATIC C runtime, so it starts on a' -ForegroundColor Cyan
+            Write-Host '  machine with no Visual C++ redistributable and can say so' -ForegroundColor Cyan
+            $env:RUSTFLAGS = '-C target-feature=+crt-static'
+            $env:CARGO_TARGET_DIR = $staticTarget
+            & cargo build --release -p launcher
+            $ok = $LASTEXITCODE -eq 0
+            Remove-Item Env:\RUSTFLAGS -ErrorAction SilentlyContinue
+            Remove-Item Env:\CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+            if (-not $ok) { Fail 'the static-runtime launcher build failed' }
+        }
     }
-    finally { Pop-Location }
+    finally {
+        Pop-Location
+        Remove-Item Env:\RUSTFLAGS -ErrorAction SilentlyContinue
+        Remove-Item Env:\CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+    }
 }
 
-$rel = Join-Path $repo 'target\release'
+# The static launcher replaces the ordinary one in a client payload, and ONLY that one file.
+#
+# **Not by repointing $rel**, which is what the first version of this did: only the LAUNCHER is
+# built in the static tree, so $rel pointing there made the very next step fail looking for
+# grap64.dll - which is deliberately still built the ordinary way and lives in target\release.
+# One override for one file.
+$staticExe = if ($ClientOnly) { Join-Path $staticTarget 'release\maplecw-launcher.exe' } else { $null }
+if ($ClientOnly) {
+    if (Test-Path $staticExe) {
+        Write-Host "  the launcher will come from $staticExe"
+    } elseif (-not $SkipBuild) {
+        Fail "the static-runtime launcher is missing at $staticExe"
+    } else {
+        Write-Host '  NO static-runtime launcher found (-SkipBuild) - shipping the ordinary' -ForegroundColor Yellow
+        Write-Host '  one, which needs the Visual C++ redistributable to START and therefore' -ForegroundColor Yellow
+        Write-Host '  cannot tell a player that it is missing.' -ForegroundColor Yellow
+        $staticExe = $null
+    }
+}
 # `To` is the payload-relative directory. The launcher and the stub go to the root because
 # that is where the launcher's own path resolution expects them; see the header.
 $binaries = @(
@@ -218,7 +271,15 @@ New-Item -ItemType Directory -Path (Join-Path $stage 'bin') -Force | Out-Null
 foreach ($b in $binaries) {
     $dst = if ($b.To -eq '.') { $stage } else { Join-Path $stage $b.To }
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
-    Copy-Item (Join-Path $rel $b.From) $dst -Force
+    # The one override: a client payload's launcher comes from the static-CRT tree so it can
+    # start on a machine with no Visual C++ redistributable and say so. Everything else,
+    # grap64.dll included, comes from the ordinary build.
+    $src = if ($staticExe -and $b.From -eq 'maplecw-launcher.exe') {
+        $staticExe
+    } else {
+        Join-Path $rel $b.From
+    }
+    Copy-Item $src $dst -Force
 }
 Write-Host ("staged {0} binaries" -f $binaries.Count)
 
@@ -226,15 +287,27 @@ if ($ClientOnly) {
     # No gm-handbook, no data\, and no server-start scripts: all three are the world server's,
     # and shipping them to a player is 400 MB of game tables they cannot use and a script that
     # would start a second server on their machine.
+    # **No install.ps1 and no README either.** The owner, 2026-09-07, once the launcher had taken
+    # over the last job the installer did that nothing else could:
+    #
+    #   the database        gone - a client has none; accounts live on the server
+    #   the first account   gone - made in the launcher's REGISTER tab with a GM's code
+    #   the server address  the launcher has boxes for it and REMEMBERS them after a
+    #                       successful Start Game
+    #   the firewall rule   written by the launcher at Start Game, scoped to the address that
+    #                       launch resolved - crates/launcher/src/firewall.rs
+    #   the runtime check   moved into the launcher - crates/launcher/src/stub.rs - which only
+    #                       works because of the STATIC CRT below: a dynamically linked
+    #                       launcher would have died before it could report anything
+    #   copying to C:\      unzip it wherever you like; the launcher finds client\ beside
+    #                       itself
+    #   a desktop shortcut  the only thing genuinely lost, and it is a right-click away
+    #
+    # So: three entries and no instructions to follow. If something here ever needs a step
+    # again, the step belongs in the launcher, not in a script beside it.
     Remove-Item (Join-Path $stage 'bin') -Recurse -Force -ErrorAction SilentlyContinue
-    Copy-Item (Join-Path $here 'installer\install.ps1') $stage -Force
-    # **A player gets a different README, not the full one.** The full text tells them to
-    # double-click start-servers.cmd, which is not in this payload, and says install.ps1 will
-    # ask for an account name and password, which it no longer does on a client - accounts are
-    # made in the launcher's REGISTER tab against the server. Shipping instructions for the
-    # wrong shape is how a working install looks broken to the person holding it.
-    Copy-Item (Join-Path $here 'installer\README-client.txt') (Join-Path $stage 'README.txt') -Force
-    Write-Host 'CLIENT-ONLY payload: no server binaries, no gm-handbook, no data\' -ForegroundColor Cyan
+    Write-Host 'CLIENT-ONLY payload: launcher, stub and client. No servers, no handbook, no' -ForegroundColor Cyan
+    Write-Host '  data, no install script, no README - unzip and run the launcher.' -ForegroundColor Cyan
 } else {
     Copy-Item $handbook (Join-Path $stage 'gm-handbook') -Recurse -Force
     Copy-Item $dataDir  (Join-Path $stage 'data')        -Recurse -Force

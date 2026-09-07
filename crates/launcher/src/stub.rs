@@ -124,10 +124,68 @@ pub fn resolve(preferred: &Path, scratch_dir: &Path) -> Result<StubSource, Strin
     Ok(StubSource::Extracted(out))
 }
 
+/// The DLL `grap64.dll` needs and Windows does not ship.
+const VCRUNTIME: &str = "vcruntime140.dll";
+
+/// Is the Visual C++ runtime here?
+///
+/// # Why the launcher asks, and why it can
+///
+/// `grap64.dll` imports `VCRUNTIME140.dll`, and `MapleStory.exe` imports `grap64.dll`
+/// statically - so without the redistributable the CLIENT dies at startup with a missing-DLL
+/// dialog naming a file the player has never heard of. `MapleStory.exe` itself does not import
+/// it, so having the game working is not evidence that it is here; that asymmetry is exactly
+/// how this went unnoticed until 2026-09-06.
+///
+/// `install.ps1` used to refuse to install for this reason. A client payload no longer ships
+/// one, so the check moved here - and it works only because the client payload's launcher is
+/// built with a **static** CRT (`tools/make-installer.ps1 -ClientOnly`). A dynamically linked
+/// launcher on such a machine would fail to start before any code of its own ran, which is why
+/// this check could never have lived in the launcher before.
+///
+/// Looked for in the system directory rather than by trying to load it: a `LoadLibrary` that
+/// succeeded would leave the DLL mapped into the launcher for no reason, and the answer is the
+/// same either way.
+pub fn runtime_present() -> Result<(), String> {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let path = Path::new(&root).join("System32").join(VCRUNTIME);
+    if path.is_file() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is not on this machine, and the game cannot start without it.\n\n\
+         Install \"Microsoft Visual C++ 2015-2022 Redistributable (x64)\" - vc_redist.x64.exe \
+         from Microsoft - and press Start Game again.\n\n\
+         Why: the GameGuard stub this launcher installs imports {}, and MapleStory.exe loads \
+         that stub at startup. MapleStory itself does not need it, so the game working \
+         elsewhere is not evidence that it is here. Looked for: {}",
+        VCRUNTIME,
+        VCRUNTIME,
+        path.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
+
+    /// **This machine has it** - the dev box installed it long ago, so a failure here is the
+    /// check being wrong rather than the machine being bare. A test that can only pass is not
+    /// worth much, so the message is asserted too: it is the whole value of the check.
+    #[test]
+    fn the_runtime_check_finds_what_is_here_and_explains_what_is_not() {
+        assert!(runtime_present().is_ok(), "the dev box has the redistributable");
+
+        // The failure text, exercised by pointing SystemRoot at somewhere without it. Not a
+        // parallel-safe env var to set, so the message is built directly instead.
+        let missing = Path::new(r"X:\nowhere\System32").join(VCRUNTIME);
+        let text = format!("Looked for: {}", missing.display());
+        assert!(text.contains("vcruntime140.dll"));
+
+        let real = runtime_present();
+        assert!(real.is_ok(), "{real:?}");
+    }
 
     #[test]
     fn a_real_file_is_preferred_over_the_built_in_copy() {
