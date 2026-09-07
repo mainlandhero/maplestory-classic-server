@@ -48,7 +48,9 @@ def main():
     dump = dw.MiniDump(sys.argv[1])
     exc = dw.parse_exception(dump)
     threads = dw.parse_threads(dump)
-    hfi = dw.heap_failure_info(dump, exc["info"][0])
+    # A crash dump carries an exception record; a POOL SENTRY dump does not - it was written
+    # by a walk, not a fault. Without this guard the tool refused the freshest dump there is.
+    hfi = dw.heap_failure_info(dump, exc["info"][0]) if exc and exc.get("info") else None
     tids = set(t["tid"] for t in threads)
 
     print("== %s" % os.path.basename(sys.argv[1]))

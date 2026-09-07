@@ -85,10 +85,13 @@ game socket itself carries no credential and never has. Say so in every progress
   change the reading. `1`, `2` and the map node's `-1` are all 32-bit stores at `+4`: a
   counter, not an initialiser. The session was idle - 34 k mob acks, 1 317 chatter lines, 21
   banners, 0 hits - so the writer runs on idle traffic, which `heap-corruption-2026-08-27.md`
-  §7 asked about. **The pool sentry has run for nineteen seconds in its life**; T17 / 0i is the
-  idle run that arms it (the launcher does not - the marker file does), and
-  `research/heap-corruption-2026-09-06.md` §3.2 is the guard-page build that would name the
-  writer if the sentry's timing does not name the packet.
+  §7 asked about. **The sentry then ran for six minutes the same evening and caught it twice**
+  (`research/heap-corruption-2026-09-06.md` §5): finding #2's slot was freed 720 ms later and
+  that free was the `0xC0000374` death - the chain watched live for the first time. One slot
+  was live, one free, same value: the writer holds its own pointer. The offset is `(body+4) - 8`
+  - a **refcount written through a BSTR-convention data pointer as if it had an 8-byte
+  cookie**, `[D]`. The sentry cannot name the instruction (every thread was asleep by the time
+  a 100 ms walk finds the slot); §3.2's guard-page allocator can, and that is the next build.
 
 **2026-09-05: the server is ready to leave this machine.** Two changes for the homelab move,
 both built, tested, and exercised against the shipped binaries:

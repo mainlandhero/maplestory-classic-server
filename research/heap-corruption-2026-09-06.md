@@ -152,6 +152,71 @@ is a day's build and one idle launch, and it is the only route left that produce
 rather than a *when*. Do §3.1 first: if a catch lands within 100 ms of the same packet three
 times, the build may not be needed.
 
+## 5. The sentry run, same evening: two catches, the whole chain, and the offset
+
+The owner armed the sentry by the marker file and stood idle on map 10001010 (29 mobs). Process
+212108. `client-patched\maplecw-hook.log`: `POOL SENTRY ARMED`, a heartbeat every 60 s with
+its own controls passing (`2574 chunks x 32 = 82368` against the allocator's carved counter,
+walk 740 µs average), then:
+
+```text
+22:34:34.376  FINDING #1  slot 0x2f3eccb0  header 0x0000000100000020   NOT on the free list
+22:34:35.101  dump written 724 ms later: maplecw-sentry-212108-finding1-1.dmp
+22:37:34.414  FINDING #2  slot 0x39203c50  header 0x0000000100000020   ON the free list
+22:37:35.134  CLIENT FAULT 0xC0000374 - the pool free of 0x39203c50, the slot caught 720 ms before
+22:37:35.792  crash dump: maplecw-crash-212108-c0000374-1.dmp
+```
+
+**[L]** for all of it. Three things this run settles that no dump could.
+
+### 5.1 The chain, observed once end to end
+
+Catch, then 720 ms later the client frees that exact slot, reads the damaged header, diverts
+to `HeapFree`, and dies with the family's `0xC0000374`. `poolchain.py` on the crash dump: two
+damaged slots, `0x39203c50` marked as the one that was freed, and `0x2f3eccb0` still sitting
+there. Every earlier file inferred this chain from a corpse; this is the first time it was
+watched.
+
+### 5.2 The writer does not care whether the slot is free
+
+Finding #1's slot was **live** - not on the free list, body freshly written (`0x2f3eccb8` twice,
+its own address, then `"234"` in UTF-16). Finding #2's slot was **free**, and so were both of
+its neighbours (`"EDOPHILIA"`, `"322007.img"`, `"inolympics"` - stale UTF-16 fragments, the
+predecessor and successor tailed with `dd dd dd dd`). Same value, same offset, one slot
+somebody owned and one slot nobody did. That kills "the pool's own push/pop wrote it" and
+"the occupant underruns its own buffer" in one stroke: the writer holds a pointer of its own
+and writes through it regardless of the slot's state. **[D]**
+
+The 0x20 class is short UTF-16 strings and small nodes - WZ image names among them - which is
+the memory that churns while mobs animate, and why an idle map produces it.
+
+### 5.3 The offset is the boundary between two prefix conventions
+
+The sentry names the arithmetic: the pool's header is 8 bytes at `body-8`; the 0x20 class is
+laid out BSTR-style with a 4-byte count at `body+0` and **the pointer handed around is
+`body+4`**. The four bytes that change are at `body-4` - which is `(body+4) - 8`. Code holding
+the `body+4` pointer and writing a 4-byte field at **pointer − 8**, as it would for an object
+with an 8-byte cookie before its data, lands exactly on the pool header's high dword. The
+values are `1`, `1`, `1` … with an occasional `2` and today's `-1`: a **reference count**
+written through a data pointer of the wrong prefix convention. **[D]**, and the strongest
+reading the family has had - it explains the offset, the width, the values, both slot states,
+and why the string in the slot has never mattered. It has not been seen as an instruction.
+
+### 5.4 Why the sentry cannot name the instruction, and what can
+
+Both catches sampled all 68 threads at the moment of confirmation and every one was parked in
+`ntdll` waits. The write is one instruction; a 100 ms walk finds the slot long after the thread
+that wrote it has gone back to sleep. No tuning of the sentry changes that. The instrument that
+names the writer is the one §3.2 describes - every freed `0x20` slot turned into a guard page,
+so the next write through the stale pointer faults *at the writer*, with RIP and stack in the
+hook's exception handler. §5.3 says what that fault will show: a 4-byte store at `reg - 8`
+where `reg` holds a `body+4` pointer.
+
+Two cheaper things first, both one launch: run the sentry again with `dumps=4` in the marker
+(the cap of 1 spent the only dump on finding #1), and note that `0x01ED` - the client's own
+usage-report channel, `CLIENT_USAGE_REPORT` - fired 89 ms before catch #2 and not near catch
+#1, so it is a coincidence until a third catch says otherwise.
+
 ## 4. What this file does not claim
 
 * That the three `2`s and the `-1` are the same writer as the `1`s. Same width, same offset,

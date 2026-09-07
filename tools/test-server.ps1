@@ -162,20 +162,16 @@
     line (bit 84, [D] - icon without the number means 83 is next). Iron Will is SELF-ONLY in
     this client's data (no lt/rb rectangle) - report it as expected, not as a bug.
 
-    T17 (2026-09-06). THE IDLE SENTRY RUN - the one measurement that can name the corruption's
-    moment. Today's dump has EIGHT damaged 0x20 slots from 51 idle minutes (mobs moving, never
-    hit), three of them reading 2 instead of 1: research/heap-corruption-2026-09-06.md. The
-    pool sentry (crates/grap-stub/src/poolsentry.rs) catches a write within ~100 ms and it has
-    run for NINETEEN SECONDS in its life. ARM IT: pass -PoolSentry here, OR - for a launcher
-    start - create the file maplecw-hook.sentry containing the word on in the client folder
-    BEFORE Start Game (the hook reads it and deletes it; one launch per marker). Then stand on
-    one map with mobs for 10-15 minutes doing nothing, and CLOSE THE CLIENT YOURSELF. Read
-    client-patched\maplecw-hook.log: "POOL SENTRY ARMED" then a heartbeat every 60 s proves it
-    ran. NO CATCH in 15 min -> today's rate does not hold while idle; say what differed. A
-    CATCH -> note its time and open world.log at that time +-100 ms: the three idle senders
-    have different rhythms (banner on the 5-min mark, NPC chatter every ~1.3 s, mob acks tens
-    a second), so two or three catches say which one they sit beside. Each catch also writes a
-    dump; keep them.
+    T17 (2026-09-06) - DONE THE SAME EVENING, AND IT WORKED. The idle sentry run caught the
+    write TWICE in six minutes (22:34:34, 22:37:34) and the second slot was freed 720 ms later
+    for the 0xC0000374 death - the whole chain watched live: research/heap-corruption-2026-09-06.md
+    §5. What it settled: one slot was LIVE and one FREE with the same value, so the writer holds
+    its own pointer; the offset is (body+4)-8 - a refcount written through a BSTR data pointer as
+    if it had an 8-byte cookie [D]. What it CANNOT do: name the instruction - every thread was
+    asleep by the time a 100 ms walk found the slot. IF YOU RUN IT AGAIN, put dumps=4 in the
+    marker (the cap of 1 spent the only dump on the first catch): the file is still
+    maplecw-hook.sentry in the client folder, content "dumps=4". Naming the writer is a BUILD
+    (§3.2: freed 0x20 slots become guard pages, the stale write faults at the writer), not a run.
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
@@ -1767,15 +1763,13 @@ function Show-TestPlan {
         Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
-        Write-Host '    0i. THE IDLE SENTRY RUN (2026-09-06) - names WHEN the heap goes bad.'
-        Write-Host '       Today''s dump: 8 damaged slots from 51 idle minutes, three reading 2.'
-        Write-Host '       Arm the pool sentry: -PoolSentry here, or for a LAUNCHER start put a'
-        Write-Host '       file maplecw-hook.sentry containing "on" in the client folder BEFORE'
-        Write-Host '       Start Game (one launch per marker). Stand on a map with mobs 10-15'
-        Write-Host '       min, touch nothing, CLOSE THE CLIENT YOURSELF. Hook log: ARMED + a'
-        Write-Host '       heartbeat/60 s = it ran. A CATCH: open world.log at its time +-100 ms;'
-        Write-Host '       banner (5-min mark), chatter (~1.3 s) and mob acks (tens/s) have'
-        Write-Host '       different rhythms, so two catches say which. Keep the dumps.'
+        Write-Host '    0i. THE IDLE SENTRY RUN - DONE 2026-09-06 evening, caught the write TWICE'
+        Write-Host '       in 6 min; the 2nd slot was freed 720 ms later = the 0xC0000374 death,'
+        Write-Host '       watched live. One slot live, one free, same value: the writer holds'
+        Write-Host '       its own pointer; offset (body+4)-8 = a refcount through a BSTR pointer'
+        Write-Host '       [D]. The sentry cannot name the instruction (threads asleep by then).'
+        Write-Host '       Re-run only with dumps=4 in maplecw-hook.sentry. Next is a BUILD, not'
+        Write-Host '       a run: guard pages on freed 0x20 slots so the write faults at the writer.'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'
