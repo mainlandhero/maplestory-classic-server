@@ -73,6 +73,11 @@ const DIALOG_FLAG: u8 = 4;
 const MEM_COMMIT: u32 = 0x1000;
 /// Protections that allow a read. `PAGE_NOACCESS` (0x01) and `PAGE_GUARD` (0x100) do not.
 const READABLE: u32 = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80;
+/// `PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY`.
+/// Deliberately **not** a superset of [`READABLE`]: `PAGE_READONLY` and `PAGE_EXECUTE_READ`
+/// are readable and not writable, and a store into one of those raises an access violation
+/// rather than failing quietly.
+const WRITABLE: u32 = 0x04 | 0x08 | 0x40 | 0x80;
 const PAGE_GUARD: u32 = 0x100;
 
 static PATCHED: AtomicBool = AtomicBool::new(false);
@@ -188,6 +193,32 @@ pub fn enabled() -> bool {
 /// registers inside a vectored handler where a fault would be fatal.
 pub(crate) unsafe fn can_read(addr: usize, len: usize) -> bool {
     readable(addr, len)
+}
+
+/// Is `len` bytes at `addr` committed and **writable**?
+///
+/// Same shape as [`readable`] and deliberately a separate mask: the sentry's repair mode is
+/// the only thing in this crate that writes to memory the client owns, and a store into a
+/// `PAGE_READONLY` region would raise an access violation inside the client rather than
+/// returning an error. So the protection is checked before the store, not inferred from the
+/// fact that the same address was readable a moment earlier.
+pub(crate) unsafe fn can_write(addr: usize, len: usize) -> bool {
+    if addr == 0 {
+        return false;
+    }
+    let mut mbi = MemoryBasicInformation {
+        base: std::ptr::null_mut(),
+        allocation_base: std::ptr::null_mut(),
+        ..Default::default()
+    };
+    let size = std::mem::size_of::<MemoryBasicInformation>();
+    if VirtualQuery(addr as *const c_void, &mut mbi, size) == 0 {
+        return false;
+    }
+    if mbi.state != MEM_COMMIT || mbi.protect & PAGE_GUARD != 0 || mbi.protect & WRITABLE == 0 {
+        return false;
+    }
+    addr + len <= mbi.base as usize + mbi.region_size
 }
 
 /// `DAT_143ac1898` — the global holding the launch/session config object.

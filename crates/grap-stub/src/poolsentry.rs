@@ -264,6 +264,10 @@ const CTX_RIP_OFF: usize = 0xF8;
 static ARMED: AtomicBool = AtomicBool::new(false);
 static DUMPS_WRITTEN: AtomicU32 = AtomicU32::new(0);
 static FINDINGS: AtomicU32 = AtomicU32::new(0);
+/// Headers put back by [`repair_header`]. Printed in the heartbeat beside the finding count,
+/// because "how many deaths did this prevent" is not answerable and "how many headers did it
+/// restore" is.
+static REPAIRS: AtomicU32 = AtomicU32::new(0);
 
 // ---------------------------------------------------------------------------------------
 // Guarded reads
@@ -976,6 +980,9 @@ pub(crate) struct Config {
     pub heartbeat: Duration,
     pub max_dumps: u32,
     pub stacks: bool,
+    /// Put the damaged header back. **Off by default, and it is the only thing in this module
+    /// that writes to the client.** See [`repair_header`].
+    pub repair: bool,
 }
 
 impl Default for Config {
@@ -986,6 +993,7 @@ impl Default for Config {
             heartbeat: DEFAULT_HEARTBEAT,
             max_dumps: DEFAULT_MAX_DUMPS,
             stacks: true,
+            repair: false,
         }
     }
 }
@@ -1023,6 +1031,8 @@ pub(crate) fn parse_config(text: &str) -> Option<Config> {
             }
         } else if token == "stacks=off" {
             cfg.stacks = false;
+        } else if token == "repair=on" {
+            cfg.repair = true;
         }
     }
     if disabled {
@@ -1111,15 +1121,22 @@ unsafe fn run(cfg: Config) {
     }
     log(&format!(
         "***** POOL SENTRY ARMED: pool ctx {:#x}, every {} ms (all four buckets every {}), \
-         heartbeat {} s, up to {} dump(s). It READS ONLY - no lock is taken and no client \
-         byte is written. Expected catch rate is about ONE per 300 s of in-field play \
-         (research/heap-crash-pattern.md), so silence is normal and the heartbeat is what \
-         says the walk is alive.{baseline} *****",
+         heartbeat {} s, up to {} dump(s). {} No lock is taken either way. The writer runs on \
+         a 180-SECOND CLOCK - six catches, four intervals, all 180.0 s within 0.12 s \
+         (research/the-180-second-clock-2026-09-07.md) - so after the first catch the next one \
+         is predictable, and silence for longer than that is itself the news.{baseline} *****",
         pool.ctx,
         cfg.interval.as_millis(),
         cfg.full_every,
         cfg.heartbeat.as_secs(),
         cfg.max_dumps,
+        if cfg.repair {
+            "REPAIR IS ON: a confirmed damaged header is put back to the slot size, which is \
+             the ONE client byte this module ever writes - it turns a fatal free into a \
+             correct one and does NOT stop the writer."
+        } else {
+            "It READS ONLY - no client byte is written."
+        },
     ));
 
     let mut tick: usize = 0;
@@ -1166,6 +1183,31 @@ unsafe fn run(cfg: Config) {
                 let mut confirmed = f;
                 confirmed.value = value;
                 walks[i].mark_reported(&confirmed);
+                // **The repair goes FIRST, and the ordering is the whole point of it.**
+                // `report` writes a ~1.3 GB dump that freezes the client for about 660 ms,
+                // and the one observed corrupt-to-free gap in this family is 720 ms. A repair
+                // after the dump would have beaten that by 60 ms; a repair before it beats it
+                // by 700. The cost is that the dump then shows a clean header - acceptable,
+                // because the FINDING block below records the value as read, and five dumps
+                // of the damage already exist.
+                if cfg.repair {
+                    match repair_header(&confirmed) {
+                        Ok(now) => {
+                            REPAIRS.fetch_add(1, Ordering::SeqCst);
+                            log(&format!(
+                                "***** POOL SENTRY REPAIR: {:#x} was {:#018x}, now {now:#018x}. \
+                                 The next free of this slot goes back on the pool's own list \
+                                 instead of to HeapFree. This does NOT stop the writer, and \
+                                 the dump below (if any) shows the REPAIRED header *****",
+                                confirmed.header_va, confirmed.value
+                            ));
+                        }
+                        Err(why) => log(&format!(
+                            "***** POOL SENTRY REPAIR REFUSED for {:#x}: {why} *****",
+                            confirmed.header_va
+                        )),
+                    }
+                }
                 report(&pool, &walks[i], &confirmed, armed_at, &cfg);
             }
         }
@@ -1191,6 +1233,12 @@ unsafe fn run(cfg: Config) {
                     }
                 ));
             }
+            let repaired = REPAIRS.load(Ordering::SeqCst);
+            let line = if cfg.repair {
+                format!("{line} | {repaired} header(s) repaired")
+            } else {
+                line
+            };
             log(&format!(
                 "POOL SENTRY alive {}s: {} confirmed finding(s){line} | walk {} us avg, \
                  {walk_us_max} us max over {walk_count} walks",
@@ -1207,6 +1255,77 @@ unsafe fn run(cfg: Config) {
             walk_count = 0;
         }
     }
+}
+
+/// Put a damaged header back to the value the carve wrote, so the next free of that slot is
+/// an ordinary free instead of `0xC0000374`.
+///
+/// **This is the only write to client memory in this module, and it is off by default**
+/// (`repair=on` in the marker). Everything else here reads.
+///
+/// # What it does and does not fix
+///
+/// It does not stop the writer. Every death in this family is the same event: the pool's free
+/// reads all 64 bits of the size header, a non-zero high dword sends the block past the
+/// `0x10/0x20/0x40/0x80` ladder to `HeapFree`, and `HeapFree` is handed a pointer Windows
+/// never issued. Restoring the high dword to zero makes the slot the `0x20` slot it still
+/// genuinely is, and the free goes back on the pool's own list.
+///
+/// So it converts a fatal free into a correct one. Three things it cannot do, stated because
+/// a mitigation that is described as a fix will be trusted as one:
+///
+/// * **It is a race.** A write and a free inside one walk interval still dies. The observed
+///   gaps are 720 ms once and minutes otherwise, against a 100 ms walk, but the guarantee is
+///   statistical and nothing here makes it otherwise.
+/// * **It only sees this shape.** The damage that killed the client on 2026-09-06 with
+///   `0xC0000005` was a `-1` in the upper half of a *pointer* in a map node, not a pool
+///   header (`research/heap-corruption-2026-09-06.md` §1.2). Same writer, most likely; not a
+///   header, so not repairable here.
+/// * **It changes what the writer sees.** If that dword is a reference count reached through
+///   a stale pointer, zeroing it means the next increment starts from zero rather than
+///   continuing. The `-1` already in the record says a decrement from zero does not kill the
+///   client on its own, but that is an inference and it is written down as one.
+///
+/// # Why this is safe to write
+///
+/// Three conditions, all checked, and any one failing means nothing is written:
+///
+/// 1. the low dword equals this bucket's slot size exactly — so the qword really is a header
+///    of the known shape and not some other object;
+/// 2. the high dword is non-zero — there is something to repair;
+/// 3. `VirtualQuery` says the four bytes are committed and writable — a store into a
+///    `PAGE_READONLY` page would raise an access violation inside the client.
+///
+/// The store is a single aligned 32-bit write, which is atomic on x86-64, so no other thread
+/// can observe a torn header. It is read back and the read-back is what the log reports:
+/// a repair nobody verified is exactly the kind of claim `CLAUDE.md` is about.
+unsafe fn repair_header(f: &Finding) -> Result<u64, String> {
+    let slot = BUCKETS[f.bucket].slot as u64;
+    if f.value & 0xFFFF_FFFF != slot {
+        return Err(format!(
+            "low dword {:#x} is not bucket {}'s slot size {slot:#x} - this is not the known \
+             shape and the sentry will not guess at it",
+            f.value & 0xFFFF_FFFF,
+            f.bucket
+        ));
+    }
+    if f.value >> 32 == 0 {
+        return Err("high dword is already zero - nothing to repair".to_string());
+    }
+    let high = f.header_va + 4;
+    if !crate::session::can_write(high, 4) {
+        return Err(format!("{high:#x} is not committed and writable - NOT repaired"));
+    }
+    std::ptr::write_volatile(high as *mut u32, 0);
+    let after = std::ptr::read_volatile(f.header_va as *const u64);
+    if after != slot {
+        return Err(format!(
+            "the write did not take - {:#x} now reads {after:#018x}, wanted {slot:#018x}. \
+             Treat every later reading of this slot as suspect",
+            f.header_va
+        ));
+    }
+    Ok(after)
 }
 
 /// Everything worth knowing about one confirmed finding, written to the log **before** the
@@ -1945,6 +2064,84 @@ mod tests {
         assert!(!c.stacks);
         // a silly interval must not be honoured - a 1 ms walk would be a busy loop
         assert_eq!(parse_config("interval=1").unwrap().interval, DEFAULT_INTERVAL);
+        // **Repair is the one option that writes to the client, so it must be OFF unless the
+        // marker says exactly `repair=on`.** A near miss enabling it would be the worst
+        // possible failure of this parser.
+        assert!(!parse_config("").unwrap().repair, "default must not write");
+        assert!(!parse_config("dumps=4").unwrap().repair);
+        assert!(!parse_config("repair").unwrap().repair, "bare `repair` is not `repair=on`");
+        assert!(!parse_config("repair=off").unwrap().repair);
+        assert!(!parse_config("repair=1").unwrap().repair);
+        assert!(parse_config("dumps=4,repair=on").unwrap().repair);
+        assert!(parse_config("REPAIR=ON").unwrap().repair, "the marker is lower-cased first");
+        // and `off` still disarms the whole thing even beside a repair request
+        assert!(parse_config("repair=on,off").is_none());
+    }
+
+    /// **The repair, driven against a real damaged header**, for the same reason the dump
+    /// writer is driven end to end: this is the only code in the crate that writes to memory
+    /// the client owns, and a repair that has never repaired anything is exactly the
+    /// instrument `CLAUDE.md` warns about.
+    ///
+    /// It also pins the three refusals, because each one is a case where writing would be
+    /// wrong rather than merely useless.
+    #[test]
+    fn the_repair_restores_a_header_and_refuses_everything_else() {
+        let mut pool = FakePool::new(DAMAGE_CLASS, 3);
+        let at = pool.damage(1, 7, KNOWN_DAMAGE);
+        let f = Finding {
+            bucket: DAMAGE_CLASS,
+            chunk: 0,
+            chunk_age: 0,
+            index: 7,
+            header_va: at,
+            value: KNOWN_DAMAGE,
+        };
+
+        // The positive control first: the damage is really there before the repair.
+        assert_eq!(unsafe { std::ptr::read_volatile(at as *const u64) }, KNOWN_DAMAGE);
+        let now = unsafe { repair_header(&f) }.expect("a known-family header must be repairable");
+        assert_eq!(now, 0x20, "the header must read exactly the slot size afterwards");
+        assert_eq!(
+            unsafe { std::ptr::read_volatile(at as *const u64) },
+            0x20,
+            "and it must still read that when re-read independently"
+        );
+
+        // Refusal 1: nothing to do. Idempotent rather than a second write.
+        let clean = Finding { value: 0x20, ..f };
+        assert!(unsafe { repair_header(&clean) }.is_err());
+
+        // Refusal 2: the low dword is not this bucket's slot size, so the qword is not a
+        // header of the known shape and guessing at it could corrupt a live object.
+        let wrong_class = Finding {
+            value: 0x0000_0001_0000_0040,
+            ..f
+        };
+        let why = unsafe { repair_header(&wrong_class) }.unwrap_err();
+        assert!(why.contains("slot size"), "{why}");
+        assert_eq!(
+            unsafe { std::ptr::read_volatile(at as *const u64) },
+            0x20,
+            "a refused repair must not have written anything"
+        );
+
+        // Refusal 3: unwritable memory. PAGE_NOACCESS rather than a bogus pointer, so the
+        // guard is what refuses - without it this test would fault the runner.
+        const MEM_RESERVE: u32 = 0x2000;
+        const PAGE_NOACCESS: u32 = 0x01;
+        extern "system" {
+            fn VirtualAlloc(addr: *mut std::ffi::c_void, size: usize, typ: u32, prot: u32)
+                -> *mut std::ffi::c_void;
+        }
+        let dead = unsafe { VirtualAlloc(std::ptr::null_mut(), 0x1000, MEM_RESERVE, PAGE_NOACCESS) };
+        assert!(!dead.is_null());
+        let unwritable = Finding {
+            header_va: dead as usize,
+            ..f
+        };
+        let why = unsafe { repair_header(&unwritable) }.unwrap_err();
+        assert!(why.contains("NOT repaired"), "{why}");
     }
 
     /// **The dump writer, driven end to end**, for the same reason

@@ -173,13 +173,24 @@
     of it, so a census lands beside every catch and five out of six censuses produce nothing.
     Two grids sharing a wall clock, not cause.
 
-    NOTHING TO RE-RUN HERE. The next step is a BUILD, and the period makes it cheap - a
-    guard-page run needs to survive about six minutes to catch two events
-    (heap-corruption-2026-09-06.md §3.2). A cheaper half-step first: the sentry walks every
-    100 ms, so a catch is up to 106 ms stale and every thread has parked by then; with the
-    period known it can drop to 5-10 ms around the predicted time and sample threads on the
-    tick it fires. That either catches a running thread or proves the write is one instruction
-    between two walks.
+    THE MITIGATION IS BUILT: -PoolSentry -SentryRepair. On a confirmed damaged header the
+    sentry writes the high dword back to zero - the value the carve wrote and the only legal
+    one - so the pool's free recognises the slot as the 0x20 slot it still is and puts it on
+    its own list instead of handing it to HeapFree. That removes the 0xC0000374 death.
+
+    It is OFF by default because it is the only client byte this hook writes, and three things
+    it cannot do are in repair_header's doc block: it is a RACE (a write and a free inside one
+    100 ms walk still dies), it only sees damage shaped like a pool header (the 0xC0000005
+    death of 2026-09-06 was a -1 in a map-node pointer), and if that dword is a refcount
+    reached through a stale pointer then zeroing it changes what the writer sees next time.
+    Expect FOUR 'header(s) repaired' in a 15-minute idle run; the heartbeat prints the count.
+    Say the flag was on in any result that depends on the client having stayed alive.
+
+    NAMING THE WRITER is still a BUILD, and the period makes it cheap - a guard-page run needs
+    to survive about six minutes to catch two events (heap-corruption-2026-09-06.md 3.2). A
+    cheaper half-step first: the sentry walks every 100 ms, so a catch is up to 106 ms stale
+    and every thread has parked by then; with the period known it can drop to 5-10 ms around
+    the predicted time and sample threads on the tick it fires.
 
     STILL OPEN, and it is NOT answerable by any run: whether any of this is OURS. 75 of 75
     archived client runs carried our hook. That control needs the LAUNCHER to write a smaller
@@ -988,6 +999,21 @@ param(
     # and the client freezes for about a second while each one is written, so this is not free;
     # 4 is enough for a fifteen-minute run at the observed rate of one catch per ~3 minutes.
     [int]$SentryDumps = 4,
+    # THE MITIGATION, and the only thing in the hook that writes to the client's own memory.
+    #
+    # On a confirmed damaged header the sentry puts the high dword back to zero, which is the
+    # value the pool's carve wrote and the only legal one. That turns the fatal free - the
+    # 0xC0000374 this family dies of, where a non-zero high dword sends a pool slot to
+    # HeapFree - back into an ordinary free onto the pool's own list.
+    #
+    # It does NOT stop the writer, and three things it cannot do are in repair_header's doc
+    # block: it is a race against a free inside one walk interval, it only sees damage shaped
+    # like a pool header (the 0xC0000005 death of 2026-09-06 was a -1 in a map node pointer),
+    # and if that dword is a refcount reached through a stale pointer then zeroing it changes
+    # what the writer sees next time.
+    #
+    # Off by default because it writes. Say so in any result that depends on it.
+    [switch]$SentryRepair,
     [switch]$HeapFix,
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
@@ -1805,18 +1831,26 @@ function Show-TestPlan {
         Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
-        Write-Host '    0i. DONE 2026-09-07 - THE WRITER RUNS ON A 180-SECOND CLOCK.'
-        Write-Host '       Four catches in one idle session: +180.002s, +180.115s, +180.020s.'
-        Write-Host '       With the 9-06 pair (+180.038s) that is 6 catches, 4 intervals, all'
-        Write-Host '       180.0s within 0.12s. It is a TIMER, not traffic: no packet, no'
-        Write-Host '       exception, no socket, every thread parked.'
-        Write-Host '       RETRACTS the census lead this plan used to carry: 0x013D is on a'
-        Write-Host '       30s grid and 180 is a multiple, so a census sits beside every catch'
-        Write-Host '       while 5 of 6 censuses produce nothing. Two grids, one wall clock.'
-        Write-Host '       NOTHING TO RE-RUN. Next is a BUILD, and the period makes it cheap:'
-        Write-Host '       guard pages on freed 0x20 slots, ~6 min to catch two. Cheaper first'
-        Write-Host '       step: drop the sentry to 5-10ms around the predicted time and sample'
-        Write-Host '       threads on the firing tick. research/the-180-second-clock-2026-09-07.md'
+        Write-Host '    0i. THE FIX IS BUILT AND UNTESTED ON A CLIENT: -PoolSentry -SentryRepair.'
+        Write-Host '       On a confirmed damaged header the sentry now writes the high dword'
+        Write-Host '       back to zero, so the next free of that slot goes on the pool list'
+        Write-Host '       instead of to HeapFree. That is the 0xC0000374 death, removed.'
+        Write-Host '       IT DOES NOT STOP THE WRITER and it is a RACE: a write and a free'
+        Write-Host '       inside one 100ms walk still dies. Read the heartbeats for'
+        Write-Host '       "header(s) repaired" and expect FOUR in a 15-minute idle run.'
+        Write-Host '         4 repairs, client survives, closed by you   the mitigation works'
+        Write-Host '         a 0xC0000374 anyway                         the race, or a second'
+        Write-Host '                                                     damage shape. Keep the'
+        Write-Host '                                                     dump either way'
+        Write-Host '         REPAIR REFUSED lines                        read the reason; each'
+        Write-Host '                                                     one is a guard doing'
+        Write-Host '                                                     its job, not a bug'
+        Write-Host '       WHY FOUR: the writer runs on a 180-SECOND CLOCK. Six catches, four'
+        Write-Host '       intervals, all 180.0s within 0.12s. It is a timer, not traffic - no'
+        Write-Host '       packet, no exception, no socket, every thread parked. That RETRACTS'
+        Write-Host '       the census lead this plan used to carry (0x013D is on a 30s grid, so'
+        Write-Host '       one sits beside every catch while 5 of 6 produce nothing).'
+        Write-Host '       research/the-180-second-clock-2026-09-07.md'
         Write-Host '       STILL OPEN and not answerable by a run: whether any of it is OURS.'
         Write-Host '       75 of 75 runs carried the hook; that control needs the LAUNCHER to'
         Write-Host '       write a smaller patch set. DO NOT retry -DirectClient (3 launches,'
@@ -2161,8 +2195,18 @@ function Show-TestPlan {
 # the marker once it has read it, so this is belt and braces.
 if ($PoolSentry) {
     if ($SentryDumps -lt 0) { $SentryDumps = 0 }
-    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value "dumps=${SentryDumps}" -Encoding ascii
-    Write-Host "POOL SENTRY ARMED (up to $SentryDumps dump(s)) - a heartbeat every 60s in the hook log, findings when they happen" -ForegroundColor Cyan
+    $sentryCfg = "dumps=${SentryDumps}"
+    if ($SentryRepair) { $sentryCfg = "${sentryCfg},repair=on" }
+    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value $sentryCfg -Encoding ascii
+    Write-Host "POOL SENTRY ARMED ($sentryCfg) - a heartbeat every 60s in the hook log, findings when they happen" -ForegroundColor Cyan
+    if ($SentryRepair) {
+        Write-Host '  REPAIR IS ON. The sentry will WRITE to the client: a confirmed damaged' -ForegroundColor Yellow
+        Write-Host '  header goes back to the slot size, so the next free of that slot is an' -ForegroundColor Yellow
+        Write-Host '  ordinary free instead of 0xC0000374. It does NOT stop the writer, and it' -ForegroundColor Yellow
+        Write-Host '  is a race - a write and a free inside one 100 ms walk still dies. Count' -ForegroundColor Yellow
+        Write-Host '  "header(s) repaired" in the heartbeats and say this flag was on in any' -ForegroundColor Yellow
+        Write-Host '  result that depends on the client having stayed alive.' -ForegroundColor Yellow
+    }
 } else {
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
 }
