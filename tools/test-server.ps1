@@ -173,8 +173,21 @@
     of it, so a census lands beside every catch and five out of six censuses produce nothing.
     Two grids sharing a wall clock, not cause.
 
-    THE MITIGATION IS BUILT and there is now ONE run that tests it AND the best candidate for
-    the writer. start-servers.cmd with these, then the launcher as usual:
+    THE MITIGATION HOLDS - 26 minutes, 7 catches, 7 repairs, 0 refusals, no death, closed by
+    hand; the same idle session the night before died at 23 minutes.
+
+    TO PLAY, add -SentryQuiet. The owner: "it lags/freezes the client every time it runs." Measured
+    off that run's own heartbeats rather than guessed: an ordinary walk costs 0.63-0.71 ms, a
+    finding without a dump costs 49 ms (the 68-thread stack scan), and a finding WITH a dump
+    costs 703-895 ms with the client frozen throughout. -SentryQuiet drops the dumps and the
+    thread scan and walks every 2 s except within 5 s of a predicted firing, where it returns
+    to 100 ms. The period is LEARNED from the first two catches - nothing is hard-coded - and a
+    catch outside the predicted window drops it and goes back to fine. The repair stays on.
+    Use -PoolSentry alone when the run is a MEASUREMENT rather than play.
+
+    STILL UNTESTED: whether the ticker family is the writer. It needs FIFTEEN IDLE MINUTES -
+    the last attempt was an enter-and-exit, so its only two allocator hits were the login-stage
+    channel list (rdx=2), not a ticker (rdx=6). start-servers.cmd with these, then the launcher:
 
       -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -PinPatches
       -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"
@@ -1029,6 +1042,22 @@ param(
     #
     # Off by default because it writes. Say so in any result that depends on it.
     [switch]$SentryRepair,
+    # PLAY MODE: keep the repair, drop everything that makes the client hitch.
+    #
+    # The owner, 2026-09-07: "it lags/freezes the client every time it runs, which is undesirable."
+    # Measured off that session's own heartbeats, the three costs are very different:
+    #   ordinary walk            0.63 - 0.71 ms   every 100 ms. Negligible in CPU.
+    #   a finding, no dump       49 ms            the 68-thread stack scan
+    #   a finding WITH a dump    703 - 895 ms     and the client is frozen for all of it
+    # So this sets dumps=0 (nine sentry dumps already exist; a tenth proves nothing),
+    # stacks=off, and coarse=2000 - which walks every 2 s except within five seconds of a
+    # predicted firing, where it goes back to 100 ms. The period is LEARNED from the findings,
+    # so the first two catches are at the fine interval and nothing is assumed.
+    #
+    # It keeps the repair. What it gives up: no dump if something novel turns up, no thread
+    # snapshot, and a first catch no earlier than it would have been anyway. Use -PoolSentry
+    # alone when the run is a MEASUREMENT rather than play.
+    [switch]$SentryQuiet,
     # Make the LAUNCHER use this -Probe / -Session for its next launch instead of its own
     # defaults, by writing maplecw-hook.probe.pin / .session.pin beside the client.
     #
@@ -1860,31 +1889,21 @@ function Show-TestPlan {
         Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
-        Write-Host '    0i. ONE RUN, TWO ANSWERS. Start-servers with these, then the launcher:'
-        Write-Host '         -SetFieldProbe -ServersOnly -PoolSentry -SentryRepair -PinPatches'
+        Write-Host '    0i. THE REPAIR HOLDS. 26 min, 7 catches, 7 repairs, 0 refusals, NO death'
+        Write-Host '       - the night before, the same idle session died at 23 min. It does NOT'
+        Write-Host '       stop the writer; it turns the fatal free into a correct one.'
+        Write-Host '       TO PLAY, add -SentryQuiet. The freezes were measured, not guessed:'
+        Write-Host '         ordinary walk        0.63-0.71 ms   negligible'
+        Write-Host '         finding, no dump     49 ms          the 68-thread stack scan'
+        Write-Host '         finding WITH a dump  703-895 ms     client frozen throughout'
+        Write-Host '       -SentryQuiet drops dumps and the thread scan, and walks every 2s'
+        Write-Host '       except within 5s of a predicted firing. The 180s period is LEARNED'
+        Write-Host '       from the first two catches, so nothing is assumed, and a catch'
+        Write-Host '       outside the window resets it. Keep the repair either way.'
+        Write-Host '       STILL UNTESTED: is the ticker family the writer? Needs -PinPatches'
         Write-Host '         -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"'
-        Write-Host '       Stand idle 15 min on a map with mobs, close the client yourself.'
-        Write-Host '       (A) DOES THE FIX HOLD? -SentryRepair puts a damaged header back, so'
-        Write-Host '           the next free of that slot goes on the pool list instead of to'
-        Write-Host '           HeapFree. Expect FOUR "header(s) repaired" in the heartbeats.'
-        Write-Host '             4 repairs and you close it yourself   the mitigation works'
-        Write-Host '             0xC0000374 anyway                     the race, or a second'
-        Write-Host '                                                   damage shape. Keep the dump'
-        Write-Host '           It does NOT stop the writer and it IS a race: a write and a free'
-        Write-Host '           inside one 100ms walk still dies.'
-        Write-Host '       (B) IS THE TICKER FAMILY THE WRITER? 140ca61d0 is the array allocator'
-        Write-Host '           six 180-second tickers call; two of them ask it for exactly 32'
-        Write-Host '           bytes, the damaged size class, and free it again each firing.'
-        Write-Host '             WATCH lines at the catch times, rdx=6   the family is running'
-        Write-Host '                                                     on the clock. Named.'
-        Write-Host '             no WATCH lines near a catch             it is not this family;'
-        Write-Host '                                                     4 of the 7 tickers jump'
-        Write-Host '                                                     into .themida, unreadable'
-        Write-Host '       -PinPatches is what makes (B) possible at all: the LAUNCHER writes the'
-        Write-Host '       probe marker with its own defaults, so until now its patch set was the'
-        Write-Host '       only one the client could ever run. A pin overrides it for ONE launch'
-        Write-Host '       and the launcher deletes it on read - look for OVERRIDES in its log'
-        Write-Host '       pane, and if it is absent say so rather than assuming.'
+        Write-Host '       AND fifteen idle minutes - last run was enter-and-exit, so the only'
+        Write-Host '       two hits were the login channel list (rdx=2), not a ticker (rdx=6).'
         Write-Host '       research/the-180-second-clock-2026-09-07.md'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
@@ -2227,9 +2246,18 @@ function Show-TestPlan {
 if ($PoolSentry) {
     if ($SentryDumps -lt 0) { $SentryDumps = 0 }
     $sentryCfg = "dumps=${SentryDumps}"
+    if ($SentryQuiet) { $sentryCfg = 'dumps=0,stacks=off,coarse=2000' }
     if ($SentryRepair) { $sentryCfg = "${sentryCfg},repair=on" }
     Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.sentry') -Value $sentryCfg -Encoding ascii
     Write-Host "POOL SENTRY ARMED ($sentryCfg) - a heartbeat every 60s in the hook log, findings when they happen" -ForegroundColor Cyan
+    if ($SentryQuiet) {
+        Write-Host '  QUIET MODE: no dumps, no thread scan, and the walk drops to every 2s' -ForegroundColor Cyan
+        Write-Host '  except within 5s of a predicted firing. The 703-895ms freezes were the' -ForegroundColor Cyan
+        Write-Host '  dumps; the 49ms hitches were the 68-thread stack scan. Both are off.' -ForegroundColor Cyan
+        Write-Host '  The period is LEARNED, so the first two catches are still at 100ms and' -ForegroundColor Cyan
+        Write-Host '  a catch outside the predicted window resets it. This is a PLAY setting -' -ForegroundColor Cyan
+        Write-Host '  use -PoolSentry on its own when the run is a measurement.' -ForegroundColor Cyan
+    }
     if ($SentryRepair) {
         Write-Host '  REPAIR IS ON. The sentry will WRITE to the client: a confirmed damaged' -ForegroundColor Yellow
         Write-Host '  header goes back to the slot size, so the next free of that slot is an' -ForegroundColor Yellow

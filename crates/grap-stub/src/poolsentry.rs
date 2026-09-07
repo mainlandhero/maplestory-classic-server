@@ -983,6 +983,60 @@ pub(crate) struct Config {
     /// Put the damaged header back. **Off by default, and it is the only thing in this module
     /// that writes to the client.** See [`repair_header`].
     pub repair: bool,
+    /// Walk this slowly while no firing is due. `None` means never - walk at
+    /// [`Config::interval`] the whole time, which is the behaviour every measurement to date
+    /// was taken with. See [`nap_for`].
+    pub coarse: Option<Duration>,
+}
+
+/// How far either side of a predicted firing the sentry stays at the fine interval.
+///
+/// The period held to ±1.02 s over six consecutive intervals on 2026-09-07, and the one long
+/// gap **shifted the phase permanently** rather than snapping back - so the window has to
+/// absorb drift, not just jitter. Five seconds is about five times the largest excursion seen.
+const FIRE_WINDOW: Duration = Duration::from_secs(5);
+
+/// How long to sleep before the next walk.
+///
+/// # Why this exists
+///
+/// The owner, 2026-09-07: *"it lags/freezes the client every time it runs, which is undesirable."*
+/// Measured from that session's own heartbeats: an ordinary walk costs **0.63-0.71 ms**, a
+/// finding without a dump costs **49 ms**, and a finding *with* one costs **703-895 ms** and
+/// freezes the client outright. The dumps and the thread scan are the freezes and both are
+/// already switchable (`dumps=0`, `stacks=off`). What is left is 70 368 slot headers read
+/// every 100 ms, which is cheap in CPU and **not** cheap in cache - it evicts the client's
+/// working set ten times a second, which is the shape of a continuous stutter that does not
+/// show up in the walk's own wall-clock timing. That last part is `[I]`, not measured.
+///
+/// # What makes this safe
+///
+/// The writer runs on a 180-second clock (`research/the-180-second-clock-2026-09-07.md`), so
+/// once two findings have been seen the next one is predictable. Outside a
+/// [`FIRE_WINDOW`] of that prediction there is nothing to catch, and the walk can be as lazy
+/// as the caller likes. Inside it, the interval is exactly what it always was.
+///
+/// **The fine interval still has to win a race**, which is why the coarse one is opt-in and
+/// why a surprise resets it: the one observed corrupt-to-free gap is 720 ms, so a walk that is
+/// 2 s late has already lost. A finding that arrives while coarse means the prediction was
+/// wrong, and [`walk_loop`] drops the learned period on the spot and goes back to fine.
+fn nap_for(cfg: &Config, last_fire: Option<Instant>, period: Option<Duration>) -> Duration {
+    let (Some(coarse), Some(last), Some(p)) = (cfg.coarse, last_fire, period) else {
+        return cfg.interval;
+    };
+    if p.is_zero() {
+        return cfg.interval;
+    }
+    let since = last.elapsed().as_secs_f64();
+    let p = p.as_secs_f64();
+    let phase = since % p;
+    let window = FIRE_WINDOW.as_secs_f64();
+    // Near the firing we just passed, or near the one coming up.
+    if phase <= window || p - phase <= window {
+        cfg.interval
+    } else {
+        coarse.min(Duration::from_secs_f64((p - phase - window).max(0.001)))
+    }
 }
 
 impl Default for Config {
@@ -994,6 +1048,7 @@ impl Default for Config {
             max_dumps: DEFAULT_MAX_DUMPS,
             stacks: true,
             repair: false,
+            coarse: None,
         }
     }
 }
@@ -1008,6 +1063,7 @@ pub(crate) fn parse_config(text: &str) -> Option<Config> {
     let text = text.trim().to_ascii_lowercase();
     let mut cfg = Config::default();
     let mut disabled = false;
+    let mut coarse_ms: Option<u64> = None;
     for token in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
         if token == "off" || token == "0" || token == "no" {
             disabled = true;
@@ -1033,6 +1089,19 @@ pub(crate) fn parse_config(text: &str) -> Option<Config> {
             cfg.stacks = false;
         } else if token == "repair=on" {
             cfg.repair = true;
+        } else if let Some(v) = token.strip_prefix("coarse=") {
+            // Held aside and validated after the loop: it is compared against `interval`, and
+            // comparing here would make the answer depend on which token came first.
+            coarse_ms = v.parse::<u64>().ok();
+        }
+    }
+    // A coarse interval shorter than the fine one is a mistake, not an instruction to walk
+    // harder, and one long enough to lose the 720 ms corrupt-to-free race is refused rather
+    // than honoured quietly. Both are dropped in silence the way every other bad token here is.
+    if let Some(ms) = coarse_ms {
+        let d = Duration::from_millis(ms);
+        if d > cfg.interval && ms <= 10_000 {
+            cfg.coarse = Some(d);
         }
     }
     if disabled {
@@ -1145,8 +1214,15 @@ unsafe fn run(cfg: Config) {
     let mut walk_us_total = 0u128;
     let mut walk_count = 0u128;
 
+    // What [`nap_for`] needs to predict the next firing, learned from the findings themselves
+    // rather than assumed: a hard-coded 180 s would be this file asserting its own conclusion.
+    let mut last_fire: Option<Instant> = None;
+    let mut period: Option<Duration> = None;
+
     loop {
-        std::thread::sleep(cfg.interval);
+        let nap = nap_for(&cfg, last_fire, period);
+        let was_coarse = nap > cfg.interval;
+        std::thread::sleep(nap);
         tick += 1;
         let full = cfg.full_every > 0 && tick as u32 % cfg.full_every == 0;
         let started = Instant::now();
@@ -1183,6 +1259,30 @@ unsafe fn run(cfg: Config) {
                 let mut confirmed = f;
                 confirmed.value = value;
                 walks[i].mark_reported(&confirmed);
+
+                // Learn the cadence. A finding that arrived while we were walking COARSE means
+                // the prediction was wrong, so the period is dropped rather than refined - the
+                // fine interval has a 720 ms race to win and guessing again with bad data is
+                // how it would be lost.
+                let now = Instant::now();
+                if was_coarse {
+                    if period.is_some() {
+                        log(
+                            "***** POOL SENTRY: a finding arrived OUTSIDE the predicted window \
+                             - the learned period was wrong. Dropping it and returning to the \
+                             fine interval *****",
+                        );
+                    }
+                    period = None;
+                } else if let Some(prev) = last_fire {
+                    let gap = now.duration_since(prev);
+                    period = if gap >= Duration::from_secs(20) && gap <= Duration::from_secs(600) {
+                        Some(gap)
+                    } else {
+                        None
+                    };
+                }
+                last_fire = Some(now);
                 // **The repair goes FIRST, and the ordering is the whole point of it.**
                 // `report` writes a ~1.3 GB dump that freezes the client for about 660 ms,
                 // and the one observed corrupt-to-free gap in this family is 720 ms. A repair
@@ -1238,6 +1338,25 @@ unsafe fn run(cfg: Config) {
                 format!("{line} | {repaired} header(s) repaired")
             } else {
                 line
+            };
+            // Say which cadence is in force. A run that quietly walked coarse the whole time
+            // would under-count findings and look identical to a quiet client.
+            let line = match (cfg.coarse, period) {
+                (Some(c), Some(p)) => format!(
+                    "{line} | adaptive: {} ms fine within {} s of each firing, {} ms otherwise \
+                     (period learned: {:.3} s)",
+                    cfg.interval.as_millis(),
+                    FIRE_WINDOW.as_secs(),
+                    c.as_millis(),
+                    p.as_secs_f64()
+                ),
+                (Some(c), None) => format!(
+                    "{line} | adaptive armed ({} ms) but NO period learned yet - still walking \
+                     every {} ms",
+                    c.as_millis(),
+                    cfg.interval.as_millis()
+                ),
+                _ => line,
             };
             log(&format!(
                 "POOL SENTRY alive {}s: {} confirmed finding(s){line} | walk {} us avg, \
@@ -2064,6 +2183,74 @@ mod tests {
         assert!(!c.stacks);
         // a silly interval must not be honoured - a 1 ms walk would be a busy loop
         assert_eq!(parse_config("interval=1").unwrap().interval, DEFAULT_INTERVAL);
+        // **The coarse interval is compared against the fine one, so it must not depend on
+        // token order.** Both spellings have to give the same answer or the flag is a trap.
+        assert_eq!(
+            parse_config("coarse=1000,interval=200").unwrap().coarse,
+            parse_config("interval=200,coarse=1000").unwrap().coarse,
+            "token order must not decide whether coarse is honoured"
+        );
+        assert_eq!(
+            parse_config("coarse=1000").unwrap().coarse,
+            Some(Duration::from_millis(1000))
+        );
+        assert!(parse_config("").unwrap().coarse.is_none(), "off by default");
+        // shorter than the fine walk is a mistake, not an instruction to walk harder
+        assert!(parse_config("interval=500,coarse=200").unwrap().coarse.is_none());
+        assert!(parse_config("coarse=100").unwrap().coarse.is_none(), "equal is not greater");
+        // and one long enough to lose the 720 ms corrupt-to-free race by a mile is refused
+        assert!(parse_config("coarse=60000").unwrap().coarse.is_none());
+        assert!(parse_config("coarse=wat").unwrap().coarse.is_none());
+    }
+
+    /// **The adaptive walk sleeps long only when nothing is due, and never before it has
+    /// learned a period.** The whole point of the flag is to stop the walk evicting the
+    /// client's cache ten times a second between firings; the whole risk of it is sleeping
+    /// through one, so every case that could do that is pinned here.
+    #[test]
+    fn the_coarse_interval_only_applies_away_from_a_predicted_firing() {
+        let fine = Duration::from_millis(100);
+        let coarse = Duration::from_millis(2000);
+        let cfg = Config {
+            interval: fine,
+            coarse: Some(coarse),
+            ..Config::default()
+        };
+        let period = Duration::from_secs(180);
+
+        // Nothing learned yet: always fine, whatever else is set.
+        assert_eq!(nap_for(&cfg, None, None), fine);
+        assert_eq!(nap_for(&cfg, Some(Instant::now()), None), fine);
+
+        // Just fired: inside the window, so fine.
+        assert_eq!(nap_for(&cfg, Some(Instant::now()), Some(period)), fine);
+
+        // Well away from a firing: coarse, and never long enough to overshoot the next one.
+        let long_ago = Instant::now() - Duration::from_secs(90);
+        let nap = nap_for(&cfg, Some(long_ago), Some(period));
+        assert!(nap > fine, "90 s into a 180 s period is nowhere near a firing");
+        assert!(nap <= coarse);
+
+        // Approaching the next firing: back to fine before it lands.
+        let nearly = Instant::now() - Duration::from_secs(177);
+        assert_eq!(nap_for(&cfg, Some(nearly), Some(period)), fine);
+
+        // A coarse nap must never carry past the window's edge, at any phase.
+        for secs in 6..175u64 {
+            let at = Instant::now() - Duration::from_secs(secs);
+            let nap = nap_for(&cfg, Some(at), Some(period));
+            let remaining = 180.0 - secs as f64 - FIRE_WINDOW.as_secs_f64();
+            assert!(
+                nap.as_secs_f64() <= remaining.max(0.0) + 0.05 || nap == fine,
+                "at {secs}s the nap {nap:?} would sleep past the window"
+            );
+        }
+
+        // With the flag off, nothing changes however much is known.
+        let off = Config { interval: fine, ..Config::default() };
+        assert_eq!(nap_for(&off, Some(long_ago), Some(period)), fine);
+        // A zero period must not divide by zero or pin the walk coarse.
+        assert_eq!(nap_for(&cfg, Some(long_ago), Some(Duration::ZERO)), fine);
         // **Repair is the one option that writes to the client, so it must be OFF unless the
         // marker says exactly `repair=on`.** A near miss enabling it would be the worst
         // possible failure of this parser.
