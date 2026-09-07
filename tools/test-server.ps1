@@ -105,7 +105,8 @@
     button no longer errors (stored server-side; the value gates nothing beyond membership,
     and this client has no standalone rights-changed packet). PARTY EXP: on the same map, one
     kills a mob - the killer sees a white line, every other member on the field a yellow line
-    (their equal share of 30%; no AFK signal exists, so on-field-and-online is the test).
+    (a COPY of the party share each - 30% by default, the 5th !setrates field, since
+    2026-09-06; no AFK signal exists, so on-field-and-online is the test).
     QUEST: a kill credits every party member on the field who has that kill-quest in progress.
     DROPS: a party mob's drops show to all members on the field and any of them may take them;
     a member who then LEAVES loses access while the killer keeps it. GROUND DROP: an item a
@@ -699,8 +700,16 @@
     !npcecho, !setrates, !npcreload, !registrationcode, !recoverycode. EVERYONE: !rates and
     !help - a player's !help shows only those two. PRUNED 2026-09-06 on the owner's instruction:
     !kit, !buff, !unbuff, !npcfx, !migsweep, !buy, !locker and the per-kind rate setters
-    (!exprate !mesorate !droprate) are GONE; !setrates <exp> <meso> <drop> is the one rate
-    command, and it writes only the kinds that changed. !job, !resetap and !resetsp answer in
+    (!exprate !mesorate !droprate) are GONE; !setrates <exp> <meso> <drop> <quest> <party%> is
+    the one rate command (FIVE fields since 2026-09-06: the 4th multiplies quest-completion
+    EXP, the 5th is the percent of a kill each OTHER party member on the map receives as a
+    COPY - killer keeps 70%; 30 is the old behaviour, 50 makes a 100-EXP mob pay 70 + 50 per
+    member), and it writes only the kinds that changed. !rates lists all five and is public.
+    !RATES AND THE CLIENT: on 2026-09-06 the client died 8 ms after a !rates reply, 51 min into
+    a session, inside a std::map walk on a garbage node - the FIRST chat notice in 30 min. The
+    same-shaped text survived on 08-21. So: type !rates at ~40 s of client life. Survives ->
+    the session was the cause (the long-session corruption family); dies -> !rates is fatal
+    and that is a finding nobody has yet. !job, !resetap and !resetsp answer in
     ONE line now ("Cobalt is now a Swordsman", "Skill Point successfully reset for Cobalt");
     the working is in world.log.
       !nx [amount]                          grant NX. Real and displayed, but it buys
@@ -1694,7 +1703,8 @@ function Show-TestPlan {
         Write-Host '       leader''s window drops them. Before: "unknown error", stuck in party.'
         Write-Host '       PICK-UP RIGHTS: the leader clicks it - no more "unknown error".'
         Write-Host '       PARTY EXP: both stand on the same map, ONE kills a mob. The other'
-        Write-Host '       should see a YELLOW EXP gain (their 30% share); the killer white.'
+        Write-Host '       should see a YELLOW EXP gain (a 30% COPY each - the 5th !setrates'
+        Write-Host '       field, not a split); the killer white with 70%.'
         Write-Host '       QUEST: both have a kill quest (e.g. Sam''s snails). One kills - the'
         Write-Host '       OTHER''s counter should tick up too.'
         Write-Host '       PARTY DROPS: a mob killed by one shows its drops to BOTH, and either'
@@ -2039,7 +2049,12 @@ function Show-TestPlan {
         Write-Host '  !nx !lp !resetap !resetsp !npcreload !registrationcode !recoverycode.'
         Write-Host '  EVERYONE: !rates and !help - a player''s !help shows only those two.'
         Write-Host '  Pruned 2026-09-06: !kit !buff !unbuff !npcfx !migsweep !buy !locker and'
-        Write-Host '  the per-kind rate setters are GONE; !setrates <exp> <meso> <drop> is it.'
+        Write-Host '  the per-kind rate setters are GONE. !setrates now takes FIVE fields:'
+        Write-Host '  <exp> <meso> <drop> <quest> <party%> - quest multiplies turn-in EXP; party%'
+        Write-Host '  is the COPY each other member on the map gets (killer keeps 70%).'
+        Write-Host '  !RATES: type it at ~40 s of client life. It killed the client once, 51 min'
+        Write-Host '  in, on a corrupted map walk - the same text survived on 08-21. Survives at'
+        Write-Host '  40 s = the session was the cause; dies = !rates is fatal, a new finding.'
         Write-Host '  gm-handbook/equips.txt NOW HAS NAMES - and reqLevel, reqSTR, reqDEX,'
         Write-Host '  reqINT, reqLUK and reqJob. 1759 rows, name is the LAST column. That is'
         Write-Host '  the file to read when picking something to !item in.'

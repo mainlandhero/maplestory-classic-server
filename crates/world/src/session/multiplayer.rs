@@ -924,6 +924,87 @@ mod tests {
         );
     }
 
+    /// **Party EXP is a COPY per member on the field, at the `!setrates` party share.**
+    ///
+    /// The owner, 2026-09-06: *"you kill a shitty slime that gets you 100 EXP ... 30% split copy
+    /// for party member means killer (70% - 70 EXP), party mem 2-6 (30% each, 30 EXP each),
+    /// this mob awarded a total of 220 EXP; 50% ... 50 EXP each."* Three in the party on one
+    /// field plus a stranger. Level 50 characters, so 70 EXP moves the number and not the
+    /// level. Claims: killer +70 and white; each member +30 on their own tick, yellow; the
+    /// stranger nothing; `!setrates 1 1 1 1 50` makes the next kill +50 each with the killer
+    /// still +70; and `0` shares nothing at all.
+    #[test]
+    fn party_exp_is_a_copy_per_member_at_the_configured_share() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let config = Arc::new(Config { set_field_probe: true, ..Config::default() });
+        let fields = Arc::new(Fields::new());
+        let account = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap(); // after the account exists, or NoSuchAccount
+        let make = |name: &str| {
+            let chr = net::opcode::Character { name: name.to_string(), map_id: 104_040_000, ..Default::default() };
+            let mut made = store.create_character(account, 0, &chr).unwrap();
+            made.level = 50;
+            made.exp = 0;
+            store.save_character_progress(&made).unwrap();
+            store.create_migration(account, made.id, 0, 0).unwrap();
+            let mut s = Session::joining(store.clone(), config.clone(), fields.clone());
+            s.claim_for_character(made.id);
+            s.on_field_entered();
+            (s, made.id)
+        };
+        let (mut killer, killer_id) = make("Cobalt");
+        let (mut a, a_id) = make("Tester2");
+        let (mut b, b_id) = make("Robin");
+        let (mut stranger, stranger_id) = make("Stranger");
+        let created = killer.run_party_request(killer_id, crate::party::Request::Create { name: "P".into() });
+        let party = u32::from_le_bytes(created[0].body[1..5].try_into().unwrap());
+        for (m, id) in [(&mut a, a_id), (&mut b, b_id)] {
+            let _ = killer.run_party_request(killer_id, crate::party::Request::Invite { target: id });
+            let _ = m.tick(1_000);
+            let _ = m.run_party_request(id, crate::party::Request::Accept { party });
+        }
+        for s in [&mut killer, &mut a, &mut b, &mut stranger] {
+            let _ = s.tick(2_000);
+        }
+        let exp = |id: u32| store.characters_for(account, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp;
+
+        // Default share, 30%: 70 to the killer, 30 to each of the two members, total 130.
+        let out = killer.party_exp_split(100, killer_id).expect("a party of three splits");
+        assert!(out.iter().any(|r| r.what.contains("70")), "the killer's own 70: {out:?}");
+        assert_eq!(exp(killer_id), 70, "70% to the killer");
+        let _ = a.tick(3_000);
+        let _ = b.tick(3_000);
+        let _ = stranger.tick(3_000);
+        assert_eq!((exp(a_id), exp(b_id)), (30, 30), "30 EACH, not 15 each - a copy, not a split");
+        assert_eq!(exp(stranger_id), 0, "not in the party");
+
+        // 50%: the killer still keeps 70, each member now gets 50.
+        let said = killer.handle(&gm_chat_body("!setrates 1 1 1 1 50"));
+        assert!(said.iter().any(|r| r.what.contains("Party EXP 50%")), "{said:?}");
+        let _ = killer.party_exp_split(100, killer_id).unwrap();
+        let _ = a.tick(4_000);
+        let _ = b.tick(4_000);
+        assert_eq!(exp(killer_id), 140);
+        assert_eq!((exp(a_id), exp(b_id)), (80, 80), "+50 each at 50%");
+
+        // 0%: nobody but the killer.
+        let _ = killer.handle(&gm_chat_body("!setrates 1 1 1 1 0"));
+        let _ = killer.party_exp_split(100, killer_id).unwrap();
+        let _ = a.tick(5_000);
+        assert_eq!(exp(killer_id), 210);
+        assert_eq!(exp(a_id), 80, "a 0% share pays nothing - and is not floored to 1");
+    }
+
+    /// The `0x00E7` body the client sends for a typed line: u32 tick, the text, u8 tab.
+    fn gm_chat_body(text: &str) -> Vec<u8> {
+        let mut b = net::opcode::CLIENT_CHAT.to_le_bytes().to_vec();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&(text.len() as u16).to_le_bytes());
+        b.extend_from_slice(text.as_bytes());
+        b.push(0);
+        b
+    }
+
     /// Two sessions, one channel, one map - and a **real** `0x0224` crosses
     /// between them. This is the end-to-end claim of the whole feature, and it
     /// is the test that fails if any link in the chain is unhooked: the

@@ -68,6 +68,17 @@ game socket itself carries no credential and never has. Say so in every progress
   `crates/world/src/loadout.rs` with it). `!rates` and `!help` answer for everyone; `!help`
   shows a player only `!rates` and `!help`. `!job`, `!resetap`, `!resetsp` reply in one line;
   the working moved to the log. No "A skill has been activated." line on a skill-up.
+* **`!setrates` takes five fields**: `<exp> <meso> <drop> <quest> <party%>`. Quest multiplies
+  turn-in EXP. Party% is the **copy** each other member on the field receives (killer keeps
+  70%); 30 is the old behaviour, 0 is allowed, and it never appears on the banner. `!rates`
+  lists all five.
+* **`!rates` and a client death, UNSETTLED.** 01:53:24 UTC: the client died 8 ms after the
+  `!rates` reply, 51 min into the session, inside a red-black-tree walk on a garbage node
+  pointer (`0xffffffff2f822a41`) reached from the chat-notice printer - and that reply was the
+  first chat notice in 30 minutes. The one earlier `!rates` in the archive (08-21, same-shaped
+  text) drew fine. Reads as the long-session corruption with `!rates` as the first messenger;
+  **`!rates` at ~40 s of client life is the discriminator** and is in the plan. Dump:
+  `dumps\maplecw-crash-179092-c0000005-1.dmp`.
 
 **2026-09-05: the server is ready to leave this machine.** Two changes for the homelab move,
 both built, tested, and exercised against the shipped binaries:

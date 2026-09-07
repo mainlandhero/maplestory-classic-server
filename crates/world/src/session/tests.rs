@@ -4059,7 +4059,7 @@ fn banners(out: &[Reply]) -> Vec<Option<String>> {
 #[test]
 fn setrates_stores_the_rate_and_announces_it_at_once() {
     let (mut s, store, _) = gm_session();
-    let out = s.handle(&gm_chat("!setrates 2 1 1"));
+    let out = s.handle(&gm_chat("!setrates 2 1 1 1 30"));
 
     assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 200, "stored as hundredths");
     assert_eq!(
@@ -4074,8 +4074,8 @@ fn setrates_stores_the_rate_and_announces_it_at_once() {
 #[test]
 fn two_rates_produce_one_banner_carrying_both() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
-    let out = s.handle(&gm_chat("!setrates 2 3 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
+    let out = s.handle(&gm_chat("!setrates 2 3 1 1 30"));
 
     assert_eq!(
         banners(&out),
@@ -4093,8 +4093,8 @@ fn two_rates_produce_one_banner_carrying_both() {
 #[test]
 fn returning_to_normal_announces_the_end() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
-    let out = s.handle(&gm_chat("!setrates 1 1 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
+    let out = s.handle(&gm_chat("!setrates 1 1 1 1 30"));
 
     assert_eq!(store.rates().unwrap().exp.rate, store::rates::Rate::NORMAL);
     assert_eq!(
@@ -4110,7 +4110,7 @@ fn returning_to_normal_announces_the_end() {
 #[test]
 fn ending_an_event_that_never_started_says_nothing() {
     let (mut s, _, _) = gm_session();
-    let out = s.handle(&gm_chat("!setrates 1 1 1"));
+    let out = s.handle(&gm_chat("!setrates 1 1 1 1 30"));
     assert!(banners(&out).is_empty(), "{out:?}");
     assert!(notice_text(&out[0]).contains("already"), "{out:?}");
 }
@@ -4120,9 +4120,9 @@ fn ending_an_event_that_never_started_says_nothing() {
 #[test]
 fn an_ending_and_a_survivor_share_the_banner() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
-    s.handle(&gm_chat("!setrates 2 3 1"));
-    let out = s.handle(&gm_chat("!setrates 1 3 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
+    s.handle(&gm_chat("!setrates 2 3 1 1 30"));
+    let out = s.handle(&gm_chat("!setrates 1 3 1 1 30"));
 
     assert_eq!(
         banners(&out),
@@ -4137,7 +4137,7 @@ fn an_ending_and_a_survivor_share_the_banner() {
 #[test]
 fn a_tick_with_nothing_new_sends_no_banner() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
     for tick in 1..=6u64 {
         let out = s.tick(tick * 500);
         assert!(
@@ -4152,9 +4152,9 @@ fn a_tick_with_nothing_new_sends_no_banner() {
 #[test]
 fn a_bad_multiplier_changes_nothing() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
     for bad in ["fast", "0", "1000", "1.234", "-2"] {
-        let out = s.handle(&gm_chat(&format!("!setrates {bad} 1 1")));
+        let out = s.handle(&gm_chat(&format!("!setrates {bad} 1 1 1 30")));
         assert!(banners(&out).is_empty(), "{bad} moved the banner: {out:?}");
         assert_eq!(store.rates().unwrap().exp.rate.per_cent(), 200, "{bad} changed the rate");
     }
@@ -4164,8 +4164,8 @@ fn a_bad_multiplier_changes_nothing() {
 #[test]
 fn setting_the_same_rate_again_is_a_no_op() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
-    let out = s.handle(&gm_chat("!setrates 2 1 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
+    let out = s.handle(&gm_chat("!setrates 2 1 1 1 30"));
     assert!(banners(&out).is_empty(), "it would have restarted the scroll: {out:?}");
     assert!(notice_text(&out[0]).contains("already"), "{out:?}");
 }
@@ -4179,9 +4179,9 @@ fn the_exp_rate_multiplies_a_kill() {
     s.config = Arc::new(Config { mob_exp, ..(*s.config).clone() });
 
     assert_eq!(s.exp_for_kill(2).0, 15, "1x by default");
-    s.handle(&gm_chat("!setrates 2 1 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
     assert_eq!(s.exp_for_kill(2).0, 30);
-    s.handle(&gm_chat("!setrates 1.5 1 1"));
+    s.handle(&gm_chat("!setrates 1.5 1 1 1 30"));
     assert_eq!(s.exp_for_kill(2).0, 22, "truncated, not rounded");
     assert!(s.exp_for_kill(2).1.contains("1.5x"), "and the log says why");
 }
@@ -4190,7 +4190,7 @@ fn the_exp_rate_multiplies_a_kill() {
 #[test]
 fn the_exp_command_is_not_multiplied() {
     let (mut s, store, id) = gm_session();
-    s.handle(&gm_chat("!setrates 10 1 1"));
+    s.handle(&gm_chat("!setrates 10 1 1 1 30"));
     let exp_now = |store: &Arc<Store>| {
         store.characters_for(1, 0).unwrap().into_iter().find(|c| c.id == id).unwrap().exp
     };
@@ -4212,7 +4212,7 @@ fn the_meso_rate_multiplies_a_drop() {
     s.last_position = Some((520, 395));
     let map = net::opcode::START_MAP_ID;
 
-    s.handle(&gm_chat("!setrates 1 3 1"));
+    s.handle(&gm_chat("!setrates 1 3 1 1 30"));
     s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
 
     let mesos: Vec<u32> =
@@ -4229,9 +4229,19 @@ fn the_rates_command_lists_all_three() {
     assert!(quiet.contains("EXP 1x"), "{quiet}");
     assert!(quiet.contains("Meso 1x"), "{quiet}");
     assert!(quiet.contains("Drop 1x"), "{quiet}");
-    assert!(quiet.contains("No event is running"), "{quiet}");
+    // The two fields added 2026-09-06 - the owner: "!rates should also additionally show both of
+    // these new rates". The party share prints as a percent, not a multiplier.
+    assert!(quiet.contains("Quest EXP 1x"), "{quiet}");
+    assert!(quiet.contains("Party EXP 30%"), "{quiet}");
+    assert!(quiet.contains("No event is running"), "a 30% share is not an event: {quiet}");
+    // And it is one ordinary chat notice, the same builder as every reply that draws.
+    let out = s.handle(&gm_chat("!rates"));
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].opcode, net::notice::CHAT_NOTICE);
+    assert_eq!(out[0].body[0], 1, "force = 1, like every notice");
+    assert_eq!(u16::from_le_bytes([out[0].body[1], out[0].body[2]]) as usize, out[0].body.len() - 3);
 
-    s.handle(&gm_chat("!setrates 1 1 2.5"));
+    s.handle(&gm_chat("!setrates 1 1 2.5 1 30"));
     let loud = notice_text(&s.handle(&gm_chat("!rates"))[0]);
     assert!(loud.contains("Drop 2.5x"), "{loud}");
     assert!(!loud.contains("No event is running"), "{loud}");
@@ -4241,7 +4251,7 @@ fn the_rates_command_lists_all_three() {
 #[test]
 fn the_rates_command_is_read_only() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
     let before = store.rates().unwrap();
     let out = s.handle(&gm_chat("!rates"));
     assert!(banners(&out).is_empty(), "reporting is not a change: {out:?}");
@@ -4256,7 +4266,7 @@ fn the_rates_command_is_read_only() {
 #[test]
 fn the_drop_rate_announces_through_setrates() {
     let (mut s, store, _) = gm_session();
-    let out = s.handle(&gm_chat("!setrates 1 1 4"));
+    let out = s.handle(&gm_chat("!setrates 1 1 4 1 30"));
     assert_eq!(store.rates().unwrap().drop.rate.per_cent(), 400);
     assert_eq!(
         banners(&out),
@@ -4269,9 +4279,9 @@ fn the_drop_rate_announces_through_setrates() {
 #[test]
 fn three_events_share_one_banner() {
     let (mut s, _, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 1 1"));
-    s.handle(&gm_chat("!setrates 2 3 1"));
-    let out = s.handle(&gm_chat("!setrates 2 3 4"));
+    s.handle(&gm_chat("!setrates 2 1 1 1 30"));
+    s.handle(&gm_chat("!setrates 2 3 1 1 30"));
+    let out = s.handle(&gm_chat("!setrates 2 3 4 1 30"));
     assert_eq!(
         banners(&out),
         vec![Some(
@@ -4299,7 +4309,7 @@ fn the_drop_rate_multiplies_the_chance() {
         "10x makes a 10% row certain"
     );
 
-    s.handle(&gm_chat("!setrates 1 1 10"));
+    s.handle(&gm_chat("!setrates 1 1 10 1 30"));
     s.drops_from_kill(2, 2000, Some((500, 395)), 204, map);
     assert_eq!(
         s.fields.with_drops(map, |d| d.len()),
@@ -4628,7 +4638,7 @@ fn an_absent_slot_max_is_unspecified_not_one() {
 #[test]
 fn setrates_sets_all_three_on_one_timestamp() {
     let (mut s, store, _) = gm_session();
-    let out = s.handle(&gm_chat("!setrates 2 3 5"));
+    let out = s.handle(&gm_chat("!setrates 2 3 5 1 30"));
     let r = store.rates().unwrap();
     assert_eq!(r.exp.rate.per_cent(), 200);
     assert_eq!(r.meso.rate.per_cent(), 300);
@@ -4649,8 +4659,8 @@ fn setrates_sets_all_three_on_one_timestamp() {
 #[test]
 fn setrates_all_ones_ends_every_event() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 3 5"));
-    let out = s.handle(&gm_chat("!setrates 1 1 1"));
+    s.handle(&gm_chat("!setrates 2 3 5 1 30"));
+    let out = s.handle(&gm_chat("!setrates 1 1 1 1 30"));
     assert!(store.rates().unwrap().all_normal());
     let text = banners(&out)[0].clone().unwrap();
     for want in ["The EXP rate-up event has ended.", "The Meso rate-up event has ended.", "The Drop rate-up event has ended."] {
@@ -4662,8 +4672,8 @@ fn setrates_all_ones_ends_every_event() {
 #[test]
 fn setrates_refuses_below_one_and_writes_nothing() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!setrates 2 2 2"));
-    for bad in ["0.5 3 5", "2 0.99 5", "2 3 0"] {
+    s.handle(&gm_chat("!setrates 2 2 2 1 30"));
+    for bad in ["0.5 3 5 1 30", "2 0.99 5 1 30", "2 3 0 1 30", "2 3 5 0.5 30"] {
         let out = s.handle(&gm_chat(&format!("!setrates {bad}")));
         assert!(banners(&out).is_empty(), "{bad} moved the banner: {out:?}");
         let r = store.rates().unwrap();
@@ -4679,7 +4689,7 @@ fn setrates_refuses_below_one_and_writes_nothing() {
 #[test]
 fn setrates_accepts_one_and_fractions_above_it() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!setrates 1 1.5 2"));
+    s.handle(&gm_chat("!setrates 1 1.5 2 1 30"));
     let r = store.rates().unwrap();
     assert_eq!(
         (r.exp.rate.per_cent(), r.meso.rate.per_cent(), r.drop.rate.per_cent()),
@@ -4689,11 +4699,11 @@ fn setrates_accepts_one_and_fractions_above_it() {
 
 /// The wrong number of arguments says what it wanted rather than guessing.
 #[test]
-fn setrates_wants_exactly_three() {
+fn setrates_wants_exactly_five() {
     let (mut s, store, _) = gm_session();
-    for bad in ["", "2", "2 3", "2 3 5 7"] {
+    for bad in ["", "2", "2 3", "2 3 5", "2 3 5 7", "2 3 5 7 30 1"] {
         let out = s.handle(&gm_chat(&format!("!setrates {bad}")));
-        assert!(notice_text(&out[0]).contains("multipliers - EXP, then Meso, then Drop"), "{}", notice_text(&out[0]));
+        assert!(notice_text(&out[0]).contains("wants 5 fields"), "{}", notice_text(&out[0]));
         assert!(store.rates().unwrap().all_normal(), "{bad:?} changed something");
     }
 }
@@ -4705,9 +4715,9 @@ fn setrates_wants_exactly_three() {
 #[test]
 fn setrates_refuses_below_one_in_every_position() {
     let (mut s, store, _) = gm_session();
-    for position in 0..3 {
+    for position in 0..4 {
         for bad in ["0.5", "0.99", "0.01"] {
-            let mut words = ["1", "1", "1"];
+            let mut words = ["1", "1", "1", "1", "30"];
             words[position] = bad;
             let cmd = format!("!setrates {}", words.join(" "));
             let out = s.handle(&gm_chat(&cmd));
@@ -4723,7 +4733,7 @@ fn setrates_refuses_below_one_in_every_position() {
 #[test]
 fn setrates_accepts_one_and_above_on_every_kind() {
     let (mut s, store, _) = gm_session();
-    s.handle(&gm_chat("!setrates 1.5 2 1"));
+    s.handle(&gm_chat("!setrates 1.5 2 1 1 30"));
     let r = store.rates().unwrap();
     assert_eq!(
         (r.exp.rate.per_cent(), r.meso.rate.per_cent(), r.drop.rate.per_cent()),
@@ -8445,4 +8455,65 @@ fn a_channel_refuses_a_migration_claimed_from_a_different_address_and_accepts_th
     let note = owner.claim_for_character(id);
     assert!(note.contains("claimed the migration"), "the refusal did not consume it: {note}");
     assert!(owner.claimed().is_some());
+}
+
+/// **The Quest EXP rate multiplies a turn-in, and the kill rate does not.** The owner, 2026-09-06:
+/// *"it should also now affect quest exp obtained from quest completion"* - the fourth
+/// `!setrates` field. Quest 1000 pays nothing; **1001** (Sera's, auto-started when 1000
+/// completes, turned in to Heena) pays `Act.1.exp = 2`. At `!setrates 5 1 1 1 30` it still
+/// pays 2 (the kill rate is not the quest rate), and at `!setrates 1 1 1 2 30` it pays 4, with
+/// the reason line saying so.
+#[test]
+fn the_quest_exp_rate_multiplies_a_turn_in_and_the_kill_rate_does_not() {
+    let path = std::path::Path::new("../../gm-handbook/questlines.txt");
+    if !path.exists() {
+        return; // generated data, gitignored
+    }
+    // `0x0151`: u8 op, u32 questId, u32 npc, i16 x, i16 y, u32 -1. The 1000 bodies are the
+    // captured ones the fanfare test uses; 1001's completion is the same shape with its own
+    // id (0x3e9) and its end NPC, Heena (1).
+    let turn_in = |s: &mut Session| -> (u64, String) {
+        s.on_quest_request(&hex("01e8030000010000000c046d0100000000")); // start 1000 at Heena
+        s.on_quest_request(&hex("02e80300000200000043ffe501ffffffff")); // complete 1000 at Sera -> 1001 starts
+        let done = s.on_quest_request(&hex("02e90300000100000043ffe501ffffffff")); // complete 1001 at Heena
+        let exp = done
+            .iter()
+            .find(|r| r.opcode == net::stats::STAT_CHANGED && r.what.contains("exp from quest 1001"))
+            .unwrap_or_else(|| panic!("a quest EXP line: {:?}", done.iter().map(|r| &r.what).collect::<Vec<_>>()));
+        let gained: u64 = exp.what.trim_start_matches("StatChanged: +").split(' ').next().unwrap().parse().unwrap();
+        (gained, exp.what.clone())
+    };
+    let fresh = || {
+        // `set_field_probe`, or `handle` answers nothing and the `!setrates` below is dropped
+        // on the floor - which reads exactly like the rate not applying.
+        let config = Config {
+            set_field_probe: true,
+            quests: crate::config::load_quests(path),
+            ..Config::default()
+        };
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let account_id = store.create_account("maplecw", "correct horse battery").unwrap();
+        store.set_gm("maplecw", true).unwrap();
+        let chr = net::opcode::Character { name: "TestCharD".to_string(), ..Default::default() };
+        let id = store.create_character(account_id, 0, &chr).unwrap().id;
+        store.create_migration(account_id, id, 0, 0).unwrap();
+        let mut s = Session::new(store, Arc::new(config));
+        s.claim_for_character(id);
+        s
+    };
+
+    let mut s = fresh();
+    let (base, _) = turn_in(&mut s);
+    assert!(base > 0, "the positive control: quest 1000 pays something");
+
+    let mut s = fresh();
+    s.handle(&gm_chat("!setrates 5 1 1 1 30"));
+    let (at_kill_rate, why) = turn_in(&mut s);
+    assert_eq!(at_kill_rate, base, "the KILL rate does not touch a turn-in: {why}");
+
+    let mut s = fresh();
+    s.handle(&gm_chat("!setrates 1 1 1 2 30"));
+    let (doubled, why) = turn_in(&mut s);
+    assert_eq!(doubled, base * 2, "the QUEST rate does: {why}");
+    assert!(why.contains(&format!("quest 1001 ({base} at 2x)")), "and the reason says so: {why}");
 }

@@ -45,6 +45,8 @@ pub enum RateError {
     NotANumber(String),
     /// A number, but outside [`Rate::MIN`]..=[`Rate::MAX`].
     OutOfRange(String),
+    /// The party share field: not a whole number of percent from 0 to 100.
+    NotAShare(String),
 }
 
 impl fmt::Display for RateError {
@@ -62,6 +64,11 @@ impl fmt::Display for RateError {
                 Rate(Rate::MIN),
                 Rate(Rate::MAX)
             ),
+            Self::NotAShare(s) => write!(
+                f,
+                "{s:?} is not a party share. It is a whole number of percent from 0 to 100 - \
+                 30 means every other party member on the map gets 30% of the kill."
+            ),
         }
     }
 }
@@ -76,9 +83,48 @@ impl Rate {
     /// 100x.
     pub const MAX: u32 = 10_000;
 
-    /// Hundredths in, clamped to the allowed range.
+    /// The party share a server runs at until somebody changes it: **30%** of a kill to each
+    /// other member on the field, which is what the split did before it was a setting.
+    pub const PARTY_DEFAULT: Rate = Rate(30);
+
+    /// Hundredths in, clamped to the top of the range. **Zero is allowed here** since
+    /// 2026-09-06: a party share of 0% is a legitimate setting, and the floor that keeps a
+    /// *multiplier* off zero lives in [`Rate::parse`], where a player types one.
     pub fn from_per_cent(per_cent: u32) -> Rate {
-        Rate(per_cent.clamp(Self::MIN, Self::MAX))
+        Rate(per_cent.min(Self::MAX))
+    }
+
+    /// Parse a **percentage share** - `30`, `30%`, `0`, `100` - as the fifth `!setrates`
+    /// field is typed. Whole percent only, `0..=100`.
+    ///
+    /// The owner, 2026-09-06: *"the last field will be for how much % of exp should party EXP be
+    /// distributed amongst players ... 30% split copy for party member means ... party mem
+    /// 2-6 (30% each)"*. A share is not a multiplier: 30 means thirty percent, not thirty
+    /// times, so it does not go through [`Rate::parse`], and it is stored as the same
+    /// hundredths so that [`Rate::share_of`] is the plain `value * 30 / 100`.
+    pub fn parse_share_percent(text: &str) -> std::result::Result<Rate, RateError> {
+        let raw = text.trim();
+        let digits = raw.strip_suffix('%').unwrap_or(raw).trim();
+        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+            return Err(RateError::NotAShare(raw.to_string()));
+        }
+        let percent: u32 = digits.parse().map_err(|_| RateError::NotAShare(raw.to_string()))?;
+        if percent > 100 {
+            return Err(RateError::NotAShare(raw.to_string()));
+        }
+        Ok(Rate(percent))
+    }
+
+    /// This rate as a **share** of `value`: `value * hundredths / 100`, truncated, and
+    /// **without** [`Rate::apply`]'s floor at 1 - a 0% share of a kill is nothing, and a
+    /// 30% share of 2 EXP is 0, which is the arithmetic and not a broken feature.
+    pub fn share_of(self, value: u64) -> u64 {
+        value.saturating_mul(u64::from(self.0)) / 100
+    }
+
+    /// Render as a percentage, for the party share: `30%`.
+    pub fn as_percent(self) -> String {
+        format!("{}%", self.0)
     }
 
     /// The raw hundredths. For storage and tests; do not do arithmetic on it.
@@ -158,17 +204,30 @@ impl fmt::Display for Rate {
     }
 }
 
-/// Which rate. The string is the primary key in the table, so these three spellings are
-/// on-disk format and cannot be renamed casually.
+/// Which rate. The string is the primary key in the table, so these spellings are on-disk
+/// format and cannot be renamed casually.
+///
+/// Two joined on 2026-09-06 - the owner: *"!setrates <exp> <meso> <drop> <quest> <party%>"*.
+/// `Quest` multiplies the EXP a quest completion pays. `Party` is **not a multiplier**: it
+/// is the share of a kill's EXP that every other party member on the field receives, as a
+/// whole percent, and it never appears on the event banner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateKind {
     Exp,
     Meso,
     Drop,
+    Quest,
+    Party,
 }
 
-/// Every rate there is, in the order the banner names them.
-pub const ALL_KINDS: [RateKind; 3] = [RateKind::Exp, RateKind::Meso, RateKind::Drop];
+/// Every rate there is, in the order `!setrates` takes them and `!rates` lists them.
+pub const ALL_KINDS: [RateKind; 5] =
+    [RateKind::Exp, RateKind::Meso, RateKind::Drop, RateKind::Quest, RateKind::Party];
+
+/// The **multipliers** - the kinds that are events, that the banner announces, that must be
+/// 1x or above, and whose being 1x means "no event is running". The party share is not one.
+pub const EVENT_KINDS: [RateKind; 4] =
+    [RateKind::Exp, RateKind::Meso, RateKind::Drop, RateKind::Quest];
 
 impl RateKind {
     /// The database key.
@@ -177,24 +236,32 @@ impl RateKind {
             Self::Exp => "exp",
             Self::Meso => "meso",
             Self::Drop => "drop",
+            Self::Quest => "quest",
+            Self::Party => "party",
         }
     }
 
-    /// How the banner names it: *"The Server's **EXP** rate"*.
+    /// How the banner and `!rates` name it: *"The Server's **EXP** rate"*.
     pub fn label(self) -> &'static str {
         match self {
             Self::Exp => "EXP",
             Self::Meso => "Meso",
             Self::Drop => "Drop",
+            Self::Quest => "Quest EXP",
+            Self::Party => "Party EXP",
         }
     }
 
-    /// The chat command that sets it, without the `!`.
-    pub fn command(self) -> &'static str {
+    /// Is this a multiplier with an event banner, or the party share?
+    pub fn is_event(self) -> bool {
+        EVENT_KINDS.contains(&self)
+    }
+
+    /// What a server nobody has touched runs this kind at.
+    pub fn default_rate(self) -> Rate {
         match self {
-            Self::Exp => "exprate",
-            Self::Meso => "mesorate",
-            Self::Drop => "droprate",
+            Self::Party => Rate::PARTY_DEFAULT,
+            _ => Rate::NORMAL,
         }
     }
 }
@@ -219,25 +286,39 @@ impl Default for RateRow {
     }
 }
 
-/// All three rates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// All five rates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rates {
     pub exp: RateRow,
     pub meso: RateRow,
     pub drop: RateRow,
+    pub quest: RateRow,
+    /// The party share. Its "rate" is a percentage in hundredths - 30 is 30% - and
+    /// [`Rate::share_of`] is how it is applied. See [`RateKind::Party`].
+    pub party: RateRow,
+}
+
+impl Default for Rates {
+    fn default() -> Self {
+        Rates::NORMAL
+    }
 }
 
 impl Rates {
-    /// What a server that has never been touched runs at.
+    /// What a server that has never been touched runs at: every multiplier 1x, the party
+    /// share [`Rate::PARTY_DEFAULT`].
     pub const NORMAL: Rates = Rates {
         exp: RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 },
         meso: RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 },
         drop: RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 },
+        quest: RateRow { rate: Rate::NORMAL, set_at: 0, ended_at: 0 },
+        party: RateRow { rate: Rate::PARTY_DEFAULT, set_at: 0, ended_at: 0 },
     };
 
-    /// Are all three rates 1x?
+    /// Are all the **event** rates 1x? The party share is a setting, not an event, and does
+    /// not count - a 50% share is not a "rate-up event" and never goes on the banner.
     pub fn all_normal(&self) -> bool {
-        ALL_KINDS.iter().all(|k| self.get(*k).is_normal())
+        EVENT_KINDS.iter().all(|k| self.get(*k).is_normal())
     }
 
     /// One rate by kind.
@@ -251,6 +332,8 @@ impl Rates {
             RateKind::Exp => self.exp,
             RateKind::Meso => self.meso,
             RateKind::Drop => self.drop,
+            RateKind::Quest => self.quest,
+            RateKind::Party => self.party,
         }
     }
 
@@ -259,15 +342,19 @@ impl Rates {
             RateKind::Exp => &mut self.exp,
             RateKind::Meso => &mut self.meso,
             RateKind::Drop => &mut self.drop,
+            RateKind::Quest => &mut self.quest,
+            RateKind::Party => &mut self.party,
         }
     }
 
-    /// The most recent change to **any** rate - the anchor the banner's cycle counts from.
+    /// The most recent change to any **event** rate - the anchor the banner's cycle counts
+    /// from. The party share is excluded on purpose: changing it must not restart a banner
+    /// it never appears on.
     ///
     /// One timestamp for the set rather than one each, so that changing any rate restarts the
     /// cycle and every current message appears together from that moment.
     pub fn anchor(&self) -> i64 {
-        ALL_KINDS.iter().map(|k| self.row(*k).set_at).max().unwrap_or(0)
+        EVENT_KINDS.iter().map(|k| self.row(*k).set_at).max().unwrap_or(0)
     }
 }
 
@@ -436,15 +523,60 @@ mod tests {
     }
 
     #[test]
-    fn every_kind_has_a_distinct_key_and_command() {
+    fn every_kind_has_a_distinct_key_and_the_share_is_the_one_non_event() {
         let keys: Vec<&str> = ALL_KINDS.iter().map(|k| k.key()).collect();
         let mut sorted = keys.clone();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), keys.len(), "the key is a primary key: {keys:?}");
-        for k in ALL_KINDS {
-            assert!(k.command().ends_with("rate"), "{}", k.command());
+        assert_eq!(ALL_KINDS.iter().filter(|k| !k.is_event()).count(), 1, "only the party share");
+        assert!(!RateKind::Party.is_event() && RateKind::Quest.is_event());
+        assert_eq!(RateKind::Party.default_rate(), Rate::PARTY_DEFAULT);
+        assert_eq!(RateKind::Quest.default_rate(), Rate::NORMAL);
+    }
+
+    /// **The party share is a percent, parsed and applied as one.** `30` is thirty percent,
+    /// `0` is allowed (nobody shares), `100` is a full copy, and `101`, `1.5x` and words are
+    /// refused. `share_of` has no floor: 30% of 2 is 0, and 0% of anything is 0.
+    #[test]
+    fn the_party_share_parses_as_a_whole_percent_and_applies_without_a_floor() {
+        assert_eq!(Rate::parse_share_percent("30").unwrap().per_cent(), 30);
+        assert_eq!(Rate::parse_share_percent(" 30% ").unwrap().per_cent(), 30);
+        assert_eq!(Rate::parse_share_percent("0").unwrap().per_cent(), 0);
+        assert_eq!(Rate::parse_share_percent("100").unwrap().per_cent(), 100);
+        for bad in ["101", "1.5", "30x", "-1", "", "half"] {
+            assert!(Rate::parse_share_percent(bad).is_err(), "{bad:?} must be refused");
         }
+        let thirty = Rate::parse_share_percent("30").unwrap();
+        assert_eq!(thirty.share_of(100), 30, "the owner's example: 30 each");
+        assert_eq!(Rate::parse_share_percent("50").unwrap().share_of(100), 50);
+        assert_eq!(thirty.share_of(2), 0, "no floor at 1 - unlike a multiplier");
+        assert_eq!(Rate::parse_share_percent("0").unwrap().share_of(1_000), 0);
+        assert_eq!(thirty.as_percent(), "30%");
+        // Zero survives storage: from_per_cent no longer lifts it to 1.
+        assert_eq!(Rate::from_per_cent(0).per_cent(), 0);
+    }
+
+    /// The two new kinds round-trip through the table, an untouched server has the party
+    /// share at 30%, and a party share of 0% reads back as 0 rather than as 1.
+    #[test]
+    fn quest_and_party_rates_round_trip_and_default_sensibly() {
+        let s = store();
+        let fresh = s.rates().unwrap();
+        assert_eq!(fresh.quest.rate, Rate::NORMAL);
+        assert_eq!(fresh.party.rate, Rate::PARTY_DEFAULT, "30% until somebody changes it");
+        assert!(fresh.all_normal(), "a 30% share is not an event");
+
+        s.set_rate(RateKind::Quest, Rate::from_per_cent(200), 1_000).unwrap();
+        s.set_rate(RateKind::Party, Rate::from_per_cent(50), 1_010).unwrap();
+        let r = s.rates().unwrap();
+        assert_eq!(r.quest.rate.per_cent(), 200);
+        assert_eq!(r.party.rate.per_cent(), 50);
+        assert!(!r.all_normal(), "a Quest EXP event is running");
+        assert_eq!(r.anchor(), 1_000, "the party share does not move the banner's anchor");
+
+        s.set_rate(RateKind::Party, Rate::from_per_cent(0), 1_020).unwrap();
+        assert_eq!(s.rates().unwrap().party.rate.per_cent(), 0);
     }
 
     fn store() -> Store {

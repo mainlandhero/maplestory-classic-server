@@ -58,7 +58,7 @@
 //! answer in the far more common case - so this does nothing, deliberately, until a run says
 //! which way it actually behaves.
 
-use store::rates::{Rate, RateKind, Rates, ALL_KINDS};
+use store::rates::{Rate, RateKind, Rates, ALL_KINDS, EVENT_KINDS};
 
 use super::*;
 
@@ -102,11 +102,7 @@ impl Session {
             Ok(r) => r,
             Err(e) => return self.gm_ack(format!("!rates: could not read the rates: {e}")),
         };
-        let listed: Vec<String> = ALL_KINDS
-            .iter()
-            .map(|k| format!("{} {}x", k.label(), rates.get(*k)))
-            .collect();
-        let mut said = format!("Server rates: {}.", listed.join(", "));
+        let mut said = format!("Server rates: {}.", listed(&rates).join(", "));
         if rates.all_normal() {
             said.push_str(" No event is running.");
         }
@@ -125,26 +121,41 @@ impl Session {
     /// see [`below_normal`]. So `!setrates 1 1 1` is the way to end everything in one command,
     /// which is the natural counterpart to a command whose whole point is not typing three,
     /// and `!setrates 0.5 1 1` is refused.
+    ///
+    /// **Five fields since 2026-09-06** - the owner: *"!setrates <exp> <meso> <drop> <quest>
+    /// <party%>"*. The fourth is a multiplier like the first three and applies to the EXP a
+    /// quest completion pays. The fifth is **not a multiplier**: it is the percent of a kill's
+    /// EXP that every other party member on the field receives as their own copy - *"30%
+    /// split copy for party member means killer 70 EXP, party mem 2-6 30 EXP each"* - parsed
+    /// as a whole percent from 0 to 100 and never shown on the event banner.
     pub(super) fn gm_set_rates(&mut self, arg: &str) -> Vec<Reply> {
         let words: Vec<&str> = arg.split_whitespace().collect();
         if words.len() != ALL_KINDS.len() {
             return self.gm_ack(format!(
-                "!setrates wants {} multipliers - EXP, then Meso, then Drop. Try !setrates 2 3 5, or !setrates 1 1 1 to end everything.",
+                "!setrates wants {} fields - <exp> <meso> <drop> <quest> <party%>: four multipliers (1 or above; 1 is normal), then the percent of a kill each other party member on the map receives (0-100). Try !setrates 2 3 5 1 30, or !setrates 1 1 1 1 30 to end every event.",
                 ALL_KINDS.len()
             ));
         }
         // Parse and validate ALL of them before writing ANY of them. A partial application
         // would leave the server on a combination nobody asked for, and the player would have
-        // to work out which of the three had taken.
+        // to work out which of the five had taken.
         let mut wanted = Vec::new();
         for (kind, word) in ALL_KINDS.iter().zip(&words) {
-            let rate = match Rate::parse(word) {
-                Ok(r) => r,
-                Err(e) => return self.gm_ack(format!("!setrates: the {} rate: {e}", kind.label())),
+            let rate = if kind.is_event() {
+                let rate = match Rate::parse(word) {
+                    Ok(r) => r,
+                    Err(e) => return self.gm_ack(format!("!setrates: the {} rate: {e}", kind.label())),
+                };
+                if let Some(why) = below_normal(*kind, rate) {
+                    return self.gm_ack(format!("!setrates: {why}"));
+                }
+                rate
+            } else {
+                match Rate::parse_share_percent(word) {
+                    Ok(r) => r,
+                    Err(e) => return self.gm_ack(format!("!setrates: the {} share: {e}", kind.label())),
+                }
             };
-            if let Some(why) = below_normal(*kind, rate) {
-                return self.gm_ack(format!("!setrates: {why}"));
-            }
             wanted.push((*kind, rate));
         }
 
@@ -157,8 +168,7 @@ impl Session {
             Ok(r) => r,
             Err(e) => return self.gm_ack(format!("!setrates: could not read the rates: {e}")),
         };
-        let listed: Vec<String> =
-            wanted.iter().map(|(k, r)| format!("{} {r}x", k.label())).collect();
+        let listed: Vec<String> = wanted.iter().map(|(k, r)| shown(*k, *r)).collect();
         let changed: Vec<(RateKind, Rate)> =
             wanted.iter().copied().filter(|(k, r)| *r != current.get(*k)).collect();
         if changed.is_empty() {
@@ -238,7 +248,9 @@ pub(super) fn banner_text(rates: &Rates, now: i64) -> Option<String> {
         return None;
     }
     let mut parts = Vec::new();
-    for kind in ALL_KINDS {
+    // The event kinds only. The party share is a setting, and "The Server's Party EXP rate
+    // has been set to 0.3x" is a sentence no player should ever read.
+    for kind in EVENT_KINDS {
         let row = rates.row(kind);
         if !row.rate.is_normal() {
             parts.push(running(kind, row.rate));
@@ -250,6 +262,21 @@ pub(super) fn banner_text(rates: &Rates, now: i64) -> Option<String> {
         return None;
     }
     Some(parts.join(" "))
+}
+
+/// One kind as `!rates` and `!setrates` print it: a multiplier as `EXP 2x`, the party share
+/// as `Party EXP 30%`.
+fn shown(kind: RateKind, rate: Rate) -> String {
+    if kind.is_event() {
+        format!("{} {rate}x", kind.label())
+    } else {
+        format!("{} {}", kind.label(), rate.as_percent())
+    }
+}
+
+/// All five, in `!setrates` order.
+fn listed(rates: &Rates) -> Vec<String> {
+    ALL_KINDS.iter().map(|k| shown(*k, rates.get(*k))).collect()
 }
 
 /// A running event's sentence, exactly as the owner wrote it.
@@ -280,7 +307,24 @@ mod tests {
 
     fn running_at(exp: u32, meso: u32, drop: u32, set_at: i64) -> Rates {
         let row = |p: u32| RateRow { rate: Rate::from_per_cent(p), set_at, ended_at: 0 };
-        Rates { exp: row(exp), meso: row(meso), drop: row(drop) }
+        // Quest stays 1x and the party share at its default: these tests are about the three
+        // original banners, and neither of the new kinds may change what they say.
+        Rates { exp: row(exp), meso: row(meso), drop: row(drop), quest: RateRow::default(), party: Rates::NORMAL.party }
+    }
+
+    /// The party share never reaches the banner, at any value, and does not anchor it.
+    #[test]
+    fn the_party_share_is_not_an_event_and_never_scrolls() {
+        let mut r = running_at(100, 100, 100, 0);
+        r.party = RateRow { rate: Rate::from_per_cent(50), set_at: 9_000, ended_at: 0 };
+        assert_eq!(banner_text(&r, 9_000), None, "50% is a setting, not an event");
+        assert_eq!(r.anchor(), 0, "and setting it does not restart the cycle");
+        // A Quest EXP event, on the other hand, scrolls like the other three.
+        r.quest = RateRow { rate: Rate::from_per_cent(200), set_at: 9_000, ended_at: 0 };
+        assert_eq!(
+            banner_text(&r, 9_000).as_deref(),
+            Some("[Event] The Server's Quest EXP rate has been set to 2x")
+        );
     }
 
     #[test]

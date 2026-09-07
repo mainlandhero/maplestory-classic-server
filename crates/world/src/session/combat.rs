@@ -1173,7 +1173,7 @@ impl Session {
     /// **AFK is not modelled** - this server has no idle signal - so "on the same field and
     /// online" is the whole of the eligibility test. Said out loud because the owner's rule names
     /// AFK and this is the honest approximation of it.
-    fn party_exp_split(&mut self, worth: u64, chr_id: u32) -> Option<Vec<Reply>> {
+    pub(super) fn party_exp_split(&mut self, worth: u64, chr_id: u32) -> Option<Vec<Reply>> {
         let map = self.claimed_character().map(|c| c.map_id)?;
         let members = self.fields.parties().party_of(chr_id).map(|p| p.members.clone())?;
         if members.len() < 2 {
@@ -1187,12 +1187,17 @@ impl Session {
             return Some(self.award_experience(worth, "for the kill (party, alone on the map)", true, false));
         }
 
-        // 30% split equally; the killer keeps 70% plus whatever the integer split could not
-        // divide, so the four numbers always add back to `worth` exactly.
-        let pool = worth * 30 / 100;
-        let each = pool / eligible.len() as u64;
-        let paid_out = each * eligible.len() as u64;
-        let killer_share = worth - paid_out;
+        // **A COPY to each member, not a split.** The owner, 2026-09-06: *"you kill a shitty slime
+        // that gets you 100 EXP ... 30% split copy for party member means killer (70% - 70
+        // EXP), party mem 2-6 (30% each, 30 EXP each), this mob awarded a total of 220 EXP;
+        // 50% ... 50 EXP each, total 320."* So the killer keeps 70% and every other member on
+        // the field receives the party share of the WHOLE worth, each - the share is the
+        // fifth `!setrates` field (`RateKind::Party`, 30% until changed), and the total paid
+        // grows with the party. It replaces the 08-2x rule that divided 30% among them; that
+        // rule is what the owner described as "split" before they specified "split copy".
+        let share = self.rate(store::rates::RateKind::Party);
+        let each = share.share_of(worth);
+        let killer_share = worth * 70 / 100;
 
         for member in &eligible {
             let delivered = self.bus().send_to_character(
@@ -1213,9 +1218,11 @@ impl Session {
             }
         }
         crate::server::log(&format!(
-            "   exp: party kill on map {map} - killer {chr_id} keeps {killer_share} (white), \
-             {} member(s) split {paid_out} at {each} each (yellow, party EXP)",
-            eligible.len()
+            "   exp: party kill on map {map} worth {worth} - killer {chr_id} keeps {killer_share} (70%, white), \
+             {} member(s) each receive {each} ({} of the whole, yellow, party EXP); {} paid in all",
+            eligible.len(),
+            share.as_percent(),
+            killer_share + each * eligible.len() as u64
         ));
         Some(self.award_experience(killer_share, "for the kill (party)", true, false))
     }

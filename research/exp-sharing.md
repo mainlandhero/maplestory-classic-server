@@ -107,12 +107,15 @@ computed, delivered and applied in code, and nobody has watched a second player'
 appear.*
 
 **Parties now exist, and the party split is implemented** (`Session::party_exp_split`,
-2026-09-05). When the killer is in a party of two or more, the damage-share path above is
-suppressed and this runs instead: the killer keeps **70%** (white), and every other member
-**standing on the killer's field** splits the remaining **30%** equally, yellow. The killer
-keeps the integer-division remainder, so the four numbers add back to the worth exactly. A
-member on another map or offline is not eligible and their slice is not minted, so a lone
-member on the field takes the whole 30% and a killer with nobody there keeps 100%.
+2026-09-05; **rule changed 2026-09-06**). When the killer is in a party of two or more, the
+damage-share path above is suppressed and this runs instead: the killer keeps **70%** (white),
+and every other member **standing on the killer's field** receives **a copy** of the party
+share of the whole worth, yellow - not a division of the remaining 30%. The owner, 2026-09-06:
+*"30% split copy for party member means killer (70% - 70 EXP), party mem 2-6 (30% each, 30
+EXP each), this mob awarded a total of 220 EXP; 50% ... 50 EXP each ... 320."* The share is
+the fifth `!setrates` field (`RateKind::Party`, 30% until changed, 0 allowed), so the total
+paid out grows with the party rather than summing back to the worth. A member on another map
+or offline is not eligible and their copy is not minted; a killer with nobody there keeps 100%.
 
 Two honest gaps, both stated in the code:
 

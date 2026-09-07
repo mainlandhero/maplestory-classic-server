@@ -428,7 +428,19 @@ impl Session {
 
         // Last, so the experience line lands under the item lines the way a turn-in reads.
         // White: a quest reward is yours, not a share of somebody else's kill.
-        out.extend(self.award_experience(exp, &format!("quest {quest_id}"), true, true));
+        //
+        // **Multiplied by the Quest EXP rate**, the fourth `!setrates` field (the owner,
+        // 2026-09-06: *"it should also now affect quest exp obtained from quest completion"*).
+        // Separate from the kill rate on purpose: a 5x kill event need not make every
+        // turn-in worth five levels, and the two are set independently.
+        let quest_rate = self.rate(store::rates::RateKind::Quest);
+        let paid = quest_rate.apply(exp);
+        let why = if quest_rate.is_normal() {
+            format!("quest {quest_id}")
+        } else {
+            format!("quest {quest_id} ({exp} at {quest_rate}x)")
+        };
+        out.extend(self.award_experience(paid, &why, true, true));
         out
     }
 
