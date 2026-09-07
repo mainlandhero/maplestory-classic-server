@@ -182,6 +182,57 @@ and returns. **A branch that cannot re-arm its own gate cannot produce a 180 s p
 is a cleaner reason to drop that lead than the "it read zero in the dumps" one below, and it
 agrees with it. `[D]`
 
+## 4b. Is the server sending bad data? No, and here is what the client itself says
+
+The owner, 2026-09-07: *"Isn't the server just sending the client bad data which cause the bad heap
+lookup?"*
+
+The honest answer has two halves and they point different ways.
+
+**Not as a packet, and the client agrees.** `0x009E` is the client's own *"I could not handle
+this packet"* report, and it carries the offending opcode and body verbatim - a gift this
+project has used before. Across the archive it fires **34** times, so the instrument works and
+has a positive control. In the three sessions that produced catches it fires **zero** times.
+`[L]` The client is not refusing anything we send while this is happening.
+
+And it is a **write**, not a lookup. A misread does not corrupt; something stores four bytes
+into a slot header. That store is on a clock the client generates itself (§5a), with no packet,
+no exception and no socket event within a second of it (§4), and traffic volume does not track
+damage - 36 231 mob-move acks against five damaged slots in the run measured here. `[L]`
+
+**But the other half is open, and it is the half the owner is really pointing at.** This family has
+only ever been observed in *our* environment; there is no unhooked or non-MapleCW run anywhere
+in the archive (`research/is-the-corruption-ours-2026-09-06.md` §1). And this client demonstrably
+*does* have a memory-corruption path that only our environment reaches: the reachability check
+that overruns its own stack buffer when nothing is reachable, which is why `1415db360:ret` is
+not optional. So *"our setup puts the client somewhere it was never meant to be"* is very much
+live. It is just not *"a malformed packet parsed wrongly"*.
+
+### 4b.1 A new lead: the client writes an error record on this clock
+
+`0x008F CLIENT_ELOG` is the client's own error log, uploaded at the **start** of a session and
+describing the **previous** one. Decoded with `tools/decode_elog.py`, two of them land on the
+180-second clock: `[L]`
+
+| uploaded in | record | its `Time2` against that session's catches |
+|---|---|---|
+| the 23:27 run | `ELog|10 ... DATETIME 02:34:33 ... Time1 173293072 Time2 173292058` | catch #1 of the sentry session was 22:34:34.376; the dump 725 ms later read `[ctx+0x3b18] = 173292538`, so `Time2` is ~250 ms **after** that catch |
+| the run in progress | `ELog|10 ... DATETIME 03:56:42 ... Time1 178222699 Time2 178222162` | the four-catch session's catch-1 dump read `178402192`; `Time2` is **180 030 ms** before it - one period, to 30 ms |
+
+Type 10 carries `State|3`, `AccountId|0` and a trailing `767`, and other sessions show type 15
+and 18 records that are unmistakable errors (`throw ZException|-|1330|HR|38`). `[L]`
+
+**Two observations, and this file has already burned two correlations tonight** - the census and
+the banner - so it is tagged `[D]` and no further. What makes it worth chasing anyway is that it
+is the client *saying something happened*, at a moment we can predict to the second.
+
+**The prediction, and it costs nothing.** The run in progress has catches at 00:46:52.625,
+00:49:52.670, 00:52:52.673, 00:55:52.779 and 00:58:52.744 local. When that client is closed, the
+**next** login uploads this session's `ELog`. If its `Time2` lands within a second of one of
+those, the client logs an error on the corruption clock and the record's own fields name the
+subsystem. If it lands somewhere unrelated, the two above were coincidence and this dies like
+the other two.
+
 ## 5. Where this points, and what is not yet claimed
 
 `0x2bf20` is 180000, and it appears **42 times in `.text`** (`tools/pe_packing`-style literal
