@@ -45,8 +45,11 @@ pub struct Remembered {
     pub client_dir: Option<String>,
     /// The server the last successful Start Game reached. An address or a name, as typed.
     pub server_ip: Option<String>,
-    /// The login port that went with it.
+    /// The game port that went with it.
     pub port: Option<u16>,
+    /// The sign-in port. A box on screen since 2026-09-07, so it is the player's to set and
+    /// therefore the launcher's to remember.
+    pub auth_port: Option<u16>,
     /// The account name or email that was in the box. **Never the password** - see
     /// [`render`].
     pub identity: Option<String>,
@@ -74,7 +77,6 @@ pub fn parse(text: &str) -> Remembered {
     // the right answer to that is a line saying where it belongs.
     for (key, present) in [
         ("stub_path", cfg.stub_path.is_some()),
-        ("auth_port", cfg.auth_port.is_some()),
         ("auth_fingerprint", cfg.auth_fingerprint.is_some()),
     ] {
         if present {
@@ -88,6 +90,7 @@ pub fn parse(text: &str) -> Remembered {
         client_dir: cfg.client_dir,
         server_ip: cfg.server_ip,
         port: cfg.port,
+        auth_port: cfg.auth_port,
         identity: cfg.identity,
         problems,
     }
@@ -114,6 +117,7 @@ pub fn render(
     client_dir: Option<&Path>,
     server_ip: Option<&str>,
     port: Option<u16>,
+    auth_port: Option<u16>,
     identity: Option<&str>,
 ) -> String {
     let mut out = format!(
@@ -132,6 +136,9 @@ pub fn render(
     if let Some(v) = port {
         out.push_str(&format!("port = \"{v}\"\n"));
     }
+    if let Some(v) = auth_port {
+        out.push_str(&format!("auth_port = \"{v}\"\n"));
+    }
     if let Some(v) = identity.map(str::trim).filter(|v| !v.is_empty()) {
         out.push_str(&format!("identity = \"{v}\"\n"));
     }
@@ -140,7 +147,7 @@ pub fn render(
 
 /// Kept so a Browse with nothing else known still writes a usable file.
 pub fn render_client_dir(client_dir: &Path) -> String {
-    render(Some(client_dir), None, None, None)
+    render(Some(client_dir), None, None, None, None)
 }
 
 /// Remember `client_dir` in `dir`. Returns the file written.
@@ -166,11 +173,18 @@ pub fn save(
     client_dir: &Path,
     server_ip: &str,
     port: u16,
+    auth_port: u16,
     identity: &str,
 ) -> io::Result<PathBuf> {
     write_file(
         dir,
-        render(Some(client_dir), Some(server_ip), Some(port), Some(identity)),
+        render(
+            Some(client_dir),
+            Some(server_ip),
+            Some(port),
+            Some(auth_port),
+            Some(identity),
+        ),
     )
 }
 
@@ -249,15 +263,17 @@ mod tests {
     #[test]
     fn the_players_settings_are_remembered_and_the_operators_are_not() {
         let got = parse(
-            "client_dir = C:\\x\nserver_ip = 10.0.0.9\nport = 8484\nidentity = cobalt\n",
+            "client_dir = C:\\x\nserver_ip = 10.0.0.9\nport = 8484\nauth_port = 8480\nidentity = cobalt\n",
         );
         assert_eq!(got.client_dir.as_deref(), Some("C:\\x"));
         assert_eq!(got.server_ip.as_deref(), Some("10.0.0.9"));
         assert_eq!(got.port, Some(8484));
+        // The one that cost a debugging session: sign-in dials THIS, not `port`.
+        assert_eq!(got.auth_port, Some(8480));
         assert_eq!(got.identity.as_deref(), Some("cobalt"));
         assert!(got.problems.is_empty(), "{:?}", got.problems);
 
-        for key in ["stub_path = C:\\y", "auth_port = 8480", "auth_fingerprint = sha256:ab"] {
+        for key in ["stub_path = C:\\y", "auth_fingerprint = sha256:ab"] {
             let got = parse(&format!("client_dir = C:\\x\n{key}\n"));
             assert_eq!(got.client_dir.as_deref(), Some("C:\\x"), "{key}");
             assert_eq!(got.problems.len(), 1, "{key}: {:?}", got.problems);
@@ -281,6 +297,7 @@ mod tests {
             Some(Path::new(r"C:\MapleCW\client")),
             Some("  10.0.0.9  "),
             Some(8484),
+            Some(8480),
             Some(" cobalt "),
         );
         // Checked over the KEYS, not the prose: the header says the word "password" on
@@ -293,7 +310,7 @@ mod tests {
             .map(str::trim)
             .filter(|k| !k.is_empty())
             .collect();
-        assert_eq!(keys, ["client_dir", "server_ip", "port", "identity"], "{full}");
+        assert_eq!(keys, ["client_dir", "server_ip", "port", "auth_port", "identity"], "{full}");
         for k in &keys {
             let k = k.to_ascii_lowercase();
             assert!(
@@ -306,7 +323,8 @@ mod tests {
         assert!(full.contains("server_ip = \"10.0.0.9\""), "{full}");
         assert!(full.contains("identity = \"cobalt\""), "{full}");
 
-        let sparse = render(Some(Path::new(r"C:\MapleCW\client")), Some("   "), None, Some(""));
+        let sparse =
+            render(Some(Path::new(r"C:\MapleCW\client")), Some("   "), None, None, Some(""));
         assert!(!sparse.contains("server_ip"), "an empty box must not be written: {sparse}");
         assert!(!sparse.contains("identity"), "{sparse}");
         assert!(!sparse.contains("port"), "{sparse}");
@@ -316,6 +334,7 @@ mod tests {
         let back = parse(&full);
         assert_eq!(back.server_ip.as_deref(), Some("10.0.0.9"));
         assert_eq!(back.port, Some(8484));
+        assert_eq!(back.auth_port, Some(8480), "the sign-in port must survive the round trip");
         assert_eq!(back.identity.as_deref(), Some("cobalt"));
         assert!(back.problems.is_empty(), "{:?}", back.problems);
     }

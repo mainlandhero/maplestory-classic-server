@@ -51,7 +51,9 @@ Options worth knowing:
     -InstallDir "D:\Games\MapleCW"   somewhere other than C:\MapleCW
     -AuthPort   8480                 the port the SERVER's sign-in service listens on, if
                                      it was moved off 8080. The two sides must agree or
-                                     sign-in never connects
+                                     sign-in never connects. You can also just type it into
+                                     the launcher's "Sign-in port" box - that is the one
+                                     sign-in uses. "Game port" is a different service
     -NoFirewall                      skip the outbound block rule (read the warning first)
     -SkipRuntimeCheck                install without the Visual C++ runtime present. The
                                      launcher will not start until you install it
@@ -92,7 +94,7 @@ Then type the account name (or its email) and the password, check the server add
 press Login. When it succeeds, Start Game becomes available. Start Game installs the
 GameGuard stub into client\ and launches the client.
 
-THE LAUNCHER REMEMBERS. Once Start Game has worked, it saves the server address, the port,
+THE LAUNCHER REMEMBERS. Once Start Game has worked, it saves the server address, both ports,
 the game folder and your account name into maplecw-launcher.remembered.toml beside
 maplecw-launcher.exe, and fills them in for you next time. Only the password is not saved,
 and never will be - you type that each time. Delete that file to go back to the defaults.

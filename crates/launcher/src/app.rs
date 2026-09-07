@@ -64,7 +64,11 @@ pub struct LauncherApp {
     identity: String,
     password: String,
     server_ip: String,
+    /// The GAME port, handed to the client after sign-in.
     port_text: String,
+    /// The SIGN-IN port - `crates/auth` over HTTPS. A separate service and a separate number;
+    /// see `service_target`, where conflating them cost a debugging session.
+    auth_port_text: String,
     /// The client directory, editable. The owner, 2026-08-29: *"We should probably let the player
     /// choose where the MapleStory.exe is."* Held as text rather than a `PathBuf` so a
     /// half-typed path is a half-typed path and not a resolution failure on every keystroke.
@@ -106,6 +110,7 @@ impl LauncherApp {
         let mut app = LauncherApp {
             server_ip: layout.server_ip.clone(),
             port_text: layout.port.to_string(),
+            auth_port_text: layout.auth_port.to_string(),
             client_dir_text: layout.client_dir.display().to_string(),
             // Pre-filled from the last successful Start Game. The password box stays empty
             // and always will - `crate::remembered` explains why.
@@ -220,7 +225,13 @@ impl LauncherApp {
     /// saying why nothing will be sent. Every server call starts here.
     fn service_target(&mut self) -> Option<(String, u16, tlspin::Fingerprint)> {
         let host = self.server_ip.trim().to_string();
-        let port = self.layout.auth_port;
+        // **The box, not the layout.** Until 2026-09-07 this read `layout.auth_port`, which no
+        // box on screen could change: the only visible "Port" is the GAME port handed to the
+        // client. The owner moved the sign-in service to 8480 because 8080 was taken, typed 8480,
+        // and watched the launcher dial 8080 and report that whatever answered was not
+        // speaking TLS. The input was respected; it was the wrong input, and the one that
+        // mattered was invisible.
+        let port = self.auth_port_text.trim().parse::<u16>().unwrap_or(self.layout.auth_port);
         match self.layout.auth_fingerprint {
             Some(pin) => {
                 self.push(Level::Info, format!("{host}:{port} over TLS, pinned to {}", pin.short()));
@@ -378,11 +389,17 @@ impl LauncherApp {
     /// constraint, and this file is plain text beside the executable.
     fn remember_settings(&mut self) {
         let port = self.port_text.trim().parse::<u16>().unwrap_or(self.layout.port);
+        let auth_port = self
+            .auth_port_text
+            .trim()
+            .parse::<u16>()
+            .unwrap_or(self.layout.auth_port);
         match crate::remembered::save(
             &self.layout.exe_dir,
             &self.layout.client_dir,
             &self.server_ip,
             port,
+            auth_port,
             &self.identity,
         ) {
             Ok(path) => self.push(
@@ -644,10 +661,25 @@ impl eframe::App for LauncherApp {
                     );
                     ui.end_row();
 
-                    ui.label("Port");
+                    // **Two ports, and they are two different services.** Sign-in is HTTPS to
+                    // `crates/auth`; the game port is handed to the client afterwards. One box
+                    // labelled "Port" made the invisible one the cause of a failure the
+                    // visible one looked responsible for.
+                    ui.label("Sign-in port");
                     ui.add_enabled(
                         !busy,
-                        egui::TextEdit::singleline(&mut self.port_text).desired_width(90.0),
+                        egui::TextEdit::singleline(&mut self.auth_port_text)
+                            .desired_width(90.0)
+                            .hint_text("8080"),
+                    );
+                    ui.end_row();
+
+                    ui.label("Game port");
+                    ui.add_enabled(
+                        !busy,
+                        egui::TextEdit::singleline(&mut self.port_text)
+                            .desired_width(90.0)
+                            .hint_text("8484"),
                     );
                     ui.end_row();
 
