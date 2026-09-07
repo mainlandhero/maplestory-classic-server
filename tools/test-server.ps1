@@ -174,8 +174,15 @@
     THE RUN. One launch, servers and client together, with every OPTIONAL patch off:
 
       powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
-        -DirectClient -FallbackAccount maplecw -PoolSentry
+        -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry
         -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
+
+    **-SetFieldProbe is in that line because it is NOT optional and it is NOT a client patch.**
+    It is a WORLD-SERVER flag: without it Session::handle returns nothing for every packet and
+    the client hangs on "Connecting..." after you pick a character - which is exactly what
+    happened on the first attempt at this run, 2026-09-06 23:27, because the command handed over
+    left it out. It does not weaken the control: -SetFieldProbe only substitutes the default
+    watch set when -Probe was NOT passed explicitly (line ~1173), and this line passes it.
 
     -DirectClient is the point: the LAUNCHER writes the probe and session markers with its own
     defaults, so the launcher path cannot run this control. This drops four things at once - the
@@ -1802,8 +1809,12 @@ function Show-TestPlan {
         Write-Host '       separates "this client corrupts its heap" from "it corrupts it while'
         Write-Host '       we are inside it". This run is the separation. It needs -DirectClient:'
         Write-Host '       the LAUNCHER writes the probe/session markers with its own defaults.'
-        Write-Host '         -DirectClient -FallbackAccount maplecw -PoolSentry'
+        Write-Host '         -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry'
         Write-Host '         -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"'
+        Write-Host '       -SetFieldProbe is NOT a client patch and NOT optional: it is a WORLD'
+        Write-Host '       flag, and without it the channel answers nothing and picking a'
+        Write-Host '       character hangs on "Connecting...". It leaves -Probe alone when -Probe'
+        Write-Host '       is passed, so the two-watch control set survives.'
         Write-Host '       Drops 4 things at once (2 watches, create=on, the identity write, the'
         Write-Host '       multiclient hooks); correct for a control - if catches continue, all'
         Write-Host '       four are cleared in one launch. Cobalt, a map with mobs, STAND STILL'

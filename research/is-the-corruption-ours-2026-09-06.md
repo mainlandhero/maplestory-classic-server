@@ -191,9 +191,26 @@ One launch, and it is the control that has never been run.
 
 ```text
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
-  -DirectClient -FallbackAccount maplecw -PoolSentry
+  -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry
   -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
 ```
+
+**`-SetFieldProbe` is not a client patch and is not optional.** It is a world-server flag;
+without it `Session::handle` returns nothing for every packet and the client hangs on
+"Connecting..." after a character is picked. The first attempt at this run, 2026-09-06 23:27,
+did exactly that, because the command written into both plan copies and into this section left
+it out. `[L]` - `login.log` shows the character list going out at `03:26:56.690` and then no
+`0x0078 CLIENT_SELECT_CHARACTER_REQUEST` at all, against the archived working sequence
+`0x0078 -> 0x0011 MIGRATE_COMMAND`, and `world.log` has 35 lines, all of them startup banner.
+
+It does not weaken the control. `-SetFieldProbe` substitutes the default four-watch probe set
+**only when `-Probe` was not passed explicitly**, and this command passes it, so the client
+still runs with just the two mandatory patches. Everything else the flag touches is the world
+server's own arguments and what the plan prints.
+
+The lesson is the file's own: this script's `.NOTES` said *"-SetFieldProbe is NOT optional"* at
+line 42 and prints a red six-line warning on the branch without it. A command assembled from
+the patch list rather than from the run's requirements dropped it anyway, and cost a launch.
 
 `-DirectClient` is not a detail: **the launcher writes the probe and session markers with its
 own defaults**, so the ordinary launcher path cannot run this control at all. That one switch
