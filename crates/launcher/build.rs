@@ -69,8 +69,75 @@ fn embed_stub() {
     );
 }
 
+/// Compile the sign-in service's certificate fingerprint into the launcher, so a client
+/// machine needs no certificate configuration at all.
+///
+/// # Why
+///
+/// The owner, 2026-09-07: *"I would like to modify the launcher to automatically assume we will use
+/// the current cert. The server will use the same cert as the test machine ... that way no
+/// manual configuration is needed on the client's files."*
+///
+/// Until now a pin had to reach every client by hand - `install.ps1 -AuthFingerprint <value>`,
+/// or a `auth-cert-fingerprint.txt` copied beside the launcher - and a machine that missed
+/// that step could not sign in at all. Baking the value in makes the ordinary deployment
+/// need nothing, and every on-disk source still **overrides** it (`crates/launcher/src/paths.rs`
+/// `resolve_fingerprint`), so a different server is still a config key away.
+///
+/// # This is a pin, not a relaxation
+///
+/// The launcher refuses any certificate that does not match. Baking a value in changes *where
+/// the pin comes from*, never whether there is one: a build with no fingerprint file produces
+/// a launcher with **no** baked pin, which behaves exactly as it does today - it looks on disk
+/// and refuses sign-in if it finds nothing. There is no path here that accepts an unknown
+/// certificate.
+///
+/// # The failure mode this creates, stated because it is new
+///
+/// `crates/auth/src/tls.rs` generates a self-signed certificate **only when `auth-cert.pem` is
+/// absent** and reloads it otherwise, so the value is stable for as long as those two files
+/// survive. If the server is ever deployed without them it mints a new one, and every launcher
+/// built before that refuses to sign in. That is the correct behaviour for a pin and it is
+/// why `tools/package-server.ps1` ships the certificate with the server.
+fn embed_fingerprint() {
+    println!("cargo:rustc-check-cfg=cfg(has_baked_fingerprint)");
+    let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") else { return };
+    let Some(root) = std::path::Path::new(&manifest).parent().and_then(|p| p.parent()) else {
+        return;
+    };
+    let file = root.join("auth-cert-fingerprint.txt");
+    println!("cargo:rerun-if-changed={}", file.display());
+
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        println!(
+            "cargo:warning=launcher: no {} at the repo root, so NO certificate pin is compiled \
+             in and every client machine will need one on disk or in its config. Start the \
+             sign-in service once to write it.",
+            file.display()
+        );
+        return;
+    };
+    let text = text.trim().to_string();
+    // Shape-checked here rather than trusted: a launcher that baked in a typo would refuse
+    // every sign-in with a pin nobody could find the source of. The real parse still happens
+    // at run time in `tlspin::Fingerprint::parse`, which is the authority.
+    let body = text.strip_prefix("sha256:").unwrap_or("");
+    if body.len() != 64 || !body.bytes().all(|b| b.is_ascii_hexdigit()) {
+        println!(
+            "cargo:warning=launcher: {} does not hold `sha256:` followed by 64 hex characters, \
+             so NO certificate pin is compiled in. Found {:?}",
+            file.display(),
+            text.chars().take(24).collect::<String>()
+        );
+        return;
+    }
+    println!("cargo:rustc-env=MAPLECW_BAKED_FINGERPRINT={text}");
+    println!("cargo:rustc-cfg=has_baked_fingerprint");
+}
+
 fn main() {
     embed_stub();
+    embed_fingerprint();
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();

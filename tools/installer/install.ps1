@@ -210,12 +210,23 @@ Set-Content -Path (Join-Path $InstallDir 'maplecw-launcher.toml') -Value $toml -
 Write-Host ''
 Write-Host "wrote $InstallDir\maplecw-launcher.toml"
 if (-not $AuthFingerprint) {
+    # **No longer an error, and no longer a warning either.** Since 2026-09-07 the launcher has
+    # the sign-in certificate's fingerprint COMPILED IN (crates/launcher/build.rs), so an
+    # ordinary install needs no certificate configuration at all - which is the point:
+    # The owner wanted no manual configuration on the client's files. -AuthFingerprint stays as the
+    # override for a server using a different certificate; a value in the .toml still wins.
+    #
+    # This deliberately does not claim the pin is present: this script cannot read what was
+    # compiled into the launcher binary. The launcher itself prints the pin AND where it came
+    # from on every start, and that is the line to read.
     Write-Host ''
-    Write-Host 'NO CERTIFICATE FINGERPRINT WAS GIVEN, so this machine cannot sign in yet.' -ForegroundColor Yellow
-    Write-Host '  The launcher refuses to send a password to a server it has not been told to'
-    Write-Host '  trust. The server window prints "TLS: fingerprint sha256:..." at startup;'
-    Write-Host '  either re-run this with -AuthFingerprint <that value>, or edit'
-    Write-Host ("  {0}\maplecw-launcher.toml and set auth_fingerprint." -f $InstallDir)
+    Write-Host 'No -AuthFingerprint given, which is normal.' -ForegroundColor Green
+    Write-Host '  Launchers built since 2026-09-07 carry the sign-in certificate fingerprint'
+    Write-Host '  compiled in, so this machine needs no certificate configuration.'
+    Write-Host '  The launcher prints its pin and where the pin came from on every start. If it'
+    Write-Host '  says NOT PINNED, or sign-in is refused, the server is using a different'
+    Write-Host '  certificate than this launcher was built against - re-run with'
+    Write-Host ("  -AuthFingerprint <the value the server window prints>, or edit {0}\maplecw-launcher.toml." -f $InstallDir)
 }
 
 # ---------------------------------------------------------------- firewall

@@ -15,13 +15,67 @@ fn scratch(tag: &str) -> PathBuf {
     dir
 }
 
+/// **With nothing on disk, the answer now depends on how this launcher was built**, and both
+/// outcomes are asserted here rather than one of them being assumed.
+///
+/// This test failed the moment `build.rs` started baking a pin in, which is the test doing its
+/// job: the behaviour genuinely changed. What must NOT change is that there is no third
+/// outcome - a launcher either has a pin or refuses to sign in, and never accepts an unknown
+/// certificate because it could not find one.
 #[test]
-fn with_nothing_pinned_the_layout_says_so() {
+fn with_nothing_pinned_the_answer_is_the_baked_pin_or_a_refusal() {
     let dir = scratch("none");
     let layout = resolve_from(&dir);
-    assert!(layout.auth_fingerprint.is_none());
-    assert!(layout.auth_fingerprint_from.contains("NOT PINNED"), "{}", layout.auth_fingerprint_from);
-    assert!(layout.report().contains("NOT PINNED"), "{}", layout.report());
+
+    match crate::paths::baked_fingerprint() {
+        Some(baked) => {
+            let expected = tlspin::Fingerprint::parse(baked).expect("build.rs shape-checks it");
+            assert_eq!(
+                layout.auth_fingerprint,
+                Some(expected),
+                "a build with a compiled-in pin must use it when nothing is on disk"
+            );
+            assert!(
+                layout.auth_fingerprint_from.contains("compiled into this launcher"),
+                "the report must say where the pin came from: {}",
+                layout.auth_fingerprint_from
+            );
+            assert!(layout.report().contains(&expected.to_string()));
+        }
+        None => {
+            assert!(layout.auth_fingerprint.is_none());
+            assert!(
+                layout.auth_fingerprint_from.contains("NOT PINNED"),
+                "{}",
+                layout.auth_fingerprint_from
+            );
+            assert!(layout.report().contains("NOT PINNED"), "{}", layout.report());
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **A file on disk still outranks the compiled-in pin.** This is what keeps a shipped
+/// launcher pointable at a different server without a rebuild, and it is the property most
+/// likely to be broken by someone tidying the fallback chain later.
+#[test]
+fn a_file_on_disk_outranks_the_compiled_in_pin() {
+    let Some(baked) = crate::paths::baked_fingerprint() else {
+        return; // nothing to outrank in a build without one
+    };
+    let baked = tlspin::Fingerprint::parse(baked).unwrap();
+    let dir = scratch("outranks");
+    let other = tlspin::Fingerprint::of_der(b"a different server's certificate");
+    assert_ne!(other, baked, "the test needs two distinct fingerprints");
+
+    std::fs::write(dir.join(tlspin::FINGERPRINT_FILE), format!("{other}\n")).unwrap();
+    let layout = resolve_from(&dir);
+    assert_eq!(layout.auth_fingerprint, Some(other), "the file must win");
+    assert!(
+        layout.auth_fingerprint_from.ends_with(tlspin::FINGERPRINT_FILE),
+        "{}",
+        layout.auth_fingerprint_from
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

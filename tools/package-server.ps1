@@ -159,6 +159,33 @@ New-Item -ItemType Directory -Path (Join-Path $stage 'bin') -Force | Out-Null
 foreach ($b in $binaries) { Copy-Item (Join-Path $rel $b) (Join-Path $stage 'bin') -Force }
 Copy-Item $handbook (Join-Path $stage 'gm-handbook') -Recurse -Force
 Copy-Item (Join-Path $repo 'data') (Join-Path $stage 'data') -Recurse -Force
+# **The sign-in certificate travels with the server, and that is what makes the client need no
+# configuration.** crates/auth/src/tls.rs mints a self-signed certificate only when auth-cert.pem
+# is ABSENT and reloads it otherwise, and crates/launcher/build.rs compiles that certificate's
+# fingerprint into every launcher. So a server deployed without these two files would mint a new
+# one and every launcher built here would refuse to sign in - correctly, because a pin that
+# accepted a certificate it did not recognise would not be a pin.
+#
+# auth-key.pem is the sign-in service's PRIVATE KEY. It is self-signed, it authenticates nothing
+# but this service, and it never leaves the owner's own machines - but it is a private key in a zip
+# and it is named as one here rather than left to be discovered.
+$certFiles = @('auth-cert.pem', 'auth-key.pem', 'auth-cert-fingerprint.txt')
+$missingCert = @()
+foreach ($c in $certFiles) {
+    $src = Join-Path $repo $c
+    if (Test-Path $src) { Copy-Item $src $stage -Force } else { $missingCert += $c }
+}
+if ($missingCert.Count -gt 0) {
+    Write-Host ''
+    Write-Host ("THE SIGN-IN CERTIFICATE IS NOT IN THIS PACKAGE: {0}" -f ($missingCert -join ', ')) -ForegroundColor Red
+    Write-Host '  The server will mint a NEW self-signed certificate on first start, and every' -ForegroundColor Red
+    Write-Host '  launcher built from this checkout has the OLD fingerprint compiled in, so no' -ForegroundColor Red
+    Write-Host '  client will be able to sign in. Start the sign-in service once here to create' -ForegroundColor Red
+    Write-Host '  them, then re-package - or pass the new fingerprint to install.ps1 by hand.' -ForegroundColor Red
+    Write-Host ''
+} else {
+    Write-Host '  sign-in certificate included - clients need no fingerprint configuration'
+}
 Copy-Item (Join-Path $here 'installer\start-server.ps1')  $stage -Force
 Copy-Item (Join-Path $here 'installer\start-servers.cmd') $stage -Force
 Copy-Item (Join-Path $here 'installer\SERVER-README.txt') $stage -Force
@@ -240,9 +267,13 @@ Write-Host '  4. Double-click start-servers.cmd. THAT WINDOW IS THE SERVER.'
 Write-Host '     It binds 0.0.0.0 and works out the host each client must dial on its'
 Write-Host '     own - LAN address for LAN clients, the discovered public address for'
 Write-Host '     internet ones. -Advertise <ip> pins one. login.log prints the decision.'
-Write-Host '  5. Copy the certificate fingerprint it prints ("TLS: fingerprint sha256:...")'
-Write-Host '     to every client: install.ps1 -AuthFingerprint <it>. Without it a launcher'
-Write-Host '     refuses to sign in rather than send a password to an unknown server.'
+Write-Host '  5. NOTHING to do about the certificate. This package carries auth-cert.pem, so'
+Write-Host '     the server presents the SAME certificate the launchers were built against,'
+Write-Host '     and every launcher has that fingerprint compiled in. Clients need no'
+Write-Host '     certificate configuration at all.'
+Write-Host '     If the server ever starts WITHOUT auth-cert.pem it mints a new one and no'
+Write-Host '     client will sign in - correctly, because the pin refuses what it does not'
+Write-Host '     recognise. Fix by restoring the file, or install.ps1 -AuthFingerprint <new>.'
 Write-Host ''
 Write-Host 'THEN ON EACH CLIENT MACHINE - and this is the step that is easy to miss:' -ForegroundColor Yellow
 Write-Host '  the launcher needs the SERVER IP, not 127.0.0.1, and the client-side'

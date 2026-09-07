@@ -378,11 +378,53 @@ fn resolve_fingerprint(layout: &mut Layout, in_config: Option<&str>, exe_dir: &P
             Some(Err(e)) => layout.config_problems.push(e),
         }
     }
+    // **Last, and only if nothing on disk answered: the pin compiled into this build.**
+    //
+    // `crates/launcher/build.rs` reads `auth-cert-fingerprint.txt` from the repo root at build
+    // time, so an ordinary deployment needs no certificate configuration on the client at all.
+    // It comes last on purpose - every on-disk source outranks it, so pointing a launcher at a
+    // different server stays one config key away and needs no rebuild.
+    //
+    // A build with no fingerprint file bakes nothing and falls through to NOT PINNED below,
+    // which is the behaviour this had before. There is no branch here that accepts an
+    // unknown certificate.
+    if let Some(baked) = baked_fingerprint() {
+        match tlspin::Fingerprint::parse(baked) {
+            Ok(fp) => {
+                layout.auth_fingerprint = Some(fp);
+                layout.auth_fingerprint_from =
+                    "compiled into this launcher at build time (no client configuration needed; \
+                     override with auth_fingerprint in the config file)"
+                        .into();
+                return;
+            }
+            // Unreachable unless build.rs's shape check and tlspin disagree, which is worth
+            // saying out loud rather than falling through as though nothing were baked.
+            Err(e) => layout
+                .config_problems
+                .push(format!("the fingerprint compiled into this launcher does not parse: {e}")),
+        }
+    }
+
     layout.auth_fingerprint_from = format!(
-        "NOT PINNED - sign-in will be refused. Set auth_fingerprint in {} or put {} beside the launcher; the sign-in service prints the value at startup",
+        "NOT PINNED - sign-in will be refused. This build has none compiled in either. Set auth_fingerprint in {} or put {} beside the launcher; the sign-in service prints the value at startup",
         crate::config::CONFIG_FILE_NAME,
         tlspin::FINGERPRINT_FILE
     );
+}
+
+/// The fingerprint `build.rs` compiled in, if it found one.
+///
+/// Separate so the precedence tests can read it, and so the `cfg` appears exactly once.
+pub fn baked_fingerprint() -> Option<&'static str> {
+    #[cfg(has_baked_fingerprint)]
+    {
+        Some(env!("MAPLECW_BAKED_FINGERPRINT"))
+    }
+    #[cfg(not(has_baked_fingerprint))]
+    {
+        None
+    }
 }
 
 /// Overlay a config file onto an already-resolved layout. Separate so the precedence test

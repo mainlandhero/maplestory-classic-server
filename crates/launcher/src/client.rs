@@ -246,6 +246,41 @@ pub fn stub_gameguard(client_dir: &Path, stub: &Path) -> Result<Steps, String> {
 /// reads, so a newline would be harmless, but a BOM would not - `read_to_string` keeps it and
 /// `trim` does not remove it, so `"\u{feff}watch@..."` would fail every prefix test in
 /// `probe.rs` silently.
+/// `grap_stub::poolsentry`'s marker. Written by the launcher unless one is already there.
+pub const HOOK_SENTRY_MARKER: &str = "maplecw-hook.sentry";
+
+/// What the launcher arms the pool sentry with on an ordinary launch.
+///
+/// # Why this ships
+///
+/// The client corrupts one 32-byte pool slot every 180 seconds and dies of it - the pool's
+/// free reads a header whose high dword should be zero, misclassifies the slot, and hands it
+/// to `HeapFree`. `repair=on` puts that dword back, which turns the fatal free into an
+/// ordinary one. Measured 2026-09-07: 26 minutes, seven catches, **seven repairs, no death**,
+/// against the same idle session the night before dying at 23 minutes.
+/// `research/the-180-second-clock-2026-09-07.md`.
+///
+/// It does **not** stop the writer, and it is a race - a write and a free inside one walk
+/// interval still dies. It is a mitigation and every report that depends on the client having
+/// stayed alive should say it was on.
+///
+/// # Why these settings and not the diagnostic ones
+///
+/// The owner, 2026-09-07: *"it lags/freezes the client every time it runs, which is undesirable."*
+/// Measured from that run's own heartbeats: an ordinary walk costs 0.63-0.71 ms, a finding
+/// without a dump costs 49 ms (the 68-thread stack scan), and a finding **with** a dump costs
+/// 703-895 ms with the client frozen throughout. So a shipped client gets `dumps=0` and
+/// `stacks=off` - a player has no use for a 1.3 GB minidump - and `coarse=2000`, which walks
+/// every 2 s except within five seconds of a predicted firing. The period is learned from the
+/// findings, so the first two catches are still at the fine interval.
+///
+/// # It never overrides a marker that is already there
+///
+/// `tools/test-server.ps1 -PoolSentry` writes this file to arm a **measurement** run, and the
+/// launcher starts the client. Overwriting it would silently turn every such run into a
+/// shipping-settings run and quietly discard the dumps it was asked for.
+pub const SHIPPED_SENTRY: &str = "dumps=0,stacks=off,coarse=2000,repair=on";
+
 /// A one-launch override for [`HOOK_PROBE_MARKER`], written by `tools/test-server.ps1`.
 pub const HOOK_PROBE_PIN: &str = "maplecw-hook.probe.pin";
 /// The same for [`HOOK_SESSION_MARKER`].
@@ -331,12 +366,25 @@ pub fn write_markers(
 
     let dump_text = dump_dir.to_string_lossy().to_string();
     write(HOOK_DUMPDIR_MARKER, &dump_text)?;
-    // **The sentry marker is deliberately NOT touched here.** An earlier version of this
-    // removed it, on the reasoning that the launcher is the shipping path. That was wrong
-    // and it broke the ordinary diagnostic combination: `test-server.ps1 -ServersOnly` arms
-    // the sentry and the LAUNCHER starts the client, so removing it here made the two
-    // impossible to use together. The hook deletes the marker itself once it has read it,
-    // which closes the stale-marker hole without closing that path.
+
+    // **The heap repair ships with the client.** See [`SHIPPED_SENTRY`].
+    let sentry = client_dir.join(HOOK_SENTRY_MARKER);
+    if sentry.exists() {
+        steps.push(format!(
+            "{HOOK_SENTRY_MARKER} was already here - left alone. This launch uses ITS settings, \
+             not the shipping ones"
+        ));
+    } else {
+        write(HOOK_SENTRY_MARKER, SHIPPED_SENTRY)?;
+        steps.push(format!("heap repair armed ({SHIPPED_SENTRY})"));
+    }
+    // **The sentry marker is never REMOVED or overwritten here**, and that rule is older than
+    // the repair. An earlier version deleted it, on the reasoning that the launcher is the
+    // shipping path. That was wrong and it broke the ordinary diagnostic combination:
+    // `test-server.ps1 -ServersOnly` arms the sentry and the LAUNCHER starts the client, so
+    // removing it here made the two impossible to use together. The hook deletes the marker
+    // itself once it has read it, which closes the stale-marker hole without closing that
+    // path. Writing a shipping default when there is none, above, keeps both.
     if !dump_text.is_ascii() {
         steps.push(format!(
             "WARNING: the dump directory is not ASCII ({dump_text}) - the hook reads it as UTF-8, \
@@ -867,6 +915,37 @@ mod tests {
             std::fs::read_to_string(client.join(HOOK_SESSION_MARKER)).unwrap(),
             DEFAULT_SESSION
         );
+    }
+
+    /// **The heap repair ships, and a marker that is already there is left alone.**
+    ///
+    /// Both halves matter. Without the first, a player's client dies of the 180-second
+    /// corruption every few minutes. Without the second, `test-server.ps1 -PoolSentry` would
+    /// arm a measurement run and the launcher would silently overwrite it with the shipping
+    /// settings, discarding the dumps that run was started to collect.
+    #[test]
+    fn the_launcher_arms_the_repair_but_never_overwrites_a_marker() {
+        let t = TempDir::new("sentry");
+        let client = t.dir("client");
+        let dumps = t.dir("dumps");
+
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("first");
+        let written = std::fs::read_to_string(client.join(HOOK_SENTRY_MARKER)).unwrap();
+        assert_eq!(written, SHIPPED_SENTRY);
+        assert!(written.contains("repair=on"), "the whole point is the repair: {written}");
+        assert!(written.contains("dumps=0"), "a player has no use for a 1.3 GB dump: {written}");
+        assert!(steps.iter().any(|s| s.contains("heap repair armed")), "{steps:?}");
+
+        // A marker already there is a measurement run being set up. Leave it.
+        let mine = "dumps=4,repair=on";
+        std::fs::write(client.join(HOOK_SENTRY_MARKER), mine).unwrap();
+        let steps = write_markers(&client, DEFAULT_PROBE, DEFAULT_SESSION, &dumps).expect("second");
+        assert_eq!(
+            std::fs::read_to_string(client.join(HOOK_SENTRY_MARKER)).unwrap(),
+            mine,
+            "the launcher must not overwrite a sentry marker somebody else wrote"
+        );
+        assert!(steps.iter().any(|s| s.contains("left alone")), "{steps:?}");
     }
 
     /// An empty or whitespace-only pin is a mistake, not an instruction to patch nothing.
