@@ -189,11 +189,28 @@ ms before a `0x013D`** - and three catches would settle it.
 
 One launch, and it is the control that has never been run.
 
-**Arm the sentry with `dumps=4` and take every optional patch off.** `maplecw-hook.sentry`
-containing `dumps=4`; a probe marker naming **only** `1415db360:ret` and `141b2a280:rdx=0` (both
-mandatory - without them the client dies at 37 s and the dialog blocks); no identity marker, no
-`create=on`, no extra watches. Then stand idle on a map with mobs for fifteen minutes and close
-the client yourself.
+```text
+powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
+  -DirectClient -FallbackAccount maplecw -PoolSentry
+  -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
+```
+
+`-DirectClient` is not a detail: **the launcher writes the probe and session markers with its
+own defaults**, so the ordinary launcher path cannot run this control at all. That one switch
+drops the two extra `int3` watches, `create=on`, the identity write and - after the fix
+committed alongside this file - the multiclient hooks. `1415db360:ret` and `141b2a280:rdx=0`
+stay; without them the client dies at 37 s and the login dialog blocks. `-PoolSentry` now
+writes `dumps=4` rather than the cap of 1 that spent last run's only dump on the first of two
+catches.
+
+Then Cobalt, one map with mobs, stand still for fifteen minutes, and **close the client
+yourself** - a deliberate end keeps the sample unbiased.
+
+**One stale marker nearly ruined this before it ran.** `maplecw-hook.multiclient` is written by
+the launcher and deleted by nothing; the copy in `client-patched\` was twelve days old, so a
+`-DirectClient` run would have inherited the `FindWindow` and `CreateMutex` hooks it is supposed
+to exclude. `[L]` The script now removes it on that path. A control that quietly carries one of
+the things it excludes is not a control, and this one would have looked clean doing it.
 
 | outcome | reading |
 |---|---|
