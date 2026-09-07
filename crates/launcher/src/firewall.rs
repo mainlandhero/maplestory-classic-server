@@ -321,6 +321,34 @@ mod tests {
         assert!(bad.problems[0].contains("on or off"), "{:?}", bad.problems);
     }
 
+    /// **Every reader of the sign-in port must see the box**, not just the one that was fixed
+    /// first.
+    ///
+    /// This is a regression test for a bug that shipped and that the owner hit: sign-in read the
+    /// box and honoured 8480, while the launch registration read `layout.auth_port` from a
+    /// Layout clone and dialled 8080, so one launch did both. The fix is that the box is
+    /// COMMITTED into the layout, so there is one value rather than two readers who have to
+    /// agree. Asserted here by counting: `layout.auth_port` is the only thing any caller
+    /// outside `app.rs` reads.
+    #[test]
+    fn the_sign_in_port_has_exactly_one_source_of_truth() {
+        let src = include_str!("prepare.rs");
+        // prepare.rs runs in the worker from a Layout clone. If it ever grows a second way to
+        // learn the port, this catches it.
+        let reads: Vec<&str> = src
+            .lines()
+            .filter(|l| l.contains("auth_port"))
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect();
+        for line in &reads {
+            assert!(
+                line.contains("layout.auth_port"),
+                "prepare.rs must read the port from the layout, not elsewhere: {line}"
+            );
+        }
+        assert!(!reads.is_empty(), "prepare.rs is expected to register the launch");
+    }
+
     #[test]
     fn the_description_says_what_was_done() {
         let exe = std::path::Path::new(r"C:\MapleCW\client\MapleStory.exe");

@@ -225,13 +225,15 @@ impl LauncherApp {
     /// saying why nothing will be sent. Every server call starts here.
     fn service_target(&mut self) -> Option<(String, u16, tlspin::Fingerprint)> {
         let host = self.server_ip.trim().to_string();
-        // **The box, not the layout.** Until 2026-09-07 this read `layout.auth_port`, which no
-        // box on screen could change: the only visible "Port" is the GAME port handed to the
-        // client. The owner moved the sign-in service to 8480 because 8080 was taken, typed 8480,
-        // and watched the launcher dial 8080 and report that whatever answered was not
-        // speaking TLS. The input was respected; it was the wrong input, and the one that
-        // mattered was invisible.
-        let port = self.auth_port_text.trim().parse::<u16>().unwrap_or(self.layout.auth_port);
+        // **Commit the box into the layout, then read the layout.** One source of truth, and
+        // the reason is a bug that shipped: this used to read `layout.auth_port`, which no box
+        // could change, so the owner's 8480 was ignored and the launcher dialled 8080. Fixing it to
+        // read the box fixed sign-in and left the LAUNCH REGISTRATION - which runs from a
+        // Layout clone in the worker thread - still reading the layout, so the same launch
+        // signed in on 8480 and then failed to register against 8080. Two readers, one fixed.
+        // Committing means a reader added tomorrow cannot be the third.
+        self.commit_auth_port();
+        let port = self.layout.auth_port;
         match self.layout.auth_fingerprint {
             Some(pin) => {
                 self.push(Level::Info, format!("{host}:{port} over TLS, pinned to {}", pin.short()));
@@ -373,6 +375,34 @@ impl LauncherApp {
         }
         self.layout.client_dir = std::path::PathBuf::from(typed);
         self.remember_client_dir();
+    }
+
+    /// Take whatever is in the **Sign-in port** box and make it the layout's, before a launch.
+    ///
+    /// # Why this is separate from `service_target`, and why it was missed once
+    ///
+    /// `service_target` reads the box directly, so sign-in, register and recover all honoured
+    /// it the moment the box existed. **The launch registration did not.** It runs in the
+    /// worker thread from a `Layout` clone and reads `layout.auth_port`, which nothing on
+    /// screen had updated - so on 2026-09-07 the owner signed in successfully on 8480 and the same
+    /// launch reported *"could not send the sign-in request: received corrupt message of type
+    /// InvalidContentType"* against 8080, which is occupied by something else on that machine.
+    /// One port, two readers, and only one of them had been fixed.
+    ///
+    /// Committing into the layout rather than passing the value down fixes every reader at
+    /// once, including any added later, which is the failure mode worth designing out.
+    fn commit_auth_port(&mut self) {
+        match self.auth_port_text.trim().parse::<u16>() {
+            Ok(0) | Err(_) => self.push(
+                Level::Warn,
+                format!(
+                    "{:?} is not a sign-in port (1..=65535) - using {}",
+                    self.auth_port_text.trim(),
+                    self.layout.auth_port
+                ),
+            ),
+            Ok(v) => self.layout.auth_port = v,
+        }
     }
 
     /// Save everything the window lets a player set, after a launch that worked.
@@ -754,6 +784,7 @@ impl eframe::App for LauncherApp {
                         if start.clicked() {
                             // A typed path counts, not only a browsed one.
                             self.commit_client_dir();
+                            self.commit_auth_port();
                             match self.port() {
                                 Ok(port) => {
                                     let plan = Plan {
