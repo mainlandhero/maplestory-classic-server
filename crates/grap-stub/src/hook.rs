@@ -549,6 +549,12 @@ pub unsafe fn install() {
     // later. Gated on `maplecw-hook.sentry`; absent, it does not start a thread or read a
     // byte. See crates/grap-stub/src/poolsentry.rs.
     crate::poolsentry::install();
+    // Refuse a pool chunk handed to the NT heap - the OTHER lethal free, the one that killed
+    // 288744 on a map change through PCOM's WZ property teardown. Gated on `freeguard=` in the
+    // session marker; absent, it starts no thread and hooks nothing. It waits for PCOM.dll on
+    // a thread of its own, because PCOM's cached free pointer is filled at runtime.
+    // See crates/grap-stub/src/freeguard.rs.
+    crate::freeguard::install();
 
     log("install: hook active");
 }

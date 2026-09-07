@@ -120,6 +120,83 @@ immediate cause is the client's internal corruption, not a bad packet.
   asked to avoid. Nothing in this dump names the writing instruction; the writer had finished
   long before the map change that exposed its work.
 
+## 6. The free is interceptable, and the obvious way to do it would not have worked
+
+2026-09-07, from the shipped `PCOM.dll` rather than the dump. The owner: *"since these functions
+that corrupt the heap are coming from other dll, can we potentially stub them as well?"*
+
+**First, the premise needs one correction.** PCOM, `oleaut32` and `ResMan` are on the **free**
+path, not the write path - they are the victim. The writer is on a 180-second clock generated
+inside `MapleStory.exe` (`the-180-second-clock-2026-09-07.md` §5a) and has never been named.
+Stubbing anything on this stack cannot stop the corruption; it can only stop this particular
+death.
+
+**Second, the free wrapper cannot be stubbed outright.** `PCOM+0xe08a` is a `free`. Making it
+return would leak every allocation the WZ property system makes, and that system churns on
+every map change. It would take the client down faster than the bug does.
+
+**What is available is a filtered stub**, and refusing is the *correct* action rather than a
+workaround: a pool chunk is not PCOM's to free. The pool still owns it and will free it
+itself; handing it to `RtlFreeHeap` can only corrupt the process heap or kill it.
+
+### 6.1 The call site, decoded
+
+```text
+PCOM+0xe0fb  48 8b 1d 7e da 0c 00   mov  rbx, [rip+0xcda7e]   ; -> PCOM+0xdbb80
+PCOM+0xe102  ff 15 80 da 0c 00      call [rip+0xcda80]        ; -> PCOM+0xdbb88
+PCOM+0xe108  4c 8d 47 f8            lea  r8, [rdi-8]
+PCOM+0xe10c  33 d2                  xor  edx, edx
+PCOM+0xe10e  48 8b c8               mov  rcx, rax
+PCOM+0xe111  ff d3                  call rbx                  ; ends at 0xe113
+```
+
+`[L]`, decoded from the DLL. **`call rbx` ends at `PCOM+0xe113`, which is exactly the return
+address frame #3 recorded**, so this is provably the instruction that performed the fatal free
+and not a plausible neighbour.
+
+**The IAT is not the call site.** PCOM imports `HeapFree` at `PCOM+0xae4d0`, but this code
+calls through a **cached function pointer** at `PCOM+0xdbb80`, which is past `.data`'s
+`SizeOfRawData` - zero at load, filled at runtime. `[L]` An IAT hook would have installed
+cleanly, logged success, and intercepted **nothing**. That is the failure this repo keeps
+paying for, and it cost one `pefile` script to avoid rather than a client run.
+
+Seven `mov reg,[PCOM+0xdbb80]` sites exist in `.text` and ten `call [PCOM+0xdbb88]`. `[L]`
+So **one qword covers every free PCOM makes**, with no code patched, nothing relocated and no
+short branch to move - which an inline hook on `PCOM+0xe08a` would have had, since its first
+thirteen bytes end in a `jns +3`.
+
+### 6.2 `lea r8, [rdi-8]`, and what it says about the writer
+
+PCOM's data pointers sit **8 bytes past their block**. `rdi` held `0x6b4c2e8` - the pool
+chunk's base - and PCOM freed `base − 8`, the chunk's size qword, as if it were its own block
+header. `[D]`
+
+That 8-byte prefix convention is the same one `heap-corruption-2026-09-06.md` §5.3 needs to
+explain the damage offset: a `body+4` pointer (BSTR-style, 4-byte count at `body+0`) used by
+code that assumes a cookie at `p − 8` writes into `body − 4`, which is the pool header's high
+dword. **PCOM is code with exactly that convention, and it owns the WZ property strings that
+live in the `0x20` class.** `[I]` - a reading, and `crate::writewatch` is what can settle it in
+one run. It is written down because it arrived from a direction nothing else had tried: the
+DLL, not the dump.
+
+### 6.3 The guard
+
+`crates/grap-stub/src/freeguard.rs`, `freeguard=on` (refuse) or `freeguard=observe` (log and
+free anyway) in the session marker; `tools	est-server.ps1 -FreeGuard` / `-FreeGuardObserve`,
+both needing `-PinPatches`. **Off by default, and off during a `writewatch` run** - it is one
+more patch to the client and that run is the one measuring whether our patches matter.
+
+The test is two identities that must agree on the same bucket, read from `mem+0`, `mem+8` and
+`mem+0x10`: the chunk size, and the slot size in the low dword of slot 0's header. The high
+dword is ignored, because it is `1` in precisely the case this exists for. The unit test
+asserts the **exact three qwords the dump holds** at `0x6b4c2e0` -
+`[0x508][0x3360dc68][0x0000000100000020]` - so if it ever stops matching, the guard would not
+have caught the crash it was built for.
+
+Its liveness control is a pass-through count printed every 120 s. Zero passes means the shim is
+not on PCOM's free path, and no refusal count from that run means anything - a distinction that
+would otherwise look identical to "it worked".
+
 ## 5. What could not be established without more work
 
 1. **The instruction in `PCOM.dll` that frees the interior pointer.** Nexon code, needs a

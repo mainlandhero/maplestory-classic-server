@@ -21,6 +21,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+pub mod freeguard;
 pub mod heapfix;
 pub mod hitnumber;
 pub mod hook;

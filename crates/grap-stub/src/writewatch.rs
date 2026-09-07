@@ -27,7 +27,7 @@
 //! What makes a cheaper instrument possible is the thing 2026-09-07 established: **the period
 //! is 180.000 s and it re-arms on the firing branch**, so after one catch the next write is
 //! predictable to a few hundred milliseconds. Protecting the whole size class for the whole
-//! session would be unusable. Protecting it for 800 ms every three minutes is a stutter.
+//! session would be unusable. Protecting it for 1.2 s every three minutes is a stutter.
 //!
 //! # How it works
 //!

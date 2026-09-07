@@ -217,7 +217,7 @@
     overrides it for ONE launch; the launcher deletes it on read and prints OVERRIDES.
 
     (C) -SentryWriteWatch IS THE POINT OF THIS RUN. Every instrument before it could say
-    WHEN. This makes the store fault at the instruction that makes it. For ~900 ms around each
+    WHEN. This makes the store fault at the instruction that makes it. For ~1.2 s around each
     PREDICTED firing, bucket 1's pages go PAGE_READONLY. Reads are untouched, so the walk and
     the client's own strings carry on; a WRITE faults, the handler records RIP and the exact
     address, makes the page writable and re-executes, and the client keeps running. It writes
@@ -242,6 +242,19 @@
 
     Four of the seven frame-tick tickers jump into .themida, rawsize 0, so if (B) comes back
     empty that is where they went and static analysis stops there. (C) does not care.
+
+    (D) -FreeGuard is the OTHER half, and it is NOT for this run. The field crash of
+    2026-09-07 died with the repair on and the live pool provably clean (0 damaged of 193 632):
+    the same disease surfaced at a DIFFERENT free - PCOM's WZ property teardown on a map
+    change handing a POOL CHUNK to the NT heap. -FreeGuard refuses that one free. It replaces
+    ONE cached function pointer, PCOM+0xdbb80, which all seven of PCOM's free sites call
+    through; the IAT is NOT the call site (PCOM does `call rbx`), and an IAT hook would have
+    installed cleanly and intercepted nothing. -FreeGuardObserve logs without refusing.
+    Both need -PinPatches to survive a launcher run. Watch for "FREE GUARD ARMED" and then a
+    liveness line every 120 s: ZERO passes means the shim is not on the free path, so no
+    refusal count from that run means anything.
+    DO NOT combine it with (C). It is one more patch to the client, and (C) is the run that
+    measures whether our patches matter. research/naming-the-writer-2026-09-07.md.
 
     WHETHER ANY OF THIS IS OURS is still open, and (C) is the first instrument that can
     answer it - the faulting RIP names a module. 75 of 75 archived client runs carried our
@@ -1075,7 +1088,7 @@ param(
     #
     # Off by default because it writes. Say so in any result that depends on it.
     [switch]$SentryRepair,
-    # NAME the writer instead of timing it. For ~900 ms around each PREDICTED firing of the
+    # NAME the writer instead of timing it. For ~1.2 s around each PREDICTED firing of the
     # 180 s clock, bucket 1's pages go PAGE_READONLY: reads are untouched, so the sentry walk
     # and the client's own string reads carry on, and a WRITE faults at the instruction that
     # made it. The handler records RIP and the exact address, makes the page writable and
@@ -1115,6 +1128,19 @@ param(
     # start the launcher, the launcher consumes it.
     [switch]$PinPatches,
     [switch]$HeapFix,
+    # Refuse the OTHER lethal free: a pool chunk handed to the NT heap by PCOM's WZ property
+    # teardown on a map change. That is how process 288744 died on 2026-09-07 with the pool
+    # repair on and the live pool provably clean - a different surface from the pooled free
+    # the repair covers. It replaces ONE cached function pointer in PCOM's .data (the IAT is
+    # not the call site; PCOM does `call rbx` out of PCOM+0xdbb80) and passes every free
+    # through untouched unless the pointer's first three qwords read as a pool chunk.
+    # OFF by default. Do NOT combine with -SentryWriteWatch on a measurement run: it is one
+    # more patch to the client, and "is any of this ours" is the thing that run is measuring.
+    # crates/grap-stub/src/freeguard.rs.
+    [switch]$FreeGuard,
+    # Same guard, but it logs and frees anyway - so the false-positive rate can be measured
+    # without changing what the client does. Expect the client to still die on the map change.
+    [switch]$FreeGuardObserve,
     # Clear user+0x544a. OFF by default and MEASURED INERT on 2026-08-28: the contact path
     # bails before the gate is ever reached, because it is gated on a WZ node no mob has.
     # Kept because it may matter for a mob ATTACK-SKILL hit, which has never been observed.
@@ -1945,7 +1971,7 @@ function Show-TestPlan {
         Write-Host '    0j. NAME THE WRITER. THIS IS THE RUN. -SentryWriteWatch.' -ForegroundColor Yellow
         Write-Host '       Everything so far could say WHEN. This makes the STORE fault at the'
         Write-Host '       instruction that makes it: around each PREDICTED firing, bucket 1'
-        Write-Host '       goes read-only for ~900ms. Reads are untouched. A write faults, we'
+        Write-Host '       goes read-only for ~1.2s. Reads are untouched. A write faults, we'
         Write-Host '       log RIP and the address, unprotect, and the write RE-EXECUTES - so'
         Write-Host '       the client keeps running, and we write nothing to it.'
         Write-Host '       Stand still on a map with mobs for FIFTEEN MINUTES, then close the'
@@ -1961,6 +1987,15 @@ function Show-TestPlan {
         Write-Host '         -PinPatches -Probe "watch@1415db360:ret,141b2a280:rdx=0,140ca61d0:hits=40"'
         Write-Host '         a ticker allocates with rdx=6; the login channel list is rdx=2.'
         Write-Host '       research/the-180-second-clock-2026-09-07.md'
+        Write-Host '    0k. THE OTHER FREE: -FreeGuard. NOT on the same run as 0j.'
+        Write-Host '       The field crash died with the repair ON and the pool CLEAN: the'
+        Write-Host '       same disease came out at a different free - PCOM handing a POOL'
+        Write-Host '       CHUNK to the NT heap while tearing down WZ properties on a map'
+        Write-Host '       change. -FreeGuard refuses that one free (-FreeGuardObserve logs'
+        Write-Host '       and frees anyway). Needs -PinPatches. Watch for "FREE GUARD ARMED"'
+        Write-Host '       then a liveness line every 120s: ZERO passes = the shim is not on'
+        Write-Host '       the free path, so no refusal count from that run means anything.'
+        Write-Host '       Keep it OFF for 0j - that run measures whether our patches matter.'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'
@@ -2325,7 +2360,7 @@ if ($PoolSentry) {
     }
     if ($SentryWriteWatch) {
         Write-Host '  WRITE WATCH IS ON. Around each PREDICTED firing, bucket 1 goes read-only' -ForegroundColor Yellow
-        Write-Host '  for ~900ms so the damaging STORE faults at its own instruction. Nothing is' -ForegroundColor Yellow
+        Write-Host '  for ~1.2s so the damaging STORE faults at its own instruction. Nothing is' -ForegroundColor Yellow
         Write-Host '  written to the client. It cannot arm until the FIRST catch gives it a phase.' -ForegroundColor Yellow
         Write-Host '  Look for: "control PASS" (armed), "saw a write into a watched page"' -ForegroundColor Yellow
         Write-Host '  (liveness), and "THE WRITER: ... from RIP" (the answer).' -ForegroundColor Yellow
@@ -2340,6 +2375,33 @@ if ($PoolSentry) {
     }
 } else {
     Remove-Item (Join-Path $ClientDir 'maplecw-hook.sentry') -ErrorAction SilentlyContinue
+}
+
+# **The session tokens are appended HERE, above the pin.** They used to be appended beside the
+# `maplecw-hook.session` write, which sits BELOW the `-ServersOnly` wait loop - a loop that
+# never returns. So `-HeapFix -PinPatches -ServersOnly`, which is how every instrumented launch
+# is actually run, pinned a session string with no `heapfix=on` in it and the flag did nothing.
+# Silently: the launcher would print its OVERRIDES line for a pin that was missing the very
+# token the run was about. That is the THIRD time something in this file was placed past that
+# return (the test plan was the first, the sentry marker the second), and it is the same fix.
+if ($HeapFix) { $Session = "$Session,heapfix=on" }
+if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
+if ($FreeGuard) { $Session = "$Session,freeguard=on" }
+elseif ($FreeGuardObserve) { $Session = "$Session,freeguard=observe" }
+
+if ($FreeGuard -or $FreeGuardObserve) {
+    if (-not $PinPatches) {
+        Write-Host 'FREE GUARD needs -PinPatches to reach a launcher run: the launcher writes' -ForegroundColor Yellow
+        Write-Host '  maplecw-hook.session with its OWN defaults and would overwrite this.' -ForegroundColor Yellow
+    }
+    Write-Host "FREE GUARD: $(if ($FreeGuard) { 'REFUSE' } else { 'OBSERVE' }) mode." -ForegroundColor Cyan
+    Write-Host '  It replaces PCOM+0xdbb80, the cached free ALL SEVEN of PCOM''s free sites' -ForegroundColor Cyan
+    Write-Host '  call through. A pointer whose first three qwords read as a pool chunk is' -ForegroundColor Cyan
+    Write-Host "  $(if ($FreeGuard) { 'not freed' } else { 'logged and freed anyway' }); everything else passes untouched." -ForegroundColor Cyan
+    Write-Host '  In the hook log: "FREE GUARD ARMED", then a liveness line every 120s with a' -ForegroundColor Cyan
+    Write-Host '  pass-through count. ZERO passes means the shim is NOT on the free path, and' -ForegroundColor Cyan
+    Write-Host '  no refusal count from that run means anything. Say which you saw.' -ForegroundColor Cyan
+    Write-Host '  It does NOT stop the writer and it is NOT the pool repair.' -ForegroundColor Cyan
 }
 
 # The launcher pins. Same `else` and the same reason as the sentry marker above: a pin left
@@ -2532,8 +2594,6 @@ if (-not $FallbackAccount) {
 New-Item -ItemType Directory -Path $dumpDir -Force | Out-Null
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.dumpdir') -Value $dumpDir -Encoding ascii
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.probe') -Value $Probe -Encoding ascii
-if ($HeapFix) { $Session = "$Session,heapfix=on" }
-if ($ClientHitNumberPatch) { $Session = "$Session,hitnumber=off" }
 Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session -Encoding ascii
 # **Only maplecw-launcher can mint a client credential, because only it signs in.** This
 # path is a direct run, so clear any leftover: presenting a stale token is refused, and a

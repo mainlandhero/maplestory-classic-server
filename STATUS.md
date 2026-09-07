@@ -57,6 +57,13 @@ so the archive never could. What is established today: our hook has no 180-secon
 none of its writes has the family's shape; what is *not* established is whether our environment
 puts the client on a path it would not otherwise take.
 
+The **other** lethal free now has a guard too: `-FreeGuard`
+(`crates/grap-stub/src/freeguard.rs`) refuses a pool chunk handed to the NT heap by PCOM's WZ
+property teardown, which is how the field client died on a map change. It replaces one cached
+function pointer at `PCOM+0xdbb80` - the IAT is **not** the call site, so an IAT hook would
+have installed cleanly and intercepted nothing. Off by default, and off during a write-watch
+run.
+
 **2026-09-06: Thief and Warrior audit - built, unit-tested, NOT yet on a screen.** Details in
 `research/thief-warrior-audit-2026-09-06.md`; the plan is T16 / 0f-0h in `tools/test-server.ps1`.
 
