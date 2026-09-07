@@ -202,7 +202,18 @@ written through a data pointer of the wrong prefix convention. **[D]**, and the 
 reading the family has had - it explains the offset, the width, the values, both slot states,
 and why the string in the slot has never mattered. It has not been seen as an instruction.
 
-### 5.4 Why the sentry cannot name the instruction, and what can
+### 5.5 SUPERSEDED the next day: it is a 180-second clock, and §4 above is retracted
+
+A four-catch run on 2026-09-07 measured the intervals: **+180.002 s, +180.115 s, +180.020 s**,
+and this session's own pair was **+180.038 s**. Four consecutive intervals, all 180.0 s to
+within 0.12 s. `[L]` **The writer runs on a timer, not on traffic.**
+
+That retracts the census reading offered in §4. `0x013D` is on a **30-second** grid and 180 is a
+multiple of it, so a census lands beside every catch by construction while five out of six
+censuses produce nothing at all. The alignment is two grids sharing a wall clock. Full write-up
+and what to do with a period: `research/the-180-second-clock-2026-09-07.md`.
+
+## 5.4 Why the sentry cannot name the instruction, and what can
 
 Both catches sampled all 68 threads at the moment of confirmation and every one was parked in
 `ntdll` waits. The write is one instruction; a 100 ms walk finds the slot long after the thread

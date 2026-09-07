@@ -162,38 +162,30 @@
     line (bit 84, [D] - icon without the number means 83 is next). Iron Will is SELF-ONLY in
     this client's data (no lt/rb rectangle) - report it as expected, not as a bug.
 
-    T17 (2026-09-06). THE SENTRY RUN, AND A CONTROL THAT IS BLOCKED. Just double-click
-    start-servers.cmd - it already passes -SetFieldProbe -ServersOnly -PoolSentry - then
-    maplecw-launcher.exe, sign in, Start Game. Cobalt, one map with mobs, STAND STILL fifteen
-    minutes, CLOSE THE CLIENT YOURSELF. The dump cap is -SentryDumps, now 4: the 2026-09-06
-    run caught the write TWICE and its cap of 1 spent the only dump on the first catch, so the
-    catch that was freed 720 ms later into the 0xC0000374 left nothing but a log block.
+    T17 (2026-09-07). DONE, AND IT FOUND A CLOCK. The sentry run caught the write FOUR times
+    in one idle session and the intervals are the finding: +180.002 s, +180.115 s, +180.020 s.
+    With the previous evening's pair (+180.038 s) that is SIX catches, FOUR intervals, every
+    one 180.0 s to within 0.12 s. research/the-180-second-clock-2026-09-07.md.
 
-    WHAT THAT RUN SETTLES, and it is worth the launch on its own: both catches landed a few
-    hundred ms BEFORE a 0x013D census send and were exactly six 30 s census intervals apart.
-    Two samples are not a period. A THIRD CATCH SETTLES IT. So for each catch, open world.log
-    at its time and read the gap to the next 0x013D.
+    THE WRITER IS ON A TIMER, NOT ON TRAFFIC. No packet, no exception (2 C++ throws all
+    session, both in the first 1.4 s), no socket event, every thread parked. And it RETRACTS
+    the census lead this plan carried: the 0x013D census is on a 30 s grid, 180 is a multiple
+    of it, so a census lands beside every catch and five out of six censuses produce nothing.
+    Two grids sharing a wall clock, not cause.
 
-      three catches, each <300 ms before a 0x013D   the census path is where to look next
-      catches with no 0x013D near them              coincidence; the guard-page BUILD
-                                                    (heap-corruption-2026-09-06.md §3.2) is
-                                                    then the only route to a WHO
+    NOTHING TO RE-RUN HERE. The next step is a BUILD, and the period makes it cheap - a
+    guard-page run needs to survive about six minutes to catch two events
+    (heap-corruption-2026-09-06.md §3.2). A cheaper half-step first: the sentry walks every
+    100 ms, so a catch is up to 106 ms stale and every thread has parked by then; with the
+    period known it can drop to 5-10 ms around the predicted time and sample threads on the
+    tick it fires. That either catches a running thread or proves the write is one instruction
+    between two walks.
 
-    WHAT THAT RUN DOES NOT SETTLE: whether any of this is OUR fault. Every archived client run,
-    75 of 75, carried our hook, so nothing on disk separates "this client corrupts its heap"
-    from "it corrupts it while we are inside it". The control for that needs the launcher's
-    patch set reduced, and the LAUNCHER writes the probe and session markers with its own
-    defaults - so it is a change to crates/launcher/src/client.rs, not a command line.
-
-    DO NOT retry -DirectClient for this. It cost three launches on 2026-09-06 and never
-    reached the world; research/is-the-corruption-ours-2026-09-06.md §5 has the table. Two of
-    those were my errors (-SetFieldProbe is a WORLD flag, not a client patch, and leaving it
-    out hangs the client on "Connecting to server"), and the third was a RETRACTION: I read a
-    9-of-9 correlation between the client token and character selection off the fifteen most
-    recent login logs, and the whole 2026-08-19..21 archive breaks it - dozens of runs with no
-    token, sending 0x00C0, selected characters fine. Worse, 0x0078=0 also means "nobody clicked
-    a character", so the count could not tell a refusal from an idle screen. CLAUDE.md's "the
-    filter was a timestamp" and "a summary line is not a check", in one mistake.
+    STILL OPEN, and it is NOT answerable by any run: whether any of this is OURS. 75 of 75
+    archived client runs carried our hook. That control needs the LAUNCHER to write a smaller
+    patch set - a change to crates/launcher/src/client.rs, not a command line. DO NOT retry
+    -DirectClient for it: three launches on 2026-09-06, none reached the world, and one
+    produced a retraction. research/is-the-corruption-ours-2026-09-06.md §5.
 
     T13 (NEW 2026-09-05). LOGIN IS ENFORCED. The launcher path is the ordinary run: sign in,
     Start Game, and the world as before - that half is regression. (Every Start Game also puts
@@ -1813,23 +1805,22 @@ function Show-TestPlan {
         Write-Host '       83). The caster must HAVE the skill: !job 410 then !learn (Haste).'
         Write-Host '       IRON WILL is SELF-ONLY in this client''s data (no rectangle):'
         Write-Host '       expected, not a bug.'
-        Write-Host '    0i. THE SENTRY RUN. start-servers.cmd already arms it, so this run IS'
-        Write-Host '       it - the dump cap is 4 now, up from the 1 that spent its only dump'
-        Write-Host '       on the first of two catches on 9-06. Cobalt, a map with mobs, STAND'
-        Write-Host '       STILL 15 min, close the client yourself.'
-        Write-Host '       THE QUESTION A THIRD CATCH ANSWERS: both 9-06 catches landed a few'
-        Write-Host '       hundred ms BEFORE a 0x013D census send, exactly six 30 s intervals'
-        Write-Host '       apart. Two samples are not a period. For each catch in the hook log,'
-        Write-Host '       open world.log at that time and read the gap to the next 0x013D.'
-        Write-Host '         3 catches, each <300 ms before one  look at the census path next'
-        Write-Host '         catches with no 0x013D near them    coincidence; the guard-page'
-        Write-Host '                                            BUILD is the only route to a WHO'
-        Write-Host '       WHAT IT CANNOT ANSWER: whether any of this is OURS. 75 of 75 archived'
-        Write-Host '       runs carried the hook. That control needs the LAUNCHER to write a'
-        Write-Host '       smaller patch set - a change to crates/launcher/src/client.rs, not a'
-        Write-Host '       command line. DO NOT retry -DirectClient: 3 launches on 9-06, never'
-        Write-Host '       reached the world, and one of the three produced a RETRACTION.'
-        Write-Host '       research/is-the-corruption-ours-2026-09-06.md section 5.'
+        Write-Host '    0i. DONE 2026-09-07 - THE WRITER RUNS ON A 180-SECOND CLOCK.'
+        Write-Host '       Four catches in one idle session: +180.002s, +180.115s, +180.020s.'
+        Write-Host '       With the 9-06 pair (+180.038s) that is 6 catches, 4 intervals, all'
+        Write-Host '       180.0s within 0.12s. It is a TIMER, not traffic: no packet, no'
+        Write-Host '       exception, no socket, every thread parked.'
+        Write-Host '       RETRACTS the census lead this plan used to carry: 0x013D is on a'
+        Write-Host '       30s grid and 180 is a multiple, so a census sits beside every catch'
+        Write-Host '       while 5 of 6 censuses produce nothing. Two grids, one wall clock.'
+        Write-Host '       NOTHING TO RE-RUN. Next is a BUILD, and the period makes it cheap:'
+        Write-Host '       guard pages on freed 0x20 slots, ~6 min to catch two. Cheaper first'
+        Write-Host '       step: drop the sentry to 5-10ms around the predicted time and sample'
+        Write-Host '       threads on the firing tick. research/the-180-second-clock-2026-09-07.md'
+        Write-Host '       STILL OPEN and not answerable by a run: whether any of it is OURS.'
+        Write-Host '       75 of 75 runs carried the hook; that control needs the LAUNCHER to'
+        Write-Host '       write a smaller patch set. DO NOT retry -DirectClient (3 launches,'
+        Write-Host '       none reached the world, one retraction).'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
         Write-Host '       DROP MESOS: try to drop mesos. It does nothing today because the'
         Write-Host '       client''s meso-drop request has never been captured. Note what'
