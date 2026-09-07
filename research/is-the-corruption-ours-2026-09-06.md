@@ -192,8 +192,42 @@ One launch, and it is the control that has never been run.
 ```text
 powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
   -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry
+  -ClientToken AAAAAAAAAAAAAAAAAAAAAAAAAA
   -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
 ```
+
+### 5.1 Two flags in that line are not client patches, and leaving either out hangs the client
+
+Both were found by handing the owner a command that did not work, twice.
+
+**`-SetFieldProbe`** is a world-server flag. Without it `Session::handle` returns nothing for
+every packet and the channel answers nothing at all. The script's `.NOTES` says *"NOT
+optional"* and the branch without it prints six red lines naming this exact symptom.
+
+**`-ClientToken`** fills the client's own identity field. This one was not documented anywhere,
+and it is the more interesting of the two. Counted over 15 archived login logs: `[L]`
+
+| | carried a token | sent `0x0078` select | got `0x0011` migrate |
+|---|---:|---:|---:|
+| 9 runs, all through the launcher | 9 | 9 | 9 |
+| 3 runs, no token, each sending `0x00C0 CLIENT_AUTH_FAILURE_REPORT` | 0 | **0** | **0** |
+| 2 runs that never reached a character list | 0 | 0 | 0 - say nothing either way |
+
+Ten for ten among the runs that reached a character list. The failure is not new: 2026-09-05
+21:10 is the same shape as both attempts on 2026-09-06 - character list drawn, Cobalt picked,
+`0x00C0` sent instead of `0x0078`, `world.log` never touched. `[L]`
+
+**It is confounded and the flag is the discriminator.** Every token run is a launcher run, so
+"no token" and "direct client" cannot be separated by counting. Only the launcher can mint a
+token the server accepts, so `-ClientToken` writes one that is **wrong by construction** - and
+the login server's own rule is that a wrong token *downgrades* to the fallback account rather
+than being refused, so the account served is unchanged. `[L]` If the client then selects a
+character, what it checks is its own field. If it still hangs, the token is not the cause and
+the direct path differs some other way, which is also a result.
+
+**The identity write is therefore back in the run, and that does not weaken the control.** §2
+already cleared it by date: `identity.rs` is eleven days younger than the family's first death.
+What this run still tests is `create=on`, the two extra watches and the multiclient hooks.
 
 **`-SetFieldProbe` is not a client patch and is not optional.** It is a world-server flag;
 without it `Session::handle` returns nothing for every packet and the client hangs on
@@ -232,7 +266,7 @@ the things it excludes is not a control, and this one would have looked clean do
 | outcome | reading |
 |---|---|
 | catches at the same rate (~1 per 3 min) | our optional patches are innocent and the bug is the client's own, in our environment. The guard-page build is the only way forward |
-| no catches in 15 min | one of the patches we dropped is implicated, and a bisection over four of them is three more launches |
+| no catches in 15 min | one of the three dropped patches is implicated, and bisecting them is two more launches |
 | catches, and each within ~300 ms before a `0x013D` | §4 becomes a finding and the search narrows to the census path |
 
 What it still cannot do is compare against retail. Nothing available here can.

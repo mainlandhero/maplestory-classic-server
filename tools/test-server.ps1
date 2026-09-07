@@ -175,7 +175,22 @@
 
       powershell -ExecutionPolicy Bypass -File "C:\MapleCW\tools\test-server.ps1"
         -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry
+        -ClientToken AAAAAAAAAAAAAAAAAAAAAAAAAA
         -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"
+
+    **-ClientToken is why the first two attempts hung on "Connecting to server".** Enumerated
+    over 15 archived login logs: 9 of 9 runs whose client carried a token sent 0x0078 and got a
+    migrate; 3 of 3 runs without one sent 0x00C0 CLIENT_AUTH_FAILURE_REPORT instead and never
+    sent 0x0078 at all. Only the launcher can mint a token the server accepts, so this one is
+    wrong by construction - and a wrong token DOWNGRADES to -FallbackAccount rather than being
+    refused, so the account served is the same either way. It fills the CLIENT's field, which
+    is the thing under test. If the client still hangs with it, the token is not the cause and
+    the direct path differs some other way - say which, that is a result too.
+
+    It also means the identity write is back in this run. That does NOT weaken the control:
+    identity.rs was added 2026-08-30 and the family's first death is 2026-08-19, so it was
+    already exonerated by eleven days (research/is-the-corruption-ours-2026-09-06.md §2). What
+    the run still tests is create=on, the two extra watches and the multiclient hooks.
 
     **-SetFieldProbe is in that line because it is NOT optional and it is NOT a client patch.**
     It is a WORLD-SERVER flag: without it Session::handle returns nothing for every packet and
@@ -185,10 +200,11 @@
     watch set when -Probe was NOT passed explicitly (line ~1173), and this line passes it.
 
     -DirectClient is the point: the LAUNCHER writes the probe and session markers with its own
-    defaults, so the launcher path cannot run this control. This drops four things at once - the
-    two extra int3 watches, create=on, the identity write (which pins a refcount at 2 in a
-    client pool block) and the multiclient hooks - which is correct for a CONTROL: if catches
-    continue, all four are cleared in one launch. 1415db360:ret and 141b2a280:rdx=0 STAY; without
+    defaults, so the launcher path cannot run this control. This drops three things at once -
+    the two extra int3 watches, create=on and the multiclient hooks - which is correct for a
+    CONTROL: if catches continue, all three are cleared in one launch. The identity write stays,
+    because without a token the client will not select a character at all, and it was already
+    exonerated by date. 1415db360:ret and 141b2a280:rdx=0 STAY; without
     the first the client __fastfails at ~37 s on a reachability check that overruns its own stack
     buffer, and without the second the login dialog blocks the tick.
 
@@ -867,6 +883,28 @@ param(
     # Serve a connection the login server CANNOT attribute to a launcher sign-in as this
     # account instead of refusing it. Off = LOGIN ENFORCED. Only -DirectClient needs it.
     [string]$FallbackAccount,
+    # Give a -DirectClient run a client token, WITHOUT a launcher sign-in.
+    #
+    # Only maplecw-launcher can mint a token the login server will recognise, so anything
+    # passed here is a WRONG token by construction - and the login server's own rule is that a
+    # wrong or spent one DOWNGRADES the connection to -FallbackAccount rather than refusing it
+    # (its startup banner says so). So the account served is unchanged; the only thing that
+    # changes is that the CLIENT's identity field is non-empty.
+    #
+    # That is the point. Enumerated over 15 archived login logs on 2026-09-06: every run whose
+    # client carried a token sent 0x0078 CLIENT_SELECT_CHARACTER_REQUEST and got a migrate
+    # (9 of 9); every run without one sent 0x00C0 CLIENT_AUTH_FAILURE_REPORT instead and NEVER
+    # sent 0x0078, hanging on "Connecting to server" after a character is picked (3 of 3,
+    # 2026-09-05 21:10 and both 2026-09-06 23:2x attempts). The two remaining logs never
+    # reached a character list at all and say nothing either way. Whether that is the token or
+    # something else about the direct path is confounded - every token run is a launcher run -
+    # and THIS FLAG IS THE DISCRIMINATOR: a token the server rejects still fills the client's
+    # field. If the client then selects a character, the field is what it checks. If it still
+    # hangs, the token is not the cause and the direct path differs some other way.
+    #
+    # 26 characters of uppercase base32 is the shape the real thing has. identity.rs refuses
+    # anything with a byte outside 0x21..0x7e, or longer than 1024.
+    [string]$ClientToken,
     # When a migration is bound to the sign-in that minted it: auto (default - bound when the
     # login connection came from a process on this machine, which the channel re-checks
     # through the OS; address-bound otherwise), always, or never. The escape hatch if a
@@ -1810,18 +1848,26 @@ function Show-TestPlan {
         Write-Host '       we are inside it". This run is the separation. It needs -DirectClient:'
         Write-Host '       the LAUNCHER writes the probe/session markers with its own defaults.'
         Write-Host '         -SetFieldProbe -DirectClient -FallbackAccount maplecw -PoolSentry'
+        Write-Host '         -ClientToken AAAAAAAAAAAAAAAAAAAAAAAAAA'
         Write-Host '         -Probe "watch@1415db360:ret,141b2a280:rdx=0" -Session "mode=2"'
-        Write-Host '       -SetFieldProbe is NOT a client patch and NOT optional: it is a WORLD'
-        Write-Host '       flag, and without it the channel answers nothing and picking a'
-        Write-Host '       character hangs on "Connecting...". It leaves -Probe alone when -Probe'
-        Write-Host '       is passed, so the two-watch control set survives.'
-        Write-Host '       Drops 4 things at once (2 watches, create=on, the identity write, the'
-        Write-Host '       multiclient hooks); correct for a control - if catches continue, all'
-        Write-Host '       four are cleared in one launch. Cobalt, a map with mobs, STAND STILL'
+        Write-Host '       Two flags there are NOT client patches and are NOT optional, and'
+        Write-Host '       leaving either out hangs the client on "Connecting to server":'
+        Write-Host '        -SetFieldProbe is a WORLD flag; without it the channel answers'
+        Write-Host '          nothing at all. It leaves -Probe alone when -Probe is passed.'
+        Write-Host '        -ClientToken fills the CLIENT identity field. 9 of 9 archived runs'
+        Write-Host '          carrying a token sent 0x0078; 3 of 3 without one sent 0x00C0'
+        Write-Host '          AUTH_FAILURE instead and never selected. The token is wrong by'
+        Write-Host '          construction and downgrades to -FallbackAccount, so the account'
+        Write-Host '          served is unchanged. If it STILL hangs, the token is not the'
+        Write-Host '          cause and the direct path differs some other way - a result.'
+        Write-Host '       Drops 3 things (2 watches, create=on, the multiclient hooks); the'
+        Write-Host '       identity write stays and was already exonerated by date. Correct'
+        Write-Host '       for a control - if catches continue, all three are cleared in one'
+        Write-Host '       launch. Cobalt, a map with mobs, STAND STILL'
         Write-Host '       15 min, close the client yourself. Then read the hook log:'
         Write-Host '         catches at ~1/3 min  our patches are innocent; next is the guard-page'
         Write-Host '                              BUILD, the only thing that can name the writer'
-        Write-Host '         no catch in 15 min   one of the 4 is implicated - bisect, 3 launches'
+        Write-Host '         no catch in 15 min   one of the 3 is implicated - bisect, 2 launches'
         Write-Host '         catch <300 ms before a 0x013D in world.log  the census lead becomes a'
         Write-Host '                              finding (both 9-06 catches did, 6 intervals apart)'
         Write-Host '    0d. STILL NEEDS A CAPTURE - do this and report the inbound opcode:'
@@ -2348,7 +2394,18 @@ Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.session') -Value $Session 
 # **Only maplecw-launcher can mint a client credential, because only it signs in.** This
 # path is a direct run, so clear any leftover: presenting a stale token is refused, and a
 # refusal downgrades the connection to the --account fallback silently.
-Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
+#
+# -ClientToken overrides that, and the parameter's own comment says why: without SOME token in
+# the client's identity field, the client reports 0x00C0 and never sends a character selection,
+# so a direct run cannot reach the world at all. The token written here is wrong by
+# construction and the login server downgrades it to -FallbackAccount, which is the account
+# this run was going to be served as anyway.
+if ($ClientToken) {
+    Set-Content -Path (Join-Path $ClientDir 'maplecw-hook.identity') -Value $ClientToken -Encoding ascii -NoNewline
+    Write-Host "client token: $($ClientToken.Length) chars written to maplecw-hook.identity - the login server will REJECT it and serve this connection as `"$FallbackAccount`". The point is the CLIENT's field, not the server's answer." -ForegroundColor Yellow
+} else {
+    Remove-Item (Join-Path $ClientDir 'maplecw-hook.identity') -ErrorAction SilentlyContinue
+}
 # **And the multiclient marker, for the same reason and a sharper one.** The launcher writes
 # it on every launch and NOTHING deletes it - the copy in client-patched\ dated from a launcher
 # run twelve days earlier - so a -DirectClient run silently inherited the FindWindow and
