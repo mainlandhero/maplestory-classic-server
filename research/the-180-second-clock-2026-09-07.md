@@ -251,12 +251,54 @@ and 18 records that are unmistakable errors (`throw ZException|-|1330|HR|38`). `
 the banner - so it is tagged `[D]` and no further. What makes it worth chasing anyway is that it
 is the client *saying something happened*, at a moment we can predict to the second.
 
-**The prediction, and it costs nothing.** The run in progress has catches at 00:46:52.625,
-00:49:52.670, 00:52:52.673, 00:55:52.779 and 00:58:52.744 local. When that client is closed, the
-**next** login uploads this session's `ELog`. If its `Time2` lands within a second of one of
-those, the client logs an error on the corruption clock and the record's own fields name the
-subsystem. If it lands somewhere unrelated, the two above were coincidence and this dies like
-the other two.
+### 4b.2 The prediction was run, and it survived - just
+
+The 26-minute repair session was closed and the next login uploaded its record: `[L]`
+
+```text
+ELog|10|VERSION|100|DATETIME|2026/09/07 04:43:51|FID|10001010|State|3
+       |Time1|181051781|Time2|181051206|NAME|Cobalt|Socket|127.0.0.1:8485|0|767|AccountId|0|
+```
+
+**The anchor, measured rather than assumed.** `[ctx+0x4088]` advances by exactly `180180` between
+each of that session's four dumps, which are 180 s apart, and `[ctx+0x3b18]` advances `180090`
+between dumps 3 and 4 - so both are tick-derived and `0x3b18` is current at those two. `[L]`
+Taking `tick 181591326 ↔ 00:52:53` and `181771416 ↔ 00:55:53` (they agree to 0.1 s):
+
+| | wall time | vs the firing before catch #1 (00:43:52.63, extrapolated back from the seven measured catches) |
+|---|---|---|
+| `Time2` | 00:43:52.85 | **0.22 s after** |
+| `Time1` | 00:43:53.42 | 0.79 s after |
+
+Re-anchoring the earlier session the same way puts its `Time2` **0.67 s after** its own
+extrapolated firing. `[D]`
+
+So: two sessions, and in both the record lands **within about 0.7 s of a firing of the clock**.
+That is as tight as the anchor allows and it is not tight enough to call. `DATETIME` disagrees
+with `Time1` by about 2 s in both sessions, consistently, so it has a different origin and is no
+use for this.
+
+**And the firing it lands on damaged nothing.** The sentry was armed at 00:40:44 and walking; it
+reported no finding at 00:43:52. So if this is the same clock, the timer fires, sometimes writes
+an error record, and only sometimes corrupts a slot - which is a different and more interesting
+claim than "the error is the corruption". `[D]`
+
+**Where the static chain stops.** The two functions that reference the record's `AccountId` field
+name - `FUN_1415dd920` and `FUN_142d17160` - have **zero** direct callers, tail jumps or pointers
+between them. `[L]` Per `tools/callers.py`'s own warning that is *indirect*, not *unreachable*:
+a register, a vtable slot or the Themida VM. Naming what raises a type-10 record needs something
+other than a call scan.
+
+### 4b.3 The allocator watch: armed, consumed, and inconclusive
+
+The launcher took the pin (`probe: watching 0x140ca61d0 (slot 2)`), so that mechanism works.
+`[L]` But the session was an enter-and-exit, and the watch logged **two** hits, both at
+`01:09:53.942` while dispatching `0x0010 LOGIN_RESULT`, both `rdx=2`, called from
+`0x141b2c96c` / `0x141b2c9ac` - inside `FUN_141b2c7c0`, the **channel-list filler**
+(`research/channel-select.md` §9.4), not the ticker family, which passes `6`. `[L]`
+
+Nothing was in the world long enough for a 180-second ticker to fire, so §5a's Tier 1 is
+**untested, not refuted**. It needs the same pin and a fifteen-minute idle run.
 
 ## 5. Where this points, and what is not yet claimed
 
