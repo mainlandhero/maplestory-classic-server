@@ -10,11 +10,11 @@
 //! **[D]** derived from two or more [L] facts, **[I]** inferred - a policy nothing on this
 //! machine can confirm.
 //!
-//! # Wired since 2026-08-31 - this heading used to say the opposite
+//! # Wired since 2026-09-01 (`cc5511f`) - this heading used to say the opposite
 //!
 //! `session/consume.rs` reads both skill levels and calls [`restored`] before it caps the
 //! restore, exactly as `research/item-recovery.md` §7 asked. The heading above said *"THIS
-//! MODULE IS NOT WIRED"* for six days after that landed, which is the mirror of the
+//! MODULE IS NOT WIRED"* for five days after that landed, which is the mirror of the
 //! `CLAUDE.md` failure it was written to prevent: a loud "unwired" that outlives the wiring
 //! sends the next reader to re-do finished work. Corrected 2026-09-06 while answering
 //! whether the passives work. **Not yet confirmed on a screen** - the 08-30 report that
