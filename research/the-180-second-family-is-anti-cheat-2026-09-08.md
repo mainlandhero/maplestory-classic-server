@@ -308,6 +308,15 @@ neighbours (`0x143AC7F28 = 0xCC`, `0x143AC7F2C = 0x12CD84`, `0x143AC7F30 = 0x1FF
 byte-identical across three sessions [L], so **[I]** that block is configuration loaded at startup,
 not a per-session detection count.
 
+> **Corrected the same day — see §9.** Half of that inference is now **[L]** and half of it was
+> never supported. The three *neighbours* are written as compile-time immediates by
+> `FUN_140c93370`, so "configuration" is confirmed for them and no longer an inference. **The gate
+> itself is not.** Its on-disk initialiser is zero and nothing in `.text` writes it. And the
+> evidence offered — three byte-identical sessions — could not have distinguished configuration
+> from a response to *this* environment, because all three sessions ran the same stub `grap64.dll`,
+> the same hook and the same patched client. That is this repo's "the thing you are comparing
+> against may never have been a control", and I walked into it.
+
 ## 6. The mechanism: the overrun, and the arithmetic error in the negative that refuted it
 
 For the six readable writers the question is closed by reading them: the base is `&v[0]` of an
@@ -425,3 +434,155 @@ switch on at once.
   determined from here; the §6 test can, because it observes the write rather than the code.
 * **Whether zeroing `0x143AC7F3C` is itself detected.** Cannot be determined statically. The run
   that tests it is the run that answers it.
+
+---
+
+## 9. The owner's three questions, 2026-09-08
+
+> *"Does the anti-cheat writer always write to predictable locations? Can we potentially reserve
+> those chunks for the anti cheat so it never corrupts the heap? Does anything have to do with our
+> stub anticheat since it does nothing and the client assumes that those memory addresses are
+> provisioned?"*
+
+### 9.1 The offset is predictable. The address is not.
+
+Both halves matter and they point opposite ways.
+
+The **offset** is a compile-time constant in every readable writer - `&v[0] + K` for
+`K` in `{0x90, 0x94, 0xc0, 0xcc, 0xe4, 0x220}`, §1. Nothing computes it, nothing varies it.
+
+The **address** is `pool_allocate(ctx 0x143AD68A0, n*4 + 8) + 8 + K`, and the first term is
+whatever slot the pool free list happens to hand out at that instant. So there is no address to
+reserve: the writer does not aim at a location, it aims at a *distance* from a location the
+allocator chose 100 ms earlier.
+
+That is why the victim class varies across dumps while the residue does not, and it is why
+`damage-enumeration-2026-09-08.md` found "the field is consistent, the offset is not".
+
+### 9.2 You cannot reserve the chunk. You can reserve the SLACK - and we already do.
+
+The workable form of the idea is not "reserve those addresses" but **"make sure the ground at
+`base + K` belongs to us"**. Give the allocation private space and a constant-offset overrun lands
+in padding instead of in the next object.
+
+**The guard page already does this, and it was not designed to.** `guardpage.rs`:
+
+```rust
+const SLOT_BODY_OFF: usize = 0x10;   // body at page + 0x10, header at page + 8
+const PAGE_BYTES:    usize = 0x1000;
+```
+
+One slot per 4 KB page, body at `page + 0x10`, and the page is committed `PAGE_READWRITE` for as
+long as the slot is live. So a write at `body + K` lands at `page + 0x10 + K`:
+
+| writer | K | lands at | inside the same page? |
+|---|---|---|---|
+| `FUN_140c93530` | `0x90` | `page + 0xa0` | yes |
+| `FUN_140c936a0` | `0x94` | `page + 0xa4` | yes |
+| `FUN_140c93810` | `0xc0` | `page + 0xd0` | yes |
+| `FUN_140c93a50` | `0xcc` | `page + 0xdc` | yes |
+| `FUN_140c93b70` | `0xe4` | `page + 0xf4` | yes |
+| `FUN_140c93930` | `0x220` | `page + 0x230` | yes |
+| the live one, from the observed residue | `~0x24` | `page + 0x34` | yes |
+
+Every one of them, with 3.5 KB to spare. The slot occupies `page .. page+0x90` and everything
+above that is ours and unread. **The guard page was built as a stale-access detector and is
+functioning as an overrun absorber** - a different mechanism doing a different job than the one on
+the label.
+
+**This reframes the overnight run rather than confirming it.** `0 confirmed finding` and
+`0 STALE-ACCESS CATCH` at three hours was being read as "nothing has gone wrong yet". Against a
+37.7 % crash rate (`tools/crash_rate.py`) it is at least as well explained by *the write is
+happening and being absorbed silently*. The two readings predict the same log and different
+futures, so they need separating - and they can be, cheaply:
+
+> **Scan the slack.** At each heartbeat, read `page + 0x90 .. page + 0x300` of the live
+> quarantined slots and count the non-zero dwords. The pages are handed out zeroed and nothing
+> legitimate writes there. A non-zero dword at a constant offset across many slots **is the
+> writer counter, caught in our padding, in a client that is still running** - no crash, no dump,
+> no lost session. Zero non-zero dwords across thousands of slots says the absorber reading is
+> wrong and the run really is quiet.
+>
+> It also settles §6 for free. An overrun writes at a constant `K` from the slot own base; a stale
+> pointer does not, because it aims at an address whose slot has since moved.
+
+### 9.3 The stub: the mechanism is not ours, the arming is undetermined
+
+Two separate questions live inside the third one and they have different answers.
+
+**Is the write itself caused by grap64 not provisioning something? No, and this is [L].** The
+buffer is `ZArray<int>(n)` allocated from the *client own* pool context with `n` as a compile-time
+immediate (`mov edx, 5`), and the write offset is a compile-time immediate in the same function.
+Both numbers are in `MapleStory.exe`'s `.text`, both are fixed at build time, and no call into
+`grap64.dll` sits between the allocation and the write. There is no "provisioned region" the
+client believes in and we failed to supply. The overrun is out-of-bounds by construction and would
+be out-of-bounds with the real DLL loaded.
+
+**Is the writer ARMED because of our environment? Cannot be ruled out, and the file that said
+otherwise was over-confident.** The live writer runs only when `[0x143AC7F3C] >= 2`, and:
+
+* **The on-disk initialiser is zero** [L]. `python tools/dump_va.py 0x143AC7F28 48` answers
+  `section .data, no file bytes (uninitialised)` - the gate is in the tail where `VirtualSize`
+  exceeds `SizeOfRawData`. The image supplies no value. Something in the running process writes
+  the 2, every session.
+* **Nothing in `.text` writes it** [L]. `dataref.py` reports one reference and its own docstring
+  warns that its opcode table has been incomplete before, so this was redone opcode-agnostically:
+  scan every position in `.text` whose ModRM byte is `mod=00, rm=101` and whose disp32 resolves to
+  the target for an immediate of 0, 1, 2 or 4 bytes. Three raw candidates, two of which are the
+  neighbouring `0x143AC7F38` references matching four bytes early. **One real reference: the `cmp`
+  at `0x140c93cc6` that reads it.** Same for `0x143AC7F70`. The writer is in `.themida`, in another
+  module, or reached through a computed pointer.
+* **The three neighbours ARE configuration** [L], and this is what §5 half-saw. `FUN_140c93370` is
+  eight instructions with no branches:
+
+```
+140c93374  call [rip+...]                       ; GetTickCount
+140c9337a  add  eax, 0xf010fa1
+140c9337f  mov  [rip+...], eax                  ; -> 0x143AC7F24
+140c93385  mov  dword ptr [rip+...], 0xcc       ; -> 0x143AC7F28   the CODE
+140c9338f  mov  qword ptr [rip+...], 0x1ffa28ac ; -> 0x143AC7F30   the VALUE
+140c9339a  mov  dword ptr [rip+...], 0x12cd84   ; -> 0x143AC7F2C   the STATE
+```
+
+  It writes four fields as immediates and **does not touch `0x143AC7F3C`**. So the neighbours are
+  identical across sessions because an unconditional initialiser writes them; that says nothing
+  about the gate, which the same function leaves alone.
+
+The surrounding machinery is now legible and it is a detect-report-clear state machine:
+`FUN_140c79130` stamps `STATE = 0x1AFF01` with a code and a value and a 600 s ticker;
+`FUN_140c933b0` polls, and on `STATE == 0x1AFF01` sends opcode `0x1F8` carrying `&record` and
+clears `STATE` back to `0x12CD84`. **In all four dumps `STATE` is `0x12CD84`**, and no `0x1F8`
+appears inbound in any archived `world*.log` or `login*.log`, so on the evidence nothing has been
+detected *through that path*. But `0x143AC7F3C` is not part of that record and is not written by
+any of it.
+
+### 9.4 The measurement, and it costs no relaunch
+
+`tools/gatescan.py` reads all eighteen gates, the three enable flags and the detection record out
+of the **running** client with `PROCESS_VM_READ` and `ReadProcessMemory` - the same read-only
+pattern `tools/dump_runtime.py` has used on this client before. It writes nothing.
+
+It refuses to report unless two controls pass, because a read of a wrong address returns plausible
+numbers:
+
+* **the rebase** - eight bytes of `.text` at `FUN_140c93370` must equal the bytes on disk;
+* **the block** - `[0x143AC7F28]` must be `0xCC` and `[0x143AC7F30]` must be `0x1FFA28AC`, the two
+  immediates the initialiser above writes unconditionally. They are the fingerprint that says we
+  are reading the right structure and not whatever else lives at that VA.
+
+The readings, written down before the run:
+
+* **the gate reads 2, and every other gate reads what the dumps read** -> the state is reproducible
+  and the next question is *when* it becomes 2, which the same tool answers by being run at 40 s of
+  client life and again later;
+* **the gate reads 0 in a healthy long-lived session** -> it is set by something that happens on the
+  way to a crash, and it is a *consequence* rather than a cause;
+* **a control fails** -> nothing is reported, and the tool says which.
+
+It must be run from an elevated shell: the client runs elevated, so a normal shell is refused
+`OpenProcess` with error 5 even for a read.
+
+What it cannot do is separate "2 because of our stub" from "2 for everybody". The only control for
+that is a session with the real `grap64.dll`, which installs `NGService.exe`, a Windows service and
+the `BlackCat64.sys` kernel driver system-wide. **That is not worth it**, and it is not necessary
+first: if the gate can be observed at 0 in any session, the whole question closes without it.
