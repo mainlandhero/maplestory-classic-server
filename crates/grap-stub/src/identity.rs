@@ -533,9 +533,11 @@ unsafe fn release_parked(handles: Vec<*mut c_void>) {
 /// **Every other thread is suspended while the bytes change**, and none of them is allowed to
 /// be stopped inside `[target, target+stolen)`. A 12-byte jump written over a live prologue
 /// is not atomic; a thread that had already fetched the first `mov` and resumed at byte 5
-/// would execute the middle of our immediate. Nothing allocates, logs or formats while the
-/// threads are parked - the same rule `poolsentry::thread_snapshot` keeps, for the same
-/// reason: a parked thread may hold the heap lock.
+/// would execute the middle of our immediate. **Nothing at all happens between the suspend
+/// and the resume** - not a log, not an allocation, and in particular not the `VirtualProtect`
+/// that makes the page writable, which takes the address-space lock a parked thread may be
+/// holding. Only the twelve bytes and the `nop` tail are written there. Same rule, same
+/// reason, as `poolsentry::thread_snapshot`.
 ///
 /// # Safety
 /// `target` must be the first byte of a function whose first `stolen` bytes are
@@ -579,27 +581,35 @@ pub unsafe fn install_detour(
     // a real trampoline.
     publish.store(tramp as usize, Ordering::SeqCst);
 
+    // **Both `VirtualProtect` calls are outside the parked window, and that is the whole
+    // ordering.** Found reviewing the first version of this fix: it parked the threads and
+    // then called `VirtualProtect`, which takes the process address-space lock - the same lock
+    // a thread suspended mid-`VirtualAlloc` is holding. That is a deadlock of the client by
+    // the instrument meant to observe it, and it is exactly the rule
+    // `poolsentry::thread_snapshot` already states: **nothing at all happens between the
+    // suspend and the resume.** Here that leaves only twelve `mov` bytes and some `nop`s.
+    // The page is executable-writable for a few microseconds longer in exchange.
+    let mut old = 0u32;
+    if VirtualProtect(target as *mut c_void, stolen, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+        log(&format!(
+            "identity: could not make {target:#x} writable - NOT patching"
+        ));
+        return None;
+    }
     let Some(parked) = park_other_threads_outside(target, target + stolen) else {
+        VirtualProtect(target as *mut c_void, stolen, old, &mut old);
         log(&format!(
             "identity: some thread would not leave the prologue at {target:#x} after {PARK_ATTEMPTS} \
              attempts - NOT patching"
         ));
         return None;
     };
-    let mut old = 0u32;
-    if VirtualProtect(target as *mut c_void, stolen, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
-        release_parked(parked);
-        log(&format!(
-            "identity: could not make {target:#x} writable - NOT patching"
-        ));
-        return None;
-    }
     write_abs_jmp(target as *mut u8, detour);
     for i in 12..stolen {
         *(target as *mut u8).add(i) = 0x90;
     }
-    VirtualProtect(target as *mut c_void, stolen, old, &mut old);
     release_parked(parked);
+    VirtualProtect(target as *mut c_void, stolen, old, &mut old);
 
     // Read the patch back. A jump that did not take reports nothing and looks exactly like a
     // function that never runs - the silent negative this repo keeps getting caught by.

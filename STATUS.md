@@ -93,7 +93,11 @@ trampoline is now published first and other threads are parked outside the prolo
 jump is written, in `identity::install_detour` for both its users), the "freed from" address
 would always have read the pool's own free (`0x14019bbf3`) instead of the freer, and `probe.rs`'s
 handler - registered later, so it runs first - would have logged every catch as a `CLIENT FAULT`
-and written a crash dump before the guard page's handler saw it. Confirmed off the listing while
+and written a crash dump before the guard page's handler saw it. A fourth was found **in the
+first fix**: it parked the threads and then called `VirtualProtect`, which takes the lock a
+thread suspended inside `VirtualAlloc` holds - a deadlock of the client at arm time. Both
+protect calls are now outside the parked window, which is the rule `poolsentry` already
+stated. Confirmed off the listing while
 reviewing: both pool frees read the one `HeapFree` slot (60 readers in all), the ladder takes a
 `0x100` header to that arm, `HeapFree` gets `body-8`, and the allocator overwrites `rax` before
 reading it, so the trampoline's clobber is safe. 97 grap-stub tests.

@@ -152,7 +152,28 @@ page. `writewatch` already had a `suppresses()` hand-off there for exactly this 
 `guardpage::suppresses()` now sits beside it. The write watch's own handler, also registered
 later, returns `CONTINUE_SEARCH` for any target outside its runs, so it needed nothing.
 
-### 6.5 Still true after the review
+### 6.5 The fix's own defect: an API call inside the parked window
+
+Asked *"has everything been fixed?"*, the answer was no, and the thing that was not fixed was
+in §6.2's fix. It parked the threads and **then** called `VirtualProtect` to make the prologue
+writable. `VirtualProtect` takes the process address-space lock, which a thread suspended
+mid-`VirtualAlloc` is holding - and the pool allocator is a `VirtualAlloc` caller. That is the
+instrument deadlocking the client it exists to observe, at arm time, and it would have looked
+like the client hanging on launch with no fault and no log line.
+
+`poolsentry::thread_snapshot` already carries the rule in its doc block - *"nothing at all
+happens between the suspend and the resume - no allocation, no `VirtualQuery`, no
+formatting"* - written after this project had already paid for it once. It was cited in the
+same patch that broke it. Both `VirtualProtect` calls are now outside the parked window: make
+the page writable, park, write twelve bytes and the `nop` tail, unpark, restore. Nothing but
+stores between the suspend and the resume. The page is executable-writable for a few
+microseconds longer, which is the right side of that trade.
+
+The general form, for the next instrument: **a rule quoted in a patch is not a rule the patch
+follows.** `CLAUDE.md` says a comment describing a guarantee is not the guarantee; a citation
+is not either.
+
+### 6.6 Still true after the review
 
 It has not run on a client. The three defects above are the kind that only a run or a review
 finds, and the review found them; what a run will add is whether Themida objects to the
