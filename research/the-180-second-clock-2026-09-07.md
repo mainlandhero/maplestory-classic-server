@@ -418,3 +418,60 @@ Run 1 again, same recipe, twenty minutes or more. The free-guard run (`-FreeGuar
 still worth doing - it guards the other death, the PCOM map-change free, which did not occur
 here - but this run is now the one with a specific address to watch and a mechanism that says
 it will be hit again.
+
+## 8. Run 2 of the write watch died at nine minutes on a different surface: a +2 on a map node pointer
+
+2026-09-07 21:08-21:17, process 345148, same recipe. One catch (21:14:44.882, repaired), the
+`rdx=5` allocation 148 ms before it as in §7, and `0xC0000005` at 21:17:32.635 - **twelve
+seconds before the next firing was due**, before any write window had opened (the first was
+due at 21:17:44). `dumps\maplecw-crash-345148-c0000005-1.dmp`. `[L]`
+
+### 8.1 The chain, read out of the dump
+
+Frame 3 (`FUN_140ce1ac0+0x6ef`) is a refcount release - `lock xadd [rbx+8]; dec; jne` - that hit
+zero and called the object's destructor through its vtable; the destructor (`FUN_140ceca50`,
+a 0x70-byte object) tears down a `std::map` at `+0x60` through `FUN_140ce79c0`, whose
+recursive `_Erase` (`FUN_1408de8c0`) faulted on `cmp byte [r8+0x19]` with
+`r8 = 0x01010000000038a3` - non-canonical, hence the reported fault address of `-1`. `[L]`
+
+The map object at `0x479e41f0` reads `[head 0x38a36c30][size 0]`. The head node: `[L]`
+
+```text
+0x38a36c28  40 00 00 00 00 00 00 00      <- a POOL HEADER: the 0x40 class (bucket 2)
+0x38a36c30  30 6c a3 38 00 00 00 00      left   = 0x38a36c30  (itself: an empty map)
+0x38a36c38  32 6c a3 38 00 00 00 00      parent = 0x38a36c32  <<< should be 0x38a36c30
+0x38a36c40  30 6c a3 38 00 00 00 00      right  = 0x38a36c30  (itself)
+0x38a36c48  01 01 2f 00 6d 00 6f 00 ...  _Color 1, _Isnil 1, then "/move/2/head" (UTF-16)
+```
+
+An empty map's head points at itself three times. **The parent pointer is off by exactly +2 in
+its low byte.** `_Erase(root = 0x38a36c32)` reads `[0x38a36c32 + 0x19] = 0x00` - not nil, because
+the shifted address lands two bytes early - then takes its "left child" from `+0x10`, which is
+the last six bytes of the real pointer followed by the `01 01`: `0x01010000000038a3`. `[D]`
+
+### 8.2 What it says, and what it does not
+
+* **The signature is the family's, on a new surface.** The header family is a 32-bit field
+  incremented to `1`, then `2` (§7.1 saw the `2` live). This is a 32-bit field incremented
+  twice - `..30`, `..31`, `..32` - where the field happened to be the low dword of a live
+  pointer in a **`0x40`-class slot**. `poolchain` checks slot *headers* and never a body, so an
+  increment inside a body in bucket 2 is invisible to every dump walked so far. `[D]` that the
+  two are one writer; the offset convention differs (the header hit is at `body − 4`, this is
+  `body + 8`), and that is exactly the kind of difference the write watch's RIP would settle.
+* **It is not the `0x140ce89d6` family.** The 34 archived stacks in this neighbourhood all go
+  through the unwind funclet `0x14308e3db` (an exception releasing an uninitialised local);
+  **none** goes through this normal-path destructor. First observation of this path. `[L]`
+* **It was not at the clock**, and the write watch had not yet opened a window, so nothing this
+  run's instruments did can have touched that slot: the only client write was one repair of one
+  `0x20` header at 21:14:44. `[L]`
+* **Whose map**: not established. `rax` at the fault was `0x14336b5b8`, which `rtti.py` does
+  not resolve as a vtable, and the destructor's `this` was not recovered from the registers
+  the fault left. The strings beside the node - `"/move/2/head"`, `"Character/Cap/01002997.img
+  /default"` - are WZ property paths, the same neighbourhood as every damaged `0x20` slot.
+
+### 8.3 What changes
+
+Nothing in the instrument. The run ended before the fixes of §7 were exercised - one catch, no
+re-hit, no window - so run 1 is still to be run again, twenty minutes or more. This death is
+recorded so the next one of its shape is compared rather than re-derived, and because it is the
+first sign of the writer's increment landing outside the `0x20` class.
