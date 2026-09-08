@@ -315,7 +315,10 @@ pub struct StakedClaim {
     /// own session object and the client sends it in `0x0073`. That makes it the first value
     /// in this project that identifies a launch **on the wire** rather than by inference.
     ///
-    /// Spent on first presentation. See [`Store::present_client_token`].
+    /// **Valid for as long as its claim is**, not for a single presentation. It used to be
+    /// one-time, and that was the bug the owner reported on 2026-09-08: the launcher hands the same
+    /// token to every `Start Game`, and the second one is a different process. See
+    /// [`Store::present_client_token`], which also states what the change costs.
     ///
     /// It authenticates the **login socket only**. `0x0073` has never appeared on a channel
     /// connection - 103 archived files, every one port 8484, including four whose names say
@@ -746,12 +749,20 @@ struct LiveRow {
 enum Judgement {
     /// Unspent and matching. Index into the live rows.
     Fresh(usize),
-    /// Spent, matching, and **the operating system attributes this connection to the same
-    /// process that spent it**. See [`Store::present_client_token`] for why this is honoured.
+    /// Matching, already presented once, and **the operating system attributes this connection
+    /// to the same process that presented it first**.
     ReplayBySameProcess(usize),
-    /// Spent, and this is somebody else. A refusal.
-    ReplayByAnother { index: usize },
-    /// It matches no live claim. A refusal.
+    /// Matching, already presented once, and this is a **different** process - or one this
+    /// server cannot attribute.
+    ///
+    /// **Accepted since 2026-09-08.** It used to be a refusal, and the refusal was the bug
+    /// The owner reported: see [`Store::present_client_token`]'s "the token is a session
+    /// credential" section. The variant is kept rather than folded into
+    /// [`Judgement::ReplayBySameProcess`] because the two are still different events and the
+    /// log line has to say which one happened.
+    ReplayByAnotherProcess(usize),
+    /// It matches no live claim: never issued, or the claim expired, was cleared, or its
+    /// account was disabled or deleted. **A refusal, and now the only one.**
     Unknown,
 }
 
@@ -759,8 +770,18 @@ enum Judgement {
 ///
 /// `pid` is what the **server** derived from the accepted socket via the OS TCP table
 /// (`crate::peerowner::owning_pid`), never anything the connection asserted. `None` means the
-/// peer is not on this machine and cannot be attributed - and an unattributable replay is
-/// refused, which is the conservative direction.
+/// peer is not on this machine and cannot be attributed.
+///
+/// # `rows` is the whole of the expiry check, and that is now the whole of the gate
+///
+/// Every row here came from [`Store::live_rows`], whose `WHERE` is
+/// `c.expires_at > now AND a.enabled = 1` over a `JOIN` to `accounts`. So a token whose claim
+/// has expired, been cleared by [`Store::clear_login_claims`] or
+/// [`Store::clear_login_claims_for`], or whose account has been disabled or deleted, cannot
+/// match **any** row and lands in [`Judgement::Unknown`]. Since the pid no longer decides
+/// acceptance, that query is the only thing standing between a leaked token and an account -
+/// which is why `a_spent_token_is_refused_once_its_claim_has_expired` and its siblings assert
+/// the refusal rather than only the acceptance.
 fn judge_client_token(rows: &[LiveRow], presented: &str, pid: Option<u32>) -> Judgement {
     let want = hash_token(presented);
     let Some(index) = rows.iter().position(|r| r.client_token_hash.as_deref() == Some(&want))
@@ -772,8 +793,8 @@ fn judge_client_token(rows: &[LiveRow], presented: &str, pid: Option<u32>) -> Ju
         return Judgement::Fresh(index);
     }
     match (row.client_token_used_pid, pid) {
-        (Some(spent_by), Some(now)) if spent_by == now => Judgement::ReplayBySameProcess(index),
-        _ => Judgement::ReplayByAnother { index },
+        (Some(first_by), Some(now)) if first_by == now => Judgement::ReplayBySameProcess(index),
+        _ => Judgement::ReplayByAnotherProcess(index),
     }
 }
 
@@ -784,19 +805,31 @@ fn judge_client_token(rows: &[LiveRow], presented: &str, pid: Option<u32>) -> Ju
 /// credential mechanism is not worth reshaping a neighbouring module's control flow for. It
 /// also lets the four outcomes carry the four *different* sentences a log needs - which is the
 /// same reasoning that made `ClaimResolution` three variants instead of an `Option`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presentation {
+    /// **The first time this token has been seen.** The first-use markers - the time and the
+    /// OS-attributed process - were written by this call.
+    First,
+    /// Presented again, by the process the operating system attributed the first use to.
+    SameProcess,
+    /// Presented again, by a **different** process, or by a peer this server cannot attribute.
+    ///
+    /// **This is an acceptance since 2026-09-08**, and it is the whole of the owner's Change 1: a
+    /// second `Start Game` is a second process, and refusing it was the reported bug. The
+    /// first use is carried along so the log can say who got here first and when.
+    AnotherProcess { first_used_at: i64, first_used_pid: Option<u32> },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientTokenOutcome {
     /// **Accepted.** The claim is the account this connection should be served as.
     ///
-    /// `replay` is `false` on first use - the normal case, and the one where the token was
-    /// just spent. `true` means the same client process presented it again; nothing was spent
-    /// a second time and the answer is the same claim.
-    Accepted { claim: Box<ResolvedClaim>, replay: bool },
-    /// The token names a live claim that has **already been spent by a different process**,
-    /// or by one this server cannot attribute. Refused: the caller must serve its fallback.
-    AlreadyUsed { account_name: String, used_at: i64, used_pid: Option<u32> },
-    /// It matches no live claim: never issued, expired, cleared, or from a previous sign-in.
-    /// Refused.
+    /// [`Presentation`] says which of the three ways it got here. All three are acceptances;
+    /// the distinction is for the log and for the audit columns, not for the decision.
+    Accepted { claim: Box<ResolvedClaim>, presentation: Presentation },
+    /// It matches no live claim: never issued, **expired**, cleared, disabled, deleted, or
+    /// from a previous sign-in. Refused - and this is now the ONLY refusal, which is why
+    /// [`Store::live_rows`]'s predicate is the whole security boundary.
     Unknown,
     /// **Nothing was presented.** The identity field was empty or absent, which is what every
     /// client that has ever connected to this server sends and what every reconnect sends.
@@ -811,36 +844,46 @@ impl ClientTokenOutcome {
     /// The anti-downgrade rule as a function, so no call site has to re-derive it - and so
     /// that adding an outcome later cannot silently default to "carry on".
     pub fn is_refusal(&self) -> bool {
-        matches!(self, ClientTokenOutcome::AlreadyUsed { .. } | ClientTokenOutcome::Unknown)
+        matches!(self, ClientTokenOutcome::Unknown)
     }
 
     /// The whole sentence to log. Written here for the same reason [`ClaimResolution::why`] is.
     pub fn why(&self) -> String {
         match self {
-            ClientTokenOutcome::Accepted { claim, replay: false } => format!(
-                "ACCEPTED and SPENT - the client carried a valid one-time token in 0x0073. \
+            ClientTokenOutcome::Accepted { claim, presentation: Presentation::First } => format!(
+                "ACCEPTED - the client carried a valid token in 0x0073, for the FIRST time. \
                  Serving account {:?} (id {}). This connection is identified by a CREDENTIAL, \
-                 not by inference. It authenticates the LOGIN socket only",
+                 not by inference. It authenticates the LOGIN socket only. The token stays \
+                 valid for the rest of the claim's life; the first use is recorded for audit",
                 claim.claim.account_name, claim.claim.account_id
             ),
-            ClientTokenOutcome::Accepted { claim, replay: true } => format!(
-                "ACCEPTED as a REPLAY BY THE SAME CLIENT PROCESS - the token was already spent, \
-                 and the operating system attributes this socket to the process that spent it. \
-                 Nothing was spent again. Serving account {:?} (id {})",
-                claim.claim.account_name, claim.claim.account_id
+            ClientTokenOutcome::Accepted { claim, presentation: Presentation::SameProcess } => {
+                format!(
+                    "ACCEPTED as a REPEAT BY THE SAME CLIENT PROCESS - the operating system \
+                     attributes this socket to the process that first presented this token. \
+                     Serving account {:?} (id {})",
+                    claim.claim.account_name, claim.claim.account_id
+                )
+            }
+            ClientTokenOutcome::Accepted {
+                claim,
+                presentation: Presentation::AnotherProcess { first_used_at, first_used_pid },
+            } => format!(
+                "ACCEPTED as a REPEAT BY A DIFFERENT PROCESS - the token was first presented at \
+                 {first_used_at} by pid {}. Since 2026-09-08 the token is honoured for as long \
+                 as its login claim is live (the owner: \"the server should honor that same token \
+                 until its expiry\"), so a second Start Game is served rather than refused. \
+                 EXPIRY IS NOW THE WHOLE GATE: anyone holding this token can be served as \
+                 account {:?} (id {}) until the claim runs out. Serving it",
+                first_used_pid.map(|p| p.to_string()).unwrap_or_else(|| "<unattributed>".into()),
+                claim.claim.account_name,
+                claim.claim.account_id
             ),
-            ClientTokenOutcome::AlreadyUsed { account_name, used_at, used_pid } => format!(
-                "REFUSED - the client token is SPENT. It was used at {used_at} by pid {} and \
-                 named account {account_name:?}. A one-time token is not replayable by another \
-                 process, so this connection is served the FALLBACK account instead. If this \
-                 appears on a legitimate reconnect, the client is re-sending 0x0073 - which 57 \
-                 archived runs say it does not - and the fix is here, not in the launcher",
-                used_pid.map(|p| p.to_string()).unwrap_or_else(|| "<unattributed>".into())
-            ),
-            ClientTokenOutcome::Unknown => "REFUSED - the client token matches no live claim. \
-                 It was never issued, or the sign-in expired, or Login was pressed again since \
-                 the launcher wrote it. Serving the FALLBACK account: a connection that presents \
-                 a credential gets THAT claim or none, and never falls through to the weaker \
+            ClientTokenOutcome::Unknown => "REFUSED - the client token matches no LIVE claim. \
+                 The claim EXPIRED, or was cleared, or its account was disabled or deleted, or \
+                 the token was never issued, or Login was pressed again since the launcher \
+                 wrote it. Serving the FALLBACK account: a connection that presents a \
+                 credential gets THAT claim or none, and never falls through to the weaker \
                  rules. Sign in again through maplecw-launcher"
                 .to_string(),
             ClientTokenOutcome::NotPresented => "no client token was carried - the 0x0073 \
@@ -1113,13 +1156,17 @@ impl Store {
         if let Some(presented) = evidence.client_token.as_deref() {
             return Ok(
                 match judge_client_token(&live, presented, evidence.launch_pid) {
-                    Judgement::Fresh(i) | Judgement::ReplayBySameProcess(i) => {
+                    // All three matching arms resolve. The pid stopped deciding acceptance on
+                    // 2026-09-08 - see `Judgement::ReplayByAnotherProcess` - so the only
+                    // refusal left is a token that matches no LIVE row, and liveness is
+                    // `live_rows`'s `expires_at > now AND a.enabled = 1`.
+                    Judgement::Fresh(i)
+                    | Judgement::ReplayBySameProcess(i)
+                    | Judgement::ReplayByAnotherProcess(i) => {
                         let row = live.into_iter().nth(i).expect("index came from this slice");
                         ClaimResolution::Resolved(row.into_resolved(ResolvedBy::ClientToken))
                     }
-                    Judgement::ReplayByAnother { .. } | Judgement::Unknown => {
-                        ClaimResolution::NoClaim
-                    }
+                    Judgement::Unknown => ClaimResolution::NoClaim,
                 },
             );
         }
@@ -1229,29 +1276,56 @@ impl Store {
     /// (`crate::peerowner::owning_pid_of`), not anything the connection asserted. Pass `None`
     /// for an off-box peer; the effect is that a replay from it cannot be honoured.
     ///
-    /// # What a replay does, in one place, because this is the question that decides the design
+    /// # THE TOKEN IS A SESSION CREDENTIAL WITH THE CLAIM'S EXPIRY, AND IT USED NOT TO BE
     ///
-    /// | who presents a spent token | answer |
+    /// The owner, 2026-09-08, relaying a player: *"the launcher says the session is valid for 12
+    /// hours on Login, but after the initial launch, if they try clicking Start Game again,
+    /// the client will say the session is invalid."*
+    ///
+    /// That was this function. The launcher keeps the token its sign-in returned
+    /// (`launcher::session::SignIn::Ok`) and hands the same one to every `Start Game`; the
+    /// token was **spent on first presentation**, and a second `Start Game` is a second
+    /// process, so it judged `ReplayByAnother` and was refused. The twelve hours the launcher
+    /// promises is [`LOGIN_CLAIM_TTL_SECS`], the **claim's** lifetime, and the token's
+    /// lifetime was one presentation.
+    ///
+    /// The owner: *"the launcher should keep that token, the server should honor that same token
+    /// until its expiry, as long as that token is still valid."* So it does. Every match is an
+    /// acceptance:
+    ///
+    /// | who presents it | answer |
     /// |---|---|
-    /// | the same client process, as the OS attributes the socket | [`ClientTokenOutcome::Accepted`] with `replay: true`. Nothing is spent again. |
-    /// | any other process, or a peer that cannot be attributed | [`ClientTokenOutcome::AlreadyUsed`] - **refused**, and the caller serves its fallback |
+    /// | nobody has yet | [`Presentation::First`] - accepted, and the first use is recorded |
+    /// | the same client process | [`Presentation::SameProcess`] - accepted |
+    /// | a different process, or an unattributable peer | [`Presentation::AnotherProcess`] - **accepted** |
+    /// | a token matching no live claim | [`ClientTokenOutcome::Unknown`] - refused |
     ///
-    /// The same-process allowance is not a weakening and it is not decoration. It exists
-    /// because the failure it prevents is the exact one `store::claims` was rewritten to
-    /// avoid: the client opens a **second login connection** in one launch after "Log Out" and
-    /// "Choose another world", and if a spent token refused it, the player would watch their
-    /// characters turn into somebody else's and report it as a character-deletion bug.
+    /// # What this costs, stated plainly rather than buried
     ///
-    /// **Measured, and it says that path is currently unreachable**: across 57 archived login
-    /// runs, `0x0073` occurs exactly once per run - never twice - while 7 of those runs carry
-    /// two or three `0x0080` login requests, on separate connections that send no identity at
-    /// all. So the reconnect presents nothing and is carried by rule 2 today. The allowance is
-    /// insurance against the client behaving differently once the field is non-empty, which
-    /// nobody can rule out because nobody has ever seen a non-empty one.
+    /// **The token used to be useless once spent; it is now good for the rest of the claim's
+    /// life - up to twelve hours.** It sits in plain text in a marker file beside the client
+    /// until the hook deletes it (`launcher::client::write_identity_marker`), so anyone who
+    /// can read that file, or who captures the identity string off the wire, can be served as
+    /// that account on the LOGIN socket for the remainder of the claim. Before this change the
+    /// same theft bought one presentation and only if it beat the real client to it.
     ///
-    /// It cannot be abused from elsewhere: the pid comes from the kernel's TCP table keyed by
-    /// the socket this server accepted, so another process cannot claim to be the one that
-    /// spent the token, and an off-box peer has no row in that table at all.
+    /// What has NOT changed: it is still login-socket only (`0x0073` has never appeared on a
+    /// channel connection - 103 archived files), it still cannot be used to authenticate
+    /// anything else, and it still dies with the claim. [`Store::clear_login_claims_for`] -
+    /// which `Store::set_password` already calls - revokes it immediately, and that is now the
+    /// meaningful kill switch rather than a formality.
+    ///
+    /// # The audit columns are still written, and they no longer refuse
+    ///
+    /// First use - time, and the OS-attributed process - is recorded exactly as before. It has
+    /// simply stopped being a guard. `CLAUDE.md`: *"A refusal that is reported to no one will
+    /// be ignored eventually"*; the mirror of that is that a **record** which no longer
+    /// refuses must not go on describing itself as one, which is why
+    /// [`ClientTokenOutcome::AlreadyUsed`] was removed rather than left unreachable.
+    ///
+    /// The pid still comes from the kernel's TCP table keyed by the socket this server
+    /// accepted, so a process cannot claim to be another one - it is just no longer the thing
+    /// that decides.
     pub fn present_client_token(
         &self,
         presented: &str,
@@ -1263,31 +1337,36 @@ impl Store {
         let live = self.live_rows()?;
         Ok(match judge_client_token(&live, &presented, pid) {
             Judgement::Unknown => ClientTokenOutcome::Unknown,
-            Judgement::ReplayByAnother { index } => {
-                let row = &live[index];
-                ClientTokenOutcome::AlreadyUsed {
-                    account_name: row.claim.account_name.clone(),
-                    used_at: row.client_token_used_at.unwrap_or_default(),
-                    used_pid: row.client_token_used_pid,
-                }
-            }
             Judgement::ReplayBySameProcess(index) => {
                 let row = live.into_iter().nth(index).expect("index came from this slice");
                 ClientTokenOutcome::Accepted {
                     claim: Box::new(row.into_resolved(ResolvedBy::ClientToken)),
-                    replay: true,
+                    presentation: Presentation::SameProcess,
+                }
+            }
+            Judgement::ReplayByAnotherProcess(index) => {
+                let row = live.into_iter().nth(index).expect("index came from this slice");
+                let presentation = Presentation::AnotherProcess {
+                    first_used_at: row.client_token_used_at.unwrap_or_default(),
+                    first_used_pid: row.client_token_used_pid,
+                };
+                ClientTokenOutcome::Accepted {
+                    claim: Box::new(row.into_resolved(ResolvedBy::ClientToken)),
+                    presentation,
                 }
             }
             Judgement::Fresh(index) => {
                 let row = live.into_iter().nth(index).expect("index came from this slice");
                 let id = row.id;
-                // Spend it. The predicate repeats `client_token_used_at IS NULL` so two
-                // connections racing the same fresh token cannot both be told they were first:
-                // SQLite reports one row changed to exactly one of them, the same shape
-                // `migration::claim_migration_with` uses for single use.
+                // **Record** the first use. The predicate still repeats
+                // `client_token_used_at IS NULL`, so two connections racing a token nobody has
+                // presented cannot both be told they were first - but the loser is no longer
+                // refused, it is simply a repeat. The write is an audit trail now, not a
+                // consumption, and the `WHERE` is what keeps the recorded pid the pid of the
+                // connection that actually got there first.
                 let now = Store::now();
                 let conn = self.conn();
-                let spent = conn.execute(
+                let recorded = conn.execute(
                     "UPDATE login_claims
                         SET client_token_used_at = ?2, client_token_used_pid = ?3
                       WHERE id = ?1 AND client_token_used_at IS NULL",
@@ -1295,25 +1374,31 @@ impl Store {
                 )?;
                 drop(conn);
                 let claim = Box::new(row.into_resolved(ResolvedBy::ClientToken));
-                if spent == 1 {
-                    ClientTokenOutcome::Accepted { claim, replay: false }
+                if recorded == 1 {
+                    ClientTokenOutcome::Accepted { claim, presentation: Presentation::First }
                 } else {
-                    // The other connection won the race and spent it between the read and the
-                    // write. Re-judging is the honest answer rather than assuming: it is
-                    // `ReplayBySameProcess` if this really is the same client, and
-                    // `AlreadyUsed` if it is not.
+                    // The other connection won the race between the read and the write. Both
+                    // are accepted either way; re-judging is what makes the LOG say which of
+                    // the two this was, and re-reading the row is what makes the recorded
+                    // first-use figures in it belong to the connection that really was first.
                     match self.live_rows()?.into_iter().find(|r| r.id == id) {
-                        Some(row) if row.client_token_used_pid == pid && pid.is_some() => {
+                        Some(row) => {
+                            let presentation = if row.client_token_used_pid == pid && pid.is_some()
+                            {
+                                Presentation::SameProcess
+                            } else {
+                                Presentation::AnotherProcess {
+                                    first_used_at: row.client_token_used_at.unwrap_or_default(),
+                                    first_used_pid: row.client_token_used_pid,
+                                }
+                            };
                             ClientTokenOutcome::Accepted {
                                 claim: Box::new(row.into_resolved(ResolvedBy::ClientToken)),
-                                replay: true,
+                                presentation,
                             }
                         }
-                        Some(row) => ClientTokenOutcome::AlreadyUsed {
-                            account_name: row.claim.account_name.clone(),
-                            used_at: row.client_token_used_at.unwrap_or_default(),
-                            used_pid: row.client_token_used_pid,
-                        },
+                        // The claim stopped being live between the two reads - it expired, or
+                        // was cleared. Expiry is the gate, so this is a refusal.
                         None => ClientTokenOutcome::Unknown,
                     }
                 }
@@ -2451,27 +2536,38 @@ mod tests {
         );
     }
 
-    /// **One-time use.** The first presentation is accepted and spends the token; a second
-    /// process presenting it is refused, and the refusal names what happened.
+    /// **THE BUG WISP REPORTED, AS A TEST.** One sign-in, the same token, two different
+    /// processes - both accepted - and then refused once the claim stops being live.
+    ///
+    /// This test used to be `presenting_the_token_spends_it_and_another_process_is_refused` and
+    /// asserted the opposite. The behaviour it pinned is what a player hit: the launcher hands
+    /// the token it got at sign-in to **every** `Start Game`, and the second `Start Game` is a
+    /// second process, so it was `ReplayByAnother` and refused - while the launcher's own
+    /// screen said the session was good for twelve hours.
+    ///
+    /// **Both halves matter and the second one is the load-bearing one.** A test that proved
+    /// only the acceptance would pass just as happily against a version with no expiry check
+    /// at all, and expiry is now the only gate there is.
     #[test]
-    fn presenting_the_token_spends_it_and_another_process_is_refused() {
+    fn the_same_token_is_accepted_from_two_processes_and_refused_once_the_claim_is_gone() {
         let (store, wisp, _) = store_with_accounts();
         let token = login(&store, "wisp");
         let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
 
+        // The first Start Game.
         let first = store.present_client_token(&staked.client_token, Some(1111)).unwrap();
         match &first {
-            ClientTokenOutcome::Accepted { claim, replay } => {
+            ClientTokenOutcome::Accepted { claim, presentation } => {
                 assert_eq!(claim.claim.account_id, wisp);
                 assert_eq!(claim.how, ResolvedBy::ClientToken);
-                assert!(!replay, "the first presentation is not a replay");
+                assert_eq!(*presentation, Presentation::First);
             }
             other => panic!("the first presentation must be accepted: {other:?}"),
         }
         assert!(!first.is_refusal());
-        assert!(first.why().contains("SPENT"), "{}", first.why());
 
-        // The database says it is spent, and by whom.
+        // The first use is still RECORDED - it just no longer refuses. `CLAUDE.md`: an effect
+        // that quietly stops happening is how an audit trail becomes fiction.
         let (used_at, used_pid): (Option<i64>, Option<i64>) = store
             .conn()
             .query_row(
@@ -2480,31 +2576,124 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert!(used_at.is_some(), "the spend was not recorded");
+        assert!(used_at.is_some(), "first use was not recorded");
         assert_eq!(used_pid, Some(1111));
 
-        // A DIFFERENT process replaying it is refused.
-        let replayed = store.present_client_token(&staked.client_token, Some(2222)).unwrap();
-        assert!(replayed.is_refusal(), "{replayed:?}");
-        assert!(
-            matches!(&replayed, ClientTokenOutcome::AlreadyUsed { account_name, used_pid, .. }
-                     if account_name == "wisp" && *used_pid == Some(1111)),
-            "{replayed:?}"
-        );
-        assert!(replayed.why().contains("SPENT"), "{}", replayed.why());
-        // And the read path refuses it too, rather than falling through.
+        // **The second Start Game.** A different pid, the same token, and it is served.
+        let second = store.present_client_token(&staked.client_token, Some(2222)).unwrap();
+        assert!(!second.is_refusal(), "this refusal is the reported bug: {second:?}");
+        match &second {
+            ClientTokenOutcome::Accepted {
+                claim,
+                presentation: Presentation::AnotherProcess { first_used_pid, .. },
+            } => {
+                assert_eq!(claim.claim.account_id, wisp);
+                assert_eq!(*first_used_pid, Some(1111), "the audit trail names who was first");
+            }
+            other => panic!("a second process must now be served: {other:?}"),
+        }
+        assert!(second.why().contains("DIFFERENT PROCESS"), "{}", second.why());
+        // The recorded first use is NOT overwritten by the second presentation.
+        let used_pid: Option<i64> = store
+            .conn()
+            .query_row("SELECT client_token_used_pid FROM login_claims", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(used_pid, Some(1111), "a repeat must not rewrite who was first");
+
+        // The read path agrees - the resolver and the presenter share `judge_client_token`, so
+        // they cannot disagree, and this asserts that rather than trusting it.
         assert_eq!(
             store
                 .resolve_login_claim(
                     &ClaimEvidence::with_client_token(&staked.client_token)
                         .and_launch_pid(Some(2222))
                 )
-                .unwrap(),
-            ClaimResolution::NoClaim
+                .unwrap()
+                .resolved()
+                .expect("the second process resolves too")
+                .how,
+            ResolvedBy::ClientToken
         );
-        // The CLAIM itself is untouched: spending a token must not evict a live claim.
+
+        // The claim is untouched by any of it.
         assert_eq!(claim_rows(&store), 1);
         assert_eq!(store.current_login_claim().unwrap().unwrap().account_id, wisp);
+
+        // ---- AND NOW THE REFUSAL, which is the half that proves the gate exists. ----
+        assert_eq!(store.clear_login_claims().unwrap(), 1);
+        for pid in [Some(1111), Some(2222), None] {
+            assert_eq!(
+                store.present_client_token(&staked.client_token, pid).unwrap(),
+                ClientTokenOutcome::Unknown,
+                "a cleared claim's token must be refused, from any process ({pid:?})"
+            );
+            assert_eq!(
+                store
+                    .resolve_login_claim(
+                        &ClaimEvidence::with_client_token(&staked.client_token)
+                            .and_launch_pid(pid)
+                    )
+                    .unwrap(),
+                ClaimResolution::NoClaim,
+                "and the read path must refuse it too ({pid:?})"
+            );
+        }
+    }
+
+    /// **The refusal, on the other three ways a claim stops being live.** Clearing is covered
+    /// above; this is expiry, the scoped clear, and disabling the account.
+    ///
+    /// Every one of them goes through `live_rows`, and `live_rows` is now the whole of the
+    /// boundary between a leaked token and an account. So it gets asserted per route rather
+    /// than once, and each route gets a positive control immediately before it - otherwise a
+    /// query that returned nothing at all would pass every line of this.
+    #[test]
+    fn a_token_is_refused_once_its_claim_stops_being_live_by_every_route() {
+        let (store, wisp, _) = store_with_accounts();
+        let token = login(&store, "wisp");
+
+        // 1. EXPIRY - the route the whole change now rests on.
+        let dead = store.stake_login_claim_with(wisp, &token, -1, None).unwrap();
+        assert_eq!(
+            store.present_client_token(&dead.client_token, Some(1)).unwrap(),
+            ClientTokenOutcome::Unknown,
+            "an expired claim's token is not a credential"
+        );
+
+        // 2. clear_login_claims_for - what `set_password` calls, and now the kill switch.
+        let scoped = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert!(
+            !store.present_client_token(&scoped.client_token, Some(1)).unwrap().is_refusal(),
+            "positive control: it works while the claim is live"
+        );
+        assert_eq!(store.clear_login_claims_for(wisp).unwrap(), 1);
+        assert_eq!(
+            store.present_client_token(&scoped.client_token, Some(1)).unwrap(),
+            ClientTokenOutcome::Unknown
+        );
+
+        // 3. the account being disabled.
+        let live = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert!(
+            !store.present_client_token(&live.client_token, Some(1)).unwrap().is_refusal(),
+            "positive control"
+        );
+        store.set_enabled("wisp", false).unwrap();
+        assert_eq!(
+            store.present_client_token(&live.client_token, Some(1)).unwrap(),
+            ClientTokenOutcome::Unknown,
+            "disabling an account must not be bypassable with a client token"
+        );
+
+        // 4. the account being deleted, through ON DELETE CASCADE and the join.
+        store.set_enabled("wisp", true).unwrap();
+        let live = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
+        assert!(!store.present_client_token(&live.client_token, Some(1)).unwrap().is_refusal());
+        store.conn().execute("DELETE FROM accounts WHERE id = ?1", rusqlite::params![wisp]).unwrap();
+        assert_eq!(
+            store.present_client_token(&live.client_token, Some(1)).unwrap(),
+            ClientTokenOutcome::Unknown
+        );
     }
 
     /// **The reconnect insurance.** The client opens a second login connection in one launch
@@ -2524,29 +2713,47 @@ mod tests {
             .is_refusal());
         let again = store.present_client_token(&staked.client_token, Some(4242)).unwrap();
         match &again {
-            ClientTokenOutcome::Accepted { claim, replay } => {
+            ClientTokenOutcome::Accepted { claim, presentation } => {
                 assert_eq!(claim.claim.account_id, wisp);
-                assert!(replay, "it is a replay, and the log line has to say so");
+                assert_eq!(*presentation, Presentation::SameProcess);
             }
             other => panic!("the same process must not be refused: {other:?}"),
         }
         assert!(again.why().contains("SAME CLIENT PROCESS"), "{}", again.why());
     }
 
-    /// A peer this server cannot attribute to a process - anything off-box - cannot replay a
-    /// spent token. The allowance above is keyed on a fact the OS supplies; with no such fact
-    /// there is nothing to key on and the conservative answer is a refusal.
+    /// An off-box peer, which this server cannot attribute to a process, is **also** served
+    /// now. It used to be refused, and the refusal was deliberate: a spent token was one-time
+    /// and an unattributable replay could not be shown to be the same client.
+    ///
+    /// That reasoning went with the one-time property. Expiry is the gate, the pid is an audit
+    /// column, and refusing an off-box client would refuse everybody who is not on the owner's box -
+    /// which is the deployment shape `docs/launcher.md` is aiming at.
     #[test]
-    fn an_unattributable_peer_cannot_replay_a_spent_token() {
+    fn an_unattributable_peer_may_present_the_token_again() {
         let (store, wisp, _) = store_with_accounts();
         let token = login(&store, "wisp");
         let staked = store.stake_login_claim_with(wisp, &token, LOGIN_CLAIM_TTL_SECS, None).unwrap();
 
-        // Spent by a connection that could not be attributed either.
         assert!(!store.present_client_token(&staked.client_token, None).unwrap().is_refusal());
         let again = store.present_client_token(&staked.client_token, None).unwrap();
-        assert!(again.is_refusal(), "two unattributable connections are not known to be one");
-        assert!(matches!(again, ClientTokenOutcome::AlreadyUsed { used_pid: None, .. }));
+        assert!(!again.is_refusal(), "an off-box client must not be locked out: {again:?}");
+        assert!(
+            matches!(
+                again,
+                ClientTokenOutcome::Accepted {
+                    presentation: Presentation::AnotherProcess { first_used_pid: None, .. },
+                    ..
+                }
+            ),
+            "{again:?}"
+        );
+        // ...and expiry still refuses it, which is the only thing that does.
+        store.clear_login_claims().unwrap();
+        assert_eq!(
+            store.present_client_token(&staked.client_token, None).unwrap(),
+            ClientTokenOutcome::Unknown
+        );
     }
 
     /// A token nobody issued is refused and says so differently from a spent one - the two
@@ -2559,7 +2766,7 @@ mod tests {
         let out = store.present_client_token("ZZZZZZZZZZZZZZZZZZZZZZZZZZ", Some(1)).unwrap();
         assert_eq!(out, ClientTokenOutcome::Unknown);
         assert!(out.is_refusal());
-        assert!(out.why().contains("matches no live claim"), "{}", out.why());
+        assert!(out.why().contains("matches no LIVE claim"), "{}", out.why());
     }
 
     /// Re-staking is a new launch: a fresh token, the old one dead, and the spent markers
@@ -2585,8 +2792,11 @@ mod tests {
         // ...and the new one is fresh, not inherited-as-spent.
         let out = store.present_client_token(&new.client_token, Some(7)).unwrap();
         assert!(
-            matches!(out, ClientTokenOutcome::Accepted { replay: false, .. }),
-            "a re-stake must not hand back an already-spent token: {out:?}"
+            matches!(
+                out,
+                ClientTokenOutcome::Accepted { presentation: Presentation::First, .. }
+            ),
+            "a re-stake must hand back a token whose first use has not been recorded: {out:?}"
         );
     }
 

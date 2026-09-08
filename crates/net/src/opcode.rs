@@ -1297,6 +1297,50 @@ pub fn login_result(world_id: u32, channel_id: u32, characters: &[Character]) ->
 /// tells the person nothing they can act on.
 pub const LOGIN_REFUSED_NOT_REGISTERED: u8 = 5;
 
+/// **The login-result code that draws the client's `loginAlready` notice.**
+///
+/// The owner, 2026-09-08: *"the server should not allow the same account to login twice, there
+/// should be an existing message to say that the account is already logged in."* There is:
+/// this is it, and the wording is the client's own.
+///
+/// # How this was verified against THIS client, not against a reference
+///
+/// Three independent readings, in decreasing order of what they are worth:
+///
+/// 1. **The notice exists and says the right thing.** `Login.img /Notice/text/loginAlready` is
+///    a real canvas in this client's own WZ - 215x86, format 1 - and rendering it reads
+///    **"That ID is already logged in. Please try again later"**. `CLAUDE.md` warns that much
+///    of this client's wording is bitmaps rather than strings, so it was rendered rather than
+///    grepped:
+///
+///    ```text
+///    wz-dump canvas client-patched/Data/UI/_Canvas/_Canvas_000.wz Login.img <out> loginAlready
+///    python tools/wz_png.py <out>
+///    ```
+///
+/// 2. **The gate maps 7 to it.** `FUN_141b267c0` - the same gate [`LOGIN_RESULT`] and
+///    [`ACCOUNT_INFO`] go through - switches on `result + 1`, so its `case 8` is wire code 7,
+///    and that case loads `L"loginAlready"` (`research/msexe-decoders3.c:178`). It then
+///    `break`s to the tail that `return 0`s, which is a **hard refusal**: the client shows the
+///    dialog and does not proceed to read the body. Contrast `-1`, `6`, `8`, `9`, which reach
+///    the same refusal but with the useless generic `loginTroubleAskSupport`, and `0` and
+///    `0x0C`, which proceed.
+///
+///    Wire code `0x4E` (78) is the second case that names `loginAlready`
+///    (`research/msexe-decoders3.c:335`). 7 is used because it is the plainer of the two and
+///    the one the twin function corroborates.
+///
+/// 3. **The twin agrees.** `FUN_141b2a280` is a near-duplicate with its own copy of the table,
+///    tabulated in `docs/session.md`, and it maps 7 to `loginAlready` as well. Two separately
+///    decompiled functions is corroboration; the reference tree scoring `AlreadyConnected(7)`
+///    is **not** evidence and is recorded only because it happens to match - it scored 1 of 8
+///    against a held-out control.
+///
+/// **[D], not [L]: nobody has yet sent this client a `0x0010` with result 7 and watched the
+/// screen.** Step 1 is measured, steps 2 and 3 are read out of a decompilation. The client run
+/// that would upgrade it costs one launch and is in the test plan.
+pub const LOGIN_REFUSED_ALREADY_LOGGED_IN: u8 = 7;
+
 /// A login result that REFUSES. Same shape as [`login_result`] with the result byte set, so a
 /// client that reads past the code - the handler gates on it, but a gate is a claim - finds
 /// the fields it expects rather than the end of the packet.
@@ -4445,6 +4489,33 @@ mod tests {
         assert_eq!(ok[0], LOGIN_OK);
         assert_eq!(refused.len(), ok.len());
         assert_eq!(&refused[1..], &ok[1..]);
+    }
+
+    /// **The "already logged in" code is 7 and is not one of the codes that PROCEED.**
+    ///
+    /// `FUN_141b267c0` returns 1 - carry on and read the body - for exactly `0` and `0x0C`.
+    /// Sending a refusal that the client proceeds on would show a dialog and then log the
+    /// second player in anyway, which is the failure mode `MIGRATE_REFUSED`'s doc block
+    /// records for `-1`, `6`, `8` and `9` on the migrate path.
+    #[test]
+    fn the_already_logged_in_code_refuses_rather_than_proceeding() {
+        assert_eq!(LOGIN_REFUSED_ALREADY_LOGGED_IN, 7);
+        for proceeds in [LOGIN_OK, 0x0C] {
+            assert_ne!(
+                LOGIN_REFUSED_ALREADY_LOGGED_IN, proceeds,
+                "code {proceeds} makes FUN_141b267c0 return 1, so the client would log in anyway"
+            );
+        }
+        // And it is a distinct notice from the one an unattributed connection gets, or a
+        // player told "already logged in" could not tell it from "sign in through the
+        // launcher" - two different problems with two different fixes.
+        assert_ne!(LOGIN_REFUSED_ALREADY_LOGGED_IN, LOGIN_REFUSED_NOT_REGISTERED);
+
+        let refused = login_refused(LOGIN_REFUSED_ALREADY_LOGGED_IN);
+        assert_eq!(refused[0], 7);
+        // Same well-formed body as a success, so a client that reads past the gate finds
+        // fields rather than the end of the packet. "Always answer" is about the shape too.
+        assert_eq!(refused.len(), login_result(0, 0, &[]).len());
     }
 
     /// The address goes into `sin_addr` unconverted, so the octets are in order on the

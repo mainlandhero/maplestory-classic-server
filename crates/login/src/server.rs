@@ -215,11 +215,35 @@ pub fn serve(config: Config) -> std::io::Result<()> {
         store::claims::CLIENT_TOKEN_CHARS
     ));
     log("  every capture before 2026-08-29 carried and what every reconnect sends - it is not");
-    log("  a refusal, and the weaker rules still decide. A WRONG or SPENT one downgrades the");
-    log("  connection to the fallback account, because a credential that can be skipped by");
+    log("  a refusal, and the weaker rules still decide. A token whose CLAIM IS DEAD downgrades");
+    log("  the connection to the fallback account, because a credential that can be skipped by");
     log("  presenting a bad one is not a credential.");
     log("  This authenticates the LOGIN socket only. 0x0073 has never appeared on a channel");
     log("  connection, so the game socket is unchanged.");
+    log("TOKEN LIFETIME (changed 2026-09-08): a client token is honoured for as long as its");
+    log("  login claim is live - it is NO LONGER one-time. The launcher hands the same token to");
+    log("  every Start Game, so spending it on first use refused the second launch while the");
+    log("  launcher's own screen promised twelve hours. EXPIRY IS NOW THE WHOLE GATE: the token");
+    log("  sits in plain text beside the client until the hook deletes it, and anyone who reads");
+    log("  it can be served as that account on THIS socket until the claim runs out. Changing");
+    log("  the account's password clears its claims and kills the token immediately.");
+    log(&format!(
+        "ONE LOGIN PER ACCOUNT: a second client asking to log in as an account that is already \
+         being played is answered with login failure {} (loginAlready) and sees no characters.",
+        net::opcode::LOGIN_REFUSED_ALREADY_LOGGED_IN
+    ));
+    log("  The client draws its own notice: \"That ID is already logged in. Please try again");
+    log("  later\". This is a LEASE on a live connection, not a flag: it is released the moment");
+    log("  the socket closes - INCLUDING when it closes because the client crashed, which is");
+    log(&format!(
+        "  the common case here - and expires by itself {} s after the last packet if a server \
+         process dies outright.",
+        store::PRESENCE_LEASE_SECS
+    ));
+    log("  A crashed player waits NOTHING in the ordinary case and at most that long in the");
+    log("  worst one, and needs no manual step. The lease is held per CLIENT PROCESS, so Log");
+    log("  Out, Choose another world, character select and Change Channel all re-take their");
+    log("  own lease rather than locking the player out of themselves.");
     match config.bind_migrations {
         crate::config::MigrationBinding::Auto => {
             log("MIGRATION BINDING: AUTO. A migration minted for a login connection from a process");
@@ -295,9 +319,9 @@ pub fn serve(config: Config) -> std::io::Result<()> {
                         resolve_account(&store, fallback.as_ref(), &evidence);
                     log(&format!("{peer} served as {why}"));
                     log(&format!(
-                        "{peer} that decision is PROVISIONAL: if this client carries a one-time \
-                         token in 0x0073, it overrides the above - and if it carries a wrong one \
-                         this connection is downgraded to {}",
+                        "{peer} that decision is PROVISIONAL: if this client carries a token in \
+                         0x0073 whose claim is live, it overrides the above - and if it carries \
+                         one whose claim is dead this connection is downgraded to {}",
                         match &fallback {
                             Some(fb) => format!("the fallback {:?}", fb.name),
                             None => "NOBODY and refused".to_string(),
@@ -456,8 +480,8 @@ fn connection(
     // The fallback and the pid are here for `0x0073`: the client's own credential arrives
     // mid-connection, so the session needs to be able to re-resolve the account when it does -
     // upwards to the claim the token names, or **downwards** to the fallback when the token is
-    // refused. The pid is what lets the same client process re-present a spent token; it comes
-    // from the OS's TCP table at accept time, never from the client.
+    // refused. The pid is what labels a repeat presentation and what a presence lease is held
+    // under; it comes from the OS's TCP table at accept time, never from the client.
     let session = session.with_claim_token_hash(claim_token_hash).with_launch_pid(launch_pid);
     let mut session = match fallback {
         Some(fallback) => session.with_fallback(fallback),

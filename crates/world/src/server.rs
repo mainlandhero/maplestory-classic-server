@@ -46,6 +46,14 @@ pub fn log(msg: &str) {
 /// tenth of a second.
 const TICK_MS: u64 = 100;
 
+/// How often a channel connection refreshes the presence lease it holds.
+///
+/// **Not every tick.** `TICK_MS` is 100, and renewing there would be ten `UPDATE`s a second
+/// per connection for a value nothing reads more than once a minute. Fifteen seconds against
+/// `store::PRESENCE_LEASE_SECS` of sixty is four chances to miss one before an account frees
+/// itself underneath a player who is still in the map.
+const PRESENCE_RENEW_MS: u64 = 15_000;
+
 fn send(
     stream: &mut TcpStream,
     tx: &mut Framer<ByteShiftCipher>,
@@ -118,9 +126,17 @@ fn connection(
     // fields, so this line changes nothing about the log and adds the one fact the attestation
     // needs.
     let local_addr = stream.local_addr().ok();
-    let mut session = match stream.peer_addr() {
-        Ok(addr) => Session::joining(store, config.clone(), fields).with_peer_addr(addr),
-        Err(_) => Session::joining(store, config.clone(), fields),
+    let peer_addr = stream.peer_addr().ok();
+    // **The same two facts the login server keys a presence lease on**, derived the same way:
+    // the process the operating system attributes this socket to, and the address as a
+    // fallback for an off-box peer. Both come from the kernel, neither from the client. This
+    // is what makes the login connection's lease and this one's the SAME lease - see
+    // `store::presence::holder_key`.
+    let peer_ip = peer_addr.map(|a| a.ip().to_string());
+    let launch_pid = store::peerowner::owning_pid_of(peer_addr);
+    let mut session = match peer_addr {
+        Some(addr) => Session::joining(store.clone(), config.clone(), fields).with_peer_addr(addr),
+        None => Session::joining(store.clone(), config.clone(), fields),
     };
     // The server's end of the socket: on a 0.0.0.0 bind, the interface this client reached,
     // which is what it is told to dial when it changes channel. `net::advertise`.
@@ -142,6 +158,25 @@ fn connection(
     // after one interval and looks exactly like the client disconnecting.
     stream.set_read_timeout(Some(std::time::Duration::from_millis(TICK_MS)))?;
     let started = std::time::Instant::now();
+
+    // **THE PRESENCE LEASE, held for as long as this player is in the world.**
+    //
+    // The login connection took it, then handed it over rather than releasing it, because it
+    // closes a second before this one opens - `login::session::hand_presence_to_the_channel`.
+    // This connection re-takes it under the SAME key (the client process, as the operating
+    // system attributes the socket), so the takeover is a renewal rather than a fight, and
+    // then holds it until the socket closes.
+    //
+    // **Every return path below releases it, and that is the whole reason it is a guard.**
+    // There are five of them - a clean close, a read error, a framing error, a write failure
+    // in the tick, a write failure in the reply loop - and the one that matters is the read
+    // error, because that is the crash: `world.log` records it as `ended: An existing
+    // connection was forcibly closed by the remote host. (os error 10054)`. A release written
+    // at any one `return` is a release missed at the other four.
+    let mut presence: Option<store::PresenceGuard> = None;
+    let mut presence_renewed_ms: u64 = 0;
+    let presence_holder = store::holder_key(launch_pid, peer_ip.as_deref());
+
     let mut buf = [0u8; 8192];
     loop {
         let read = match stream.read(&mut buf) {
@@ -153,6 +188,57 @@ fn connection(
             {
                 // Nothing arrived. Give the session the clock and send whatever it owes.
                 let now_ms = started.elapsed().as_millis() as u64;
+                // Keep the lease alive. A player standing still sends nothing at all, and
+                // this wakeup is the only thing that runs for them.
+                if let Some(guard) = &presence {
+                    if now_ms.saturating_sub(presence_renewed_ms) >= PRESENCE_RENEW_MS {
+                        presence_renewed_ms = now_ms;
+                        let lost = match guard.renew() {
+                            Ok(true) => None,
+                            Ok(false) => Some(guard.account_id()),
+                            Err(e) => {
+                                log(&format!("PRESENCE: could not renew the lease: {e}"));
+                                None
+                            }
+                        };
+                        // **Re-take it rather than leaving the player unheld.** Two ways to
+                        // get here and both are real: the lease genuinely went stale, or a
+                        // Change Channel raced - the old channel's guard released a row the
+                        // new channel had already re-taken under the same key. Neither is
+                        // fatal, both fail OPEN (a second client could log in), and both are
+                        // repaired by asking again. A guard whose answer is ignored is not a
+                        // guard, and "we lost it" is an answer.
+                        if let (Some(account_id), Some(holder)) = (lost, presence_holder.as_deref())
+                        {
+                            presence = None;
+                            let whence =
+                                format!("channel {} (re-taken, holder {holder})", config.channel_id);
+                            match store::PresenceGuard::hold(
+                                store.clone(),
+                                account_id,
+                                holder,
+                                &whence,
+                            ) {
+                                Ok(Ok(guard)) => {
+                                    log(&format!(
+                                        "PRESENCE: the lease on account {account_id} had been \
+                                         lost and was RE-TAKEN by this connection"
+                                    ));
+                                    presence = Some(guard);
+                                }
+                                Ok(Err(who)) => log(&format!(
+                                    "PRESENCE: the lease on account {account_id} is held by {} \
+                                     and could not be re-taken. This player stays in the world",
+                                    who.whence
+                                )),
+                                Err(e) => log(&format!(
+                                    "PRESENCE: could not re-take the lease for account \
+                                     {account_id}: {e}"
+                                )),
+                            }
+                        }
+                    }
+                }
                 for reply in session.tick(now_ms) {
                     send(&mut stream, &mut tx, reply.opcode, &reply.packet(), &reply.what)?;
                 }
@@ -181,6 +267,58 @@ fn connection(
 
             if opcode == CLIENT_MIGRATION_HELLO {
                 describe_hello(&mut session, payload);
+                // The hello is the first and only point at which this connection learns WHICH
+                // ACCOUNT it is - the channel socket carries no credentials, and the account
+                // comes out of the migration row the hello claimed. So the lease is taken
+                // here, and only when a migration was actually claimed: a hello that was
+                // refused enters no world and must hold nothing.
+                if presence.is_none() {
+                    if let (Some(claimed), Some(holder)) =
+                        (session.claimed(), presence_holder.as_deref())
+                    {
+                        let account_id = claimed.account_id;
+                        let whence = format!(
+                            "channel {} playing character {} (holder {holder})",
+                            config.channel_id, claimed.character_id
+                        );
+                        match store::PresenceGuard::hold(
+                            store.clone(),
+                            account_id,
+                            holder,
+                            &whence,
+                        ) {
+                            Ok(Ok(guard)) => {
+                                log(&format!(
+                                    "   PRESENCE: account {account_id} is held by {holder} for \
+                                     as long as this channel connection lives. It is released \
+                                     when the socket closes - including when it closes because \
+                                     the client crashed - and expires by itself {} s after the \
+                                     last renewal if this process dies outright",
+                                    store::PRESENCE_LEASE_SECS
+                                ));
+                                presence = Some(guard);
+                                presence_renewed_ms = started.elapsed().as_millis() as u64;
+                            }
+                            // Somebody else holds it. NOT a refusal: this player has already
+                            // been let into the world by the login server, and throwing them
+                            // out here would be a lockout arriving one screen later. It is a
+                            // log line, because the only way to reach it is a pid lookup that
+                            // disagreed with the login connection's.
+                            Ok(Err(who)) => log(&format!(
+                                "   PRESENCE: account {account_id} is held by {} rather than by \
+                                 this connection, so this connection holds NOTHING. The player \
+                                 is still served - refusing here would be a lockout one screen \
+                                 after the login server allowed them in",
+                                who.whence
+                            )),
+                            Err(e) => log(&format!(
+                                "   PRESENCE: could not take the lease for account \
+                                 {account_id}: {e}. The player is served; a table that will \
+                                 not read must not keep anybody out"
+                            )),
+                        }
+                    }
+                }
             }
 
             let replies = session.handle(&body);

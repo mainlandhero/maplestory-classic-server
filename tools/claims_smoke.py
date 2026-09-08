@@ -70,8 +70,25 @@ it is what makes those checks about the token rather than about the pid.
       The client opens a second login connection per launch. A token that refused the
       reconnect would produce exactly the failure `store::claims` was rewritten to avoid.
 
-  "another process REPLAYING a spent client token is refused"
-      One-time use, where it means something.
+  "a DIFFERENT process may present the same token (the second Start Game)"
+      The owner's 2026-09-08 report: the launcher keeps the token its sign-in returned and hands
+      the same one to every Start Game, so the second Start Game is a second process. It used
+      to be refused - "the session is invalid" - while the launcher's own screen said the
+      session was good for twelve hours. This check asserted that refusal until 2026-09-08.
+
+  "a token whose claim is GONE is refused, from any process"
+      The other half, and the important one: expiry is now the ONLY gate. A run that proved
+      only the acceptance above would pass against a build with no expiry check at all.
+
+  "a SECOND client on a live account is refused with loginAlready (result 7)"
+      One login per account. The refusing connection presents ALICE'S OWN token, so it gets
+      as far as being resolved to otter and is then stopped by the presence lease - which is
+      what makes this a test of the lease rather than of the credential.
+
+  "a client that dies WITHOUT logging out frees the account at once"
+      The lockout regression, and the one a player would find rather than us. This client
+      crashes mid-session; a presence flag that a crash left set would lock its owner out.
+      The holder's process is killed here with no logout, exactly as a crash does it.
 
   "a WRONG client token is refused rather than falling through"
       The anti-downgrade rule. A wrong credential must buy strictly less than no credential,
@@ -97,6 +114,11 @@ ACCOUNT_INFO = 0x0000
 WORLD_LIST = 0x000B
 LOGIN_RESULT = 0x0010
 CLIENT_LOGIN_REQUEST = 0x0080
+# The login-result code that draws the client's own `loginAlready` notice - "That ID is
+# already logged in. Please try again later". `FUN_141b267c0` switches on `result + 1`, so
+# case 8 is wire code 7, and that case loads L"loginAlready" and returns 0 (refuse).
+# `net::opcode::LOGIN_REFUSED_ALREADY_LOGGED_IN` is the same constant on the server side.
+LOGIN_ALREADY = 7
 
 PASSWORD = "correct horse battery staple"
 
@@ -298,17 +320,38 @@ def characters_seen(host, port, client_token=None):
     """
     peer = Peer(host, port)
     try:
-        peer.recv(1)                       # the unprompted startup gate, 0x0032
-        if client_token is not None:
-            peer.send(0x0073, identity_body(client_token))
-        peer.send(CLIENT_LOGIN_REQUEST)
-        replies = peer.recv(4)
-        opcodes = [op for op, _ in replies]
-        if opcodes != [ACCOUNT_INFO, WORLD_LIST, WORLD_LIST, LOGIN_RESULT]:
-            return {"error": "unexpected reply sequence " + repr(opcodes)}
-        return {"names": names_in(replies[3][1])}
+        return login_on(peer, client_token)
     finally:
         peer.close()
+
+
+def login_on(peer, client_token=None):
+    """The exchange itself, on a peer the caller owns.
+
+    Split out from `characters_seen` because a PRESENCE lease is held by a live connection,
+    so a check about it needs a socket that is still open while the next one is made. See the
+    `--connect` child mode.
+
+    Returns `names`, the login `result` byte, and `refused` - which is a shape, not just a
+    code. A refusal is a SINGLE `LOGIN_RESULT` with no account info and no world list in front
+    of it, and that is worth asserting on its own: a refusal that also sent the world list
+    would put the refused client on a screen it must not reach.
+    """
+    peer.recv(1)                           # the unprompted startup gate, 0x0032
+    if client_token is not None:
+        peer.send(0x0073, identity_body(client_token))
+    peer.send(CLIENT_LOGIN_REQUEST)
+    # One packet first, so a refusal does not sit on the ten-second read timeout waiting for
+    # three replies that are never coming. The opcode of the first reply says which shape
+    # this is, exactly, with nothing inferred from a timeout.
+    first = peer.recv(1)[0]
+    if first[0] == LOGIN_RESULT:
+        return {"names": names_in(first[1]), "result": first[1][0], "refused": True}
+    replies = [first] + peer.recv(3)
+    opcodes = [op for op, _ in replies]
+    if opcodes != [ACCOUNT_INFO, WORLD_LIST, WORLD_LIST, LOGIN_RESULT]:
+        return {"error": "unexpected reply sequence " + repr(opcodes)}
+    return {"names": names_in(replies[3][1]), "result": replies[3][1][0], "refused": False}
 
 
 # ------------------------------------------------------------------- the child-process mode
@@ -328,9 +371,23 @@ if len(sys.argv) > 1 and sys.argv[1] == "--connect":
     # a token from a DIFFERENT pid than the one that spent it, which is the whole of the
     # one-time-use property: the same process may re-present, another may not, and the pid
     # comes from the operating system rather than from anything the connection says.
-    token = sys.argv[4] if len(sys.argv) > 4 else None
+    token = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
     sys.stdin.readline()
-    print(json.dumps(characters_seen(host, port, token)), flush=True)
+    child_peer = Peer(host, port)
+    print(json.dumps(login_on(child_peer, token)), flush=True)
+    # **AND THEN HOLD THE SOCKET OPEN** until the parent says otherwise.
+    #
+    # This used to exit here, and for the claim checks that was right - a claim is a standing
+    # row and does not care whether anybody is connected. A PRESENCE lease is the opposite: it
+    # is held by a live connection and released the instant the socket closes. A child that
+    # connected and exited would free the account before the parent could ask whether a second
+    # client is refused, and the check would pass against a build with no enforcement at all.
+    #
+    # It is also how the release is measured: the parent closes this child's stdin, the child
+    # exits, the operating system closes the socket - which is exactly what a CRASHED client
+    # does - and the account must be free immediately.
+    sys.stdin.readline()
+    child_peer.close()
     raise SystemExit(0)
 
 
@@ -603,6 +660,70 @@ def main():
                       "Nobody is impersonatable")
                 print("           in this state; nobody can play their own account either.")
 
+        # 4b. ONE LOGIN PER ACCOUNT, and the lockout it must not cause. Over real sockets,
+        #     with otter's client STILL CONNECTED - which is the only state the question is
+        #     about, and the reason the child mode now holds its socket open.
+        #
+        #     This is also where the two 2026-09-08 changes meet. The third process below
+        #     presents ALICE'S OWN TOKEN, and it gets that far precisely because the token is
+        #     no longer one-time: the credential resolves it to otter, and then the presence
+        #     lease refuses it. Before, it would have been refused a step earlier for the
+        #     wrong reason, and this check would have passed while proving nothing.
+        second = subprocess.Popen(
+            [sys.executable, "-u", os.path.join("tools", "claims_smoke.py"),
+             "--connect", "127.0.0.1", str(s.login_port), tokens["otter"]],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        )
+        children.append(("second otter", second))
+        second.stdin.write("go\n")
+        second.stdin.flush()
+        line = second.stdout.readline()
+        blocked = json.loads(line) if line.strip() else {"error": "no answer"}
+        check(
+            "a SECOND client on a live account is refused with loginAlready (result 7)",
+            blocked.get("result") == LOGIN_ALREADY and not blocked.get("names"),
+            "the second client got result %r and saw %s"
+            % (blocked.get("result"), blocked.get("names") or ["(none)"]),
+        )
+        check(
+            "...and the refusal is the WHOLE reply - no world list in front of it",
+            blocked.get("refused") is True,
+            "refused=%r (a refusal that also sent the world list would put the second "
+            "client on a screen it must not reach)" % blocked.get("refused"),
+        )
+        # And the first session is untouched by having refused somebody. A test that checked
+        # only the refusal would give false confidence about this.
+        still = characters_seen("127.0.0.1", s.login_port, tokens["otter"])
+        check(
+            "...but a refusal does not disturb the session that holds the account",
+            still.get("result") == LOGIN_ALREADY,
+            "a third connection also got %r, so the lease is still otter's client's"
+            % still.get("result"),
+        )
+
+        # 4c. THE LOCKOUT REGRESSION, and the one a player would find rather than us.
+        #     Otter's client dies without logging out - stdin closes, the process exits, the
+        #     operating system closes the socket. That is byte for byte what a CRASH does, and
+        #     this client crashes mid-session often enough that a lockout here would be worse
+        #     than the double login it prevents.
+        for who, child in list(children):
+            if who in ("otter", "owl", "second otter"):
+                try:
+                    child.stdin.close()
+                except OSError:
+                    pass
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+        freed = characters_seen("127.0.0.1", s.login_port, tokens["otter"])
+        check(
+            "a client that dies WITHOUT logging out frees the account at once",
+            "OtterOne" in freed.get("names", []),
+            "after the holder's process exited, the next login saw %s (result %r)"
+            % (freed.get("names") or ["(none)"], freed.get("result")),
+        )
+
         # 5. The refusal. A connection from THIS process is registered to nobody, and with
         #    two claims live it must be served the fallback rather than the newest claim.
         #    Without this the check above could pass by luck for whichever player signed in
@@ -669,22 +790,47 @@ def main():
             "the second connection saw %s" % (again or ["(none)"]),
         )
 
-        # One-time use, where it means something: a DIFFERENT process replaying the token
-        # otter already spent. It must be refused down to the fallback, not served otter.
-        thief = subprocess.Popen(
+        # **THE BUG WISP REPORTED, OVER REAL SOCKETS.** A DIFFERENT process presenting the
+        # token the launcher kept - which is what a second `Start Game` is - must be SERVED.
+        #
+        # This check used to assert the opposite, under the name "another process REPLAYING a
+        # spent client token is refused". That refusal was the bug: the launcher hands the same
+        # token to every Start Game, and the second one is a second process, while the
+        # launcher's own screen promised twelve hours. The owner, 2026-09-08: *"the server should
+        # honor that same token until its expiry, as long as that token is still valid."*
+        second_launch = subprocess.Popen(
             [sys.executable, "-u", os.path.join("tools", "claims_smoke.py"),
              "--connect", "127.0.0.1", str(s.login_port), tokens["otter"]],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
         )
-        children.append(("thief", thief))
-        thief.stdin.write("go\n")
-        thief.stdin.flush()
-        line = thief.stdout.readline()
-        stolen = (json.loads(line) if line.strip() else {}).get("names", [])
+        children.append(("second launch", second_launch))
+        second_launch.stdin.write("go\n")
+        second_launch.stdin.flush()
+        line = second_launch.stdout.readline()
+        served = (json.loads(line) if line.strip() else {}).get("names", [])
         check(
-            "another process REPLAYING a spent client token is refused",
-            "OtterOne" not in stolen and "OwlTwo" not in stolen,
-            "the replaying process saw %s" % (stolen or ["(none)"]),
+            "a DIFFERENT process may present the same token (the second Start Game)",
+            "OtterOne" in served,
+            "the second launch saw %s" % (served or ["(none)"]),
+        )
+        try:
+            second_launch.stdin.close()
+            second_launch.wait(timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            second_launch.kill()
+
+        # **AND THE REFUSAL, which is the half that proves there is still a gate.** Expiry is
+        # now the ONLY thing between a leaked token and an account, so a check that proved only
+        # the acceptance above would pass just as happily against a build with no expiry check
+        # at all - which is exactly the shape worth being afraid of here.
+        subprocess.run([exe("maplecw-useradd"), "--db", s.db, "--clear-claims"],
+                       capture_output=True, text=True)
+        dead = characters_seen("127.0.0.1", s.login_port, tokens["otter"])
+        check(
+            "a token whose claim is GONE is refused, from any process",
+            "OtterOne" not in dead.get("names", []) and "OwlTwo" not in dead.get("names", []),
+            "after clearing the claims the same token saw %s"
+            % (dead.get("names") or ["(none)"]),
         )
 
         # The anti-downgrade rule: a wrong credential must buy strictly LESS than no

@@ -62,6 +62,17 @@
 
     WHAT CHANGED IN THE SERVER SINCE THE LAST RUN
     ---------------------------------------------
+    THE SESSION BUG IS FIXED AND AN ACCOUNT CAN ONLY BE LOGGED IN ONCE (2026-09-08).
+    Start Game twice from one sign-in used to say the session was invalid on the second
+    press - the launcher reuses its token and the server spent it on first use. The token
+    is now honoured until the claim expires. The second client is instead told "That ID is
+    already logged in", which is the client's own baked notice on login result 7. NOBODY
+    HAS SEEN THAT DIALOG YET: the wording is read out of the WZ and the code out of
+    FUN_141b267c0, both static. Step 0A below is what makes it measured.
+    The "logged in" state is a LEASE on a live connection, not a flag: a crashed client
+    frees its account at once, and at worst 60 s later. If a crash ever locks you out for
+    longer, STOP and report it - that is worse than the bug this fixed.
+
     TWO PLAYERS CAN NOW SIGN IN IN ANY ORDER. The old instruction here said to wait until
     the first client reached the world, because the login server served whichever account
     claimed LAST. That was a real bug - one player was served the other's character list -
@@ -2066,6 +2077,46 @@ function Show-TestPlan {
         Write-Host '    seat, then position/foothold/facing. All fixed.'
         Write-Host ''
         Write-Host '  WHAT IS WORTH A RUN NOW, in order:' -ForegroundColor Yellow
+        Write-Host '    0A. THE SESSION BUG AND ONE LOGIN PER ACCOUNT (new 2026-09-08).' -ForegroundColor Green
+        Write-Host '        Two changes, and they only make sense together. Do this FIRST -'
+        Write-Host '        it is two minutes and it gates the launcher for everything below.'
+        Write-Host '        (i) START GAME TWICE from ONE sign-in. Sign in, Start Game, let'
+        Write-Host '            the client reach CHARACTER SELECT. Leave it there. Press'
+        Write-Host '            Start Game again in the launcher.'
+        Write-Host '              "That ID is already logged in. Please try again later"'
+        Write-Host '                 -> BOTH changes work. The token was honoured (it used'
+        Write-Host '                 to say the session was invalid) and the account was'
+        Write-Host '                 then held by the first client. The whole feature.'
+        Write-Host '              session/ID invalid, or NOT REGISTERED -> the token was'
+        Write-Host '                 refused, so change 1 did not take. Read login.log for'
+        Write-Host '                 the 0x0073 IDENTITY line.'
+        Write-Host '              second client reaches character select -> the lease was'
+        Write-Host '                 not held. login.log says why on a PRESENCE line.'
+        Write-Host '              FIRST client FREEZES -> STOP. The refusal packet was not'
+        Write-Host '                 accepted. Keep both logs; that is the finding.'
+        Write-Host '            NOBODY HAS SENT THIS CLIENT LOGIN RESULT 7 BEFORE. The'
+        Write-Host '            wording comes from its own WZ and the code from'
+        Write-Host '            FUN_141b267c0 - both static. This step is what makes it'
+        Write-Host '            measured, so SAY WHAT THE DIALOG ACTUALLY SAID.'
+        Write-Host '        (ii) CLOSE THE SECOND CLIENT and press Start Game again.'
+        Write-Host '              still refused -> the lease did not release. It should'
+        Write-Host '                 expire on its own within 60 s; if not, that is the'
+        Write-Host '                 finding.'
+        Write-Host '        (iii) THE LOCKOUT, the one a player would hit. Take the FIRST' -ForegroundColor Yellow
+        Write-Host '             client INTO THE WORLD, then KILL IT from Task Manager -' -ForegroundColor Yellow
+        Write-Host '             not a clean quit. Press Start Game.' -ForegroundColor Yellow
+        Write-Host '              it starts and plays -> correct. A crash frees the account'
+        Write-Host '                 at once: the OS closes the socket and world.log logs'
+        Write-Host '                 "ended: ... forcibly closed ... (os error 10054)".'
+        Write-Host '              "already logged in" -> A LOCKOUT. Say how long it lasts.'
+        Write-Host '                 More than ~60 s means the release AND the expiry both'
+        Write-Host '                 missed, and that is WORSE than the bug this fixed.'
+        Write-Host '        (iv) LOG OUT / CHOOSE ANOTHER WORLD from one client, twice.'
+        Write-Host '             Neither must ever say "already logged in" - the lease is'
+        Write-Host '             held per client PROCESS, so your own reconnect re-takes it.'
+        Write-Host '        Not worth a step: two DIFFERENT accounts, two clients. Unchanged,'
+        Write-Host '        and claims_smoke.py measures it over real sockets every run.'
+        Write-Host ''
         Write-Host '    0. LOGIN IS ENFORCED (new 2026-09-05). The launcher path is the run'
         Write-Host '       now: sign in there, Start Game, the world as before. To SEE the'
         Write-Host '       refusal, with NOBODY signed in yet, start the PATCHED client with'
