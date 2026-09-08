@@ -30,6 +30,7 @@ pub mod broadcast;
 pub mod channel;
 pub mod codec;
 pub mod combat;
+pub mod dropmoney;
 pub mod drops;
 pub mod error;
 pub mod handshake;

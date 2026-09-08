@@ -27,6 +27,9 @@ pub mod cash;
 pub mod character;
 pub mod claims;
 pub mod codes;
+/// One claim per perk per UTC day - the gate behind the Maple Administrator's three
+/// quality-of-life options. See its module docs for why the answer is a transition.
+pub mod dailyperks;
 pub mod db;
 pub mod inventory;
 pub mod migration;
@@ -50,6 +53,10 @@ pub use claims::{
     LOGIN_CLAIM_TTL_SECS,
 };
 pub use codes::{NewCode, CODE_ALPHABET, CODE_CHARS, INVITE_TTL_SECS, RECOVERY_TTL_SECS};
+pub use dailyperks::{
+    today, utc_date, utc_day, utc_day_start, DailyClaimOutcome, SCOPE_ACCOUNT, SCOPE_CHARACTER,
+    SECONDS_PER_DAY,
+};
 pub use inventory::{
     Bag, Equipped, EquippedItem, InvItem, InventoryType, Item, ItemKind, ItemRules, MoveOutcome,
 };

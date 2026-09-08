@@ -879,6 +879,35 @@ impl Session {
             op if crate::drops::may_be_the_pick_up_request(op) => {
                 return self.on_pick_up(op, body.get(2..).unwrap_or(&[]))
             }
+            // **`0x0143` is the meso drop, and it LATCHES.** The owner, 2026-09-08: *"I have
+            // attempted to drop 10 mesos and 5000 mesos, none of these attempts worked, but I
+            // lose all functionality in being able to interact with my inventory."* The
+            // client's builder `FUN_142d4cb40` sets `player+0x2330` through `142cc4430` the
+            // moment it sends, so an unanswered one does not fail a drop - it kills the
+            // inventory, the ability-point buttons, the cash shop and the item drop for the
+            // rest of the session. Mesos still cannot be dropped; `crate::mesodrop` refuses
+            // AND answers, which is the whole difference.
+            net::dropmoney::CLIENT_DROP_MONEY => {
+                let who = self.claimed_character().map(|c| c.id);
+                return crate::mesodrop::on_drop_money(
+                    &self.store,
+                    who,
+                    body.get(2..).unwrap_or(&[]),
+                );
+            }
+            // Anything else whose CLIENT-SIDE builder sets that same exclusive-request latch.
+            // Not implemented, but silence here freezes the UI, so it gets the nine-byte
+            // unlock and nothing else - an empty mask says nothing about any subsystem.
+            // Placed last so it can only fire on opcodes no specific arm above answers.
+            //
+            // Deliberately a measured whitelist rather than "answer everything unknown":
+            // blanket-answering would send a stat change in reply to 750 archived environment
+            // reports and 23 261 mob moves, for which returning nothing is correct. Three
+            // opcodes have arrived unhandled in the archive and frozen a client - `0x0143`,
+            // `0x01FD` and `0x02F6` - and this arm would have caught all three.
+            op if net::dropmoney::latches_the_exclusive_request(op) => {
+                return crate::mesodrop::unlock_unhandled_latching_request(op)
+            }
             _ => return Vec::new(),
         }
         // Always answer. An unanswered packet freezes the client's whole UI - every

@@ -341,10 +341,36 @@ impl Fields {
         maps.get(&map)?.mobs.get(&object_id).map(|m| m.hp)
     }
 
-    /// Where a mob is, for a drop to land on.
+    /// Where a mob has **reported** being. `None` means it has never sent a `0x02FF`.
+    ///
+    /// **This is the raw report and it stays that way.** `note_position_from` refuses a
+    /// writer that does not control the mob, and the two tests below prove that refusal by
+    /// asserting this answers `None` afterwards; a fallback in here would make those tests
+    /// pass whatever the guard did. For "where is this mob, for a drop to land on", use
+    /// [`Fields::mob_site`].
     pub fn mob_position(&self, map: u32, object_id: u32) -> Option<(i16, i16)> {
         let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
         maps.get(&map)?.mobs.get(&object_id).and_then(|m| m.at)
+    }
+
+    /// **Where a mob is, for a drop to land on**: its reported position, else its spawn
+    /// point. `None` only when the mob is not on that map at all.
+    ///
+    /// The spawn-point half is the fix for the quieter half of the drop-placement bug. A mob
+    /// that has never moved has `at == None`, so `session/combat.rs` fell all the way through
+    /// to the **player's own feet** - contradicting the owner's *"they should drop from the killed
+    /// mob's position, not from the player character position"* while `LiveMob::spawn` sat in
+    /// the same struct, one field away, carrying the exact pixel out of `Map.wz`. That mob is
+    /// standing on its spawn point by definition: `gm-handbook/mobs.txt` names the very
+    /// foothold, and `crate::footholds` measured that 10 235 of 10 236 `life` entries sit
+    /// exactly on the foothold they name.
+    ///
+    /// [`LiveMob::as_seen`] has always done exactly this fold for the packet it builds. This
+    /// is the same rule for the question the drop path asks, rather than a second one.
+    pub fn mob_site(&self, map: u32, object_id: u32) -> Option<(i16, i16)> {
+        let maps = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let m = maps.get(&map)?.mobs.get(&object_id)?;
+        Some(m.at.unwrap_or((m.spawn.x, m.spawn.y)))
     }
 
     /// A mob's template id, for its drop table.
@@ -669,6 +695,38 @@ mod tests {
 
         assert!(f.note_position_from(7, id, (500, 395), CONTROLLER), "the holder is believed");
         assert_eq!(f.mob_position(7, id), Some((500, 395)));
+    }
+
+    /// **`mob_site` falls back to the spawn point; `mob_position` never does.**
+    ///
+    /// The two questions are different and this is the test that keeps them apart. A mob that
+    /// has not reported is standing on its spawn point, so a drop belongs there rather than
+    /// at the player's feet - but the *report* is still absent, and the controller guard
+    /// above proves itself by asserting exactly that absence.
+    #[test]
+    fn a_mob_that_has_never_reported_still_has_a_place_for_its_drops_to_fall() {
+        const CONTROLLER: crate::mobshare::SessionId = 1;
+        let f = Fields::new();
+        let c = config_with_one_map();
+        f.seed(7, &c, 0);
+        f.due_respawns(7, &c, 999_999);
+        let spawn = f.mobs_on(7)[0].spawn;
+        let id = spawn.object_id;
+        let home = (spawn.x, spawn.y);
+
+        assert_eq!(f.mob_position(7, id), None, "it has never sent a 0x02FF");
+        assert_eq!(f.mob_site(7, id), Some(home), "and it is standing on its spawn point");
+        assert_ne!(home, (0, 0), "a spawn point of (0,0) would make this vacuous");
+
+        // Once it reports, the report wins - the spawn point is a fallback, not a floor.
+        f.controllers().claim_uncontrolled(7, CONTROLLER, &[id]);
+        assert!(f.note_position_from(7, id, (742, 395), CONTROLLER));
+        assert_eq!(f.mob_site(7, id), Some((742, 395)));
+        assert_ne!(f.mob_site(7, id), Some(home), "it really moved away from home");
+
+        // A mob that is not on the map has no site at all, and the caller must not invent one.
+        assert_eq!(f.mob_site(7, 999_999), None);
+        assert_eq!(f.mob_site(999, id), None);
     }
 
     /// **`with_drops` delivers what the table addressed to an owner.**

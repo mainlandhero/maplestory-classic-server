@@ -7800,8 +7800,11 @@ fn a_non_controllers_mob_move_is_refused_and_the_controllers_is_rebroadcast() {
     assert_eq!(count_of(&ack, net::mobmove::MOB_CTRL_ACK), 1, "the ack: {ack:?}");
     assert_eq!(
         fields.mob_position(SHARED_MAP, 2000),
-        Some((424, 395)),
-        "the same pixel two independent decoders read out of this capture"
+        Some((456, 395)),
+        "the END of the reported path. (424, 395) is its HEAD - where the mob was when the \
+         walk began - and storing that is the drop-placement bug crate::dropsite measures. \
+         The head is still a real coordinate, so the two independent decoders that agreed on \
+         it were not wrong; it just is not where the mob is now"
     );
     assert_eq!(
         count_of(&ack, net::mobmove::MOB_MOVE),
@@ -9052,4 +9055,115 @@ fn power_guard_reflects_its_share_onto_the_mob() {
     s.on_user_hit(&drake_hit(200, 7777));
     assert_eq!(hp_of(&s), before - 160);
     assert_eq!(fields.mob_hp(SHARED_MAP, 2002), Some(460));
+}
+
+// ---------------------------------------------------------------------------------------
+// 0x0143, the meso drop. See crates/world/src/mesodrop.rs and crates/net/src/dropmoney.rs.
+// ---------------------------------------------------------------------------------------
+
+/// **These two calls are the dispatch arm.**
+///
+/// The arm itself lives in `session/mod.rs`, which this agent does not own, so it is handed
+/// to the coordinator as a patch. This test exercises the exact expressions that patch uses
+/// - `self.claimed_character().map(|c| c.id)` and `&self.store` against
+/// `crate::mesodrop::on_drop_money` - on a real `Session` with a real claimed character, so
+/// the patch cannot fail to compile or to find a balance.
+///
+/// It asserts all three effects, not one: a packet went back, the balance did not move, and
+/// nothing reached the floor.
+#[test]
+fn a_meso_drop_from_a_claimed_session_is_answered_and_costs_nothing() {
+    let (s, store, id) = claimed_session();
+    store.set_mesos(id, 5_000).unwrap();
+
+    let who = s.claimed_character().map(|c| c.id);
+    assert_eq!(who, Some(id), "the arm must find the character it is charging nothing to");
+
+    let out = crate::mesodrop::on_drop_money(
+        &s.store,
+        who,
+        &net::dropmoney::drop_money_request(0x101b_5775, 10),
+    );
+
+    // 1. answered - and with the byte that clears +0x2330, which is the whole bug
+    assert_eq!(out[0].opcode, net::combat::STAT_CHANGED);
+    assert_eq!(out[0].body[0], 1, "bExclRequestSent");
+    // 2. the balance is untouched, with the store right there to be spent from
+    assert_eq!(store.mesos(id).unwrap(), 5_000);
+    // 3. nothing on the floor, and no bag packet either
+    assert!(!out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD));
+    assert!(!out.iter().any(|r| r.opcode == net::inventory::INVENTORY_OPERATION));
+    // and the balance is named in the log line, so a run records what was left alone
+    assert!(out[0].what.contains("balance still 5000"), "{}", out[0].what);
+}
+
+/// The other half of the patch: the fall-through that must never let a latching opcode go
+/// unanswered again. `0x0143` reaches it if the specific arm is ever removed, and `0x01FD`
+/// and `0x02F6` - both seen unhandled in the archive - reach it today.
+#[test]
+fn the_latching_fall_through_would_have_caught_every_freeze_in_the_archive() {
+    for op in [0x0143u16, 0x01FD, 0x02F6] {
+        assert!(net::dropmoney::latches_the_exclusive_request(op), "{op:#06X}");
+        let out = crate::mesodrop::unlock_unhandled_latching_request(op);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].body[0], 1);
+    }
+    // Every opcode the dispatch already answers specifically is matched by an earlier arm,
+    // so this predicate being true for them changes nothing - but the ones it is FALSE for
+    // are the control that says it is not simply "everything".
+    for op in [0x00D9u16, 0x02FF, 0x0070, 0x00E7, 0x013F] {
+        assert!(!net::dropmoney::latches_the_exclusive_request(op), "{op:#06X}");
+    }
+}
+
+/// **A drop lands where the mob FINISHED its path, not where it started.**
+///
+/// The owner, 2026-09-08: *"the mob drops from a moving mob seems to be dropping from an awkward
+/// location not related to the current mob location mid-movement."* The server stored the
+/// `0x02FF` path HEAD as the mob's position, and the head is where the walk began - a median
+/// of 41 px behind the mob, and more than 25 px behind it 62.8% of the time, measured over
+/// 642 431 deduplicated reports (`crate::dropsite`, `tools/mobmove_lag.py`).
+///
+/// This is the only test that crosses every seam: the move report, the stored position, the
+/// kill, and the bytes of the drop that reaches the field. Four numbers are in play and only
+/// one is right - 100 is the spawn point, 424 the path head, 1500 the player, 456 the mob -
+/// so each wrong answer is named in its own assertion rather than left to a bare equality.
+#[test]
+fn a_drop_lands_where_the_mob_finished_its_path_not_where_it_started() {
+    let (store, config, fields, account) = shared_channel(1, 30);
+    let drops = crate::droptables::DropTables::parse("2 | 4000001 | 100 | 1 | 1 | 9 | Shell\n");
+    let config = Arc::new(Config { drops, ..(*config).clone() });
+    let (mut controller, chr_id) = join_channel(&store, &config, &fields, account, "PathWalker");
+    controller.on_field_entered();
+    let _ = controller.handle(&NO_PACKET);
+
+    let mut packet = net::mobmove::MOB_MOVE_REQUEST.to_le_bytes().to_vec();
+    packet.extend_from_slice(&unhex_body(CAPTURED_MOB_MOVE_2000));
+    let ack = controller.handle(&packet);
+    assert_eq!(count_of(&ack, net::mobmove::MOB_CTRL_ACK), 1, "the report was believed");
+
+    assert_eq!(fields.mobs_on(SHARED_MAP)[0].spawn.x, 100, "the spawn point, a decoy");
+    assert_eq!(fields.mob_site(SHARED_MAP, 2000), Some((456, 395)));
+
+    controller.last_position = Some((1500, 395));
+    let out = controller.deal_to_mob(SHARED_MAP, 2000, 9_999, chr_id);
+    assert!(
+        out.iter().any(|r| r.opcode == net::drops::DROP_ENTER_FIELD),
+        "the kill must actually have dropped something, or every number below is vacuous: {out:?}"
+    );
+
+    let xs: Vec<i16> =
+        fields.with_drops(SHARED_MAP, |d| d.on_field(SHARED_MAP).map(|x| x.x).collect());
+    assert_eq!(xs.len(), 1);
+    assert_eq!(
+        xs[0], 456,
+        "the end of the path - not 424 (the head), 100 (the spawn point) or 1500 (the player)"
+    );
+
+    // The arc's ORIGIN too. An item flying out of empty space 32 px behind the corpse is
+    // exactly as wrong on screen as one landing there, and it is a separate field.
+    let src = fields.with_drops(SHARED_MAP, |d| {
+        d.on_field(SHARED_MAP).map(|x| (x.source_x, x.source_y)).next().unwrap()
+    });
+    assert_eq!(src, (456, 395), "an arc starting behind the corpse is the bug on screen");
 }

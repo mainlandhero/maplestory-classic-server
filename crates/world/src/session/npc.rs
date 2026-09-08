@@ -68,6 +68,21 @@ impl Session {
                 return replies;
             }
         }
+        // **The Maple Administrator arrives as EITHER packet, for the same reason Phil does.**
+        // The client forks on whether the NPC has an offerable quest, and 9010000 has one:
+        // quest `500005` names them as both its start and its turn-in NPC
+        // (`crate::dailyperks::SWALLOWED_QUEST`, **[L]** `gm-handbook/questlines.txt`). So a
+        // handler hooked only into `on_npc_click` would do nothing for anybody the client
+        // thinks can take that quest.
+        //
+        // **Unlike Phil's, this branch does NOT let the quest run first.** The owner asked to
+        // *repurpose* them, so 500005 is never offered and never turned in. Recorded rather than
+        // silently done - this is the one line that takes it.
+        if req.npc_template_id == crate::dailyperks::ADMIN_TEMPLATE {
+            if let Some(replies) = self.open_daily_perks_for(req.npc_template_id) {
+                return replies;
+            }
+        }
         // Which half of the quest's Say tree the action selects. With no quest state, a
         // start and an opening script both land on "0".
         let state = match req.action {
@@ -695,6 +710,15 @@ impl Session {
         // **And a taxi sells a ride instead of talking.** Same shape, and the same failure it
         // fixes: Lyn has no `d0` at all, so clicking their printed the placeholder.
         if let Some(replies) = self.open_taxi_for(template) {
+            return replies;
+        }
+
+        // **And the Maple Administrator hands out the daily favours instead of talking.**
+        // Template 9010000 in Henesys, and no other NPC in the game - see
+        // `crate::dailyperks`'s module doc for how that template was told apart from the four
+        // others with the same name. Order against every other branch is irrelevant: none of
+        // them can name this template.
+        if let Some(replies) = self.open_daily_perks_for(template) {
             return replies;
         }
 
@@ -1378,6 +1402,468 @@ impl Session {
         }
     }
 
+    // -----------------------------------------------------------------------------------
+    // The Maple Administrator's three daily favours
+    //
+    // The decision, the table and every sentence live in `crate::dailyperks`; the gate lives
+    // in `store::dailyperks`. What is here is the part that needs `&mut Session`: the wallet,
+    // `award_experience`, and the two reset commands.
+    // -----------------------------------------------------------------------------------
+
+    /// **Put the daily-favour menu on screen.** `None` for any NPC that is not the Maple
+    /// Administrator, so the click chain carries on.
+    ///
+    /// Once the template matches this **never returns `None`**, even with no character
+    /// claimed. Both call sites are answering a click, and `on_quest_request`'s is a `0x0151`
+    /// - which the client *does* block on. `CLAUDE.md`'s *always answer*.
+    ///
+    /// `awaiting_yes_no` is deliberately `false`: a menu is not a yes/no box, and if this
+    /// branch were ever skipped a stray reply must not be mistaken for a quest Accept.
+    pub(super) fn open_daily_perks_for(&mut self, template: u32) -> Option<Vec<Reply>> {
+        if template != crate::dailyperks::ADMIN_TEMPLATE {
+            return None;
+        }
+        let Some(chr) = self.claimed_character() else {
+            // A dialogue rather than silence. There is nothing to offer, but the box still has
+            // to appear or the client sits on a click that did nothing.
+            return Some(self.admin_says(
+                template,
+                "I cannot find your record just now. Nothing has been used up - try me again.",
+                "no character is claimed on this connection",
+            ));
+        };
+        let used = self.daily_perks_used(chr.id);
+        self.conversation = Some(Conversation {
+            npc_template: template,
+            quest_id: None,
+            path: crate::dailyperks::MENU_PATH.to_string(),
+            sent: 0,
+            awaiting_yes_no: false,
+            sent_with_next: false,
+        });
+        let text = crate::dailyperks::menu_text(used);
+        Some(vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_menu(template, &text),
+            what: format!(
+                "ScriptMessage MENU (type 6) from the {} (template {template}) to character {}: {} of {} favours already used on UTC day {} ({}). Quest {} is deliberately NOT offered - this NPC is repurposed",
+                crate::dailyperks::ADMIN_NAME,
+                chr.id,
+                used.iter().filter(|u| **u).count(),
+                crate::dailyperks::PERKS.len(),
+                store::today(),
+                store::utc_date(store::today()),
+                crate::dailyperks::SWALLOWED_QUEST,
+            ),
+        }])
+    }
+
+    /// Which of the three this character has already had today, in `PERKS` order.
+    ///
+    /// **This is the display, not the gate**, and the difference matters: a database read that
+    /// fails here marks the option **available**, because the claim itself is atomic and will
+    /// refuse if it really was taken. Marking it used would lock somebody out of a favour they
+    /// are owed on the strength of one failed `SELECT`. The gate can afford to fail closed;
+    /// the picture of it cannot.
+    fn daily_perks_used(&self, character_id: u32) -> [bool; crate::dailyperks::PERKS.len()] {
+        let today = store::today();
+        let mut out = [false; crate::dailyperks::PERKS.len()];
+        for (i, perk) in crate::dailyperks::PERKS.iter().enumerate() {
+            let Some(scope_id) = self.daily_perk_scope_id(*perk, character_id) else { continue };
+            out[i] = match self.store.daily_claim_day(perk.scope(), scope_id, perk.store_key()) {
+                Ok(Some(day)) => day >= today,
+                Ok(None) => false,
+                Err(e) => {
+                    crate::server::log(&format!(
+                        "dailyperks: could not read the {:?} claim for character {character_id}: {e} - showing it as AVAILABLE; the claim itself is the gate",
+                        perk
+                    ));
+                    false
+                }
+            };
+        }
+        out
+    }
+
+    /// The id a perk's claim row is keyed on: the character for [`store::SCOPE_CHARACTER`],
+    /// the account for [`store::SCOPE_ACCOUNT`].
+    ///
+    /// `None` only for an account-scoped perk with no claimed migration, which cannot happen
+    /// today because all three perks ship character-scoped - see `dailyperks::Perk::scope`.
+    fn daily_perk_scope_id(&self, perk: crate::dailyperks::Perk, character_id: u32) -> Option<i64> {
+        if perk.scope() == store::SCOPE_ACCOUNT {
+            return self.claimed().map(|c| c.account_id);
+        }
+        Some(i64::from(character_id))
+    }
+
+    /// The player picked a favour off the menu. `None` means "not mine" - fall through.
+    ///
+    /// **The path is the only thing that says who asked**: a type-6 body carries no speaker,
+    /// so this checks `dailyperks::is_menu_path` before it decodes anything, exactly as the
+    /// taxi's and the instructor's do. The three prefixes are disjoint and a test says so.
+    fn daily_perk_menu_answer(&mut self, body: &[u8]) -> Option<Vec<Reply>> {
+        let convo = self.conversation.clone()?;
+        if !crate::dailyperks::is_menu_path(&convo.path) {
+            return None; // a taxi's, an instructor's, Phil's, or a quest's
+        }
+        let reply = net::script::parse_menu_reply(body)?;
+        let template = convo.npc_template;
+        // The box is gone from the screen either way; a stale conversation is what the next
+        // reply walks into.
+        self.conversation = None;
+        // Closed rather than chosen. Nothing was decided, so nothing happens and nothing is
+        // said - `0x00F3` does not hold the one-request latch, so silence here is safe and is
+        // measured (`research/script-reply.md` §5.1, §5.2). Claimed rather than fallen through,
+        // so the Say-shaped decoder never sees a 10-byte type-6 body.
+        let Some(selection) = reply.selection else { return Some(Vec::new()) };
+        let Some(perk) = crate::dailyperks::perk_at(selection) else {
+            return Some(self.admin_says(
+                template,
+                &crate::dailyperks::no_such_option(),
+                &format!(
+                    "selection {selection} names no favour; there are {} (a -2 is the client's own special path, 141f739b4). NOTHING CLAIMED",
+                    crate::dailyperks::PERKS.len()
+                ),
+            ));
+        };
+        Some(self.grant_daily_perk(template, perk))
+    }
+
+    /// **Claim a day and then pay for it, in that order and never the other.**
+    ///
+    /// # Every effect hangs off the transition
+    ///
+    /// `CLAUDE.md`'s Heena section: `store::complete_quest` guarded correctly for weeks while
+    /// the payout sat *outside* the match on its answer, so a repeat click re-paid the quest.
+    /// The shape that avoids it here is three steps and the order is the whole design:
+    ///
+    /// 1. **Pre-check, before anything is claimed.** A character at the level cap, or one with
+    ///    nothing spent to reset, is refused *without spending their day*. A refusal that costs
+    ///    a day is worse than no feature.
+    /// 2. **The claim**, [`store::Store::claim_daily_perk_now`] - one `BEGIN IMMEDIATE`, one
+    ///    answer. This is the transition. `DailyClaimOutcome::AlreadyToday` returns here and
+    ///    nothing below it runs; there is no field on that arm to pay from.
+    /// 3. **The grant.** If it fails, the day is handed straight back with
+    ///    [`store::Store::release_daily_perk`] and the player is told so.
+    ///
+    /// # Why the claim and the grant are not literally one SQL transaction
+    ///
+    /// Said plainly rather than implied. The brief asked for one transaction, and the claim
+    /// **is** one - the read and the write that decide whether anything is owed cannot be
+    /// interleaved by a second packet. The grant is not inside it, and cannot be: paying a
+    /// favour means `save_character_progress`, `add_maple_points`, `take_ap_spend` and
+    /// `forget_all_skills_and_refund`, each of which takes the store's own connection lock and
+    /// opens its own transaction. Nesting them would deadlock on the `Mutex<Connection>` that
+    /// makes `Store` `Sync`.
+    ///
+    /// So the property that actually holds is: **a grant is impossible without a transition,
+    /// and a transition without a grant is undone.** The window between them is a few
+    /// microseconds on one thread, and its failure mode is a returned day rather than a double
+    /// payout. Step 3 is what makes that true, and it is the reason `Claimed` carries the
+    /// previous day at all.
+    fn grant_daily_perk(&mut self, template: u32, perk: crate::dailyperks::Perk) -> Vec<Reply> {
+        let Some(chr) = self.claimed_character() else {
+            return self.admin_says(
+                template,
+                "I cannot find your record just now. Nothing has been used up.",
+                "no character is claimed; NOTHING CLAIMED",
+            );
+        };
+        // 0. **A cosmetic read, and it is NOT the guard.** Without it the reset says *"you have
+        // nothing spent to give back"* on a second click - true, because the first click spent
+        // it, but it answers a question nobody asked. Asking first whether the day is already
+        // gone puts the right sentence on screen.
+        //
+        // It is deliberately a *read* placed before a *refusal*, never before a grant: it can
+        // only ever turn one refusal into a different refusal. The transition below is
+        // untouched and is still the only thing that authorises a payment, so a stale or
+        // failed read here costs a worse sentence and nothing else.
+        if self.daily_perks_used(chr.id)[perk.selection() as usize] {
+            let day = self
+                .daily_perk_scope_id(perk, chr.id)
+                .and_then(|sid| self.store.daily_claim_day(perk.scope(), sid, perk.store_key()).ok())
+                .flatten()
+                .unwrap_or_else(store::today);
+            return self.admin_says(
+                template,
+                &crate::dailyperks::already_used_today(perk, day),
+                &format!(
+                    "{perk:?} REFUSED: character {} already claimed it on UTC day {day} ({}). NOTHING PAID",
+                    chr.id,
+                    store::utc_date(day)
+                ),
+            );
+        }
+        // 1. Refusals that must not cost a day.
+        if let Some(refusal) = self.daily_perk_refusal(perk, &chr) {
+            return self.admin_says(
+                template,
+                &refusal,
+                &format!("{perk:?} REFUSED before the claim - NOTHING CLAIMED, the day is intact"),
+            );
+        }
+        let Some(scope_id) = self.daily_perk_scope_id(perk, chr.id) else {
+            return self.admin_says(
+                template,
+                "I cannot tell whose day this would be. Nothing has been used up.",
+                &format!("{perk:?}: no scope id for scope {}; NOTHING CLAIMED", perk.scope()),
+            );
+        };
+        let scope = perk.scope();
+        let key = perk.store_key();
+
+        // 2. THE TRANSITION.
+        let outcome = match self.store.claim_daily_perk_now(scope, scope_id, key) {
+            Ok(o) => o,
+            Err(e) => {
+                return self.admin_says(
+                    template,
+                    "My ledger will not open just now. Nothing has been used up - try me again.",
+                    &format!("{perk:?}: the claim FAILED ({e}); NOTHING CLAIMED and NOTHING PAID"),
+                )
+            }
+        };
+        let store::DailyClaimOutcome::Claimed { day, previous } = outcome else {
+            // Already had it today. There is no field on this arm to pay from, which is the
+            // point of the type.
+            return self.admin_says(
+                template,
+                &crate::dailyperks::already_used_today(perk, outcome.day()),
+                &format!(
+                    "{perk:?} REFUSED: character {} already claimed it on UTC day {} ({}). NOTHING PAID",
+                    chr.id,
+                    outcome.day(),
+                    store::utc_date(outcome.day())
+                ),
+            );
+        };
+
+        // 3. The grant. Nothing above this line has paid anything.
+        crate::server::log(&crate::dailyperks::claim_note(perk, chr.id, day));
+        match self.apply_daily_perk(template, perk, &chr) {
+            Ok(replies) => replies,
+            Err(why) => {
+                // The day goes straight back. A player who is told nothing, given nothing and
+                // locked out until tomorrow is the worst outcome this feature has.
+                let restored = self.store.release_daily_perk(scope, scope_id, key, previous);
+                let note = match restored {
+                    Ok(()) => "the day has been given back",
+                    Err(_) => "AND THE DAY COULD NOT BE GIVEN BACK - the claim row still says today",
+                };
+                self.admin_says(
+                    template,
+                    &crate::dailyperks::grant_failed_day_returned(perk, &why),
+                    &format!("{perk:?} claimed for character {} on UTC day {day} and the grant FAILED ({why}); {note}", chr.id),
+                )
+            }
+        }
+    }
+
+    /// The refusals that are decided **before** a day is spent. `None` means "go ahead".
+    ///
+    /// Leaf Points can always be granted, so it has no arm here.
+    fn daily_perk_refusal(
+        &self,
+        perk: crate::dailyperks::Perk,
+        chr: &net::opcode::Character,
+    ) -> Option<String> {
+        match perk {
+            crate::dailyperks::Perk::LeafPoints => None,
+            crate::dailyperks::Perk::LevelUp => {
+                if chr.level >= crate::expcurve::MAX_LEVEL {
+                    return Some(crate::dailyperks::already_max_level(chr.level));
+                }
+                // A level with no row in `data/exp-curve.txt` has no price, so there is no
+                // "exactly the experience needed" to grant. Cannot happen with the shipped file
+                // (1..119) and is a sentence rather than a panic because a missing data file
+                // must not read as a frozen client.
+                if self.config.exp_curve.to_next(chr.level).is_none() {
+                    return Some(crate::dailyperks::no_curve_for_level(chr.level));
+                }
+                None
+            }
+            crate::dailyperks::Perk::ResetApSp => {
+                // The same three sources `gm_reset_ap` and `gm_reset_sp` draw from. If all
+                // three are empty the command is a no-op, and a no-op must not eat a day.
+                let floor = super::gm::AP_RESET_FLOOR;
+                let stat_refund = chr.strength.saturating_sub(floor)
+                    + chr.dexterity.saturating_sub(floor)
+                    + chr.intelligence.saturating_sub(floor)
+                    + chr.luck.saturating_sub(floor);
+                let hpmp = self.store.ap_spend(chr.id).unwrap_or_default().total();
+                let skills = self.store.skills(chr.id).map(|s| s.len()).unwrap_or(0);
+                if stat_refund == 0 && hpmp == 0 && skills == 0 {
+                    return Some(crate::dailyperks::nothing_to_reset());
+                }
+                None
+            }
+        }
+    }
+
+    /// Pay a favour that has already been claimed. `Err` gives the day back.
+    ///
+    /// **Each arm checks that its own effect actually landed**, rather than trusting that the
+    /// call it made worked. `CLAUDE.md`: *"A test that checks one of several effects gives
+    /// false confidence about the rest"* - and the same is true of a handler. `award_experience`
+    /// answers a save failure with a chat notice rather than a signal, so the level is verified
+    /// by re-reading the character; `gm_reset_ap` reports its own failure the same way, so the
+    /// AP pool is re-read too.
+    fn apply_daily_perk(
+        &mut self,
+        template: u32,
+        perk: crate::dailyperks::Perk,
+        chr: &net::opcode::Character,
+    ) -> Result<Vec<Reply>, String> {
+        match perk {
+            // ---- 1000 Leaf Points ----------------------------------------------------
+            //
+            // **The wallet is per ACCOUNT** (`store::cash`), while this claim is per
+            // character - so a player with several characters banks the allowance once per
+            // character into one shared pot. That is the scope the owner asked for; see
+            // `dailyperks::Perk::scope` for the one-line change if it should be per account.
+            //
+            // Nothing pushes a wallet update to the client: the balance travels in the
+            // `0x05AD` that goes out with `SetCashShop`, and the client's own poll is
+            // throttled to once a minute. So the sentence carrying the new balance IS the
+            // feedback until the shop is next opened.
+            crate::dailyperks::Perk::LeafPoints => {
+                let account_id = self
+                    .claimed()
+                    .map(|c| c.account_id)
+                    .ok_or_else(|| "there is no account on this connection".to_string())?;
+                let balance = self
+                    .store
+                    .add_maple_points(account_id, i64::from(crate::dailyperks::LEAF_POINTS_PER_CLAIM))
+                    .map_err(|e| e.to_string())?;
+                Ok(self.admin_says(
+                    template,
+                    &crate::dailyperks::granted(&crate::dailyperks::leaf_points_line(
+                        crate::dailyperks::LEAF_POINTS_PER_CLAIM,
+                        balance,
+                    )),
+                    &format!(
+                        "daily perk LeafPoints PAID: account {account_id} +{} LP -> {balance}. Per-ACCOUNT wallet, per-CHARACTER claim",
+                        crate::dailyperks::LEAF_POINTS_PER_CLAIM
+                    ),
+                ))
+            }
+
+            // ---- exactly one level ---------------------------------------------------
+            //
+            // **The same curve as everything else.** `config.exp_curve` is what a kill and a
+            // quest turn-in both go through, so a level bought here costs what a level costs.
+            // `to_next(level)` is the price of the NEXT level and `chr.exp` is what is already
+            // banked toward it, so `need - exp` is *exactly* the shortfall and no more: the
+            // character arrives at the new level with zero experience toward the one after it.
+            //
+            // **No rate multiplier.** `Session::rate` is applied by the *callers* of
+            // `award_experience`, not inside it, so a 5x event does not turn this into five
+            // levels - which would be a different feature.
+            crate::dailyperks::Perk::LevelUp => {
+                let need = self
+                    .config
+                    .exp_curve
+                    .to_next(chr.level)
+                    .ok_or_else(|| format!("level {} has no row in the experience curve", chr.level))?;
+                // `max(1)` covers the one state the curve cannot: experience already at or past
+                // the threshold, which means a level was banked and never applied. Awarding 0
+                // would be a no-op that still spent the day.
+                let gained = need.saturating_sub(chr.exp).max(1);
+                let before = chr.level;
+                let mut out = self.award_experience(
+                    gained,
+                    &format!("the {}'s daily level", crate::dailyperks::ADMIN_NAME),
+                    true,
+                    true,
+                );
+                // **The transition, re-read rather than assumed.** `award_experience` answers a
+                // failed `save_character_progress` with a chat notice and no signal, so the only
+                // honest check is whether the level actually moved.
+                let after = self
+                    .claimed_character()
+                    .ok_or_else(|| "your record could not be read back".to_string())?;
+                if after.level <= before {
+                    return Err(format!(
+                        "your level did not move (still {before} after {gained} experience)"
+                    ));
+                }
+                out.extend(self.admin_says(
+                    template,
+                    &crate::dailyperks::granted(&crate::dailyperks::level_up_line(
+                        before, after.level, gained,
+                    )),
+                    &format!(
+                        "daily perk LevelUp PAID: character {} +{gained} exp (curve says level {before} costs {need}, {} was banked) -> level {}",
+                        chr.id, chr.exp, after.level
+                    ),
+                ));
+                Ok(out)
+            }
+
+            // ---- reset AP & SP -------------------------------------------------------
+            //
+            // **The two GM commands, called rather than re-implemented.** They are the
+            // definition of what a reset is on this server - the stat floor, the HP/MP ledger,
+            // the `max_hp` arithmetic that uses the same constant that granted it, the
+            // `SkillChange::Forget` encoding and the SP pool packet - and a second copy here
+            // would drift from them one correction at a time. Neither checks GM status; the
+            // permission check lives in the chat dispatcher, not in these.
+            //
+            // Conserving points is therefore theirs and not this feature's: `!resetap` refunds
+            // `(stats - floor) + ap_spent_hp + ap_spent_mp` and `!resetsp` returns the pool by
+            // erasing the skills that charged it. Nothing here adds or removes a point.
+            crate::dailyperks::Perk::ResetApSp => {
+                let ap_before = chr.ap;
+                let skills_before = self.store.skills(chr.id).map(|s| s.len()).unwrap_or(0);
+                let mut out = self.gm_reset_ap();
+                out.extend(self.gm_reset_sp());
+                let after = self
+                    .claimed_character()
+                    .ok_or_else(|| "your record could not be read back".to_string())?;
+                let skills_after = self.store.skills(chr.id).map(|s| s.len()).unwrap_or(0);
+                let refunded = after.ap.saturating_sub(ap_before);
+                let forgotten = skills_before.saturating_sub(skills_after);
+                // **Both effects are checked, not one.** `gm_reset_ap` reports a failed save as
+                // a chat line and carries on, so "the notice went out" says nothing about
+                // whether the points moved. The refusal is only for the case where NEITHER
+                // moved - `daily_perk_refusal` has already ruled out the legitimate no-op, so
+                // nothing moving here means something failed.
+                if refunded == 0 && forgotten == 0 {
+                    return Err("nothing came back - neither your points nor your skills moved"
+                        .to_string());
+                }
+                out.extend(self.admin_says(
+                    template,
+                    &crate::dailyperks::granted(&crate::dailyperks::reset_line(refunded, forgotten)),
+                    &format!(
+                        "daily perk ResetApSp PAID: character {} ap {ap_before} -> {} (+{refunded}), {forgotten} of {skills_before} skill(s) forgotten",
+                        chr.id, after.ap
+                    ),
+                ));
+                Ok(out)
+            }
+        }
+    }
+
+    /// One `0x055B` Say from the Maple Administrator, with no conversation left behind.
+    ///
+    /// Same shape and same reason as [`Session::instructor_says`]: this is a sentence the
+    /// server composed, not a walk through a WZ line list, and leaving a stale `Conversation`
+    /// behind it is how a later reply walks into the wrong state machine. `why` is the log
+    /// label, so `world.log` records whether a day was spent without the sentence having to
+    /// say so on screen.
+    fn admin_says(&self, template: u32, text: &str, why: &str) -> Vec<Reply> {
+        vec![Reply {
+            opcode: net::script::SCRIPT_MESSAGE,
+            body: net::script::npc_say(template, text, false, false),
+            what: format!(
+                "ScriptMessage Say from the {} (template {template}): {why} | {text:?}",
+                crate::dailyperks::ADMIN_NAME
+            ),
+        }]
+    }
+
     /// One `0x055B` from an instructor, with no conversation state behind it.
     ///
     /// Deliberately **not** routed through [`Session::say_line`]: that walks a WZ line list and
@@ -1482,6 +1968,13 @@ impl Session {
         // path prefix: each answers only when this session has *its* conversation parked, so
         // the order between the two does not matter and a test in each module says so.
         if let Some(replies) = self.second_job_menu_answer(body) {
+            return replies;
+        }
+        // **And so is the Maple Administrator's.** Third feature on one packet type, same
+        // precondition and a third disjoint path prefix, so the order between the three does
+        // not matter - `dailyperks::this_menu_path_cannot_be_confused_with_a_taxi_or_an_
+        // instructor` asserts all six directions.
+        if let Some(replies) = self.daily_perk_menu_answer(body) {
             return replies;
         }
         let Some(reply) = net::script::parse_script_reply(body) else { return Vec::new() };

@@ -300,6 +300,12 @@ impl Store {
         // module WIRED rather than merely working, and its absence is exactly the state
         // CLAUDE.md calls "built is not wired".
         crate::codes::create_tables(&conn)?;
+        // One row per (scope, scope_id, perk) holding the last UTC day it was claimed - the
+        // Maple Administrator's daily allowance. A whole new table, so `CREATE TABLE IF NOT
+        // EXISTS` is enough. `dailyperks.rs` also ensures it inside every entry point, for the
+        // same belt-and-braces reason `claims.rs` and `codes.rs` do; this line is what makes
+        // the module WIRED rather than merely working.
+        crate::dailyperks::create_tables(&conn)?;
         // The migration credential columns. These are ALTERed onto `migrations`, which is
         // NOT a new table, so the call carries its own PRAGMA guard - see that module.
         // Every claim entry point already calls this; doing it here too makes the module

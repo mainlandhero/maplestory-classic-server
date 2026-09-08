@@ -474,6 +474,36 @@ fn main() -> ExitCode {
         );
     }
 
+    // **Which items may only drop for a player who has the quest.** Built after the shop
+    // table because the `info/quest` flag arrives with it - one parse of itemdata.txt, so
+    // "may not be sold" and "may not drop" cannot disagree about what a quest item is.
+    //
+    // Both inputs live in gm-handbook/, which is generated and gitignored, so an empty table
+    // is a real possibility and it gates NOTHING - the pre-feature behaviour. That is the
+    // `!map` guard's failure mode, so this says which one it is out loud rather than leaving
+    // it to be inferred from a bag filling up again.
+    config.quest_items =
+        world::questitems::QuestItems::load(&config.shops.item_data, &quest_reqs_path);
+    if config.quest_items.is_armed() {
+        println!(
+            "maplecw-world: quest items: {} carry info/quest, {} are wanted by a quest, {} by \
+             none (those never drop). Only a player with the quest IN PROGRESS is offered one",
+            config.quest_items.flagged_count(),
+            config.quest_items.mapped_count(),
+            config.quest_items.orphan_count(),
+        );
+    } else {
+        eprintln!(
+            "maplecw-world: quest items: NOT ARMED - {} flagged items and {} quest rows from {} \
+             and {}. Quest items will drop for EVERYBODY, as they did before this filter \
+             existed. Regenerate with: python tools/dump_itemdata.py and python tools/dump_quests.py",
+            config.quest_items.flagged_count(),
+            config.quest_items.mapped_count(),
+            item_data_path.display(),
+            quest_reqs_path.display(),
+        );
+    }
+
     report_binding_readiness();
 
     // A bare-port channel under --advertise list would answer Change Channel with 0.0.0.0.
